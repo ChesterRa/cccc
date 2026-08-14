@@ -66,6 +66,9 @@ def test_macos_standalone_accepts_11_0_and_system_dependencies() -> None:
      platform MACOS
         minos 11.0
           sdk 15.4
+       ntools 1
+         tool LD
+      version 1053.12
     """
     libraries = """
     cccc:
@@ -81,8 +84,27 @@ def test_macos_standalone_accepts_11_0_and_system_dependencies() -> None:
     assert validate_macos(build, libraries) == []
 
 
+def test_macos_standalone_reads_legacy_version_min_command() -> None:
+    build = """
+    Load command 9
+          cmd LC_VERSION_MIN_MACOSX
+      cmdsize 16
+      version 10.15
+          sdk 11.3
+    """
+
+    assert parse_macos_minimum_versions(build) == [(10, 15)]
+
+
 def test_macos_standalone_rejects_newer_baseline_and_non_system_dylib() -> None:
-    build = "minos 13.0"
+    build = """
+    Load command 10
+          cmd LC_BUILD_VERSION
+      cmdsize 32
+     platform MACOS
+        minos 13.0
+          sdk 15.4
+    """
     libraries = """
     cccc:
         @rpath/libssl.3.dylib (compatibility version 3.0.0, current version 3.5.0)

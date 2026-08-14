@@ -13,9 +13,6 @@ from pathlib import Path
 
 _ELF_VERSION_RE = re.compile(r"\b(GLIBCXX|GLIBC|CXXABI|GCC)_([0-9]+(?:\.[0-9]+)+)\b")
 _ELF_NEEDED_RE = re.compile(r"\(NEEDED\).*?\[([^\]]+)\]")
-_MACOS_MINIMUM_RE = re.compile(
-    r"^\s*(?:minos|version)\s+([0-9]+(?:\.[0-9]+)+)\s*$", re.MULTILINE
-)
 _MACOS_DEPENDENCY_RE = re.compile(r"^\s+(\S+)\s+\(compatibility version ", re.MULTILINE)
 
 _LINUX_VERSION_LIMITS = {
@@ -78,7 +75,24 @@ def parse_elf_needed(output: str) -> set[str]:
 
 
 def parse_macos_minimum_versions(output: str) -> list[tuple[int, ...]]:
-    return [_version(raw_version) for raw_version in _MACOS_MINIMUM_RE.findall(output)]
+    versions: list[tuple[int, ...]] = []
+    load_command = ""
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Load command "):
+            load_command = ""
+            continue
+        if line.startswith("cmd "):
+            load_command = line.removeprefix("cmd ").strip()
+            continue
+
+        field = "minos" if load_command == "LC_BUILD_VERSION" else "version"
+        if load_command not in {"LC_BUILD_VERSION", "LC_VERSION_MIN_MACOSX"}:
+            continue
+        match = re.fullmatch(rf"{field}\s+([0-9]+(?:\.[0-9]+)+)", line)
+        if match:
+            versions.append(_version(match.group(1)))
+    return versions
 
 
 def parse_macos_dependencies(output: str) -> set[str]:
