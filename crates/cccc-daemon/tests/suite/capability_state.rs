@@ -60,6 +60,7 @@ fn legacy_registered_skills_are_projected_for_slash_commands() {
         overview["items"][0]["source_uri"],
         "https://example.test/review"
     );
+    assert_eq!(overview["items"][0]["autoload_candidate"], true);
 }
 
 #[test]

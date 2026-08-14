@@ -100,6 +100,7 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
         "blocked_global":blocked,
         "policy_visible":!blocked,
         "enable_supported":true,
+        "autoload_candidate":!blocked,
         "qualification_status":if blocked { "blocked" } else { "qualified" },
     })
 }
