@@ -118,6 +118,28 @@ function Move-CcccItemWithRetry([string]$Source, [string]$Destination) {
   }
 }
 
+function Invoke-CcccDaemonStart([string]$CommandPath) {
+  $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("cccc-daemon-start-" + [Guid]::NewGuid().ToString("N") + ".out")
+  $stderrPath = "$stdoutPath.err"
+  $process = $null
+  try {
+    $process = Start-Process -FilePath $CommandPath -ArgumentList @("daemon", "start") `
+      -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    if (-not $process.WaitForExit(35000)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      throw "daemon start timed out"
+    }
+    if ($process.ExitCode -ne 0) {
+      $detail = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue).Trim()
+      if (-not $detail) { $detail = "exit code $($process.ExitCode)" }
+      throw "daemon start failed: $detail"
+    }
+  } finally {
+    if ($null -ne $process) { $process.Dispose() }
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Join-PersistedWindowsPath([string]$MachinePath, [string]$UserPath) {
   $parts = @()
   if (-not [string]::IsNullOrWhiteSpace($MachinePath)) { $parts += $MachinePath }
@@ -423,8 +445,11 @@ try {
   }
 
   if ($daemonWasRunning) {
-    & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
-    if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
+    try {
+      Invoke-CcccDaemonStart (Join-Path $InstallDir "cccc.exe")
+    } catch {
+      throw "The updated CCCC daemon could not restart: $_"
+    }
   }
   $transactionCommitted = $true
   Remove-Item -LiteralPath $backupDir -Recurse -Force
@@ -479,10 +504,7 @@ try {
     }
     if ($daemonWasRunning -and (Test-Path -LiteralPath (Join-Path $InstallDir "cccc.exe"))) {
       try {
-        & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
-        if ($LASTEXITCODE -ne 0) {
-          Write-Error "Rollback restored the previous binary but failed to restart its daemon" -ErrorAction Continue
-        }
+        Invoke-CcccDaemonStart (Join-Path $InstallDir "cccc.exe")
       } catch {
         Write-Error "Rollback restored the previous binary but failed to restart its daemon: $_" -ErrorAction Continue
       }

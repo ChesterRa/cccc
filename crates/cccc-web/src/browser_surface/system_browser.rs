@@ -1,4 +1,6 @@
-use anyhow::{Context, Result, bail};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
 #[cfg(not(target_os = "macos"))]
 use chromiumoxide::BrowserConfig;
 #[cfg(not(target_os = "macos"))]
@@ -325,6 +327,7 @@ async fn wait_for_browser_pid(profile: &Path, deadline: Instant) -> Result<u32> 
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn reserve_cdp_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     Ok(listener.local_addr()?.port())

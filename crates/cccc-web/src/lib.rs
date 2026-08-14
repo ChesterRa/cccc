@@ -266,18 +266,18 @@ async fn static_asset(uri: Uri) -> Response {
     } else {
         path
     };
-    let asset = WebAssets::get(path).or_else(|| {
+    let asset = WebAssets::get(path).map(|asset| (asset, path)).or_else(|| {
         (!path
             .rsplit('/')
             .next()
             .is_some_and(|name| name.contains('.')))
-        .then(|| WebAssets::get("index.html"))
+        .then(|| WebAssets::get("index.html").map(|asset| (asset, "index.html")))
         .flatten()
     });
-    let Some(asset) = asset else {
+    let Some((asset, served_path)) = asset else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mime = mime_guess::from_path(served_path).first_or_octet_stream();
     (
         [
             (header::CONTENT_TYPE, mime.as_ref()),
@@ -474,6 +474,25 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod static_asset_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn spa_fallback_uses_index_html_content_type() {
+        for path in ["/ui/capabilities", "/ui/capabilities/"] {
+            let response = static_asset(path.parse().expect("URI")).await;
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static("text/html")),
+                "unexpected content type for {path}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

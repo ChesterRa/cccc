@@ -1,4 +1,6 @@
-use anyhow::{Context, Result, bail};
+#[cfg(unix)]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use chromiumoxide::browser::Browser;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
