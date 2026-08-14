@@ -273,7 +273,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -292,7 +292,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
       - name: Test installer and release assets
         run: |
@@ -321,7 +321,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
       - name: Test combined daemon and Web process lifecycle serially
         run: >-
@@ -350,7 +350,7 @@ jobs:
           python-version: "3.14"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

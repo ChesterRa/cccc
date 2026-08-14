@@ -55,7 +55,7 @@ jobs:
         run: dnf install -y cmake perl-core
       - name: Select Python 3.14
         run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-unknown-linux-gnu-standalone
@@ -107,7 +107,7 @@ jobs:
       - name: Mark shared Web bundle current
         shell: bash
         run: touch web/dist/index.html
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2

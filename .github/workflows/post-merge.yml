@@ -55,7 +55,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -82,7 +82,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

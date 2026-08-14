@@ -100,7 +100,7 @@ jobs:
         run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -186,7 +186,7 @@ jobs:
           python-version: "3.14"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
 
