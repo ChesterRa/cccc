@@ -180,11 +180,15 @@ class TestContextV2Ops(unittest.TestCase):
             )
             self.assertTrue(ok_resp.ok, getattr(ok_resp, "error", None))
 
-            from cccc.daemon.context.context_ops import _rebuild_summary_snapshot
+            from cccc.daemon.context.context_ops import (
+                _rebuild_summary_snapshot,
+                _wait_for_summary_snapshot_rebuild,
+            )
 
             from cccc.kernel.context import ContextStorage
 
             _rebuild_summary_snapshot(gid)
+            self.assertTrue(_wait_for_summary_snapshot_rebuild(gid))
 
             original_list_tasks = ContextStorage.list_tasks
             original_load_agents = ContextStorage.load_agents
