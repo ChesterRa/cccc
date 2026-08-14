@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { voiceRecordingLeaseIsDefinitelyLost } from "./voiceRecordingLease";
+import {
+  voiceRecordingLeaseConflictFromDetails,
+  voiceRecordingLeaseIsDefinitelyLost,
+} from "./voiceRecordingLease";
 
 describe("voiceRecordingLeaseIsDefinitelyLost", () => {
   it("keeps the local lease during transient heartbeat failures", () => {
@@ -31,5 +34,19 @@ describe("voiceRecordingLeaseIsDefinitelyLost", () => {
         error: { code: "assistant_voice_recording_lease_lost", message: "lease lost" },
       }),
     ).toBe(true);
+  });
+});
+
+describe("voiceRecordingLeaseConflictFromDetails", () => {
+  it("normalizes the active recording owner and group", () => {
+    expect(
+      voiceRecordingLeaseConflictFromDetails({
+        active_lease: {
+          owner_id: " owner ",
+          group_id: " original-group ",
+          group_title: " Original ",
+        },
+      }),
+    ).toEqual({ ownerId: "owner", groupId: "original-group", groupTitle: "Original" });
   });
 });

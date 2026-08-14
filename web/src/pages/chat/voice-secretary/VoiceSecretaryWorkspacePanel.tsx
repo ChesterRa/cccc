@@ -404,51 +404,58 @@ export function VoiceSecretaryWorkspacePanel({
                     isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
                   )}
                 >
-                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    {speakerLabel ? (
-                      <span
-                        className={classNames(
-                          "shrink-0 text-[11px] font-semibold",
-                          isDark ? "text-sky-100" : "text-sky-800",
-                        )}
-                      >
-                        {speakerLabel}
-                      </span>
-                    ) : null}
-                    {itemText ? (
-                      <span
-                        className={classNames(
-                          "min-w-[10rem] flex-1 whitespace-pre-wrap break-words text-sm leading-5",
-                          isDark ? "text-slate-100" : "text-gray-900",
-                        )}
-                      >
-                        {itemText}
-                      </span>
-                    ) : null}
-                    {sourceLabel ? (
-                      <span
-                        className={classNames(
-                          "shrink-0 text-[10px] font-semibold",
-                          isDark ? "text-emerald-100/85" : "text-emerald-800",
-                        )}
-                        title={sourceDetail || sourceLabel}
-                      >
-                        {sourceLabel}
-                      </span>
-                    ) : null}
-                    {timeLabel ? (
-                      <time
-                        className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--color-text-muted)]"
-                        dateTime={new Date(item.updatedAt).toISOString()}
-                        title={fullTimeLabel}
-                      >
-                        {timeLabel}
-                      </time>
-                    ) : null}
-                  </div>
-                  {sourceDetail ? (
-                    <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-                      {sourceDetail}
+                  {speakerLabel ? (
+                    <div
+                      className={classNames(
+                        "mb-0.5 text-[11px] font-semibold",
+                        isDark ? "text-sky-100" : "text-sky-800",
+                      )}
+                    >
+                      {speakerLabel}
+                    </div>
+                  ) : null}
+                  {itemText ? (
+                    <div
+                      className={classNames(
+                        "whitespace-pre-wrap break-words text-sm leading-5",
+                        isDark ? "text-slate-100" : "text-gray-900",
+                      )}
+                    >
+                      {itemText}
+                    </div>
+                  ) : null}
+                  {sourceLabel || sourceDetail || timeLabel ? (
+                    <div className="mt-1 flex min-w-0 items-center gap-2">
+                      {sourceDetail ? (
+                        <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--color-text-muted)]">
+                          {sourceDetail}
+                        </span>
+                      ) : null}
+                      {sourceLabel ? (
+                        <span
+                          className={classNames(
+                            "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                            isDark
+                              ? "bg-emerald-300/10 text-emerald-100/85"
+                              : "bg-emerald-50 text-emerald-800",
+                          )}
+                          title={sourceDetail || sourceLabel}
+                        >
+                          {sourceLabel}
+                        </span>
+                      ) : null}
+                      {timeLabel ? (
+                        <time
+                          className={classNames(
+                            "shrink-0 text-[10px] tabular-nums text-[var(--color-text-muted)]",
+                            !sourceLabel && !sourceDetail && "ml-auto",
+                          )}
+                          dateTime={new Date(item.updatedAt).toISOString()}
+                          title={fullTimeLabel}
+                        >
+                          {timeLabel}
+                        </time>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

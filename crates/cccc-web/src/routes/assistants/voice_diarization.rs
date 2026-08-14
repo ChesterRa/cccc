@@ -23,6 +23,10 @@ pub(super) struct DiarizationJob {
     pub(super) language: String,
 }
 
+pub(super) fn available(state: &AppState, model_id: &str) -> bool {
+    voice_asr::diarization_available(&state.home, model_id)
+}
+
 pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> SpawnStatus {
     let DiarizationJob {
         state,
@@ -33,15 +37,14 @@ pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> S
         transcript_model,
         language,
     } = job;
-    if !voice_asr::diarization_available(&state.home, &diarization_model) {
+    if !available(&state, &diarization_model) {
         return SpawnStatus::Skipped("model_not_ready");
     }
-    let Some(permit) = voice_inference::try_acquire() else {
-        return SpawnStatus::Skipped("worker_busy");
-    };
     tokio::spawn(async move {
         let home = state.home.clone();
+        let permit = voice_inference::acquire().await;
         let outcome = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             voice_segment_analysis::analyze(
                 &home,
                 &diarization_model,
@@ -51,7 +54,6 @@ pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> S
             )
         })
         .await;
-        drop(permit);
         let (action, result, error_code, error_message) = match outcome {
             Ok(Ok(Some(result))) => ("diarization_ready", Some(result), "", String::new()),
             Ok(Ok(None)) => (

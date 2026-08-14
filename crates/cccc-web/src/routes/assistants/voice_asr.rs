@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 mod engine;
 pub use engine::{
-    StreamingSession, clean_transcript, diarize_pcm16_file, transcribe_file, transcribe_pcm16_file,
-    transcribe_pcm16_ranges,
+    StreamingSession, clean_transcript, diarize_pcm16_file, transcribe_file,
+    transcribe_pcm16_ranges, transcribe_pcm16_ranges_partial,
 };
 
 const BUILTIN_MANIFEST: &str = include_str!("../../../resources/voice-models.default.json");

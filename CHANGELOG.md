@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Voice Secretary recordings keep their original Group scope while navigating.** Switching Groups during an active recording no longer redirects document checkpoints, final transcripts, Ask/Prompt work, or direct-composer text into the newly visible Group; the immutable recording scope continues targeting the original Group and document, with composer text routed to that Group's preserved draft.
+- **Silent Voice Secretary streams no longer grow the native ASR heap without bound.** Rust now resets sherpa-onnx at every detected endpoint even when the hypothesis is empty or unchanged, releasing accumulated streaming features while preserving final transcript events.
+- **Long Voice Secretary recordings no longer block later stops or permanently lose speaker labels.** Short WebSocket recordings still receive immediate final ASR; when speaker analysis is available, persistent recordings over 30 seconds, or recordings stopped while native inference is occupied, complete stop promptly and retain their durable live transcript while speaker analysis waits behind the active job instead of returning `worker_busy`. Final ASR paths that cannot defer reuse one SenseVoice recognizer across bounded 30-second ranges.
+
 ## [0.4.34-rc3] — 2026-08-14
 
 ### Changed

@@ -144,11 +144,14 @@ impl VoiceWsCapture {
         if recordings.is_empty() {
             return Ok(events);
         }
+        let can_defer_to_speaker_analysis =
+            self.persist_artifacts && voice_diarization::available(state, &self.diarization_model);
         let mut final_asr = voice_final_asr::transcribe_pcm16_segments(
             state.home.clone(),
             self.selected_model.clone(),
             self.language.clone(),
             &recordings,
+            can_defer_to_speaker_analysis,
         )
         .await;
         final_asr["seq"] = seq.clone();

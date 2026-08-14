@@ -1893,10 +1893,30 @@ full segment has been flushed and data-synced, the server emits:
 Segment rollover MUST NOT stop live recognition or require a new microphone
 capture. Rust stores 48,000,000 PCM bytes per segment (25 minutes) and caps one
 WebSocket session at 800 MiB (about 7 hours 17 minutes). On `stop` or an
-unexpected disconnect, final ASR processes segment files sequentially. The
+unexpected disconnect, persistent recordings longer than 30 seconds MUST defer
+final transcription when speaker analysis is available. Short persistent recordings MAY run
+immediate final ASR. Final ASR paths that cannot defer MUST process segment files
+sequentially and reuse one offline recognizer per recording segment across
+inference ranges no longer than 30 seconds. When final ASR is deferred because
+the recording is long or the native inference worker is occupied, WebSocket stop
+MUST complete promptly with `final_asr_status.status` set to
+`deferred_to_speaker_analysis`, retain the durable live transcript, and queue
+speaker analysis; temporary worker occupancy MUST NOT permanently skip speaker
+analysis or retain the recording lease. The Python backend defers whenever
+speaker analysis is available (regardless of duration) and reports
+`reason="speaker_analysis_available"`; its `final_asr_text` event carries one
+`segments` entry per transcribed VAD segment with
+`recording_segment_index=1`, because it persists a single PCM16 buffer per
+recording session. A final ASR path that cannot defer but
+finds the native inference worker occupied MUST bound its wait well below the
+recording lease TTL and complete stop with an `asr_busy` `final_asr_text` error
+if the worker stays occupied, so a queued stop never outlives its lease.
+HTTP upload transcription MAY retain a
+fail-fast busy response. The
 `final_asr_text` event keeps the combined text in timeline order and includes a
-`segments` array with each segment's status. If at least one segment succeeds
-and another fails, the event keeps `ok=true` so the available text is retained,
+`segments` array with each inference range's status and its owning
+`recording_segment_index`. If at least one range succeeds and another fails, the
+event keeps `ok=true` so the available text is retained,
 and MUST also report `partial=true` plus `failed_segment_count`; clients MUST
 surface that incompleteness rather than presenting the text as a complete
 transcript. Speaker analysis is likewise

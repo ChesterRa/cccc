@@ -1,4 +1,4 @@
-type VoiceCaptureLock = { ownerId: string; groupId: string; updatedAt: number };
+export type VoiceCaptureLock = { ownerId: string; groupId: string; updatedAt: number };
 
 export type VoiceCaptureChannelMessage = {
   type?: "probe" | "alive";

@@ -22,12 +22,32 @@ make interrupted installs recoverable after a process crash.
 Live browser capture sends 16 kHz mono PCM16 as binary WebSocket frames; JSON is
 used only for start/stop control messages. Both WebSocket recordings and HTTP
 binary request bodies are streamed into auto-deleted files under `~/.cccc/cache`
-instead of being accumulated in Rust byte buffers. Final ASR feeds PCM16 and WAV
-samples to sherpa-onnx in bounded chunks on the blocking worker pool. A single
-final-ASR permit prevents native inference from stalling normal Web/API requests
-or multiplying large memory peaks. The 100 MiB value is a per-recording abuse and
+instead of being accumulated in Rust byte buffers. Short WebSocket recordings
+receive immediate final ASR. When speaker analysis is available, persistent
+recordings over 30 seconds, or recordings stopped while the single native
+inference worker is occupied, complete stop promptly, retain the durable live
+transcript, and defer final speaker-labeled transcription to the queued
+speaker-analysis stage. Final ASR paths that cannot
+defer reuse one offline recognizer across bounded 30-second inference ranges.
+HTTP uploads keep their fail-fast busy response. The 100 MiB value is a per-recording abuse and
 resource limit (about 55 minutes of PCM16), not a preallocated memory requirement.
 Each WebSocket recording must also hold the daemon recording lease.
+
+### Switching Groups During Recording
+
+An active recording is a navigation-independent session. Its Group, target
+document, capture mode, dispatch target, composer snapshot, and session ID are
+fixed when recording starts. Switching the visible Group does not move or stop
+the recording: checkpoints, final transcripts, Ask/Prompt requests, and speaker
+analysis continue to target the original Group. The UI identifies that Group
+and keeps the single global recording lease until the user stops and saves.
+
+Direct-composer results follow the same ownership rule. If another Group is
+visible when text becomes ready, CCCC appends it to the original Group's
+preserved composer draft instead of changing the visible Group's draft.
+The live recognizer resets its native stream at every detected speech endpoint,
+including silence or unchanged hypotheses, so decoded features do not accumulate
+for the lifetime of an open microphone connection.
 
 WebSocket PCM is rolled into a new file every 25 minutes (48,000,000 bytes). A
 completed segment is flushed and data-synced before the server emits
@@ -38,6 +58,8 @@ the final pipeline releases them. The complete WebSocket session is capped at
 their independent 100 MiB limit. Browser-side backpressure keeps a bounded PCM
 tail and sends it before the stop frame; if audio must be dropped, capture stops
 with an explicit error instead of silently shifting transcript timestamps.
+Final result metadata reports each 30-second inference range in timeline order
+and retains its owning 25-minute `recording_segment_index`.
 
 The linked Rust speech runtime and an installed live streaming model are
 separate readiness conditions: the microphone control is service-ready only
@@ -72,13 +94,13 @@ The connection releases its recording lease only when the stored owner and lease
 ID still match, so stale connection cleanup cannot unlock a newer recorder.
 Reacquiring from the same browser owner also creates a fresh lease ID and fences
 the superseded connection.
-Only one native diarization job runs at a time. The sherpa-onnx diarization API
+Only one native inference job runs at a time. The sherpa-onnx diarization API
 requires one complete `f32` waveform, so this stage has a bounded, temporary
 full-recording memory peak; it reads directly from the recording file without
-also retaining a duplicate PCM byte buffer. If the model is unavailable or the
-worker is busy, capture closes normally and reports that speaker analysis was
-skipped. Every recording has an independent session ID, so a late result cannot
-overwrite a newer recording.
+also retaining a duplicate PCM byte buffer. Speaker analysis waits fairly behind
+active final ASR or speaker work and persists its result when the worker becomes
+available; only a missing model skips analysis. Every recording has an
+independent session ID, so a late result cannot overwrite a newer recording.
 
 ## Durable Input
 

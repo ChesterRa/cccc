@@ -285,6 +285,9 @@ describe("voice transcript model", () => {
     expect(voiceTranscriptSourceLabel("assistant_service_local_asr_final")).toBe(
       "Final SenseVoice",
     );
+    expect(voiceTranscriptSourceLabel("assistant_service_local_asr_streaming")).toBe(
+      "Live Paraformer",
+    );
     expect(
       voiceTranscriptSourceDetail({
         modelId: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",

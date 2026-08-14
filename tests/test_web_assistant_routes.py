@@ -534,6 +534,116 @@ class TestWebAssistantRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_web_voice_secretary_stream_stop_defers_final_asr_when_diarization_ready(self) -> None:
+        from cccc.ports.web.app import create_app
+        from starlette.websockets import WebSocketDisconnect
+
+        _, cleanup = self._with_home()
+        try:
+            class FakeStreamingSession:
+                def __init__(self) -> None:
+                    self.sent: list[dict] = []
+                    self.closed = False
+
+                async def send(self, payload: dict):
+                    self.sent.append(dict(payload))
+
+                async def receive(self, timeout=None):
+                    from cccc.daemon.assistants.sherpa_streaming_asr import SherpaStreamingAsrError
+
+                    if self.sent and self.sent[-1].get("type") == "stop":
+                        return {"type": "closed"}
+                    raise SherpaStreamingAsrError("asr_backend_timeout", "ASR worker timed out")
+
+                async def close(self):
+                    self.closed = True
+
+            fake_session = FakeStreamingSession()
+            background_calls: list[dict] = []
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return fake_session
+
+            async def fake_diarization_background(**kwargs):
+                background_calls.append(dict(kwargs))
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.sherpa_diarization_status",
+                return_value={"ready": True},
+            ), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ), patch(
+                "cccc.ports.web.routes.groups._run_voice_meeting_diarization_background",
+                side_effect=fake_diarization_background,
+            ):
+                with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "defer-owner",
+                            "capture_mode": "document",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "document",
+                        },
+                    )
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=defer-owner&lease_id={lease_id}"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "stream-defer",
+                                "capture_mode": "document",
+                                "dispatch_target": "document",
+                                "document_path": "docs/meeting.md",
+                                "sample_rate": 16000,
+                                "language": "en-US",
+                            }
+                        )
+                        ready = ws.receive_json()
+                        self.assertEqual(ready.get("type"), "ready")
+                        ws.send_json(
+                            {
+                                "type": "audio",
+                                "seq": 2,
+                                "sample_rate": 16000,
+                                "audio_base64": base64.b64encode(b"\x01\x00" * 8000).decode("ascii"),
+                            }
+                        )
+                        ws.send_json({"type": "stop", "seq": 3})
+                        events: list[dict] = []
+                        while True:
+                            try:
+                                events.append(ws.receive_json())
+                            except WebSocketDisconnect:
+                                break
+
+            defer_events = [item for item in events if item.get("type") == "final_asr_status"]
+            self.assertEqual(len(defer_events), 1, events)
+            self.assertEqual(defer_events[0].get("ok"), True)
+            self.assertEqual(defer_events[0].get("status"), "deferred_to_speaker_analysis")
+            self.assertEqual(defer_events[0].get("reason"), "speaker_analysis_available")
+            self.assertTrue(
+                any(
+                    item.get("type") == "diarization_status" and item.get("status") == "separating_speakers"
+                    for item in events
+                ),
+                events,
+            )
+            self.assertEqual(len(background_calls), 1)
+        finally:
+            cleanup()
+
     def test_web_voice_secretary_stream_rejects_oversized_pcm16_audio(self) -> None:
         from cccc.ports.web.app import create_app
 

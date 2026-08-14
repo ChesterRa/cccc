@@ -82,11 +82,13 @@ pub(super) async fn finalize_disconnect(
         return;
     };
 
+    let can_defer_to_speaker_analysis = voice_diarization::available(&state, &diarization_model_id);
     let final_result = voice_final_asr::transcribe_pcm16_segments(
         state.home.clone(),
         final_model_id.clone(),
         language.clone(),
         &recordings,
+        can_defer_to_speaker_analysis,
     )
     .await;
     let final_text = best_transcript(&final_result, streaming_text);

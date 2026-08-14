@@ -57,7 +57,15 @@ import {
   shouldCloseVoiceCaptureSocket,
   voiceCaptureStopAction,
 } from "./voice-secretary/voiceCaptureStopModel";
-import { createVoiceRecordingSessionId } from "./voice-secretary/voiceCaptureLock";
+import {
+  claimVoiceCaptureLock,
+  createVoiceCaptureOwnerId,
+  createVoiceRecordingSessionId,
+  openVoiceCaptureChannel,
+  refreshVoiceCaptureLock,
+  releaseVoiceCaptureLock,
+  type VoiceCaptureChannelMessage,
+} from "./voice-secretary/voiceCaptureLock";
 import { getVoiceSecretaryWorkspaceVisibility } from "./voice-secretary/voiceSecretaryWorkspaceLayout";
 import {
   newestVoiceActivityItemsFirst,
@@ -124,7 +132,20 @@ import {
   upsertLiveVoiceTranscriptItem,
 } from "./voice-secretary/voiceStreamModel";
 import { resolveVoiceServiceReadiness } from "./voice-secretary/voiceServiceReadiness";
-import { voiceRecordingLeaseIsDefinitelyLost } from "./voice-secretary/voiceRecordingLease";
+import {
+  voiceRecordingLeaseConflictFromDetails,
+  voiceRecordingLeaseIsDefinitelyLost,
+  type VoiceRecordingLeaseConflict,
+} from "./voice-secretary/voiceRecordingLease";
+import {
+  createVoiceRecordingSessionScope,
+  voiceRecordingCaptureMode,
+  voiceRecordingDispatchTarget,
+  voiceRecordingTargetDocumentPath,
+  voiceRecordingTargetGroupId,
+  type VoiceRecordingSessionScope,
+} from "./voice-secretary/voiceRecordingSessionScope";
+import { routeVoiceTextToComposerGroup } from "./voice-secretary/voiceComposerDraftRouting";
 import * as voicePcmTransport from "./voice-secretary/voicePcmBackpressure";
 import { Pcm16Resampler } from "./voice-secretary/voicePcmResampler";
 import {
@@ -190,17 +211,6 @@ type BrowserSpeechRecognition = {
 
 type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
-type VoiceCaptureLock = { ownerId: string; groupId: string; updatedAt: number };
-
-type VoiceRecordingLeaseConflict = { ownerId: string; groupId: string; groupTitle?: string };
-
-type VoiceCaptureChannelMessage = {
-  type?: "probe" | "alive";
-  ownerId?: string;
-  groupId?: string;
-  sentAt?: number;
-};
-
 type VoiceActivityFeedItem =
   | { kind: "ask"; id: string; sortAt: number; item: AssistantVoiceAskFeedback }
   | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
@@ -218,11 +228,7 @@ type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
 type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
 type BrowserSpeechSupportIssue = "" | "unsupported";
 
-const VOICE_CAPTURE_LOCK_KEY = "cccc.voiceSecretary.activeCapture";
-const VOICE_CAPTURE_CHANNEL_NAME = "cccc.voiceSecretary.capture";
-const VOICE_CAPTURE_LOCK_TTL_MS = 30 * 1000;
 const VOICE_RECORDING_LEASE_TTL_SECONDS = 30;
-const VOICE_CAPTURE_LOCK_PROBE_TIMEOUT_MS = 300;
 const BROWSER_DEFAULT_MIC_LABEL = "browser_default";
 const SERVICE_DEFAULT_MIC_LABEL = "service_default";
 const BROWSER_SPEECH_MAX_WINDOW_FALLBACK_MS = 300_000;
@@ -265,130 +271,6 @@ function voiceDocumentRevisionKey(document: AssistantVoiceDocument | null | unde
     String(document.updated_at || "").trim(),
     String(document.content_chars ?? "").trim(),
   ].join("|");
-}
-
-function createVoiceCaptureOwnerId(): string {
-  return `voice-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function readVoiceCaptureLock(): VoiceCaptureLock | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(VOICE_CAPTURE_LOCK_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<VoiceCaptureLock>;
-    const ownerId = String(parsed.ownerId || "").trim();
-    const groupId = String(parsed.groupId || "").trim();
-    const updatedAt = Number(parsed.updatedAt || 0);
-    if (!ownerId || !groupId || !Number.isFinite(updatedAt)) return null;
-    if (Date.now() - updatedAt > VOICE_CAPTURE_LOCK_TTL_MS) {
-      window.localStorage.removeItem(VOICE_CAPTURE_LOCK_KEY);
-      return null;
-    }
-    return { ownerId, groupId, updatedAt };
-  } catch {
-    return null;
-  }
-}
-
-function writeVoiceCaptureLock(ownerId: string, groupId: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      VOICE_CAPTURE_LOCK_KEY,
-      JSON.stringify({ ownerId, groupId, updatedAt: Date.now() }),
-    );
-  } catch {
-    void 0;
-  }
-}
-
-function clearVoiceCaptureLock(ownerId?: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (ownerId) {
-      const active = readVoiceCaptureLock();
-      if (active && active.ownerId !== ownerId) return;
-    }
-    window.localStorage.removeItem(VOICE_CAPTURE_LOCK_KEY);
-  } catch {
-    void 0;
-  }
-}
-
-function openVoiceCaptureChannel(): BroadcastChannel | null {
-  if (typeof BroadcastChannel === "undefined") return null;
-  try {
-    return new BroadcastChannel(VOICE_CAPTURE_CHANNEL_NAME);
-  } catch {
-    return null;
-  }
-}
-
-function probeVoiceCaptureOwner(lock: VoiceCaptureLock): Promise<boolean> {
-  const channel = openVoiceCaptureChannel();
-  if (!channel) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (alive: boolean) => {
-      if (settled) return;
-      settled = true;
-      channel.removeEventListener("message", handleMessage);
-      channel.close();
-      resolve(alive);
-    };
-    const handleMessage = (event: MessageEvent<VoiceCaptureChannelMessage>) => {
-      const message = event.data || {};
-      if (message.type !== "alive") return;
-      if (String(message.ownerId || "") !== lock.ownerId) return;
-      finish(true);
-    };
-    channel.addEventListener("message", handleMessage);
-    window.setTimeout(() => finish(false), VOICE_CAPTURE_LOCK_PROBE_TIMEOUT_MS);
-    channel.postMessage({
-      type: "probe",
-      ownerId: lock.ownerId,
-      groupId: lock.groupId,
-      sentAt: Date.now(),
-    } satisfies VoiceCaptureChannelMessage);
-  });
-}
-
-async function claimVoiceCaptureLock(
-  ownerId: string,
-  groupId: string,
-): Promise<VoiceCaptureLock | null> {
-  const active = readVoiceCaptureLock();
-  if (active && active.ownerId !== ownerId) {
-    const ownerAlive = await probeVoiceCaptureOwner(active);
-    if (ownerAlive) return active;
-    clearVoiceCaptureLock(active.ownerId);
-  }
-  writeVoiceCaptureLock(ownerId, groupId);
-  return null;
-}
-
-function refreshVoiceCaptureLock(ownerId: string, groupId: string): void {
-  const active = readVoiceCaptureLock();
-  if (!active || active.ownerId === ownerId) writeVoiceCaptureLock(ownerId, groupId);
-}
-
-function releaseVoiceCaptureLock(ownerId: string): void {
-  clearVoiceCaptureLock(ownerId);
-}
-
-function voiceRecordingLeaseConflictFromDetails(
-  details: unknown,
-): VoiceRecordingLeaseConflict | null {
-  const record = details && typeof details === "object" ? (details as Record<string, unknown>) : {};
-  const active =
-    record.active_lease && typeof record.active_lease === "object"
-      ? (record.active_lease as Record<string, unknown>)
-      : {};
-  const ownerId = String(active.owner_id || "").trim();
-  const groupId = String(active.group_id || "").trim();
-  if (!ownerId || !groupId) return null;
-  return { ownerId, groupId, groupTitle: String(active.group_title || "").trim() || undefined };
 }
 
 function getBrowserSpeechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
@@ -518,6 +400,7 @@ export function VoiceSecretaryComposerControl({
   const serviceDocumentCheckpointTimerRef = useRef<number | null>(null);
   const voiceCaptureOwnerIdRef = useRef(createVoiceCaptureOwnerId());
   const voiceRecordingSessionIdRef = useRef("");
+  const voiceRecordingSessionScopeRef = useRef<VoiceRecordingSessionScope | null>(null);
   const voiceRecordingLeaseGroupIdRef = useRef("");
   const voiceRecordingLeaseIdRef = useRef("");
   const voiceRecordingLeaseAcquiredRef = useRef(false);
@@ -540,6 +423,7 @@ export function VoiceSecretaryComposerControl({
   const browserSpeechMediaCleanupRef = useRef<(() => void) | null>(null);
   const browserSpeechTransientErrorCountRef = useRef(0);
   const pendingPromptRequestIdRef = useRef("");
+  const pendingPromptGroupIdRef = useRef("");
   const pendingPromptRequestStartedAtRef = useRef(0);
   const pendingAskRequestIdRef = useRef("");
   const pendingPromptComposerHashRef = useRef("");
@@ -562,6 +446,19 @@ export function VoiceSecretaryComposerControl({
   selectedGroupIdRef.current = String(selectedGroupId || "").trim();
   const isCurrentGroup = useCallback(
     (gid: string) => String(gid || "").trim() === selectedGroupIdRef.current,
+    [],
+  );
+  const recordingTargetGroupId = useCallback(
+    () =>
+      voiceRecordingTargetGroupId(
+        voiceRecordingSessionScopeRef.current,
+        selectedGroupIdRef.current,
+      ),
+    [],
+  );
+  const recordingTargetDocumentPath = useCallback(
+    (fallbackPath = "") =>
+      voiceRecordingTargetDocumentPath(voiceRecordingSessionScopeRef.current, fallbackPath),
     [],
   );
   const releaseDaemonVoiceRecordingLease = useCallback((groupId?: string) => {
@@ -750,6 +647,9 @@ export function VoiceSecretaryComposerControl({
       recordingStoppingRef.current = false;
       if (!runId || browserSpeechFinalizingRunIdRef.current === runId) {
         browserSpeechFinalizingRunIdRef.current = 0;
+      }
+      if (!runId || voiceRecordingSessionScopeRef.current?.runId === runId) {
+        voiceRecordingSessionScopeRef.current = null;
       }
       recordingRunIdRef.current += 1;
       setRecordingStartingFlag(false);
@@ -1528,7 +1428,7 @@ export function VoiceSecretaryComposerControl({
       const requestId = String(
         pendingPromptRequestIdRef.current || pendingPromptRequestId || "",
       ).trim();
-      const gid = String(selectedGroupId || "").trim();
+      const gid = String(pendingPromptGroupIdRef.current || selectedGroupId || "").trim();
       if (
         !gid ||
         !requestId ||
@@ -1536,7 +1436,6 @@ export function VoiceSecretaryComposerControl({
       )
         return;
       void fetchVoiceAssistantStatus(gid, { promptRequestId: requestId }).then((resp) => {
-        if (!isCurrentGroup(gid)) return;
         if (!resp.ok) return;
         const promptDraft = resp.result.prompt_draft || null;
         if (
@@ -1552,7 +1451,7 @@ export function VoiceSecretaryComposerControl({
     return () => {
       window.clearInterval(timer);
     };
-  }, [isCurrentGroup, pendingPromptDraft, pendingPromptRequestId, selectedGroupId]);
+  }, [pendingPromptDraft, pendingPromptRequestId, selectedGroupId]);
 
   useEffect(() => {
     const hasActiveAsk = askFeedbackItems.some((item) => isActiveAskFeedbackStatus(item.status));
@@ -1570,16 +1469,21 @@ export function VoiceSecretaryComposerControl({
   }, [askFeedbackItems, liveTranscriptPreview, pendingPromptRequestId, recording]);
 
   const acknowledgePromptDraft = useCallback(
-    async (draft: AssistantVoicePromptDraft, status: "applied" | "dismissed" | "stale") => {
-      const gid = String(selectedGroupId || "").trim();
+    async (
+      draft: AssistantVoicePromptDraft,
+      status: "applied" | "dismissed" | "stale",
+      targetGroupId?: string,
+    ) => {
+      const gid = String(targetGroupId || selectedGroupId || "").trim();
       if (!gid || !draft.request_id) return;
       const resp = await ackVoiceAssistantPromptDraft(gid, {
         requestId: draft.request_id,
         status,
         by: "user",
       });
-      if (!isCurrentGroup(gid)) return;
-      if (resp.ok && resp.result.assistant) setAssistant(resp.result.assistant);
+      if (isCurrentGroup(gid) && resp.ok && resp.result.assistant) {
+        setAssistant(resp.result.assistant);
+      }
     },
     [isCurrentGroup, selectedGroupId],
   );
@@ -1594,9 +1498,15 @@ export function VoiceSecretaryComposerControl({
       setPendingPromptRequestId("");
       setPendingPromptDraft(null);
       const applyMode = promptDraftApplyMode(draft);
-      onPromptDraft?.(text, { mode: applyMode });
+      const groupId = String(pendingPromptGroupIdRef.current || recordingTargetGroupId()).trim();
+      pendingPromptGroupIdRef.current = "";
+      if (isCurrentGroup(groupId)) {
+        onPromptDraft?.(text, { mode: applyMode });
+      } else {
+        routeVoiceTextToComposerGroup({ groupId, text, mode: applyMode });
+      }
       try {
-        await acknowledgePromptDraft(draft, "applied");
+        await acknowledgePromptDraft(draft, "applied", groupId);
       } catch {
         // Applying locally is the critical path; ack retry is non-critical.
       }
@@ -1611,7 +1521,7 @@ export function VoiceSecretaryComposerControl({
               }),
       });
     },
-    [acknowledgePromptDraft, onPromptDraft, showNotice, t],
+    [acknowledgePromptDraft, isCurrentGroup, onPromptDraft, recordingTargetGroupId, showNotice, t],
   );
 
   useEffect(() => {
@@ -1630,6 +1540,7 @@ export function VoiceSecretaryComposerControl({
     let timer = 0;
     const clearStaleRequest = () => {
       pendingPromptRequestIdRef.current = "";
+      pendingPromptGroupIdRef.current = "";
       pendingPromptRequestStartedAtRef.current = 0;
       pendingPromptComposerHashRef.current = "";
       setPendingPromptRequestId("");
@@ -1706,6 +1617,7 @@ export function VoiceSecretaryComposerControl({
     setSelectedAudioDeviceId("");
     if (!keepActiveRecording) {
       pendingPromptRequestIdRef.current = "";
+      pendingPromptGroupIdRef.current = "";
       pendingPromptRequestStartedAtRef.current = 0;
       pendingAskRequestIdRef.current = "";
       pendingPromptComposerHashRef.current = "";
@@ -1943,14 +1855,15 @@ export function VoiceSecretaryComposerControl({
         speakerSegments?: Record<string, unknown>[];
       },
     ): Promise<boolean> => {
-      const gid = String(selectedGroupId || "").trim();
-      if (!gid || !assistantEnabled) return false;
+      const sessionScope = voiceRecordingSessionScopeRef.current;
+      const gid = recordingTargetGroupId();
+      if (!gid || (!sessionScope && !assistantEnabled)) return false;
       const cleanText = String(text || "").trim();
       const flush = Boolean(opts?.flush);
       if (!cleanText && !flush) return false;
-      const targetDocumentPath = String(
-        opts?.documentPath || captureTargetDocumentPathRef.current || "",
-      ).trim();
+      const targetDocumentPath = recordingTargetDocumentPath(
+        opts?.documentPath || captureTargetDocumentPathRef.current,
+      );
       const segmentSeq = transcriptSegmentSeqRef.current + 1;
       transcriptSegmentSeqRef.current = segmentSeq;
       try {
@@ -2011,8 +1924,9 @@ export function VoiceSecretaryComposerControl({
       isCurrentGroup,
       pushVoiceTranscriptItem,
       recognitionBackend,
+      recordingTargetDocumentPath,
+      recordingTargetGroupId,
       selectedAudioDeviceLabel,
-      selectedGroupId,
       serviceAsrReady,
       showError,
       t,
@@ -2022,7 +1936,10 @@ export function VoiceSecretaryComposerControl({
   const flushServiceDocumentCheckpoint = useCallback(
     async (triggerKind = "max_window"): Promise<boolean> => {
       clearServiceDocumentCheckpointTimer();
-      if (captureMode !== "document") return false;
+      if (
+        voiceRecordingCaptureMode(voiceRecordingSessionScopeRef.current, captureMode) !== "document"
+      )
+        return false;
       const committedDocumentText = normalizeBrowserTranscriptChunk(
         serviceDocumentCommittedTranscriptRef.current,
       );
@@ -2046,7 +1963,7 @@ export function VoiceSecretaryComposerControl({
         triggerKind,
         source: "assistant_service_local_asr_streaming",
         inputDeviceLabel: selectedAudioDeviceLabel,
-        documentPath: effectiveCaptureTargetDocumentPath,
+        documentPath: recordingTargetDocumentPath(effectiveCaptureTargetDocumentPath),
         startMs,
         endMs,
         speakerSegments: serviceFinalSpeakerSegmentsRef.current.length
@@ -2066,12 +1983,16 @@ export function VoiceSecretaryComposerControl({
       captureMode,
       clearServiceDocumentCheckpointTimer,
       effectiveCaptureTargetDocumentPath,
+      recordingTargetDocumentPath,
       selectedAudioDeviceLabel,
     ],
   );
 
   const scheduleServiceDocumentCheckpoint = useCallback(() => {
-    if (captureMode !== "document") return;
+    if (
+      voiceRecordingCaptureMode(voiceRecordingSessionScopeRef.current, captureMode) !== "document"
+    )
+      return;
     if (autoDocumentMaxWindowMs === null) return;
     if (serviceDocumentCheckpointTimerRef.current !== null) return;
     serviceDocumentCheckpointTimerRef.current = window.setTimeout(() => {
@@ -2082,13 +2003,14 @@ export function VoiceSecretaryComposerControl({
 
   const sendInstructionTranscript = useCallback(
     async (text: string, opts?: { triggerKind?: string }): Promise<boolean> => {
-      const gid = String(selectedGroupId || "").trim();
+      const sessionScope = voiceRecordingSessionScopeRef.current;
+      const gid = recordingTargetGroupId();
       const instruction = normalizeBrowserTranscriptChunk(text);
-      if (!gid || !assistantEnabled || !instruction) return false;
+      if (!gid || (!sessionScope && !assistantEnabled) || !instruction) return false;
       const requestId = `voice-ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const currentDocumentPath = String(
-        captureTargetDocumentPathRef.current || activeDocumentWritePath || viewedDocumentPath || "",
-      ).trim();
+      const currentDocumentPath = recordingTargetDocumentPath(
+        captureTargetDocumentPathRef.current || activeDocumentWritePath || viewedDocumentPath,
+      );
       try {
         const resp = await appendVoiceAssistantInput(gid, {
           kind: "voice_instruction",
@@ -2156,8 +2078,9 @@ export function VoiceSecretaryComposerControl({
       finalizeLiveTranscriptPreview,
       isCurrentGroup,
       recognitionBackend,
+      recordingTargetDocumentPath,
+      recordingTargetGroupId,
       refreshAssistant,
-      selectedGroupId,
       showError,
       showNotice,
       t,
@@ -2170,10 +2093,13 @@ export function VoiceSecretaryComposerControl({
       triggerKind = "prompt_refine",
       opts?: { operation?: "append_to_composer_end" | "replace_with_refined_prompt" },
     ) => {
-      const gid = String(selectedGroupId || "").trim();
+      const sessionScope = voiceRecordingSessionScopeRef.current;
+      const gid = recordingTargetGroupId();
       const voiceTranscript = normalizeBrowserTranscriptChunk(text);
-      const snapshot = String(composerText || "");
-      if (!gid || !assistantEnabled || (!voiceTranscript && !snapshot.trim())) return;
+      const snapshot = String(sessionScope?.composerText ?? composerText ?? "");
+      const requestComposerContext = sessionScope?.composerContext || composerContext;
+      if (!gid || (!sessionScope && !assistantEnabled) || (!voiceTranscript && !snapshot.trim()))
+        return;
       const operation = opts?.operation || "append_to_composer_end";
       const snapshotHash = hashComposerSnapshot(snapshot);
       const nowMs = Date.now();
@@ -2196,6 +2122,7 @@ export function VoiceSecretaryComposerControl({
         ? pendingPromptRequestStartedAtRef.current
         : nowMs;
       pendingPromptComposerHashRef.current = snapshotHash;
+      pendingPromptGroupIdRef.current = gid;
       setPendingPromptRequestId(requestId);
       try {
         const resp = await appendVoiceAssistantInput(gid, {
@@ -2206,7 +2133,7 @@ export function VoiceSecretaryComposerControl({
           inputAppendId,
           operation,
           composerSnapshotHash: snapshotHash,
-          composerContext,
+          composerContext: requestComposerContext,
           language: effectiveRecognitionLanguage,
           trigger: {
             trigger_kind: triggerKind,
@@ -2216,15 +2143,16 @@ export function VoiceSecretaryComposerControl({
           },
           by: "user",
         });
-        if (!isCurrentGroup(gid)) return;
         if (!resp.ok) {
           pendingPromptRequestIdRef.current = "";
+          pendingPromptGroupIdRef.current = "";
           pendingPromptRequestStartedAtRef.current = 0;
           pendingPromptComposerHashRef.current = "";
           setPendingPromptRequestId("");
-          showError(resp.error.message);
+          if (isCurrentGroup(gid)) showError(resp.error.message);
           return;
         }
+        if (!isCurrentGroup(gid)) return;
         setPendingPromptDraft(null);
         if (resp.result.assistant) setAssistant(resp.result.assistant);
         finalizeLiveTranscriptPreview();
@@ -2240,11 +2168,12 @@ export function VoiceSecretaryComposerControl({
         });
         void refreshAssistant({ quiet: true });
       } catch {
-        if (!isCurrentGroup(gid)) return;
         pendingPromptRequestIdRef.current = "";
+        pendingPromptGroupIdRef.current = "";
         pendingPromptRequestStartedAtRef.current = 0;
         pendingPromptComposerHashRef.current = "";
         setPendingPromptRequestId("");
+        if (!isCurrentGroup(gid)) return;
         showError(
           t("voiceSecretaryPromptRefineFailed", {
             defaultValue: "Failed to send prompt refinement to Voice Secretary.",
@@ -2261,8 +2190,8 @@ export function VoiceSecretaryComposerControl({
       isCurrentGroup,
       pendingPromptRequestId,
       recognitionBackend,
+      recordingTargetGroupId,
       refreshAssistant,
-      selectedGroupId,
       showError,
       showNotice,
       t,
@@ -2273,7 +2202,12 @@ export function VoiceSecretaryComposerControl({
     (text: string): boolean => {
       const transcript = String(text || "").trim();
       if (!transcript || !onPromptDraft) return false;
-      onPromptDraft(transcript, { mode: "append" });
+      const groupId = recordingTargetGroupId();
+      if (isCurrentGroup(groupId)) {
+        onPromptDraft(transcript, { mode: "append" });
+      } else {
+        routeVoiceTextToComposerGroup({ groupId, text: transcript, mode: "append" });
+      }
       finalizeLiveTranscriptPreview();
       showNotice({
         message: t("voiceDirectDictationFilled", {
@@ -2282,7 +2216,14 @@ export function VoiceSecretaryComposerControl({
       });
       return true;
     },
-    [finalizeLiveTranscriptPreview, onPromptDraft, showNotice, t],
+    [
+      finalizeLiveTranscriptPreview,
+      isCurrentGroup,
+      onPromptDraft,
+      recordingTargetGroupId,
+      showNotice,
+      t,
+    ],
   );
 
   const takeBrowserFinalTranscriptBuffer = useCallback((): string => {
@@ -2295,23 +2236,27 @@ export function VoiceSecretaryComposerControl({
     async (triggerKind = "meeting_window", opts?: { documentPath?: string }): Promise<void> => {
       clearTranscriptFlushTimer();
       clearTranscriptMaxFlushTimer();
-      const documentPath = String(
-        opts?.documentPath || captureTargetDocumentPathRef.current || "",
-      ).trim();
-      if (captureDispatchTarget !== "document" && triggerKind !== "push_to_talk_stop") {
+      const dispatchTarget = voiceRecordingDispatchTarget(
+        voiceRecordingSessionScopeRef.current,
+        captureDispatchTarget,
+      );
+      const documentPath = recordingTargetDocumentPath(
+        opts?.documentPath || captureTargetDocumentPathRef.current,
+      );
+      if (dispatchTarget !== "document" && triggerKind !== "push_to_talk_stop") {
         return;
       }
       const text = takeBrowserFinalTranscriptBuffer();
-      if (captureDispatchTarget === "composer") {
+      if (dispatchTarget === "composer") {
         appendDirectDictationToComposer(text);
         return;
       }
-      if (captureDispatchTarget === "prompt") {
+      if (dispatchTarget === "prompt") {
         if (!isMeaningfulVoiceDispatchText(text)) return;
         await requestPromptRefine(text, triggerKind || "prompt_refine");
         return;
       }
-      if (captureDispatchTarget === "instruction") {
+      if (dispatchTarget === "instruction") {
         if (!isMeaningfulVoiceDispatchText(text)) return;
         await sendInstructionTranscript(text, { triggerKind });
         return;
@@ -2333,6 +2278,7 @@ export function VoiceSecretaryComposerControl({
       clearTranscriptMaxFlushTimer,
       finalizeLiveTranscriptPreview,
       requestPromptRefine,
+      recordingTargetDocumentPath,
       sendInstructionTranscript,
       takeBrowserFinalTranscriptBuffer,
     ],
@@ -2340,7 +2286,13 @@ export function VoiceSecretaryComposerControl({
 
   const scheduleTranscriptMaxFlush = useCallback(
     (triggerKind: string) => {
-      if (captureDispatchTarget !== "document") return;
+      if (
+        voiceRecordingDispatchTarget(
+          voiceRecordingSessionScopeRef.current,
+          captureDispatchTarget,
+        ) !== "document"
+      )
+        return;
       if (autoDocumentMaxWindowMs === null) return;
       if (transcriptMaxFlushTimerRef.current !== null) return;
       const documentPath = captureTargetDocumentPathRef.current;
@@ -2557,7 +2509,8 @@ export function VoiceSecretaryComposerControl({
             type: "stop",
             seq: serviceAudioSeqRef.current,
             skip_final_document_apply:
-              captureMode === "document" &&
+              voiceRecordingCaptureMode(voiceRecordingSessionScopeRef.current, captureMode) ===
+                "document" &&
               Boolean(
                 normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current),
               ),
@@ -2636,6 +2589,7 @@ export function VoiceSecretaryComposerControl({
       clearServiceDocumentCheckpointTimer();
       cleanupServiceAudio();
       releaseVoiceRecordingGuards();
+      voiceRecordingSessionScopeRef.current = null;
     };
   }, [
     cleanupServiceAudio,
@@ -2783,6 +2737,16 @@ export function VoiceSecretaryComposerControl({
     // stream can destabilize Edge/Chromium Web Speech capture.
     stopMediaStream(stream);
     mediaStreamRef.current = null;
+    voiceRecordingSessionScopeRef.current = createVoiceRecordingSessionScope({
+      runId,
+      sessionId: voiceRecordingSessionIdRef.current,
+      groupId: gid,
+      documentPath: effectiveCaptureTargetDocumentPath,
+      captureMode,
+      dispatchTarget: captureDispatchTarget,
+      composerText,
+      composerContext,
+    });
     recordingRef.current = true;
     setRecording(true);
     finishRecordingStart(runId);
@@ -3076,11 +3040,14 @@ export function VoiceSecretaryComposerControl({
     browserSpeechReady,
     captureDispatchTarget,
     captureMode,
+    composerContext,
+    composerText,
     clearBrowserSpeechMediaHandlers,
     clearBrowserSpeechRestartTimer,
     clearBrowserSpeechStopFinalizeTimer,
     clearTranscriptFlushTimer,
     endRecordingRun,
+    effectiveCaptureTargetDocumentPath,
     browserRecognitionLanguage,
     finishRecordingStart,
     finalizeBrowserRecordingRun,
@@ -3325,6 +3292,16 @@ export function VoiceSecretaryComposerControl({
           detail: state,
         });
       };
+      voiceRecordingSessionScopeRef.current = createVoiceRecordingSessionScope({
+        runId,
+        sessionId: voiceRecordingSessionIdRef.current,
+        groupId: gid,
+        documentPath: effectiveCaptureTargetDocumentPath,
+        captureMode,
+        dispatchTarget: captureDispatchTarget,
+        composerText,
+        composerContext,
+      });
       setSpeechError("");
       recordingRef.current = true;
       setRecording(true);
@@ -3658,7 +3635,10 @@ export function VoiceSecretaryComposerControl({
     cleanupServiceAudio,
     appendDirectDictationToComposer,
     captureDispatchTarget,
+    captureMode,
     captureTransportMode,
+    composerContext,
+    composerText,
     commitServiceLatestPartialTranscript,
     flushServiceDocumentCheckpoint,
     getAudioCaptureErrorMessage,
@@ -3699,14 +3679,15 @@ export function VoiceSecretaryComposerControl({
       refreshVoiceCaptureLock(voiceCaptureOwnerIdRef.current, gid);
       if (!voiceRecordingLeaseAcquiredRef.current || !gid) return;
       const leaseId = voiceRecordingLeaseIdRef.current;
+      const sessionScope = voiceRecordingSessionScopeRef.current;
       void updateVoiceAssistantRecordingLease(gid, {
         action: "heartbeat",
         ownerId: voiceCaptureOwnerIdRef.current,
         leaseId,
         ttlSeconds: VOICE_RECORDING_LEASE_TTL_SECONDS,
-        captureMode,
+        captureMode: voiceRecordingCaptureMode(sessionScope, captureMode),
         recognitionBackend,
-        dispatchTarget: captureDispatchTarget,
+        dispatchTarget: voiceRecordingDispatchTarget(sessionScope, captureDispatchTarget),
       })
         .then((resp) => {
           if (leaseId !== voiceRecordingLeaseIdRef.current) return;

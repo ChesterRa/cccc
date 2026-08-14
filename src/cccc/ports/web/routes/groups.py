@@ -2814,6 +2814,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     )
                     await send_streaming_json(
                         {
+                            "type": "final_asr_status",
+                            "ok": True,
+                            "seq": seq,
+                            "status": "deferred_to_speaker_analysis",
+                            "reason": "speaker_analysis_available",
+                        },
+                        enabled=send_client_events,
+                    )
+                    await send_streaming_json(
+                        {
                             "type": "diarization_status",
                             "ok": True,
                             "seq": seq,

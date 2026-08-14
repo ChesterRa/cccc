@@ -26,6 +26,19 @@ class FinalAsrEvent:
     text: str = ""
 
 
+# The Python backend persists one PCM16 buffer per recording session, so every
+# transcription segment belongs to recording segment 1 (the Rust backend rolls
+# segment files and reports the owning `recording_segment_index` per range).
+_SINGLE_RECORDING_SEGMENT_INDEX = 1
+
+
+@dataclass(frozen=True)
+class FinalAsrResult:
+    text: str = ""
+    segments: tuple[dict[str, Any], ...] = ()
+    failed_segment_count: int = 0
+
+
 def _pcm16_duration_ms(byte_count: int, sample_rate: int) -> int:
     rate = max(1, int(sample_rate or 16000))
     return int(max(0, byte_count) / (2 * rate) * 1000)
@@ -86,7 +99,7 @@ def _progress(
     return FinalAsrEvent(payload)
 
 
-def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, segment: VoicePcmSegment, language: str = "") -> FinalAsrEvent:
+def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, segment: VoicePcmSegment, language: str = "", index: int = 0) -> FinalAsrEvent:
     text = clean_sense_voice_text(text)
     return FinalAsrEvent(
         {
@@ -94,8 +107,11 @@ def _final(text: str, *, seq: Any, selected_model_id: str, sample_rate: int, seg
             "ok": True,
             "seq": seq,
             "text": text,
+            "index": index,
+            "recording_segment_index": _SINGLE_RECORDING_SEGMENT_INDEX,
             "start_ms": segment.start_ms,
             "end_ms": segment.end_ms,
+            "bytes": len(segment.audio),
             "source": _FINAL_ASR_SOURCE,
             **_base_meta(selected_model_id, sample_rate, language),
             "quality_flags": voice_final_asr_quality_flags(text),
@@ -166,7 +182,7 @@ async def iter_final_asr_events(
                     yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), segment=segment, index=index)
                     segment_text = (await offline_session.transcribe_pcm16(segment.audio, sample_rate=sample_rate)).strip()
                     if segment_text:
-                        yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language)
+                        yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language, index=index)
             except LocalStreamingAsrError as exc:
                 offline_transcribe_failed = True
                 yield _progress(
@@ -196,7 +212,7 @@ async def iter_final_asr_events(
                 )
             ).strip()
             if segment_text:
-                yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language)
+                yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language, index=index)
     except LocalStreamingAsrError as exc:
         yield FinalAsrEvent(
             {
@@ -231,6 +247,48 @@ def _append_final_chunk(buffer: str, chunk: str) -> str:
     return f"{buffer} {chunk}"
 
 
+async def collect_final_asr_result(
+    pcm16_audio: bytes,
+    *,
+    selected_model_id: str,
+    sample_rate: int = 16000,
+    language: str = "",
+) -> FinalAsrResult:
+    text = ""
+    segments: list[dict[str, Any]] = []
+    async for event in iter_final_asr_events(
+        pcm16_audio,
+        selected_model_id=selected_model_id,
+        sample_rate=sample_rate,
+        language=language,
+    ):
+        payload = event.payload
+        if payload.get("type") == "final_asr_progress" and payload.get("stage") == "legacy_fallback":
+            # The offline path failed midway; the fallback run re-transcribes every
+            # segment, so drop the partially accumulated segments from the failed run.
+            text = ""
+            segments = []
+            continue
+        chunk = (event.text or "").strip()
+        if payload.get("type") != "final" or not chunk:
+            continue
+        text = _append_final_chunk(text, chunk)
+        segments.append(
+            {
+                "index": int(payload.get("index") or len(segments) + 1),
+                "recording_segment_index": _SINGLE_RECORDING_SEGMENT_INDEX,
+                "start_ms": payload.get("start_ms"),
+                "end_ms": payload.get("end_ms"),
+                "bytes": payload.get("bytes"),
+                "ok": True,
+                "text": chunk,
+                "model_id": payload.get("model_id"),
+                "sample_rate": payload.get("sample_rate"),
+            }
+        )
+    return FinalAsrResult(text=text, segments=tuple(segments))
+
+
 async def collect_final_asr_text(
     pcm16_audio: bytes,
     *,
@@ -238,18 +296,13 @@ async def collect_final_asr_text(
     sample_rate: int = 16000,
     language: str = "",
 ) -> str:
-    text = ""
-    async for event in iter_final_asr_events(
+    result = await collect_final_asr_result(
         pcm16_audio,
         selected_model_id=selected_model_id,
         sample_rate=sample_rate,
         language=language,
-    ):
-        chunk = (event.text or "").strip()
-        if not chunk:
-            continue
-        text = _append_final_chunk(text, chunk)
-    return text
+    )
+    return result.text
 
 
 async def build_final_asr_text_event(
@@ -261,7 +314,7 @@ async def build_final_asr_text_event(
     language: str = "",
 ) -> dict[str, Any] | None:
     try:
-        text = await collect_final_asr_text(
+        result = await collect_final_asr_result(
             pcm16_audio,
             selected_model_id=selected_model_id,
             sample_rate=sample_rate,
@@ -269,7 +322,7 @@ async def build_final_asr_text_event(
         )
     except Exception:
         return None
-    text = (text or "").strip()
+    text = (result.text or "").strip()
     if not text:
         return None
     return {
@@ -280,4 +333,8 @@ async def build_final_asr_text_event(
         "source": _FINAL_ASR_SOURCE,
         "model_id": str(selected_model_id or "").strip(),
         "language": normalize_sherpa_sense_voice_language(language) if str(language or "").strip() else "auto",
+        "segments": list(result.segments),
+        "segment_count": len(result.segments),
+        "partial": result.failed_segment_count > 0,
+        "failed_segment_count": result.failed_segment_count,
     }
