@@ -110,11 +110,12 @@ recorded, so recovery is deliberately at-least-once rather than provider-level
 exactly-once.
 
 Failed work remains unread and stays ahead of later work. Actor/group activation
-and daemon restore inject one transient unread summary instead of replaying every
-old message body into the PTY. The summary reports a bounded count ("at least
-256" when capped), points the actor to `cccc_inbox_list` and
-`cccc_inbox_mark_read`, and never advances the unread cursor. Normal live
-delivery still refills from the canonical ledger and inbox in ordered 256-event
+and daemon restore inject one transient unread summary into supported PTY and
+Codex/Claude headless sessions instead of replaying every old message body. The
+summary reports a bounded count ("at least 256" when capped), points the actor
+to `cccc_inbox_list` and `cccc_inbox_mark_read`, and never advances the unread
+cursor. Normal live delivery still refills from the canonical ledger and inbox
+in ordered 256-event
 windows after completed prefixes. Switching engines does not transfer a live PTY
 process, its input mode, preamble memory, or hot terminal ring; both engines use
 the same durable unread state and restart-summary behavior.

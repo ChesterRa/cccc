@@ -15,7 +15,7 @@ Key design decisions:
 Group State Behavior:
 - active: All messages delivered normally
 - idle: chat.message + system.notify delivered (no auto state transition)
-- paused: All PTY delivery blocked (messages accumulate in inbox only)
+- paused: All runtime delivery blocked (messages accumulate in inbox only)
 """
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ def should_deliver_message(group: Group, kind: str) -> bool:
         kind: Message kind ("chat.message" or "system.notify")
     
     Returns:
-        True if the message should be delivered to PTY, False if it should only go to inbox
+        True if the message should be delivered to a runtime, False if it should only go to inbox
     
     State behavior:
         - active: All messages delivered
@@ -136,7 +136,7 @@ def should_deliver_message(group: Group, kind: str) -> bool:
     state = get_group_state(group)
     
     if state in ("paused", "stopped"):
-        # Paused/stopped: block all PTY delivery
+        # Paused/stopped: block all runtime delivery
         return False
     
     if state == "idle":
@@ -957,15 +957,19 @@ def queue_system_notify(
 
 
 def recover_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
-    """Queue one restart notice while leaving canonical unread work untouched."""
+    """Deliver one restart notice while leaving canonical unread work untouched."""
     aid = str(actor_id or "").strip()
     actor = find_actor(group, aid)
     if not aid or not isinstance(actor, dict):
         return 0
-    if not bool(actor.get("enabled", True)) or str(actor.get("runner") or "pty").strip() != "pty":
+    runner = str(actor.get("runner") or "pty").strip()
+    runtime = str(actor.get("runtime") or "").strip().lower()
+    if not bool(actor.get("enabled", True)) or runner not in {"pty", "headless"}:
         return 0
     from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
-    if actor_uses_codex_app_server_state(actor):
+    if runner == "pty" and actor_uses_codex_app_server_state(actor):
+        return 0
+    if runner == "headless" and runtime not in {"codex", "claude"}:
         return 0
     effective_limit = max(1, int(limit or 256))
     unread = unread_messages(group, actor_id=aid, limit=effective_limit, kind_filter="all")
@@ -976,23 +980,77 @@ def recover_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256
     if not latest_event_id:
         return 0
     count = f"at least {len(unread)}" if len(unread) >= effective_limit else str(len(unread))
+    notice_id = f"unread-recovery:{latest_event_id}"
+    notice_message = (
+        f"You have {count} unread collaboration messages. Use cccc_inbox_list to review them, "
+        "then cccc_inbox_mark_read after handling them. This restart recovery notice does not "
+        "advance the unread cursor."
+    )
+    notify = SystemNotifyData(
+        kind="info",
+        priority="normal",
+        title="Unread collaboration messages",
+        message=notice_message,
+        target_actor_id=aid,
+        im_visibility="internal",
+        context={
+            "kind": "unread_recovery",
+            "unread_count": len(unread),
+            "count_is_lower_bound": len(unread) >= effective_limit,
+        },
+        requires_ack=False,
+        related_event_id=latest_event_id,
+    )
+    if runner == "headless":
+        event = {
+            "id": notice_id,
+            "ts": str(latest.get("ts") or "").strip(),
+            "kind": "system.notify",
+            "group_id": group.group_id,
+            "scope_key": "",
+            "by": "system",
+            "data": notify.model_dump(),
+        }
+        return int(
+            dispatch_system_notify_event_to_actor(
+                group,
+                event=event,
+                actor_id=aid,
+            )
+        )
     notice = PendingMessage(
-        event_id=f"unread-recovery:{latest_event_id}",
+        event_id=notice_id,
         by="system",
         to=[aid],
         text="",
         ts=str(latest.get("ts") or "").strip(),
         kind="system.notify",
-        notify_kind="info",
-        notify_title="Unread collaboration messages",
-        notify_message=(
-            f"You have {count} unread collaboration messages. Use cccc_inbox_list to review them, "
-            "then cccc_inbox_mark_read after handling them. This restart recovery notice does not "
-            "advance the unread cursor."
-        ),
+        notify_kind=str(notify.kind),
+        notify_title=str(notify.title),
+        notify_message=str(notify.message),
         advances_cursor=False,
     )
     return THROTTLE.recover_front(group.group_id, aid, [notice])
+
+
+def recover_group_unread_headless_messages(group: Group, *, limit: int = 256) -> int:
+    """Submit one unread recovery notice per supported headless actor after resume."""
+    if not should_deliver_message(group, "system.notify"):
+        return 0
+    recovered = 0
+    for actor in list_actors(group):
+        if not isinstance(actor, dict):
+            continue
+        if str(actor.get("runner") or "pty").strip() != "headless":
+            continue
+        if str(actor.get("runtime") or "").strip().lower() not in {"codex", "claude"}:
+            continue
+        recovered += recover_unread_pty_messages(
+            group,
+            actor_id=str(actor.get("id") or "").strip(),
+            limit=limit,
+        )
+    return recovered
 
 
 def _refill_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
@@ -1106,6 +1164,16 @@ def dispatch_system_notify_event_to_actor(
     runner_kind = str(actor.get("runner") or "pty").strip()
 
     if runner_kind == "headless":
+        current_group = load_group(group.group_id)
+        if current_group is None or not should_deliver_message(current_group, "system.notify"):
+            return False
+        current_actor = find_actor(current_group, aid)
+        if not isinstance(current_actor, dict):
+            return False
+        if str(current_actor.get("runner") or "pty").strip() != "headless":
+            return False
+        group = current_group
+        runtime = str(current_actor.get("runtime") or "").strip().lower()
         headless_control_text = render_headless_control_text(
             control_kind="system_notify",
             body=render_system_notify_delivery_text(notify=notify, group=group),

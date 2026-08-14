@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
+import { getComposerCanSend } from "./chatComposerActions";
 import { RECIPIENT_POPOVER_GAP_PX } from "./useRecipientPopover";
 
 const composerSource = readFileSync(
@@ -33,16 +33,6 @@ const mentionMenuSource = readFileSync(
   "utf8",
 );
 
-describe("ChatComposer action visibility", () => {
-  it("hides message mode selector on small screens", () => {
-    expect(getComposerActionVisibility(true)).toEqual({ showMessageModeSelector: false });
-  });
-
-  it("keeps message mode selector on larger screens", () => {
-    expect(getComposerActionVisibility(false)).toEqual({ showMessageModeSelector: true });
-  });
-});
-
 describe("ChatComposer send availability", () => {
   it("enables send when the composer has non-whitespace text", () => {
     expect(getComposerCanSend({ composerText: "hello", composerFilesCount: 0 })).toBe(true);
@@ -71,6 +61,20 @@ describe("ChatComposer send availability", () => {
         recipientResolutionBusy: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("ChatComposer message mode control", () => {
+  it("keeps the persisted mode visible and adjustable on small screens", () => {
+    expect(composerSource).toContain("grid-cols-[2.75rem_minmax(0,1fr)_2.75rem_2.75rem]");
+    expect(composerSource).toContain('className="hidden sm:inline">{activeMode.label}</span>');
+    expect(composerSource).toContain('aria-label={t("messageMode", { mode: activeMode.label })}');
+    expect(composerSource).not.toContain("showMessageModeSelector");
+  });
+
+  it("keeps mode explanations in the menu instead of a persistent banner", () => {
+    expect(composerSource).toContain("{opt.description}");
+    expect(composerSource).not.toContain("modeNotice");
   });
 });
 

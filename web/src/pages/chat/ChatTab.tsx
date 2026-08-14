@@ -237,8 +237,7 @@ export function ChatTab({
     clearRecipients,
     priority,
     replyRequired,
-    setPriority,
-    setReplyRequired,
+    setMessageMode,
     destGroupId,
     setDestGroupId,
     composerGroupSettled,
@@ -1095,8 +1094,7 @@ export function ChatTab({
             setComposerAgentMentionTokens={setComposerAgentMentionTokens}
             priority={priority}
             replyRequired={replyRequired}
-            setPriority={setPriority}
-            setReplyRequired={setReplyRequired}
+            setMessageMode={setMessageMode}
             onSendMessage={sendMessage}
             showMentionMenu={showMentionMenu}
             setShowMentionMenu={setShowMentionMenu}

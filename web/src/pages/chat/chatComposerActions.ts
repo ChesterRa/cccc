@@ -1,9 +1,3 @@
-export function getComposerActionVisibility(isSmallScreen: boolean): {
-  showMessageModeSelector: boolean;
-} {
-  return { showMessageModeSelector: !isSmallScreen };
-}
-
 export function getComposerCanSend({
   composerText,
   composerFilesCount,

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
+from ..messaging.delivery import recover_group_unread_headless_messages
+
+
+logger = logging.getLogger(__name__)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -56,6 +61,15 @@ def handle_group_set_state(
         by=by,
         data={"old_state": old_state, "new_state": new_state},
     )
+    if old_state == "paused" and new_state in {"active", "idle"}:
+        try:
+            recover_group_unread_headless_messages(group)
+        except Exception as exc:
+            logger.warning(
+                "failed to recover unread headless delivery after group resume: group=%s error=%s",
+                group.group_id,
+                exc,
+            )
     return DaemonResponse(ok=True, result={"group_id": group.group_id, "state": new_state, "event": event})
 
 

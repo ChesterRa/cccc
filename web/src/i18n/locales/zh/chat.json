@@ -124,8 +124,6 @@
   "modeImportantDesc": "需要收件人确认收到",
   "modeNeedReply": "需回复",
   "modeNeedReplyDesc": "需要收件人给出具体回复",
-  "modeNoticeNeedReply": "需回复：收件人需要发送具体回复。",
-  "modeNoticeImportant": "请确认：收件人需要确认已收到这条消息。",
   "messageType": "消息模式",
   "messageTypeOptions": "消息模式选项",
   "messageMode": "消息模式：{{mode}}",

@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 
 from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
+from ...kernel.group import load_group
 from ..actors.runner_ops import _effective_runner_kind as default_effective_runner_kind
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -32,6 +33,7 @@ from .delivery import (
     get_headless_targets_for_message,
     queue_chat_message,
     request_flush_pending_messages,
+    should_deliver_message,
 )
 
 
@@ -106,6 +108,9 @@ def deliver_chat_message(
     skip_headless_notify_actor_ids: set[str] = set()
     clean_reply_to = str(reply_to or "").strip()
     clean_attachments = [item for item in (attachments or []) if isinstance(item, dict)]
+    current_runtime_group = load_group(str(group.group_id or "").strip())
+    if current_runtime_group is not None and not should_deliver_message(current_runtime_group, "chat.message"):
+        current_runtime_group = None
     for actor in list_actors(group):
         if not isinstance(actor, dict):
             continue
@@ -121,6 +126,14 @@ def deliver_chat_message(
             web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
+        if decision.transport in {
+            TRANSPORT_CODEX_HEADLESS,
+            TRANSPORT_CODEX_APP_SERVER,
+            TRANSPORT_CLAUDE_HEADLESS,
+            TRANSPORT_WEB_MODEL_BROWSER,
+        } and current_runtime_group is None:
+            logger.debug("[chat-delivery] defer actor=%s while group delivery is disabled", actor_id)
+            continue
         if decision.transport in {TRANSPORT_CODEX_HEADLESS, TRANSPORT_CODEX_APP_SERVER}:
             delivered = bool(
                 codex_submit_user_message(
@@ -176,6 +189,9 @@ def deliver_chat_message(
             ):
                 skip_headless_notify_actor_ids.add(actor_id)
         elif actor_id in woken and decision.reason in {"codex_headless_not_running", "claude_headless_not_running"}:
+            if current_runtime_group is None:
+                logger.debug("[chat-delivery] defer post-wake actor=%s while group delivery is disabled", actor_id)
+                continue
             if schedule_headless_post_wake_delivery(
                 group_id=group.group_id,
                 actor_id=actor_id,
@@ -195,15 +211,16 @@ def deliver_chat_message(
         else:
             logger.debug("[chat-delivery] skip actor=%s (%s)", actor_id, decision.reason)
 
-    notify_headless_targets(
-        group=group,
-        by=by,
-        event_id=event_id,
-        priority=priority,
-        reply_required=reply_required,
-        event=event_with_effective_to(event, effective_to),
-        skip_actor_ids=skip_headless_notify_actor_ids,
-    )
+    if current_runtime_group is not None:
+        notify_headless_targets(
+            group=current_runtime_group,
+            by=by,
+            event_id=event_id,
+            priority=priority,
+            reply_required=reply_required,
+            event=event_with_effective_to(event, effective_to),
+            skip_actor_ids=skip_headless_notify_actor_ids,
+        )
 
 
 def deliver_appended_chat_message(

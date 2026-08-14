@@ -324,3 +324,83 @@ def test_handle_send_schedules_browser_delivery_for_web_model_actor(monkeypatch,
     schedule.assert_called_once_with(group_id=group_id, actor_id="peer1", trigger_event_id=event_id, logger=ANY)
     queue_chat_message.assert_not_called()
     request_flush.assert_not_called()
+
+
+def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, tmp_path) -> None:
+    from cccc.contracts.v1 import DaemonRequest
+    from cccc.daemon.messaging.chat_ops import handle_send
+    from cccc.daemon.server import handle_request
+
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path))
+    create_resp, _ = handle_request(
+        DaemonRequest.model_validate(
+            {"op": "group_create", "args": {"title": "paused-direct-delivery", "topic": "", "by": "user"}}
+        )
+    )
+    assert create_resp.ok
+    group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+    assert group_id
+
+    for actor_id, title, runtime in (
+        ("codex-peer", "Codex Peer", "codex"),
+        ("claude-peer", "Claude Peer", "claude"),
+        ("web-peer", "Web Peer", "web_model"),
+    ):
+        add_resp, _ = handle_request(
+            DaemonRequest.model_validate(
+                {
+                    "op": "actor_add",
+                    "args": {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "title": title,
+                        "runtime": runtime,
+                        "runner": "headless",
+                        "by": "user",
+                    },
+                }
+            )
+        )
+        assert add_resp.ok
+
+    paused_resp, _ = handle_request(
+        DaemonRequest.model_validate(
+            {"op": "group_set_state", "args": {"group_id": group_id, "state": "paused", "by": "user"}}
+        )
+    )
+    assert paused_resp.ok
+
+    with (
+        patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
+        patch("cccc.daemon.messaging.chat_ops.claude_app_supervisor.actor_running", return_value=True),
+        patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message", return_value=True) as codex_submit,
+        patch(
+            "cccc.daemon.messaging.chat_ops.claude_app_supervisor.submit_user_message",
+            return_value=True,
+        ) as claude_submit,
+        patch("cccc.daemon.messaging.chat_delivery_ops.web_model_browser_delivery_enabled", return_value=True),
+        patch("cccc.daemon.messaging.chat_delivery_ops.schedule_web_model_browser_delivery") as web_schedule,
+        patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
+    ):
+        resp = handle_send(
+            {
+                "group_id": group_id,
+                "by": "user",
+                "text": "keep this unread while paused",
+                "to": ["@all"],
+                "client_id": "paused-direct-delivery",
+            },
+            coerce_bool=bool,
+            normalize_attachments=lambda _group, _attachments: [],
+            effective_runner_kind=lambda runner: str(runner or "pty"),
+            auto_wake_recipients=lambda _group, _to, _by: [],
+            automation_on_resume=lambda _group: None,
+            automation_on_new_message=lambda _group: None,
+            clear_pending_system_notifies=lambda _group_id, _reasons: None,
+        )
+
+    assert resp.ok
+    codex_submit.assert_not_called()
+    claude_submit.assert_not_called()
+    web_schedule.assert_not_called()
+    emit_notify.assert_not_called()

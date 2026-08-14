@@ -124,8 +124,6 @@
   "modeImportantDesc": "受信確認が必要",
   "modeNeedReply": "要返信",
   "modeNeedReplyDesc": "具体的な返信が必要",
-  "modeNoticeNeedReply": "要返信： 受信者は具体的な返信を送る必要があります。",
-  "modeNoticeImportant": "要確認： 受信者はこのメッセージの受信確認が必要です。",
   "messageType": "メッセージモード",
   "messageTypeOptions": "メッセージモードのオプション",
   "messageMode": "メッセージモード： {{mode}}",

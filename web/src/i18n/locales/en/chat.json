@@ -124,8 +124,6 @@
   "modeImportantDesc": "Needs acknowledgement",
   "modeNeedReply": "Need Reply",
   "modeNeedReplyDesc": "Needs concrete response",
-  "modeNoticeNeedReply": "Need Reply: recipients are expected to send a concrete reply.",
-  "modeNoticeImportant": "Needs Ack: recipients are expected to acknowledge this message.",
   "messageType": "Message mode",
   "messageTypeOptions": "Message mode options",
   "messageMode": "Message mode: {{mode}}",

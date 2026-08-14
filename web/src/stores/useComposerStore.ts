@@ -2,6 +2,56 @@
 import { create } from "zustand";
 import type { PresentationMessageRef, ReplyTarget } from "../types";
 
+export type ComposerMessageMode = "normal" | "attention" | "reply";
+
+export const COMPOSER_MESSAGE_MODE_STORAGE_KEY = "cccc-composer-message-mode";
+export const DEFAULT_COMPOSER_MESSAGE_MODE: ComposerMessageMode = "reply";
+
+export function normalizeComposerMessageMode(value: unknown): ComposerMessageMode {
+  return value === "normal" || value === "attention" || value === "reply"
+    ? value
+    : DEFAULT_COMPOSER_MESSAGE_MODE;
+}
+
+export function getComposerMessageMode(
+  priority: "normal" | "attention",
+  replyRequired: boolean,
+): ComposerMessageMode {
+  if (replyRequired) return "reply";
+  return priority === "attention" ? "attention" : "normal";
+}
+
+function deliveryStateForMessageMode(mode: ComposerMessageMode): {
+  priority: "normal" | "attention";
+  replyRequired: boolean;
+} {
+  if (mode === "attention") return { priority: "attention", replyRequired: false };
+  if (mode === "reply") return { priority: "normal", replyRequired: true };
+  return { priority: "normal", replyRequired: false };
+}
+
+export function loadComposerMessageModePreference(): ComposerMessageMode {
+  try {
+    if (typeof localStorage === "undefined") return DEFAULT_COMPOSER_MESSAGE_MODE;
+    return normalizeComposerMessageMode(localStorage.getItem(COMPOSER_MESSAGE_MODE_STORAGE_KEY));
+  } catch (error) {
+    console.warn("Failed to read composer message mode from localStorage:", error);
+    return DEFAULT_COMPOSER_MESSAGE_MODE;
+  }
+}
+
+function saveComposerMessageModePreference(mode: ComposerMessageMode): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(COMPOSER_MESSAGE_MODE_STORAGE_KEY, mode);
+  } catch (error) {
+    console.warn("Failed to persist composer message mode to localStorage:", error);
+  }
+}
+
+const initialMessageMode = loadComposerMessageModePreference();
+const initialDeliveryState = deliveryStateForMessageMode(initialMessageMode);
+
 export function getEffectiveComposerDestGroupId(
   destGroupId: string,
   activeGroupId: string,
@@ -44,6 +94,7 @@ interface GroupDraft {
 
 interface ComposerState {
   activeGroupId: string;
+  preferredMessageMode: ComposerMessageMode;
   // Current active state
   composerText: string;
   composerFiles: File[];
@@ -68,6 +119,7 @@ interface ComposerState {
   setQuotedPresentationRef: (ref: PresentationMessageRef | null) => void;
   setPriority: (priority: "normal" | "attention") => void;
   setReplyRequired: (value: boolean) => void;
+  setMessageMode: (mode: ComposerMessageMode) => void;
   setDestGroupId: (groupId: string) => void;
   clearComposer: () => void;
 
@@ -80,13 +132,14 @@ interface ComposerState {
 
 export const useComposerStore = create<ComposerState>((set, get) => ({
   activeGroupId: "",
+  preferredMessageMode: initialMessageMode,
   composerText: "",
   composerFiles: [],
   toText: "",
   replyTarget: null,
   quotedPresentationRef: null,
-  priority: "normal",
-  replyRequired: false,
+  priority: initialDeliveryState.priority,
+  replyRequired: initialDeliveryState.replyRequired,
   destGroupId: "",
   drafts: {},
   normalToTextByGroup: {},
@@ -144,6 +197,11 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   setQuotedPresentationRef: (ref) => set({ quotedPresentationRef: ref }),
   setPriority: (priority) => set({ priority }),
   setReplyRequired: (value) => set({ replyRequired: !!value }),
+  setMessageMode: (mode) => {
+    const normalized = normalizeComposerMessageMode(mode);
+    saveComposerMessageModePreference(normalized);
+    set({ preferredMessageMode: normalized, ...deliveryStateForMessageMode(normalized) });
+  },
   setDestGroupId: (groupId) => set({ destGroupId: String(groupId || "").trim() }),
 
   clearComposer: () =>
@@ -157,8 +215,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         toText: nextToText,
         replyTarget: null,
         quotedPresentationRef: null,
-        priority: "normal",
-        replyRequired: false,
+        ...deliveryStateForMessageMode(state.preferredMessageMode),
         destGroupId: activeGroupId,
         normalToTextByGroup: activeGroupId
           ? { ...state.normalToTextByGroup, [activeGroupId]: nextToText }
@@ -207,6 +264,9 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       draft?.toText ??
       (normalizedToGroupId ? state.normalToTextByGroup[normalizedToGroupId] : undefined) ??
       "";
+    const nextDeliveryState = draft
+      ? { priority: draft.priority, replyRequired: draft.replyRequired }
+      : deliveryStateForMessageMode(state.preferredMessageMode);
 
     set({
       activeGroupId: normalizedDestGroupId,
@@ -216,8 +276,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       toText: nextToText,
       replyTarget: draft?.replyTarget || null,
       quotedPresentationRef: draft?.quotedPresentationRef || null,
-      priority: draft?.priority || "normal",
-      replyRequired: draft?.replyRequired || false,
+      ...nextDeliveryState,
       // After switching groups, return delivery to the current group. Cross-group
       // sends must be selected explicitly so restored drafts do not trigger remote fetches.
       destGroupId: normalizedDestGroupId,

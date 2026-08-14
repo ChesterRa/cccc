@@ -1567,6 +1567,10 @@ Args:
 Notes:
 - `stopped` is not a valid `group_set_state` value in daemon IPC v1.
 - Higher-level surfaces (CLI/MCP) MAY expose `stopped` as a convenience alias that maps to `group_stop`.
+- While a group is `paused`, the daemon MUST NOT submit `chat.message` or
+  `system.notify` work to PTY or headless actor runtimes. Canonical unread work
+  remains in the ledger and MAY be surfaced through one bounded recovery notice
+  after the group returns to `active` or `idle`.
 
 Result:
 ```ts

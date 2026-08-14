@@ -66,6 +66,52 @@ class TestGroupStateOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_resume_from_paused_recovers_headless_unread_work(self) -> None:
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import load_group, set_group_state
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "paused-headless-resume", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            add_actor(group, actor_id="peer1", runtime="codex", runner="headless")
+            unread = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"to": ["peer1"], "text": "resume this work", "priority": "normal"},
+            )
+            group = set_group_state(group, state="paused")
+
+            with (
+                patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", return_value=True),
+                patch(
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                    return_value=True,
+                ) as submit,
+            ):
+                active, _ = self._call(
+                    "group_set_state",
+                    {"group_id": group_id, "state": "active", "by": "user"},
+                )
+
+            self.assertTrue(active.ok, getattr(active, "error", None))
+            submit.assert_called_once()
+            self.assertEqual(submit.call_args.kwargs.get("event_id"), f"unread-recovery:{unread['id']}")
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

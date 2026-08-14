@@ -97,6 +97,108 @@ class TestDeliveryStateBehavior(unittest.TestCase):
                 os.environ["CCCC_HOME"] = old_home
             td_ctx.__exit__(None, None, None)
 
+    def test_headless_activation_submits_one_notice_and_keeps_unread_cursor(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="headless-delivery-recovery")
+            add_actor(group, actor_id="peer1", runtime="codex", runner="headless")
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"to": ["peer1"], "text": "message-A", "priority": "normal"},
+            )
+
+            with (
+                patch(
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                    return_value=True,
+                ) as submit,
+            ):
+                self.assertEqual(
+                    delivery.recover_unread_pty_messages(group, actor_id="peer1"),
+                    1,
+                )
+
+            submit.assert_called_once()
+            submitted = submit.call_args.kwargs
+            self.assertEqual(submitted["control_kind"], "system_notify")
+            self.assertEqual(submitted["event_id"], f"unread-recovery:{event['id']}")
+            self.assertIn("1 unread collaboration messages", submitted["text"])
+            self.assertNotIn("message-A", submitted["text"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
+    def test_headless_recovery_respects_idle_and_paused_for_supported_runtimes(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group, set_group_state
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            for runtime, supervisor_module in (
+                ("codex", "cccc.daemon.codex_app_sessions"),
+                ("claude", "cccc.daemon.claude_app_sessions"),
+            ):
+                for state, expected_deliveries in (("idle", 1), ("paused", 0)):
+                    with self.subTest(runtime=runtime, state=state), tempfile.TemporaryDirectory() as td:
+                        os.environ["CCCC_HOME"] = td
+                        group = create_group(load_registry(), title=f"{runtime}-{state}-recovery")
+                        add_actor(group, actor_id="peer1", runtime=runtime, runner="headless")
+                        append_event(
+                            group.ledger_path,
+                            kind="chat.message",
+                            group_id=group.group_id,
+                            scope_key="",
+                            by="user",
+                            data={"to": ["peer1"], "text": "message-A", "priority": "normal"},
+                        )
+                        group = set_group_state(group, state=state)
+
+                        with (
+                            patch(f"{supervisor_module}.SUPERVISOR.actor_running", return_value=True),
+                            patch(
+                                f"{supervisor_module}.SUPERVISOR.submit_control_message",
+                                return_value=True,
+                            ) as submit,
+                        ):
+                            self.assertEqual(
+                                delivery.recover_unread_pty_messages(group, actor_id="peer1"),
+                                expected_deliveries,
+                            )
+
+                        self.assertEqual(submit.call_count, expected_deliveries)
+                        self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_live_delivery_refill_keeps_canonical_message_bodies(self) -> None:
         from cccc.daemon.messaging import delivery
         from cccc.kernel.actors import add_actor
