@@ -19,15 +19,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24.19.0"
           cache: npm
@@ -63,7 +63,7 @@ jobs:
         run: python scripts/tests/smoke_wheel_frontdoor.py dist/*.whl --expect-rust unavailable
 
       - name: Upload shared Web bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-web-bundle
           path: |
@@ -72,7 +72,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Python compatibility distribution
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dist-universal
           path: dist/*
@@ -85,10 +85,10 @@ jobs:
     container: quay.io/pypa/manylinux_2_28_x86_64:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Web bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-web-bundle
           path: .
@@ -132,7 +132,7 @@ jobs:
         run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
 
       - name: Upload Linux native wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dist-linux-x64
           path: wheelhouse/final/*.whl
@@ -172,16 +172,16 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore Web bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-web-bundle
           path: .
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -245,7 +245,7 @@ jobs:
         run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
 
       - name: Upload native wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dist-${{ matrix.artifact }}
           path: wheelhouse/final/*.whl
@@ -260,15 +260,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
       - name: Download every release distribution
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-dist-*
           path: dist
@@ -281,7 +281,7 @@ jobs:
           python scripts/verify_python_release_set.py dist
 
       - name: Upload verified release set
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dist
           path: dist/*
@@ -294,12 +294,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
       - name: Download verified release set
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-dist
           path: dist
