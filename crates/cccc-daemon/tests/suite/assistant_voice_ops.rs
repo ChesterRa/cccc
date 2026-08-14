@@ -1848,6 +1848,71 @@ fn saving_unchanged_document_does_not_increment_revision() {
 }
 
 #[test]
+fn creating_empty_document_writes_its_workspace_file() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "title":"Empty notes",
+            "create_new":true,
+            "by":"user"
+        }),
+    );
+    let document = &saved.result["document"];
+    let absolute_path = document["absolute_path"].as_str().expect("absolute path");
+
+    assert!(std::path::Path::new(absolute_path).is_file());
+    assert_eq!(
+        std::fs::read_to_string(absolute_path).expect("read empty document"),
+        ""
+    );
+    let listed = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id}),
+    );
+    assert_eq!(listed.result["documents"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        listed.result["documents"][0]["document_id"],
+        document["document_id"]
+    );
+}
+
+#[test]
+fn saving_unindexed_existing_document_without_content_preserves_file() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let group = store.load(&group_id).expect("group");
+    let workspace = std::path::Path::new(&group.scopes[0].url);
+    let document_path = "docs/voice-secretary/external.md";
+    let absolute_path = workspace.join(document_path);
+    std::fs::create_dir_all(absolute_path.parent().expect("document parent"))
+        .expect("create document parent");
+    std::fs::write(&absolute_path, "# External\n\npreserve me\n").expect("write external document");
+
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":document_path,
+            "title":"External notes"
+        }),
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(&absolute_path).expect("read external document"),
+        "# External\n\npreserve me\n"
+    );
+    assert_eq!(
+        saved.result["document"]["content"],
+        "# External\n\npreserve me\n"
+    );
+    assert_eq!(saved.result["document"]["revision_count"], 1);
+}
+
+#[test]
 fn saving_existing_document_replaces_file_contents() {
     let (_temp, home, _store, group_id) = enabled_voice_group();
     let document_path = "docs/voice-secretary/replaced.md";

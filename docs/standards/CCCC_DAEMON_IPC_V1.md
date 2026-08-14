@@ -2201,6 +2201,10 @@ Save or create a Voice Secretary working markdown document. This is the daemon
 path used by Web when the user edits the document surface. The `voice-secretary`
 actor should normally edit repository-backed markdown directly at
 `document_path`; the MCP document tool intentionally has no save action.
+When `content` is omitted for an unindexed path, an implementation MUST NOT
+rewrite an existing repository file: it MAY read the file into the document
+index or reject the request. An empty file MAY be created only when the target
+does not already exist.
 
 Args:
 ```ts

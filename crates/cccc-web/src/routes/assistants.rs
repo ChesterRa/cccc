@@ -5,7 +5,6 @@ use axum::http::{HeaderMap, header};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_contracts::DaemonRequest;
 use cccc_core::{assistant_state, voice_recording_lease};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -143,13 +142,8 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn list(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    let runtime_assistant = runtime_assistant(&state, &group_id).await;
-    Ok(success(payload(
-        &state,
-        &group_id,
-        &load(&state, &group_id)?,
-        runtime_assistant.as_ref(),
-    )))
+    let runtime_state = runtime_state(&state, &group_id).await?;
+    Ok(success(payload(&state, &group_id, &runtime_state)))
 }
 async fn show(
     State(state): State<AppState>,
@@ -158,13 +152,8 @@ async fn show(
     if assistant_id != "voice_secretary" {
         return Err(ApiError::not_found("assistant not found"));
     }
-    let runtime_assistant = runtime_assistant(&state, &group_id).await;
-    Ok(success(payload(
-        &state,
-        &group_id,
-        &load(&state, &group_id)?,
-        runtime_assistant.as_ref(),
-    )))
+    let runtime_state = runtime_state(&state, &group_id).await?;
+    Ok(success(payload(&state, &group_id, &runtime_state)))
 }
 async fn update_settings(
     State(state): State<AppState>,
@@ -450,15 +439,8 @@ async fn clear_asks(
     args.entry("by").or_insert_with(|| json!("user"));
     call(&state, "assistant_voice_ask_requests_clear", args).await
 }
-fn payload(
-    state: &AppState,
-    group_id: &str,
-    value: &Value,
-    runtime_assistant: Option<&Value>,
-) -> Value {
-    let mut assistant = runtime_assistant
-        .cloned()
-        .unwrap_or_else(|| assistant(value));
+fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
+    let mut assistant = assistant(value);
     let documents = array(value, "documents").to_vec();
     let asks = array(value, "ask_requests").to_vec();
     let models=voice_asr::list_models(&state.home).unwrap_or_else(|error|vec![json!({"model_id":"","status":"failed","available":false,"error":{"code":error.code,"message":error.message,"details":error.details}})]);
@@ -499,20 +481,22 @@ fn payload(
         "implementation":"rust",
         "runtime":runtime
     });
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
 }
 
-async fn runtime_assistant(state: &AppState, group_id: &str) -> Option<Value> {
-    let response = state
-        .client
-        .call(&DaemonRequest {
-            v: 1,
-            op: "assistant_state".into(),
-            args: object(json!({"group_id":group_id})),
-        })
-        .await
-        .ok()?;
-    response.ok.then(|| response.result["assistant"].clone())
+async fn runtime_state(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
+    let Json(response) = call(
+        state,
+        "assistant_state",
+        object(json!({
+            "group_id":group_id,
+            "assistant_id":"voice_secretary",
+            "view":"voice_workspace",
+            "suppress_retry_notify":true,
+        })),
+    )
+    .await?;
+    Ok(response["result"].clone())
 }
 pub(super) fn assistant(value: &Value) -> Value {
     value

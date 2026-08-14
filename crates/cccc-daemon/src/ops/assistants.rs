@@ -3,6 +3,7 @@ use cccc_core::{GroupStore, HomeLayout};
 use cccc_core::{assistant_state, voice_recording_lease};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::fs::OpenOptions;
 use std::io;
 use uuid::Uuid;
 
@@ -201,6 +202,7 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::not_found)?;
     let (storage_path, storage_kind) = document_storage_path(home, &group, &path)?;
     let mut previous_file = None::<Option<Vec<u8>>>;
+    let mut attempted_content = None::<String>;
     let result = voice_document_state::update(home, &group_id, |state| {
         let docs = array(state, "documents");
         let index = docs.iter().position(|item| item["document_path"] == path);
@@ -209,9 +211,21 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .and_then(|index| docs.get(index))
             .cloned()
             .unwrap_or_else(|| json!({}));
-        let text = content
-            .as_deref()
-            .unwrap_or_else(|| old["content"].as_str().unwrap_or(""));
+        let text = if let Some(content) = content.as_deref() {
+            previous_file = Some(std::fs::read(&storage_path).ok());
+            write_document(&storage_path, content)?;
+            attempted_content = Some(content.to_owned());
+            content.to_owned()
+        } else if is_new {
+            let (text, created) = read_or_create_empty_document(&storage_path)?;
+            if created {
+                previous_file = Some(None);
+                attempted_content = Some(String::new());
+            }
+            text
+        } else {
+            old["content"].as_str().unwrap_or("").to_owned()
+        };
         let created_at = old["created_at"]
             .as_str()
             .filter(|value| !value.is_empty())
@@ -223,12 +237,8 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             &title
         };
         let changed = is_new
-            || old["content"].as_str() != Some(text)
+            || old["content"].as_str() != Some(text.as_str())
             || old["title"].as_str() != Some(effective_title);
-        if let Some(text) = content.as_deref() {
-            previous_file = Some(std::fs::read(&storage_path).ok());
-            write_document(&storage_path, text)?;
-        }
         let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"document_path":path,"workspace_path":path,"absolute_path":storage_path,"filename":path.rsplit('/').next().unwrap_or(&path),"assistant_id":"voice_secretary","title":effective_title,"status":old["status"].as_str().unwrap_or("active"),"storage_kind":storage_kind,"content":text,"content_sha256":format!("{:x}",Sha256::digest(text.as_bytes())),"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+u64::from(changed),"created_at":created_at,"updated_at":utc_now(),"created_by":string_arg(request,"by").unwrap_or_else(||"user".into())});
         if let Some(index) = index {
             docs[index] = document.clone();
@@ -244,7 +254,6 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Ok(document) => document,
         Err(error) => {
             if let Some(previous) = previous_file {
-                let attempted_content = content.clone();
                 let current_matches_attempt =
                     voice_document_state::load(home, &group_id)
                         .ok()
@@ -258,7 +267,12 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                                 )
                             })
                         });
-                let rollback = if current_matches_attempt {
+                let disk_matches_attempt = attempted_content.as_deref().is_some_and(|text| {
+                    std::fs::read(&storage_path)
+                        .ok()
+                        .is_some_and(|bytes| bytes == text.as_bytes())
+                });
+                let rollback = if current_matches_attempt || !disk_matches_attempt {
                     Ok(())
                 } else if let Some(bytes) = previous.as_deref() {
                     write_document_bytes(&storage_path, bytes)
@@ -314,6 +328,30 @@ fn document_storage_path(
 fn write_document(path: &std::path::Path, content: &str) -> io::Result<()> {
     write_document_bytes(path, content.as_bytes())
 }
+
+fn read_or_create_empty_document(path: &std::path::Path) -> io::Result<(String, bool)> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok((content, false)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| io::Error::other("document path has no parent"))?;
+            std::fs::create_dir_all(parent)?;
+            match OpenOptions::new().write(true).create_new(true).open(path) {
+                Ok(file) => {
+                    file.sync_all()?;
+                    Ok((String::new(), true))
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    std::fs::read_to_string(path).map(|content| (content, false))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn write_document_bytes(path: &std::path::Path, content: &[u8]) -> io::Result<()> {
     cccc_core::fs::atomic_write(path, content)
 }
