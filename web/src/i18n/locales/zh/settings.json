@@ -239,6 +239,8 @@
     "noneSelected": "尚未选择能力。",
     "noCandidates": "暂无可自动加载候选。",
     "loading": "正在加载能力...",
+    "searchPlaceholder": "搜索 capability id、名称、来源、标签或工具...",
+    "openToLoad": "打开此区域后加载能力。",
     "removeFromAutoload": "从自动加载中移除",
     "enable": "启用"
   },

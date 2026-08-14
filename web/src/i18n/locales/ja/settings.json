@@ -239,6 +239,8 @@
     "noneSelected": "選択された能力はありません。",
     "noCandidates": "Autoload 候補が見つかりません。",
     "loading": "Capabilities を読み込み中...",
+    "searchPlaceholder": "capability id、名前、source、tag、tool を検索...",
+    "openToLoad": "このセクションを開くと能力を読み込みます。",
     "removeFromAutoload": "Autoload から削除",
     "enable": "有効化"
   },
