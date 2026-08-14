@@ -57,11 +57,19 @@ fn daemon_stop_waits_for_the_combined_web_process_to_exit() {
 
     wait_for_daemon_start(&installed, &home, &mut web);
     let stop = run(&installed, &home, &["daemon", "stop"]);
-    assert!(
-        stop.status.success(),
-        "daemon stop failed: {}",
-        detail(&stop)
-    );
+    if !stop.status.success() {
+        // Recover the combined process output so CI failures show which
+        // shutdown stage hung instead of only the CLI timeout.
+        let _ = web.kill();
+        let output = web
+            .wait_with_output()
+            .expect("collect combined CCCC output");
+        panic!(
+            "daemon stop failed: {} combined CCCC output: {}",
+            detail(&stop),
+            detail(&output)
+        );
+    }
     assert!(
         web.try_wait().expect("combined CCCC status").is_some(),
         "daemon stop returned before the combined Web process exited"

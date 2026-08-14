@@ -135,11 +135,16 @@ async fn launch(
     instance.hold_until_process_exit();
     replace_incompatible_daemon(&home, &client).await?;
     let mut embedded_daemon = None;
+    // Event-driven loss detection for the embedded daemon: polling in
+    // `wait_for_daemon_loss` stays as the fallback for an external daemon.
+    let (daemon_exit_tx, daemon_exit_rx) = tokio::sync::watch::channel(false);
     if !ping(&client).await {
         let daemon_home = home.clone();
-        embedded_daemon = Some(tokio::spawn(
-            async move { cccc_daemon::run(daemon_home).await },
-        ));
+        embedded_daemon = Some(tokio::spawn(async move {
+            let result = cccc_daemon::run(daemon_home).await;
+            let _ = daemon_exit_tx.send(true);
+            result
+        }));
         wait_for_daemon(&client, std::time::Duration::from_secs(30)).await;
     }
     if !ping(&client).await {
@@ -152,8 +157,12 @@ async fn launch(
         let monitor =
             DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_secs(2));
         let daemon_address = home.daemon_dir().join("ccccd.addr.json");
+        let mut daemon_exited = daemon_exit_rx.clone();
         let shutdown = async move {
-            wait_for_daemon_loss(&monitor, &daemon_address).await;
+            tokio::select! {
+                () = wait_for_daemon_loss(&monitor, &daemon_address) => {}
+                _ = daemon_exited.wait_for(|exited| *exited) => {}
+            }
             eprintln!("CCCC daemon stopped; Web server closed");
         };
         match cccc_web::serve_until_mode_supervised(
