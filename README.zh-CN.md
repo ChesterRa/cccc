@@ -515,7 +515,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其
 `Installation` 部分会显示本次入口、PATH 实际命中的命令以及全部冲突路径。
 
-当前托管的原生安装器固定安装 `v0.4.34-rc2` 候选版本。
+当前托管的原生安装器固定安装 `v0.4.34-rc3` 候选版本。
 
 ### pip（RC 版，TestPyPI）
 

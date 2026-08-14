@@ -205,7 +205,9 @@ def main() -> int:
     if not wheel.is_file():
         parser.error(f"wheel does not exist: {wheel}")
 
-    with tempfile.TemporaryDirectory(prefix="cccc-wheel-frontdoor-") as raw_root:
+    # Keep this short: macOS limits Unix-domain socket paths to roughly 104 bytes,
+    # and the daemon socket is created below this temporary root.
+    with tempfile.TemporaryDirectory(prefix="c4-wheel-") as raw_root:
         smoke = InstalledWheelSmoke(
             Path(raw_root),
             expect_rust=args.expect_rust == "available",

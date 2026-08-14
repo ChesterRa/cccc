@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.34-rc3] — 2026-08-14
+
 ### Changed
 - **Distribution guidance now keeps PyPI as the stable, recommended product path.** The standalone Rust binary is presented consistently as an experimental Rust-only preview without Python fallback or implementation switching, including its GitHub Release metadata.
 - **Release publication now gates complete Python and standalone artifact sets without duplicating normal CI.** PyPI receives one source distribution, one portable wheel, and four version-matched native Rust wheels after parallel payload checks; standalone binaries execute on their build hosts and final Linux and Windows installer candidates are verified in parallel. Full source and cross-language interoperability suites remain in normal CI only.

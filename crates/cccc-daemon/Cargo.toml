@@ -11,11 +11,11 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc2", path = "../cccc-client" }
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc2", path = "../cccc-contracts" }
-cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc2", path = "../cccc-core" }
-cccc-notebooklm = { package = "cccc-pair-notebooklm", version = "=0.4.34-rc2", path = "../cccc-notebooklm" }
-cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc2", path = "../cccc-runtime" }
+cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc3", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc3", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc3", path = "../cccc-core" }
+cccc-notebooklm = { package = "cccc-pair-notebooklm", version = "=0.4.34-rc3", path = "../cccc-notebooklm" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc3", path = "../cccc-runtime" }
 chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
