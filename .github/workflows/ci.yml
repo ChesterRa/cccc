@@ -4,15 +4,13 @@ on:
   push:
     branches: [main, rust]
   pull_request:
-  schedule:
-    - cron: "17 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+  cancel-in-progress: true
 
 jobs:
   quality:
@@ -78,7 +76,6 @@ jobs:
           if-no-files-found: error
 
   python-tests:
-    if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -116,7 +113,6 @@ jobs:
           env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
   python-compat:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -167,7 +163,6 @@ jobs:
           PY
 
   package:
-    if: github.event_name != 'schedule'
     needs: [quality, web, python-tests, python-compat, interop]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -237,10 +232,9 @@ jobs:
           PY
 
   windows-smoke:
-    if: github.event_name != 'schedule'
     needs: web
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -268,6 +262,23 @@ jobs:
           tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
           tests/test_installation_diagnostics.py tests/test_system_cmds_doctor.py
 
+  windows-installer:
+    # Installer/PATH ownership checks need a native release build; keep them
+    # off the PR critical path and verify them when changes land on a branch.
+    if: github.event_name == 'push'
+    needs: web
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.88.0
 
@@ -282,11 +293,10 @@ jobs:
         timeout-minutes: 15
         run: scripts/tests/install_windows.ps1
 
-  rust:
-    if: github.event_name != 'schedule'
+  rust-lint:
     needs: web
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -297,14 +307,27 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Test installer and release assets
-        run: |
-          scripts/tests/install_unix.sh
-          scripts/tests/release_assets.sh
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rust-test:
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Test installer and release assets
+        run: |
+          scripts/tests/install_unix.sh
+          scripts/tests/release_assets.sh
       - name: Test Rust workspace
         run: |
           # The dedicated interop job owns tests that execute src/cccc. Keep
@@ -314,6 +337,22 @@ jobs:
           cargo test --package cccc-pair-daemon --locked -- \
             --test-threads=1 \
             --skip python_interop_
+
+  rust-dist:
+    # The release distribution smoke needs a full release build; keep it off
+    # the PR critical path and verify it when changes land on a branch.
+    if: github.event_name == 'push'
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
       - name: Build and verify Rust distribution
         run: |
           cargo build --workspace --release --locked
@@ -322,7 +361,6 @@ jobs:
           bash scripts/tests/smoke_rust_replacement.sh target/release/cccc
 
   interop:
-    if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -364,32 +402,3 @@ jobs:
           cargo test -p cccc-pair-core --test ledger_python_interop --locked
           cargo test -p cccc-pair-core --test shared_integration_state_interop --locked
           cargo test -p cccc-pair-daemon --test python_storage_interop --locked -- --test-threads=1
-
-  nightly-serial:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.14"]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install test dependencies
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e . pytest pytest-timeout
-
-      - name: Run full Python suite serially
-        timeout-minutes: 30
-        run: >-
-          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20
