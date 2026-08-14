@@ -359,7 +359,7 @@ def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None
         "build-linux": "45",
         "build-desktop": "45",
         "prepare": "10",
-        "verify": "5",
+        "verify": "10",
         "publish": "10",
     }
     assert rust_candidate["jobs"]["build-linux"]["needs"] == "web"
@@ -399,7 +399,7 @@ def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None
     }
     verify = rust_candidate["jobs"]["verify"]
     assert verify["needs"] == "prepare"
-    assert verify["timeout-minutes"] == "5"
+    assert verify["timeout-minutes"] == "10"
     assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
