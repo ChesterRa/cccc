@@ -47,6 +47,17 @@ def _process_is_running(pid: int) -> bool:
             return False
         except PermissionError:
             return True
+        if sys.platform.startswith("linux"):
+            try:
+                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            except OSError:
+                pass
+            else:
+                closing_parenthesis = stat.rfind(")")
+                if closing_parenthesis >= 0:
+                    fields = stat[closing_parenthesis + 1 :].split()
+                    if fields and fields[0] == "Z":
+                        return False
         return True
 
     synchronize = 0x00100000
