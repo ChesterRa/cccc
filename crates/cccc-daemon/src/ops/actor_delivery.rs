@@ -11,6 +11,7 @@ use crate::ops::actor_delivery_worker;
 
 mod drain;
 mod lifecycle;
+mod recovery;
 pub(crate) use drain::{drain_group, pending_group_ids};
 pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
 
@@ -37,6 +38,7 @@ pub(super) struct DeliveryJob {
     pub group: GroupDoc,
     pub actor: Actor,
     pub event: Event,
+    pub advances_cursor: bool,
 }
 
 pub(super) struct DeliveryCompletion {
@@ -153,6 +155,7 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
+            advances_cursor: true,
         }) {
             queued += 1;
         }
@@ -161,17 +164,60 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
 }
 
 pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
-    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
-        return 0;
-    }
-    let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+    let Some((actor, events)) = unread_delivery_input(home, group, actor_id) else {
         return 0;
     };
+    events
+        .into_iter()
+        .filter(|event| {
+            enqueue(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: event.clone(),
+                advances_cursor: true,
+            })
+        })
+        .count()
+}
+
+pub fn dispatch_unread_notice(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
+    let Some((actor, events)) = unread_delivery_input(home, group, actor_id) else {
+        return 0;
+    };
+    if events.is_empty() {
+        return 0;
+    }
+    let notice = recovery::notice_event(
+        &group.group_id,
+        actor_id,
+        events.len(),
+        events.len() == QUEUE_CAPACITY,
+        &events[events.len() - 1].id,
+    );
+    usize::from(enqueue(DeliveryJob {
+        home: home.clone(),
+        group: group.clone(),
+        actor: actor.clone(),
+        event: notice,
+        advances_cursor: false,
+    }))
+}
+
+fn unread_delivery_input<'a>(
+    home: &HomeLayout,
+    group: &'a GroupDoc,
+    actor_id: &str,
+) -> Option<(&'a Actor, Vec<Event>)> {
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return None;
+    }
+    let actor = group.actors.iter().find(|actor| actor.id == actor_id)?;
     if !actor.enabled
         || (crate::ops::actor_runtime::is_structured(actor)
             && !crate::ops::local_headless::supports(actor))
     {
-        return 0;
+        return None;
     }
     let events = match inbox::list_unread(home, group, actor_id, QUEUE_CAPACITY, "all") {
         Ok(events) => events,
@@ -182,28 +228,17 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
                 %actor_id,
                 "failed to reload unread runtime deliveries"
             );
-            return 0;
+            return None;
         }
     };
-    events
-        .into_iter()
-        .filter(|event| matches!(event.kind.as_str(), "chat.message" | "system.notify"))
-        .filter(|event| {
-            enqueue(DeliveryJob {
-                home: home.clone(),
-                group: group.clone(),
-                actor: actor.clone(),
-                event: event.clone(),
-            })
-        })
-        .count()
+    Some((actor, events))
 }
 
 pub fn dispatch_group_unread(home: &HomeLayout, group: &GroupDoc) -> usize {
     group
         .actors
         .iter()
-        .map(|actor| dispatch_unread(home, group, &actor.id))
+        .map(|actor| dispatch_unread_notice(home, group, &actor.id))
         .sum()
 }
 
@@ -424,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn actor_activation_can_reload_canonical_unread_work() {
+    fn actor_activation_queues_one_transient_unread_notice() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -445,20 +480,38 @@ mod tests {
             &event,
         )
         .expect("append message");
+        let mut newer = Event::new("chat.message", &group.group_id);
+        newer.by = "user".into();
+        newer.data = json!({"to":["peer1"],"text":"recover me too"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &newer,
+        )
+        .expect("append newer message");
 
-        assert_eq!(dispatch_unread(&home, &group, "peer1"), 1);
-        assert!(in_flight().lock().expect("in flight").contains(&(
-            group.group_id.clone(),
-            "peer1".into(),
-            event.id.clone(),
-        )));
+        let notice_id = format!("unread-recovery:{}", newer.id);
+        assert_eq!(dispatch_unread_notice(&home, &group, "peer1"), 1);
+        let pending = in_flight().lock().expect("in flight");
+        assert!(pending.contains(&(group.group_id.clone(), "peer1".into(), notice_id)));
+        assert_eq!(
+            pending
+                .iter()
+                .filter(|item| item.0 == group.group_id && item.1 == "peer1")
+                .count(),
+            1
+        );
+        assert!(!pending.contains(&(group.group_id.clone(), "peer1".into(), event.id.clone(),)));
+        drop(pending);
 
         shutdown_actor(&group.group_id, "peer1");
         let _ = cccc_runtime::stop(&group.group_id, "peer1");
     }
 
     #[test]
-    fn deferred_delivery_retries_without_waiting_for_another_message() {
+    fn deferred_recovery_notice_retries_without_advancing_cursor() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workspace = temp.path().join("workspace");
         std::fs::create_dir(&workspace).expect("workspace");
@@ -495,23 +548,28 @@ mod tests {
             .join("group.yaml");
         let hidden_path = group_path.with_extension("yaml.hidden");
         std::fs::rename(&group_path, &hidden_path).expect("hide group state");
-        assert_eq!(dispatch_unread(&home, &group, "peer1"), 1);
+        let notice_id = format!("unread-recovery:{}", event.id);
+        assert_eq!(dispatch_unread_notice(&home, &group, "peer1"), 1);
         std::thread::sleep(std::time::Duration::from_millis(600));
         std::fs::rename(&hidden_path, &group_path).expect("restore group state");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
-            let completed = completions()
-                .lock()
-                .expect("completions")
-                .iter()
-                .any(|item| item.event_id == event.id);
-            if completed || std::time::Instant::now() >= deadline {
-                assert!(completed, "deferred delivery was not retried");
+            let still_pending =
+                in_flight().lock().expect("in flight").iter().any(|item| {
+                    item.0 == group.group_id && item.1 == "peer1" && item.2 == notice_id
+                });
+            if !still_pending || std::time::Instant::now() >= deadline {
+                assert!(!still_pending, "deferred recovery notice was not retried");
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        assert!(
+            inbox::cursor(&home, &group.group_id, "peer1")
+                .expect("cursor")
+                .is_none()
+        );
 
         shutdown_actor(&group.group_id, "peer1");
         let _ = cccc_runtime::stop(&group.group_id, "peer1");

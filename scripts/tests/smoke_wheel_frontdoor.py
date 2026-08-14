@@ -23,16 +23,23 @@ def _run(
     check: bool = True,
     timeout: float = 30.0,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
-        command,
-        env=env,
-        input=input_text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    # A Windows daemon grandchild can inherit a PIPE handle after its launcher
+    # exits, leaving subprocess.run() waiting forever for EOF. A regular file
+    # preserves diagnostics without coupling completion to the process tree.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output:
+        completed = subprocess.run(
+            command,
+            env=env,
+            input=input_text,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        output.seek(0)
+        stdout = output.read()
+    completed = subprocess.CompletedProcess(completed.args, completed.returncode, stdout, None)
     if check and completed.returncode != 0:
         rendered = " ".join(command)
         raise RuntimeError(f"command failed ({completed.returncode}): {rendered}\n{completed.stdout}")

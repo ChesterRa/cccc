@@ -3,7 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.tests.smoke_wheel_frontdoor import _process_is_running
+import os
+import sys
+
+from scripts.tests.smoke_wheel_frontdoor import _process_is_running, _run
+
+
+def test_run_captures_combined_output_without_a_pipe() -> None:
+    completed = _run(
+        [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"],
+        env=os.environ.copy(),
+    )
+
+    assert completed.returncode == 0
+    assert sorted(completed.stdout.splitlines()) == ["err", "out"]
 
 
 def test_linux_zombie_is_treated_as_exited() -> None:

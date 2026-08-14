@@ -109,13 +109,15 @@ still die after the operating system accepts the bytes but before completion is
 recorded, so recovery is deliberately at-least-once rather than provider-level
 exactly-once.
 
-Failed work remains unread and stays ahead of later work. Actor/group
-activation and daemon restore rebuild pending PTY delivery from the canonical
-ledger and inbox rather than an engine-private queue. Recovery uses a bounded
-256-event memory window and refills it after completed prefixes, so a large
-backlog remains ordered without creating an unbounded queue. Switching engines
-does not transfer a live PTY process, its input mode, preamble memory, or hot
-terminal ring; restart and delivery recovery use the shared durable state.
+Failed work remains unread and stays ahead of later work. Actor/group activation
+and daemon restore inject one transient unread summary instead of replaying every
+old message body into the PTY. The summary reports a bounded count ("at least
+256" when capped), points the actor to `cccc_inbox_list` and
+`cccc_inbox_mark_read`, and never advances the unread cursor. Normal live
+delivery still refills from the canonical ledger and inbox in ordered 256-event
+windows after completed prefixes. Switching engines does not transfer a live PTY
+process, its input mode, preamble memory, or hot terminal ring; both engines use
+the same durable unread state and restart-summary behavior.
 
 ### Codex and Claude PTY Hook State
 

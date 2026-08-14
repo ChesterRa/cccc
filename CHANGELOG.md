@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **ChatGPT Web Model actors now have one shared per-actor delivery preference across Python and Rust.** Stable `Standard` delivery remains text-only and default; the explicitly experimental `GPT Pro` mode attaches one deterministic blank PNG before submission for accounts where that ChatGPT-side behavior exposes third-party MCP. The preference applies from the next accepted turn, survives daemon restarts and engine switches, and never selects a ChatGPT model.
 
 ### Fixed
+- **Actor restart recovery no longer replays every unread message body into a fresh PTY.** Python and Rust inject one transient bounded unread summary, preserve the canonical cursor, and direct the actor to the inbox tools while normal live backlog delivery remains ordered.
 - **Windows standalone updates no longer hang while restarting a running daemon.** The installer waits on the short-lived `daemon start` launcher itself instead of PowerShell's native process pipeline, while retaining a bounded failure timeout and rollback restart.
 - **SPA fallback routes now retain the HTML response type.** Browser deep links served through `index.html` no longer inherit an `application/octet-stream` MIME type from the extensionless request path.
 - **Windows Rust Web builds no longer compile Unix-only browser helpers.** Platform-specific imports and CDP port reservation are gated to the targets that use them.

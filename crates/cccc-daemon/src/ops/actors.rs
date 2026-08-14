@@ -661,7 +661,7 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
     if enabled {
         match GroupStore::new(home.clone()).and_then(|store| store.load(&group_id)) {
             Ok(current_group) => {
-                actor_delivery::dispatch_unread(home, &current_group, &actor_id);
+                actor_delivery::dispatch_unread_notice(home, &current_group, &actor_id);
             }
             Err(error) => tracing::warn!(
                 %error,
@@ -750,7 +750,7 @@ fn rollback_actor_lifecycle(
         failures.push(format!("restore previous runtime: {}", error.message));
     }
     if original_actor.enabled && original_group.running {
-        actor_delivery::dispatch_unread(home, original_group, &original_actor.id);
+        actor_delivery::dispatch_unread_notice(home, original_group, &original_actor.id);
     }
     if failures.is_empty() {
         original

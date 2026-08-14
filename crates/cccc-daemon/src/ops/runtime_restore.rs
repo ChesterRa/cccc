@@ -23,7 +23,7 @@ pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
         for actor in group.actors.iter().filter(|actor| actor.enabled) {
             match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
                 Ok(_) => {
-                    actor_delivery::dispatch_unread(home, &group, &actor.id);
+                    actor_delivery::dispatch_unread_notice(home, &group, &actor.id);
                 }
                 Err(error) => {
                     tracing::warn!(

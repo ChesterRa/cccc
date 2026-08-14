@@ -73,19 +73,15 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     )
     .await;
 
-    wait_for_terminal(&client, &group_id, "message-C").await;
-    wait_until_async(|| async {
-        let inbox = call(
-            &client,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .await;
-        inbox.result["messages"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    })
+    let output = wait_for_terminal(&client, &group_id, "Unread collaboration messages").await;
+    assert!(!output.contains("message-C"));
+    let inbox = call(
+        &client,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
     .await;
+    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-C");
 
     shutdown(&client, daemon).await;
     drop(temp);
@@ -124,7 +120,7 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
 }
 
 #[tokio::test]
-async fn failed_session_does_not_let_a_followup_overtake_unread_work() {
+async fn failed_session_recovery_summarizes_ordered_unread_work() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("failed-session-recovery", false).await;
     call(
@@ -181,7 +177,7 @@ async fn failed_session_does_not_let_a_followup_overtake_unread_work() {
         json!({
             "group_id":group_id,
             "actor_id":"peer1",
-            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; printf 'RECOVERED:%s\\nFOLLOWUP:%s' \"$first\" \"$second\"; sleep 2"]},
+            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'RECOVERED:%s' \"$message\"; sleep 2"]},
             "by":"user"
         }),
     )
@@ -193,29 +189,24 @@ async fn failed_session_does_not_let_a_followup_overtake_unread_work() {
     )
     .await;
 
-    let output = wait_for_terminal(&client, &group_id, "message-B").await;
-    let first = output.find("message-A").expect("message A delivered");
-    let second = output.find("message-B").expect("message B delivered");
-    assert!(first < second, "follow-up overtook unread work: {output:?}");
-    wait_until_async(|| async {
-        let inbox = call(
-            &client,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .await;
-        inbox.result["messages"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    })
+    let output = wait_for_terminal(&client, &group_id, "2 unread collaboration messages").await;
+    assert!(!output.contains("message-A"));
+    assert!(!output.contains("message-B"));
+    let inbox = call(
+        &client,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
     .await;
+    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-A");
+    assert_eq!(inbox.result["messages"][1]["data"]["text"], "message-B");
 
     shutdown(&client, daemon).await;
     drop(temp);
 }
 
 #[tokio::test]
-async fn actor_start_retries_unread_after_a_failed_session_without_new_work() {
+async fn actor_start_summarizes_unread_after_a_failed_session_without_new_work() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("failed-session-start-recovery", false).await;
     call(
@@ -261,19 +252,15 @@ async fn actor_start_retries_unread_after_a_failed_session_without_new_work() {
     )
     .await;
 
-    wait_for_terminal(&client, &group_id, "message-A").await;
-    wait_until_async(|| async {
-        let inbox = call(
-            &client,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .await;
-        inbox.result["messages"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    })
+    let output = wait_for_terminal(&client, &group_id, "Unread collaboration messages").await;
+    assert!(!output.contains("message-A"));
+    let inbox = call(
+        &client,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
     .await;
+    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-A");
 
     shutdown(&client, daemon).await;
     drop(temp);

@@ -288,6 +288,7 @@ class PendingMessage:
     notify_kind: str = ""  # For system.notify: nudge, keepalive, etc.
     notify_title: str = ""
     notify_message: str = ""
+    advances_cursor: bool = True
 
 
 @dataclass
@@ -956,7 +957,46 @@ def queue_system_notify(
 
 
 def recover_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
-    """Rebuild a lost in-memory PTY queue from the canonical inbox."""
+    """Queue one restart notice while leaving canonical unread work untouched."""
+    aid = str(actor_id or "").strip()
+    actor = find_actor(group, aid)
+    if not aid or not isinstance(actor, dict):
+        return 0
+    if not bool(actor.get("enabled", True)) or str(actor.get("runner") or "pty").strip() != "pty":
+        return 0
+    from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
+    if actor_uses_codex_app_server_state(actor):
+        return 0
+    effective_limit = max(1, int(limit or 256))
+    unread = unread_messages(group, actor_id=aid, limit=effective_limit, kind_filter="all")
+    if not unread:
+        return 0
+    latest = unread[-1]
+    latest_event_id = str(latest.get("id") or "").strip()
+    if not latest_event_id:
+        return 0
+    count = f"at least {len(unread)}" if len(unread) >= effective_limit else str(len(unread))
+    notice = PendingMessage(
+        event_id=f"unread-recovery:{latest_event_id}",
+        by="system",
+        to=[aid],
+        text="",
+        ts=str(latest.get("ts") or "").strip(),
+        kind="system.notify",
+        notify_kind="info",
+        notify_title="Unread collaboration messages",
+        notify_message=(
+            f"You have {count} unread collaboration messages. Use cccc_inbox_list to review them, "
+            "then cccc_inbox_mark_read after handling them. This restart recovery notice does not "
+            "advance the unread cursor."
+        ),
+        advances_cursor=False,
+    )
+    return THROTTLE.recover_front(group.group_id, aid, [notice])
+
+
+def _refill_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
+    """Continue normal live delivery from canonical unread events."""
     aid = str(actor_id or "").strip()
     actor = find_actor(group, aid)
     if not aid or not isinstance(actor, dict):
@@ -1190,17 +1230,44 @@ def _finalize_delivery_success(
     if chat_total > 0:
         THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
     THROTTLE.mark_delivered(gid, aid)
-    if _get_auto_mark_on_delivery(group) and deliverable:
-        last_msg = deliverable[-1]
-        cursor_covered = maybe_auto_mark_delivered_event(
-            group,
-            actor_id=aid,
-            event_id=str(last_msg.event_id or ""),
-            ts=str(last_msg.ts or ""),
-        )
+    markable = [message for message in deliverable if message.advances_cursor]
+    if _get_auto_mark_on_delivery(group) and markable:
+        last_msg = _last_contiguous_delivered_message(group, actor_id=aid, messages=markable)
+        if last_msg is not None:
+            cursor_covered = maybe_auto_mark_delivered_event(
+                group,
+                actor_id=aid,
+                event_id=str(last_msg.event_id or ""),
+                ts=str(last_msg.ts or ""),
+            )
     if requeue:
         THROTTLE.requeue_front(gid, aid, requeue)
     return cursor_covered
+
+
+def _last_contiguous_delivered_message(
+    group: Group,
+    *,
+    actor_id: str,
+    messages: List[PendingMessage],
+) -> Optional[PendingMessage]:
+    """Return the delivered unread prefix tail without skipping an older gap."""
+    if not messages:
+        return None
+    delivered_by_id = {str(message.event_id or ""): message for message in messages}
+    unread = unread_messages(
+        group,
+        actor_id=actor_id,
+        limit=max(256, len(delivered_by_id)),
+        kind_filter="all",
+    )
+    last: Optional[PendingMessage] = None
+    for event in unread:
+        message = delivered_by_id.get(str(event.get("id") or ""))
+        if message is None:
+            break
+        last = message
+    return last
 
 
 def maybe_auto_mark_delivered_event(
@@ -1282,7 +1349,7 @@ def _finish_delivery_chain(group: Group, *, actor_id: str, reload_unread: bool =
     aid = str(actor_id or "").strip()
     THROTTLE.end_delivery(gid, aid)
     if reload_unread:
-        recover_unread_pty_messages(group, actor_id=aid)
+        _refill_unread_pty_messages(group, actor_id=aid)
     if not THROTTLE.has_pending(gid, aid):
         return
     try:
@@ -1492,7 +1559,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if not background_started:
             THROTTLE.end_delivery(gid, aid)
             if reload_unread:
-                recover_unread_pty_messages(group, actor_id=aid)
+                _refill_unread_pty_messages(group, actor_id=aid)
 
 
 def request_flush_pending_messages(group: Group, *, actor_id: str) -> bool:

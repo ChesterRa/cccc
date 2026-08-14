@@ -93,13 +93,7 @@ pub fn process_batch(
     };
     if submit_text(&current_group.group_id, &current_actor, &payload, cancelled) {
         *last_delivery = Some(std::time::Instant::now());
-        for job in jobs {
-            record_completion(DeliveryCompletion {
-                group_id: job.group.group_id.clone(),
-                actor_id: job.actor.id.clone(),
-                event_id: job.event.id.clone(),
-            });
-        }
+        finish_jobs(jobs);
         return true;
     }
     false
@@ -144,16 +138,24 @@ fn process_headless_batch(
         .all(|job| crate::ops::local_headless::submit(home, group, actor, &job.event))
     {
         *last_delivery = Some(std::time::Instant::now());
-        for job in jobs {
+        finish_jobs(jobs);
+        return true;
+    }
+    false
+}
+
+fn finish_jobs(jobs: &[DeliveryJob]) {
+    for job in jobs {
+        if job.advances_cursor {
             record_completion(DeliveryCompletion {
                 group_id: job.group.group_id.clone(),
                 actor_id: job.actor.id.clone(),
                 event_id: job.event.id.clone(),
             });
+        } else {
+            super::actor_delivery::release_in_flight(job);
         }
-        return true;
     }
-    false
 }
 
 fn ensure_running(

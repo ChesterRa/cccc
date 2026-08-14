@@ -1,5 +1,5 @@
 use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind};
-use cccc_core::{GroupStore, HomeLayout, Scope, actors, ledger};
+use cccc_core::{GroupStore, HomeLayout, Scope, actors, inbox, ledger};
 use serde_json::{Map, json};
 
 use super::{actor_delivery, actor_runtime, runtime_restore};
@@ -100,7 +100,7 @@ fn restores_enabled_actors_for_persisted_running_groups() {
 }
 
 #[test]
-fn restore_rehydrates_unread_pty_delivery_from_the_ledger() {
+fn restore_delivers_one_unread_notice_without_advancing_cursor() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -152,18 +152,22 @@ fn restore_rehydrates_unread_pty_delivery_from_the_ledger() {
                     .expect("args"),
             },
         );
-        if response.result["text"]
-            .as_str()
-            .is_some_and(|text| text.contains("message-before-restart"))
-        {
+        let text = response.result["text"].as_str().unwrap_or_default();
+        if text.contains("Unread collaboration messages") {
+            assert!(!text.contains("message-before-restart"));
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "restored actor did not receive canonical unread work: {response:?}"
+            "restored actor did not receive unread summary: {response:?}"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    assert!(
+        inbox::cursor(&home, &group_id, "peer1")
+            .expect("cursor")
+            .is_none()
+    );
 
     actor_delivery::shutdown_actor(&group_id, "peer1");
     let _ = cccc_runtime::stop(&group_id, "peer1");
