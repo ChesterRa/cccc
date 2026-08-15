@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -50,6 +49,7 @@ from ..ports.web.runtime_control import (
     wait_for_child_exit_interruptibly,
     web_runtime_pid_candidates,
 )
+from ..ports.web.web_banner import print_web_banner
 from ..util.conv import coerce_bool
 from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
 from ..util.process import (
@@ -61,21 +61,6 @@ from ..util.process import (
 )
 
 _SPACE_QUERY_OPTION_KEYS = {"source_ids"}
-
-
-def _display_local_host(host: str) -> str:
-    h = str(host or "").strip()
-    if h in {"0.0.0.0", "::", "[::]"}:
-        return "localhost"
-    return h or "localhost"
-
-
-def _http_host_literal(host: str) -> str:
-    h = _display_local_host(host)
-    # Keep localhost as-is; bracket raw IPv6 literals for URL correctness.
-    if h != "localhost" and ":" in h and not (h.startswith("[") and h.endswith("]")):
-        return f"[{h}]"
-    return h
 
 
 def _resolve_web_server_binding() -> tuple[str, int]:
@@ -618,24 +603,8 @@ def _default_entry(*, web_host_override: str = "", web_port_override: Optional[i
         monitor_thread = threading.Thread(target=_lifecycle.monitor_daemon, daemon=True)
         monitor_thread.start()
 
-        def _get_lan_ip() -> str:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(0.1)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
-                return ip
-            except Exception:
-                return ""
-
         def _print_web_banner(cur_host: str, cur_port: int) -> None:
-            print("[cccc] Implementation: python", file=sys.stderr)
-            print("[cccc] Starting web server...", file=sys.stderr)
-            print(f"[cccc]   Local:   http://{_http_host_literal(cur_host)}:{cur_port}", file=sys.stderr)
-            lan_ip = _get_lan_ip()
-            if lan_ip and lan_ip != cur_host and lan_ip != "127.0.0.1":
-                print(f"[cccc]   Network: http://{lan_ip}:{cur_port}", file=sys.stderr)
+            print_web_banner(cur_host, cur_port, implementation="python")
 
         web_process, web_error = start_supervised_web_child(
             home=home,

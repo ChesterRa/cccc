@@ -152,9 +152,7 @@ class TestWebBindPreflight(unittest.TestCase):
         from cccc.ports.web import main as web_main
 
         stderr = io.StringIO()
-        with patch.object(web_main, "_get_lan_ip", return_value=""), patch.object(
-            web_main.sys, "stderr", stderr
-        ):
+        with patch.object(web_main.sys, "stderr", stderr):
             web_main._print_web_banner("127.0.0.1", 8848)
 
         self.assertEqual(stderr.getvalue().splitlines()[0], "[cccc] Implementation: python")

@@ -48,6 +48,12 @@ export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: bool
   return true;
 }
 
+export function shouldRefreshCapabilitiesAfterGlobalEventsOpen(
+  _hasConnectedOnce: boolean,
+): boolean {
+  return true;
+}
+
 export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(
   _hasConnectedOnce: boolean,
 ): boolean {

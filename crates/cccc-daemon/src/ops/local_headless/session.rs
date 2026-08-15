@@ -111,11 +111,53 @@ pub(super) fn spawn_reader(
                     output::handle_message(&session, message);
                 }
             }
-            session.stopped.store(true, Ordering::Release);
+            let unexpected_exit = !session.stopped.swap(true, Ordering::AcqRel);
+            if unexpected_exit {
+                invalidate_pending_claude_resume(
+                    &session,
+                    "claude headless resume process exited before completing a turn",
+                );
+            }
             session.set_status("stopped", None);
             session.completion.1.notify_all();
         })?;
     Ok(())
+}
+
+pub(super) fn invalidate_pending_claude_resume(session: &Session, error: &str) {
+    if session.runtime != ActorRuntime::Claude {
+        return;
+    }
+    let provider_session_id = session
+        .resumed_provider_session_id
+        .lock()
+        .ok()
+        .map(|mut session_id| std::mem::take(&mut *session_id))
+        .unwrap_or_default();
+    if provider_session_id.is_empty() {
+        return;
+    }
+    if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
+        &session.home,
+        &session.group_id,
+        &session.actor_id,
+        error,
+    ) {
+        tracing::warn!(
+            error = %persist_error,
+            group_id = %session.group_id,
+            actor_id = %session.actor_id,
+            "failed to invalidate rejected Claude resume metadata"
+        );
+    }
+    output::emit(
+        session,
+        "headless.session.resume_failed",
+        serde_json::Map::from_iter([
+            ("provider_session_id".into(), json!(provider_session_id)),
+            ("error".into(), json!(error)),
+        ]),
+    );
 }
 
 pub(super) fn spawn_stderr(

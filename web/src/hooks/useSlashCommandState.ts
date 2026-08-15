@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as api from "../services/api";
 import { buildSlashCommands, type SlashCommandItem } from "../utils/slashCommands";
@@ -17,53 +17,57 @@ function cacheSlashCommands(groupId: string, commands: SlashCommandItem[]): Slas
 
 export function useSlashCommandState(selectedGroupId: string) {
   const selectedGid = useMemo(() => String(selectedGroupId || "").trim(), [selectedGroupId]);
-  const [slashCommands, setSlashCommands] = useState<SlashCommandItem[]>(() => {
-    return selectedGid ? cachedSlashCommands(selectedGid) : [];
-  });
+  const selectedGidRef = useRef(selectedGid);
+  const requestVersionRef = useRef(0);
+  selectedGidRef.current = selectedGid;
+  const [snapshot, setSnapshot] = useState<{ groupId: string; commands: SlashCommandItem[] }>(
+    () => {
+      return {
+        groupId: selectedGid,
+        commands: selectedGid ? cachedSlashCommands(selectedGid) : [],
+      };
+    },
+  );
 
-  const refreshSlashCommands = useCallback(async () => {
-    const gid = selectedGid;
-    if (!gid) return;
-    try {
-      const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
-      setSlashCommands(
-        cacheSlashCommands(
-          gid,
-          buildSlashCommands({ state: stateResp.ok ? stateResp.result : null }),
-        ),
-      );
-    } catch {
-      setSlashCommands(cachedSlashCommands(gid));
-    }
-  }, [selectedGid]);
+  const loadSlashCommands = useCallback(
+    async (noCache: boolean) => {
+      const gid = selectedGid;
+      if (!gid) return;
+      const requestVersion = ++requestVersionRef.current;
+      try {
+        const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache });
+        if (
+          !stateResp.ok ||
+          selectedGidRef.current !== gid ||
+          requestVersionRef.current !== requestVersion
+        ) {
+          return;
+        }
+        const commands = cacheSlashCommands(gid, buildSlashCommands({ state: stateResp.result }));
+        setSnapshot({ groupId: gid, commands });
+      } catch {
+        // Keep the last known-good catalog. A later event or SSE reconnect retries it.
+      }
+    },
+    [selectedGid],
+  );
 
-  const visibleSlashCommands = selectedGid ? slashCommands : [];
+  const refreshSlashCommands = useCallback(() => loadSlashCommands(true), [loadSlashCommands]);
+
+  const visibleSlashCommands = selectedGid
+    ? snapshot.groupId === selectedGid
+      ? snapshot.commands
+      : cachedSlashCommands(selectedGid)
+    : [];
 
   useEffect(() => {
-    let cancelled = false;
     const gid = selectedGid;
     if (!gid) return;
-    queueMicrotask(() => {
-      if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
-    });
-    void api
-      .fetchSlashCommandCapabilityState(gid, "user")
-      .then((stateResp) => {
-        if (cancelled) return;
-        setSlashCommands(
-          cacheSlashCommands(
-            gid,
-            buildSlashCommands({ state: stateResp.ok ? stateResp.result : null }),
-          ),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
-      });
+    void loadSlashCommands(false);
     return () => {
-      cancelled = true;
+      requestVersionRef.current += 1;
     };
-  }, [selectedGid]);
+  }, [loadSlashCommands, selectedGid]);
 
   useEffect(() => {
     return subscribeCapabilityChanged(selectedGid, () => {

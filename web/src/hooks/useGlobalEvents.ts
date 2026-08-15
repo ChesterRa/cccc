@@ -10,6 +10,7 @@ import {
   shouldKeepGlobalEventsConnected,
   shouldRefreshActorsAfterGlobalEvent,
   shouldRefreshCapabilitiesAfterGlobalEvent,
+  shouldRefreshCapabilitiesAfterGlobalEventsOpen,
   shouldRefreshGroupBridgePairingAfterGlobalEvent,
   shouldRefreshGroupBridgePairingAfterGlobalEventsOpen,
   shouldRefreshGroupsAfterGlobalEvent,
@@ -154,6 +155,9 @@ export function useGlobalEvents({
       });
       es.onopen = () => {
         const shouldRefresh = shouldRefreshGroupsAfterGlobalEventsOpen(hasConnectedOnceRef.current);
+        const shouldRefreshCapabilities = shouldRefreshCapabilitiesAfterGlobalEventsOpen(
+          hasConnectedOnceRef.current,
+        );
         const shouldRefreshGroupBridgePairing =
           shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
         errorCount = 0; // Reset on successful connection
@@ -165,6 +169,9 @@ export function useGlobalEvents({
         if (shouldRefresh) {
           invalidateAndRefreshGroups();
           refreshSelectedActors();
+        }
+        if (shouldRefreshCapabilities) {
+          refreshSelectedCapabilities();
         }
         if (shouldRefreshGroupBridgePairing) {
           refreshSelectedGroupBridgePairing();

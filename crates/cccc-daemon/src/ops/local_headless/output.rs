@@ -176,7 +176,7 @@ fn complete_turn(session: &Session, message: &Value) {
         claude_terminal_event(message, &current.event_id)
     };
     let resume_rejection = if session.runtime == ActorRuntime::Claude {
-        take_claude_resume_rejection(session, message)
+        claude_resume_rejection(session, message)
     } else {
         None
     };
@@ -188,34 +188,14 @@ fn complete_turn(session: &Session, message: &Value) {
     }
     let control_kind = is_control.then(|| kind.replace("turn", "control"));
     emit(session, control_kind.as_deref().unwrap_or(kind), data);
-    if let Some((provider_session_id, error)) = resume_rejection {
+    if let Some(error) = resume_rejection {
         session.stop_after_invalidate(|| {
-            if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
-                &session.home,
-                &session.group_id,
-                &session.actor_id,
-                &error,
-            ) {
-                tracing::warn!(
-                    error = %persist_error,
-                    group_id = %session.group_id,
-                    actor_id = %session.actor_id,
-                    "failed to persist delayed Claude resume rejection"
-                );
-            }
-            emit(
-                session,
-                "headless.session.resume_failed",
-                Map::from_iter([
-                    ("provider_session_id".into(), json!(provider_session_id)),
-                    ("error".into(), json!(error)),
-                ]),
-            );
+            super::session::invalidate_pending_claude_resume(session, &error);
         });
     }
 }
 
-fn take_claude_resume_rejection(session: &Session, message: &Value) -> Option<(String, String)> {
+fn claude_resume_rejection(session: &Session, message: &Value) -> Option<String> {
     let subtype = message
         .get("subtype")
         .and_then(Value::as_str)
@@ -237,16 +217,15 @@ fn take_claude_resume_rejection(session: &Session, message: &Value) -> Option<(S
         .trim()
         .to_owned();
     super::super::runtime_session::resume_failure_marker(&error)?;
-    let provider_session_id = session
+    let has_pending_resume = session
         .resumed_provider_session_id
         .lock()
         .ok()
-        .map(|mut session_id| std::mem::take(&mut *session_id))
-        .unwrap_or_default();
-    if provider_session_id.is_empty() {
+        .is_some_and(|session_id| !session_id.is_empty());
+    if !has_pending_resume {
         return None;
     }
-    Some((provider_session_id, error))
+    Some(error)
 }
 
 fn active_context(session: &Session) -> Option<(String, String, String)> {

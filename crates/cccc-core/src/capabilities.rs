@@ -36,6 +36,11 @@ pub struct CapabilityStore {
     home: HomeLayout,
 }
 
+enum BindingMutation {
+    SetEnabled(bool),
+    EnableAndUnhide,
+}
+
 impl CapabilityStore {
     #[must_use]
     pub fn new(home: HomeLayout) -> Self {
@@ -415,10 +420,51 @@ impl CapabilityStore {
         scope: &str,
         ttl_seconds: i64,
     ) -> io::Result<CapabilityState> {
+        self.mutate_binding_for(
+            id,
+            BindingMutation::SetEnabled(enabled),
+            group_id,
+            actor_id,
+            scope,
+            ttl_seconds,
+        )
+    }
+
+    pub fn enable_and_unhide_for(
+        &self,
+        id: &str,
+        group_id: &str,
+        actor_id: &str,
+        scope: &str,
+        ttl_seconds: i64,
+    ) -> io::Result<CapabilityState> {
+        self.mutate_binding_for(
+            id,
+            BindingMutation::EnableAndUnhide,
+            group_id,
+            actor_id,
+            scope,
+            ttl_seconds,
+        )
+    }
+
+    fn mutate_binding_for(
+        &self,
+        id: &str,
+        mutation: BindingMutation,
+        group_id: &str,
+        actor_id: &str,
+        scope: &str,
+        ttl_seconds: i64,
+    ) -> io::Result<CapabilityState> {
         self.require(id)?;
         if group_id.is_empty() {
             return Err(io::Error::other("group_id is required"));
         }
+        let (enabled, unhide) = match mutation {
+            BindingMutation::SetEnabled(enabled) => (enabled, false),
+            BindingMutation::EnableAndUnhide => (true, true),
+        };
         self.mutate_state(|raw| {
             if enabled {
                 let groups = object_field(raw, "group_removed");
@@ -475,6 +521,16 @@ impl CapabilityStore {
                 _ => {
                     return Err(io::Error::other("scope must be group, actor, or session"));
                 }
+            }
+            if unhide && !actor_id.is_empty() {
+                let groups = object_field(raw, "actor_hidden");
+                if let Some(group) = groups.get_mut(group_id).and_then(Value::as_object_mut) {
+                    if let Some(items) = group.get_mut(actor_id) {
+                        set_array_member(items, id, false);
+                    }
+                    remove_empty_entry(group, actor_id);
+                }
+                remove_empty_entry(groups, group_id);
             }
             Ok(())
         })?;
@@ -921,6 +977,35 @@ mod tests {
             .expect("record");
         assert_eq!(record["install_spec"]["package"], "test-server");
         assert_eq!(record["source_id"], "github_import");
+    }
+
+    #[test]
+    fn enable_and_unhide_updates_one_state_document() {
+        let (_temp, store) = store();
+        store
+            .import_record(json!({
+                "capability_id":"skill:test","kind":"skill","name":"Test",
+                "capsule_text":"Test skill"
+            }))
+            .expect("import");
+        store
+            .set_hidden_for("skill:test", true, "g_test", "user")
+            .expect("hide");
+
+        store
+            .enable_and_unhide_for("skill:test", "g_test", "user", "group", 3600)
+            .expect("enable and unhide");
+
+        assert!(
+            store
+                .is_enabled_for("skill:test", "g_test", "user", "group")
+                .expect("enabled")
+        );
+        assert!(
+            !store
+                .is_hidden_for("skill:test", "g_test", "user")
+                .expect("visible")
+        );
     }
 
     #[test]

@@ -56,6 +56,21 @@ describe("slashCommands", () => {
     );
   });
 
+  it("does not infer slash callability from an enabled activation-pending binding", () => {
+    const commands = buildSlashCommands({
+      state: {
+        group_id: "g1",
+        actor_id: "user",
+        enabled: [{ capability_id: "skill:test:pending", scope: "group" }],
+        enabled_capabilities: ["skill:test:pending"],
+        active_capsule_skills: [],
+        dynamic_tools: [],
+      },
+    });
+
+    expect(commands.map((item) => item.command)).toEqual(["/install"]);
+  });
+
   it("does not build slash commands for actor-hidden runtime skills", () => {
     const commands = buildSlashCommands({
       state: {

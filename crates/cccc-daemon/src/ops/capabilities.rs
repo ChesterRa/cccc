@@ -10,6 +10,7 @@ mod allowlist;
 mod effective_state;
 mod external_runtime;
 mod import;
+mod install_events;
 mod overview;
 mod package_install;
 mod target_install;

@@ -4,6 +4,10 @@ mod admin_ops;
 mod assistant_voice_ops;
 #[path = "suite/automation_ops.rs"]
 mod automation_ops;
+#[path = "suite/capability_install_events.rs"]
+mod capability_install_events;
+#[path = "suite/capability_install_events_support.rs"]
+mod capability_install_events_support;
 #[path = "suite/capability_state.rs"]
 mod capability_state;
 #[path = "suite/cross_group_foreman_default.rs"]

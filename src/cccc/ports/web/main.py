@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import socket
 import sys
 from typing import Optional
 
@@ -20,6 +19,7 @@ from .runtime_control import (
     web_listener_auth_error,
     wait_for_child_exit_interruptibly,
 )
+from .web_banner import print_web_banner
 
 
 def _check_daemon_running() -> bool:
@@ -33,39 +33,8 @@ def _effective_binding() -> tuple[str, int]:
     return str(binding.get("web_host") or "").strip() or "127.0.0.1", int(binding.get("web_port") or 8848)
 
 
-def _display_local_host(host: str) -> str:
-    h = str(host or "").strip()
-    if h in {"0.0.0.0", "::", "[::]"}:
-        return "localhost"
-    return h or "localhost"
-
-
-def _http_host_literal(host: str) -> str:
-    h = _display_local_host(host)
-    if h != "localhost" and ":" in h and not (h.startswith("[") and h.endswith("]")):
-        return f"[{h}]"
-    return h
-
-
-def _get_lan_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.1)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return ""
-
-
 def _print_web_banner(host: str, port: int) -> None:
-    print("[cccc] Implementation: python", file=sys.stderr)
-    print("[cccc] Starting web server...", file=sys.stderr)
-    print(f"[cccc]   Local:   http://{_http_host_literal(host)}:{int(port)}", file=sys.stderr)
-    lan_ip = _get_lan_ip()
-    if lan_ip and lan_ip != host and lan_ip != "127.0.0.1":
-        print(f"[cccc]   Network: http://{lan_ip}:{int(port)}", file=sys.stderr)
+    print_web_banner(host, port, implementation="python")
 
 
 def _run_web_child(*, host: str, port: int, mode: str, reload: bool, log_level: str) -> int:

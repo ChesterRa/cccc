@@ -14,6 +14,7 @@ pub fn print(host: &str, port: u16) {
 
 fn urls(host: &str, port: u16, lan_ip: Option<Ipv4Addr>) -> (String, Option<String>) {
     let host = host.trim();
+    let wildcard = matches!(host, "0.0.0.0" | "::" | "[::]");
     let local_host = match host {
         "" | "0.0.0.0" | "::" | "[::]" => "localhost".to_owned(),
         value if value.contains(':') && !(value.starts_with('[') && value.ends_with(']')) => {
@@ -22,8 +23,9 @@ fn urls(host: &str, port: u16, lan_ip: Option<Ipv4Addr>) -> (String, Option<Stri
         value => value.to_owned(),
     };
     let local_url = format!("http://{local_host}:{port}");
-    let network_url = lan_ip
-        .filter(|ip| host != ip.to_string())
+    let network_url = wildcard
+        .then_some(lan_ip)
+        .flatten()
         .map(|ip| format!("http://{ip}:{port}"));
     (local_url, network_url)
 }
@@ -40,6 +42,22 @@ mod tests {
                 "http://localhost:8848".into(),
                 Some("http://192.168.1.20:8848".into())
             )
+        );
+    }
+
+    #[test]
+    fn loopback_binding_does_not_advertise_lan_url() {
+        assert_eq!(
+            urls("127.0.0.1", 8848, Some(Ipv4Addr::new(192, 168, 1, 20))),
+            ("http://127.0.0.1:8848".into(), None)
+        );
+    }
+
+    #[test]
+    fn explicit_interface_binding_uses_only_its_bound_url() {
+        assert_eq!(
+            urls("192.168.1.20", 8848, Some(Ipv4Addr::new(192, 168, 1, 20))),
+            ("http://192.168.1.20:8848".into(), None)
         );
     }
 

@@ -164,29 +164,31 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
             return Err(error);
         }
     } else {
+        let resumed = claude_session.as_ref().is_some_and(|(_, resumed)| *resumed);
+        // Serialize the startup liveness check and metadata refresh with the
+        // stdout reader's resume invalidation. Otherwise an exit between the
+        // check and record could be marked failed and then overwritten as usable.
+        let resume_record_guard = if resumed {
+            Some(
+                item.resumed_provider_session_id
+                    .lock()
+                    .map_err(|_| poisoned())?,
+            )
+        } else {
+            None
+        };
         std::thread::sleep(CLAUDE_STARTUP_GRACE);
         if !item.running() {
-            let resumed = claude_session.as_ref().is_some_and(|(_, resumed)| *resumed);
             let error = if resumed {
                 "claude headless resume process exited during startup"
             } else {
                 "claude headless process exited during startup"
             };
+            drop(resume_record_guard);
             if resumed {
-                item.stop();
-                if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
-                    home,
-                    &group.group_id,
-                    &actor.id,
-                    error,
-                ) {
-                    tracing::warn!(
-                        error = %persist_error,
-                        group_id = %group.group_id,
-                        actor_id = %actor.id,
-                        "failed to invalidate rejected Claude resume metadata"
-                    );
-                }
+                item.stop_after_invalidate(|| {
+                    session::invalidate_pending_claude_resume(&item, error);
+                });
             }
             return Err(io::Error::other(error));
         }
@@ -208,6 +210,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
                 "failed to persist Claude headless session"
             );
         }
+        drop(resume_record_guard);
     }
     sessions()
         .write()
@@ -666,7 +669,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rejected_claude_resume_is_invalidated_before_explicit_retry() {
+    fn claude_resume_exit_after_startup_grace_is_invalidated_before_retry() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -693,6 +696,7 @@ mod tests {
 printf '%s\n' "$*" >> "$CCCC_TEST_ARGS"
 if [ ! -e "$CCCC_TEST_FIRST_LAUNCH" ]; then
   : > "$CCCC_TEST_FIRST_LAUNCH"
+  sleep 2
   exit 2
 fi
 while IFS= read -r line; do :; done
@@ -737,16 +741,28 @@ while IFS= read -r line; do :; done
         )
         .expect("seed stale session");
 
-        let error = start(&home, &group, &actor).expect_err("stale resume must fail");
-        assert!(error.to_string().contains("resume process exited"));
         let session_path = GroupStore::new(home.clone())
             .expect("store")
             .state_dir(&group.group_id)
             .expect("state dir")
             .join("runtime_sessions")
             .join(format!("{}.json", actor.id));
-        let rejected: serde_json::Value =
-            cccc_core::fs::read_json(&session_path).expect("rejected session metadata");
+        if let Err(error) = start(&home, &group, &actor) {
+            assert!(error.to_string().contains("resume process exited"));
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let rejected = loop {
+            let document: serde_json::Value =
+                cccc_core::fs::read_json(&session_path).expect("rejected session metadata");
+            if !running(&group.group_id, &actor.id) && document["status"] == "resume_failed" {
+                break document;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "stale resume process or metadata did not settle: {document}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
         assert_eq!(rejected["status"], "resume_failed");
         assert_eq!(rejected["resume_eligible"], false);
         assert_eq!(rejected["failure_count"], 1);

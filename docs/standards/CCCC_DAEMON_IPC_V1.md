@@ -1230,6 +1230,14 @@ path, a direct HTTP(S) URL, or a GitHub repository. GitHub repositories import a
 and files matching `skills/*/SKILL.md` (up to 64 records). Imported records retain their source,
 qualification, capsule, and installation metadata.
 
+The native daemon commits catalog, binding, and actor slash-visibility state before appending one
+`capability.changed` event to the target Group ledger for the complete install batch. Semantically
+unchanged reinstalls do not append a duplicate event. Failed or rolled-back installs do not append
+one either. Event publication is a recoverable notification boundary: if the state commit succeeds
+but the ledger append fails, the operation remains successful and reports `event_publish_error`;
+Web clients catch up the authoritative slash-command capability view when their global event stream
+opens or reconnects.
+
 Args:
 ```ts
 {
@@ -1239,6 +1247,25 @@ Args:
   by?: string
   scope?: "actor" | "group" | "session"
   ttl_seconds?: number
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  target: string
+  target_kind: "capability_id" | "local_path" | "url" | "github"
+  scope: "actor" | "group" | "session"
+  installed_capability_ids: string[]
+  enabled_capability_ids: string[]
+  use_ready_capability_ids: string[]
+  requires_setup: boolean
+  refresh_required: boolean // true only when the effective runtime/slash catalog changed
+  state: "ready" | "needs_setup"
+  event_publish_error?: string
 }
 ```
 

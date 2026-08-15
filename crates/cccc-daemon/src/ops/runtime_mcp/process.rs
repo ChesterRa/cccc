@@ -142,7 +142,7 @@ mod tests {
             &["runtime-mcp-fixture".into()],
             temp.path(),
             &env,
-            Duration::from_secs(2),
+            super::super::CHECK_TIMEOUT,
         )
         .expect("run fixture");
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getGlobalEventGroupId,
   shouldRefreshCapabilitiesAfterGlobalEvent,
+  shouldRefreshCapabilitiesAfterGlobalEventsOpen,
   shouldRefreshGroupBridgePairingAfterGlobalEvent,
   shouldRefreshGroupBridgePairingAfterGlobalEventsOpen,
   shouldKeepGlobalEventsConnected,
@@ -17,6 +18,11 @@ describe("useGlobalEvents open refresh policy", () => {
 
   it("requires catch-up refresh on reconnects too", () => {
     expect(shouldRefreshGroupsAfterGlobalEventsOpen(true)).toBe(true);
+  });
+
+  it("requires capability catch-up on first connect and reconnect", () => {
+    expect(shouldRefreshCapabilitiesAfterGlobalEventsOpen(false)).toBe(true);
+    expect(shouldRefreshCapabilitiesAfterGlobalEventsOpen(true)).toBe(true);
   });
 
   it("refreshes groups for Python and Rust lifecycle event names", () => {
