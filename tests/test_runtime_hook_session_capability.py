@@ -61,6 +61,10 @@ class _Supervisor:
         return self.session
 
 
+def _supported_codex_hooks(*_args: object) -> bool:
+    return True
+
+
 def _start_eligible(
     supervisor: _Supervisor, home: Path
 ) -> _Session:
@@ -75,6 +79,7 @@ def _start_eligible(
         runtime="codex",
         max_backlog_bytes=1024,
         cccc_command=["/bin/cccc"],
+        codex_hook_probe=_supported_codex_hooks,
     )
 
 

@@ -359,6 +359,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
             ), patch(
                 "cccc.daemon.runtime_session_ops._schedule_codex_pty_status_capture",
                 side_effect=lambda **kwargs: scheduled.append(kwargs),
+            ), patch(
+                "cccc.daemon.runtime_hooks.launch.probe_codex_hook_config",
+                return_value=True,
             ):
                 session = start_pty_actor_with_runtime_resume(
                     group_id="g1",
@@ -809,6 +812,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
             ), patch(
                 "cccc.daemon.runtime_session_ops._schedule_codex_pty_status_capture",
                 side_effect=lambda **kwargs: scheduled.append(kwargs),
+            ), patch(
+                "cccc.daemon.runtime_hooks.launch.probe_codex_hook_config",
+                return_value=True,
             ):
                 session = start_pty_actor_with_runtime_resume(
                     group_id="g1",
