@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next";
-import { FileCheckIcon, FileIcon } from "../../../components/Icons";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { VoiceSecretaryDocumentTargetButton } from "./VoiceSecretaryDocumentTargetButton";
 
 type VoiceSecretaryDocumentListPanelProps = {
   actionBusy: string;
@@ -179,11 +179,12 @@ export function VoiceSecretaryDocumentListPanel({
               >
                 <span className="flex min-w-0 items-center justify-between gap-2">
                   <span className="truncate text-sm font-semibold">{document.title || docId}</span>
-                  <span className="flex w-8 shrink-0 items-center justify-end">
-                    <button
-                      type="button"
-                      aria-pressed={!!captureTarget}
-                      aria-label={
+                  <span className="flex w-10 shrink-0 items-center justify-end">
+                    <VoiceSecretaryDocumentTargetButton
+                      selected={!!captureTarget}
+                      disabled={!docPath}
+                      isDark={isDark}
+                      label={
                         captureTarget
                           ? t("voiceSecretaryDefaultDocumentActiveAriaLabel", {
                               title: document.title || docId,
@@ -195,41 +196,8 @@ export function VoiceSecretaryDocumentListPanel({
                                 "Set {{title}} as the default document for new transcript",
                             })
                       }
-                      title={
-                        captureTarget
-                          ? t("voiceSecretaryDefaultDocumentHint", {
-                              defaultValue: "New transcript is written here by default",
-                            })
-                          : t("voiceSecretarySetDefaultDocumentHint", {
-                              defaultValue: "Set as the default document for new transcript",
-                            })
-                      }
-                      disabled={!docPath}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (captureTarget) return;
-                        onSetCaptureTargetDocument(document);
-                      }}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                      }}
-                      className={classNames(
-                        "flex h-8 w-8 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-default disabled:opacity-45",
-                        captureTarget
-                          ? isDark
-                            ? "bg-white/12 text-white focus-visible:ring-white/40"
-                            : "bg-black/[0.07] text-[rgb(35,36,37)] focus-visible:ring-black/30"
-                          : isDark
-                            ? "text-slate-400 hover:bg-white/[0.08] hover:text-white focus-visible:ring-white/40"
-                            : "text-gray-400 hover:bg-black/[0.05] hover:text-gray-800 focus-visible:ring-black/30",
-                      )}
-                    >
-                      {captureTarget ? (
-                        <FileCheckIcon size={18} aria-hidden="true" />
-                      ) : (
-                        <FileIcon size={18} aria-hidden="true" />
-                      )}
-                    </button>
+                      onActivate={() => onSetCaptureTargetDocument(document)}
+                    />
                   </span>
                 </span>
                 {document.workspace_path ? (

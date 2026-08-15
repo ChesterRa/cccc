@@ -58,4 +58,77 @@ describe("useComposerStore voice document drafts", () => {
     useComposerStore.getState().switchGroup("group-b", "group-a");
     expect(useComposerStore.getState().quotedVoiceDocumentRef?.document_path).toBe("voice/a.md");
   });
+
+  it("clears an archived document from the active composer and its saved draft", () => {
+    const ref = {
+      kind: "voice_document_ref" as const,
+      group_id: "group-a",
+      document_id: "doc-a",
+      document_path: "voice/a.md",
+      title: "A",
+    };
+    useComposerStore.setState({
+      activeGroupId: "group-a",
+      quotedVoiceDocumentRef: ref,
+      drafts: {
+        "group-a": {
+          composerText: "Review this",
+          composerFiles: [],
+          toText: "",
+          replyTarget: null,
+          quotedPresentationRef: null,
+          quotedVoiceDocumentRef: ref,
+          priority: "normal",
+          replyRequired: false,
+        },
+      },
+    });
+
+    useComposerStore
+      .getState()
+      .clearQuotedVoiceDocumentRefsForDocument("group-a", {
+        document_id: "doc-a",
+        document_path: "archive/a.md",
+        title: "A",
+        status: "archived",
+      });
+
+    expect(useComposerStore.getState().quotedVoiceDocumentRef).toBeNull();
+    expect(useComposerStore.getState().drafts["group-a"]?.quotedVoiceDocumentRef).toBeNull();
+  });
+
+  it("clears an archived document from an inactive group draft", () => {
+    const ref = {
+      kind: "voice_document_ref" as const,
+      group_id: "group-a",
+      document_path: "voice/a.md",
+    };
+    useComposerStore.setState({
+      activeGroupId: "group-b",
+      quotedVoiceDocumentRef: null,
+      drafts: {
+        "group-a": {
+          composerText: "Review this",
+          composerFiles: [],
+          toText: "",
+          replyTarget: null,
+          quotedPresentationRef: null,
+          quotedVoiceDocumentRef: ref,
+          priority: "normal",
+          replyRequired: false,
+        },
+      },
+    });
+
+    useComposerStore
+      .getState()
+      .clearQuotedVoiceDocumentRefsForDocument("group-a", {
+        document_id: "",
+        document_path: "voice/a.md",
+        title: "A",
+        status: "archived",
+      });
+
+    expect(useComposerStore.getState().drafts["group-a"]?.quotedVoiceDocumentRef).toBeNull();
+  });
 });

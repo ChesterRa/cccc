@@ -48,7 +48,9 @@ class AssistantStatusUpdateData(BaseModel):
 
 class AssistantVoiceDocumentData(BaseModel):
     assistant_id: str
+    document_id: str = ""
     document_path: str = ""
+    archived_from_document_path: str = ""
     action: str
     input_kind: str = ""
     request_id: str = ""

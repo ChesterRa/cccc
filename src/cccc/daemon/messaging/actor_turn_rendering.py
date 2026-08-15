@@ -8,6 +8,7 @@ instructions, not their own message grammar.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, Iterable, List
 
@@ -15,6 +16,14 @@ from ...kernel.peer_insight import PEER_PERSPECTIVE_AGENT_LABEL, append_peer_per
 
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 from .local_group_route import render_local_group_route_ref
+
+_UNICODE_LINE_SEPARATOR_ESCAPES = str.maketrans(
+    {
+        "\u0085": "\\u0085",
+        "\u2028": "\\u2028",
+        "\u2029": "\\u2029",
+    }
+)
 
 
 def compact_delivery_text(value: Any, *, limit: int) -> str:
@@ -24,6 +33,10 @@ def compact_delivery_text(value: Any, *, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _encode_inline_json_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False).translate(_UNICODE_LINE_SEPARATOR_ESCAPES)
 
 
 def _presentation_slot_label(slot_id: str, label: str) -> str:
@@ -156,8 +169,9 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
                 )
                 group_id = compact_delivery_text(ref.get("group_id"), limit=48)
                 scope = f", group_id={group_id}" if group_id else ""
+                encoded_document_path = _encode_inline_json_string(document_path)
                 lines.append(
-                    f"- Voice document {title} (path={document_path}{scope}); "
+                    f"- Voice document {title} (path={encoded_document_path}{scope}); "
                     "read this workspace-relative file before answering when its contents are needed."
                 )
                 rendered += 1

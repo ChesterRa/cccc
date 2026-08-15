@@ -304,8 +304,6 @@
   "voiceSecretaryCaptureTargetChangeFailed": "既定の作業ドキュメントの変更に失敗しました。",
   "voiceSecretaryDefaultDocumentBadge": "既定の作業ドキュメント",
   "voiceSecretaryDefaultDocumentLegend": "既定の作業ドキュメントが新しい文字起こしを受け取ります",
-  "voiceSecretaryDefaultDocumentHint": "新しい文字起こしは既定でここに書き込まれます",
-  "voiceSecretarySetDefaultDocumentHint": "新しい文字起こしの既定ドキュメントにする",
   "voiceSecretaryDefaultDocumentActiveAriaLabel": "{{title}} は新しい文字起こしの既定ドキュメントです",
   "voiceSecretarySetDefaultDocumentAriaLabel": "{{title}} を新しい文字起こしの既定ドキュメントにする",
   "voiceSecretarySwitchDocumentConfirm": "ドキュメントを切り替えて、このパネル内の未保存の編集を破棄しますか？",

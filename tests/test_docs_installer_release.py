@@ -70,6 +70,44 @@ def test_docs_installer_resolver_skips_a_newer_incomplete_release(tmp_path: Path
     assert resolved.stdout.strip() == "0.4.34-rc3"
 
 
+def test_docs_installer_resolver_sorts_complete_releases_by_semver(tmp_path: Path) -> None:
+    metadata = tmp_path / "releases.json"
+    metadata.write_text(
+        json.dumps(
+            [
+                _release("0.4.20", complete=True),
+                _release("0.4.34-rc3", complete=True),
+                _release("0.4.33", complete=True),
+                _release("0.4.34-rc10", complete=True),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = _resolve(metadata)
+
+    assert resolved.returncode == 0
+    assert resolved.stdout.strip() == "0.4.34-rc10"
+
+
+def test_docs_installer_resolver_prefers_a_stable_release_over_its_prerelease(tmp_path: Path) -> None:
+    metadata = tmp_path / "releases.json"
+    metadata.write_text(
+        json.dumps(
+            [
+                _release("0.4.34-rc10", complete=True),
+                _release("0.4.34", complete=True),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = _resolve(metadata)
+
+    assert resolved.returncode == 0
+    assert resolved.stdout.strip() == "0.4.34"
+
+
 def test_docs_installer_resolver_rejects_an_incomplete_release_set(tmp_path: Path) -> None:
     metadata = tmp_path / "releases.json"
     metadata.write_text(

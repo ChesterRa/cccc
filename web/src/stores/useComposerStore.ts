@@ -1,86 +1,36 @@
 // Chat composer state store with per-group draft preservation.
 import { create } from "zustand";
-import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } from "../types";
+import type {
+  AssistantVoiceDocument,
+  PresentationMessageRef,
+  ReplyTarget,
+  VoiceDocumentMessageRef,
+} from "../types";
+import { voiceDocumentRefMatchesDocument } from "../utils/voiceDocumentRefs";
+import {
+  deliveryStateForMessageMode,
+  loadComposerMessageModePreference,
+  normalizeComposerMessageMode,
+  saveComposerMessageModePreference,
+  type ComposerMessageMode,
+} from "./composerMessageMode";
 
-export type ComposerMessageMode = "normal" | "attention" | "reply";
-
-export const COMPOSER_MESSAGE_MODE_STORAGE_KEY = "cccc-composer-message-mode";
-export const DEFAULT_COMPOSER_MESSAGE_MODE: ComposerMessageMode = "reply";
-
-export function normalizeComposerMessageMode(value: unknown): ComposerMessageMode {
-  return value === "normal" || value === "attention" || value === "reply"
-    ? value
-    : DEFAULT_COMPOSER_MESSAGE_MODE;
-}
-
-export function getComposerMessageMode(
-  priority: "normal" | "attention",
-  replyRequired: boolean,
-): ComposerMessageMode {
-  if (replyRequired) return "reply";
-  return priority === "attention" ? "attention" : "normal";
-}
-
-function deliveryStateForMessageMode(mode: ComposerMessageMode): {
-  priority: "normal" | "attention";
-  replyRequired: boolean;
-} {
-  if (mode === "attention") return { priority: "attention", replyRequired: false };
-  if (mode === "reply") return { priority: "normal", replyRequired: true };
-  return { priority: "normal", replyRequired: false };
-}
-
-export function loadComposerMessageModePreference(): ComposerMessageMode {
-  try {
-    if (typeof localStorage === "undefined") return DEFAULT_COMPOSER_MESSAGE_MODE;
-    return normalizeComposerMessageMode(localStorage.getItem(COMPOSER_MESSAGE_MODE_STORAGE_KEY));
-  } catch (error) {
-    console.warn("Failed to read composer message mode from localStorage:", error);
-    return DEFAULT_COMPOSER_MESSAGE_MODE;
-  }
-}
-
-function saveComposerMessageModePreference(mode: ComposerMessageMode): void {
-  try {
-    if (typeof localStorage === "undefined") return;
-    localStorage.setItem(COMPOSER_MESSAGE_MODE_STORAGE_KEY, mode);
-  } catch (error) {
-    console.warn("Failed to persist composer message mode to localStorage:", error);
-  }
-}
+export {
+  COMPOSER_MESSAGE_MODE_STORAGE_KEY,
+  DEFAULT_COMPOSER_MESSAGE_MODE,
+  getComposerMessageMode,
+  loadComposerMessageModePreference,
+  normalizeComposerMessageMode,
+  type ComposerMessageMode,
+} from "./composerMessageMode";
+export {
+  getComposerDestGroupDisplayValue,
+  getEffectiveComposerDestGroupId,
+  isComposerGroupSettled,
+} from "./composerGroupRouting";
 
 const initialMessageMode = loadComposerMessageModePreference();
 const initialDeliveryState = deliveryStateForMessageMode(initialMessageMode);
-
-export function getEffectiveComposerDestGroupId(
-  destGroupId: string,
-  activeGroupId: string,
-  selectedGroupId: string,
-): string {
-  const selected = String(selectedGroupId || "").trim();
-  const active = String(activeGroupId || "").trim();
-  const dest = String(destGroupId || "").trim();
-
-  if (!selected) return dest;
-  // During the first frame after a group switch, composer state may still belong
-  // to the previous group; avoid carrying that old destination into the new group.
-  if (active !== selected) return selected;
-  return dest || selected;
-}
-
-export function isComposerGroupSettled(activeGroupId: string, selectedGroupId: string): boolean {
-  return String(activeGroupId || "").trim() === String(selectedGroupId || "").trim();
-}
-
-export function getComposerDestGroupDisplayValue(
-  destGroupId: string,
-  selectedGroupId: string,
-  composerGroupSettled: boolean,
-): string {
-  const selected = String(selectedGroupId || "").trim();
-  if (!composerGroupSettled) return selected;
-  return String(destGroupId || "").trim() || selected;
-}
 
 interface GroupDraft {
   composerText: string;
@@ -120,6 +70,10 @@ interface ComposerState {
   setReplyTarget: (target: ReplyTarget) => void;
   setQuotedPresentationRef: (ref: PresentationMessageRef | null) => void;
   setQuotedVoiceDocumentRef: (ref: VoiceDocumentMessageRef | null) => void;
+  clearQuotedVoiceDocumentRefsForDocument: (
+    groupId: string,
+    document: AssistantVoiceDocument,
+  ) => void;
   setPriority: (priority: "normal" | "attention") => void;
   setReplyRequired: (value: boolean) => void;
   setMessageMode: (mode: ComposerMessageMode) => void;
@@ -200,6 +154,26 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     }),
   setQuotedPresentationRef: (ref) => set({ quotedPresentationRef: ref }),
   setQuotedVoiceDocumentRef: (ref) => set({ quotedVoiceDocumentRef: ref }),
+  clearQuotedVoiceDocumentRefsForDocument: (groupId, document) =>
+    set((state) => {
+      const gid = String(groupId || "").trim();
+      if (!gid) return state;
+      const activeMatches =
+        String(state.activeGroupId || "").trim() === gid &&
+        !!state.quotedVoiceDocumentRef &&
+        voiceDocumentRefMatchesDocument(state.quotedVoiceDocumentRef, gid, document);
+      const draft = state.drafts[gid];
+      const draftMatches =
+        !!draft?.quotedVoiceDocumentRef &&
+        voiceDocumentRefMatchesDocument(draft.quotedVoiceDocumentRef, gid, document);
+      if (!activeMatches && !draftMatches) return state;
+      return {
+        ...(activeMatches ? { quotedVoiceDocumentRef: null } : {}),
+        ...(draftMatches
+          ? { drafts: { ...state.drafts, [gid]: { ...draft, quotedVoiceDocumentRef: null } } }
+          : {}),
+      };
+    }),
   setPriority: (priority) => set({ priority }),
   setReplyRequired: (value) => set({ replyRequired: !!value }),
   setMessageMode: (mode) => {

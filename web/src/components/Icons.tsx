@@ -17,6 +17,7 @@ import {
   EllipsisVertical,
   File,
   FileCheck,
+  FileText,
   Folder,
   Globe,
   GripVertical,
@@ -146,6 +147,7 @@ export const InfoIcon = createIcon(Info, 2);
 export const ImageIcon = createIcon(Image);
 export const FileIcon = createIcon(File);
 export const FileCheckIcon = createIcon(FileCheck, 1.9);
+export const FileTextIcon = createIcon(FileText, 1.8);
 export const MessageSquareIcon = createIcon(MessageSquare);
 export const MessageSquareQuoteIcon = createIcon(MessageSquareQuote);
 export const MessageSquareTextIcon = createIcon(MessageSquareText);

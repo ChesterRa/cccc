@@ -9,7 +9,6 @@ import type {
   AssistantServiceRuntime,
   AssistantVoiceTranscriptSegmentResult,
   BuiltinAssistant,
-  LedgerEvent,
   VoiceDocumentMessageRef,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
@@ -31,7 +30,6 @@ import {
   ackVoiceAssistantPromptDraft,
   appendVoiceAssistantInput,
   appendVoiceAssistantTranscriptSegment,
-  archiveVoiceAssistantDocument,
   clearVoiceAssistantAskRequests,
   fetchLatestVoiceAssistantMeetingSession,
   fetchVoiceAssistantMeetingSession,
@@ -44,7 +42,7 @@ import {
   updateAssistantSettings,
   withAuthToken,
 } from "../../services/api";
-import { useGroupStore, useUIStore } from "../../stores";
+import { useUIStore } from "../../stores";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
 import { copyTextToClipboard } from "../../utils/copy";
@@ -52,6 +50,15 @@ import { VoiceActivityStreamCard } from "./voice-secretary/VoiceActivityStreamCa
 import { VoiceSecretaryDocumentListPanel } from "./voice-secretary/VoiceSecretaryDocumentListPanel";
 import { VoiceSecretaryWorkspacePanel } from "./voice-secretary/VoiceSecretaryWorkspacePanel";
 import { useVoiceCaptureTargetDocumentSelection } from "./voice-secretary/useVoiceCaptureTargetDocumentSelection";
+import {
+  useVoiceDocumentArchive,
+  type VoiceSecretaryAction,
+} from "./voice-secretary/useVoiceDocumentArchive";
+import {
+  clearRemovedVoiceDocumentReferences,
+  useVoiceDocumentLedgerProjection,
+  useVoiceDocumentReferenceCleanup,
+} from "./voice-secretary/voiceDocumentReferenceLifecycle";
 import { useVoiceAudioLevelMeter } from "./voice-secretary/useVoiceAudioLevelMeter";
 import { shouldScheduleBrowserSpeechErrorRestart } from "./voice-secretary/browserSpeechRecoveryModel";
 import {
@@ -171,7 +178,6 @@ type VoiceSecretaryComposerControlProps = {
   variant?: "button" | "assistantRow";
   captureMode?: VoiceSecretaryCaptureMode;
   onCaptureModeChange?: (mode: VoiceSecretaryCaptureMode) => void;
-  onDocumentArchived?: (document: AssistantVoiceDocument) => void;
   onQuoteDocument?: (ref: VoiceDocumentMessageRef) => void;
   composerText?: string;
   composerContext?: Record<string, unknown>;
@@ -367,7 +373,6 @@ export function VoiceSecretaryComposerControl({
   variant = "button",
   captureMode = "document",
   onCaptureModeChange,
-  onDocumentArchived,
   onQuoteDocument,
   composerText = "",
   composerContext = {},
@@ -450,6 +455,7 @@ export function VoiceSecretaryComposerControl({
   const voiceStreamItemIdRef = useRef("");
   const liveTranscriptPreviewRef = useRef<VoiceTranscriptPreview | null>(null);
   const archivedDocumentPathsRef = useRef<Set<string>>(new Set());
+  const clearVoiceDocumentReferences = useVoiceDocumentReferenceCleanup();
   const selectedGroupIdRef = useRef("");
   const unmountCleanupRef = useRef<() => void>(() => undefined);
   selectedGroupIdRef.current = String(selectedGroupId || "").trim();
@@ -526,17 +532,7 @@ export function VoiceSecretaryComposerControl({
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [actionBusy, setActionBusy] = useState<
-    | ""
-    | "enable"
-    | "transcribe"
-    | "save_doc"
-    | "new_doc"
-    | "instruct_doc"
-    | "instruct_ask"
-    | "archive_doc"
-    | "clear_ask"
-  >("");
+  const [actionBusy, setActionBusy] = useState<VoiceSecretaryAction>("");
   const [recognitionLanguageSaving, setRecognitionLanguageSaving] = useState(false);
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
   const [serviceRuntimesById, setServiceRuntimesById] = useState<
@@ -665,17 +661,10 @@ export function VoiceSecretaryComposerControl({
     },
     [isActiveRecordingRun, setRecordingStartingFlag],
   );
-  const latestVoiceLedgerEvent = useGroupStore((state): LedgerEvent | null => {
-    const gid = String(selectedGroupId || "").trim();
-    const events = gid ? state.chatByGroup[gid]?.events || [] : [];
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index];
-      const kind = String(event?.kind || "").trim();
-      if (!kind.startsWith("assistant.voice.")) continue;
-      return event;
-    }
-    return null;
-  });
+  const latestVoiceLedgerEvent = useVoiceDocumentLedgerProjection(
+    selectedGroupId,
+    clearVoiceDocumentReferences,
+  );
 
   useEffect(() => {
     recordingRef.current = recording;
@@ -1206,6 +1195,12 @@ export function VoiceSecretaryComposerControl({
             return !docPath || !archivedDocumentPathsRef.current.has(docPath);
           },
         );
+        clearRemovedVoiceDocumentReferences(
+          clearVoiceDocumentReferences,
+          gid,
+          documentsRef.current,
+          nextDocuments,
+        );
         setDocuments(nextDocuments);
         const serverCaptureTargetPath =
           resolveVoiceDocumentPath(
@@ -1326,7 +1321,7 @@ export function VoiceSecretaryComposerControl({
         }
       }
     },
-    [isCurrentGroup, loadDocumentDraft, selectedGroupId, showError],
+    [clearVoiceDocumentReferences, isCurrentGroup, loadDocumentDraft, selectedGroupId, showError],
   );
 
   useEffect(() => {
@@ -4231,81 +4226,26 @@ export function VoiceSecretaryComposerControl({
     t,
   });
 
-  const archiveDocument = useCallback(
-    async (targetDocument?: AssistantVoiceDocument | null) => {
-      const gid = String(selectedGroupId || "").trim();
-      const docPath = targetDocument
-        ? voiceDocumentPath(targetDocument)
-        : activeDocumentWritePath || viewedDocumentPath;
-      if (!gid || !docPath) return;
-      const archivedDocument = targetDocument || findVoiceDocument(documents, docPath);
-      const title = String(archivedDocument?.title || docPath).trim();
-      const confirmed = window.confirm(
-        t("voiceSecretaryArchiveDocumentConfirm", {
-          title,
-          defaultValue: 'Archive document "{{title}}"?',
-        }),
-      );
-      if (!confirmed) return;
-      const isActiveTarget = docPath === (activeDocumentWritePath || viewedDocumentPath);
-      setActionBusy("archive_doc");
-      try {
-        const resp = await archiveVoiceAssistantDocument(gid, docPath, { by: "user" });
-        if (!isCurrentGroup(gid)) return;
-        if (!resp.ok) {
-          showError(resp.error.message);
-          return;
-        }
-        onDocumentArchived?.(
-          archivedDocument || {
-            document_id: "",
-            document_path: docPath,
-            title,
-            status: "archived",
-          },
-        );
-        archivedDocumentPathsRef.current.add(docPath);
-        setDocuments((prev) => prev.filter((item) => voiceDocumentPath(item) !== docPath));
-        if (isActiveTarget) {
-          setViewedDocumentPath("");
-          loadDocumentDraft(null);
-          setDocumentEditing(false);
-        }
-        if (captureTargetDocumentPathRef.current === docPath) {
-          captureTargetDocumentPathRef.current = "";
-          setCaptureTargetDocumentPath("");
-        }
-        showNotice({
-          message: t("voiceSecretaryDocumentArchived", {
-            defaultValue: "Voice Secretary working document archived.",
-          }),
-        });
-        await refreshAssistant({ quiet: true });
-      } catch {
-        if (!isCurrentGroup(gid)) return;
-        showError(
-          t("voiceSecretaryDocumentArchiveFailed", {
-            defaultValue: "Failed to archive the Voice Secretary document.",
-          }),
-        );
-      } finally {
-        if (isCurrentGroup(gid)) setActionBusy("");
-      }
-    },
-    [
-      viewedDocumentPath,
-      activeDocumentWritePath,
-      documents,
-      isCurrentGroup,
-      loadDocumentDraft,
-      onDocumentArchived,
-      refreshAssistant,
-      selectedGroupId,
-      showError,
-      showNotice,
-      t,
-    ],
-  );
+  const archiveDocument = useVoiceDocumentArchive({
+    selectedGroupId,
+    activeDocumentWritePath,
+    viewedDocumentPath,
+    documents,
+    archivedDocumentPathsRef,
+    captureTargetDocumentPathRef,
+    isCurrentGroup,
+    loadDocumentDraft,
+    clearReferences: clearVoiceDocumentReferences,
+    refreshAssistant,
+    setActionBusy,
+    setDocuments,
+    setViewedDocumentPath,
+    setDocumentEditing,
+    setCaptureTargetDocumentPath,
+    showError,
+    showNotice,
+    t,
+  });
 
   const downloadCurrentDocument = useCallback(() => {
     if (!activeDocument) return;

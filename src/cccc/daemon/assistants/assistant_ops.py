@@ -6355,7 +6355,11 @@ def handle_assistant_voice_document_archive(args: Dict[str, Any]) -> DaemonRespo
             by=by,
             data={
                 "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                "document_id": str(record.get("document_id") or ""),
                 "document_path": _voice_document_path(record),
+                "archived_from_document_path": str(
+                    record.get("archived_from_workspace_path") or document_path
+                ),
                 "action": "archive",
                 "status": "archived",
                 "workspace_path": str(record.get("workspace_path") or ""),

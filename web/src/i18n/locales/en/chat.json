@@ -304,8 +304,6 @@
   "voiceSecretaryCaptureTargetChangeFailed": "Failed to change the default document.",
   "voiceSecretaryDefaultDocumentBadge": "Default document",
   "voiceSecretaryDefaultDocumentLegend": "default document receives new transcript",
-  "voiceSecretaryDefaultDocumentHint": "New transcript is written here by default",
-  "voiceSecretarySetDefaultDocumentHint": "Set as the default document for new transcript",
   "voiceSecretaryDefaultDocumentActiveAriaLabel": "{{title}} is the default document for new transcript",
   "voiceSecretarySetDefaultDocumentAriaLabel": "Set {{title}} as the default document for new transcript",
   "voiceSecretarySwitchDocumentConfirm": "Switch documents and discard unsaved edits in this panel?",

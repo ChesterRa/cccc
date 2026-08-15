@@ -86,6 +86,12 @@ export function VoiceSecretaryWorkspacePanel({
     [transcriptItems],
   );
   const transcriptCount = transcriptRows.length;
+  const documentActionClassName = classNames(
+    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
+    isDark
+      ? "border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/10"
+      : "border-black/10 bg-white text-gray-600 hover:bg-black/5",
+  );
   return (
     <section
       className={classNames(
@@ -187,12 +193,7 @@ export function VoiceSecretaryWorkspacePanel({
                   type="button"
                   onClick={onQuoteDocument}
                   disabled={documentLoading || documentHasUnsavedEdits}
-                  className={classNames(
-                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
-                    isDark
-                      ? "border-violet-300/20 bg-violet-400/10 text-violet-100 hover:bg-violet-400/20"
-                      : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100",
-                  )}
+                  className={documentActionClassName}
                   title={
                     documentHasUnsavedEdits
                       ? t("voiceSecretaryQuoteDocumentSaveFirst", {
@@ -208,12 +209,7 @@ export function VoiceSecretaryWorkspacePanel({
                   type="button"
                   onClick={onArchiveDocument}
                   disabled={!!actionBusy || documentLoading}
-                  className={classNames(
-                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
-                    isDark
-                      ? "border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/10"
-                      : "border-black/10 bg-white text-gray-600 hover:bg-black/5",
-                  )}
+                  className={documentActionClassName}
                   title={t("voiceSecretaryArchiveDocument", { defaultValue: "Archive viewed" })}
                 >
                   {actionBusy === "archive_doc"

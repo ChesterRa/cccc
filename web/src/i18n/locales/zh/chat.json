@@ -304,8 +304,6 @@
   "voiceSecretaryCaptureTargetChangeFailed": "切换默认维护文档失败。",
   "voiceSecretaryDefaultDocumentBadge": "默认维护文档",
   "voiceSecretaryDefaultDocumentLegend": "默认维护文档会接收新转写",
-  "voiceSecretaryDefaultDocumentHint": "新转写会默认写入这里",
-  "voiceSecretarySetDefaultDocumentHint": "设为新转写的默认维护文档",
   "voiceSecretaryDefaultDocumentActiveAriaLabel": "{{title}} 是新转写的默认维护文档",
   "voiceSecretarySetDefaultDocumentAriaLabel": "将 {{title}} 设为新转写的默认维护文档",
   "voiceSecretarySwitchDocumentConfirm": "切换文档并丢弃本面板中未保存的修改吗？",

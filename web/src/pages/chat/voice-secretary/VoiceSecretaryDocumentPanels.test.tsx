@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import type { AssistantVoiceDocument } from "../../../types";
 import { VoiceSecretaryDocumentListPanel } from "./VoiceSecretaryDocumentListPanel";
+import { VoiceSecretaryDocumentTargetButton } from "./VoiceSecretaryDocumentTargetButton";
 import { VoiceSecretaryWorkspacePanel } from "./VoiceSecretaryWorkspacePanel";
 
 const t = ((key: string, options?: Record<string, unknown>) => {
@@ -54,7 +55,7 @@ describe("Voice Secretary document panels", () => {
     host.remove();
   });
 
-  it("uses document icons for the default action without losing keyboard or aria behavior", async () => {
+  it("uses one container and one state glyph without losing interaction", async () => {
     const onSelectDocument = vi.fn();
     const onSetCaptureTargetDocument = vi.fn();
 
@@ -85,11 +86,19 @@ describe("Voice Secretary document panels", () => {
     const selectedAction = host.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
     const availableAction = host.querySelector<HTMLButtonElement>('button[aria-pressed="false"]');
     expect(selectedAction?.disabled).toBe(false);
-    expect(selectedAction?.querySelector("svg")?.classList.contains("lucide-file-check")).toBe(
-      true,
-    );
-    expect(availableAction?.querySelector("svg")?.classList.contains("lucide-file")).toBe(true);
+    expect(selectedAction?.dataset.state).toBe("default");
+    expect(availableAction?.dataset.state).toBe("available");
+    expect(selectedAction?.querySelectorAll("svg")).toHaveLength(1);
+    expect(availableAction?.querySelectorAll("svg")).toHaveLength(1);
+    expect(selectedAction?.querySelector(".lucide-file-check")).toBeTruthy();
+    expect(availableAction?.querySelector(".lucide-file-text")).toBeTruthy();
+    expect(selectedAction?.querySelector("[data-document-surface]")).toBeNull();
+    expect(selectedAction?.querySelector("[data-default-indicator]")).toBeNull();
+    expect(selectedAction?.className).toContain("bg-[rgb(35,36,37)]");
     expect(selectedAction?.getAttribute("aria-label")).toContain("Primary notes");
+    expect(selectedAction?.getAttribute("title")).toBeNull();
+    expect(availableAction?.getAttribute("aria-label")).toContain("Follow-up");
+    expect(availableAction?.getAttribute("title")).toBeNull();
     expect(selectedAction?.className).toContain("focus-visible:ring-2");
 
     await act(async () => selectedAction?.click());
@@ -116,6 +125,46 @@ describe("Voice Secretary document panels", () => {
     expect(onSelectDocument).toHaveBeenCalledWith(documents[1]);
   });
 
+  it("keeps the single-glyph control legible in dark and disabled states", async () => {
+    const onActivate = vi.fn();
+    await act(async () => {
+      root.render(
+        <VoiceSecretaryDocumentTargetButton
+          disabled={false}
+          isDark
+          label="Primary notes is the default document"
+          selected
+          onActivate={onActivate}
+        />,
+      );
+    });
+
+    const darkDefault = host.querySelector<HTMLButtonElement>("[data-voice-document-target]");
+    expect(darkDefault?.className).toContain("bg-white/[0.13]");
+    expect(darkDefault?.getAttribute("aria-label")).toBe("Primary notes is the default document");
+    expect(darkDefault?.getAttribute("title")).toBeNull();
+    expect(darkDefault?.querySelectorAll("svg")).toHaveLength(1);
+    expect(darkDefault?.querySelector(".lucide-file-check")).toBeTruthy();
+
+    await act(async () => {
+      root.render(
+        <VoiceSecretaryDocumentTargetButton
+          disabled
+          isDark={false}
+          label="Document has no repository path"
+          selected={false}
+          onActivate={onActivate}
+        />,
+      );
+    });
+    const disabled = host.querySelector<HTMLButtonElement>("[data-voice-document-target]");
+    expect(disabled?.disabled).toBe(true);
+    expect(disabled?.dataset.state).toBe("available");
+    expect(disabled?.className).toContain("disabled:opacity-40");
+    await act(async () => disabled?.click());
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+
   it("keeps behavioral status and repo metadata while removing duplicate type chips", async () => {
     await act(async () => {
       root.render(workspacePanel());
@@ -126,6 +175,26 @@ describe("Voice Secretary document panels", () => {
     expect(host.textContent).toContain("Default document");
     expect(host.textContent).toContain("Repo markdown");
     expect(host.textContent).toContain("docs/voice/primary.md");
+
+    const lightQuoteAction = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Quote in chat"),
+    );
+    const lightArchiveAction = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Archive"),
+    );
+    expect(lightQuoteAction?.className).toBe(lightArchiveAction?.className);
+    expect(lightQuoteAction?.className).toContain("border-black/10");
+    expect(lightQuoteAction?.className).not.toContain("violet");
+    expect(lightQuoteAction?.querySelector(".lucide-message-square-quote")).toBeTruthy();
+
+    await act(async () => {
+      root.render(workspacePanel({ isDark: true }));
+    });
+    const darkQuoteAction = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Quote in chat"),
+    );
+    expect(darkQuoteAction?.className).toContain("border-white/10");
+    expect(darkQuoteAction?.className).not.toContain("violet");
 
     await act(async () => {
       root.render(

@@ -2143,6 +2143,10 @@ class TestAssistantOps(unittest.TestCase):
             self.assertFalse(imported_path.exists())
             archived_doc = (archive.result or {}).get("document") if isinstance(archive.result, dict) else {}
             self.assertIn("docs/voice-secretary/archive/", str(archived_doc.get("workspace_path") or ""))
+            archive_event = (archive.result or {}).get("event") if isinstance(archive.result, dict) else {}
+            archive_event_data = archive_event.get("data") if isinstance(archive_event, dict) else {}
+            self.assertEqual(archive_event_data.get("document_id"), archived_doc.get("document_id"))
+            self.assertEqual(archive_event_data.get("archived_from_document_path"), imported_rel)
 
             after_archive, _ = self._call("assistant_voice_document_list", {"group_id": group_id})
             self.assertTrue(after_archive.ok, getattr(after_archive, "error", None))

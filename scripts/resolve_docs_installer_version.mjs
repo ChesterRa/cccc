@@ -19,14 +19,58 @@ function requiredAssets(version) {
   ];
 }
 
-function completeReleaseVersion(release) {
-  const match = /^v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)$/.exec(
-    release.tag_name || "",
+function parseVersion(value) {
+  const match = /^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?(?:\+([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?$/.exec(
+    value || "",
   );
-  if (!match || release.draft) {
+  if (!match) return null;
+  return {
+    raw: match[0].replace(/^v/, ""),
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] ? match[4].split(".") : [],
+  };
+}
+
+function compareIdentifiers(left, right) {
+  const leftNumeric = /^[0-9]+$/.test(left);
+  const rightNumeric = /^[0-9]+$/.test(right);
+  if (leftNumeric && rightNumeric) return Number(left) - Number(right);
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  const leftNatural = /^([A-Za-z-]+)([0-9]+)$/.exec(left);
+  const rightNatural = /^([A-Za-z-]+)([0-9]+)$/.exec(right);
+  if (leftNatural && rightNatural && leftNatural[1] === rightNatural[1]) {
+    return Number(leftNatural[2]) - Number(rightNatural[2]);
+  }
+  return left.localeCompare(right, "en");
+}
+
+function compareVersions(left, right) {
+  for (let index = 0; index < left.core.length; index += 1) {
+    if (left.core[index] !== right.core[index]) return left.core[index] - right.core[index];
+  }
+  if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+    if (left.prerelease.length === right.prerelease.length) return 0;
+    return left.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftIdentifier = left.prerelease[index];
+    const rightIdentifier = right.prerelease[index];
+    if (leftIdentifier === undefined || rightIdentifier === undefined) {
+      return leftIdentifier === undefined ? -1 : 1;
+    }
+    const compared = compareIdentifiers(leftIdentifier, rightIdentifier);
+    if (compared !== 0) return compared;
+  }
+  return 0;
+}
+
+function completeReleaseVersion(release) {
+  const parsed = parseVersion(release.tag_name);
+  if (!String(release.tag_name || "").startsWith("v") || !parsed || release.draft) {
     return "";
   }
-  const version = match[1];
+  const version = parsed.raw;
   const uploadedAssets = new Set(
     (release.assets || [])
       .filter((asset) => asset.state === "uploaded")
@@ -58,7 +102,12 @@ if (metadataPath) {
   releases = await response.json();
 }
 
-const version = releases.map(completeReleaseVersion).find(Boolean);
+const version = releases
+  .map(completeReleaseVersion)
+  .filter(Boolean)
+  .map((value) => parseVersion(value))
+  .filter(Boolean)
+  .sort((left, right) => compareVersions(right, left))[0]?.raw;
 if (!version) {
   throw new Error("No published GitHub Release has the complete installer asset set");
 }
