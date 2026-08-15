@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -52,6 +53,10 @@ def is_direct_codex_command(command: Sequence[str]) -> bool:
     return True
 
 
+def _toml_string(value: object) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+
 def _hook_hash(event_key: str, command: str) -> str:
     identity = {
         "event_name": event_key,
@@ -70,8 +75,63 @@ def _hook_hash(event_key: str, command: str) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _toml_string(value: object) -> str:
-    return json.dumps(str(value), ensure_ascii=False)
+def _insert_before_prompt_tail(command: list[str], arguments: Sequence[str]) -> None:
+    try:
+        index = command.index("--")
+    except ValueError:
+        index = len(command)
+    command[index:index] = [str(item) for item in arguments]
+
+
+def _hook_arguments(hook_command: str) -> list[str]:
+    hook_toml = json.dumps(hook_command)
+    arguments: list[str] = []
+    for event_name, _ in HOOK_EVENTS:
+        arguments.extend(
+            [
+                "-c",
+                (
+                    f"hooks.{event_name}=[{{hooks=[{{type=\"command\","
+                    f"command={hook_toml},timeout={HOOK_TIMEOUT_SECONDS}}}]}}]"
+                ),
+            ]
+        )
+    trusted = ",".join(
+        (
+            f"{json.dumps(f'/<session-flags>/config.toml:{event_key}:0:0')}"
+            f'={{trusted_hash="{_hook_hash(event_key, hook_command)}"}}'
+        )
+        for _, event_key in HOOK_EVENTS
+    )
+    arguments.extend(["-c", f"hooks.state={{{trusted}}}"])
+    return arguments
+
+
+def probe_codex_hook_config(
+    command: Sequence[str],
+    cwd: Path,
+    env: Mapping[str, str],
+    cccc_command: Sequence[str],
+) -> bool:
+    if not command:
+        return False
+    process_env = os.environ.copy()
+    process_env.update({str(key): str(value) for key, value in env.items()})
+    hook_command = shell_command(cccc_command, "hook", "codex-state")
+    try:
+        completed = subprocess.run(
+            [str(command[0]), *_hook_arguments(hook_command), "mcp", "list"],
+            cwd=str(cwd),
+            env=process_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def configure_codex_launch(
@@ -94,7 +154,8 @@ def configure_codex_launch(
     hook_command = shell_command(cli_command, "hook", "codex-state")
     executable_toml = _toml_string(cli_command[0])
     mcp_args = json.dumps([*cli_command[1:], "mcp"], separators=(",", ":"))
-    configured.extend(
+    _insert_before_prompt_tail(
+        configured,
         [
             "-c",
             f"mcp_servers.cccc.command={executable_toml}",
@@ -106,27 +167,9 @@ def configure_codex_launch(
             f"mcp_servers.cccc.env.CCCC_GROUP_ID={_toml_string(group_id)}",
             "-c",
             f"mcp_servers.cccc.env.CCCC_ACTOR_ID={_toml_string(actor_id)}",
-        ]
+        ],
     )
-    hook_toml = json.dumps(hook_command)
-    for event_name, _ in HOOK_EVENTS:
-        configured.extend(
-            [
-                "-c",
-                (
-                    f"hooks.{event_name}=[{{hooks=[{{type=\"command\","
-                    f"command={hook_toml},timeout={HOOK_TIMEOUT_SECONDS}}}]}}]"
-                ),
-            ]
-        )
-    trusted = ",".join(
-        (
-            f"{json.dumps(f'/<session-flags>/config.toml:{event_key}:0:0')}"
-            f'={{trusted_hash="{_hook_hash(event_key, hook_command)}"}}'
-        )
-        for _, event_key in HOOK_EVENTS
-    )
-    configured.extend(["-c", f"hooks.state={{{trusted}}}"])
+    _insert_before_prompt_tail(configured, _hook_arguments(hook_command))
     launch_env.update(
         {
             "CCCC_HOME": str(home),

@@ -20,7 +20,11 @@ from .claude import (
     is_direct_claude_command,
     parse_claude_version,
 )
-from .codex import configure_codex_launch, is_direct_codex_command
+from .codex import (
+    configure_codex_launch,
+    is_direct_codex_command,
+    probe_codex_hook_config,
+)
 from .input_observer import (
     HookSessionCapability,
     observe_pty_input,
@@ -29,6 +33,7 @@ from .input_observer import (
 from .provider_command import normalize_cli_command
 
 ClaudeVersionProbe = Callable[[list[str], Path, Mapping[str, str]], tuple[int, int, int] | None]
+CodexHookProbe = Callable[[list[str], Path, Mapping[str, str], list[str]], bool]
 _LAUNCH_LOCKS: dict[tuple[int, str, str], tuple[threading.Lock, int]] = {}
 _LAUNCH_LOCKS_GUARD = threading.Lock()
 
@@ -74,6 +79,7 @@ def start_actor_with_hooks(
     max_backlog_bytes: int,
     cccc_executable: Path | None = None,
     cccc_command: list[str] | None = None,
+    codex_hook_probe: CodexHookProbe | None = None,
     claude_version_probe: ClaudeVersionProbe | None = None,
 ) -> Any:
     with serialize_actor_launch(supervisor, group_id, actor_id):
@@ -89,6 +95,7 @@ def start_actor_with_hooks(
             max_backlog_bytes=max_backlog_bytes,
             cccc_executable=cccc_executable,
             cccc_command=cccc_command,
+            codex_hook_probe=codex_hook_probe,
             claude_version_probe=claude_version_probe,
         )
 
@@ -106,6 +113,7 @@ def _start_actor_with_hooks_serialized(
     max_backlog_bytes: int,
     cccc_executable: Path | None = None,
     cccc_command: list[str] | None = None,
+    codex_hook_probe: CodexHookProbe | None = None,
     claude_version_probe: ClaudeVersionProbe | None = None,
 ) -> Any:
     cli_command = normalize_cli_command(cccc_command, cccc_executable)
@@ -137,17 +145,29 @@ def _start_actor_with_hooks_serialized(
     try:
         if runtime_name == "codex" and is_direct_codex_command(argv):
             attempted = True
-            argv, launch_env = configure_codex_launch(
-                home=home,
-                group_id=group_id,
-                actor_id=actor_id,
-                command=argv,
-                env=launch_env,
-                cccc_command=cli_command,
-                launch_token=token,
-            )
-            hook_state_active = True
-            hook_input_active = True
+            unavailable_event = "HookUnavailableSettings"
+            probe = codex_hook_probe or probe_codex_hook_config
+            if not probe(argv, cwd, launch_env, cli_command):
+                begin_launch(
+                    home,
+                    runtime_name,
+                    group_id,
+                    actor_id,
+                    token,
+                    event=unavailable_event,
+                )
+            else:
+                argv, launch_env = configure_codex_launch(
+                    home=home,
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    command=argv,
+                    env=launch_env,
+                    cccc_command=cli_command,
+                    launch_token=token,
+                )
+                hook_state_active = True
+                hook_input_active = True
         elif runtime_name == "claude" and is_direct_claude_command(argv):
             attempted = True
             unavailable_event = "HookUnavailableVersion"

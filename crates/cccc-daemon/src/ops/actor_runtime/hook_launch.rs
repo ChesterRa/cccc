@@ -7,6 +7,23 @@ use std::path::Path;
 use crate::dispatch::OpError;
 use crate::ops::{codex_mcp, runtime_hook_session};
 
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum LaunchIntegration {
+    CodexHooks,
+    CodexMcpOnly,
+    ClaudeHooks,
+    None,
+}
+
+pub(super) fn launch_integration(actor: &Actor) -> LaunchIntegration {
+    match (actor.runtime, actor.runtime_state_source) {
+        (ActorRuntime::Codex, RuntimeStateSource::Terminal) => LaunchIntegration::CodexHooks,
+        (ActorRuntime::Codex, _) => LaunchIntegration::CodexMcpOnly,
+        (ActorRuntime::Claude, RuntimeStateSource::Terminal) => LaunchIntegration::ClaudeHooks,
+        _ => LaunchIntegration::None,
+    }
+}
+
 #[cfg(test)]
 pub(super) fn launch(
     home: &HomeLayout,
@@ -53,33 +70,8 @@ pub(super) fn launch_serialized_with_permit(
     let original_env = launch_env.clone();
     codex_mcp::configure_actor_cli(&mut launch_env);
 
-    let hook_eligible = actor.runtime_state_source == RuntimeStateSource::Terminal;
-    let setup = match actor.runtime {
-        ActorRuntime::Codex if hook_eligible => codex_mcp::configure(
-            home,
-            &group.group_id,
-            &actor.id,
-            &mut command,
-            &mut launch_env,
-        ),
-        ActorRuntime::Codex => {
-            let setup = codex_mcp::configure(
-                home,
-                &group.group_id,
-                &actor.id,
-                &mut command,
-                &mut launch_env,
-            );
-            codex_mcp::configure_mcp_only(
-                home,
-                &group.group_id,
-                &actor.id,
-                &mut command,
-                &mut launch_env,
-            );
-            setup
-        }
-        ActorRuntime::Claude if hook_eligible => crate::ops::claude_hooks::configure(
+    let setup = match launch_integration(actor) {
+        LaunchIntegration::CodexHooks => codex_mcp::configure(
             home,
             &group.group_id,
             &actor.id,
@@ -87,17 +79,27 @@ pub(super) fn launch_serialized_with_permit(
             &mut command,
             &mut launch_env,
         ),
-        _ => {
-            if let Err(error) =
-                runtime_hook_session::prepare_identity(home, &group.group_id, &actor.id, None)
-            {
-                tracing::warn!(
-                    %error,
-                    group_id = %group.group_id,
-                    actor_id = %actor.id,
-                    "failed to clear stale runtime hook identity"
-                );
-            }
+        LaunchIntegration::CodexMcpOnly => {
+            codex_mcp::configure_mcp_only(
+                home,
+                &group.group_id,
+                &actor.id,
+                &mut command,
+                &mut launch_env,
+            );
+            clear_hook_identity(home, group, actor);
+            return spawn(home, group, actor, cwd, command, launch_env);
+        }
+        LaunchIntegration::ClaudeHooks => crate::ops::claude_hooks::configure(
+            home,
+            &group.group_id,
+            &actor.id,
+            cwd,
+            &mut command,
+            &mut launch_env,
+        ),
+        LaunchIntegration::None => {
+            clear_hook_identity(home, group, actor);
             return spawn(home, group, actor, cwd, command, launch_env);
         }
     };
@@ -161,6 +163,19 @@ pub(super) fn launch_serialized_with_permit(
             }
             Err(error)
         }
+    }
+}
+
+fn clear_hook_identity(home: &HomeLayout, group: &GroupDoc, actor: &Actor) {
+    if let Err(error) =
+        runtime_hook_session::prepare_identity(home, &group.group_id, &actor.id, None)
+    {
+        tracing::warn!(
+            %error,
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            "failed to clear stale runtime hook identity"
+        );
     }
 }
 

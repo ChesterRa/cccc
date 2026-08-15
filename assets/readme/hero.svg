@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 1200 440" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="title desc">
+  <title id="title">CCCC — coding agents, coordinated like a group chat</title>
+  <desc id="desc">A project-native topology showing a user, foreman, peers, and trusted remote groups connected through one durable group ledger, with small delivery and reply status markers.</desc>
+
+  <rect x="1" y="1" width="1198" height="438" rx="28" fill="#0B0D10" stroke="#2A2E34" stroke-width="2"/>
+  <path d="M618 48V392" stroke="#272B31" stroke-width="2"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" letter-spacing="2.4" fill="#8A9099">
+    <text x="64" y="72">LOCAL-FIRST COLLABORATION KERNEL</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <text x="60" y="166" fill="#F7F7F2" font-size="86" font-weight="760" letter-spacing="-3">CCCC</text>
+    <text x="64" y="220" fill="#F7F7F2" font-size="32" font-weight="650">Coding agents, coordinated</text>
+    <text x="64" y="260" fill="#F7F7F2" font-size="32" font-weight="650">like a group chat.</text>
+    <text x="64" y="308" fill="#AEB3BA" font-size="21">Persistent groups · explicit delivery · trusted bridges</text>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600">
+    <g transform="translate(64 346)">
+      <rect width="140" height="38" rx="19" fill="#15181D" stroke="#343941"/>
+      <circle cx="20" cy="19" r="5" fill="#20B486"/>
+      <text x="34" y="25" fill="#D9DCE0">DELIVERED</text>
+    </g>
+    <g transform="translate(216 346)">
+      <rect width="120" height="38" rx="19" fill="#15181D" stroke="#343941"/>
+      <circle cx="20" cy="19" r="5" fill="#20B486"/>
+      <text x="34" y="25" fill="#D9DCE0">ACK 2/2</text>
+    </g>
+    <g transform="translate(348 346)">
+      <rect width="194" height="38" rx="19" fill="#15181D" stroke="#343941"/>
+      <circle cx="20" cy="19" r="5" fill="#F0B44D"/>
+      <text x="34" y="25" fill="#D9DCE0">REPLY REQUIRED</text>
+    </g>
+  </g>
+
+  <g fill="none" stroke="#D9DCE0" stroke-linecap="round">
+    <path d="M1007 324A148 148 0 1 1 1007 116" stroke-width="17"/>
+    <path d="M975 292A103 103 0 1 1 975 148" stroke-width="15" opacity=".82"/>
+    <path d="M943 260A58 58 0 1 1 943 180" stroke-width="13" opacity=".62"/>
+    <path d="M914 231A17 17 0 1 1 914 209" stroke-width="11" opacity=".44"/>
+  </g>
+  <circle cx="902" cy="220" r="8" fill="#F7F7F2"/>
+
+  <g fill="none" stroke="#555B64" stroke-width="2">
+    <path d="M812 92H866L891 112"/>
+    <path d="M1014 114L1050 86H1128"/>
+    <path d="M1024 220H1134"/>
+    <path d="M1014 326L1050 354H1142" stroke-dasharray="6 7"/>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" font-weight="650" letter-spacing="1.2">
+    <circle cx="732" cy="92" r="6" fill="#F7F7F2"/>
+    <text x="752" y="98" fill="#D9DCE0">USER</text>
+
+    <circle cx="1138" cy="86" r="6" fill="#20B486"/>
+    <text x="1038" y="64" fill="#D9DCE0">FOREMAN</text>
+
+    <circle cx="1144" cy="220" r="6" fill="#20B486"/>
+    <text x="1068" y="204" fill="#D9DCE0">PEERS</text>
+
+    <circle cx="1152" cy="354" r="6" fill="#F0B44D"/>
+    <text x="1002" y="384" fill="#D9DCE0">REMOTE GROUP</text>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">
+    <text x="902" y="409" fill="#8A9099" font-size="17" letter-spacing="2">APPEND-ONLY GROUP LEDGER</text>
+  </g>
+</svg>

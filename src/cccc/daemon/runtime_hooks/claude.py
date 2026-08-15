@@ -17,6 +17,7 @@ HOOK_EVENTS = (
     "PreToolUse",
     "PermissionRequest",
     "PostToolUse",
+    "PostToolUseFailure",
     "Stop",
     "SessionEnd",
 )

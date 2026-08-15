@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -8,10 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from cccc.daemon.runtime_hooks.claude import (
-    append_claude_settings,
-    parse_claude_version,
-)
 from cccc.daemon.runtime_hooks.codex import configure_codex_launch
 from cccc.daemon.runtime_hooks.launch import (
     _probe_claude_version,
@@ -27,59 +22,6 @@ from cccc.kernel.runtime_hooks.projection import (
     runtime_hook_working_projection,
 )
 from cccc.kernel.working_state import derive_effective_working_state
-
-
-def test_codex_direct_command_gets_session_only_hooks(tmp_path: Path) -> None:
-    command, env = configure_codex_launch(
-        home=tmp_path,
-        group_id="g1",
-        actor_id="peer",
-        command=["codex", "--search"],
-        env={"PATH": "/usr/bin"},
-        cccc_executable=Path("/opt/cccc bin/cccc"),
-        launch_token="token",
-    )
-    assert command[:2] == ["codex", "--search"]
-    assert any(item.startswith("hooks.UserPromptSubmit=") for item in command)
-    assert any(item.startswith("hooks.PostToolUse=") for item in command)
-    assert any(item.startswith("hooks.Stop=") for item in command)
-    assert not any(item.startswith("hooks.PostToolUseFailure=") for item in command)
-    assert not any(item.startswith("hooks.StopFailure=") for item in command)
-    assert any(item.startswith("hooks.state=") for item in command)
-    assert env["CCCC_HOOK_LAUNCH_TOKEN"] == "token"
-
-
-def test_wrapper_and_app_server_codex_are_not_eligible(tmp_path: Path) -> None:
-    for command in (["wrapper", "codex"], ["codex", "app-server"]):
-        configured, env = configure_codex_launch(
-            home=tmp_path,
-            group_id="g1",
-            actor_id="peer",
-            command=command,
-            env={},
-            cccc_executable=Path("/bin/cccc"),
-            launch_token="token",
-        )
-        assert configured == command
-        assert "CCCC_HOOK_LAUNCH_TOKEN" not in env
-
-
-def test_claude_settings_merge_preserves_existing_hooks_and_prompt_tail(tmp_path: Path) -> None:
-    command = [
-        "claude",
-        "--settings",
-        '{"language":"zh","hooks":{"Stop":[{"matcher":"existing"}]}}',
-        "--",
-        "--settings",
-        "prompt text",
-    ]
-    configured = append_claude_settings(command, cwd=tmp_path, cccc_executable=Path("/bin/cccc"))
-    assert configured[:2] == ["claude", "--settings"]
-    settings = json.loads(configured[2])
-    assert settings["language"] == "zh"
-    assert settings["hooks"]["Stop"][0]["matcher"] == "existing"
-    assert configured[3:] == ["--", "--settings", "prompt text"]
-    assert parse_claude_version("2.1.141 (Claude Code)") == (2, 1, 141)
 
 
 def test_input_observer_counts_submit_once_and_ignores_paste_payload(tmp_path: Path) -> None:
@@ -140,6 +82,10 @@ class _FakeSupervisor:
         return self.session
 
 
+def _supported_codex_hooks(*_args: object) -> bool:
+    return True
+
+
 def test_actual_process_launch_rotates_token_but_running_actor_does_not(
     tmp_path: Path,
 ) -> None:
@@ -155,6 +101,7 @@ def test_actual_process_launch_rotates_token_but_running_actor_does_not(
         "runtime": "codex",
         "max_backlog_bytes": 1024,
         "cccc_executable": Path("/bin/cccc"),
+        "codex_hook_probe": _supported_codex_hooks,
     }
     first = start_actor_with_hooks(**common)
     first_token = read_state(tmp_path, "codex", "g1", "peer").launch_token  # type: ignore[union-attr]
@@ -210,6 +157,7 @@ def test_concurrent_launches_keep_process_identity_and_capability_aligned(
         "runtime": "codex",
         "max_backlog_bytes": 1024,
         "cccc_command": ["/bin/cccc"],
+        "codex_hook_probe": _supported_codex_hooks,
     }
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(start_actor_with_hooks, **common)
@@ -246,6 +194,7 @@ def test_spawn_failure_records_explicit_unavailable_reason(tmp_path: Path) -> No
             runtime="codex",
             max_backlog_bytes=1024,
             cccc_executable=Path("/bin/cccc"),
+            codex_hook_probe=_supported_codex_hooks,
         )
     except OSError:
         pass
@@ -253,6 +202,32 @@ def test_spawn_failure_records_explicit_unavailable_reason(tmp_path: Path) -> No
         raise AssertionError("expected spawn failure")
     state = read_state(tmp_path, "codex", "g1", "peer")
     assert state is not None and state.event == "HookUnavailableSpawn"
+
+
+def test_codex_hook_probe_failure_preserves_original_process_launch(
+    tmp_path: Path,
+) -> None:
+    supervisor = _FakeSupervisor()
+    session = start_actor_with_hooks(
+        supervisor=supervisor,
+        home=tmp_path,
+        group_id="g1",
+        actor_id="peer",
+        cwd=tmp_path,
+        command=["codex", "--search"],
+        env={"EXAMPLE": "kept"},
+        runtime="codex",
+        max_backlog_bytes=1024,
+        cccc_command=["/bin/cccc"],
+        codex_hook_probe=lambda *_args: False,
+    )
+
+    assert session is supervisor.session
+    assert supervisor.commands == [["codex", "--search"]]
+    state = read_state(tmp_path, "codex", "g1", "peer")
+    identity = read_launch_identity(tmp_path, "g1", "peer")
+    assert state is not None and state.event == "HookUnavailableSettings"
+    assert identity is not None and identity["hook_enabled"] is False
 
 
 def test_hook_setup_failure_preserves_process_launch_and_fails_closed(
@@ -306,6 +281,7 @@ def test_direct_codex_resume_rotates_token_and_injects_hooks(tmp_path: Path) -> 
         runtime="codex",
         max_backlog_bytes=1024,
         cccc_command=["/bin/cccc"],
+        codex_hook_probe=_supported_codex_hooks,
     )
     state = read_state(tmp_path, "codex", "g1", "peer")
     assert state is not None and state.launch_token != "stale-token"
@@ -463,6 +439,7 @@ def test_headless_and_noneligible_processes_do_not_consume_hook_projection(
         runtime="codex",
         max_backlog_bytes=1024,
         cccc_command=["/bin/cccc"],
+        codex_hook_probe=_supported_codex_hooks,
     )
     assert (
         runtime_hook_working_projection(

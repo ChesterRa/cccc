@@ -200,3 +200,7 @@ fn lock_path(home: &HomeLayout, group_id: &str) -> io::Result<PathBuf> {
 #[cfg(test)]
 #[path = "runtime_activity_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_activity_failure_tests.rs"]
+mod failure_tests;

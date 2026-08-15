@@ -1,9 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="web/public/logo-dark.svg">
-  <img src="web/public/logo.svg" width="160" alt="CCCC logo" />
-</picture>
+<img src="https://raw.githubusercontent.com/ChesterRa/cccc/main/assets/readme/hero.svg" width="100%" alt="CCCC は、単一の永続的なグループ台帳を通じて、ユーザー、統括役、複数のコーディングエージェント、信頼済みのリモートグループを連携させます" />
 
 # CCCC
 
@@ -16,12 +13,11 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 インストールコマンドひとつ。Rust ツールチェーンも追加インフラも不要です。
 
-[![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
-[![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
-[![Downloads](https://static.pepy.tech/badge/cccc-pair/month)](https://pepy.tech/projects/cccc-pair)
-[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-blue)](https://chesterra.github.io/cccc/)
-[![Telegram](https://img.shields.io/badge/Telegram-ccccpair-2CA5E8?logo=telegram&logoColor=white)](https://t.me/ccccpair)
+[![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
+[![Python](https://img.shields.io/pypi/pyversions/cccc-pair?color=232425)](https://pypi.org/project/cccc-pair/)
+[![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
 
