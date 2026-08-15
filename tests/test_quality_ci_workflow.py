@@ -461,7 +461,7 @@ def test_windows_rust_binaries_use_the_static_crt() -> None:
     assert 'target-feature=+crt-static' in cargo_config
 
 
-def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None:
+def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     release = _release_workflow()
     rust_candidate = _rust_release_workflow()
 
@@ -475,7 +475,8 @@ def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
     assert "python -m twine upload" in _runs(release["jobs"]["publish"])
 
-    assert set(rust_candidate["on"]) == {"workflow_dispatch"}
+    assert set(rust_candidate["on"]) == {"push", "workflow_dispatch"}
+    assert rust_candidate["on"]["push"]["tags"] == ["v*"]
     assert rust_candidate["concurrency"] == {
         "group": "rust-preview-${{ github.ref }}",
         "cancel-in-progress": "false",
@@ -594,7 +595,29 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
         "scripts/install.sh",
         "scripts/install.ps1",
         "scripts/prepare_docs_installers.mjs",
+        "scripts/resolve_docs_installer_version.mjs",
     } <= paths
+    assert docs_workflow["on"]["workflow_run"] == {
+        "workflows": ["Experimental standalone Rust preview"],
+        "types": ["completed"],
+    }
+    assert "workflow_run.conclusion == 'success'" in docs_workflow["jobs"]["build"]["if"]
+    checkout = next(
+        step
+        for step in docs_workflow["jobs"]["build"]["steps"]
+        if step.get("uses", "").startswith("actions/checkout")
+    )
+    assert "workflow_run.head_sha" in checkout["with"]["ref"]
+    docs_runs = _runs(docs_workflow["jobs"]["build"])
+    assert "node scripts/resolve_docs_installer_version.mjs" in docs_runs
+    build = next(
+        step
+        for step in docs_workflow["jobs"]["build"]["steps"]
+        if step.get("name") == "Build with VitePress"
+    )
+    assert build["env"]["CCCC_DOCS_INSTALL_VERSION"] == (
+        "${{ steps.installer-release.outputs.version }}"
+    )
     assert package["scripts"]["prebuild"] == "npm run prepare:installers"
     assert package["scripts"]["prepare:installers"] == "node ../scripts/prepare_docs_installers.mjs"
 

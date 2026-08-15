@@ -95,6 +95,7 @@ export function useSlashCommands(args: {
       replyTarget?: ReplyTarget;
       replyRequired: boolean;
       hasQuotedPresentationRef: boolean;
+      hasQuotedVoiceDocumentRef: boolean;
       sendGroupId: string;
     }): Promise<boolean> => {
       const gid = String(selectedGroupId || "").trim();
@@ -114,6 +115,9 @@ export function useSlashCommands(args: {
           }),
           quotedPresentationUnsupported: t("slashCommandQuotedPresentationUnsupported", {
             defaultValue: "Slash command does not support quoted presentation views.",
+          }),
+          quotedVoiceDocumentUnsupported: t("slashCommandQuotedVoiceDocumentUnsupported", {
+            defaultValue: "Slash command does not support quoted voice documents.",
           }),
           crossGroupUnsupported: t("slashCommandCrossGroupUnsupported", {
             defaultValue: "Slash command does not support cross-group send.",

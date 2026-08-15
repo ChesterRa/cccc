@@ -234,6 +234,7 @@ describe("slashCommands", () => {
       attachmentsUnsupported: "附件不能用于斜杠命令。",
       repliesUnsupported: "不能回复某条消息。",
       quotedPresentationUnsupported: "引用演示不能用于斜杠命令。",
+      quotedVoiceDocumentUnsupported: "引用文档不能用于斜杠命令。",
       crossGroupUnsupported: "跨工作组发送不能用于斜杠命令。",
     };
 
@@ -276,6 +277,20 @@ describe("slashCommands", () => {
         messages,
       ),
     ).toEqual({ ok: false, message: "引用演示不能用于斜杠命令。" });
+
+    expect(
+      resolveSlashCommandGuard(
+        {
+          composerFilesCount: 0,
+          hasReplyTarget: false,
+          hasQuotedPresentationRef: false,
+          hasQuotedVoiceDocumentRef: true,
+          sendGroupId: "g1",
+          selectedGroupId: "g1",
+        },
+        messages,
+      ),
+    ).toEqual({ ok: false, message: "引用文档不能用于斜杠命令。" });
 
     expect(
       resolveSlashCommandGuard(

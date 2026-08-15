@@ -170,13 +170,14 @@ not a promise that every optional external browser, microphone, GPU, or provider
 integration is available on every host.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
-The experimental standalone workflow builds and verifies all four supported
-archives on manual runs. When an operator manually dispatches it on a matching
-`v*` tag, it also publishes those preview archives, checksums, and versioned
-installers to GitHub Releases with an explicit experimental notice; prerelease
-tags are marked as such in GitHub Releases. Product tags do not publish the
-standalone preview automatically. Release operators publish one deliberately with
-`gh workflow run release-rust.yml --ref v<version>` after the product tag exists.
+Every pushed `v*` product tag automatically builds and verifies all four
+standalone archives, then publishes those preview archives, checksums, and
+versioned installers to GitHub Releases with an explicit experimental notice;
+prerelease tags are marked as such in GitHub Releases. The documentation site
+pins its hosted installers to the newest published release that has the complete
+asset set, so a prepared but unpublished version cannot break installation.
+Operators can still rerun the workflow deliberately with
+`gh workflow run release-rust.yml --ref v<version>`.
 
 ## Data compatibility
 

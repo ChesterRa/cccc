@@ -1,7 +1,14 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Actor, GroupMeta, LedgerEvent, PresentationMessageRef, ReplyTarget } from "../../types";
+import {
+  Actor,
+  GroupMeta,
+  LedgerEvent,
+  PresentationMessageRef,
+  ReplyTarget,
+  VoiceDocumentMessageRef,
+} from "../../types";
 import { classNames } from "../../utils/classNames";
 import {
   AttachmentIcon,
@@ -13,6 +20,7 @@ import {
   SparklesIcon,
 } from "../../components/Icons";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
+import { getVoiceDocumentRefLabel } from "../../utils/voiceDocumentRefs";
 import { useTranslation } from "react-i18next";
 import {
   VoiceSecretaryComposerControl,
@@ -116,6 +124,9 @@ export interface ChatComposerProps {
   onCancelReply: () => void;
   quotedPresentationRef: PresentationMessageRef | null;
   onClearQuotedPresentationRef: () => void;
+  quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
+  onQuoteVoiceDocumentRef: (ref: VoiceDocumentMessageRef) => void;
+  onClearQuotedVoiceDocumentRef: () => void;
 
   // Recipients
   toTokens: string[];
@@ -176,6 +187,9 @@ export function ChatComposer({
   onCancelReply,
   quotedPresentationRef,
   onClearQuotedPresentationRef,
+  quotedVoiceDocumentRef,
+  onQuoteVoiceDocumentRef,
+  onClearQuotedVoiceDocumentRef,
   toTokens,
   onToggleRecipient,
   remoteGroups = [],
@@ -380,6 +394,10 @@ export function ChatComposer({
   const quotedPresentationRefLabel = useMemo(
     () => (quotedPresentationRef ? getPresentationRefChipLabel(quotedPresentationRef) : ""),
     [quotedPresentationRef],
+  );
+  const quotedVoiceDocumentRefLabel = useMemo(
+    () => (quotedVoiceDocumentRef ? getVoiceDocumentRefLabel(quotedVoiceDocumentRef) : ""),
+    [quotedVoiceDocumentRef],
   );
   const slashSuggestions = useMemo(
     () => filterSlashCommands(slashCommands, composerText),
@@ -876,13 +894,16 @@ export function ChatComposer({
         : "",
       quoted_reference: quotedPresentationRef
         ? getPresentationRefChipLabel(quotedPresentationRef)
-        : "",
+        : quotedVoiceDocumentRef
+          ? `Voice document: ${getVoiceDocumentRefLabel(quotedVoiceDocumentRef)} (${quotedVoiceDocumentRef.document_path})`
+          : "",
       recent_chat_excerpt: recentChatExcerpt,
     }),
     [
       messageMode,
       priority,
       quotedPresentationRef,
+      quotedVoiceDocumentRef,
       recentChatExcerpt,
       replyRequired,
       replyTarget,
@@ -1013,6 +1034,49 @@ export function ChatComposer({
             onClick={onClearQuotedPresentationRef}
             title={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
             aria-label={t("presentationRemoveQuotedView", { defaultValue: "Remove quoted view" })}
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
+
+      {quotedVoiceDocumentRef && (
+        <div
+          className={classNames(
+            "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+            isDark
+              ? "border-violet-400/12 bg-violet-500/6 text-[var(--color-text-tertiary)]"
+              : "border-violet-200/70 bg-violet-50/70 text-gray-600",
+          )}
+        >
+          <span
+            className={classNames(
+              "flex-shrink-0 font-medium",
+              isDark ? "text-violet-100/90" : "text-violet-700",
+            )}
+          >
+            {t("voiceSecretaryQuotedDocumentLabel", { defaultValue: "Quoted document" })}
+          </span>
+          <span
+            className="min-w-0 flex-1 truncate opacity-80"
+            title={quotedVoiceDocumentRef.document_path}
+          >
+            {quotedVoiceDocumentRefLabel}
+          </span>
+          <button
+            className={classNames(
+              "rounded-full p-1 transition-colors",
+              isDark
+                ? "text-[var(--color-text-tertiary)] hover:bg-white/[0.08] hover:text-[var(--color-text-primary)]"
+                : "text-gray-400 hover:bg-black/[0.06] hover:text-gray-600",
+            )}
+            onClick={onClearQuotedVoiceDocumentRef}
+            title={t("voiceSecretaryRemoveQuotedDocument", {
+              defaultValue: "Remove quoted document",
+            })}
+            aria-label={t("voiceSecretaryRemoveQuotedDocument", {
+              defaultValue: "Remove quoted document",
+            })}
           >
             <CloseIcon size={14} />
           </button>
@@ -1216,6 +1280,7 @@ export function ChatComposer({
                   onCaptureModeChange={setVoiceCaptureMode}
                   composerText={composerText}
                   composerContext={composerAssistantContext}
+                  onQuoteDocument={onQuoteVoiceDocumentRef}
                   onPromptDraft={fillPromptDraftFromSpeech}
                 />
               </div>

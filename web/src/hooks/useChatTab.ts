@@ -167,6 +167,7 @@ export function useChatTab({
     toText,
     replyTarget,
     quotedPresentationRef,
+    quotedVoiceDocumentRef,
     priority,
     replyRequired,
     destGroupId,
@@ -176,6 +177,7 @@ export function useChatTab({
     setReplyToText,
     setReplyTarget,
     setQuotedPresentationRef,
+    setQuotedVoiceDocumentRef,
     setPriority,
     setReplyRequired,
     setMessageMode,
@@ -591,6 +593,7 @@ export function useChatTab({
         replyTarget: composerStateSnapshot.replyTarget,
         replyRequired: composerStateSnapshot.replyRequired,
         hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
+        hasQuotedVoiceDocumentRef: !!composerStateSnapshot.quotedVoiceDocumentRef,
         sendGroupId: slashGuardSendGroupId,
       })
     ) {
@@ -607,8 +610,10 @@ export function useChatTab({
       ? replyTargetSnapshot.remoteDstTo.map((token) => String(token || "").trim()).filter(Boolean)
       : [];
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
+    const quotedVoiceDocumentRefSnapshot = composerStateSnapshot.quotedVoiceDocumentRef;
     const refsSnapshot: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
+      ...(quotedVoiceDocumentRefSnapshot ? [quotedVoiceDocumentRefSnapshot] : []),
       ...buildComposerLocalGroupRouteRefs({
         text: composerStateSnapshot.composerText,
         selectedGroupId,
@@ -654,6 +659,7 @@ export function useChatTab({
           toText: toTextSnapshot,
           replyTarget: replyTargetSnapshot,
           quotedPresentationRef: quotedPresentationRefSnapshot,
+          quotedVoiceDocumentRef: quotedVoiceDocumentRefSnapshot,
           priority: prioritySnapshot,
           replyRequired: replyRequiredSnapshot,
         },
@@ -662,6 +668,7 @@ export function useChatTab({
           setComposerFiles,
           setReplyTarget,
           setQuotedPresentationRef,
+          setQuotedVoiceDocumentRef,
           setPriority,
           setReplyRequired,
           setToText,
@@ -701,6 +708,11 @@ export function useChatTab({
     }
     if (quotedPresentationRefSnapshot && sendsCrossGroup) {
       showError("Cross-group send does not support quoted presentation views.");
+      setDestGroupId(selectedGroupId);
+      return;
+    }
+    if (quotedVoiceDocumentRefSnapshot && sendsCrossGroup) {
+      showError("Cross-group send does not support quoted voice documents.");
       setDestGroupId(selectedGroupId);
       return;
     }
@@ -837,6 +849,7 @@ export function useChatTab({
     setComposerFiles,
     setReplyTarget,
     setQuotedPresentationRef,
+    setQuotedVoiceDocumentRef,
     setPriority,
     setReplyRequired,
     setToText,
@@ -955,8 +968,11 @@ export function useChatTab({
     removeComposerFile,
     replyTarget,
     quotedPresentationRef,
+    quotedVoiceDocumentRef,
     cancelReply,
     clearQuotedPresentationRef: () => setQuotedPresentationRef(null),
+    setQuotedVoiceDocumentRef,
+    clearQuotedVoiceDocumentRef: () => setQuotedVoiceDocumentRef(null),
     toTokens,
     toggleRecipient,
     selectedRemoteGroupIds,

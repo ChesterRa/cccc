@@ -28,6 +28,7 @@ export type SlashCommandGuardInput = {
   replyRequired?: boolean;
   sourceType?: SlashCommandItem["sourceType"];
   hasQuotedPresentationRef: boolean;
+  hasQuotedVoiceDocumentRef?: boolean;
   sendGroupId: string;
   selectedGroupId: string;
 };
@@ -38,6 +39,7 @@ export type SlashCommandGuardMessages = {
   attachmentsUnsupported: string;
   repliesUnsupported: string;
   quotedPresentationUnsupported: string;
+  quotedVoiceDocumentUnsupported: string;
   crossGroupUnsupported: string;
 };
 
@@ -47,6 +49,7 @@ const DEFAULT_SLASH_GUARD_MESSAGES: SlashCommandGuardMessages = {
   attachmentsUnsupported: "Slash command does not support attachments.",
   repliesUnsupported: "Slash command does not support replying to a specific message yet.",
   quotedPresentationUnsupported: "Slash command does not support quoted presentation views.",
+  quotedVoiceDocumentUnsupported: "Slash command does not support quoted voice documents.",
   crossGroupUnsupported: "Slash command does not support cross-group send.",
 };
 
@@ -259,6 +262,9 @@ export function resolveSlashCommandGuard(
   }
   if (input.hasQuotedPresentationRef) {
     return { ok: false, message: copy.quotedPresentationUnsupported };
+  }
+  if (input.hasQuotedVoiceDocumentRef) {
+    return { ok: false, message: copy.quotedVoiceDocumentUnsupported };
   }
   const sendGroupId = String(input.sendGroupId || "").trim();
   const selectedGroupId = String(input.selectedGroupId || "").trim();

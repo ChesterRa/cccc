@@ -10,6 +10,7 @@ import type {
   AssistantVoiceTranscriptSegmentResult,
   BuiltinAssistant,
   LedgerEvent,
+  VoiceDocumentMessageRef,
 } from "../../types";
 import { classNames } from "../../utils/classNames";
 import {
@@ -130,6 +131,7 @@ import {
   type VoiceTranscriptPreview,
   type VoiceTranscriptPreviewPhase,
   upsertLiveVoiceTranscriptItem,
+  voiceTranscriptPreviewBelongsToGroup,
 } from "./voice-secretary/voiceStreamModel";
 import { resolveVoiceServiceReadiness } from "./voice-secretary/voiceServiceReadiness";
 import {
@@ -146,6 +148,8 @@ import {
   type VoiceRecordingSessionScope,
 } from "./voice-secretary/voiceRecordingSessionScope";
 import { routeVoiceTextToComposerGroup } from "./voice-secretary/voiceComposerDraftRouting";
+import { buildVoiceDocumentMessageRef } from "../../utils/voiceDocumentRefs";
+import { createVoiceRequestDispatchGate } from "./voice-secretary/voiceRequestDispatchGate";
 import * as voicePcmTransport from "./voice-secretary/voicePcmBackpressure";
 import { Pcm16Resampler } from "./voice-secretary/voicePcmResampler";
 import {
@@ -167,6 +171,7 @@ type VoiceSecretaryComposerControlProps = {
   variant?: "button" | "assistantRow";
   captureMode?: VoiceSecretaryCaptureMode;
   onCaptureModeChange?: (mode: VoiceSecretaryCaptureMode) => void;
+  onQuoteDocument?: (ref: VoiceDocumentMessageRef) => void;
   composerText?: string;
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
@@ -361,6 +366,7 @@ export function VoiceSecretaryComposerControl({
   variant = "button",
   captureMode = "document",
   onCaptureModeChange,
+  onQuoteDocument,
   composerText = "",
   composerContext = {},
   onPromptDraft,
@@ -423,6 +429,7 @@ export function VoiceSecretaryComposerControl({
   const browserSpeechMediaCleanupRef = useRef<(() => void) | null>(null);
   const browserSpeechTransientErrorCountRef = useRef(0);
   const pendingPromptRequestIdRef = useRef("");
+  const requestDispatchGateRef = useRef(createVoiceRequestDispatchGate());
   const pendingPromptGroupIdRef = useRef("");
   const pendingPromptRequestStartedAtRef = useRef(0);
   const pendingAskRequestIdRef = useRef("");
@@ -1010,6 +1017,7 @@ export function VoiceSecretaryComposerControl({
         pendingFinalText,
         metadata: {
           mode: captureMode,
+          groupId: recordingTargetGroupId(),
           sessionId: voiceRecordingSessionIdRef.current,
           documentTitle: captureTargetDocumentTitle,
           documentPath: effectiveCaptureTargetDocumentPath,
@@ -1028,6 +1036,7 @@ export function VoiceSecretaryComposerControl({
       effectiveCaptureTargetDocumentPath,
       captureTargetDocumentTitle,
       effectiveRecognitionLanguage,
+      recordingTargetGroupId,
     ],
   );
 
@@ -4033,104 +4042,110 @@ export function VoiceSecretaryComposerControl({
     const instruction = documentInstruction.trim();
     if (!gid || !instruction) return;
     if (captureMode === "prompt") return;
-    if (captureMode === "instruction") {
-      setActionBusy("instruct_ask");
+    const dispatchKey = `panel:${gid}`;
+    if (!requestDispatchGateRef.current.tryAcquire(dispatchKey)) return;
+    try {
+      if (captureMode === "instruction") {
+        setActionBusy("instruct_ask");
+        try {
+          const sent = await sendInstructionTranscript(instruction, {
+            triggerKind: "typed_voice_instruction",
+          });
+          if (!isCurrentGroup(gid)) return;
+          if (sent) setDocumentInstruction("");
+        } finally {
+          if (isCurrentGroup(gid)) setActionBusy("");
+        }
+        return;
+      }
+      if (documentHasUnsavedEdits) {
+        showError(
+          t("voiceSecretaryDocumentUnsavedBeforeRequest", {
+            defaultValue:
+              "Save or discard local document edits before sending a request to Voice Secretary.",
+          }),
+        );
+        return;
+      }
+      const docPath = activeDocumentWritePath || viewedDocumentPath || captureTargetDocumentPath;
+      const targetDocument = docPath ? findVoiceDocument(documents, docPath) : null;
+      if (
+        !docPath ||
+        !targetDocument ||
+        String(targetDocument.status || "active")
+          .trim()
+          .toLowerCase() === "archived"
+      ) {
+        showError(
+          t("voiceSecretaryDocumentRequestStale", {
+            defaultValue:
+              "This document is no longer active. Refresh or choose another document before sending a request.",
+          }),
+        );
+        await refreshAssistant({ quiet: true });
+        return;
+      }
+      setActionBusy("instruct_doc");
+      const nowMs = Date.now();
+      const requestId = `voice-ask-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       try {
-        const sent = await sendInstructionTranscript(instruction, {
-          triggerKind: "typed_voice_instruction",
+        const resp = await sendVoiceAssistantDocumentInstruction(gid, docPath, {
+          instruction,
+          documentPath: docPath,
+          requestId,
+          inputAppendId: requestId,
+          trigger: {
+            trigger_kind: "user_instruction",
+            mode: "meeting",
+            recognition_backend: recognitionBackend,
+            language: effectiveRecognitionLanguage,
+          },
+          by: "user",
         });
         if (!isCurrentGroup(gid)) return;
-        if (sent) setDocumentInstruction("");
+        if (!resp.ok) {
+          showError(resp.error.message);
+          return;
+        }
+        applyDocumentMutationResult(resp.result.document, resp.result.assistant);
+        const effectiveRequestId = String(resp.result.request_id || requestId).trim();
+        if (effectiveRequestId) {
+          localVoiceReplyRequestIdsRef.current.add(effectiveRequestId);
+          pendingAskRequestIdRef.current = effectiveRequestId;
+          setPendingAskRequestId(effectiveRequestId);
+          setAskFeedbackItems((prev) =>
+            [
+              {
+                request_id: effectiveRequestId,
+                status: "pending",
+                request_text: instruction,
+                request_preview: instruction.slice(0, 240),
+                document_path: docPath,
+              },
+              ...prev.filter((item) => item.request_id !== effectiveRequestId),
+            ].slice(0, 10),
+          );
+        }
+        setDocumentInstruction("");
+        setDocumentEditing(false);
+        showNotice({
+          message: t("voiceSecretaryDocumentInstructionQueued", {
+            defaultValue: "Request sent to Voice Secretary.",
+          }),
+        });
+        void refreshAssistant({ quiet: true });
+      } catch {
+        if (!isCurrentGroup(gid)) return;
+        showError(
+          t("voiceSecretaryDocumentInstructionFailed", {
+            defaultValue: "Failed to send the request to Voice Secretary.",
+          }),
+        );
       } finally {
         if (isCurrentGroup(gid)) setActionBusy("");
       }
-      return;
-    }
-    if (documentHasUnsavedEdits) {
-      showError(
-        t("voiceSecretaryDocumentUnsavedBeforeRequest", {
-          defaultValue:
-            "Save or discard local document edits before sending a request to Voice Secretary.",
-        }),
-      );
-      return;
-    }
-    const docPath = activeDocumentWritePath || viewedDocumentPath || captureTargetDocumentPath;
-    const targetDocument = docPath ? findVoiceDocument(documents, docPath) : null;
-    if (
-      !docPath ||
-      !targetDocument ||
-      String(targetDocument.status || "active")
-        .trim()
-        .toLowerCase() === "archived"
-    ) {
-      showError(
-        t("voiceSecretaryDocumentRequestStale", {
-          defaultValue:
-            "This document is no longer active. Refresh or choose another document before sending a request.",
-        }),
-      );
-      await refreshAssistant({ quiet: true });
-      return;
-    }
-    setActionBusy("instruct_doc");
-    const nowMs = Date.now();
-    const requestId = `voice-ask-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    try {
-      const resp = await sendVoiceAssistantDocumentInstruction(gid, docPath, {
-        instruction,
-        documentPath: docPath,
-        requestId,
-        inputAppendId: requestId,
-        trigger: {
-          trigger_kind: "user_instruction",
-          mode: "meeting",
-          recognition_backend: recognitionBackend,
-          language: effectiveRecognitionLanguage,
-        },
-        by: "user",
-      });
-      if (!isCurrentGroup(gid)) return;
-      if (!resp.ok) {
-        showError(resp.error.message);
-        return;
-      }
-      applyDocumentMutationResult(resp.result.document, resp.result.assistant);
-      const effectiveRequestId = String(resp.result.request_id || requestId).trim();
-      if (effectiveRequestId) {
-        localVoiceReplyRequestIdsRef.current.add(effectiveRequestId);
-        pendingAskRequestIdRef.current = effectiveRequestId;
-        setPendingAskRequestId(effectiveRequestId);
-        setAskFeedbackItems((prev) =>
-          [
-            {
-              request_id: effectiveRequestId,
-              status: "pending",
-              request_text: instruction,
-              request_preview: instruction.slice(0, 240),
-              document_path: docPath,
-            },
-            ...prev.filter((item) => item.request_id !== effectiveRequestId),
-          ].slice(0, 10),
-        );
-      }
-      setDocumentInstruction("");
-      setDocumentEditing(false);
-      showNotice({
-        message: t("voiceSecretaryDocumentInstructionQueued", {
-          defaultValue: "Request sent to Voice Secretary.",
-        }),
-      });
-      void refreshAssistant({ quiet: true });
-    } catch {
-      if (!isCurrentGroup(gid)) return;
-      showError(
-        t("voiceSecretaryDocumentInstructionFailed", {
-          defaultValue: "Failed to send the request to Voice Secretary.",
-        }),
-      );
     } finally {
-      if (isCurrentGroup(gid)) setActionBusy("");
+      requestDispatchGateRef.current.release(dispatchKey);
     }
   }, [
     activeDocumentWritePath,
@@ -4460,6 +4475,7 @@ export function VoiceSecretaryComposerControl({
   );
   const currentLiveTranscript =
     liveTranscriptPreview &&
+    voiceTranscriptPreviewBelongsToGroup(liveTranscriptPreview, currentSelectedGroupId) &&
     (recording ||
       activityClockMs - liveTranscriptPreview.updatedAt <= VOICE_LIVE_TRANSCRIPT_VISIBLE_MS)
       ? liveTranscriptPreview
@@ -5258,7 +5274,6 @@ export function VoiceSecretaryComposerControl({
                       t={t}
                       documentKey={voiceDocumentKey}
                       documentPath={voiceDocumentPath}
-                      onArchiveDocument={(document) => void archiveDocument(document)}
                       onCancelCreateDocument={cancelCreateDocument}
                       onCreateDocument={() => void createDocument()}
                       onNewDocumentTitleChange={setNewDocumentTitleDraft}
@@ -5289,6 +5304,7 @@ export function VoiceSecretaryComposerControl({
                       transcriptItems={visibleVoiceTranscriptItems}
                       view={voiceWorkspaceView}
                       onChangeView={setVoiceWorkspaceView}
+                      onArchiveDocument={() => void archiveDocument(activeDocument)}
                       onClearTranscript={() => {
                         liveTranscriptPreviewRef.current = null;
                         setLiveTranscriptPreview(null);
@@ -5298,6 +5314,13 @@ export function VoiceSecretaryComposerControl({
                       onDownloadDocument={downloadCurrentDocument}
                       onEditDocumentChange={updateDocumentDraft}
                       onLoadLatestDocument={() => loadDocumentDraft(activeDocument)}
+                      onQuoteDocument={() => {
+                        if (!activeDocument) return;
+                        const ref = buildVoiceDocumentMessageRef(selectedGroupId, activeDocument);
+                        if (!ref || !onQuoteDocument) return;
+                        onQuoteDocument(ref);
+                        setOpen(false);
+                      }}
                       onSaveDocument={() => void saveDocument()}
                       onToggleDocumentEditing={() => setDocumentEditing((value) => !value)}
                       formatTime={formatVoiceActivityTimeMs}

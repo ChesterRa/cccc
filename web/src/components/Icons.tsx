@@ -28,6 +28,7 @@ import {
   Menu,
   Mic,
   MessageSquare,
+  MessageSquareQuote,
   MessageSquareText,
   Minimize2,
   Monitor,
@@ -144,6 +145,7 @@ export const InfoIcon = createIcon(Info, 2);
 export const ImageIcon = createIcon(Image);
 export const FileIcon = createIcon(File);
 export const MessageSquareIcon = createIcon(MessageSquare);
+export const MessageSquareQuoteIcon = createIcon(MessageSquareQuote);
 export const MessageSquareTextIcon = createIcon(MessageSquareText);
 export const BellIcon = createIcon(Bell);
 export const SparklesIcon = createIcon(Sparkles);

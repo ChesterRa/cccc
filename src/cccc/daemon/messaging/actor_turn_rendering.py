@@ -148,6 +148,21 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
                 break
             continue
 
+        if kind == "voice_document_ref":
+            document_path = compact_delivery_text(ref.get("document_path"), limit=120)
+            if document_path:
+                title = compact_delivery_text(ref.get("title"), limit=72) or document_path
+                group_id = compact_delivery_text(ref.get("group_id"), limit=48)
+                scope = f", group_id={group_id}" if group_id else ""
+                lines.append(
+                    f"- Voice document {title} (path={document_path}{scope}); "
+                    "read this workspace-relative file before answering when its contents are needed."
+                )
+                rendered += 1
+                if rendered >= 4:
+                    break
+                continue
+
         if kind == "group_bridge_route":
             route_lines = render_group_bridge_route_ref(ref)
             if route_lines:

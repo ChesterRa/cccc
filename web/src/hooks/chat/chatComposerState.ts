@@ -4,7 +4,7 @@ import {
   getEffectiveComposerDestGroupId,
   isComposerGroupSettled,
 } from "../../stores/useComposerStore";
-import type { PresentationMessageRef, ReplyTarget } from "../../types";
+import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } from "../../types";
 
 export type FailedSendComposerSnapshot = {
   originGroupId: string;
@@ -13,6 +13,7 @@ export type FailedSendComposerSnapshot = {
   toText: string;
   replyTarget: ReplyTarget;
   quotedPresentationRef: PresentationMessageRef | null;
+  quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
   priority: "normal" | "attention";
   replyRequired: boolean;
 };
@@ -24,6 +25,7 @@ type FailedSendComposerRestoreActions = Pick<
   | "setToText"
   | "setReplyTarget"
   | "setQuotedPresentationRef"
+  | "setQuotedVoiceDocumentRef"
   | "setPriority"
   | "setReplyRequired"
   | "upsertDraft"
@@ -48,6 +50,7 @@ export function restoreFailedSendComposerState(
     restoreActions.setComposerFiles(snapshot.composerFiles);
     restoreActions.setReplyTarget(snapshot.replyTarget);
     restoreActions.setQuotedPresentationRef(snapshot.quotedPresentationRef);
+    restoreActions.setQuotedVoiceDocumentRef(snapshot.quotedVoiceDocumentRef);
     restoreActions.setPriority(snapshot.priority);
     restoreActions.setReplyRequired(snapshot.replyRequired);
     restoreActions.setToText(snapshot.toText);
@@ -60,6 +63,7 @@ export function restoreFailedSendComposerState(
     toText: snapshot.toText,
     replyTarget: snapshot.replyTarget,
     quotedPresentationRef: snapshot.quotedPresentationRef,
+    quotedVoiceDocumentRef: snapshot.quotedVoiceDocumentRef,
     priority: snapshot.priority,
     replyRequired: snapshot.replyRequired,
   }));

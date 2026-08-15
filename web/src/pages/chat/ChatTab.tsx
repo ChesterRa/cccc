@@ -13,7 +13,13 @@ import {
   type RefObject,
 } from "react";
 import { BookmarkIcon, InfoIcon } from "../../components/Icons";
-import { Actor, LedgerEvent, PresentationMessageRef, TaskMessageRef } from "../../types";
+import {
+  Actor,
+  LedgerEvent,
+  PresentationMessageRef,
+  TaskMessageRef,
+  VoiceDocumentMessageRef,
+} from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
@@ -228,8 +234,11 @@ export function ChatTab({
     removeComposerFile,
     replyTarget,
     quotedPresentationRef,
+    quotedVoiceDocumentRef,
     cancelReply,
     clearQuotedPresentationRef,
+    setQuotedVoiceDocumentRef,
+    clearQuotedVoiceDocumentRef,
     toTokens,
     toggleRecipient,
     selectedRemoteGroupIds,
@@ -540,6 +549,24 @@ export function ChatTab({
       setQuotedPresentationRef,
       showError,
       t,
+    ],
+  );
+
+  const handleQuoteVoiceDocumentReference = useCallback(
+    (ref: VoiceDocumentMessageRef) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid || ref.group_id !== gid || !String(ref.document_path || "").trim()) return;
+      setQuotedVoiceDocumentRef(ref);
+      setComposerDestGroupId(gid);
+      setChatMobileSurface(gid, "messages");
+      window.setTimeout(() => composerRef.current?.focus(), 0);
+    },
+    [
+      composerRef,
+      selectedGroupId,
+      setChatMobileSurface,
+      setComposerDestGroupId,
+      setQuotedVoiceDocumentRef,
     ],
   );
 
@@ -1075,6 +1102,9 @@ export function ChatTab({
             onCancelReply={cancelReply}
             quotedPresentationRef={quotedPresentationRef}
             onClearQuotedPresentationRef={clearQuotedPresentationRef}
+            quotedVoiceDocumentRef={quotedVoiceDocumentRef}
+            onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
+            onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
             toTokens={toTokens}
             onToggleRecipient={toggleRecipient}
             remoteGroups={remoteRouteGroups}

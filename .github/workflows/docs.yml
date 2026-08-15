@@ -8,7 +8,11 @@ on:
       - 'scripts/install.sh'
       - 'scripts/install.ps1'
       - 'scripts/prepare_docs_installers.mjs'
+      - 'scripts/resolve_docs_installer_version.mjs'
       - '.github/workflows/docs.yml'
+  workflow_run:
+    workflows: ['Experimental standalone Rust preview']
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +26,9 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,6 +36,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -46,7 +54,15 @@ jobs:
         run: npm ci
         working-directory: docs
 
+      - name: Resolve latest complete installer release
+        id: installer-release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "version=$(node scripts/resolve_docs_installer_version.mjs)" >> "$GITHUB_OUTPUT"
+
       - name: Build with VitePress
+        env:
+          CCCC_DOCS_INSTALL_VERSION: ${{ steps.installer-release.outputs.version }}
         run: npm run build
         working-directory: docs
 

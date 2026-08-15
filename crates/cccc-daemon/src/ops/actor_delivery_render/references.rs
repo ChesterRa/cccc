@@ -27,6 +27,9 @@ fn render(item: &Value) -> Vec<String> {
     if kind == "presentation_ref" {
         return render_presentation_ref(item);
     }
+    if kind == "voice_document_ref" {
+        return render_voice_document_ref(item).into_iter().collect();
+    }
     if kind == "group_bridge_route" {
         return render_group_bridge_route(item).into_iter().collect();
     }
@@ -38,6 +41,21 @@ fn render(item: &Value) -> Vec<String> {
         .find_map(|key| nonempty(item, key))
         .unwrap_or(kind);
     vec![format!("- {kind}: {}", compact(label, 120))]
+}
+
+fn render_voice_document_ref(item: &Value) -> Option<String> {
+    let document_path = nonempty(item, "document_path")?;
+    let title = nonempty(item, "title").unwrap_or(document_path);
+    let group_id = nonempty(item, "group_id");
+    let scope = group_id.map_or_else(String::new, |value| {
+        format!(", group_id={}", compact(value, 48))
+    });
+    Some(format!(
+        "- Voice document {} (path={}{}); read this workspace-relative file before answering when its contents are needed.",
+        compact(title, 72),
+        compact(document_path, 120),
+        scope,
+    ))
 }
 
 fn render_presentation_ref(item: &Value) -> Vec<String> {
@@ -286,6 +304,30 @@ mod tests {
                 "  captured_at: 2026-03-23T10:00:00Z",
                 "  scroll_top: 240",
                 "  snapshot: state/blobs/sha256_demo.jpg (1440x900)",
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_voice_document_as_actionable_workspace_context() {
+        let mut event = Event::new("chat.message", "g_local");
+        event.data = json!({
+            "refs":[{
+                "kind":"voice_document_ref",
+                "group_id":"g_local",
+                "document_path":"voice/meeting-notes.md",
+                "title":"Meeting notes"
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        assert_eq!(
+            lines(&event),
+            vec![
+                "[cccc] References:",
+                "- Voice document Meeting notes (path=voice/meeting-notes.md, group_id=g_local); read this workspace-relative file before answering when its contents are needed."
             ]
         );
     }

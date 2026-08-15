@@ -12,6 +12,7 @@ import {
   MessageAttachment,
   PresentationMessageRef,
   TaskMessageRef,
+  VoiceDocumentMessageRef,
 } from "../types";
 import { formatFullTime, formatMessageTimestamp } from "../utils/time";
 import { classNames } from "../utils/classNames";
@@ -19,6 +20,8 @@ import { getReplyEventId } from "../utils/chatReply";
 import { projectCrossGroupRecipients } from "../utils/crossGroupRecipients";
 import { isGroupBridgeInboundMessage } from "../utils/groupBridgeMessages";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
+import { getVoiceDocumentMessageRefs, getVoiceDocumentRefLabel } from "../utils/voiceDocumentRefs";
+import { FileIcon } from "./Icons";
 import {
   getTaskMessageRefs,
   getTaskRefChipLabel,
@@ -136,6 +139,7 @@ function MessageBubbleBody({
   quoteText,
   replyToEventId,
   presentationRefs,
+  voiceDocumentRefs,
   taskRefs,
   taskById,
   messageText,
@@ -168,6 +172,7 @@ function MessageBubbleBody({
   quoteText?: string;
   replyToEventId?: string;
   presentationRefs: PresentationMessageRef[];
+  voiceDocumentRefs: VoiceDocumentMessageRef[];
   taskRefs: TaskMessageRef[];
   taskById: Map<string, Task>;
   messageText: string;
@@ -316,6 +321,26 @@ function MessageBubbleBody({
               >
                 <span className="truncate">{getPresentationRefChipLabel(ref)}</span>
               </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {voiceDocumentRefs.length > 0 ? (
+        <div className={supportingSectionClass}>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+            {t("voiceSecretaryDocumentReferenceSection", { defaultValue: "Document" })}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {voiceDocumentRefs.map((ref, index) => (
+              <div
+                key={`${String(event.id || "message")}:voice-document-ref:${index}:${ref.document_path}`}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)]"
+                title={ref.document_path}
+              >
+                <FileIcon size={12} aria-hidden="true" />
+                <span className="truncate">{getVoiceDocumentRefLabel(ref)}</span>
+              </div>
             ))}
           </div>
         </div>
@@ -575,6 +600,10 @@ export const MessageBubble = memo(
       [msgData?.refs],
     );
     const taskRefs = useMemo(() => getTaskMessageRefs(msgData?.refs), [msgData?.refs]);
+    const voiceDocumentRefs = useMemo(
+      () => getVoiceDocumentMessageRefs(msgData?.refs),
+      [msgData?.refs],
+    );
     const shouldRenderMarkdown = useMemo(
       () => !isStreaming && mayContainMarkdown(bubbleBodyText),
       [bubbleBodyText, isStreaming],
@@ -613,13 +642,23 @@ export const MessageBubble = memo(
           insight,
           insightLabel: t("senderPerspective"),
           presentationRefs,
+          voiceDocumentRefs,
           taskRefs,
           attachments: blobAttachments.map((attachment) => ({
             title: attachment.title,
             path: attachment.path || attachment.local_preview_url,
           })),
         }),
-      [blobAttachments, displayMessageText, insight, presentationRefs, quoteText, t, taskRefs],
+      [
+        blobAttachments,
+        displayMessageText,
+        insight,
+        presentationRefs,
+        quoteText,
+        t,
+        taskRefs,
+        voiceDocumentRefs,
+      ],
     );
     const messageTimestamp = formatMessageTimestamp(ev.ts);
     const fullMessageTimestamp = formatFullTime(ev.ts);
@@ -911,6 +950,7 @@ export const MessageBubble = memo(
                 quoteText={quoteText}
                 replyToEventId={replyToEventId}
                 presentationRefs={presentationRefs}
+                voiceDocumentRefs={voiceDocumentRefs}
                 taskRefs={taskRefs}
                 taskById={taskById}
                 messageText={displayMessageText}

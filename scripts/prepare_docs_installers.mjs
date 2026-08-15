@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = join(root, "docs", "public");
 const cargoManifest = await readFile(join(root, "Cargo.toml"), "utf8");
-const version = cargoManifest.match(/^version = "([^"]+)"$/m)?.[1];
+const version =
+  process.env.CCCC_DOCS_INSTALL_VERSION || cargoManifest.match(/^version = "([^"]+)"$/m)?.[1];
 
 if (!version) {
   throw new Error("Could not read the CCCC version from Cargo.toml");

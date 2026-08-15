@@ -5,6 +5,7 @@ export type VoiceTranscriptProcessingPhase = "separating_speakers" | "failed";
 
 export type VoiceTranscriptPreview = {
   id: string;
+  groupId?: string;
   sessionId?: string;
   phase: VoiceTranscriptPreviewPhase;
   text: string;
@@ -29,6 +30,7 @@ export type VoiceTranscriptItem = VoiceTranscriptPreview & { createdAt: number }
 
 export type VoiceStreamMetadata = {
   mode: VoiceStreamCaptureMode;
+  groupId?: string;
   sessionId?: string;
   documentTitle?: string;
   documentPath?: string;
@@ -67,6 +69,16 @@ export function createVoiceTranscriptPreview(params: {
     endMs: params.timing?.endMs,
     updatedAt: params.now,
   };
+}
+
+export function voiceTranscriptPreviewBelongsToGroup(
+  preview: VoiceTranscriptPreview | null,
+  selectedGroupId: string,
+): boolean {
+  if (!preview) return false;
+  const previewGroupId = String(preview.groupId || "").trim();
+  if (!previewGroupId) return true;
+  return previewGroupId === String(selectedGroupId || "").trim();
 }
 
 export function createVoiceTranscriptItem(params: {

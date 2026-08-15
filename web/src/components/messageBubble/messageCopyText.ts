@@ -1,6 +1,7 @@
-import type { PresentationMessageRef, TaskMessageRef } from "../../types";
+import type { PresentationMessageRef, TaskMessageRef, VoiceDocumentMessageRef } from "../../types";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { getTaskRefChipLabel } from "../../utils/taskRefs";
+import { getVoiceDocumentRefLabel } from "../../utils/voiceDocumentRefs";
 
 export function buildMessageCopyText(input: {
   quoteText?: string;
@@ -8,6 +9,7 @@ export function buildMessageCopyText(input: {
   insight: string;
   insightLabel: string;
   presentationRefs: PresentationMessageRef[];
+  voiceDocumentRefs: VoiceDocumentMessageRef[];
   taskRefs: TaskMessageRef[];
   attachments: { title: string; path: string }[];
 }): string {
@@ -31,6 +33,16 @@ export function buildMessageCopyText(input: {
   if (input.taskRefs.length > 0) {
     sections.push(
       ["Tasks:", ...input.taskRefs.map((ref) => `- ${getTaskRefChipLabel(ref)}`)].join("\n"),
+    );
+  }
+  if (input.voiceDocumentRefs.length > 0) {
+    sections.push(
+      [
+        "Documents:",
+        ...input.voiceDocumentRefs.map(
+          (ref) => `- ${getVoiceDocumentRefLabel(ref)} (${ref.document_path})`,
+        ),
+      ].join("\n"),
     );
   }
   if (input.attachments.length > 0) {

@@ -92,6 +92,15 @@ export type PresentationMessageRef = MessageRef & {
   snapshot?: PresentationRefSnapshot;
 };
 
+export type VoiceDocumentMessageRef = MessageRef & {
+  kind: "voice_document_ref";
+  v?: number;
+  group_id: string;
+  document_path: string;
+  document_id?: string;
+  title?: string;
+};
+
 export type TaskMessageRef = MessageRef & {
   kind: "task_ref";
   task_id: string;

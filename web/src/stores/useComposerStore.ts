@@ -1,6 +1,6 @@
 // Chat composer state store with per-group draft preservation.
 import { create } from "zustand";
-import type { PresentationMessageRef, ReplyTarget } from "../types";
+import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } from "../types";
 
 export type ComposerMessageMode = "normal" | "attention" | "reply";
 
@@ -88,6 +88,7 @@ interface GroupDraft {
   toText: string;
   replyTarget: ReplyTarget;
   quotedPresentationRef: PresentationMessageRef | null;
+  quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
   priority: "normal" | "attention";
   replyRequired: boolean;
 }
@@ -101,6 +102,7 @@ interface ComposerState {
   toText: string;
   replyTarget: ReplyTarget;
   quotedPresentationRef: PresentationMessageRef | null;
+  quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
   priority: "normal" | "attention";
   replyRequired: boolean;
   destGroupId: string;
@@ -117,6 +119,7 @@ interface ComposerState {
   setReplyToText: (text: string) => void;
   setReplyTarget: (target: ReplyTarget) => void;
   setQuotedPresentationRef: (ref: PresentationMessageRef | null) => void;
+  setQuotedVoiceDocumentRef: (ref: VoiceDocumentMessageRef | null) => void;
   setPriority: (priority: "normal" | "attention") => void;
   setReplyRequired: (value: boolean) => void;
   setMessageMode: (mode: ComposerMessageMode) => void;
@@ -138,6 +141,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   toText: "",
   replyTarget: null,
   quotedPresentationRef: null,
+  quotedVoiceDocumentRef: null,
   priority: initialDeliveryState.priority,
   replyRequired: initialDeliveryState.replyRequired,
   destGroupId: "",
@@ -195,6 +199,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       return { replyTarget: null, toText: normalToText ?? state.toText };
     }),
   setQuotedPresentationRef: (ref) => set({ quotedPresentationRef: ref }),
+  setQuotedVoiceDocumentRef: (ref) => set({ quotedVoiceDocumentRef: ref }),
   setPriority: (priority) => set({ priority }),
   setReplyRequired: (value) => set({ replyRequired: !!value }),
   setMessageMode: (mode) => {
@@ -215,6 +220,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         toText: nextToText,
         replyTarget: null,
         quotedPresentationRef: null,
+        quotedVoiceDocumentRef: null,
         ...deliveryStateForMessageMode(state.preferredMessageMode),
         destGroupId: activeGroupId,
         normalToTextByGroup: activeGroupId
@@ -239,7 +245,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         state.composerFiles.length > 0 ||
         state.toText.trim() ||
         state.replyTarget ||
-        state.quotedPresentationRef;
+        state.quotedPresentationRef ||
+        state.quotedVoiceDocumentRef;
 
       if (hasContent) {
         newDrafts[normalizedFromGroupId] = {
@@ -248,6 +255,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           toText: state.toText,
           replyTarget: state.replyTarget,
           quotedPresentationRef: state.quotedPresentationRef,
+          quotedVoiceDocumentRef: state.quotedVoiceDocumentRef,
           priority: state.priority,
           replyRequired: state.replyRequired,
         };
@@ -276,6 +284,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       toText: nextToText,
       replyTarget: draft?.replyTarget || null,
       quotedPresentationRef: draft?.quotedPresentationRef || null,
+      quotedVoiceDocumentRef: draft?.quotedVoiceDocumentRef || null,
       ...nextDeliveryState,
       // After switching groups, return delivery to the current group. Cross-group
       // sends must be selected explicitly so restored drafts do not trigger remote fetches.

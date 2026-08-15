@@ -1,6 +1,9 @@
 name: Experimental standalone Rust preview
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:

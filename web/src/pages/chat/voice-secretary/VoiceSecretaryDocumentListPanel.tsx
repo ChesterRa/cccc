@@ -1,7 +1,6 @@
 import type { TFunction } from "i18next";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import { InboxIcon } from "../../../components/Icons";
 
 type VoiceSecretaryDocumentListPanelProps = {
   actionBusy: string;
@@ -15,7 +14,6 @@ type VoiceSecretaryDocumentListPanelProps = {
   t: TFunction;
   documentKey: (document: AssistantVoiceDocument) => string;
   documentPath: (document: AssistantVoiceDocument) => string;
-  onArchiveDocument: (document: AssistantVoiceDocument) => void;
   onCancelCreateDocument: () => void;
   onCreateDocument: () => void;
   onNewDocumentTitleChange: (value: string) => void;
@@ -36,7 +34,6 @@ export function VoiceSecretaryDocumentListPanel({
   t,
   documentKey,
   documentPath,
-  onArchiveDocument,
   onCancelCreateDocument,
   onCreateDocument,
   onNewDocumentTitleChange,
@@ -181,31 +178,7 @@ export function VoiceSecretaryDocumentListPanel({
               >
                 <span className="flex min-w-0 items-center justify-between gap-2">
                   <span className="truncate text-sm font-semibold">{document.title || docId}</span>
-                  <span className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1.5">
-                    <button
-                      type="button"
-                      aria-label={t("voiceSecretaryArchiveDocumentItemAriaLabel", {
-                        title: document.title || docId,
-                        defaultValue: "Archive {{title}}",
-                      })}
-                      title={t("voiceSecretaryArchiveDocument", { defaultValue: "Archive viewed" })}
-                      disabled={!docPath || actionBusy === "archive_doc"}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onArchiveDocument(document);
-                      }}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                      }}
-                      className={classNames(
-                        "inline-flex h-7 w-7 items-center justify-center rounded-full border opacity-0 transition-all disabled:cursor-default group-hover:opacity-100 group-focus-within:opacity-100",
-                        isDark
-                          ? "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/10 hover:text-slate-100 disabled:opacity-35"
-                          : "border-black/10 bg-white text-gray-500 hover:bg-black/5 hover:text-gray-900 disabled:opacity-35",
-                      )}
-                    >
-                      <InboxIcon size={14} aria-hidden="true" />
-                    </button>
+                  <span className="flex w-7 shrink-0 items-center justify-end">
                     <button
                       type="button"
                       aria-pressed={!!captureTarget}
