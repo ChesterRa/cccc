@@ -385,6 +385,9 @@ def test_workflows_use_node24_actions_and_schedule_action_updates() -> None:
     )
     assert action_updates["directory"] == "/"
     assert action_updates["schedule"]["interval"] == "weekly"
+    assert {
+        dependency["dependency-name"] for dependency in action_updates["ignore"]
+    } == {"dtolnay/rust-toolchain"}
 
 
 def test_python_release_builds_one_atomic_dual_implementation_set() -> None:

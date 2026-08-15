@@ -9,3 +9,8 @@ updates:
       github-actions:
         patterns:
           - "*"
+    # This action intentionally encodes the Rust toolchain in its ref
+    # (for example @1.88.0). Dependabot mistakes that for an action release and
+    # proposes nonexistent Rust versions such as 1.100.0.
+    ignore:
+      - dependency-name: dtolnay/rust-toolchain

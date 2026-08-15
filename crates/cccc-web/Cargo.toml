@@ -22,11 +22,11 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 bzip2.workspace = true
-cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc3", path = "../cccc-client" }
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc3", path = "../cccc-contracts" }
-cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc3", path = "../cccc-core" }
-cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.34-rc3", path = "../cccc-mcp" }
-cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc3", path = "../cccc-runtime" }
+cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc4", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc4", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc4", path = "../cccc-core" }
+cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.34-rc4", path = "../cccc-mcp" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc4", path = "../cccc-runtime" }
 chromiumoxide.workspace = true
 chrono.workspace = true
 crc32fast.workspace = true
@@ -65,7 +65,7 @@ url.workspace = true
 weixin-agent.workspace = true
 
 [dev-dependencies]
-cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.34-rc3", path = "../cccc-daemon" }
+cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.34-rc4", path = "../cccc-daemon" }
 http-body-util.workspace = true
 tower.workspace = true
 

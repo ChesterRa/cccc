@@ -6,10 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.34-rc4] — 2026-08-15
+
+### Changed
+- **CI now isolates process-lifecycle coverage and post-merge native verification.** The load-sensitive daemon/Web shutdown suite runs serially outside the parallel Rust workspace tests, while native distribution and Windows installer checks run after merge behind stable aggregate gates.
+- **GitHub Actions updates no longer rewrite the pinned Rust compiler version.** Dependabot continues maintaining normal Actions dependencies but ignores `dtolnay/rust-toolchain`, whose action ref intentionally encodes the workspace's Rust 1.88 toolchain.
+
 ### Fixed
 - **Voice Secretary recordings keep their original Group scope while navigating.** Switching Groups during an active recording no longer redirects document checkpoints, final transcripts, Ask/Prompt work, or direct-composer text into the newly visible Group; the immutable recording scope continues targeting the original Group and document, with composer text routed to that Group's preserved draft.
 - **Silent Voice Secretary streams no longer grow the native ASR heap without bound.** Rust now resets sherpa-onnx at every detected endpoint even when the hypothesis is empty or unchanged, releasing accumulated streaming features while preserving final transcript events.
 - **Long Voice Secretary recordings no longer block later stops or permanently lose speaker labels.** Short WebSocket recordings still receive immediate final ASR; when speaker analysis is available, persistent recordings over 30 seconds, or recordings stopped while native inference is occupied, complete stop promptly and retain their durable live transcript while speaker analysis waits behind the active job instead of returning `worker_busy`. Final ASR paths that cannot defer reuse one SenseVoice recognizer across bounded 30-second ranges.
+- **Message delivery preferences and lifecycle state stay aligned across runtime paths.** Delivery recovery no longer drifts from the actor's persisted mode or leaves stale lifecycle projections behind.
+- **The embedded CLI reacts to daemon loss without polling.** Combined process shutdown follows the daemon exit signal directly, reducing delayed or inconsistent teardown behavior.
+- **Capability discovery exposes autoload candidates consistently.** The daemon includes the candidate state expected by clients, and the Web capability picker now has complete English, Chinese, and Japanese labels.
 
 ## [0.4.34-rc3] — 2026-08-14
 
