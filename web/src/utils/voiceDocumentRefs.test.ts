@@ -4,6 +4,7 @@ import {
   buildVoiceDocumentMessageRef,
   getVoiceDocumentMessageRefs,
   getVoiceDocumentRefLabel,
+  voiceDocumentRefMatchesDocument,
 } from "./voiceDocumentRefs";
 
 const document: AssistantVoiceDocument = {
@@ -43,5 +44,32 @@ describe("voiceDocumentRefs", () => {
     ]);
     expect(refs).toHaveLength(1);
     expect(getVoiceDocumentRefLabel(refs[0])).toBe("raw.md");
+  });
+
+  it("matches an archived document by stable id or its pre-archive path", () => {
+    const ref = buildVoiceDocumentMessageRef("group-1", document);
+    expect(ref).not.toBeNull();
+    expect(
+      voiceDocumentRefMatchesDocument(ref!, "group-1", {
+        ...document,
+        document_path: "archive/meeting-notes.md",
+      }),
+    ).toBe(true);
+    expect(
+      voiceDocumentRefMatchesDocument({ ...ref!, document_id: undefined }, "group-1", document),
+    ).toBe(true);
+  });
+
+  it("does not match another group or document", () => {
+    const ref = buildVoiceDocumentMessageRef("group-1", document);
+    expect(ref).not.toBeNull();
+    expect(voiceDocumentRefMatchesDocument(ref!, "group-2", document)).toBe(false);
+    expect(
+      voiceDocumentRefMatchesDocument(ref!, "group-1", {
+        ...document,
+        document_id: "doc-2",
+        document_path: "voice/other.md",
+      }),
+    ).toBe(false);
   });
 });

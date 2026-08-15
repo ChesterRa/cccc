@@ -45,3 +45,16 @@ export function getVoiceDocumentRefLabel(ref: VoiceDocumentMessageRef): string {
   const path = trimString(ref.document_path).replace(/\\/g, "/");
   return path.split("/").filter(Boolean).pop() || path || "Document";
 }
+
+export function voiceDocumentRefMatchesDocument(
+  ref: VoiceDocumentMessageRef,
+  groupId: string,
+  document: AssistantVoiceDocument,
+): boolean {
+  if (trimString(ref.group_id) !== trimString(groupId)) return false;
+  const refDocumentId = trimString(ref.document_id);
+  const documentId = trimString(document.document_id);
+  if (refDocumentId && documentId && refDocumentId === documentId) return true;
+  const documentPath = trimString(document.document_path || document.workspace_path);
+  return !!documentPath && trimString(ref.document_path) === documentPath;
+}

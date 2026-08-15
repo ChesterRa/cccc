@@ -140,39 +140,31 @@ export function VoiceSecretaryWorkspacePanel({
                 );
               })}
             </div>
-            <span
-              className={classNames(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                isDark
-                  ? "bg-white/10 text-slate-100"
-                  : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
-              )}
-            >
-              {view === "transcript"
-                ? t("voiceSecretaryTranscriptCount", {
-                    count: transcriptCount,
-                    defaultValue: "{{count}} entries",
-                  })
-                : t("voiceSecretaryMarkdownBadge", { defaultValue: "Markdown" })}
-            </span>
-            {view === "document" ? (
+            {view === "transcript" ? (
               <span
                 className={classNames(
                   "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                  activeDocumentPath
-                    ? isDark
-                      ? "bg-white/10 text-slate-200"
-                      : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-                    : isDark
-                      ? "bg-slate-800 text-slate-300"
-                      : "bg-gray-100 text-gray-600",
+                  isDark
+                    ? "bg-white/10 text-slate-100"
+                    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
                 )}
               >
-                {activeDocumentPath
-                  ? t("voiceSecretaryRepoBackedBadge", { defaultValue: "Repo-backed" })
-                  : t("voiceSecretaryWaitingTranscriptBadge", {
-                      defaultValue: "Waiting for transcript",
-                    })}
+                {t("voiceSecretaryTranscriptCount", {
+                  count: transcriptCount,
+                  defaultValue: "{{count}} entries",
+                })}
+              </span>
+            ) : null}
+            {view === "document" && !activeDocumentPath ? (
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-600",
+                )}
+              >
+                {t("voiceSecretaryWaitingTranscriptBadge", {
+                  defaultValue: "Waiting for transcript",
+                })}
               </span>
             ) : null}
             {view === "document" &&

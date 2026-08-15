@@ -292,8 +292,6 @@
   "voiceSecretaryDocumentPlaceholder": "ここで markdown 文書全体を編集します。文字起こしが届くと Voice Secretary がこの作業稿を継続的に維持します。",
   "voiceSecretaryDocumentPreviewEmpty": "文字起こしと Voice Secretary の編集内容がここに表示されます。",
   "voiceSecretaryDocumentEditAriaLabel": "Voice Secretary 作業ドキュメントの markdown を編集",
-  "voiceSecretaryMarkdownBadge": "Markdown",
-  "voiceSecretaryRepoBackedBadge": "Repo-backed",
   "voiceSecretaryWaitingTranscriptBadge": "文字起こし待ち",
   "voiceSecretaryUnsavedEditsBadge": "未保存の編集",
   "voiceSecretaryRemoteChangedBadge": "リモート更新あり",

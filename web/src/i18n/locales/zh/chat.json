@@ -292,8 +292,6 @@
   "voiceSecretaryDocumentPlaceholder": "在这里编辑完整 Markdown 文档。转写到达后，语音小秘书会继续维护这份工作稿。",
   "voiceSecretaryDocumentPreviewEmpty": "转写和语音小秘书整理后的内容会显示在这里。",
   "voiceSecretaryDocumentEditAriaLabel": "编辑语音小秘书工作文档 Markdown",
-  "voiceSecretaryMarkdownBadge": "Markdown",
-  "voiceSecretaryRepoBackedBadge": "仓库文档",
   "voiceSecretaryWaitingTranscriptBadge": "等待转写",
   "voiceSecretaryUnsavedEditsBadge": "未保存修改",
   "voiceSecretaryRemoteChangedBadge": "有远端更新",

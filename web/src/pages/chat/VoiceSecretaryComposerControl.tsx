@@ -171,6 +171,7 @@ type VoiceSecretaryComposerControlProps = {
   variant?: "button" | "assistantRow";
   captureMode?: VoiceSecretaryCaptureMode;
   onCaptureModeChange?: (mode: VoiceSecretaryCaptureMode) => void;
+  onDocumentArchived?: (document: AssistantVoiceDocument) => void;
   onQuoteDocument?: (ref: VoiceDocumentMessageRef) => void;
   composerText?: string;
   composerContext?: Record<string, unknown>;
@@ -366,6 +367,7 @@ export function VoiceSecretaryComposerControl({
   variant = "button",
   captureMode = "document",
   onCaptureModeChange,
+  onDocumentArchived,
   onQuoteDocument,
   composerText = "",
   composerContext = {},
@@ -4236,9 +4238,8 @@ export function VoiceSecretaryComposerControl({
         ? voiceDocumentPath(targetDocument)
         : activeDocumentWritePath || viewedDocumentPath;
       if (!gid || !docPath) return;
-      const title = String(
-        targetDocument?.title || findVoiceDocument(documents, docPath)?.title || docPath,
-      ).trim();
+      const archivedDocument = targetDocument || findVoiceDocument(documents, docPath);
+      const title = String(archivedDocument?.title || docPath).trim();
       const confirmed = window.confirm(
         t("voiceSecretaryArchiveDocumentConfirm", {
           title,
@@ -4255,6 +4256,14 @@ export function VoiceSecretaryComposerControl({
           showError(resp.error.message);
           return;
         }
+        onDocumentArchived?.(
+          archivedDocument || {
+            document_id: "",
+            document_path: docPath,
+            title,
+            status: "archived",
+          },
+        );
         archivedDocumentPathsRef.current.add(docPath);
         setDocuments((prev) => prev.filter((item) => voiceDocumentPath(item) !== docPath));
         if (isActiveTarget) {
@@ -4289,6 +4298,7 @@ export function VoiceSecretaryComposerControl({
       documents,
       isCurrentGroup,
       loadDocumentDraft,
+      onDocumentArchived,
       refreshAssistant,
       selectedGroupId,
       showError,

@@ -53,7 +53,7 @@ fn render_voice_document_ref(item: &Value) -> Option<String> {
     Some(format!(
         "- Voice document {} (path={}{}); read this workspace-relative file before answering when its contents are needed.",
         compact(title, 72),
-        compact(document_path, 120),
+        document_path,
         scope,
     ))
 }
@@ -330,5 +330,26 @@ mod tests {
                 "- Voice document Meeting notes (path=voice/meeting-notes.md, group_id=g_local); read this workspace-relative file before answering when its contents are needed."
             ]
         );
+    }
+
+    #[test]
+    fn preserves_the_complete_voice_document_path() {
+        let document_path = format!("voice/{}/meeting-notes.md", "nested-directory/".repeat(10));
+        assert!(document_path.chars().count() > 120);
+        let mut event = Event::new("chat.message", "g_local");
+        event.data = json!({
+            "refs":[{
+                "kind":"voice_document_ref",
+                "group_id":"g_local",
+                "document_path":document_path,
+                "title":"Meeting notes"
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = lines(&event).join("\n");
+        assert!(rendered.contains(&format!("path={document_path}, group_id=g_local")));
     }
 }

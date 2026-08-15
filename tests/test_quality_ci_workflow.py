@@ -602,12 +602,13 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
         "types": ["completed"],
     }
     assert "workflow_run.conclusion == 'success'" in docs_workflow["jobs"]["build"]["if"]
+    assert "workflow_run.event" not in docs_workflow["jobs"]["build"]["if"]
     checkout = next(
         step
         for step in docs_workflow["jobs"]["build"]["steps"]
         if step.get("uses", "").startswith("actions/checkout")
     )
-    assert "workflow_run.head_sha" in checkout["with"]["ref"]
+    assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
     docs_runs = _runs(docs_workflow["jobs"]["build"])
     assert "node scripts/resolve_docs_installer_version.mjs" in docs_runs
     build = next(

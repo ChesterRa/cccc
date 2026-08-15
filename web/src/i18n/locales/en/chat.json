@@ -292,8 +292,6 @@
   "voiceSecretaryDocumentPlaceholder": "Edit the full markdown document here. Voice Secretary will keep maintaining it as transcript arrives.",
   "voiceSecretaryDocumentPreviewEmpty": "Transcript and Voice Secretary edits will appear here.",
   "voiceSecretaryDocumentEditAriaLabel": "Edit Voice Secretary working document markdown",
-  "voiceSecretaryMarkdownBadge": "Markdown",
-  "voiceSecretaryRepoBackedBadge": "Repo-backed",
   "voiceSecretaryWaitingTranscriptBadge": "Waiting for transcript",
   "voiceSecretaryUnsavedEditsBadge": "Unsaved edits",
   "voiceSecretaryRemoteChangedBadge": "Remote update available",

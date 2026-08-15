@@ -3,6 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Actor,
+  AssistantVoiceDocument,
   GroupMeta,
   LedgerEvent,
   PresentationMessageRef,
@@ -20,7 +21,10 @@ import {
   SparklesIcon,
 } from "../../components/Icons";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
-import { getVoiceDocumentRefLabel } from "../../utils/voiceDocumentRefs";
+import {
+  getVoiceDocumentRefLabel,
+  voiceDocumentRefMatchesDocument,
+} from "../../utils/voiceDocumentRefs";
 import { useTranslation } from "react-i18next";
 import {
   VoiceSecretaryComposerControl,
@@ -398,6 +402,17 @@ export function ChatComposer({
   const quotedVoiceDocumentRefLabel = useMemo(
     () => (quotedVoiceDocumentRef ? getVoiceDocumentRefLabel(quotedVoiceDocumentRef) : ""),
     [quotedVoiceDocumentRef],
+  );
+  const handleVoiceDocumentArchived = useCallback(
+    (document: AssistantVoiceDocument) => {
+      if (
+        quotedVoiceDocumentRef &&
+        voiceDocumentRefMatchesDocument(quotedVoiceDocumentRef, selectedGroupId, document)
+      ) {
+        onClearQuotedVoiceDocumentRef();
+      }
+    },
+    [onClearQuotedVoiceDocumentRef, quotedVoiceDocumentRef, selectedGroupId],
   );
   const slashSuggestions = useMemo(
     () => filterSlashCommands(slashCommands, composerText),
@@ -1280,6 +1295,7 @@ export function ChatComposer({
                   onCaptureModeChange={setVoiceCaptureMode}
                   composerText={composerText}
                   composerContext={composerAssistantContext}
+                  onDocumentArchived={handleVoiceDocumentArchived}
                   onQuoteDocument={onQuoteVoiceDocumentRef}
                   onPromptDraft={fillPromptDraftFromSpeech}
                 />

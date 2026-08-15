@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next";
+import { FileCheckIcon, FileIcon } from "../../../components/Icons";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
 
@@ -166,19 +167,19 @@ export function VoiceSecretaryDocumentListPanel({
                   onSelectDocument(document);
                 }}
                 className={classNames(
-                  "group flex w-full min-w-0 flex-col gap-1.5 rounded-2xl border px-3 py-2.5 text-left transition-colors",
+                  "group flex w-full min-w-0 flex-col gap-1.5 rounded-2xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2",
                   viewing
                     ? isDark
-                      ? "border-white/14 bg-white/[0.08] text-white shadow-[0_10px_30px_-24px_rgba(255,255,255,0.32)]"
-                      : "border-black/12 bg-white text-[rgb(35,36,37)] shadow-[0_10px_30px_-24px_rgba(15,23,42,0.14)]"
+                      ? "border-white/14 bg-white/[0.08] text-white shadow-[0_10px_30px_-24px_rgba(255,255,255,0.32)] focus-visible:ring-white/35"
+                      : "border-black/12 bg-white text-[rgb(35,36,37)] shadow-[0_10px_30px_-24px_rgba(15,23,42,0.14)] focus-visible:ring-black/25"
                     : isDark
-                      ? "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/8"
-                      : "border-transparent text-gray-700 hover:border-black/10 hover:bg-white",
+                      ? "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/8 focus-visible:ring-white/35"
+                      : "border-transparent text-gray-700 hover:border-black/10 hover:bg-white focus-visible:ring-black/25",
                 )}
               >
                 <span className="flex min-w-0 items-center justify-between gap-2">
                   <span className="truncate text-sm font-semibold">{document.title || docId}</span>
-                  <span className="flex w-7 shrink-0 items-center justify-end">
+                  <span className="flex w-8 shrink-0 items-center justify-end">
                     <button
                       type="button"
                       aria-pressed={!!captureTarget}
@@ -203,34 +204,31 @@ export function VoiceSecretaryDocumentListPanel({
                               defaultValue: "Set as the default document for new transcript",
                             })
                       }
-                      disabled={!docPath || !!captureTarget}
+                      disabled={!docPath}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (captureTarget) return;
                         onSetCaptureTargetDocument(document);
                       }}
                       onKeyDown={(event) => {
                         event.stopPropagation();
                       }}
                       className={classNames(
-                        "relative flex h-7 w-7 items-center justify-center rounded-full border transition-colors disabled:cursor-default",
+                        "flex h-8 w-8 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-default disabled:opacity-45",
                         captureTarget
                           ? isDark
-                            ? "border-white/70 bg-white/10 shadow-[0_0_0_3px_rgba(255,255,255,0.08)]"
-                            : "border-[rgb(35,36,37)] bg-white shadow-[0_0_0_3px_rgba(35,36,37,0.08)]"
+                            ? "bg-white/12 text-white focus-visible:ring-white/40"
+                            : "bg-black/[0.07] text-[rgb(35,36,37)] focus-visible:ring-black/30"
                           : isDark
-                            ? "border-white/25 bg-white/[0.03] hover:border-white/50 hover:bg-white/[0.08] disabled:opacity-45"
-                            : "border-gray-300 bg-white hover:border-[rgb(35,36,37)]/35 hover:bg-[rgb(245,245,245)] disabled:opacity-45",
+                            ? "text-slate-400 hover:bg-white/[0.08] hover:text-white focus-visible:ring-white/40"
+                            : "text-gray-400 hover:bg-black/[0.05] hover:text-gray-800 focus-visible:ring-black/30",
                       )}
                     >
                       {captureTarget ? (
-                        <span
-                          aria-hidden="true"
-                          className={classNames(
-                            "h-3 w-3 rounded-full",
-                            isDark ? "bg-white" : "bg-[rgb(35,36,37)]",
-                          )}
-                        />
-                      ) : null}
+                        <FileCheckIcon size={18} aria-hidden="true" />
+                      ) : (
+                        <FileIcon size={18} aria-hidden="true" />
+                      )}
                     </button>
                   </span>
                 </span>

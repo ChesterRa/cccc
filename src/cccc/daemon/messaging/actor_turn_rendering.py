@@ -149,9 +149,11 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
             continue
 
         if kind == "voice_document_ref":
-            document_path = compact_delivery_text(ref.get("document_path"), limit=120)
+            document_path = str(ref.get("document_path") or "").strip()
             if document_path:
-                title = compact_delivery_text(ref.get("title"), limit=72) or document_path
+                title = compact_delivery_text(ref.get("title"), limit=72) or compact_delivery_text(
+                    document_path, limit=72
+                )
                 group_id = compact_delivery_text(ref.get("group_id"), limit=48)
                 scope = f", group_id={group_id}" if group_id else ""
                 lines.append(
