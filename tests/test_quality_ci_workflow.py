@@ -229,6 +229,7 @@ def test_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
     assert "Start-Process -FilePath $CommandPath" in windows_installer
     assert "[int]$TimeoutMilliseconds = 35000" in windows_installer
     assert "$process.WaitForExit($TimeoutMilliseconds)" in windows_installer
+    assert "$process.WaitForExit()\n    $stdout =" in windows_installer
 
 
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:

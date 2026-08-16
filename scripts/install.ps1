@@ -137,6 +137,9 @@ function Invoke-CcccCommand(
       $process.WaitForExit()
       throw "$CommandPath $($Arguments -join ' ') timed out"
     }
+    # The timed overload can return before redirected streams and the process
+    # object are fully synchronized on Windows PowerShell 5.1.
+    $process.WaitForExit()
     $stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
     $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
     return [PSCustomObject]@{
