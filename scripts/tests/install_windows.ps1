@@ -310,7 +310,7 @@ use std::{env, fs, process};
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let state = env::var("CCCC_TEST_DAEMON_STATE").unwrap_or_default();
-    if args == ["--version"] { println!("cccc 9.9.6"); return; }
+    if args == ["--version"] { println!("cccc 9.9.3"); return; }
     if args == ["daemon", "status"] {
         if !state.is_empty() && std::path::Path::new(&state).exists() { return; }
         eprintln!("Error: ccccd: not running");
@@ -328,7 +328,7 @@ use std::{env, fs, process};
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let state = env::var("CCCC_TEST_DAEMON_STATE").unwrap_or_default();
-    if args == ["--version"] { println!("cccc 9.9.7"); return; }
+    if args == ["--version"] { println!("cccc 9.9.4"); return; }
     if args == ["daemon", "status"] {
         if !state.is_empty() && std::path::Path::new(&state).exists() { return; }
         eprintln!("Error: ccccd: not running");
@@ -346,7 +346,7 @@ fn main() {
   if ($LASTEXITCODE -ne 0) { throw "failed to build legacy PowerShell old fixture" }
   & rustc $legacyNewSource -O -o $legacyNewBinary
   if ($LASTEXITCODE -ne 0) { throw "failed to build legacy PowerShell new fixture" }
-  $legacyVersion = "9.9.7"
+  $legacyVersion = "9.9.4"
   New-FixtureRelease $legacyVersion $true $legacyNewBinary
 
   $legacyInstallDir = Join-Path $tempRoot "legacy-powershell-installed"
