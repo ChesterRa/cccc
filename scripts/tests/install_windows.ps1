@@ -320,6 +320,8 @@ try {
   $legacyOldBinary = Join-Path $tempRoot "legacy-powershell-old.exe"
   $legacyNewSource = Join-Path $tempRoot "legacy-powershell-new.rs"
   $legacyNewBinary = Join-Path $tempRoot "legacy-powershell-new.exe"
+  $restartFailureSource = Join-Path $tempRoot "restart-failure.rs"
+  $restartFailureBinary = Join-Path $tempRoot "restart-failure.exe"
   Set-Content -LiteralPath $legacyOldSource -Encoding utf8 -Value @'
 use std::{env, fs, process};
 fn main() {
@@ -350,10 +352,24 @@ fn main() {
         process::exit(1);
     }
     if args == ["daemon", "start"] {
-        if env::var("CCCC_TEST_DAEMON_START_FAIL").as_deref() == Ok("1") { process::exit(1); }
         fs::write(state, b"running").unwrap();
         return;
     }
+    process::exit(2);
+}
+'@
+  Set-Content -LiteralPath $restartFailureSource -Encoding utf8 -Value @'
+use std::{env, process};
+fn main() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let state = env::var("CCCC_TEST_DAEMON_STATE").unwrap_or_default();
+    if args == ["--version"] { println!("cccc 9.9.5"); return; }
+    if args == ["daemon", "status"] {
+        if !state.is_empty() && std::path::Path::new(&state).exists() { return; }
+        eprintln!("Error: ccccd: not running");
+        process::exit(1);
+    }
+    if args == ["daemon", "start"] { process::exit(1); }
     process::exit(2);
 }
 '@
@@ -361,6 +377,8 @@ fn main() {
   if ($LASTEXITCODE -ne 0) { throw "failed to build legacy PowerShell old fixture" }
   & rustc $legacyNewSource -O -o $legacyNewBinary
   if ($LASTEXITCODE -ne 0) { throw "failed to build legacy PowerShell new fixture" }
+  & rustc $restartFailureSource -O -o $restartFailureBinary
+  if ($LASTEXITCODE -ne 0) { throw "failed to build daemon restart failure fixture" }
   $legacyVersion = "9.9.4"
   New-FixtureRelease $legacyVersion $true $legacyNewBinary
 
@@ -388,28 +406,25 @@ fn main() {
   # passed validation. Keep that valid update instead of futilely restoring a
   # binary which faces the same runtime state, and preserve a useful message
   # even when the failed daemon emits no stderr.
+  $restartFailureVersion = "9.9.5"
+  New-FixtureRelease $restartFailureVersion $true $restartFailureBinary
   $restartFailureInstallDir = Join-Path $tempRoot "restart-failure-installed"
   New-Item -ItemType Directory -Force -Path $restartFailureInstallDir | Out-Null
   Copy-Item -LiteralPath $legacyOldBinary -Destination (Join-Path $restartFailureInstallDir "cccc.exe")
   Set-Content -LiteralPath (Join-Path $restartFailureInstallDir ".cccc-standalone") -Value "standalone-v1" -Encoding Ascii
   $env:CCCC_TEST_DAEMON_STATE = Join-Path $tempRoot "restart-failure-daemon.running"
   Set-Content -LiteralPath $env:CCCC_TEST_DAEMON_STATE -Value "running" -Encoding Ascii
-  $env:CCCC_TEST_DAEMON_START_FAIL = "1"
   $restartOut = Join-Path $tempRoot "restart-failure.out"
   $restartErr = Join-Path $tempRoot "restart-failure.err"
-  try {
-    $restartExit = Invoke-WindowsPowerShellInstaller `
-      (Join-Path $rootDir "scripts\install.ps1") $legacyVersion $restartFailureInstallDir $restartOut $restartErr
-  } finally {
-    Remove-Item Env:CCCC_TEST_DAEMON_START_FAIL -ErrorAction SilentlyContinue
-  }
+  $restartExit = Invoke-WindowsPowerShellInstaller `
+    (Join-Path $rootDir "scripts\install.ps1") $restartFailureVersion $restartFailureInstallDir $restartOut $restartErr
   if ($restartExit -eq 0) { throw "daemon restart failure unexpectedly reported success" }
   $restartDiagnostic = Get-Content -LiteralPath $restartErr -Raw
-  if ($restartDiagnostic -notlike "*CCCC v$legacyVersion was installed, but its daemon could not restart*" -or
+  if ($restartDiagnostic -notlike "*CCCC v$restartFailureVersion was installed, but its daemon could not restart*" -or
       $restartDiagnostic -notlike "*exit code 1*") {
     throw "daemon restart failure lost its null-safe diagnostic: $restartDiagnostic"
   }
-  if ((& (Join-Path $restartFailureInstallDir "cccc.exe") --version | Out-String).Trim() -ne "cccc $legacyVersion") {
+  if ((& (Join-Path $restartFailureInstallDir "cccc.exe") --version | Out-String).Trim() -ne "cccc $restartFailureVersion") {
     throw "daemon restart failure rolled back a validated binary"
   }
   Remove-Item Env:CCCC_TEST_DAEMON_STATE -ErrorAction SilentlyContinue
