@@ -112,8 +112,23 @@ function Invoke-WindowsPowerShellInstaller(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Installer,
     "-Version", $Version, "-InstallDir", $InstallDir, "-NoModifyPath"
   )
-  $process = Start-Process -FilePath $windowsPowerShell -ArgumentList $arguments -PassThru -NoNewWindow `
-    -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+  # A pwsh parent exports its PowerShell 7 module path. Do not pass that
+  # incompatible path into Windows PowerShell 5.1; without the override it
+  # reconstructs the native system module path containing Get-FileHash.
+  $parentModulePath = $env:PSModulePath
+  $process = $null
+  try {
+    Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+    $process = Start-Process -FilePath $windowsPowerShell -ArgumentList $arguments -PassThru -NoNewWindow `
+      -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+  } finally {
+    if ($null -eq $parentModulePath) {
+      Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+    } else {
+      $env:PSModulePath = $parentModulePath
+    }
+  }
+  if ($null -eq $process) { throw "failed to start Windows PowerShell 5.1" }
   $process.WaitForExit()
   $exitCode = $process.ExitCode
   $process.Dispose()
