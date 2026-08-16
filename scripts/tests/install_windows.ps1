@@ -418,7 +418,13 @@ fn main() {
   $restartErr = Join-Path $tempRoot "restart-failure.err"
   $restartExit = Invoke-WindowsPowerShellInstaller `
     (Join-Path $rootDir "scripts\install.ps1") $restartFailureVersion $restartFailureInstallDir $restartOut $restartErr
-  if ($restartExit -eq 0) { throw "daemon restart failure unexpectedly reported success" }
+  if ($restartExit -eq 0) {
+    $restartStateExists = Test-Path -LiteralPath $env:CCCC_TEST_DAEMON_STATE -PathType Leaf
+    $restartInstalledVersion = (& (Join-Path $restartFailureInstallDir "cccc.exe") --version | Out-String).Trim()
+    $restartOutput = Get-Content -LiteralPath $restartOut -Raw -ErrorAction SilentlyContinue
+    $restartError = Get-Content -LiteralPath $restartErr -Raw -ErrorAction SilentlyContinue
+    throw "daemon restart failure unexpectedly reported success; state_exists=$restartStateExists; installed=$restartInstalledVersion; stdout=$restartOutput; stderr=$restartError"
+  }
   $restartDiagnostic = Get-Content -LiteralPath $restartErr -Raw
   if ($restartDiagnostic -notlike "*CCCC v$restartFailureVersion was installed, but its daemon could not restart*" -or
       $restartDiagnostic -notlike "*exit code 1*") {
