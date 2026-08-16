@@ -347,7 +347,10 @@ incorrect file format.
 `group.running` stores the operator's desired runtime state. API group summaries
 also expose `runtime_status`, which is derived from live actor sessions. On
 daemon startup, enabled local actors in groups whose desired state is running
-are restored before the daemon publishes its IPC address.
+begin restoring in a detached worker after the daemon publishes its IPC
+address. IPC health and diagnostics therefore remain available while an actor
+runtime is slow to prepare or fails to resume; individual restore failures are
+logged and do not prevent the daemon from becoming ready.
 
 Actor-bound chat messages and system notifications use one bounded FIFO worker
 per actor. A worker seeds the runtime with its CCCC system prompt once per

@@ -3,6 +3,19 @@ use cccc_core::{GroupStore, HomeLayout};
 use crate::dispatch::OpError;
 use crate::ops::{actor_delivery, actor_runtime};
 
+pub fn spawn(home: HomeLayout) {
+    let result = std::thread::Builder::new()
+        .name("cccc-runtime-restore".into())
+        .spawn(move || {
+            if let Err(error) = restore_running(&home) {
+                tracing::warn!(message = %error.message, "failed to restore running runtimes");
+            }
+        });
+    if let Err(error) = result {
+        tracing::warn!(%error, "failed to spawn runtime restore worker");
+    }
+}
+
 pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     for meta in store.list().map_err(OpError::io)? {

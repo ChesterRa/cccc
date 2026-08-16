@@ -118,25 +118,49 @@ function Move-CcccItemWithRetry([string]$Source, [string]$Destination) {
   }
 }
 
-function Invoke-CcccDaemonStart([string]$CommandPath) {
-  $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("cccc-daemon-start-" + [Guid]::NewGuid().ToString("N") + ".out")
+function Invoke-CcccCommand(
+  [string]$CommandPath,
+  [string[]]$Arguments,
+  [int]$TimeoutMilliseconds = 35000
+) {
+  $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("cccc-command-" + [Guid]::NewGuid().ToString("N") + ".out")
   $stderrPath = "$stdoutPath.err"
   $process = $null
   try {
-    $process = Start-Process -FilePath $CommandPath -ArgumentList @("daemon", "start") `
+    $process = Start-Process -FilePath $CommandPath -ArgumentList $Arguments `
       -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-    if (-not $process.WaitForExit(35000)) {
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      throw "daemon start timed out"
+    if ($null -eq $process) {
+      throw "failed to start $CommandPath"
     }
-    if ($process.ExitCode -ne 0) {
-      $detail = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue).Trim()
-      if (-not $detail) { $detail = "exit code $($process.ExitCode)" }
-      throw "daemon start failed: $detail"
+    if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      $process.WaitForExit()
+      throw "$CommandPath $($Arguments -join ' ') timed out"
+    }
+    $stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+    $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+    return [PSCustomObject]@{
+      ExitCode = $process.ExitCode
+      Stdout = [string]$stdout
+      Stderr = [string]$stderr
     }
   } finally {
     if ($null -ne $process) { $process.Dispose() }
     Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Get-CcccCommandFailure([object]$Result) {
+  $detail = ([string]$Result.Stderr).Trim()
+  if (-not $detail) { $detail = ([string]$Result.Stdout).Trim() }
+  if (-not $detail) { $detail = "exit code $($Result.ExitCode)" }
+  return $detail
+}
+
+function Invoke-CcccDaemonStart([string]$CommandPath) {
+  $result = Invoke-CcccCommand $CommandPath @("daemon", "start")
+  if ($result.ExitCode -ne 0) {
+    throw "daemon start failed: $(Get-CcccCommandFailure $result)"
   }
 }
 
@@ -363,14 +387,16 @@ try {
   $transactionStarted = $true
   $oldCli = Join-Path $InstallDir "cccc.exe"
   if (Test-Path -LiteralPath $oldCli -PathType Leaf) {
-    & $oldCli daemon status *> $null
-    $daemonWasRunning = $LASTEXITCODE -eq 0
+    $daemonStatus = Invoke-CcccCommand $oldCli @("daemon", "status")
+    $daemonWasRunning = $daemonStatus.ExitCode -eq 0
     if ($daemonWasRunning) {
-      & $oldCli daemon stop *> $null
-      if ($LASTEXITCODE -ne 0) { throw "Could not stop the running CCCC daemon" }
+      $daemonStop = Invoke-CcccCommand $oldCli @("daemon", "stop")
+      if ($daemonStop.ExitCode -ne 0) {
+        throw "Could not stop the running CCCC daemon: $(Get-CcccCommandFailure $daemonStop)"
+      }
       for ($attempt = 0; $attempt -lt 40; $attempt++) {
-        & $oldCli daemon status *> $null
-        if ($LASTEXITCODE -ne 0) { break }
+        $daemonStatus = Invoke-CcccCommand $oldCli @("daemon", "status")
+        if ($daemonStatus.ExitCode -ne 0) { break }
         Start-Sleep -Milliseconds 250
       }
       if ($attempt -eq 40) { throw "The running CCCC daemon did not stop in time" }
@@ -444,15 +470,19 @@ try {
     Write-Host "Verified persistent Machine + User PATH resolves cccc to $installedCommand."
   }
 
+  # The downloaded binary, ownership marker, and PATH have passed validation.
+  # Commit the update before runtime restart: a project/runtime recovery issue
+  # affects the old binary too and must not roll back a valid installation.
+  $transactionCommitted = $true
+  Remove-Item -LiteralPath $backupDir -Recurse -Force
+
   if ($daemonWasRunning) {
     try {
       Invoke-CcccDaemonStart (Join-Path $InstallDir "cccc.exe")
     } catch {
-      throw "The updated CCCC daemon could not restart: $_"
+      throw "CCCC v$Version was installed, but its daemon could not restart: $_"
     }
   }
-  $transactionCommitted = $true
-  Remove-Item -LiteralPath $backupDir -Recurse -Force
 
   Write-Host "Installed CCCC v$Version in $InstallDir"
   Write-Host "Verify installed command directly: `"$installedCommand`" doctor"

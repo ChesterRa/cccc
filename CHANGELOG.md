@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Windows standalone updates and daemon recovery no longer fail on expected stopped-state diagnostics.** PowerShell 5.1 now checks daemon commands by process exit code without promoting native stderr into a terminating installer error, empty restart diagnostics are null-safe, and a verified replacement is retained when only runtime restart fails. The Rust daemon publishes IPC before restoring actors in a detached worker, so a slow or failed actor recovery remains diagnosable without blocking daemon readiness; stale unlocked daemon files continue to be reclaimed through the operating-system lock.
+
 ## [0.4.34] — 2026-08-16
 
 ### Added

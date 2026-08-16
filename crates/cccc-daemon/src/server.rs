@@ -20,7 +20,13 @@ use crate::server_connection::spawn_connection;
 use crate::server_connections::ConnectionTasks;
 use crate::server_lifecycle::{DaemonLifecycle, cleanup_stale};
 
+type RuntimeRestoreSpawner = fn(HomeLayout);
+
 pub async fn run(home: HomeLayout) -> Result<()> {
+    run_with_restore(home, crate::ops::runtime_restore::spawn).await
+}
+
+async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> Result<()> {
     home.initialize().context("initialize Rust home")?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
@@ -29,8 +35,6 @@ pub async fn run(home: HomeLayout) -> Result<()> {
     cleanup_stale(&paths);
     let mut lifecycle = DaemonLifecycle::new(paths, lock);
     std::fs::write(&lifecycle.paths.pid, format!("{}\n", std::process::id()))?;
-    crate::ops::runtime_restore::restore_running(&lifecycle.paths.home)
-        .map_err(|error| anyhow::anyhow!(error.message))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
     let dispatch_locks = DispatchLocks::default();
@@ -38,9 +42,23 @@ pub async fn run(home: HomeLayout) -> Result<()> {
         crate::group_bridge_sessions::SessionManager::start(lifecycle.paths.home.clone());
 
     let result = if use_tcp() {
-        serve_tcp(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
+        serve_tcp(
+            &lifecycle.paths,
+            shutdown_tx,
+            shutdown_rx,
+            dispatch_locks,
+            restore,
+        )
+        .await
     } else {
-        serve_platform_default(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
+        serve_platform_default(
+            &lifecycle.paths,
+            shutdown_tx,
+            shutdown_rx,
+            dispatch_locks,
+            restore,
+        )
+        .await
     };
     actor_activity.finish().await;
     group_bridge_sessions.shutdown().await;
@@ -52,6 +70,7 @@ async fn serve_tcp(
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
     dispatch_locks: DispatchLocks,
+    restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
     let host = std::env::var("CCCC_DAEMON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let port = std::env::var("CCCC_DAEMON_PORT")
@@ -60,12 +79,13 @@ async fn serve_tcp(
         .unwrap_or(0);
     let listener = TcpListener::bind((host.as_str(), port)).await?;
     let local = listener.local_addr()?;
-    write_address(
+    publish_address_and_restore(
         paths,
         Transport::Tcp,
         "",
         local.ip().to_string(),
         local.port(),
+        restore,
     )?;
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -104,14 +124,16 @@ async fn serve_platform_default(
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
     dispatch_locks: DispatchLocks,
+    restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
     let listener = UnixListener::bind(&paths.socket)?;
-    write_address(
+    publish_address_and_restore(
         paths,
         Transport::Unix,
         &paths.socket.to_string_lossy(),
         String::new(),
         0,
+        restore,
     )?;
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -150,8 +172,9 @@ async fn serve_platform_default(
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
     dispatch_locks: DispatchLocks,
+    restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
-    serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_locks).await
+    serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_locks, restore).await
 }
 
 fn acquire_daemon_lock(path: &Path) -> Result<File> {
@@ -190,6 +213,19 @@ fn write_address(
     Ok(())
 }
 
+fn publish_address_and_restore(
+    paths: &DaemonPaths,
+    transport: Transport,
+    path: &str,
+    host: String,
+    port: u16,
+    restore: RuntimeRestoreSpawner,
+) -> Result<()> {
+    write_address(paths, transport, path, host, port)?;
+    restore(paths.home.clone());
+    Ok(())
+}
+
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -212,4 +248,48 @@ fn use_tcp() -> bool {
 fn begin_runtime_shutdown(home: &HomeLayout) {
     let _ = crate::runtime_start_gate::prevent(home);
     crate::ops::actor_runtime::cancel_resume_verifications();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_address_is_published(home: HomeLayout) {
+        let paths = DaemonPaths::new(home);
+        assert!(paths.address.exists());
+        std::fs::write(paths.daemon_dir.join("restore.started"), b"").expect("mark restore start");
+    }
+
+    #[test]
+    fn reclaims_an_unlocked_stale_daemon_lock_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ccccd.lock");
+        std::fs::write(&path, "stale pid\n").expect("write stale lock");
+
+        let lock = acquire_daemon_lock(&path).expect("claim stale lock");
+
+        assert!(path.exists());
+        drop(lock);
+        acquire_daemon_lock(&path).expect("reclaim released lock");
+    }
+
+    #[test]
+    fn publishes_ipc_address_before_starting_runtime_restore() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let paths = DaemonPaths::new(home.clone());
+
+        publish_address_and_restore(
+            &paths,
+            Transport::Tcp,
+            "",
+            "127.0.0.1".into(),
+            4242,
+            assert_address_is_published,
+        )
+        .expect("publish daemon address");
+
+        assert!(paths.daemon_dir.join("restore.started").exists());
+    }
 }
