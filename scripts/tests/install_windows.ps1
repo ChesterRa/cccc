@@ -363,7 +363,7 @@ use std::{env, process};
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let state = env::var("CCCC_TEST_DAEMON_STATE").unwrap_or_default();
-    if args == ["--version"] { println!("cccc 9.9.5"); return; }
+    if args == ["--version"] { println!("cccc 9.9.2"); return; }
     if args == ["daemon", "status"] {
         if !state.is_empty() && std::path::Path::new(&state).exists() { return; }
         eprintln!("Error: ccccd: not running");
@@ -406,7 +406,7 @@ fn main() {
   # passed validation. Keep that valid update instead of futilely restoring a
   # binary which faces the same runtime state, and preserve a useful message
   # even when the failed daemon emits no stderr.
-  $restartFailureVersion = "9.9.5"
+  $restartFailureVersion = "9.9.2"
   New-FixtureRelease $restartFailureVersion $true $restartFailureBinary
   $restartFailureInstallDir = Join-Path $tempRoot "restart-failure-installed"
   New-Item -ItemType Directory -Force -Path $restartFailureInstallDir | Out-Null
