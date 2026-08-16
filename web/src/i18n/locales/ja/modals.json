@@ -5,6 +5,7 @@
     "quickSelect": "クイック選択",
     "projectDirectory": "プロジェクトディレクトリ",
     "browse": "参照",
+    "locations": "ドライブ",
     "noSubdirectories": "サブディレクトリがありません",
     "groupName": "グループ名",
     "groupNamePlaceholder": "ディレクトリ名から自動入力",

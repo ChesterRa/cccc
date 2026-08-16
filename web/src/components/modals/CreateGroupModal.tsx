@@ -4,6 +4,8 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { ArrowDownIcon, DownloadIcon, FileIcon, FolderIcon, HomeIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { CreateGroupDirectoryBrowser } from "./CreateGroupDirectoryBrowser";
+import { directoryNameFromPath, driveSuggestions } from "./createGroupDirectoryModel";
 import { ModalFrame } from "./ModalFrame";
 
 export interface CreateGroupModalProps {
@@ -123,7 +125,7 @@ export function CreateGroupModal({
                   className="flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-left min-h-[56px] glass-card"
                   onClick={() => {
                     setCreateGroupPath(s.path);
-                    setCreateGroupName(s.path.split("/").filter(Boolean).pop() || "");
+                    setCreateGroupName(directoryNameFromPath(s.path));
                     onFetchDirContents(s.path);
                   }}
                 >
@@ -153,11 +155,8 @@ export function CreateGroupModal({
               value={createGroupPath}
               onChange={(e) => {
                 setCreateGroupPath(e.target.value);
-                const dirName = e.target.value.split("/").filter(Boolean).pop() || "";
-                if (
-                  !createGroupName ||
-                  createGroupName === currentDir.split("/").filter(Boolean).pop()
-                ) {
+                const dirName = directoryNameFromPath(e.target.value);
+                if (!createGroupName || createGroupName === directoryNameFromPath(currentDir)) {
                   setCreateGroupName(dirName);
                 }
               }}
@@ -173,63 +172,18 @@ export function CreateGroupModal({
           </div>
         </div>
         {showDirBrowser && (
-          <div
-            className={`rounded-xl max-h-48 overflow-auto ${dirBrowseError ? "border border-rose-500/30 bg-rose-500/10" : "glass-panel"}`}
-          >
-            {dirBrowseError ? (
-              <div className="px-3 py-3 text-sm text-rose-600 dark:text-rose-400">
-                {dirBrowseError}
-              </div>
-            ) : (
-              <>
-                {currentDir && (
-                  <div className="px-3 py-1.5 border-b text-xs font-mono truncate border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
-                    {currentDir}
-                  </div>
-                )}
-                {parentDir && (
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left border-b min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)] border-[var(--glass-border-subtle)]"
-                    onClick={() => {
-                      onFetchDirContents(parentDir);
-                      setCreateGroupPath(parentDir);
-                      setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
-                    }}
-                  >
-                    <span className="text-[var(--color-text-muted)]">
-                      <FolderIcon size={16} />
-                    </span>
-                    <span className="text-sm text-[var(--color-text-muted)]">..</span>
-                  </button>
-                )}
-                {dirItems.filter((d) => d.is_dir).length === 0 && (
-                  <div className="px-3 py-4 text-center text-sm text-[var(--color-text-muted)]">
-                    {t("createGroup.noSubdirectories")}
-                  </div>
-                )}
-                {dirItems
-                  .filter((d) => d.is_dir)
-                  .map((item) => (
-                    <button
-                      key={item.path}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left min-h-[44px] hover:bg-[var(--glass-tab-bg-hover)]"
-                      onClick={() => {
-                        setCreateGroupPath(item.path);
-                        setCreateGroupName(item.name);
-                        onFetchDirContents(item.path);
-                      }}
-                    >
-                      <span className="text-[var(--color-text-secondary)]">
-                        <FolderIcon size={16} />
-                      </span>
-                      <span className="text-sm text-[var(--color-text-secondary)]">
-                        {item.name}
-                      </span>
-                    </button>
-                  ))}
-              </>
-            )}
-          </div>
+          <CreateGroupDirectoryBrowser
+            dirItems={dirItems}
+            currentDir={currentDir}
+            parentDir={parentDir}
+            driveLocations={driveSuggestions(dirSuggestions)}
+            error={dirBrowseError}
+            onSelect={(path, name) => {
+              setCreateGroupPath(path);
+              setCreateGroupName(name);
+            }}
+            onFetch={onFetchDirContents}
+          />
         )}
         <div>
           <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">

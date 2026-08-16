@@ -5,6 +5,7 @@
     "quickSelect": "Quick Select",
     "projectDirectory": "Project Directory",
     "browse": "Browse",
+    "locations": "Drives",
     "noSubdirectories": "No subdirectories",
     "groupName": "Group Name",
     "groupNamePlaceholder": "Auto-filled from directory name",

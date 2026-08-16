@@ -5,6 +5,7 @@
     "quickSelect": "快速选择",
     "projectDirectory": "项目目录",
     "browse": "浏览",
+    "locations": "磁盘",
     "noSubdirectories": "没有子目录",
     "groupName": "工作组名称",
     "groupNamePlaceholder": "根据目录名自动填充",

@@ -37,6 +37,7 @@ from ..branding import (
     resolve_branding_asset_path,
     store_branding_asset,
 )
+from ..filesystem_suggestions import recent_directory_suggestions
 from ...mcp.common import MCPError, runtime_context_override
 from ...mcp.group_bridge import GroupBridgeContext, handle_group_bridge_request
 from ...mcp.handlers.cccc_capability import capability_install as mcp_capability_install
@@ -1750,30 +1751,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "details": {"endpoint": "fs_recent"},
                 },
             )
-        home = Path.home()
-        suggestions = []
-
-        # Home directory
-        suggestions.append({"name": "Home", "path": str(home), "icon": "🏠"})
-
-        # Common dev directories
-        for name in ["dev", "projects", "code", "src", "workspace", "repos", "github", "work"]:
-            p = home / name
-            if p.exists() and p.is_dir():
-                suggestions.append({"name": name.title(), "path": str(p), "icon": "📁"})
-
-        # Desktop and Documents
-        for name, icon in [("Desktop", "🖥️"), ("Documents", "📄"), ("Downloads", "⬇️")]:
-            p = home / name
-            if p.exists() and p.is_dir():
-                suggestions.append({"name": name, "path": str(p), "icon": icon})
-
-        # Current working directory
-        cwd = Path.cwd()
-        if cwd != home:
-            suggestions.append({"name": "Current Dir", "path": str(cwd), "icon": "📍"})
-
-        return {"ok": True, "result": {"suggestions": suggestions[:10]}}
+        return {
+            "ok": True,
+            "result": {"suggestions": recent_directory_suggestions(Path.home(), Path.cwd())},
+        }
 
     @global_router.get("/api/v1/fs/scope_root", dependencies=[Depends(require_admin)])
     async def fs_scope_root(path: str = "") -> Dict[str, Any]:
