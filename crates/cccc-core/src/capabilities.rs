@@ -29,6 +29,18 @@ pub struct Capability {
     pub source: String,
     #[serde(default)]
     pub source_uri: String,
+    #[serde(default = "default_qualification_status")]
+    pub qualification_status: String,
+    #[serde(default = "default_enable_supported")]
+    pub enable_supported: bool,
+}
+
+fn default_qualification_status() -> String {
+    "qualified".into()
+}
+
+const fn default_enable_supported() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -143,8 +155,8 @@ impl CapabilityStore {
             "capsule_text":capability.capsule_text,
             "source_id":if capability.source.is_empty(){"manual_import"}else{&capability.source},
             "source_uri":capability.source_uri,
-            "qualification_status":"qualified",
-            "enable_supported":true
+            "qualification_status":capability.qualification_status,
+            "enable_supported":capability.enable_supported
         });
         self.import_record(record)?;
         self.load()
@@ -929,6 +941,15 @@ fn capability_from_record(record: &Value) -> io::Result<Capability> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned(),
+        qualification_status: record
+            .get("qualification_status")
+            .and_then(Value::as_str)
+            .unwrap_or("qualified")
+            .to_owned(),
+        enable_supported: record
+            .get("enable_supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
     })
 }
 

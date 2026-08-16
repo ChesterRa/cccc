@@ -22,6 +22,7 @@ from .claude import (
 )
 from .codex import (
     configure_codex_launch,
+    configure_codex_mcp_launch,
     is_direct_codex_command,
     probe_codex_hook_config,
 )
@@ -148,6 +149,14 @@ def _start_actor_with_hooks_serialized(
             unavailable_event = "HookUnavailableSettings"
             probe = codex_hook_probe or probe_codex_hook_config
             if not probe(argv, cwd, launch_env, cli_command):
+                argv, launch_env = configure_codex_mcp_launch(
+                    home=home,
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    command=argv,
+                    env=launch_env,
+                    cccc_command=cli_command,
+                )
                 begin_launch(
                     home,
                     runtime_name,

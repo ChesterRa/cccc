@@ -143,5 +143,7 @@ fn pack(id: &str, title: &str, tools: &[&str], tags: &[&str]) -> Capability {
         capsule_text: String::new(),
         source: "cccc_builtin".into(),
         source_uri: String::new(),
+        qualification_status: "qualified".into(),
+        enable_supported: true,
     }
 }

@@ -1,8 +1,8 @@
-use super::launcher::{prepend_executable_dir, valid_public_launcher};
-use super::overrides::hook_hash;
+use super::launcher::{prepend_executable_dir, resolve_on_path, valid_public_launcher};
+use super::overrides::{append_overrides, hook_hash};
 use super::{
-    CodexLaunch, append_overrides, begin_hook_launch, configure_with_executable,
-    is_direct_codex_command, record_launch_issue,
+    CodexLaunch, begin_hook_launch, configure_with_executable, is_direct_codex_command,
+    record_launch_issue,
 };
 use cccc_core::HomeLayout;
 use std::collections::BTreeMap;
@@ -152,6 +152,36 @@ fn prepends_binary_directory_without_duplicate() {
 }
 
 #[test]
+fn resolves_relative_path_entries_against_the_daemon_cwd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bin = temp.path().join("bin");
+    fs::create_dir(&bin).expect("create bin");
+    let executable = bin.join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
+    fs::write(&executable, b"launcher").expect("write launcher");
+    let paths = std::env::join_paths([Path::new("bin")]).expect("relative PATH");
+
+    assert_eq!(
+        resolve_on_path(&paths, Some(temp.path())).as_deref(),
+        Some(executable.as_path())
+    );
+}
+
+#[test]
+fn resolves_absolute_path_entries_without_a_daemon_cwd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let executable = temp
+        .path()
+        .join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
+    fs::write(&executable, b"launcher").expect("write launcher");
+    let paths = std::env::join_paths([temp.path()]).expect("absolute PATH");
+
+    assert_eq!(
+        resolve_on_path(&paths, None).as_deref(),
+        Some(executable.as_path())
+    );
+}
+
+#[test]
 fn each_hook_launch_rotates_the_environment_fence_atomically() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -212,7 +242,7 @@ fn missing_codex_executable_records_a_specific_setup_issue() {
 }
 
 #[test]
-fn unsupported_hook_config_keeps_original_codex_command_launchable() {
+fn unsupported_hook_config_keeps_mcp_without_injecting_hooks() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
     let executable = temp
@@ -236,7 +266,17 @@ fn unsupported_hook_config_keeps_original_codex_command_launchable() {
     )
     .expect("safe fallback");
 
-    assert_eq!(command, ["codex", "--search"]);
+    assert!(
+        command
+            .iter()
+            .any(|item| item.starts_with("mcp_servers.cccc.command="))
+    );
+    assert!(
+        !command
+            .iter()
+            .any(|item| item.starts_with("hooks.SessionStart="))
+    );
+    assert_eq!(env["CCCC_HOME"], temp.path().to_string_lossy());
     assert!(!setup.hook_enabled);
     let state = cccc_core::codex_hook_state::read(&home, "g_test", "peer1").expect("hook issue");
     assert_eq!(state.event, "HookUnavailableSettings");

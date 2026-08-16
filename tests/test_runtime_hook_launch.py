@@ -204,7 +204,7 @@ def test_spawn_failure_records_explicit_unavailable_reason(tmp_path: Path) -> No
     assert state is not None and state.event == "HookUnavailableSpawn"
 
 
-def test_codex_hook_probe_failure_preserves_original_process_launch(
+def test_codex_hook_probe_failure_preserves_mcp_without_hooks(
     tmp_path: Path,
 ) -> None:
     supervisor = _FakeSupervisor()
@@ -223,7 +223,9 @@ def test_codex_hook_probe_failure_preserves_original_process_launch(
     )
 
     assert session is supervisor.session
-    assert supervisor.commands == [["codex", "--search"]]
+    command = supervisor.commands[0]
+    assert any(item.startswith("mcp_servers.cccc.command=") for item in command)
+    assert not any(item.startswith("hooks.SessionStart=") for item in command)
     state = read_state(tmp_path, "codex", "g1", "peer")
     identity = read_launch_identity(tmp_path, "g1", "peer")
     assert state is not None and state.event == "HookUnavailableSettings"

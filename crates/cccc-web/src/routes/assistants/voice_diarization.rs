@@ -2,11 +2,15 @@ use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{GroupStore, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::{
     voice_asr, voice_inference, voice_segment_analysis, voice_segmented_recording::RecordingSegment,
 };
 use crate::AppState;
+
+static DIARIZATION_JOBS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 pub(super) enum SpawnStatus {
     Started,
@@ -23,11 +27,27 @@ pub(super) struct DiarizationJob {
     pub(super) language: String,
 }
 
-pub(super) fn available(state: &AppState, model_id: &str) -> bool {
+fn available(state: &AppState, model_id: &str) -> bool {
     voice_asr::diarization_available(&state.home, model_id)
 }
 
-pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> SpawnStatus {
+pub(super) fn try_reserve(
+    state: &AppState,
+    model_id: &str,
+) -> Result<OwnedSemaphorePermit, &'static str> {
+    if !available(state, model_id) {
+        return Err("model_not_ready");
+    }
+    reservation_semaphore()
+        .try_acquire_owned()
+        .map_err(|_| "busy")
+}
+
+pub(super) fn spawn(
+    job: DiarizationJob,
+    recordings: Vec<RecordingSegment>,
+    reservation: OwnedSemaphorePermit,
+) -> SpawnStatus {
     let DiarizationJob {
         state,
         group_id,
@@ -37,10 +57,8 @@ pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> S
         transcript_model,
         language,
     } = job;
-    if !available(&state, &diarization_model) {
-        return SpawnStatus::Skipped("model_not_ready");
-    }
     tokio::spawn(async move {
+        let _reservation = reservation;
         let home = state.home.clone();
         let permit = voice_inference::acquire().await;
         let outcome = tokio::task::spawn_blocking(move || {
@@ -109,6 +127,12 @@ pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> S
         }
     });
     SpawnStatus::Started
+}
+
+fn reservation_semaphore() -> Arc<Semaphore> {
+    DIARIZATION_JOBS
+        .get_or_init(|| Arc::new(Semaphore::new(1)))
+        .clone()
 }
 
 async fn persist_result(

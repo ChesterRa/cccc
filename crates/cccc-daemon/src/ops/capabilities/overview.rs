@@ -85,6 +85,14 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
     } else {
         capability.kind
     };
+    let qualification_status = if blocked {
+        "blocked".to_owned()
+    } else if capability.qualification_status.is_empty() {
+        "qualified".to_owned()
+    } else {
+        capability.qualification_status
+    };
+    let enable_supported = capability.enable_supported && qualification_status != "blocked";
     let tool_count = capability.tool_names.len();
     json!({
         "capability_id":capability.id,
@@ -99,9 +107,9 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
         "tool_count":tool_count,
         "blocked_global":blocked,
         "policy_visible":!blocked,
-        "enable_supported":true,
-        "autoload_candidate":!blocked,
-        "qualification_status":if blocked { "blocked" } else { "qualified" },
+        "enable_supported":enable_supported,
+        "autoload_candidate":!blocked && enable_supported,
+        "qualification_status":qualification_status,
     })
 }
 

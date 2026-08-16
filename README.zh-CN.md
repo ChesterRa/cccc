@@ -260,7 +260,7 @@ Actor 可以以 **PTY**（嵌入式终端）或 **headless**（无终端的结�
 
 ChatGPT Web 可以作为真正的 CCCC actor 加入协作组，而不只是外部聊天窗口：CCCC 通过浏览器投递把组消息送进绑定的 ChatGPT 对话，GPT-5.x 再经由 actor 绑定的远程 MCP connector 回连 CCCC —— 接收路由消息、可见回复、查看和编辑仓库文件、运行受 scope 限制的 shell/git 命令，体验接近原生本地编码 agent。这也能把闲置的 ChatGPT Web 用量转化为额外的本地开发 agent 容量。
 
-配置需要通过公网 HTTPS URL 暴露 MCP connector（Cloudflare Tunnel、ngrok、Tailscale Funnel 或反向代理）。注意 GPT-5.x Pro 会话目前不支持此用法 —— 它不暴露第三方 MCP connector。完整配置与排障见 [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
+配置需要通过公网 HTTPS URL 暴露 MCP connector（Cloudflare Tunnel、ngrok、Tailscale Funnel 或反向代理）。CCCC 默认使用稳定的纯文本投递，也提供实验性的 **GPT Pro** 模式：每次投递会附带一张极小的空白 PNG，以兼容部分账户中由此开放第三方 MCP 的 ChatGPT 行为。CCCC 不会替你切换模型，也不保证该兼容方式在 ChatGPT 改版后继续有效。完整配置与排障见 [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
 ## Group Bridge：连接远端协作组
 
@@ -466,7 +466,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 | [Web UI 指南](https://chesterra.github.io/cccc/guide/web-ui) | 看板导航 |
 | [IM 桥接配置](https://chesterra.github.io/cccc/guide/im-bridge/) | 连接 Telegram、Slack、Discord、飞书、钉钉、企业微信、微信 |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM 知识集成 |
-| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | 将 ChatGPT Web / 支持 MCP 的 GPT-5.x 接入为 CCCC actor；GPT-5.x Pro 更适合作为建议和 review 辅助 |
+| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | 将支持 MCP 的 ChatGPT Web 接入为 CCCC actor；可选的实验性 GPT Pro 模式会附带一张极小的空白 PNG |
 | [能力白名单](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP 能力治理 |
 | [最佳实践](https://chesterra.github.io/cccc/guide/best-practices) | 推荐模式与工作流 |
 | [常见问题](https://chesterra.github.io/cccc/guide/faq) | FAQ |
@@ -511,7 +511,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其
 `Installation` 部分会显示本次入口、PATH 实际命中的命令以及全部冲突路径。
 
-当前托管的原生安装器固定安装 `v0.4.34-rc4` 候选版本。
+当前托管的原生安装器固定安装 `v0.4.34` 正式版。
 
 ### pip（RC 版，TestPyPI）
 

@@ -64,6 +64,35 @@ fn legacy_registered_skills_are_projected_for_slash_commands() {
 }
 
 #[test]
+fn unsupported_catalog_records_are_not_autoload_candidates() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    std::fs::create_dir_all(home.root().join("state/capabilities")).expect("capability state");
+    write_json(
+        &home.root().join("state/capabilities/catalog.json"),
+        json!({"records":{"skill:test:unsupported":{
+            "capability_id":"skill:test:unsupported",
+            "kind":"skill",
+            "name":"unsupported",
+            "qualification_status":"blocked",
+            "enable_supported":false
+        }}}),
+    );
+
+    let overview = call(
+        &home,
+        "capability_overview",
+        json!({"query":"skill:test:unsupported"}),
+    );
+
+    assert_eq!(overview["total_count"], 1);
+    assert_eq!(overview["items"][0]["qualification_status"], "blocked");
+    assert_eq!(overview["items"][0]["enable_supported"], false);
+    assert_eq!(overview["items"][0]["autoload_candidate"], false);
+}
+
+#[test]
 fn native_updates_override_legacy_capability_flags() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

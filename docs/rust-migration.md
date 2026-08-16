@@ -62,8 +62,8 @@ and install into a user-owned directory. They refuse to overwrite a public
 `cccc` executable not carrying the standalone ownership marker; uninstall that
 command deliberately, choose another
 `CCCC_INSTALL_DIR`, or set `CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement
-is intentional. The initial experimental preview is `0.4.34-rc2`; callers can
-override the documentation pin through `CCCC_VERSION`.
+is intentional. The hosted scripts are rendered with the current documentation
+release; callers can override that concrete pin through `CCCC_VERSION`.
 
 In either distribution, inspect or apply updates with:
 

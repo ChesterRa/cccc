@@ -143,6 +143,13 @@ fn parse_capability(value: &Value) -> Option<Capability> {
         source_uri: nonempty(value.get("source_uri"))
             .unwrap_or_default()
             .to_owned(),
+        qualification_status: nonempty(value.get("qualification_status"))
+            .unwrap_or("qualified")
+            .to_owned(),
+        enable_supported: value
+            .get("enable_supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
     })
 }
 

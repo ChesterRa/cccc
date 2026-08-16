@@ -82,7 +82,8 @@ pub(super) async fn finalize_disconnect(
         return;
     };
 
-    let can_defer_to_speaker_analysis = voice_diarization::available(&state, &diarization_model_id);
+    let diarization_reservation = voice_diarization::try_reserve(&state, &diarization_model_id);
+    let can_defer_to_speaker_analysis = diarization_reservation.is_ok();
     let final_result = voice_final_asr::transcribe_pcm16_segments(
         state.home.clone(),
         final_model_id.clone(),
@@ -103,18 +104,21 @@ pub(super) async fn finalize_disconnect(
         "assistant_service_local_asr_final",
     )
     .await;
-    let _ = voice_diarization::spawn(
-        voice_diarization::DiarizationJob {
-            state,
-            group_id,
-            session_id,
-            document_path,
-            diarization_model: diarization_model_id,
-            transcript_model: final_model_id,
-            language,
-        },
-        recordings,
-    );
+    if let Ok(reservation) = diarization_reservation {
+        let _ = voice_diarization::spawn(
+            voice_diarization::DiarizationJob {
+                state,
+                group_id,
+                session_id,
+                document_path,
+                diarization_model: diarization_model_id,
+                transcript_model: final_model_id,
+                language,
+            },
+            recordings,
+            reservation,
+        );
+    }
 }
 
 fn best_transcript(final_result: &Value, streaming_text: String) -> String {

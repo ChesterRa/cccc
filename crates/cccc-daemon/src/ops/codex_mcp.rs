@@ -10,7 +10,7 @@ use launcher::configure_actor_cli_path;
 pub(crate) use launcher::{configure_actor_cli, resolve_cccc_executable};
 #[path = "codex_mcp_overrides.rs"]
 mod overrides;
-use overrides::{append_mcp_overrides, append_overrides};
+use overrides::{append_hook_overrides, append_mcp_overrides};
 
 struct CodexLaunch<'a> {
     home: &'a HomeLayout,
@@ -76,6 +76,17 @@ where
         return Ok(setup("codex", launch_token, false));
     };
     configure_actor_cli_path(env, &executable);
+    append_mcp_overrides(
+        command,
+        launch.home.root(),
+        &executable,
+        launch.group_id,
+        launch.actor_id,
+    );
+    env.insert(
+        "CCCC_HOME".into(),
+        launch.home.root().to_string_lossy().into_owned(),
+    );
     if !hook_probe(command, &executable, launch.cwd, env) {
         record_launch_issue(
             launch.home,
@@ -87,17 +98,7 @@ where
         )?;
         return Ok(setup("codex", launch_token, false));
     }
-    append_overrides(
-        command,
-        launch.home.root(),
-        &executable,
-        launch.group_id,
-        launch.actor_id,
-    );
-    env.insert(
-        "CCCC_HOME".into(),
-        launch.home.root().to_string_lossy().into_owned(),
-    );
+    append_hook_overrides(command, &executable);
     Ok(setup("codex", launch_token, true))
 }
 

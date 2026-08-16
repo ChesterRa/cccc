@@ -190,7 +190,12 @@ process-based and does not claim provider-session resume semantics.
 
 `web_model` does not use `cccc setup`. Create the ChatGPT Web Model actor from the CCCC Web group, then finish sign-in, MCP URL setup, and conversation binding in **Settings > ChatGPT Web Model**.
 
-This runtime works with MCP-capable GPT-5.x ChatGPT Web sessions. GPT-5.x Pro sessions are advisory-only for this integration because they do not expose third-party MCP connectors.
+This runtime works with ChatGPT Web sessions that can use the CCCC MCP connector.
+Text-only **Standard** delivery remains the default. The explicitly experimental
+**GPT Pro** mode attaches one tiny blank PNG to each delivered batch for accounts
+where that ChatGPT-side behavior exposes the connector. CCCC does not select the
+ChatGPT model and cannot guarantee that this compatibility workaround will keep
+working when ChatGPT changes.
 
 For details, see [ChatGPT Web Model Runtime](/guide/web-model-runtime).
 

@@ -7,7 +7,7 @@ import pytest
 from scripts.verify_python_release_set import MAX_WHEEL_BYTES, WHEEL_SUFFIXES, verify
 
 
-PREFIX = "cccc_pair-0.4.34rc4"
+PREFIX = "cccc_pair-0.4.34"
 
 
 def _complete_set(directory: Path) -> None:

@@ -18,6 +18,7 @@ use std::fs::OpenOptions;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DAEMON_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const DAEMON_OWNER_HANDOFF_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -137,7 +138,7 @@ async fn launch(
     let mut embedded_daemon = None;
     // Event-driven loss detection for the embedded daemon: polling in
     // `wait_for_daemon_loss` stays as the fallback for an external daemon.
-    let (daemon_exit_tx, daemon_exit_rx) = tokio::sync::watch::channel(false);
+    let (daemon_exit_tx, mut daemon_exit_rx) = tokio::sync::watch::channel(false);
     if !ping(&client).await {
         let daemon_home = home.clone();
         embedded_daemon = Some(tokio::spawn(async move {
@@ -145,7 +146,12 @@ async fn launch(
             let _ = daemon_exit_tx.send(true);
             result
         }));
-        wait_for_daemon(&client, std::time::Duration::from_secs(30)).await;
+        let _ = wait_for_daemon(
+            &client,
+            &mut daemon_exit_rx,
+            std::time::Duration::from_secs(30),
+        )
+        .await;
     }
     if !ping(&client).await {
         finish_embedded_daemon(&client, embedded_daemon.take()).await;
@@ -368,16 +374,39 @@ async fn ping(client: &DaemonClient) -> bool {
         .is_ok_and(|response| is_compatible_daemon(&response))
 }
 
-async fn wait_for_daemon(client: &DaemonClient, timeout: std::time::Duration) -> bool {
+async fn wait_for_daemon(
+    client: &DaemonClient,
+    daemon_exited: &mut tokio::sync::watch::Receiver<bool>,
+    timeout: std::time::Duration,
+) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut owner_handoff_deadline = None;
     loop {
         if ping(client).await {
             return true;
         }
-        if tokio::time::Instant::now() >= deadline {
+        if *daemon_exited.borrow() {
+            owner_handoff_deadline
+                .get_or_insert_with(|| tokio::time::Instant::now() + DAEMON_OWNER_HANDOFF_GRACE);
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline || owner_handoff_deadline.is_some_and(|handoff| now >= handoff) {
             return false;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if owner_handoff_deadline.is_some() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
+        }
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+            changed = daemon_exited.changed() => {
+                if changed.is_err() || *daemon_exited.borrow() {
+                    owner_handoff_deadline.get_or_insert_with(
+                        || tokio::time::Instant::now() + DAEMON_OWNER_HANDOFF_GRACE,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -490,9 +519,10 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PRODUCT_VERSION, is_compatible_daemon, select_active_group, wait_for_daemon_lock_release,
-        web_endpoint,
+        PRODUCT_VERSION, is_compatible_daemon, select_active_group, wait_for_daemon,
+        wait_for_daemon_lock_release, web_endpoint,
     };
+    use cccc_client::DaemonClient;
     use cccc_contracts::DaemonResponse;
     use cccc_core::{GroupStore, HomeLayout, active};
     use fs2::FileExt;
@@ -601,5 +631,52 @@ mod tests {
             .expect("waiter timeout")
             .expect("waiter task")
             .expect("lock release detected");
+    }
+
+    #[tokio::test]
+    async fn daemon_startup_wait_stops_when_the_embedded_daemon_exits() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let client = DaemonClient::new(home).with_timeout(Duration::from_millis(20));
+        let (exit_tx, mut exit_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            exit_tx.send(true).expect("publish embedded daemon exit");
+        });
+
+        let ready = tokio::time::timeout(
+            Duration::from_secs(3),
+            wait_for_daemon(&client, &mut exit_rx, Duration::from_secs(5)),
+        )
+        .await
+        .expect("startup wait ignored the embedded daemon exit signal");
+        assert!(!ready, "an exited embedded daemon cannot become ready");
+    }
+
+    #[tokio::test]
+    async fn daemon_startup_wait_adopts_a_competing_owner() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(50));
+        let (exit_tx, mut exit_rx) = tokio::sync::watch::channel(false);
+        let daemon_home = home.clone();
+        let external = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(75)).await;
+            cccc_daemon::run(daemon_home).await
+        });
+        exit_tx.send(true).expect("publish losing embedded owner");
+
+        let ready = tokio::time::timeout(
+            Duration::from_secs(3),
+            wait_for_daemon(&client, &mut exit_rx, Duration::from_secs(5)),
+        )
+        .await
+        .expect("startup handoff timed out");
+
+        external.abort();
+        let _ = external.await;
+        assert!(ready, "a ready competing daemon should be adopted");
     }
 }

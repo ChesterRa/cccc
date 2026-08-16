@@ -144,11 +144,11 @@ a new terminal after installation and run `cccc doctor` to verify that PATH
 resolves to the executable you just installed.
 
 ```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc3 sh
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34 sh
 ```
 
 ```powershell
-$env:CCCC_VERSION = "0.4.34-rc3"
+$env:CCCC_VERSION = "0.4.34"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 Remove-Item Env:CCCC_VERSION
 ```

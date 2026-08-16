@@ -1898,19 +1898,20 @@ export function VoiceSecretaryComposerControl({
           },
           by: "user",
         });
-        if (!isCurrentGroup(gid)) return false;
         if (!resp.ok) {
-          showError(resp.error.message);
+          if (isCurrentGroup(gid)) showError(resp.error.message);
           return false;
         }
-        applyTranscriptAppendResult(resp.result);
-        const resultDocumentPath = voiceDocumentPath(resp.result.document) || targetDocumentPath;
-        if (cleanText && resultDocumentPath) {
-          pushVoiceTranscriptItem(cleanText, {
-            documentPath: resultDocumentPath,
-            startMs: opts?.startMs,
-            endMs: opts?.endMs,
-          });
+        if (isCurrentGroup(gid)) {
+          applyTranscriptAppendResult(resp.result);
+          const resultDocumentPath = voiceDocumentPath(resp.result.document) || targetDocumentPath;
+          if (cleanText && resultDocumentPath) {
+            pushVoiceTranscriptItem(cleanText, {
+              documentPath: resultDocumentPath,
+              startMs: opts?.startMs,
+              endMs: opts?.endMs,
+            });
+          }
         }
         return true;
       } catch {
@@ -2008,15 +2009,24 @@ export function VoiceSecretaryComposerControl({
   }, [autoDocumentMaxWindowMs, captureMode, flushServiceDocumentCheckpoint]);
 
   const sendInstructionTranscript = useCallback(
-    async (text: string, opts?: { triggerKind?: string }): Promise<boolean> => {
-      const sessionScope = voiceRecordingSessionScopeRef.current;
-      const gid = recordingTargetGroupId();
+    async (
+      text: string,
+      opts?: { triggerKind?: string; targetGroupId?: string; documentPath?: string },
+    ): Promise<boolean> => {
+      const explicitGroupId = String(opts?.targetGroupId || "").trim();
+      const sessionScope = explicitGroupId ? null : voiceRecordingSessionScopeRef.current;
+      const gid = explicitGroupId || recordingTargetGroupId();
       const instruction = normalizeBrowserTranscriptChunk(text);
       if (!gid || (!sessionScope && !assistantEnabled) || !instruction) return false;
       const requestId = `voice-ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const currentDocumentPath = recordingTargetDocumentPath(
-        captureTargetDocumentPathRef.current || activeDocumentWritePath || viewedDocumentPath,
-      );
+      const fallbackDocumentPath =
+        opts?.documentPath ||
+        captureTargetDocumentPathRef.current ||
+        activeDocumentWritePath ||
+        viewedDocumentPath;
+      const currentDocumentPath = explicitGroupId
+        ? String(fallbackDocumentPath || "").trim()
+        : recordingTargetDocumentPath(fallbackDocumentPath);
       try {
         const resp = await appendVoiceAssistantInput(gid, {
           kind: "voice_instruction",
@@ -2033,37 +2043,38 @@ export function VoiceSecretaryComposerControl({
           },
           by: "user",
         });
-        if (!isCurrentGroup(gid)) return false;
         if (!resp.ok) {
-          showError(resp.error.message);
+          if (isCurrentGroup(gid)) showError(resp.error.message);
           return false;
         }
-        const nextRequestId = String(resp.result.request_id || requestId).trim();
-        localVoiceReplyRequestIdsRef.current.add(nextRequestId);
-        pendingAskRequestIdRef.current = nextRequestId;
-        setPendingAskRequestId(nextRequestId);
-        setAskFeedbackItems((prev) =>
-          [
-            {
-              request_id: nextRequestId,
-              status: "pending",
-              request_text: instruction,
-              request_preview: instruction.slice(0, 240),
-              target_kind: "secretary",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-            ...prev.filter((item) => item.request_id !== nextRequestId),
-          ].slice(0, 10),
-        );
-        finalizeLiveTranscriptPreview();
-        applyDocumentMutationResult(resp.result.document, resp.result.assistant);
-        showNotice({
-          message: t("voiceSecretaryDocumentInstructionQueued", {
-            defaultValue: "Request sent to Voice Secretary.",
-          }),
-        });
-        void refreshAssistant({ quiet: true });
+        if (isCurrentGroup(gid)) {
+          const nextRequestId = String(resp.result.request_id || requestId).trim();
+          localVoiceReplyRequestIdsRef.current.add(nextRequestId);
+          pendingAskRequestIdRef.current = nextRequestId;
+          setPendingAskRequestId(nextRequestId);
+          setAskFeedbackItems((prev) =>
+            [
+              {
+                request_id: nextRequestId,
+                status: "pending",
+                request_text: instruction,
+                request_preview: instruction.slice(0, 240),
+                target_kind: "secretary",
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+              ...prev.filter((item) => item.request_id !== nextRequestId),
+            ].slice(0, 10),
+          );
+          finalizeLiveTranscriptPreview();
+          applyDocumentMutationResult(resp.result.document, resp.result.assistant);
+          showNotice({
+            message: t("voiceSecretaryDocumentInstructionQueued", {
+              defaultValue: "Request sent to Voice Secretary.",
+            }),
+          });
+          void refreshAssistant({ quiet: true });
+        }
         return true;
       } catch {
         if (!isCurrentGroup(gid)) return false;
@@ -2097,13 +2108,25 @@ export function VoiceSecretaryComposerControl({
     async (
       text: string,
       triggerKind = "prompt_refine",
-      opts?: { operation?: "append_to_composer_end" | "replace_with_refined_prompt" },
+      opts?: {
+        operation?: "append_to_composer_end" | "replace_with_refined_prompt";
+        targetGroupId?: string;
+        composerText?: string;
+        composerContext?: Record<string, unknown>;
+      },
     ) => {
-      const sessionScope = voiceRecordingSessionScopeRef.current;
-      const gid = recordingTargetGroupId();
+      const explicitGroupId = String(opts?.targetGroupId || "").trim();
+      const sessionScope = explicitGroupId ? null : voiceRecordingSessionScopeRef.current;
+      const gid = explicitGroupId || recordingTargetGroupId();
       const voiceTranscript = normalizeBrowserTranscriptChunk(text);
-      const snapshot = String(sessionScope?.composerText ?? composerText ?? "");
-      const requestComposerContext = sessionScope?.composerContext || composerContext;
+      const snapshot = String(
+        explicitGroupId
+          ? (opts?.composerText ?? composerText ?? "")
+          : (sessionScope?.composerText ?? composerText ?? ""),
+      );
+      const requestComposerContext = explicitGroupId
+        ? (opts?.composerContext ?? composerContext)
+        : (sessionScope?.composerContext ?? composerContext);
       if (!gid || (!sessionScope && !assistantEnabled) || (!voiceTranscript && !snapshot.trim()))
         return;
       const operation = opts?.operation || "append_to_composer_end";
@@ -4047,6 +4070,9 @@ export function VoiceSecretaryComposerControl({
         try {
           const sent = await sendInstructionTranscript(instruction, {
             triggerKind: "typed_voice_instruction",
+            targetGroupId: gid,
+            documentPath:
+              activeDocumentWritePath || viewedDocumentPath || captureTargetDocumentPath,
           });
           if (!isCurrentGroup(gid)) return;
           if (sent) setDocumentInstruction("");
@@ -4773,9 +4799,21 @@ export function VoiceSecretaryComposerControl({
         return;
       void requestPromptRefine("", "composer_prompt_refine", {
         operation: "replace_with_refined_prompt",
+        targetGroupId: selectedGroupId,
+        composerText,
+        composerContext,
       });
     },
-    [actionBusy, assistantEnabled, canOptimizeComposerPrompt, controlDisabled, requestPromptRefine],
+    [
+      actionBusy,
+      assistantEnabled,
+      canOptimizeComposerPrompt,
+      composerContext,
+      composerText,
+      controlDisabled,
+      requestPromptRefine,
+      selectedGroupId,
+    ],
   );
   return (
     <div

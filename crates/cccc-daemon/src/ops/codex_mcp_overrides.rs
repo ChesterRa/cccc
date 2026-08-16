@@ -18,6 +18,7 @@ const HOOK_EVENTS: [(&str, &str); 9] = [
     ("SessionEnd", "session_end"),
 ];
 
+#[cfg(test)]
 pub(super) fn append_overrides(
     command: &mut Vec<String>,
     home: &Path,
@@ -57,7 +58,7 @@ pub(super) fn append_mcp_overrides(
     );
 }
 
-fn append_hook_overrides(command: &mut Vec<String>, executable: &Path) {
+pub(super) fn append_hook_overrides(command: &mut Vec<String>, executable: &Path) {
     insert_before_prompt_tail(command, hook_arguments(executable));
 }
 

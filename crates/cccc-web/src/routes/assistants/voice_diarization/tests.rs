@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn speaker_analysis_admission_is_bounded() {
+    let semaphore = reservation_semaphore();
+    let first = semaphore
+        .clone()
+        .try_acquire_owned()
+        .expect("first diarization reservation");
+    assert!(semaphore.clone().try_acquire_owned().is_err());
+    drop(first);
+    assert!(semaphore.try_acquire_owned().is_ok());
+}
+
+#[test]
 fn failure_uses_the_canonical_session_update_operation() {
     let request = completion_request(
         "g_test",

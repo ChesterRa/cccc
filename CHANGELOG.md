@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.34] — 2026-08-16
+
+### Added
+- **Supported native wheels now bundle an experimental Rust implementation behind the normal `cccc` launcher.** Python remains the stable default, `cccc rust` and `cccc python` switch the persisted implementation explicitly, and an optional Rust-only standalone preview is available for native deployment evaluation.
+- **ChatGPT Web Model actors now offer an experimental GPT Pro delivery mode.** The per-actor setting attaches one deterministic blank PNG to each batch for accounts where that ChatGPT behavior exposes the CCCC connector; Standard text-only delivery remains the default, and CCCC never selects the model.
+- **Cline is now a first-class PTY runtime** with discovery, actor defaults, MCP setup and repair, diagnostics, Web metadata, documentation, and Python/Rust coverage.
+
+### Changed
+- **Python and Rust now share one product version, public command, Web frontend, daemon contract, and durable `CCCC_HOME` authority.** Engine switching validates the bundled payload, replaces the active process pair, and never silently falls back.
+- **ChatGPT and NotebookLM use a unified projected-browser foundation.** Saved ChatGPT targets, new-chat binding, Page/Browser viewing, persistent profiles, pointer scrolling, Xvfb isolation, and the vendored NotebookLM 0.8.0 auth/provider boundary were aligned across implementations.
+- **The Web composer defaults a new preference to Need Reply and remembers later user choices.** Delivery receipts, capability availability, implementation banners, mobile controls, chat anchors, and terminal readiness are projected more consistently.
+
+### Fixed
+- **Cross-engine state no longer splits across browser connectors, Group Bridge trust, IM identifiers, Voice Secretary sessions, active Group selection, automation, capabilities, and runtime recovery.** Canonical shared stores and generation boundaries prevent stale state from being restored after an engine switch or actor recreation.
+- **Messaging and unread state follow ledger order and durable source identity.** Sends, replies, files, tracked work, cross-Group receipts, acknowledgements, cursor advances, and deferred retries avoid duplicate, skipped, or permanently stranded work.
+- **ChatGPT browser delivery is now single-flight, target-aware, and at-most-once after an ambiguous submit.** A failed batch cannot poison later delivery, bootstrap state survives reconciliation, and Python/Rust expose the same visible delivery evidence.
+- **Voice Secretary recording scope, document mutation, partial ASR failure, transcript cleanup, lease renewal, and speaker-analysis admission are bounded and consistent.** Switching Groups during recording no longer redirects background output, while manual controls continue to use the current Group.
+- **Runtime startup, hooks, resume, terminal replay, daemon handoff, shutdown, installers, and remote Web access received a broad reliability and security pass.** Hook-unavailable Codex launches retain CCCC MCP, native terminal reconnects preserve output order, scoped tokens cannot observe other Groups, and installers refuse unowned command replacement.
+
 ## [0.4.34-rc4] — 2026-08-15
 
 ### Changed

@@ -340,7 +340,7 @@ Recommended options:
 | hermes | `hermes` | Hermes Agent |
 | kimi | `kimi` | Kimi CLI |
 | opencode | `opencode` | OpenCode |
-| web_model | ChatGPT Web conversation | ChatGPT Web conversation with an MCP-capable GPT-5.x session; GPT-5.x Pro is advisory-only and has no reliable CCCC local access |
+| web_model | ChatGPT Web conversation | ChatGPT Web conversation with CCCC MCP access; optional experimental GPT Pro delivery attaches a tiny blank PNG but does not select the model or guarantee connector availability |
 | custom | Any command | Any command |
 
 These entries show stable runtime entrypoints or surfaces, not every runtime-specific launch flag. CCCC applies launch defaults automatically and actor/profile commands can be reviewed or customized in settings.

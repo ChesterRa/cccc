@@ -290,6 +290,43 @@ class CollectFinalAsrResultTests(unittest.TestCase):
 
         asyncio.run(run_case())
 
+    def test_reports_partial_result_when_a_later_segment_fails(self) -> None:
+        async def run_case() -> None:
+            events = [
+                self._final_event("第一段", index=1, start_ms=0, end_ms=1000),
+                FinalAsrEvent(
+                    {
+                        "type": "final_asr_failed",
+                        "index": 2,
+                        "start_ms": 1200,
+                        "end_ms": 2400,
+                        "bytes": 38400,
+                        "model_id": "sense_voice",
+                        "sample_rate": 16000,
+                        "error": {"code": "decode_failed", "message": "segment failed"},
+                    }
+                ),
+            ]
+
+            async def fake_iter(*_args: object, **_kwargs: object):
+                for event in events:
+                    yield event
+
+            with patch("cccc.daemon.assistants.voice_final_asr.iter_final_asr_events", fake_iter):
+                result = await collect_final_asr_result(
+                    b"\x01\x00" * 16000,
+                    selected_model_id="sense_voice",
+                    sample_rate=16000,
+                )
+
+            self.assertEqual(result.text, "第一段")
+            self.assertEqual(result.failed_segment_count, 1)
+            self.assertEqual([segment["ok"] for segment in result.segments], [True, False])
+            self.assertEqual(result.segments[1]["index"], 2)
+            self.assertEqual(result.segments[1]["error"]["code"], "decode_failed")
+
+        asyncio.run(run_case())
+
 
 class BuildFinalAsrTextEventTests(unittest.TestCase):
     def test_returns_none_when_collect_raises(self) -> None:

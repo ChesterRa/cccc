@@ -129,6 +129,8 @@ async def iter_final_asr_events(
     language: str = "",
 ) -> AsyncIterator[FinalAsrEvent]:
     yield FinalAsrEvent({"type": "final_asr_started", "ok": True, "seq": seq, "source": _FINAL_ASR_SOURCE, **_base_meta(selected_model_id, sample_rate, language)})
+    current_segment: VoicePcmSegment | None = None
+    current_segment_index = 0
     try:
         try:
             vad_ranges = await detect_sherpa_vad_segments(pcm16_audio, sample_rate=sample_rate)
@@ -179,6 +181,8 @@ async def iter_final_asr_events(
             offline_transcribe_failed = False
             try:
                 for index, segment in enumerate(segments, start=1):
+                    current_segment = segment
+                    current_segment_index = index
                     yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), segment=segment, index=index)
                     segment_text = (await offline_session.transcribe_pcm16(segment.audio, sample_rate=sample_rate)).strip()
                     if segment_text:
@@ -202,6 +206,8 @@ async def iter_final_asr_events(
 
         yield _progress("legacy_fallback", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), fallback_reason="offline_session_unavailable")
         for index, segment in enumerate(segments, start=1):
+            current_segment = segment
+            current_segment_index = index
             yield _progress("transcribing", seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, language=language, segment_count=len(segments), segment=segment, index=index)
             segment_text = (
                 await transcribe_local_streaming_pcm16(
@@ -214,17 +220,25 @@ async def iter_final_asr_events(
             if segment_text:
                 yield _final(segment_text, seq=seq, selected_model_id=selected_model_id, sample_rate=sample_rate, segment=segment, language=language, index=index)
     except LocalStreamingAsrError as exc:
-        yield FinalAsrEvent(
-            {
-                "type": "final_asr_failed",
-                "ok": False,
-                "seq": seq,
-                "source": _FINAL_ASR_SOURCE,
-                **_base_meta(selected_model_id, sample_rate, language),
-                "fallback_reason": "local_asr_error",
-                "error": {"code": exc.code, "message": exc.message, "details": exc.details},
-            }
-        )
+        failure = {
+            "type": "final_asr_failed",
+            "ok": False,
+            "seq": seq,
+            "source": _FINAL_ASR_SOURCE,
+            **_base_meta(selected_model_id, sample_rate, language),
+            "fallback_reason": "local_asr_error",
+            "error": {"code": exc.code, "message": exc.message, "details": exc.details},
+        }
+        if current_segment is not None:
+            failure.update(
+                {
+                    "index": current_segment_index,
+                    "start_ms": current_segment.start_ms,
+                    "end_ms": current_segment.end_ms,
+                    "bytes": len(current_segment.audio),
+                }
+            )
+        yield FinalAsrEvent(failure)
 
 
 def _is_cjk(char: str) -> bool:
@@ -256,6 +270,7 @@ async def collect_final_asr_result(
 ) -> FinalAsrResult:
     text = ""
     segments: list[dict[str, Any]] = []
+    failed_segment_count = 0
     async for event in iter_final_asr_events(
         pcm16_audio,
         selected_model_id=selected_model_id,
@@ -268,6 +283,24 @@ async def collect_final_asr_result(
             # segment, so drop the partially accumulated segments from the failed run.
             text = ""
             segments = []
+            failed_segment_count = 0
+            continue
+        if payload.get("type") == "final_asr_failed":
+            failed_segment_count += 1
+            segments.append(
+                {
+                    "index": int(payload.get("index") or len(segments) + 1),
+                    "recording_segment_index": _SINGLE_RECORDING_SEGMENT_INDEX,
+                    "start_ms": payload.get("start_ms"),
+                    "end_ms": payload.get("end_ms"),
+                    "bytes": payload.get("bytes"),
+                    "ok": False,
+                    "text": "",
+                    "model_id": payload.get("model_id"),
+                    "sample_rate": payload.get("sample_rate"),
+                    "error": payload.get("error"),
+                }
+            )
             continue
         chunk = (event.text or "").strip()
         if payload.get("type") != "final" or not chunk:
@@ -286,7 +319,11 @@ async def collect_final_asr_result(
                 "sample_rate": payload.get("sample_rate"),
             }
         )
-    return FinalAsrResult(text=text, segments=tuple(segments))
+    return FinalAsrResult(
+        text=text,
+        segments=tuple(segments),
+        failed_segment_count=failed_segment_count,
+    )
 
 
 async def collect_final_asr_text(

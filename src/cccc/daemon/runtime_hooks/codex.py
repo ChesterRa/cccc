@@ -134,14 +134,13 @@ def probe_codex_hook_config(
     return completed.returncode == 0
 
 
-def configure_codex_launch(
+def configure_codex_mcp_launch(
     *,
     home: Path,
     group_id: str,
     actor_id: str,
     command: Sequence[str],
     env: Mapping[str, str],
-    launch_token: str,
     cccc_executable: Path | None = None,
     cccc_command: Sequence[str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
@@ -150,8 +149,6 @@ def configure_codex_launch(
     if not is_direct_codex_command(configured):
         return configured, launch_env
     cli_command = normalize_cli_command(cccc_command, cccc_executable)
-    begin_launch(home, "codex", group_id, actor_id, launch_token)
-    hook_command = shell_command(cli_command, "hook", "codex-state")
     executable_toml = _toml_string(cli_command[0])
     mcp_args = json.dumps([*cli_command[1:], "mcp"], separators=(",", ":"))
     _insert_before_prompt_tail(
@@ -169,13 +166,11 @@ def configure_codex_launch(
             f"mcp_servers.cccc.env.CCCC_ACTOR_ID={_toml_string(actor_id)}",
         ],
     )
-    _insert_before_prompt_tail(configured, _hook_arguments(hook_command))
     launch_env.update(
         {
             "CCCC_HOME": str(home),
             "CCCC_GROUP_ID": group_id,
             "CCCC_ACTOR_ID": actor_id,
-            "CCCC_HOOK_LAUNCH_TOKEN": launch_token,
             "CCCC_CLI": cli_command[0],
         }
     )
@@ -183,4 +178,34 @@ def configure_codex_launch(
     inherited_path = launch_env.get("PATH", os.environ.get("PATH", ""))
     path_items = [item for item in inherited_path.split(os.pathsep) if item and item != executable_dir]
     launch_env["PATH"] = os.pathsep.join([executable_dir, *path_items])
+    return configured, launch_env
+
+
+def configure_codex_launch(
+    *,
+    home: Path,
+    group_id: str,
+    actor_id: str,
+    command: Sequence[str],
+    env: Mapping[str, str],
+    launch_token: str,
+    cccc_executable: Path | None = None,
+    cccc_command: Sequence[str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    configured, launch_env = configure_codex_mcp_launch(
+        home=home,
+        group_id=group_id,
+        actor_id=actor_id,
+        command=command,
+        env=env,
+        cccc_executable=cccc_executable,
+        cccc_command=cccc_command,
+    )
+    if not is_direct_codex_command(configured):
+        return configured, launch_env
+    cli_command = normalize_cli_command(cccc_command, cccc_executable)
+    begin_launch(home, "codex", group_id, actor_id, launch_token)
+    hook_command = shell_command(cli_command, "hook", "codex-state")
+    _insert_before_prompt_tail(configured, _hook_arguments(hook_command))
+    launch_env["CCCC_HOOK_LAUNCH_TOKEN"] = launch_token
     return configured, launch_env

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn configure_actor_cli(env: &mut BTreeMap<String, String>) -> Option<PathBuf> {
@@ -27,11 +28,20 @@ pub(crate) fn resolve_cccc_executable() -> Option<PathBuf> {
     if sibling.is_file() {
         return Some(sibling);
     }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join(executable_name()))
-            .find(|candidate| candidate.is_file())
-    })
+    let cwd = std::env::current_dir().ok();
+    std::env::var_os("PATH").and_then(|paths| resolve_on_path(&paths, cwd.as_deref()))
+}
+
+pub(super) fn resolve_on_path(paths: &OsStr, cwd: Option<&Path>) -> Option<PathBuf> {
+    std::env::split_paths(paths)
+        .filter_map(|directory| {
+            if directory.is_absolute() {
+                Some(directory.join(executable_name()))
+            } else {
+                cwd.map(|cwd| cwd.join(directory).join(executable_name()))
+            }
+        })
+        .find(|candidate| candidate.is_file())
 }
 
 pub(super) fn valid_public_launcher(path: &Path) -> bool {

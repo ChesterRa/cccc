@@ -144,8 +144,11 @@ impl VoiceWsCapture {
         if recordings.is_empty() {
             return Ok(events);
         }
+        let diarization_reservation = self
+            .persist_artifacts
+            .then(|| voice_diarization::try_reserve(state, &self.diarization_model));
         let can_defer_to_speaker_analysis =
-            self.persist_artifacts && voice_diarization::available(state, &self.diarization_model);
+            diarization_reservation.as_ref().is_some_and(Result::is_ok);
         let mut final_asr = voice_final_asr::transcribe_pcm16_segments(
             state.home.clone(),
             self.selected_model.clone(),
@@ -158,18 +161,22 @@ impl VoiceWsCapture {
         events.push(final_asr);
 
         if self.persist_artifacts {
-            let status = voice_diarization::spawn(
-                voice_diarization::DiarizationJob {
-                    state: state.clone(),
-                    group_id: group_id.to_owned(),
-                    session_id: self.client_session_id.clone(),
-                    document_path: self.document_path.clone(),
-                    diarization_model: self.diarization_model.clone(),
-                    transcript_model: self.selected_model.clone(),
-                    language: self.language.clone(),
-                },
-                recordings,
-            );
+            let status = match diarization_reservation.expect("persistence reserves diarization") {
+                Ok(reservation) => voice_diarization::spawn(
+                    voice_diarization::DiarizationJob {
+                        state: state.clone(),
+                        group_id: group_id.to_owned(),
+                        session_id: self.client_session_id.clone(),
+                        document_path: self.document_path.clone(),
+                        diarization_model: self.diarization_model.clone(),
+                        transcript_model: self.selected_model.clone(),
+                        language: self.language.clone(),
+                    },
+                    recordings,
+                    reservation,
+                ),
+                Err(reason) => voice_diarization::SpawnStatus::Skipped(reason),
+            };
             events.push(diarization_event(status, seq));
         }
         Ok(events)
