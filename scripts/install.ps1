@@ -123,33 +123,34 @@ function Invoke-CcccCommand(
   [string[]]$Arguments,
   [int]$TimeoutMilliseconds = 35000
 ) {
-  $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("cccc-command-" + [Guid]::NewGuid().ToString("N") + ".out")
-  $stderrPath = "$stdoutPath.err"
-  $process = $null
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $CommandPath
+  $startInfo.Arguments = $Arguments -join " "
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
   try {
-    $process = Start-Process -FilePath $CommandPath -ArgumentList $Arguments `
-      -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-    if ($null -eq $process) {
+    if (-not $process.Start()) {
       throw "failed to start $CommandPath"
     }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutMilliseconds)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       $process.WaitForExit()
       throw "$CommandPath $($Arguments -join ' ') timed out"
     }
-    # The timed overload can return before redirected streams and the process
-    # object are fully synchronized on Windows PowerShell 5.1.
     $process.WaitForExit()
-    $stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
-    $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
     return [PSCustomObject]@{
       ExitCode = $process.ExitCode
-      Stdout = [string]$stdout
-      Stderr = [string]$stderr
+      Stdout = [string]$stdoutTask.Result
+      Stderr = [string]$stderrTask.Result
     }
   } finally {
-    if ($null -ne $process) { $process.Dispose() }
-    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    $process.Dispose()
   }
 }
 
