@@ -350,7 +350,9 @@ daemon startup, enabled local actors in groups whose desired state is running
 begin restoring in a detached worker after the daemon publishes its IPC
 address. IPC health and diagnostics therefore remain available while an actor
 runtime is slow to prepare or fails to resume; individual restore failures are
-logged and do not prevent the daemon from becoming ready.
+logged and do not prevent the daemon from becoming ready. Each Group is
+reloaded and restored under the same mutation lock used by lifecycle requests,
+so a concurrent stop or pause cannot be overwritten by a stale startup snapshot.
 
 Actor-bound chat messages and system notifications use one bounded FIFO worker
 per actor. A worker seeds the runtime with its CCCC system prompt once per

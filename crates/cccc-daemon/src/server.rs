@@ -20,7 +20,7 @@ use crate::server_connection::spawn_connection;
 use crate::server_connections::ConnectionTasks;
 use crate::server_lifecycle::{DaemonLifecycle, cleanup_stale};
 
-type RuntimeRestoreSpawner = fn(HomeLayout);
+type RuntimeRestoreSpawner = fn(HomeLayout, DispatchLocks);
 
 pub async fn run(home: HomeLayout) -> Result<()> {
     run_with_restore(home, crate::ops::runtime_restore::spawn).await
@@ -85,6 +85,7 @@ async fn serve_tcp(
         "",
         local.ip().to_string(),
         local.port(),
+        dispatch_locks.clone(),
         restore,
     )?;
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
@@ -133,6 +134,7 @@ async fn serve_platform_default(
         &paths.socket.to_string_lossy(),
         String::new(),
         0,
+        dispatch_locks.clone(),
         restore,
     )?;
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
@@ -219,10 +221,11 @@ fn publish_address_and_restore(
     path: &str,
     host: String,
     port: u16,
+    dispatch_locks: DispatchLocks,
     restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
     write_address(paths, transport, path, host, port)?;
-    restore(paths.home.clone());
+    restore(paths.home.clone(), dispatch_locks);
     Ok(())
 }
 
@@ -254,7 +257,7 @@ fn begin_runtime_shutdown(home: &HomeLayout) {
 mod tests {
     use super::*;
 
-    fn assert_address_is_published(home: HomeLayout) {
+    fn assert_address_is_published(home: HomeLayout, _locks: DispatchLocks) {
         let paths = DaemonPaths::new(home);
         assert!(paths.address.exists());
         std::fs::write(paths.daemon_dir.join("restore.started"), b"").expect("mark restore start");
@@ -286,6 +289,7 @@ mod tests {
             "",
             "127.0.0.1".into(),
             4242,
+            DispatchLocks::default(),
             assert_address_is_published,
         )
         .expect("publish daemon address");

@@ -2,6 +2,8 @@ use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind}
 use cccc_core::{GroupStore, HomeLayout, Scope, actors, inbox, ledger};
 use serde_json::{Map, json};
 
+use crate::dispatch_concurrency::DispatchLocks;
+
 use super::{actor_delivery, actor_runtime, runtime_restore};
 
 #[test]
@@ -95,6 +97,65 @@ fn restores_enabled_actors_for_persisted_running_groups() {
     assert_eq!(
         store.load(&group_id).expect("restored group").actors[0].default_scope_key,
         "s_project"
+    );
+    cccc_runtime::stop(&group_id, "peer1").expect("stop");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn detached_restore_waits_for_the_group_mutation_lock() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("serialized restore", "").expect("group");
+    let group_id = group.group_id.clone();
+    let marker = temp.path().join("restored-while-locked");
+    store
+        .mutate(&group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: temp.path().to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
+            let mut actor = Actor::new("peer1");
+            actor.runtime = ActorRuntime::Custom;
+            actor.runner = RunnerKind::Pty;
+            actor.command = vec![
+                "sh".into(),
+                "-c".into(),
+                ": > \"$CCCC_TEST_RESTORE_MARKER\"; sleep 2".into(),
+            ];
+            actor.env.insert(
+                "CCCC_TEST_RESTORE_MARKER".into(),
+                marker.to_string_lossy().into_owned(),
+            );
+            actors::add(group, actor)?;
+            group.running = true;
+            group.state = GroupState::Active;
+            Ok(())
+        })
+        .expect("configure group");
+
+    let locks = DispatchLocks::default();
+    let permit = locks.group_write(&group_id).await;
+    runtime_restore::spawn(home.clone(), locks.clone());
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    assert!(
+        !marker.exists(),
+        "detached restore bypassed an in-progress group mutation"
+    );
+    drop(permit);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(
+        marker.exists(),
+        "restore did not resume after the group lock"
     );
     cccc_runtime::stop(&group_id, "peer1").expect("stop");
 }

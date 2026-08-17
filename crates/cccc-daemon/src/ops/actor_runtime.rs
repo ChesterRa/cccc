@@ -76,6 +76,8 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
         super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     }
     actor.env = env;
+    let _start_permit = crate::runtime_start_gate::permit(home)
+        .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     super::local_headless::start(home, group, &actor).map_err(OpError::io)
 }
 

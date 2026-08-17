@@ -72,6 +72,17 @@ impl DispatchLocks {
         }
     }
 
+    pub(crate) fn with_group_write_blocking<T>(
+        &self,
+        group_id: &str,
+        operation: impl FnOnce() -> T,
+    ) -> T {
+        let _global = self.global.blocking_read();
+        let group = self.group(group_id);
+        let _group = group.blocking_write();
+        operation()
+    }
+
     fn group(&self, group_id: &str) -> Arc<RwLock<()>> {
         let mut groups = self
             .groups
