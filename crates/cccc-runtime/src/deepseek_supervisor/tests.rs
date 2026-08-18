@@ -63,8 +63,28 @@ done"#
 fn stop_escalates_after_term_timeout() {
     let mut supervisor = DeepSeekSupervisor::default();
     let root = tempfile::tempdir().expect("tempdir");
-    let command = vec!["sh".into(), "-c".into(), "trap '' TERM; sleep 30".into()];
-    supervisor.start(&command, root.path(), &[]).expect("start");
+    let ready = root.path().join("term-trap-ready");
+    let command = vec![
+        "sh".into(),
+        "-c".into(),
+        "trap '' TERM; : > \"$CCCC_DEEPSEEK_TEST_READY\"; sleep 30".into(),
+    ];
+    supervisor
+        .start(
+            &command,
+            root.path(),
+            &[(
+                "CCCC_DEEPSEEK_TEST_READY".into(),
+                ready.to_string_lossy().into_owned(),
+            )],
+        )
+        .expect("start");
+    let ready_deadline = Instant::now() + Duration::from_secs(2);
+    while !ready.exists() && Instant::now() < ready_deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.exists(), "TERM trap fixture did not become ready");
+
     let started = std::time::Instant::now();
     supervisor.stop().expect("stop");
     assert!(started.elapsed() < Duration::from_secs(3));

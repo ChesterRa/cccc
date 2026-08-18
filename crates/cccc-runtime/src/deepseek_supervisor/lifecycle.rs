@@ -222,19 +222,21 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
 
 #[cfg(unix)]
 fn terminate_process_group(child: &mut Child) {
-    let pid = child.id().to_string();
-    let _ = Command::new("kill")
-        .args(["-TERM", &format!("-{pid}")])
-        .stderr(Stdio::null())
-        .status();
+    signal_process_group(child, nix::sys::signal::Signal::SIGTERM);
 }
 #[cfg(unix)]
 fn kill_process_group(child: &mut Child) {
-    let pid = child.id().to_string();
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{pid}")])
-        .stderr(Stdio::null())
-        .status();
+    signal_process_group(child, nix::sys::signal::Signal::SIGKILL);
+    let _ = child.kill();
+}
+#[cfg(unix)]
+fn signal_process_group(child: &Child, signal: nix::sys::signal::Signal) {
+    use nix::sys::signal::killpg;
+    use nix::unistd::Pid;
+
+    if let Ok(group_id) = i32::try_from(child.id()) {
+        let _ = killpg(Pid::from_raw(group_id), signal);
+    }
 }
 #[cfg(windows)]
 fn kill_process_group(child: &mut Child) {

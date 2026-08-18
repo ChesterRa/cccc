@@ -13,75 +13,18 @@ from .inbox import (
     is_message_for_actor,
 )
 from .ledger_index import lookup_event_by_id, lookup_event_positions
+from .ledger_status_db import (
+    connect_status_db,
+    ensure_status_schema,
+    is_database_busy_error,
+)
 
-_SCHEMA_VERSION = 2
-_DEFAULT_TIMEOUT_SECONDS = 5.0
 _MAX_CACHED_MESSAGES = 2000
 logger = logging.getLogger("cccc.ledger.status_cache")
 
 
 def _status_index_path(group: Group) -> Path:
     return group.path / "state" / "ledger" / "status.sqlite3"
-
-
-def _connect(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=_DEFAULT_TIMEOUT_SECONDS)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    return conn
-
-
-def _meta_int(conn: sqlite3.Connection, key: str) -> int:
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key = ?", (str(key or "").strip(),)
-    ).fetchone()
-    if row is None:
-        return 0
-    try:
-        return int(row[0] or 0)
-    except Exception:
-        return 0
-
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS message_status_meta (
-            event_id TEXT PRIMARY KEY,
-            ts TEXT NOT NULL,
-            is_attention INTEGER NOT NULL,
-            has_obligation INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS recipient_status (
-            event_id TEXT NOT NULL,
-            actor_id TEXT NOT NULL,
-            is_read INTEGER NOT NULL,
-            is_acked INTEGER NOT NULL,
-            is_replied INTEGER NOT NULL,
-            reply_required INTEGER NOT NULL,
-            PRIMARY KEY (event_id, actor_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_message_status_meta_ts ON message_status_meta(ts, event_id);
-        CREATE INDEX IF NOT EXISTS idx_recipient_status_event_id ON recipient_status(event_id);
-        """
-    )
-    current = _meta_int(conn, "schema_version")
-    if current != _SCHEMA_VERSION:
-        conn.execute("DELETE FROM recipient_status")
-        conn.execute("DELETE FROM message_status_meta")
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            ("schema_version", str(_SCHEMA_VERSION)),
-        )
 
 
 def _prune(conn: sqlite3.Connection) -> None:
@@ -217,9 +160,9 @@ def store_message_status_batch(
 ) -> None:
     if not events:
         return
-    conn = _connect(_status_index_path(group))
+    conn = connect_status_db(_status_index_path(group))
     try:
-        _ensure_schema(conn)
+        ensure_status_schema(conn)
         for event in events:
             if str(event.get("kind") or "") != "chat.message":
                 continue
@@ -250,9 +193,10 @@ def get_cached_message_status_batch(
     ]
     if not normalized_ids:
         return {}
-    conn = _connect(_status_index_path(group))
+    conn: sqlite3.Connection | None = None
     try:
-        _ensure_schema(conn)
+        conn = connect_status_db(_status_index_path(group))
+        ensure_status_schema(conn)
         placeholders = ", ".join("?" for _ in normalized_ids)
         meta_rows = conn.execute(
             f"SELECT event_id, is_attention, has_obligation FROM message_status_meta WHERE event_id IN ({placeholders})",
@@ -274,8 +218,18 @@ def get_cached_message_status_batch(
             """,
             tuple(normalized_ids),
         ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if not is_database_busy_error(exc):
+            raise
+        logger.warning(
+            "ledger_status_cache_read_busy group_id=%s requested=%d",
+            str(getattr(group, "group_id", "") or ""),
+            len(normalized_ids),
+        )
+        return {}
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     result: Dict[str, Dict[str, Any]] = {}
     for event_id, meta in meta_by_id.items():
@@ -365,9 +319,9 @@ def update_message_status_cache_on_append(
     group = load_group(group_id)
     if group is None:
         return
-    conn = _connect(_status_index_path(group))
+    conn = connect_status_db(_status_index_path(group))
     try:
-        _ensure_schema(conn)
+        ensure_status_schema(conn)
         if kind in {"actor.add", "actor.remove"}:
             conn.execute("DELETE FROM recipient_status")
             conn.execute("DELETE FROM message_status_meta")
