@@ -44,11 +44,15 @@ import {
   completeCanonicalOutboxReconciliation,
   reconcileCanonicalOutboxEvent,
 } from "../utils/chatOutboxReconciliation";
-
 import {
-  buildComposerTrustFetchGroupId,
-  shouldLockChatToBottomForSend,
-} from "./chat/chatTabBasics";
+  consumeChatSendScrollRequest,
+  createChatSendScrollRequest,
+  invalidateChatSendScrollRequestForOwner,
+  type ChatSendScrollRequest,
+} from "../utils/chatSendScrollRequest";
+
+import { buildComposerTrustFetchGroupId } from "./chat/chatTabBasics";
+import { shouldFollowChatSendFromViewport } from "./chat/chatSendAutoFollow";
 import {
   buildComposerSendRecipientTokens,
   buildComposerSendRoutingSnapshot,
@@ -101,7 +105,8 @@ export function useChatTab({
   scrollRef,
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
-  const [forceStickToBottomToken, setForceStickToBottomToken] = useState(0);
+  const [sendScrollRequest, setSendScrollRequest] = useState<ChatSendScrollRequest | null>(null);
+  const nextSendScrollRequestIdRef = useRef(0);
   const [group_bridgeTrusts, setGroupBridgeTrusts] = useState<GroupBridgeTrust[]>([]);
   const [selectedRemoteGroupIds, setSelectedRemoteGroupIds] = useState<string[]>([]);
   // ============ Stores ============
@@ -141,11 +146,6 @@ export function useChatTab({
   const setChatMobileSurface = useUIStore((s) => s.setChatMobileSurface);
   const showError = useUIStore((s) => s.showError);
 
-  const isCurrentScrollAtBottom = useCallback(() => {
-    const el = scrollRef?.current;
-    if (!el) return chatAtBottomRef ? chatAtBottomRef.current : true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-  }, [chatAtBottomRef, scrollRef]);
   const setChatAtBottom = useCallback(
     (value: boolean) => {
       if (chatAtBottomRef) chatAtBottomRef.current = value;
@@ -453,6 +453,21 @@ export function useChatTab({
     needsActors,
   });
 
+  const shouldFollowCurrentSend = useCallback(
+    () => shouldFollowChatSendFromViewport(scrollRef?.current, chatMessages.length),
+    [chatMessages.length, scrollRef],
+  );
+
+  useEffect(() => {
+    setSendScrollRequest((current) =>
+      invalidateChatSendScrollRequestForOwner(current, selectedGroupId, chatViewKey),
+    );
+  }, [chatViewKey, selectedGroupId]);
+
+  const consumeSendScrollRequest = useCallback((requestId: number) => {
+    setSendScrollRequest((current) => consumeChatSendScrollRequest(current, requestId));
+  }, []);
+
   const updateChatFilter = useCallback(
     (nextFilter: ReturnType<typeof getChatSession>["chatFilter"]) => {
       if (!selectedGroupId) return;
@@ -680,13 +695,7 @@ export function useChatTab({
       setSelectedRemoteGroupIds(selectedRemoteGroupIdsSnapshot);
     };
 
-    const applyImmediateComposerFeedback = () => {
-      const shouldLockBottom = shouldLockChatToBottomForSend({
-        currentAtBottom: isCurrentScrollAtBottom(),
-        showScrollButton,
-        chatUnreadCount,
-        scrollSnapshot,
-      });
+    const applyImmediateComposerFeedback = (shouldLockBottom: boolean) => {
       clearComposer();
       setComposerGroupMentionTokens([]);
       setComposerAgentMentionTokens([]);
@@ -696,7 +705,14 @@ export function useChatTab({
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
       }
       if (shouldLockBottom) {
-        setForceStickToBottomToken((value) => value + 1);
+        nextSendScrollRequestIdRef.current += 1;
+        setSendScrollRequest(
+          createChatSendScrollRequest(
+            nextSendScrollRequestIdRef.current,
+            selectedGroupId,
+            chatViewKey,
+          ),
+        );
       }
     };
 
@@ -728,6 +744,11 @@ export function useChatTab({
       return;
     }
 
+    // Capture the user's reading intent before optimistic rows or placeholders
+    // can change the list geometry. The token below is therefore a one-send
+    // request, not a streaming-tail subscription.
+    const shouldLockBottomAfterSend = shouldFollowCurrentSend();
+
     // Optimistic: enqueue to outbox immediately for same-group sends.
     // If the request fails, we remove the pending entry and restore the composer.
     if (sendsLocal && !sendsCrossGroup) {
@@ -746,7 +767,7 @@ export function useChatTab({
       insertLocalAssistantPlaceholders();
     }
 
-    applyImmediateComposerFeedback();
+    applyImmediateComposerFeedback(shouldLockBottomAfterSend);
     sendInFlightRef.current = true;
     let successfulSendCount = 0;
     try {
@@ -858,10 +879,7 @@ export function useChatTab({
     clearDraft,
     closeChatWindow,
     fileInputRef,
-    isCurrentScrollAtBottom,
-    showScrollButton,
-    chatUnreadCount,
-    scrollSnapshot,
+    shouldFollowCurrentSend,
     setChatFilter,
     setChatMobileSurface,
     setShowScrollButton,
@@ -877,6 +895,7 @@ export function useChatTab({
     composerRouteGroups,
     selectedRemoteGroupIds,
     chatAtBottomRef,
+    chatViewKey,
   ]);
 
   const {
@@ -947,7 +966,8 @@ export function useChatTab({
     busy,
     showScrollButton,
     chatUnreadCount,
-    forceStickToBottomToken,
+    sendScrollRequest,
+    consumeSendScrollRequest,
 
     // Setup checklist
     showSetupCard,

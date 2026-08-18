@@ -9,6 +9,7 @@ import type {
   TaskMessageRef,
 } from "../../types";
 import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
+import type { ChatSendScrollRequest } from "../../utils/chatSendScrollRequest";
 
 export interface VirtualMessageListProps {
   messages: LedgerEvent[];
@@ -42,7 +43,8 @@ export interface VirtualMessageListProps {
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
   onScrollSnapshot?: (snapshot: ChatScrollSnapshot, groupId?: string) => void;
-  forceStickToBottomToken?: number;
+  sendScrollRequest?: ChatSendScrollRequest | null;
+  onSendScrollRequestConsumed?: (requestId: number) => void;
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
   onLoadMore?: () => void;

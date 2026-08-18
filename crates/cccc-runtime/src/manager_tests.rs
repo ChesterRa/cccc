@@ -148,6 +148,18 @@ fn stop_is_bounded_when_a_background_child_keeps_the_pty_open() {
         "trap '' HUP; sleep 3 & echo $! > background.pid",
     ))
     .expect("start");
+    let pid_path = temp.path().join("background.pid");
+    for _ in 0..100 {
+        if pid_path.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let background_pid = std::fs::read_to_string(&pid_path)
+        .expect("background pid")
+        .trim()
+        .parse::<i32>()
+        .expect("numeric background pid");
     for _ in 0..100 {
         if !status("g_background_child", "peer1")
             .expect("status")
@@ -166,12 +178,16 @@ fn stop_is_bounded_when_a_background_child_keeps_the_pty_open() {
     let started = std::time::Instant::now();
     let result = stop("g_background_child", "peer1");
     let elapsed = started.elapsed();
-    if let Ok(pid) = std::fs::read_to_string(temp.path().join("background.pid")) {
-        let _ = std::process::Command::new("kill").arg(pid.trim()).status();
-    }
 
     result.expect("stop");
     assert!(elapsed < Duration::from_secs(1), "stop took {elapsed:?}");
+    for _ in 0..100 {
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(background_pid), None).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("background process {background_pid} survived actor stop");
 }
 
 #[test]

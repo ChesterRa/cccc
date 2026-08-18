@@ -367,10 +367,8 @@ if [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
       add_path_profile "$HOME/.bashrc"
       activation_hint='source ~/.bashrc'
       ;;
-    *) printf 'Move %s to the front of PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;
+    *) : ;;
   esac
-else
-  printf 'Move %s to the front of PATH, then open a new terminal.\n' "$INSTALL_DIR"
 fi
 
 installed_command=$(canonical_command_path "$INSTALL_DIR/cccc")
@@ -394,11 +392,22 @@ resolved_command=$(canonical_command_path "$resolved_command")
 [ "$resolved_command" = "$installed_command" ] ||
   fail "PATH verification resolved cccc to $resolved_command instead of $installed_command"
 
-printf 'Installed CCCC v%s in %s\n' "$VERSION" "$INSTALL_DIR"
-printf 'Verify installed command directly: "%s/cccc" doctor\n' "$INSTALL_DIR"
+printf '\n'
+printf '✅ CCCC v%s installed successfully!\n' "$VERSION"
+printf '\n'
+printf '   📦 Installed to: %s\n' "$installed_command"
 if [ -n "$activation_hint" ]; then
-  printf 'Activate in this shell: %s\n' "$activation_hint"
+  printf '   ⚡ Activate now: %s\n' "$activation_hint"
+  printf '   🔍 Verify:       cccc doctor\n'
 elif [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
-  printf 'Activate in this shell: export PATH="$HOME/.local/bin:$PATH"; hash -r\n'
+  printf '   ⚡ Activate now: export PATH="$HOME/.local/bin:$PATH"; hash -r\n'
+  printf '   🔍 Verify:       cccc doctor\n'
+else
+  printf '   🔍 Verify:       "%s" doctor\n' "$installed_command"
 fi
-printf 'Verify after opening a new terminal: cccc doctor\n'
+printf '\n'
+if [ -n "$activation_hint" ]; then
+  printf '🎉 Open a new terminal and run: cccc\n'
+else
+  printf 'ℹ️  Add %s to your shell PATH to run cccc directly.\n' "$INSTALL_DIR"
+fi

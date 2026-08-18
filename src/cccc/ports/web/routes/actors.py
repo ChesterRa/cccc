@@ -19,6 +19,7 @@ from ....daemon.actors.web_model_runtime_ops import decorate_web_model_queued_tu
 from ....daemon.context.context_ops import _agent_state_to_dict
 from ....daemon.runtime_session_ops import read_runtime_session
 from ....daemon.runner_state_ops import headless_state_path, headless_state_running, pty_state_path, read_headless_state
+from ....daemon.actors import deepseek_runtime
 from ....kernel.group import load_group
 from ....kernel.actors import find_actor
 from ....kernel.actor_runtime_projection import actor_runtime_enabled, disabled_actor_runtime_projection
@@ -224,6 +225,8 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
         if runtime.lower() == "web_model" and effective_runner == "headless":
             headless_state = read_headless_state(gid, aid)
             running = bool(headless_state_running(gid, aid))
+        elif runtime.lower() == "deepseek" and effective_runner == "headless":
+            running = deepseek_runtime.running(group_id=gid, actor_id=aid)
         if not running and runtime.lower() == "codex":
             try:
                 state_doc = read_json(headless_state_path(gid, aid))

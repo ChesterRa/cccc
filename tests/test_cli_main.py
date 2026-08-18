@@ -24,6 +24,14 @@ class TestCliMain(unittest.TestCase):
             self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", runtime]).runtime, runtime)
             self.assertEqual(parser.parse_args(["setup", "--runtime", runtime]).runtime, runtime)
 
+    def test_parser_accepts_deepseek_for_actor_and_setup_commands(self) -> None:
+        from cccc.cli.main import build_parser
+
+        parser = build_parser()
+        self.assertEqual(parser.parse_args(["actor", "add", "peer", "--runtime", "deepseek"]).runtime, "deepseek")
+        self.assertEqual(parser.parse_args(["actor", "update", "peer", "--runtime", "deepseek"]).runtime, "deepseek")
+        self.assertEqual(parser.parse_args(["setup", "--runtime", "deepseek"]).runtime, "deepseek")
+
     def test_main_uses_default_entry_when_no_subcommand(self) -> None:
         cli_main = importlib.import_module("cccc.cli.main")
 

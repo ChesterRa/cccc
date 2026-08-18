@@ -8,6 +8,7 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
   claude: "logos/claude.png",
   cline: "logos/cline.svg",
   codex: "logos/codex.png",
+  deepseek: "logos/deepseek.svg",
   copilot: "logos/copilot.svg",
   cursor: "logos/cursor.svg",
   devin: "logos/devin.svg",

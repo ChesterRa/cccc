@@ -11,12 +11,14 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 from ...kernel.actors import find_actor
 from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event
-from ...kernel.runtime import runtime_start_preflight_error
+from ...kernel.runtime import get_runtime_command_with_flags, runtime_start_preflight_error
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..mcp_install import prepare_runtime_mcp_env
 from ..runner_state_ops import headless_state_running, remove_headless_state, remove_pty_state_if_pid
+from . import deepseek_runtime
+from .deepseek_setup import ensure_deepseek_setup
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -94,6 +96,8 @@ def actor_runtime_running(
     runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
     if runtime == "web_model" and runner_effective == "headless":
         return bool(headless_state_running(group_id, actor_id))
+    if runtime == "deepseek" and runner_effective == "headless":
+        return deepseek_runtime.running(group_id=group_id, actor_id=actor_id)
     if actor_uses_codex_app_server_state(actor):
         return bool(codex_app_supervisor.actor_running(group_id, actor_id))
     if runtime == "codex" and runner_effective == "headless":
@@ -121,6 +125,8 @@ def stop_actor_runtime_handles(
         codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
     elif runtime == "claude" and runner_effective == "headless":
         claude_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runtime == "deepseek" and runner_effective == "headless":
+        deepseek_runtime.stop(group_id=group_id, actor_id=actor_id)
     elif runner_effective == "headless":
         headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
     else:
@@ -199,6 +205,10 @@ def resolve_actor_launch_config(
         resolved_runner = "headless"
         resolved_command = []
     effective_runner = effective_runner_kind(resolved_runner)
+    if resolved_runtime.lower() == "deepseek" and effective_runner != "headless":
+        raise ValueError("deepseek runtime requires the headless runner")
+    if resolved_runtime.lower() == "deepseek" and not resolved_command:
+        resolved_command = get_runtime_command_with_flags("deepseek")
     if resolved_runtime == "custom" and effective_runner != "headless" and not resolved_command:
         raise ValueError("custom runtime requires a command (PTY runner)")
 
@@ -382,9 +392,43 @@ def start_actor_process(
         if not mcp_ready:
             return {"success": False, "error": f"failed to install MCP for runtime: {runtime}"}
 
-    runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
+    runtime_error = ""
+    if runtime == "deepseek" and effective_runner == "headless":
+        # The managed ACP executable/profile are installed lazily on first
+        # use.  Setup must run before the generic preflight, otherwise a
+        # pristine Node/npm installation is rejected for missing
+        # `dsh-acp-demo` and can never reach the installer.
+        try:
+            ensure_deepseek_setup(effective_env)
+        except Exception as exc:
+            runtime_error = f"setup_required: {exc}"
+    if not runtime_error:
+        runtime_error = runtime_start_preflight_error(
+            runtime,
+            effective_cmd,
+            runner=effective_runner,
+            env=effective_env,
+        )
     if runtime_error:
-        return {"success": False, "error": runtime_error}
+        # A failed DeepSeek preflight must retire any stale state left by a
+        # previous handshake attempt before reporting setup_required.  The
+        # supervisor registry is the runtime authority; the persisted
+        # headless marker is only a projection and must not survive failure.
+        if runtime == "deepseek" and effective_runner == "headless":
+            try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor,
+                    effective_runner_kind=effective_runner_kind,
+                )
+            except Exception:
+                pass
+        return {
+            "success": False,
+            "error": runtime_error,
+            "error_code": "setup_required" if runtime == "deepseek" else "runtime_unavailable",
+        }
 
     try:
         if runtime == "web_model" and effective_runner == "headless":
@@ -442,6 +486,26 @@ def start_actor_process(
                 env=_launch_env(),
                 model=model_from_runtime_command(effective_cmd),
             )
+        elif runtime == "deepseek" and effective_runner == "headless":
+            deepseek_runtime.start(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                command=list(effective_cmd),
+                env=_launch_env(),
+            )
+            try:
+                write_headless_state(group.group_id, actor_id)
+            except Exception:
+                pass
+            try:
+                from ..messaging.deepseek_delivery import recover_durable_terminals
+
+                recover_durable_terminals(group, actor_id=actor_id, limit=256)
+            except Exception:
+                # Recovery is fail-closed; the unread source remains available
+                # for the normal delivery path if the cursor cannot be written.
+                pass
         elif effective_runner == "headless":
             headless_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,

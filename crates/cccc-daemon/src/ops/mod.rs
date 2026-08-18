@@ -8,6 +8,9 @@ mod actor_profile_runtime;
 pub(crate) mod actor_runtime;
 #[cfg(test)]
 mod actor_runtime_mcp_tests;
+mod actor_runtime_status;
+#[cfg(test)]
+mod actor_runtime_status_tests;
 #[cfg(test)]
 mod actor_runtime_tests;
 mod actor_saga;
@@ -23,6 +26,7 @@ mod claude_hooks;
 mod codex_mcp;
 mod context;
 mod context_projection;
+mod deepseek_runtime;
 mod diagnostics;
 mod group_bridge;
 pub(crate) use group_bridge::schedule_pending_route_retry;

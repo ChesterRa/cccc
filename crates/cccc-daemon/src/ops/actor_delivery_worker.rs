@@ -55,6 +55,16 @@ pub fn process_batch(
     else {
         return false;
     };
+    if current_actor.runtime == ActorRuntime::Deepseek {
+        return process_deepseek_batch(
+            jobs,
+            &job.home,
+            &current_group,
+            &current_actor,
+            last_delivery,
+            cancelled,
+        );
+    }
     if crate::ops::local_headless::supports(&current_actor) {
         return process_headless_batch(
             jobs,
@@ -97,6 +107,40 @@ pub fn process_batch(
         return true;
     }
     false
+}
+
+fn process_deepseek_batch(
+    jobs: &[DeliveryJob],
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+    last_delivery: &mut Option<std::time::Instant>,
+    cancelled: &AtomicBool,
+) -> bool {
+    if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
+        match actor_runtime::apply(home, group, &actor.id, "actor.start") {
+            Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
+            Ok(_) | Err(_) => return false,
+        }
+    }
+    for job in jobs {
+        if cancelled.load(Ordering::Acquire)
+            || !crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled)
+        {
+            return false;
+        }
+        *last_delivery = Some(std::time::Instant::now());
+        if job.advances_cursor {
+            record_completion(DeliveryCompletion {
+                group_id: job.group.group_id.clone(),
+                actor_id: job.actor.id.clone(),
+                event_id: job.event.id.clone(),
+            });
+        } else {
+            super::actor_delivery::release_in_flight(job);
+        }
+    }
+    true
 }
 
 fn process_headless_batch(

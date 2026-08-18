@@ -13,6 +13,7 @@ from ..runner_state_ops import headless_state_running, web_model_group_running
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.time import utc_now_iso
+from . import deepseek_runtime
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -113,6 +114,8 @@ def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
     runtime = str(actor.get("runtime") or "").strip().lower() if isinstance(actor, dict) else ""
     if runtime == "web_model":
         return bool(headless_state_running(group_id, actor_id))
+    if runtime == "deepseek":
+        return deepseek_runtime.running(group_id=group_id, actor_id=actor_id)
     if runtime == "codex":
         return codex_app_supervisor.actor_running(group_id, actor_id)
     if runtime == "claude" and _effective_runner_kind(runner_kind) == "headless":
@@ -129,6 +132,8 @@ def is_group_running(group_id: str) -> bool:
         codex_app_supervisor.group_running(group_id)
         or claude_app_supervisor.group_running(group_id)
         or
+        deepseek_runtime.group_running(group_id)
+        or
         pty_runner.SUPERVISOR.group_running(group_id)
         or headless_runner.SUPERVISOR.group_running(group_id)
         or web_model_group_running(group_id)
@@ -144,6 +149,8 @@ def stop_actor(group_id: str, actor_id: str, runner_kind: str) -> None:
         codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
     elif runtime == "claude" and _effective_runner_kind(runner_kind) == "headless":
         claude_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runtime == "deepseek":
+        deepseek_runtime.stop(group_id=group_id, actor_id=actor_id)
     elif _effective_runner_kind(runner_kind) == "headless":
         headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
     else:
@@ -154,6 +161,7 @@ def stop_group(group_id: str) -> None:
     """Stop all actors in a group (both PTY and headless)."""
     codex_app_supervisor.stop_group(group_id=group_id)
     claude_app_supervisor.stop_group(group_id=group_id)
+    deepseek_runtime.stop_group(group_id=group_id)
     pty_runner.SUPERVISOR.stop_group(group_id=group_id)
     headless_runner.SUPERVISOR.stop_group(group_id=group_id)
 
@@ -162,6 +170,7 @@ def stop_all() -> None:
     """Stop all actors (both PTY and headless)."""
     codex_app_supervisor.stop_all()
     claude_app_supervisor.stop_all()
+    deepseek_runtime.stop_all()
     pty_runner.SUPERVISOR.stop_all()
     headless_runner.SUPERVISOR.stop_all()
 

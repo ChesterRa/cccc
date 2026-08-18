@@ -22,6 +22,8 @@ from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
+from ..actors import deepseek_runtime
+from ..actors.deepseek_setup import ensure_deepseek_setup
 from ..actors.actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from ..assistants.voice_secretary_runtime_ops import (
     capture_voice_secretary_actor_state,
@@ -194,6 +196,7 @@ def handle_group_start(
         started: list[str] = []
         for launch_spec in start_specs:
             aid = str(((launch_spec.get("actor") or {}).get("id") or "")).strip()
+            actor_doc = launch_spec.get("actor") or {}
             cwd = launch_spec["cwd"]
             runner_kind = str(launch_spec["runner"])
             runtime = str(launch_spec["runtime"])
@@ -221,24 +224,36 @@ def handle_group_start(
                     raise RuntimeError(f"failed to install MCP for actor {aid}: {e}") from e
                 if not mcp_ready:
                     raise RuntimeError(f"failed to install MCP for actor {aid} (runtime={runtime})")
-                runtime_error = runtime_start_preflight_error(runtime, launch_spec["effective_command"], runner=runner_effective)
-                if runtime_error:
-                    return _error(
-                        "runtime_unavailable",
-                        runtime_error,
-                        details={
-                            "group_id": group.group_id,
-                            "actor_id": aid,
-                            "runtime": runtime,
-                        },
-                    )
+            runtime_error = ""
+            if runtime == "deepseek" and runner_effective == "headless":
+                try:
+                    ensure_deepseek_setup(effective_env)
+                except Exception as exc:
+                    runtime_error = f"setup_required: {exc}"
+            if not runtime_error:
+                runtime_error = runtime_start_preflight_error(
+                    runtime,
+                    launch_spec["effective_command"],
+                    runner=runner_effective,
+                    env=effective_env,
+                )
+            if runtime_error:
+                return _error(
+                    "setup_required" if runtime == "deepseek" else "runtime_unavailable",
+                    runtime_error,
+                    details={
+                        "group_id": group.group_id,
+                        "actor_id": aid,
+                        "runtime": runtime,
+                    },
+                )
 
             if runtime == "web_model" and runner_effective == "headless":
                 try:
                     write_headless_state(group.group_id, aid)
                 except Exception:
                     pass
-            elif actor_uses_codex_app_server_state(actor):
+            elif actor_uses_codex_app_server_state(actor_doc):
                 session = codex_app_supervisor.start_pty_app_actor(
                     group_id=group.group_id,
                     actor_id=aid,
@@ -268,6 +283,18 @@ def handle_group_start(
                     env=_launch_env(),
                     model=model_from_runtime_command(launch_spec["effective_command"]),
                 )
+            elif runtime == "deepseek" and runner_effective == "headless":
+                deepseek_runtime.start(
+                    group_id=group.group_id,
+                    actor_id=aid,
+                    cwd=cwd,
+                    command=list(launch_spec["effective_command"]),
+                    env=_launch_env(),
+                )
+                write_headless_state(group.group_id, aid)
+                from ..messaging.deepseek_delivery import recover_durable_terminals
+
+                recover_durable_terminals(group, actor_id=aid, limit=256)
             elif runner_effective == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
@@ -358,6 +385,7 @@ def handle_group_stop(
         headless_runner.SUPERVISOR.stop_group(group_id=group.group_id)
         codex_app_supervisor.stop_group(group_id=group.group_id)
         claude_app_supervisor.stop_group(group_id=group.group_id)
+        deepseek_runtime.stop_group(group_id=group.group_id)
 
         try:
             pdir = pty_state_dir_for_group(group.group_id)

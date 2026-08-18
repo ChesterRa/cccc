@@ -11,6 +11,7 @@ from ...kernel.actors import get_effective_role, is_voice_secretary_actor, list_
 from ...kernel.help_markdown import _select_help_markdown, parse_help_markdown, update_actor_help_note
 from ..actors.private_env_ops import copy_group_private_env
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
+from ..actors import deepseek_runtime
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .presentation_browser_runtime import close_group_browser_surface_sessions
 from ...kernel.active import load_active, set_active_group_id
@@ -447,6 +448,7 @@ def handle_group_delete(
         close_group_browser_surface_sessions(group_id=group_id)
         codex_app_supervisor.stop_group(group_id=group_id)
         claude_app_supervisor.stop_group(group_id=group_id)
+        deepseek_runtime.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group_id)
         reg = load_registry()
@@ -590,6 +592,7 @@ def _delete_group_for_reset(
         close_group_browser_surface_sessions(group_id=group_id)
         codex_app_supervisor.stop_group(group_id=group_id)
         claude_app_supervisor.stop_group(group_id=group_id)
+        deepseek_runtime.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group_id)
         reg = load_registry()

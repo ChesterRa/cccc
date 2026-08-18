@@ -63,10 +63,14 @@ export const TERMINAL_FRAME_SNAPSHOT = 55; // "7"
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
 const terminalResponseFilteringRuntimes = new Set(["codex", "devin", "droid"]);
-const terminalGeneratedInputSequencePattern =
-  /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
+const terminalServerOwnedResponseToken = String.raw`\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\[(?:\?)?\d+(?:;\d+)?[nR]|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)`;
+const terminalGeneratedInputSequencePattern = new RegExp(
+  `^(?:${terminalServerOwnedResponseToken}|\\x1b\\[[IO])+$`,
+);
+const terminalServerOwnedResponseGlobalPattern = new RegExp(terminalServerOwnedResponseToken, "g");
 const terminalColorReplySequencePattern =
   /\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)/g;
+const terminalCursorStatusReplyPattern = /^(?:\x1b\[(?:\?)?\d+(?:;\d+)?[nR])+$/;
 const bareTerminalColorReplyPattern =
   /^(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4})*$/;
 
@@ -138,7 +142,7 @@ export function splitTerminalOutputByReplayBoundary(
 export function filterTerminalInputForRuntime(
   data: string,
   runtime: string | null | undefined,
-  options?: { replaying?: boolean },
+  options?: { replaying?: boolean; serverResponses?: boolean },
 ): string {
   const text = String(data || "");
   if (!text) return text;
@@ -152,13 +156,21 @@ export function filterTerminalInputForRuntime(
   // query is answered again after reconnect and the late reply can become
   // literal prompt text in the runtime.
   if (options?.replaying && (generatedInput || bareColorReply)) return "";
+  if (
+    bareColorReply &&
+    (options?.serverResponses || terminalResponseFilteringRuntimes.has(normalizedRuntime))
+  ) {
+    return "";
+  }
+  if (options?.serverResponses) {
+    return text.replace(terminalServerOwnedResponseGlobalPattern, "");
+  }
   if (!terminalResponseFilteringRuntimes.has(normalizedRuntime)) return text;
-  if (bareColorReply) return "";
   if (!generatedInput) return text;
 
-  // Live OSC 10/11 replies are required for TUI theme negotiation. Keep only
-  // those replies while removing device/focus responses that these runtimes
-  // may echo as literal prompt text.
+  // New Rust PTYs own DA/DSR/CPR and OSC 10/11. Older backends do not declare
+  // this capability and still need xterm's live color replies.
+  if (terminalCursorStatusReplyPattern.test(text)) return text;
   return text.match(terminalColorReplySequencePattern)?.join("") || "";
 }
 

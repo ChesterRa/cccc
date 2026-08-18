@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from .context import ContextStorage
 from ..util.fs import atomic_write_json, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile
 from ..util.time import parse_utc_iso, utc_now_iso
 from .actors import find_actor, get_effective_role, is_internal_actor, list_actors
 from .group import Group
@@ -130,6 +131,10 @@ def iter_events_reverse(ledger_path: Path, *, block_size: int = 65536) -> Iterab
 
 def _cursor_path(group: Group) -> Path:
     return group.path / "state" / "read_cursors.json"
+
+
+def _cursor_lock_path(group: Group) -> Path:
+    return _cursor_path(group).with_name("read_cursors.json.lock")
 
 
 def _unread_index_path(group: Group) -> Path:
@@ -603,27 +608,106 @@ def cursor_covers_event(group: Group, *, actor_id: str, event: Dict[str, Any]) -
     )
 
 
+def _cursor_has_unread_gap(
+    group: Group,
+    *,
+    actor_id: str,
+    current_event_id: str,
+    target_event_id: str,
+) -> bool:
+    """Return whether a target cursor would skip an earlier actor-visible event."""
+    # Keep this invariant independent from the public unread iterator: callers
+    # may replace/index that iterator during recovery, but cursor advancement
+    # still needs one stable append-order view for the gap check.
+    events: List[Dict[str, Any]] = []
+    event_coordinates: List[Tuple[int, int]] = []
+    for source in list_ledger_sources(group.ledger_path.parent):
+        abs_path = source.get("abs_path")
+        if not isinstance(abs_path, Path) or not abs_path.exists():
+            continue
+        source_seq = int(source.get("seq") or 0)
+        line_no = 0
+        for raw_line in iter_source_lines(abs_path):
+            line_no += 1
+            try:
+                event = json.loads(str(raw_line).strip())
+            except Exception:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+                event_coordinates.append((source_seq, line_no))
+    positions = {
+        str(event.get("id") or "").strip(): index
+        for index, event in enumerate(events)
+        if str(event.get("id") or "").strip()
+    }
+    target = positions.get(str(target_event_id or "").strip())
+    if target is None:
+        raise ValueError(f"cursor target is not present in ledger: {target_event_id}")
+    current = positions.get(str(current_event_id or "").strip(), -1)
+    if current >= target:
+        return False
+    generation = actor_generation_positions(group, [actor_id]).get(actor_id)
+    for index, event in enumerate(events[current + 1 : target], start=current + 1):
+        if str(event.get("by") or "").strip() == actor_id:
+            continue
+        if not is_message_for_actor(group, actor_id=actor_id, event=event):
+            continue
+        current_position = event_coordinates[index]
+        if generation is not None:
+            if current_position < generation:
+                continue
+        return True
+    return False
+
+
+def _requires_contiguous_cursor(group: Group, actor_id: str) -> bool:
+    actor = find_actor(group, actor_id)
+    return isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "deepseek"
+
+
 def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[str, Any]:
     """Set an actor's read cursor (monotonic forward-only)."""
-    cursors = load_cursors(group)
-    cur = cursors.get(actor_id)
+    lock = acquire_lockfile(_cursor_lock_path(group), blocking=True)
+    try:
+        # Read, monotonicity validation, merge, and atomic replace are one
+        # critical section shared with the Rust daemon's fs2 lock.
+        cursors = load_cursors(group)
+        cur = cursors.get(actor_id)
 
-    if isinstance(cur, dict):
-        current_event_id = str(cur.get("event_id") or "").strip()
-        if current_event_id == str(event_id or "").strip() or cursor_covers_event(
+        if isinstance(cur, dict):
+            current_event_id = str(cur.get("event_id") or "").strip()
+            target_event_id = str(event_id or "").strip()
+            if current_event_id == target_event_id or cursor_covers_event(
+                group,
+                actor_id=actor_id,
+                event={"id": target_event_id, "ts": str(ts or "")},
+            ):
+                return dict(cur)
+            if _requires_contiguous_cursor(group, actor_id) and _cursor_has_unread_gap(
+                group,
+                actor_id=actor_id,
+                current_event_id=current_event_id,
+                target_event_id=target_event_id,
+            ):
+                raise ValueError("read cursor cannot skip an unread event")
+        elif _requires_contiguous_cursor(group, actor_id) and _cursor_has_unread_gap(
             group,
             actor_id=actor_id,
-            event={"id": str(event_id or "").strip(), "ts": str(ts or "")},
+            current_event_id="",
+            target_event_id=str(event_id or "").strip(),
         ):
-            return dict(cur)
+            raise ValueError("read cursor cannot skip an unread event")
 
-    cursors[str(actor_id)] = {
-        "event_id": str(event_id),
-        "ts": str(ts),
-        "updated_at": utc_now_iso(),
-    }
-    _save_cursors(group, cursors)
-    return dict(cursors[str(actor_id)])
+        cursors[str(actor_id)] = {
+            "event_id": str(event_id),
+            "ts": str(ts),
+            "updated_at": utc_now_iso(),
+        }
+        _save_cursors(group, cursors)
+        return dict(cursors[str(actor_id)])
+    finally:
+        release_lockfile(lock)
 
 
 def delete_cursor(group: Group, actor_id: str) -> bool:
@@ -631,12 +715,16 @@ def delete_cursor(group: Group, actor_id: str) -> bool:
     aid = str(actor_id or "").strip()
     if not aid:
         return False
-    cursors = load_cursors(group)
-    if aid not in cursors:
-        return False
-    cursors.pop(aid, None)
-    _save_cursors(group, cursors)
-    return True
+    lock = acquire_lockfile(_cursor_lock_path(group), blocking=True)
+    try:
+        cursors = load_cursors(group)
+        if aid not in cursors:
+            return False
+        cursors.pop(aid, None)
+        _save_cursors(group, cursors)
+        return True
+    finally:
+        release_lockfile(lock)
 
 
 def _collect_chat_acks(group: Group, *, event_ids: set[str]) -> Dict[str, set[str]]:

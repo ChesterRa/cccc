@@ -112,6 +112,8 @@ def _normalize_profile_command(*, runtime: str, runner: str, command: Any) -> Li
                 cmd = [raw]
     if runner != "headless" and runtime != "custom" and not cmd:
         cmd = get_runtime_command_with_flags(runtime)
+    if runtime.strip().lower() == "deepseek" and not cmd:
+        cmd = get_runtime_command_with_flags("deepseek")
     if runtime == "custom" and runner != "headless" and not cmd:
         raise ValueError("custom runtime requires a command (PTY runner)")
     return cmd
@@ -427,6 +429,8 @@ def _save_actor_profile(
     runtime = str(profile.get("runtime") if "runtime" in profile else existing.get("runtime") or "codex").strip() or "codex"
     runner = str(profile.get("runner") if "runner" in profile else existing.get("runner") or "pty").strip() or "pty"
     if runtime == "web_model":
+        runner = "headless"
+    if runtime.lower() == "deepseek":
         runner = "headless"
     submit = str(profile.get("submit") if "submit" in profile else existing.get("submit") or "enter").strip() or "enter"
     name = str(profile.get("name") if "name" in profile else existing.get("name") or "").strip()

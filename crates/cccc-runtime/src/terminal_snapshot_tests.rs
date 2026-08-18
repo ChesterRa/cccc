@@ -25,6 +25,80 @@ fn snapshot_rebuilds_the_current_screen_at_an_exact_raw_cursor() {
 }
 
 #[test]
+fn cursor_position_query_at_home_generates_a_response() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(mirror.process(b"\x1b[6n"), [b"\x1b[1;1R".to_vec()]);
+}
+
+#[test]
+fn cursor_position_query_reports_the_mirrored_position() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(
+        mirror.process(b"\x1b[5;10H\x1b[6n"),
+        [b"\x1b[5;10R".to_vec()]
+    );
+}
+
+#[test]
+fn private_cursor_position_query_reports_the_mirrored_position() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(
+        mirror.process(b"\x1b[5;10H\x1b[?6n"),
+        [b"\x1b[?5;10R".to_vec()]
+    );
+}
+
+#[test]
+fn split_cursor_position_query_generates_one_response() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert!(mirror.process(b"\x1b[6").is_empty());
+    assert_eq!(mirror.process(b"n"), [b"\x1b[1;1R".to_vec()]);
+    assert!(mirror.process(b"plain output").is_empty());
+}
+
+#[test]
+fn terminal_queries_continue_after_snapshots_become_unsafe() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(
+        mirror.process(b"\x1bPqgraphics\x1b\\\x1b[5;10H\x1b[6n"),
+        [b"\x1b[5;10R".to_vec()]
+    );
+    assert!(mirror.snapshot(0).is_none());
+}
+
+#[test]
+fn color_queries_are_answered_without_a_browser() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(
+        mirror.process(b"\x1b]10;?;?\x1b\\"),
+        [
+            b"\x1b]10;rgb:e2e2/e8e8/f0f0\x1b\\".to_vec(),
+            b"\x1b]11;rgb:0f0f/1717/2a2a\x1b\\".to_vec(),
+        ]
+    );
+}
+
+#[test]
+fn mixed_terminal_queries_preserve_response_order() {
+    let mut mirror = TerminalStateMirror::new(80, 24);
+
+    assert_eq!(
+        mirror.process(b"\x1b[6n\x1b]11;?\x1b\\\x1b[5n"),
+        [
+            b"\x1b[1;1R".to_vec(),
+            b"\x1b]11;rgb:0f0f/1717/2a2a\x1b\\".to_vec(),
+            b"\x1b[0n".to_vec(),
+        ]
+    );
+}
+
+#[test]
 fn snapshot_injects_recent_lines_into_native_scrollback() {
     let mut mirror = TerminalStateMirror::new(12, 3);
     mirror.process(b"line one\r\nline two\r\nline three\r\nline four\r\nlatest");
@@ -100,4 +174,17 @@ fn oversized_terminal_disables_the_mirror_instead_of_allocating_it() {
     mirror.resize(u16::MAX, u16::MAX);
     assert_eq!(mirror.size(), (u16::MAX, u16::MAX));
     assert!(mirror.snapshot(0).is_none());
+}
+
+#[test]
+fn oversized_terminal_still_answers_all_server_owned_queries() {
+    let mut mirror = TerminalStateMirror::new(u16::MAX, u16::MAX);
+    assert_eq!(
+        mirror.process(b"\x1b[6n\x1b[?6n\x1b]10;?\x1b\\"),
+        [
+            b"\x1b[1;1R".to_vec(),
+            b"\x1b[?1;1R".to_vec(),
+            b"\x1b]10;rgb:e2e2/e8e8/f0f0\x1b\\".to_vec(),
+        ]
+    );
 }

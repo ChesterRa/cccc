@@ -1,6 +1,7 @@
 use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::output_reader::OutputReader;
+use crate::process_tree::ProcessTreeGuard;
 use crate::session_history::SessionHistory;
 use crate::terminal_attach::{
     AttachmentRegistry, TerminalAttachMode, TerminalAttachOptions, TerminalAttachment,
@@ -41,7 +42,8 @@ pub struct Session {
     status: SessionStatus,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
-    writer: Box<dyn Write + Send>,
+    process_tree: ProcessTreeGuard,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     input_gate: Arc<Mutex<()>>,
     attachments: AttachmentRegistry,
     history: SessionHistory,
@@ -76,10 +78,21 @@ impl Session {
         command.env("CCCC_ACTOR_ID", &spec.actor_id);
         command.env("CCCC_RUNNER", runner_name(spec.runner));
         command.env("TERM", "xterm-256color");
-        let child = pair
+        let mut child = pair
             .slave
             .spawn_command(command)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let process_tree = match ProcessTreeGuard::attach(child.as_ref()) {
+            Ok(process_tree) => process_tree,
+            Err(error) => {
+                // A failed attachment must not orphan the PTY child.  The
+                // process-tree guard does not exist yet, so terminate and
+                // reap the child explicitly before returning the error.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
+        };
         let pid = child.process_id();
         let reader = pair
             .master
@@ -89,6 +102,8 @@ impl Session {
             .master
             .take_writer()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let writer = Arc::new(Mutex::new(writer));
+        let input_gate = Arc::new(Mutex::new(()));
         let history = SessionHistory::new_at_with_size(
             history_config,
             history_cursor_floor,
@@ -99,6 +114,8 @@ impl Session {
             format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
             reader,
             history.clone(),
+            Arc::clone(&writer),
+            Arc::clone(&input_gate),
         )?;
         Ok(Self {
             status: SessionStatus {
@@ -112,8 +129,9 @@ impl Session {
             },
             master: pair.master,
             child,
+            process_tree,
             writer,
-            input_gate: Arc::new(Mutex::new(())),
+            input_gate,
             attachments: AttachmentRegistry::default(),
             history,
             reader: Some(reader),
@@ -126,11 +144,13 @@ impl Session {
         {
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.process_tree.terminate();
         }
         self.status.clone()
     }
 
     pub fn stop(&mut self) -> Result<SessionStatus, RuntimeError> {
+        self.process_tree.terminate();
         if self.status.running {
             self.child
                 .kill()
@@ -151,8 +171,9 @@ impl Session {
         if !status.running {
             return Err(RuntimeError::NotFound(status.group_id, status.actor_id));
         }
-        self.writer.write_all(data)?;
-        self.writer.flush()?;
+        let mut writer = self.writer.lock().map_err(|_| RuntimeError::Poisoned)?;
+        writer.write_all(data)?;
+        writer.flush()?;
         Ok(())
     }
 
@@ -268,6 +289,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        self.process_tree.terminate();
         if self.status.running {
             let _ = self.child.kill();
             let _ = self.child.wait();

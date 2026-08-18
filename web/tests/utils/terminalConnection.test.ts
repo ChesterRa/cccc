@@ -127,23 +127,50 @@ describe("splitTerminalOutputByReplayBoundary", () => {
 });
 
 describe("filterTerminalInputForRuntime", () => {
-  it("forwards live color replies for color-querying PTY runtimes", () => {
+  it("suppresses live replies now owned by the Rust PTY", () => {
     const foreground = "\x1b]10;rgb:e2e2/e8e8/f0f0\x07";
     const background = "\x1b]11;rgb:fafa/fafa/fafa\x1b\\";
 
     for (const runtime of ["codex", "devin", "droid"]) {
-      expect(filterTerminalInputForRuntime(foreground, runtime)).toBe(foreground);
-      expect(filterTerminalInputForRuntime(background, runtime)).toBe(background);
+      const options = { serverResponses: true };
+      expect(filterTerminalInputForRuntime(foreground, runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime(background, runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[0n", runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[12;34R", runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[?12;34R", runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime("10;rgb:e2e2/e8e8/f0f0", runtime, options)).toBe("");
+      expect(filterTerminalInputForRuntime("11;rgb:fafa/fafa/fafa", runtime, options)).toBe("");
     }
   });
 
-  it("keeps only live color replies from a combined generated-input event", () => {
+  it("keeps legacy backend color replies when server ownership is absent", () => {
+    const foreground = "\x1b]10;rgb:e2e2/e8e8/f0f0\x07";
+    expect(filterTerminalInputForRuntime(foreground, "codex")).toBe(foreground);
+    expect(filterTerminalInputForRuntime("\x1b[12;34R", "codex")).toBe("\x1b[12;34R");
+  });
+
+  it("suppresses server-owned replies for every PTY runtime", () => {
+    const options = { serverResponses: true };
+    expect(filterTerminalInputForRuntime("\x1b[3;4R", "custom", options)).toBe("");
+    expect(filterTerminalInputForRuntime("\x1b[?1;2c", "custom", options)).toBe("");
+    expect(
+      filterTerminalInputForRuntime("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", "custom", options),
+    ).toBe("");
+    expect(filterTerminalInputForRuntime("11;rgb:0f0f/1717/2a2a", "custom", options)).toBe("");
+    expect(filterTerminalInputForRuntime("\x1b[I", "custom", options)).toBe("\x1b[I");
+    const mixedCustomReply = "\x1b]10;rgb:fafa/fafa/fafa\x1b\\" + "\x1b[I";
+    expect(filterTerminalInputForRuntime(mixedCustomReply, "custom", options)).toBe("\x1b[I");
+  });
+
+  it("suppresses a combined generated-input event", () => {
     const foreground = "\x1b]10;rgb:e2e2/e8e8/f0f0\x07";
     const background = "\x1b]11;rgb:fafa/fafa/fafa\x1b\\";
     const combined = `\x1b[?1;2c${foreground}${background}\x1b[I`;
 
     for (const runtime of ["codex", "devin", "droid"]) {
-      expect(filterTerminalInputForRuntime(combined, runtime)).toBe(`${foreground}${background}`);
+      expect(filterTerminalInputForRuntime(combined, runtime, { serverResponses: true })).toBe(
+        "\x1b[I",
+      );
     }
   });
 
@@ -163,6 +190,7 @@ describe("filterTerminalInputForRuntime", () => {
     for (const runtime of ["codex", "devin", "droid", "custom"]) {
       expect(filterTerminalInputForRuntime(colorReply, runtime, { replaying: true })).toBe("");
       expect(filterTerminalInputForRuntime("\x1b[?1;2c", runtime, { replaying: true })).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[12;34R", runtime, { replaying: true })).toBe("");
       expect(filterTerminalInputForRuntime("hello", runtime, { replaying: true })).toBe("hello");
     }
   });

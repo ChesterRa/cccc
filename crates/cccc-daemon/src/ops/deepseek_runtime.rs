@@ -1,0 +1,193 @@
+//! Rust-side DeepSeek process lifecycle registry.
+mod delivery;
+mod lifecycle;
+mod recovery;
+mod turn_failure;
+
+pub use delivery::deliver;
+pub use lifecycle::apply;
+#[cfg(test)]
+use recovery::read_bounded_events;
+pub use recovery::recover;
+
+use cccc_contracts::Actor;
+use cccc_core::{GroupDoc, HomeLayout};
+use cccc_runtime::deepseek_supervisor::DeepSeekSupervisor;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
+
+type Key = (String, String);
+
+pub(super) struct RuntimeEntry {
+    pub(super) supervisor: std::sync::Mutex<DeepSeekSupervisor>,
+    pub(super) running: AtomicBool,
+}
+
+pub(super) fn sessions() -> &'static RwLock<HashMap<Key, Arc<RuntimeEntry>>> {
+    static SESSIONS: OnceLock<RwLock<HashMap<Key, Arc<RuntimeEntry>>>> = OnceLock::new();
+    SESSIONS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn cancel_flags() -> &'static RwLock<HashMap<Key, Arc<AtomicBool>>> {
+    static FLAGS: OnceLock<RwLock<HashMap<Key, Arc<AtomicBool>>>> = OnceLock::new();
+    FLAGS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn start(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: &Path,
+) -> std::io::Result<()> {
+    let key = (group.group_id.clone(), actor.id.clone());
+    stop(&group.group_id, &actor.id);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let mut supervisor = DeepSeekSupervisor::default();
+    let env = actor
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let command = if actor
+        .command
+        .first()
+        .is_some_and(|value| value == "dsh" || value.ends_with("dsh-acp-demo"))
+    {
+        let dsh_home = actor
+            .env
+            .get("DSH_HOME")
+            .cloned()
+            .or_else(|| actor.env.get("HOME").map(|home| format!("{home}/.dsh")))
+            .ok_or_else(|| std::io::Error::other("DSH_HOME cannot be inferred"))?;
+        let executable = actor
+            .env
+            .get("PATH")
+            .and_then(|path| {
+                std::env::split_paths(path).find(|dir| dir.join("dsh-acp-demo").is_file())
+            })
+            .map(|path| path.join("dsh-acp-demo"))
+            .unwrap_or_else(|| Path::new("dsh-acp-demo").to_path_buf());
+        vec![
+            executable.to_string_lossy().into_owned(),
+            "--config".into(),
+            Path::new(&dsh_home)
+                .join("profiles/cccc-acp/cordis.yml")
+                .to_string_lossy()
+                .into_owned(),
+        ]
+    } else {
+        actor.command.clone()
+    };
+    supervisor
+        .start(&command, cwd, &env)
+        .map_err(std::io::Error::other)?;
+    if let Err(error) = supervisor.handshake(cwd, Duration::from_secs(5)) {
+        let _ = supervisor.stop();
+        return Err(std::io::Error::other(format!(
+            "deepseek ACP handshake failed: {error}"
+        )));
+    }
+    sessions()
+        .write()
+        .map_err(|_| std::io::Error::other("deepseek session lock poisoned"))?
+        .insert(
+            key,
+            Arc::new(RuntimeEntry {
+                supervisor: std::sync::Mutex::new(supervisor),
+                running: AtomicBool::new(true),
+            }),
+        );
+    cancel_flags()
+        .write()
+        .map_err(|_| std::io::Error::other("deepseek cancel lock poisoned"))?
+        .insert((group.group_id.clone(), actor.id.clone()), cancel_flag);
+    let _ = home;
+    Ok(())
+}
+
+pub fn stop(group_id: &str, actor_id: &str) {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    if let Ok(flags) = cancel_flags().read() {
+        if let Some(flag) = flags.get(&key) {
+            flag.store(true, Ordering::Release);
+        }
+    }
+    if let Some(holder) = sessions().write().ok().and_then(|mut map| map.remove(&key)) {
+        holder.running.store(false, Ordering::Release);
+        if let Ok(mut supervisor) = holder.supervisor.lock() {
+            let _ = supervisor.stop();
+        }
+    }
+    if let Ok(mut flags) = cancel_flags().write() {
+        flags.remove(&key);
+    }
+}
+
+pub fn stop_group(group_id: &str) {
+    let actor_ids = sessions()
+        .read()
+        .map(|map| {
+            map.keys()
+                .filter(|(candidate, _)| candidate == group_id)
+                .map(|(_, actor_id)| actor_id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for actor_id in actor_ids {
+        stop(group_id, &actor_id);
+    }
+}
+
+pub fn stop_all() {
+    let keys = sessions()
+        .read()
+        .map(|map| map.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for (group_id, actor_id) in keys {
+        stop(&group_id, &actor_id);
+    }
+}
+
+pub(super) fn cancellation_requested(group_id: &str, actor_id: &str) -> bool {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    cancel_flags()
+        .read()
+        .ok()
+        .and_then(|flags| flags.get(&key).cloned())
+        .is_some_and(|flag| flag.load(Ordering::Acquire))
+}
+
+pub fn running(group_id: &str, actor_id: &str) -> bool {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    sessions()
+        .read()
+        .ok()
+        .and_then(|map| map.get(&key).cloned())
+        .is_some_and(|holder| {
+            if !holder.running.load(Ordering::Acquire) {
+                return false;
+            }
+            match holder.supervisor.try_lock() {
+                Ok(mut supervisor) => {
+                    let running = supervisor.is_running();
+                    holder.running.store(running, Ordering::Release);
+                    running
+                }
+                Err(std::sync::TryLockError::WouldBlock) => true,
+                Err(std::sync::TryLockError::Poisoned(_)) => false,
+            }
+        })
+}
+
+#[cfg(test)]
+#[path = "deepseek_runtime/dedupe_tests.rs"]
+mod dedupe_tests;
+#[cfg(test)]
+#[path = "deepseek_runtime/delivery_tests.rs"]
+mod delivery_tests;
+#[cfg(test)]
+#[path = "deepseek_runtime/recovery_tests.rs"]
+mod recovery_tests;

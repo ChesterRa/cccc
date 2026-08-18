@@ -20,21 +20,6 @@ export function shouldRestoreDetachedScrollSnapshot(
   return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;
 }
 
-export function shouldLockChatToBottomForSend(input: {
-  currentAtBottom: boolean;
-  showScrollButton: boolean;
-  chatUnreadCount: number;
-  scrollSnapshot: { mode?: unknown; anchorId?: unknown; updatedAt?: unknown } | null | undefined;
-  now?: number;
-}): boolean {
-  if (!input.currentAtBottom) return false;
-  if (input.showScrollButton) return false;
-  if (Math.max(0, Number(input.chatUnreadCount) || 0) > 0) return false;
-  if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now()))
-    return false;
-  return true;
-}
-
 export function buildComposerTrustFetchGroupId(_selectedGroupId: string): string | undefined {
   const gid = String(_selectedGroupId || "").trim();
   return gid || undefined;

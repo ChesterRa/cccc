@@ -12,11 +12,9 @@ import {
   getStableMessageKey,
   isVirtualizedScrollNearEnd,
   shouldAutoScrollToBottom,
-  shouldApplyExternalForceStickToBottom,
   shouldDetachChatFollowOnScroll,
   shouldNotifyScrollChange,
   shouldPromoteScrollToFollow,
-  shouldRunScheduledBottomScroll,
   shouldUseVirtualizedMessageList,
   VIRTUAL_OVERSCAN_ROWS,
   wasAtBottomBeforeContentChange,
@@ -41,6 +39,8 @@ import {
   getMessageAnchorOffset,
   getScrollOffsetForMessageAnchor,
 } from "./virtualMessageListAnchorRestore";
+import { useSendScrollRequestLifecycle } from "./virtualMessageList/useSendScrollRequestLifecycle";
+import { useBottomScrollController } from "./virtualMessageList/useBottomScrollController";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
@@ -56,7 +56,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   groupId,
   groupLabelById,
   webModelDeliveryStatusByEventId,
-  viewKey: _viewKey,
+  viewKey,
   initialScrollTargetId,
   initialScrollAnchorId,
   initialScrollAnchorOffsetPx,
@@ -78,7 +78,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   chatUnreadCount,
   onScrollChange,
   onScrollSnapshot,
-  forceStickToBottomToken = 0,
+  sendScrollRequest,
+  onSendScrollRequestConsumed,
   isLoadingHistory = false,
   hasMoreHistory = true,
   onLoadMore,
@@ -101,6 +102,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   );
   const shouldVirtualize = shouldUseVirtualizedMessageList(displayMessages.length);
   const topInset = Math.max(0, Number(topInsetPx) || 0);
+  const ownerViewKey = String(viewKey ?? groupId);
 
   const {
     isAtBottomRef,
@@ -326,38 +328,17 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     captureScrollSnapshotRef.current = captureCurrentScrollSnapshot;
   }, [captureCurrentScrollSnapshot]);
 
-  const scrollToBottom = useCallback(
-    (opts?: { force?: boolean; requestToken?: number }) => {
-      const el = parentRef.current;
-      if (!el || displayMessages.length <= 0) return;
-      window.requestAnimationFrame(() => {
-        if (
-          opts?.requestToken != null &&
-          bottomScrollRequestTokenRef.current !== opts.requestToken
-        ) {
-          return;
-        }
-        if (
-          !shouldRunScheduledBottomScroll({
-            followMode: followModeRef.current,
-            isAtBottom: isAtBottomRef.current,
-            forceStickToBottom: forceStickToBottomUntilRef.current > performance.now(),
-            explicitForce: !!opts?.force,
-          })
-        ) {
-          return;
-        }
-        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
-      });
-    },
-    [
-      bottomScrollRequestTokenRef,
-      displayMessages.length,
+  const { activeRequestRef: activeSendScrollRequestRef, scrollToBottom } =
+    useBottomScrollController({
+      parentRef,
+      messageCount: displayMessages.length,
+      groupId,
+      viewKey: ownerViewKey,
+      requestTokenRef: bottomScrollRequestTokenRef,
       followModeRef,
-      forceStickToBottomUntilRef,
       isAtBottomRef,
-    ],
-  );
+      forceStickToBottomUntilRef,
+    });
 
   const cancelScheduledScroll = useCallback(() => {
     const rid = scrollRafRef.current;
@@ -756,19 +737,19 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     onRestoreAwayFromBottom: notifyRestoredAwayFromBottom,
   });
 
-  useEffect(() => {
-    if (!forceStickToBottomToken) return;
-    if (!shouldApplyExternalForceStickToBottom({ followMode: followModeRef.current })) return;
-    setAtBottom(true);
-    setFollowMode("follow");
-    scheduleForceStickToBottom();
-  }, [
-    followModeRef,
-    forceStickToBottomToken,
-    scheduleForceStickToBottom,
+  useSendScrollRequestLifecycle({
+    activeRequestRef: activeSendScrollRequestRef,
+    groupId,
+    viewKey: ownerViewKey,
+    request: sendScrollRequest,
+    onConsumed: onSendScrollRequestConsumed,
     setAtBottom,
     setFollowMode,
-  ]);
+    requestTokenRef: bottomScrollRequestTokenRef,
+    scheduleScroll,
+    scrollToBottom,
+    cancelPendingBottomScroll,
+  });
 
   useMessageTailAutoFollow({
     messages: displayMessages,
@@ -782,8 +763,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     scheduleScroll,
     scrollToBottom,
   });
-
-  useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
   useEffect(() => {
     const scrollEl = parentRef.current;

@@ -1,12 +1,80 @@
 import tempfile
 import unittest
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 
 class TestActorRuntimeOps(unittest.TestCase):
+    def test_deepseek_preflight_failure_retires_stale_headless_state(self) -> None:
+        from cccc.daemon.actors import actor_runtime_ops
+        from cccc.daemon.runner_state_ops import headless_state_path, write_headless_state
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group = SimpleNamespace(
+                    group_id="g-deepseek-fail",
+                    doc={"active_scope_key": "scope1", "state": "active", "running": True},
+                    save=lambda: None,
+                    ledger_path=Path(td) / "ledger.jsonl",
+                )
+                actor = {
+                    "id": "deepseek-1",
+                    "default_scope_key": "scope1",
+                    "runner": "headless",
+                    "runtime": "deepseek",
+                    "command": ["dsh-acp-demo"],
+                    "env": {},
+                }
+                write_headless_state(group.group_id, actor["id"])
+                self.assertTrue(headless_state_path(group.group_id, actor["id"]).exists())
+                with (
+                    patch.object(actor_runtime_ops, "find_actor", return_value=actor),
+                    patch.object(
+                        actor_runtime_ops,
+                        "runtime_start_preflight_error",
+                        return_value="setup_required: app unavailable",
+                    ),
+                    patch.object(actor_runtime_ops, "ensure_deepseek_setup") as setup,
+                    patch.object(actor_runtime_ops.deepseek_runtime, "stop") as stop,
+                ):
+                    result = actor_runtime_ops.start_actor_process(
+                        group,
+                        actor["id"],
+                        command=[],
+                        env={},
+                        runner="headless",
+                        runtime="deepseek",
+                        by="user",
+                        find_scope_url=lambda _group, _scope_key: td,
+                        effective_runner_kind=lambda runner: runner,
+                        merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
+                        normalize_runtime_command=lambda _runtime, command: list(command),
+                        ensure_mcp_installed=lambda *_args, **_kwargs: True,
+                        inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+                        prepare_pty_env=lambda env: dict(env),
+                        pty_backlog_bytes=lambda: 1024,
+                        write_headless_state=lambda _gid, _aid: None,
+                        write_pty_state=lambda _gid, _aid, _pid: None,
+                        clear_preamble_sent=lambda _group, _aid: None,
+                        throttle_reset_actor=lambda _gid, _aid: None,
+                        supported_runtimes=("deepseek",),
+                    )
+                self.assertFalse(result["success"])
+                self.assertEqual(result["error_code"], "setup_required")
+                setup.assert_called_once()
+                stop.assert_called_once_with(group_id=group.group_id, actor_id=actor["id"])
+                self.assertFalse(headless_state_path(group.group_id, actor["id"]).exists())
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_resolve_launch_spec_passes_merged_env_to_command_normalizer(self) -> None:
         from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_spec
 

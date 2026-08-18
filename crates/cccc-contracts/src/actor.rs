@@ -45,6 +45,7 @@ pub enum ActorRuntime {
     Cline,
     #[default]
     Codex,
+    Deepseek,
     Copilot,
     Cursor,
     Devin,
@@ -145,6 +146,17 @@ impl Actor {
             updated_at: now,
         }
     }
+
+    pub fn normalize_runtime_constraints(&mut self) {
+        match self.runtime {
+            ActorRuntime::Deepseek => self.runner = RunnerKind::Headless,
+            ActorRuntime::WebModel => {
+                self.runner = RunnerKind::Headless;
+                self.command.clear();
+            }
+            _ => {}
+        }
+    }
 }
 
 const fn version() -> u8 {
@@ -159,7 +171,7 @@ fn global_scope() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::ActorRuntime;
+    use super::{Actor, ActorRuntime, RunnerKind};
 
     #[test]
     fn cline_runtime_round_trips_through_the_shared_contract() {
@@ -169,5 +181,24 @@ mod tests {
             serde_json::to_string(&runtime).expect("serialize"),
             r#""cline""#
         );
+    }
+
+    #[test]
+    fn deepseek_runtime_round_trips_through_the_shared_contract() {
+        let runtime: ActorRuntime = serde_json::from_str(r#""deepseek""#).expect("deserialize");
+        assert_eq!(runtime, ActorRuntime::Deepseek);
+        assert_eq!(
+            serde_json::to_string(&runtime).expect("serialize"),
+            r#""deepseek""#
+        );
+    }
+
+    #[test]
+    fn deepseek_runtime_normalizes_to_headless_at_the_contract_boundary() {
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.runner = RunnerKind::Pty;
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Headless);
     }
 }

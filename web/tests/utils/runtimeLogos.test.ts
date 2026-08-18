@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
@@ -30,5 +30,15 @@ describe("runtimeLogos", () => {
     expect(getRuntimeLogoSrc("custom")).toBeNull();
     expect(getRuntimeLogoSrc("unknown-runtime")).toBeNull();
     expect(getRuntimeLogoSrc("")).toBeNull();
+  });
+
+  it("keeps the DeepSeek whale centered and visible on the avatar background", () => {
+    const svg = readFileSync(resolve(PUBLIC_ROOT, "logos/deepseek.svg"), "utf8");
+    expect(svg).toContain('viewBox="0 0 64 64"');
+    expect(svg).toContain('transform="translate(10 14.5) scale(1.65)"');
+    expect(svg).toContain('fill="#000"');
+    expect(svg).not.toContain("#4D6BFE");
+    expect(svg).not.toContain("<circle");
+    expect(svg).not.toContain("clip-path");
   });
 });

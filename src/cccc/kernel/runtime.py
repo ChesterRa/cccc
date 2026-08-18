@@ -2,15 +2,37 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..util.process import find_subprocess_executable
 
+from .deepseek_runtime import (
+    DEEPSEEK_ACP_PACKAGE,
+    DEEPSEEK_ACP_VERSION,
+    DEEPSEEK_DSH_PACKAGE,
+    DEEPSEEK_DSH_VERSION,
+    DEEPSEEK_MCP_CLIENT_PACKAGE,
+    DEEPSEEK_MCP_CLIENT_VERSION,
+    DEEPSEEK_NODE_RANGE,
+    DEEPSEEK_PACKAGE_VERSIONS,
+    _deepseek_executable,
+    _is_canonical_deepseek_config,
+    _is_canonical_deepseek_patch,
+    deepseek_external_preflight_error,
+    deepseek_preflight_error,
+    resolve_deepseek_home,
+)
 
+
+# DeepSeek Harness is a developer preview.  Keep the exact release tuple in
+# one place so catalog visibility never gets mistaken for a runnable install.
 @dataclass
 class RuntimeInfo:
     """Information about an agent runtime."""
@@ -67,6 +89,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "command": "codex",
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
+    },
+    "deepseek": {
+        "display_name": "DeepSeek Harness",
+        "command": "dsh-acp-demo",
+        "capabilities": "ACP headless; CCCC MCP; setup: cccc setup --runtime deepseek",
+        "mcp_add_pattern": None,
     },
     "copilot": {
         "display_name": "GitHub Copilot CLI",
@@ -147,6 +175,7 @@ PRIMARY_RUNTIMES = [
     "claude",
     "cline",
     "codex",
+    "deepseek",
     "copilot",
     "cursor",
     "devin",
@@ -207,8 +236,29 @@ def detect_runtime(name: str) -> RuntimeInfo:
         )
 
     command = config["command"]
-    path = find_subprocess_executable(command)
-    available = path is not None
+    discovery_env = dict(os.environ)
+    if name == "deepseek":
+        dsh_home = resolve_deepseek_home(discovery_env)
+        if dsh_home is not None:
+            local_bin = str(dsh_home / "node_modules" / ".bin")
+            inherited_path = str(discovery_env.get("PATH") or "")
+            discovery_env["PATH"] = local_bin + (os.pathsep + inherited_path if inherited_path else "")
+    path = (
+        _deepseek_executable(command, discovery_env)
+        if name == "deepseek"
+        else find_subprocess_executable(command)
+    )
+    # The catalog answers whether first-use bootstrap can start. Managed
+    # packages/profile are installed later by the actor start boundary.
+    if name == "deepseek":
+        available = not bool(
+            deepseek_external_preflight_error(
+                [path or command],
+                env=discovery_env,
+            )
+        )
+    else:
+        available = path is not None
     
     mcp_add_command = None
     if config.get("mcp_add_pattern") and available:
@@ -354,6 +404,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
+        "deepseek": ["dsh-acp-demo"],
         "copilot": ["copilot", "--allow-all"],
         "cursor": ["cursor-agent", "--yolo", "--approve-mcps"],
         "devin": ["devin", "--permission-mode", "dangerous"],
@@ -370,7 +421,13 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
     return commands.get(name, [name])
 
 
-def runtime_start_preflight_error(runtime: str, command: Optional[List[str]] = None, *, runner: str = "pty") -> str:
+def runtime_start_preflight_error(
+    runtime: str,
+    command: Optional[List[str]] = None,
+    *,
+    runner: str = "pty",
+    env: Optional[Dict[str, str]] = None,
+) -> str:
     """Return a user-facing startup error when a runtime cannot be launched.
 
     This is intentionally stricter than schema validation:
@@ -378,11 +435,17 @@ def runtime_start_preflight_error(runtime: str, command: Optional[List[str]] = N
     - It keeps headless actors out of the check because they do not spawn a CLI process.
     """
     runner_kind = str(runner or "pty").strip() or "pty"
-    if runner_kind == "headless":
-        return ""
 
     rt = str(runtime or "").strip()
     cmd = [str(part) for part in (command or []) if str(part).strip()]
+
+    if rt == "deepseek":
+        if runner_kind != "headless":
+            return "setup_required: deepseek runtime requires the headless runner"
+        return deepseek_external_preflight_error(cmd, env=env)
+
+    if runner_kind == "headless":
+        return ""
 
     if rt == "web_model":
         if runner_kind != "headless":

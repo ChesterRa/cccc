@@ -1,0 +1,51 @@
+{
+  "valid": {
+    "name": "dsh-profile-cccc-acp",
+    "private": true,
+    "ccccManaged": true,
+    "dependencies": {
+      "@deepseek-ai/dsh-acp": "0.1.0-rc.6",
+      "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+      "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6",
+      "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"
+    },
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}}
+  },
+  "empty_shell": {"ccccManaged": true, "dependencies": {}, "dsh": {"profile": {"bundles": []}}},
+  "missing_bundle": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base"]}}
+  },
+  "wrong_version": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.0.0", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}}
+  },
+  "non_string_bundle": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": [{}, "@deepseek-ai/dsh-headless"]}}
+  },
+  "nested_bundle": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": [["@deepseek-ai/dsh-base"], "@deepseek-ai/dsh-headless"]}}
+  },
+  "missing_app": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}}
+  },
+  "missing_adapter": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6"},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}}
+  },
+  "adapter_version_mismatch": {
+    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.7"},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}}
+  },
+  "truncated": {"name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true}
+}

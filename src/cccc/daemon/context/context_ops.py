@@ -49,6 +49,7 @@ from ...kernel.ledger import append_event
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..runner_state_ops import headless_state_running, read_headless_state
+from ..actors import deepseek_runtime
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...kernel.working_state import derive_effective_working_state
@@ -278,6 +279,8 @@ def _actor_runtime_state_to_dict(
             running = bool(codex_app_supervisor.actor_running(group_id, actor_id))
         elif runtime.lower() == "claude":
             running = bool(claude_app_supervisor.actor_running(group_id, actor_id))
+        elif runtime.lower() == "deepseek":
+            running = deepseek_runtime.running(group_id=group_id, actor_id=actor_id)
         else:
             running = bool(headless_runner.SUPERVISOR.actor_running(group_id=group_id, actor_id=actor_id))
     if effective_runner != "headless" and uses_app_server_state:

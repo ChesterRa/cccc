@@ -212,6 +212,7 @@ export function useAgentTerminalConnection(args: {
         });
 
         const ws = new WebSocket(withAuthToken(wsUrl));
+        let serverOwnsTerminalResponses = false;
         ws.binaryType = "arraybuffer";
         wsRef.current = ws;
 
@@ -318,6 +319,9 @@ export function useAgentTerminalConnection(args: {
           canControl: () => canControlRef.current,
           onDecoded: handleDecoded,
           setWritable: setTerminalWritable,
+          setServerResponseOwnership: (owned) => {
+            serverOwnsTerminalResponses = owned;
+          },
           resetReady: () => {
             if (terminalReadyTimeoutRef.current) {
               clearTimeout(terminalReadyTimeoutRef.current);
@@ -422,6 +426,7 @@ export function useAgentTerminalConnection(args: {
             const runtime = runtimeRef.current;
             const input = filterTerminalInputForRuntime(data, runtime, {
               replaying: replayWriteGuard.isReplaying(),
+              serverResponses: serverOwnsTerminalResponses,
             });
             if (!input) return;
             if (input.includes("\r") || input.includes("\n") || input.includes("\x03")) {

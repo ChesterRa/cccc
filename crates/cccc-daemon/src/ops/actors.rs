@@ -240,6 +240,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 patched
             };
             final_actor.role = None;
+            final_actor.normalize_runtime_constraints();
             let index = doc
                 .actors
                 .iter()

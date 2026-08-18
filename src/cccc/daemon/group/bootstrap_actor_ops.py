@@ -20,6 +20,8 @@ from ...util.conv import coerce_bool
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ..actors.actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
+from ..actors import deepseek_runtime
+from ..actors.deepseek_setup import ensure_deepseek_setup
 from ..assistants.voice_secretary_runtime_ops import (
     capture_voice_secretary_actor_state,
     restore_voice_secretary_actor_state,
@@ -155,7 +157,19 @@ def autostart_running_groups(
                     inject_actor_context_env(effective_env, group.group_id, actor_id),
                 )
 
-            runtime_error = runtime_start_preflight_error(runtime, effective_cmd, runner=effective_runner)
+            runtime_error = ""
+            if runtime == "deepseek" and effective_runner == "headless":
+                try:
+                    ensure_deepseek_setup(effective_env)
+                except Exception as exc:
+                    runtime_error = f"setup_required: {exc}"
+            if not runtime_error:
+                runtime_error = runtime_start_preflight_error(
+                    runtime,
+                    effective_cmd,
+                    runner=effective_runner,
+                    env=effective_env,
+                )
             if runtime_error:
                 logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, runtime_error)
                 continue
@@ -239,6 +253,17 @@ def autostart_running_groups(
                         env=_launch_env(),
                         model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
+                elif runtime == "deepseek" and effective_runner == "headless":
+                    deepseek_runtime.start(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        command=effective_cmd,
+                        env=_launch_env(),
+                    )
+                    from ..messaging.deepseek_delivery import recover_durable_terminals
+
+                    recover_durable_terminals(group, actor_id=actor_id, limit=256)
                 elif effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
@@ -278,6 +303,8 @@ def autostart_running_groups(
                     pass
                 elif runtime == "claude" and effective_runner == "headless":
                     pass
+                elif runtime == "deepseek" and effective_runner == "headless":
+                    write_headless_state(group.group_id, actor_id)
                 elif effective_runner == "headless":
                     write_headless_state(group.group_id, actor_id)
                 else:
@@ -299,6 +326,8 @@ def autostart_running_groups(
                     codex_app_supervisor.group_running(group.group_id)
                     or
                     claude_app_supervisor.group_running(group.group_id)
+                    or
+                    deepseek_runtime.group_running(group.group_id)
                     or
                     pty_runner.SUPERVISOR.group_running(group.group_id)
                     or headless_runner.SUPERVISOR.group_running(group.group_id)

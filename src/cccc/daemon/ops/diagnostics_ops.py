@@ -28,6 +28,7 @@ from ...runners.pty_snapshot import complete_utf8_prefix_len, cursor_preserving_
 from ...util.terminal_render import render_transcript
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..actors import deepseek_runtime
 from ...util.conv import coerce_bool
 from ...util.process import pid_is_alive
 from ...util.time import utc_now_iso
@@ -199,6 +200,8 @@ def handle_debug_snapshot(
                         elif runtime_lower == "claude":
                             state = claude_app_supervisor.get_state(group_id=group.group_id, actor_id=aid)
                             running = bool(state is not None and claude_app_supervisor.actor_running(group.group_id, aid))
+                        elif runtime_lower == "deepseek":
+                            running = deepseek_runtime.running(group_id=group.group_id, actor_id=aid)
                         else:
                             running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
                 except Exception:

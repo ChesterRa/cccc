@@ -125,6 +125,7 @@ fn attach_response(attachment: &TerminalAttachment) -> DaemonResponse {
         "terminal_mode": attachment.mode().as_str(),
         "terminal_writable": attachment.terminal_writable(),
         "writer_replaced": attachment.writer_replaced(),
+        "terminal_response_owner": "server_v1",
         "replay_cursor": attachment.replay_cursor(),
         "replay_end_cursor": attachment.replay_end_cursor(),
     });

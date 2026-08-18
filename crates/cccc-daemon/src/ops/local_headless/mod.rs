@@ -1,9 +1,14 @@
 mod events;
+mod events_migration;
+#[cfg(test)]
+mod events_migration_tests;
 mod output;
 mod protocol;
 mod provider_cli;
 mod session;
 mod supervisor;
+
+pub(crate) use events::{append as append_event, append_with_dedupe as append_event_with_dedupe};
 
 use cccc_contracts::ActorRuntime;
 use cccc_core::HomeLayout;

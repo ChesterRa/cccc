@@ -11,6 +11,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Claude Code | `claude` | `claude` | Auto |
 | Cline CLI | `cline` | `cline` | Auto |
 | Codex CLI | `codex` | `codex` | Auto |
+| DeepSeek Harness | `deepseek` | `dsh-acp-demo --config ~/.dsh/profiles/cccc-acp/cordis.yml` | Automatic on first start; explicit setup remains available |
 | GitHub Copilot CLI | `copilot` | `copilot` | Auto |
 | Cursor CLI | `cursor` | `cursor-agent` | Prompt-assisted |
 | Devin CLI | `devin` | `devin` | Auto |
@@ -37,6 +38,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
 | `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
 | `codex` | `codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
+| `deepseek` | `dsh-acp-demo --config ~/.dsh/profiles/cccc-acp/cordis.yml` | Official ACP app composition; provider permission requests are rejected rather than implicitly approved. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
 | `devin` | `devin --permission-mode dangerous` | Uses Devin's dangerous permission mode. |
@@ -61,6 +63,7 @@ Most CLI runtimes can be prepared with `cccc setup --runtime <id>`:
 cccc setup --runtime claude
 cccc setup --runtime cline
 cccc setup --runtime codex
+cccc setup --runtime deepseek
 cccc setup --runtime copilot
 cccc setup --runtime devin
 cccc setup --runtime kiro
@@ -72,6 +75,8 @@ cccc setup --runtime hermes
 cccc setup --runtime kimi
 cccc setup --runtime opencode
 ```
+
+For DeepSeek, CCCC owns the supporting ACP composition after the runtime prerequisite is available. On first use, CCCC infers `DSH_HOME` as `HOME/.dsh` when it is not explicitly set, installs the pinned `dsh`, `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` packages under that directory, and atomically creates the managed `cccc-acp` profile. Its runtime composition mounts the official DeepSeek LLM adapter, ACP app, and CCCC MCP client; the legacy one-shot `dsh --profile cccc-acp` command is not used as the ACP server. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
 
 Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
 
@@ -94,7 +99,7 @@ Actors normally run in one of two modes:
 - **PTY**: the runtime runs in an embedded terminal. This is the broadest compatibility mode.
 - **Headless**: CCCC manages structured runtime I/O without a terminal. This gives tighter delivery and streaming control where supported.
 
-Claude Code and Codex CLI support both PTY and headless operation. Most other CLI runtimes, including Cline, use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
+Claude Code and Codex CLI support both PTY and headless operation. DeepSeek Harness is fixed to headless ACP operation. Most other CLI runtimes, including Cline, use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
 
 Cline is currently integrated as a fresh-start PTY runtime. CCCC does not persist or reuse Cline's `--id` session identifier, so stopping and starting a Cline actor opens a new Cline TUI session.
 
@@ -136,9 +141,13 @@ Claude PTY hook state requires Claude Code 2.1.141 or newer, confirmed by a succ
 
 The Rust and Python backends share the same version 3 hook-state and version 1 runtime-activity disk schemas, paths, advisory locks, and committed-write protocol: flush and sync the temporary file, atomically replace the destination, then sync the parent directory where the platform supports it. Independent-process tests exercise bidirectional state/activity reads and cross-language lock exclusion. The same contract test is enabled for Windows CI; this change was locally exercised on macOS, not on a Windows host. Switching backends is supported by stopping the old daemon, starting the new daemon, and restarting the actor; running two daemons against the same `CCCC_HOME` is not supported.
 
+The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each PTY actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each PTY actor is already a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained `.pty` history.
+
 Verified PTY hook events also feed the Web runtime activity ticker. This is a separate, short-lived observability channel rather than chat history: it carries only structured lifecycle fields, replays briefly after reconnects, and detects long-running turn or tool activity. See [PTY Runtime Activity](/guide/runtime-activity) for the event contract, retention, and privacy boundaries.
 
-In the Rust backend, `runtime=codex|claude` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport and Claude uses bidirectional stream-json. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
+In the Rust backend, `runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport, Claude uses bidirectional stream-json, and DeepSeek uses ACP NDJSON through the fixed `cccc-acp` profile. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
+
+DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are projected to `headless.message.delta` and `headless.message.completed`; turn boundaries use `headless.turn.started` plus `headless.turn.completed` or `headless.turn.failed`. This is the same durable event contract used by Web SSE and reconnect snapshots. Both daemons inherit the daemon process environment (`PATH`, `HOME`, `DSH_HOME`, and similar values), then overlay actor/profile environment values. The automatic first-use installer pins all preview packages to CCCC's tested release tuple and has a 120-second timeout. If a sent request cannot be durably recorded, CCCC cancels it and waits for its terminal response; if confirmation cannot be obtained, the supervisor is stopped before the source message remains eligible for retry. Existing large Codex/Claude headless logs receive a one-time streaming dedupe-index migration when DeepSeek first writes to them, without loading the full log into memory.
 
 For daemon-managed Codex headless turns, a provider status of `failed`, `error`,
 or `cancelled`, or an explicit provider error, is persisted as

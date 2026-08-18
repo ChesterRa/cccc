@@ -22,6 +22,11 @@ pub(crate) struct SessionHistory {
     changes: watch::Sender<OutputState>,
 }
 
+pub(crate) struct HistoryPush {
+    pub(crate) terminal_responses: Vec<Vec<u8>>,
+    pub(crate) archive_error: Option<RuntimeError>,
+}
+
 impl SessionHistory {
     #[cfg(test)]
     pub(crate) fn new(config: Option<HistoryConfig>) -> Result<Self, RuntimeError> {
@@ -84,12 +89,27 @@ impl SessionHistory {
             .map(|state| state.output.end_cursor())
     }
 
+    #[cfg(test)]
     pub(crate) fn push(&self, data: &[u8]) -> Result<(), RuntimeError> {
+        let outcome = self.push_with_terminal_responses(data)?;
+        match outcome.archive_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn push_with_terminal_responses(
+        &self,
+        data: &[u8],
+    ) -> Result<HistoryPush, RuntimeError> {
         let mut state = self.state.lock().map_err(|_| RuntimeError::Poisoned)?;
         if !state.accepting_output {
-            return Ok(());
+            return Ok(HistoryPush {
+                terminal_responses: Vec::new(),
+                archive_error: None,
+            });
         }
-        state.terminal.process(data);
+        let responses = state.terminal.process(data);
         state.output.push(data);
         let end_cursor = state.output.end_cursor();
         let result = if state.archive_writable {
@@ -107,7 +127,10 @@ impl SessionHistory {
             end_cursor,
             closed: false,
         });
-        result
+        Ok(HistoryPush {
+            terminal_responses: responses,
+            archive_error: result.err(),
+        })
     }
 
     pub(crate) fn page(

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::dispatch::OpError;
 
-use super::{actor_runtime, runtime_session};
+use super::{actor_runtime_status, runtime_session};
 
 pub(super) fn list(
     home: &HomeLayout,
@@ -36,18 +36,7 @@ pub(super) fn list(
         .cloned()
         .map(|mut actor| {
             actor.role = actors::effective_role(group, &actor.id);
-            let status = actor_runtime::status(&group.group_id, &actor.id);
-            let running = if actor_runtime::is_structured(&actor) {
-                if super::local_headless::supports(&actor) {
-                    super::local_headless::running(&group.group_id, &actor.id)
-                } else {
-                    actor.enabled
-                        && group.running
-                        && group.state != cccc_contracts::GroupState::Stopped
-                }
-            } else {
-                status.as_ref().is_some_and(|item| item.running)
-            };
+            let status = actor_runtime_status::resolve(group, &actor);
             let mut value = serde_json::to_value(&actor).unwrap_or_else(|_| json!({}));
             if let Some(object) = value.as_object_mut() {
                 object.extend(runtime_session::actor_fields(
@@ -55,19 +44,18 @@ pub(super) fn list(
                     &group.group_id,
                     &actor.id,
                 ));
-                object.insert("running".into(), Value::Bool(running));
+                object.insert("running".into(), Value::Bool(status.running));
                 object.insert(
                     "pid".into(),
-                    super::local_headless::status(&group.group_id, &actor.id)
-                        .and_then(|item| item.pid)
-                        .or_else(|| status.and_then(|item| item.pid))
+                    status
+                        .pid
                         .map_or(Value::Null, |pid| Value::from(u64::from(pid))),
                 );
                 object.extend(super::working_state::runtime_actor_fields(
                     home,
                     &actor,
                     &group.group_id,
-                    running,
+                    status.running,
                 ));
                 if include_unread {
                     object.insert(

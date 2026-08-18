@@ -321,7 +321,7 @@ function CreateActorConfigModal({
   const previewRuntime = useProfile ? selectedProfileRuntime || null : runtime;
   const previewTitle = String(actorId || "").trim() || suggestedActorId;
   const customRunnerLockedToPty = !useProfile && !supportsStandardWebHeadlessRuntime(runtime);
-  const webModelRunnerLockedToHeadless = !useProfile && runtime === "web_model";
+  const webModelRunnerLockedToHeadless = !useProfile && ["web_model", "deepseek"].includes(runtime);
   const showRuntimeSetup = !useProfile && runtime === "custom";
   const showCommandEditor = !useProfile && (runtime === "custom" || !useDefaultCommand);
   const webModelSetupIsActorBound = !useProfile && runtime === "web_model";
@@ -637,7 +637,7 @@ function CreateActorConfigModal({
                           onChangeRuntime(next);
                           if (next === "custom") onChangeUseDefaultCommand(false);
                           else onChangeUseDefaultCommand(true);
-                          if (next === "web_model") onChangeRunner("headless");
+                          if (["web_model", "deepseek"].includes(next)) onChangeRunner("headless");
                           else if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           onChangeCommand(String(nextInfo?.recommended_command || "").trim());
@@ -1315,7 +1315,7 @@ function EditActorConfigModal({
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
   const customRunnerLockedToPty = !supportsStandardWebHeadlessRuntime(runtime);
-  const webModelRunnerLockedToHeadless = runtime === "web_model";
+  const webModelRunnerLockedToHeadless = ["web_model", "deepseek"].includes(runtime);
   const normalizedGroupRole = normalizeGroupRole(groupRole);
   const groupRoleLabel =
     normalizedGroupRole === "foreman"
@@ -1612,7 +1612,7 @@ function EditActorConfigModal({
                         onChange={(value) => {
                           const next = value as SupportedRuntime;
                           onChangeRuntime(next);
-                          if (next === "web_model") onChangeRunner("headless");
+                          if (["web_model", "deepseek"].includes(next)) onChangeRunner("headless");
                           else if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();

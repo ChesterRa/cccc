@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, Optional
 from .actor_runtime_cache import replace_group_runtime
 from .pty_activity_probe import read_pty_activity_signal
 from .runner_state_ops import headless_state_running, read_headless_state
+from .actors import deepseek_runtime
 from ..kernel.actor_runtime_projection import actor_runtime_enabled
 from ..kernel.context import ContextStorage
 from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
@@ -376,6 +377,8 @@ def start_actor_activity_thread(
                             elif runtime == "claude" and effective_runner == "headless" and claude_supervisor is not None:
                                 headless_state = claude_supervisor.get_state(group_id=gid, actor_id=aid)
                                 running = bool(headless_state is not None and claude_supervisor.actor_running(gid, aid))
+                            elif runtime == "deepseek" and effective_runner == "headless":
+                                running = deepseek_runtime.running(group_id=gid, actor_id=aid)
                             elif effective_runner == "headless":
                                 state = headless_supervisor.get_state(group_id=gid, actor_id=aid)
                                 headless_state = state.model_dump() if state is not None else None
@@ -534,6 +537,7 @@ def cleanup_after_stop(
     im_stop_all: Callable[..., Any],
     codex_stop_all: Callable[[], Any],
     claude_stop_all: Callable[[], Any] = lambda: None,
+    deepseek_stop_all: Callable[[], Any] = lambda: None,
     pty_stop_all: Callable[[], Any],
     headless_stop_all: Callable[[], Any],
     sock_path: Path,
@@ -557,6 +561,10 @@ def cleanup_after_stop(
         pass
     try:
         claude_stop_all()
+    except Exception:
+        pass
+    try:
+        deepseek_stop_all()
     except Exception:
         pass
     try:

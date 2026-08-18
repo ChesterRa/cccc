@@ -263,6 +263,18 @@ jobs:
           tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
           tests/test_installation_diagnostics.py tests/test_system_cmds_doctor.py
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify abrupt daemon process-tree cleanup
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc-pair-daemon --lib --locked
+          process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history
+          -- --test-threads=1
+
   rust-lint:
     needs: web
     runs-on: ubuntu-latest

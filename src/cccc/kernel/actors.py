@@ -228,6 +228,8 @@ def add_actor(
     if runtime_key == "web_model":
         runner_kind = "headless"
         command_list = []
+    if runtime_key == "deepseek":
+        runner_kind = "headless"
 
     now = utc_now_iso()
     actor = Actor(
@@ -429,6 +431,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             "claude",
             "cline",
             "codex",
+            "deepseek",
             "copilot",
             "cursor",
             "devin",
@@ -474,6 +477,8 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     if str(item.get("runtime") or "").strip() == "web_model":
         item["runner"] = "headless"
         item["command"] = []
+    if str(item.get("runtime") or "").strip().lower() == "deepseek":
+        item["runner"] = "headless"
 
     if str(item.get("runtime") or "").strip() != "codex" or str(item.get("runner") or "pty").strip() != "pty":
         item["runtime_state_source"] = "terminal"

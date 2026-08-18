@@ -1,12 +1,12 @@
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::SessionStatus;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
-use crate::ops::{actor_profile_runtime, actor_secrets, runtime_session};
+use crate::ops::{actor_profile_runtime, runtime_session};
 
+mod environment;
 mod hook_launch;
 #[cfg(test)]
 mod hook_launch_tests;
@@ -36,6 +36,10 @@ pub fn apply(
     let actor = resolved_actor.as_ref().unwrap_or(stored_actor);
     if kind != "actor.stop" {
         super::capabilities::apply_actor_startup_baseline(home, group, actor);
+    }
+    if actor.runtime == ActorRuntime::Deepseek {
+        super::deepseek_runtime::apply(home, group, actor, kind)?;
+        return Ok(None);
     }
     if is_structured(actor) {
         if super::local_headless::supports(actor) {
@@ -69,9 +73,9 @@ pub fn apply(
 }
 
 fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
-    let mut actor = resolve_launch_actor(home, group, actor)?;
+    let mut actor = environment::resolve_launch_actor(home, group, actor)?;
     let cwd = working_directory(group, &actor)?;
-    let mut env = launch_env(home, group, &actor);
+    let mut env = environment::launch_env(home, group, &actor);
     if super::local_headless::uses_managed_provider_cli(&actor) {
         super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     }
@@ -82,14 +86,14 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
-    let actor = resolve_launch_actor(home, group, actor)?;
+    let actor = environment::resolve_launch_actor(home, group, actor)?;
     let base_command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
     };
     let cwd = working_directory(group, &actor)?;
-    let mut env = launch_env(home, group, &actor);
+    let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     let prepared = match (actor.runtime, actor.runner) {
         (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
@@ -133,30 +137,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         }
         Ok(status)
     })
-}
-
-fn resolve_launch_actor(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    actor: &Actor,
-) -> Result<Actor, OpError> {
-    let mut actor = actor_profile_runtime::resolve(home, actor)?;
-    let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
-    let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
-    actor.env.extend(profile_secrets);
-    actor.env.extend(actor_secret_values);
-    Ok(actor)
-}
-
-fn launch_env(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> BTreeMap<String, String> {
-    let mut env = actor.env.clone();
-    env.insert(
-        "CCCC_HOME".into(),
-        home.root().to_string_lossy().into_owned(),
-    );
-    env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
-    env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
-    env
 }
 
 fn schedule_capture(
@@ -255,11 +235,13 @@ pub(crate) fn cancel_resume_verifications() {
 
 pub(crate) fn stop_all() -> Result<Vec<SessionStatus>, cccc_runtime::RuntimeError> {
     cancel_resume_verifications();
+    super::deepseek_runtime::stop_all();
     cccc_runtime::stop_all()
 }
 
 pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
     super::local_headless::stop_group(&group.group_id);
+    super::deepseek_runtime::stop_group(&group.group_id);
     let mut stopped = Vec::new();
     for actor in &group.actors {
         if let Some(status) = stop(group, &actor.id)? {
@@ -269,7 +251,7 @@ pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
     Ok(stopped)
 }
 
-fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathBuf, OpError> {
+pub(super) fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathBuf, OpError> {
     let wanted = if actor.default_scope_key.is_empty() {
         &group.active_scope_key
     } else {

@@ -33,12 +33,10 @@ reqwest.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

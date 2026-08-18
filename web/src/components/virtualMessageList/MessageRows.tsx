@@ -136,6 +136,7 @@ export function MessageRows({
         return (
           <div
             key={String(getStableMessageKey(message, index))}
+            data-index={index}
             data-message-row="true"
             data-message-id={message.id ? String(message.id) : ""}
             className={grouping.compactSpacing ? "pb-3" : "pb-6"}

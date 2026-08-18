@@ -89,21 +89,12 @@ impl Publisher {
     }
 }
 
-fn running_payload(
+pub(super) fn running_payload(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
 ) -> Option<Map<String, Value>> {
-    let status = super::actor_runtime::status(&group.group_id, &actor.id);
-    let running = if super::actor_runtime::is_structured(actor) {
-        if super::local_headless::supports(actor) {
-            super::local_headless::running(&group.group_id, &actor.id)
-        } else {
-            actor.enabled && group.running && group.state != cccc_contracts::GroupState::Stopped
-        }
-    } else {
-        status.is_some_and(|status| status.running)
-    };
+    let running = super::actor_runtime_status::resolve(group, actor).running;
     if !running {
         return None;
     }

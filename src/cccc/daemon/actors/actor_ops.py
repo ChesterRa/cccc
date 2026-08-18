@@ -23,6 +23,7 @@ from ...runners import pty as pty_runner
 from ..context.context_ops import _agent_state_to_dict
 from ..runner_state_ops import headless_state_running, read_headless_state
 from .private_env_ops import mask_private_env_value
+from . import deepseek_runtime
 from .web_model_runtime_ops import decorate_web_model_queued_turn_info
 from ...util.conv import coerce_bool
 
@@ -121,6 +122,8 @@ def handle_actor_list(
                 state = claude_app_supervisor.get_state(group_id=group_id, actor_id=aid)
                 headless_state = dict(state) if isinstance(state, dict) else None
                 running = bool(state is not None and claude_app_supervisor.actor_running(group_id, aid))
+            elif runtime.lower() == "deepseek" and effective_runner == "headless":
+                running = deepseek_runtime.running(group_id=group_id, actor_id=aid)
             elif runtime.lower() != "web_model" and effective_runner == "headless":
                 state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=aid)
                 headless_state = state.model_dump() if hasattr(state, "model_dump") else (dict(state) if isinstance(state, dict) else None)

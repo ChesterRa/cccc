@@ -1043,7 +1043,20 @@ def recover_group_unread_headless_messages(group: Group, *, limit: int = 256) ->
             continue
         if str(actor.get("runner") or "pty").strip() != "headless":
             continue
-        if str(actor.get("runtime") or "").strip().lower() not in {"codex", "claude"}:
+        runtime = str(actor.get("runtime") or "").strip().lower()
+        if runtime == "deepseek":
+            try:
+                from .deepseek_delivery import recover_durable_terminals
+
+                recovered += recover_durable_terminals(
+                    group,
+                    actor_id=str(actor.get("id") or "").strip(),
+                    limit=limit,
+                )
+            except Exception as exc:
+                logger.warning("failed to recover DeepSeek terminals: group=%s error=%s", group.group_id, exc)
+            continue
+        if runtime not in {"codex", "claude"}:
             continue
         recovered += recover_unread_pty_messages(
             group,
@@ -1211,6 +1224,21 @@ def dispatch_system_notify_event_to_actor(
                         ts=event_ts,
                     )
                 )
+            if runtime == "deepseek":
+                from ..actors import deepseek_runtime
+
+                if not deepseek_runtime.running(group_id=group.group_id, actor_id=aid):
+                    return False
+                queue_system_notify(
+                    group,
+                    actor_id=aid,
+                    event_id=event_id,
+                    notify_kind=str(notify.kind),
+                    title=str(notify.title),
+                    message=_render_system_notify_message_for_delivery(notify=notify, group=group),
+                    ts=event_ts,
+                )
+                return bool(flush_pending_messages(group, actor_id=aid))
         except Exception:
             logger.exception(
                 "failed to dispatch headless system.notify group=%s actor=%s event=%s",
@@ -1590,6 +1618,28 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
 
         message_text = render_batched_messages(deliverable, reminder_after_index=reminder_after_index)
 
+        # DeepSeek has a strict ACP transport: only a durable terminal event
+        # may enter the normal cursor completion path. It has no PTY preamble.
+        if str(actor.get("runtime") or "").strip().lower() == "deepseek":
+            from .deepseek_delivery import deliver_messages, recover_durable_terminals
+
+            # A previous daemon may have durably recorded the terminal after
+            # losing the cursor write. Recover it before issuing a new prompt.
+            recover_durable_terminals(group, actor_id=aid, limit=256)
+
+            delivered = bool(deliver_messages(group, actor_id=aid, messages=deliverable))
+            if delivered:
+                reload_unread = _finalize_delivery_success(
+                    group,
+                    actor_id=aid,
+                    chat_total=chat_total,
+                    deliverable=deliverable,
+                    requeue=requeue,
+                )
+            else:
+                THROTTLE.requeue_front(gid, aid, messages)
+            return delivered
+
         # First PTY delivery is fully backgrounded so HTTP only observes durable append + enqueue.
         # The in-flight gate above preserves ordering while that background chain owns the actor.
         if not is_preamble_sent(group, aid):
@@ -1683,12 +1733,17 @@ def tick_delivery(group: Group) -> None:
         aid = str(actor.get("id") or "").strip()
         if not aid:
             continue
-        # Only for PTY runners
+        runtime = str(actor.get("runtime") or "").strip().lower()
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runner_kind != "pty" or not pty_supported:
+        if runtime == "deepseek" and runner_kind == "headless":
+            from ..actors import deepseek_runtime
+
+            if not deepseek_runtime.running(group_id=group.group_id, actor_id=aid):
+                continue
+        elif runner_kind != "pty" or not pty_supported:
             continue
         # Check if actor process is actually running
-        if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
+        if runtime != "deepseek" and not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
             continue
 
         try:

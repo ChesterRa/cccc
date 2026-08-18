@@ -67,18 +67,33 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             })
             .map(|completion| completion.event_id.clone())
             .collect::<HashSet<_>>();
+        let advance_result = delivered
+            .last()
+            .map(|event_id| inbox::advance(home, &group_id, &actor_id, event_id));
+        let cursor_write_failed = advance_result.as_ref().is_some_and(Result::is_err);
         for completion in batch {
-            if !resolved_ids.contains(&completion.event_id) {
+            let resolved = resolved_ids.contains(&completion.event_id);
+            let delivered_item = delivered.iter().any(|id| id == &completion.event_id);
+            let unread_completed_beyond_prefix =
+                unread_ids.contains(&completion.event_id) && !delivered_item;
+            if !resolved
+                || (cursor_write_failed && delivered_item)
+                || unread_completed_beyond_prefix
+            {
                 deferred.push_back(completion);
             }
         }
         clear_in_flight(|item| {
-            item.0 == group_id && item.1 == actor_id && resolved_ids.contains(&item.2)
+            item.0 == group_id
+                && item.1 == actor_id
+                && resolved_ids.contains(&item.2)
+                && !(cursor_write_failed && delivered.iter().any(|id| id == &item.2))
+                && (!unread_ids.contains(&item.2) || delivered.iter().any(|id| id == &item.2))
         });
-        let advanced = delivered.last().is_some_and(|event_id| {
-            inbox::advance(home, &group_id, &actor_id, event_id).unwrap_or(false)
-        });
-        if advanced {
+        if advance_result
+            .as_ref()
+            .is_some_and(|result| result.as_ref().is_ok_and(|advanced| *advanced))
+        {
             record_read_event(&store, &group_id, &actor_id, &delivered);
             dispatch_unread(home, &group, &actor_id);
         }
@@ -283,5 +298,44 @@ mod tests {
 
         shutdown_actor(&group.group_id, "peer1");
         let _ = cccc_runtime::stop(&group.group_id, "peer1");
+    }
+
+    #[test]
+    fn shared_durability_vector_does_not_skip_failed_prefix() {
+        let vector: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../tests/fixtures/deepseek_durability_vectors.json"
+        ))
+        .expect("durability vector");
+        assert!(
+            vector["expected"]["delivered_prefix"]
+                .as_array()
+                .is_some_and(|value| value.is_empty())
+        );
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("deepseek prefix", "").expect("group");
+        group.actors.push(Actor::new("deepseek"));
+        let mut first = Event::new("chat.message", &group.group_id);
+        first.id = "event-1".into();
+        first.by = "user".into();
+        first.data = json!({"to":["deepseek"],"text":"first"})
+            .as_object()
+            .expect("first event data")
+            .clone();
+        let mut second = Event::new("chat.message", &group.group_id);
+        second.id = "event-2".into();
+        second.by = "user".into();
+        second.data = json!({"to":["deepseek"],"text":"second"})
+            .as_object()
+            .expect("second event data")
+            .clone();
+        let events = vec![first, second];
+        let positions = HashMap::from([(String::from("event-1"), 0), (String::from("event-2"), 1)]);
+        let completed = HashSet::from([String::from("event-2")]);
+        let (_, delivered) = resolve_completion_prefix(
+            &events, &positions, None, &group, "deepseek", "", &completed,
+        );
+        assert!(delivered.is_empty());
     }
 }

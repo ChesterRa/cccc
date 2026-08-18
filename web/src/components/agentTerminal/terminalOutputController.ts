@@ -27,6 +27,7 @@ export function createTerminalOutputController(args: {
   canControl: () => boolean;
   onDecoded: (data: string) => void;
   setWritable: (writable: boolean) => void;
+  setServerResponseOwnership?: (owned: boolean) => void;
   resetReady: () => void;
   scheduleReady: () => void;
   fitAfterSnapshot?: () => void;
@@ -68,6 +69,7 @@ export function createTerminalOutputController(args: {
         : String(flow || "");
     const writable = Boolean(result.terminal_writable);
     args.setWritable(writable);
+    args.setServerResponseOwnership?.(result.terminal_response_owner === "server_v1");
     if (args.canControl() && !writable) {
       args.onDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
     }

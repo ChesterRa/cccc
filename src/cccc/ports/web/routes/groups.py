@@ -68,6 +68,7 @@ from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
 from ....kernel.query_projections import get_groups_projection
 from ....daemon.runner_state_ops import headless_state_path, pty_state_path, web_model_actor_running
+from ....daemon.actors import deepseek_runtime
 from ....kernel.ledger import append_event, read_last_lines
 from ....kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
@@ -826,6 +827,8 @@ def _actor_running_local(group_id: str, actor: Any) -> bool:
     effective_runner = "headless" if runner_kind == "headless" else "pty"
     if runtime == "web_model" and effective_runner == "headless":
         return web_model_actor_running(gid, actor)
+    if runtime == "deepseek" and effective_runner == "headless":
+        return deepseek_runtime.running(group_id=gid, actor_id=aid)
     if runtime == "codex":
         if codex_app_supervisor.actor_running(gid, aid):
             return True

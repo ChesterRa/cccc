@@ -31,6 +31,7 @@ pub const fn name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Claude => "claude",
         ActorRuntime::Cline => "cline",
         ActorRuntime::Codex => "codex",
+        ActorRuntime::Deepseek => "deepseek",
         ActorRuntime::Copilot => "copilot",
         ActorRuntime::Cursor => "cursor",
         ActorRuntime::Devin => "devin",

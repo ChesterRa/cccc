@@ -1,6 +1,8 @@
 pub mod access_tokens;
 pub mod active;
 pub mod actors;
+#[cfg(test)]
+mod actors_tests;
 pub mod assistant_state;
 pub mod automation;
 mod automation_render;
@@ -25,6 +27,8 @@ pub mod group_scope;
 pub mod home;
 pub mod im_state;
 pub mod inbox;
+#[cfg(test)]
+mod inbox_tests;
 pub mod integration_state;
 pub mod ledger;
 pub mod ledger_archive;

@@ -609,6 +609,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
         actor_delivery::shutdown_group(&group.group_id);
         super::local_headless::stop_group(&group.group_id);
+        super::deepseek_runtime::stop_group(&group.group_id);
     }
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {

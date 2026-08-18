@@ -134,7 +134,8 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         .iter()
         .filter(|actor| {
             (!crate::ops::actor_runtime::is_structured(actor)
-                || crate::ops::local_headless::supports(actor))
+                || crate::ops::local_headless::supports(actor)
+                || actor.runtime == ActorRuntime::Deepseek)
                 && inbox::is_for_actor(group, event, &actor.id)
         })
         .cloned()
@@ -142,7 +143,9 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     let mut queued = 0;
     let mut online = 0;
     for actor in &targets {
-        let actor_online = if crate::ops::local_headless::supports(actor) {
+        let actor_online = if actor.runtime == ActorRuntime::Deepseek {
+            crate::ops::deepseek_runtime::running(&group.group_id, &actor.id)
+        } else if crate::ops::local_headless::supports(actor) {
             crate::ops::local_headless::running(&group.group_id, &actor.id)
         } else {
             cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| status.running)
@@ -215,7 +218,8 @@ fn unread_delivery_input<'a>(
     let actor = group.actors.iter().find(|actor| actor.id == actor_id)?;
     if !actor.enabled
         || (crate::ops::actor_runtime::is_structured(actor)
-            && !crate::ops::local_headless::supports(actor))
+            && !crate::ops::local_headless::supports(actor)
+            && actor.runtime != ActorRuntime::Deepseek)
     {
         return None;
     }
@@ -363,6 +367,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 continue;
             }
             if batch[0].actor.runtime != ActorRuntime::Custom
+                && batch[0].actor.runtime != ActorRuntime::Deepseek
                 && !crate::ops::local_headless::supports(&batch[0].actor)
             {
                 if !actor_delivery_worker::interruptible_sleep(BATCH_WINDOW, &thread_cancelled) {

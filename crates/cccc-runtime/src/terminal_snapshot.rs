@@ -1,3 +1,4 @@
+use crate::terminal_query_responder::{TerminalQueryReply, TerminalQueryResponder};
 use crate::terminal_sequence_tracker::TerminalSequenceTracker;
 use retach::screen::{AnsiRenderer, Screen};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,7 +20,9 @@ pub(crate) struct TerminalSnapshot {
 pub(crate) struct TerminalStateMirror {
     screen: Screen,
     sequences: TerminalSequenceTracker,
-    enabled: bool,
+    queries: TerminalQueryResponder,
+    snapshot_enabled: bool,
+    emulator_enabled: bool,
     cols: u16,
     rows: u16,
 }
@@ -28,34 +31,87 @@ impl TerminalStateMirror {
     pub(crate) fn new(cols: u16, rows: u16) -> Self {
         let cols = cols.max(1);
         let rows = rows.max(1);
-        let enabled = supported_size(cols, rows);
+        let emulator_enabled = supported_size(cols, rows);
         Self {
             screen: Screen::new(
-                if enabled { cols } else { 1 },
-                if enabled { rows } else { 1 },
+                if emulator_enabled { cols } else { 1 },
+                if emulator_enabled { rows } else { 1 },
                 SNAPSHOT_SCROLLBACK_LINES,
             ),
             sequences: TerminalSequenceTracker::default(),
-            enabled,
+            queries: TerminalQueryResponder::default(),
+            snapshot_enabled: emulator_enabled,
+            emulator_enabled,
             cols,
             rows,
         }
     }
 
-    pub(crate) fn process(&mut self, data: &[u8]) {
-        if data.is_empty() || !self.enabled {
-            return;
+    pub(crate) fn process(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
+        if data.is_empty() {
+            return Vec::new();
         }
+        let query_responses = self.queries.process(data);
         self.sequences.process(data);
         if !self.sequences.snapshot_safe() {
-            self.enabled = false;
+            self.snapshot_enabled = false;
+        }
+        if !self.emulator_enabled {
+            let mut responses = Vec::new();
+            let mut start = 0;
+            for response in query_responses {
+                self.process_fallback_screen_segment(
+                    &data[start..response.end_offset],
+                    &mut responses,
+                );
+                match response.reply {
+                    TerminalQueryReply::Bytes(data) => responses.push(data),
+                    TerminalQueryReply::PrivateCursorPosition => {
+                        responses.push(b"\x1b[?1;1R".to_vec())
+                    }
+                }
+                start = response.end_offset;
+            }
+            self.process_fallback_screen_segment(&data[start..], &mut responses);
+            return responses;
+        }
+        let mut responses = Vec::new();
+        let mut start = 0;
+        for response in query_responses {
+            self.process_screen_segment(&data[start..response.end_offset], &mut responses);
+            match response.reply {
+                TerminalQueryReply::Bytes(data) => responses.push(data),
+                TerminalQueryReply::PrivateCursorPosition if self.emulator_enabled => {
+                    let (column, row) = self.screen.cursor_position();
+                    responses.push(format!("\x1b[?{};{}R", row + 1, column + 1).into_bytes());
+                }
+                TerminalQueryReply::PrivateCursorPosition => {}
+            }
+            start = response.end_offset;
+        }
+        self.process_screen_segment(&data[start..], &mut responses);
+        responses
+    }
+
+    fn process_screen_segment(&mut self, data: &[u8], responses: &mut Vec<Vec<u8>>) {
+        if data.is_empty() || !self.emulator_enabled {
             return;
         }
         if catch_unwind(AssertUnwindSafe(|| self.screen.process(data))).is_err() {
-            self.enabled = false;
+            self.snapshot_enabled = false;
+            self.emulator_enabled = false;
             return;
         }
-        self.discard_side_effects();
+        responses.extend(self.take_responses_and_discard_side_effects());
+    }
+
+    fn process_fallback_screen_segment(&mut self, data: &[u8], responses: &mut Vec<Vec<u8>>) {
+        if data.is_empty() {
+            return;
+        }
+        if catch_unwind(AssertUnwindSafe(|| self.screen.process(data))).is_ok() {
+            responses.extend(self.take_responses_and_discard_side_effects());
+        }
     }
 
     pub(crate) fn resize(&mut self, cols: u16, rows: u16) {
@@ -63,11 +119,12 @@ impl TerminalStateMirror {
         let rows = rows.max(1);
         self.cols = cols;
         self.rows = rows;
-        if !self.enabled {
+        if !self.emulator_enabled {
             return;
         }
         if !supported_size(cols, rows) {
-            self.enabled = false;
+            self.snapshot_enabled = false;
+            self.emulator_enabled = false;
             return;
         }
         if catch_unwind(AssertUnwindSafe(|| {
@@ -75,7 +132,8 @@ impl TerminalStateMirror {
         }))
         .is_err()
         {
-            self.enabled = false;
+            self.snapshot_enabled = false;
+            self.emulator_enabled = false;
         }
     }
 
@@ -88,7 +146,7 @@ impl TerminalStateMirror {
     }
 
     pub(crate) fn snapshot(&self, cursor: u64) -> Option<TerminalSnapshot> {
-        if !self.enabled || !self.sequences.snapshot_safe() {
+        if !self.snapshot_enabled || !self.sequences.snapshot_safe() {
             return None;
         }
         let history = self.screen.get_history();
@@ -126,11 +184,12 @@ impl TerminalStateMirror {
         })
     }
 
-    fn discard_side_effects(&mut self) {
-        self.screen.take_responses();
+    fn take_responses_and_discard_side_effects(&mut self) -> Vec<Vec<u8>> {
+        let responses = self.screen.take_responses();
         self.screen.take_passthrough();
         self.screen.take_queued_notifications();
         self.screen.discard_pending_scrollback();
+        responses
     }
 }
 

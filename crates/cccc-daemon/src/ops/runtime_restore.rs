@@ -59,6 +59,17 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
     {
         match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
             Ok(_) => {
+                if actor.runtime == cccc_contracts::ActorRuntime::Deepseek {
+                    let recovered = crate::ops::deepseek_runtime::recover(home, &group, actor, 256);
+                    if recovered > 0 {
+                        tracing::info!(
+                            group_id = %group.group_id,
+                            actor_id = %actor.id,
+                            recovered,
+                            "recovered durable DeepSeek terminal prefix"
+                        );
+                    }
+                }
                 actor_delivery::dispatch_unread_notice(home, &group, &actor.id);
             }
             Err(error) => {

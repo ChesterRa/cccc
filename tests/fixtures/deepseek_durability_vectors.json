@@ -1,0 +1,7 @@
+{
+  "source_events": [
+    {"id": "event-1", "status": "failed"},
+    {"id": "event-2", "status": "completed"}
+  ],
+  "expected": {"cursor": null, "delivered_prefix": []}
+}

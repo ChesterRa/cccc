@@ -34,6 +34,7 @@ describe("supportsStandardWebHeadlessRuntime", () => {
   it("allows the standard-web headless runtime whitelist", () => {
     expect(supportsStandardWebHeadlessRuntime("codex")).toBe(true);
     expect(supportsStandardWebHeadlessRuntime(" claude ")).toBe(true);
+    expect(supportsStandardWebHeadlessRuntime("deepseek")).toBe(true);
   });
 
   it("rejects unsupported runtimes", () => {

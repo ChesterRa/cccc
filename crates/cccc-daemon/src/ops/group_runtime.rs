@@ -3,24 +3,13 @@ use cccc_core::actors;
 use cccc_core::{GroupDoc, registry::GroupMeta};
 use serde_json::{Value, json};
 
-use crate::ops::actor_runtime;
+use crate::ops::actor_runtime_status;
 
 pub fn status(group: &GroupDoc) -> Value {
     let running: Vec<_> = group
         .actors
         .iter()
-        .filter(|actor| {
-            actor.enabled
-                && (if super::local_headless::supports(actor) {
-                    super::local_headless::running(&group.group_id, &actor.id)
-                } else {
-                    actor_runtime::is_structured(actor)
-                        && group.running
-                        && group.state != GroupState::Stopped
-                        || actor_runtime::status(&group.group_id, &actor.id)
-                            .is_some_and(|status| status.running)
-                })
-        })
+        .filter(|actor| actor.enabled && actor_runtime_status::resolve(group, actor).running)
         .collect();
     let lifecycle = if running.is_empty() && group.state == GroupState::Stopped {
         GroupState::Stopped
@@ -52,14 +41,11 @@ pub fn group(group: GroupDoc) -> Value {
             for (item, actor) in items.iter_mut().zip(&group.actors) {
                 item["role"] = serde_json::to_value(actors::effective_role(&group, &actor.id))
                     .unwrap_or(Value::Null);
-                if actor_runtime::is_structured(actor) {
-                    item["running"] = Value::Bool(if super::local_headless::supports(actor) {
-                        super::local_headless::running(&group.group_id, &actor.id)
-                    } else {
-                        actor.enabled && group.running && group.state != GroupState::Stopped
-                    });
-                    item["pid"] = Value::Null;
-                }
+                let status = actor_runtime_status::resolve(&group, actor);
+                item["running"] = Value::Bool(status.running);
+                item["pid"] = status
+                    .pid
+                    .map_or(Value::Null, |pid| Value::from(u64::from(pid)));
             }
         }
     }

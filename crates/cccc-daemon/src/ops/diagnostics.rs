@@ -5,8 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::actor_runtime;
-
 mod tail;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
@@ -35,15 +33,15 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .actors
             .iter()
             .map(|actor| {
-                let status = actor_runtime::status(&group_id, &actor.id);
+                let status = crate::ops::actor_runtime_status::resolve(&group, actor);
                 json!({
                     "id":actor.id,
                     "role":actor.role,
                     "runtime":actor.runtime,
                     "runner":actor.runner,
                     "enabled":actor.enabled,
-                    "running":status.as_ref().is_some_and(|status| status.running),
-                    "pid":status.and_then(|status| status.pid)
+                    "running":status.running,
+                    "pid":status.pid
                 })
             })
             .collect::<Vec<_>>();

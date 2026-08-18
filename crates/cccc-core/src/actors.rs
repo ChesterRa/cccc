@@ -78,6 +78,7 @@ pub fn effective_role(group: &GroupDoc, actor_id: &str) -> Option<ActorRole> {
 
 pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     actor.id = validate_actor_id(&actor.id)?;
+    actor.normalize_runtime_constraints();
     if find(group, &actor.id).is_some() {
         return Err(io::Error::other(format!(
             "actor already exists: {}",
@@ -125,10 +126,7 @@ pub fn update(
     object.insert("updated_at".into(), Value::String(utc_now()));
     let mut actor: Actor = serde_json::from_value(value).map_err(io::Error::other)?;
     actor.role = None;
-    if actor.runtime == cccc_contracts::ActorRuntime::WebModel {
-        actor.runner = cccc_contracts::RunnerKind::Headless;
-        actor.command.clear();
-    }
+    actor.normalize_runtime_constraints();
     group.actors[index] = actor.clone();
     actor.role = effective_role(group, actor_id);
     Ok(actor)

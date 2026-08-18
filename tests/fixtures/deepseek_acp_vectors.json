@@ -1,0 +1,41 @@
+{
+  "protocol_version": 1,
+  "acp_sdk_version": "0.25.1",
+  "initialize": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {},
+      "clientInfo": {"name": "cccc", "version": "0.4.34"}
+    }
+  },
+  "session_new": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": {"cwd": "/tmp/cccc", "mcpServers": [], "additionalDirectories": []}
+  },
+  "cancelled_terminal": {
+    "frame": {"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "cancelled"}},
+    "success": false,
+    "terminal": "headless.turn.failed"
+  },
+  "update_idempotency": {
+    "source_event_id": "event-1",
+    "ordinals": [0, 1],
+    "expected_durable_updates": 2,
+    "dedupe_key": "deepseek.update:event-1:{ordinal}"
+  },
+  "frames": [
+    {"name": "response", "line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}", "id": 1, "valid": true},
+    {"name": "notification", "line": "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{}}", "valid": true},
+    {"name": "permission-request", "line": "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"s\",\"options\":[]}}", "id": 7, "valid": true},
+    {"name": "invalid-json", "line": "{not-json", "valid": false},
+    {"name": "array-batch", "line": "[{\"jsonrpc\":\"2.0\"}]", "valid": false},
+    {"name": "wrong-version", "line": "{\"jsonrpc\":\"1.0\",\"id\":3,\"result\":{}}", "id": 3, "valid": false},
+    {"name": "method-response", "line": "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"oops\"}", "id": 4, "valid": false},
+    {"name": "unknown-response", "line": "{\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}", "id": 99, "valid": false}
+  ]
+}

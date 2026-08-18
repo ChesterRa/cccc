@@ -1463,6 +1463,7 @@ export const SUPPORTED_RUNTIMES = [
   "claude",
   "cline",
   "codex",
+  "deepseek",
   "copilot",
   "cursor",
   "devin",
@@ -1488,6 +1489,10 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   claude: { label: "Claude Code", desc: "" },
   cline: { label: "Cline CLI", desc: "Uses Cline CLI MCP setup with the PTY TUI" },
   codex: { label: "Codex CLI", desc: "" },
+  deepseek: {
+    label: "DeepSeek Harness",
+    desc: "ACP headless runtime with CCCC MCP; run cccc setup --runtime deepseek first",
+  },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
   cursor: {
     label: "Cursor CLI",

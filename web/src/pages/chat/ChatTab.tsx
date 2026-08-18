@@ -215,7 +215,8 @@ export function ChatTab({
     busy,
     showScrollButton,
     chatUnreadCount,
-    forceStickToBottomToken,
+    sendScrollRequest,
+    consumeSendScrollRequest,
 
     // Setup checklist
     showSetupCard,
@@ -946,7 +947,8 @@ export function ChatTab({
                   showScrollButton={showScrollButton}
                   onScrollButtonClick={handleScrollButtonClick}
                   chatUnreadCount={chatUnreadCount}
-                  forceStickToBottomToken={forceStickToBottomToken}
+                  sendScrollRequest={sendScrollRequest}
+                  onSendScrollRequestConsumed={consumeSendScrollRequest}
                   onScrollChange={handleScrollChange}
                   onScrollSnapshot={handleScrollSnapshot}
                   isLoadingHistory={listIsLoadingHistory}

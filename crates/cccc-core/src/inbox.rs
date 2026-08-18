@@ -5,7 +5,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::actors::{effective_role, find};
-use crate::fs::{read_json, write_json};
+use crate::fs::{read_json, with_exclusive_lock, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
@@ -93,28 +93,53 @@ pub fn advance(
     event_id: &str,
 ) -> io::Result<bool> {
     let store = GroupStore::new(home.clone())?;
-    let state = load(home, group_id)?;
-    let (mut state, current, next, next_ts) =
-        ledger::inspect(&store.ledger_path(group_id)?, |events, positions| {
-            let next = positions.get(event_id).copied();
-            let current = state
-                .cursors
-                .get(actor_id)
-                .and_then(|current| positions.get(current))
-                .copied();
-            let next_ts = next
-                .and_then(|index| events.get(index))
-                .map(|event| event.ts.clone())
-                .unwrap_or_default();
-            (state, current, next, next_ts)
-        })?;
-    let next = next.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "event not found"))?;
-    if current.is_some_and(|current| current >= next) {
-        return Ok(false);
-    }
-    state.cursors.insert(actor_id.into(), event_id.into());
-    save(home, group_id, &state, actor_id, &next_ts)?;
-    Ok(true)
+    let group = store.load(group_id)?;
+    let lock_path = path(home, group_id)?.with_file_name("read_cursors.json.lock");
+    with_exclusive_lock(&lock_path, || {
+        let state = load(home, group_id)?;
+        let (mut state, current, next, next_ts, gap) =
+            ledger::inspect(&store.ledger_path(group_id)?, |events, positions| {
+                let next = positions.get(event_id).copied();
+                let current = state
+                    .cursors
+                    .get(actor_id)
+                    .and_then(|current| positions.get(current))
+                    .copied();
+                let next_ts = next
+                    .and_then(|index| events.get(index))
+                    .map(|event| event.ts.clone())
+                    .unwrap_or_default();
+                let gap = (find(&group, actor_id)
+                    .is_some_and(|actor| actor.runtime == cccc_contracts::ActorRuntime::Deepseek))
+                    && next.is_some_and(|end| {
+                        let cursor_start = current.map_or(0, |index| index.saturating_add(1));
+                        let generation_start = actor_generation_positions(events)
+                            .get(actor_id)
+                            .copied()
+                            .unwrap_or(0);
+                        let start = cursor_start.max(generation_start);
+                        start < end
+                            && events[start..end]
+                                .iter()
+                                .any(|event| is_for_actor(&group, event, actor_id))
+                    });
+                (state, current, next, next_ts, gap)
+            })?;
+        let next =
+            next.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "event not found"))?;
+        if current.is_some_and(|current| current >= next) {
+            return Ok(false);
+        }
+        if gap {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "read cursor cannot skip an unread event",
+            ));
+        }
+        state.cursors.insert(actor_id.into(), event_id.into());
+        save(home, group_id, &state, actor_id, &next_ts)?;
+        Ok(true)
+    })
 }
 
 pub fn cursor(home: &HomeLayout, group_id: &str, actor_id: &str) -> io::Result<Option<String>> {

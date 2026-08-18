@@ -228,8 +228,12 @@ for bash_profile in .profile .bashrc; do
   ! grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
 done
 test ! -e "$TMP_ROOT/home with space/.bash_profile"
-grep -Fq 'Activate in this shell: source ~/.bashrc' "$TMP_ROOT/bash-install.out"
-grep -Fq 'Verify installed command directly:' "$TMP_ROOT/bash-install.out"
+expected_bash_command="$(cd -P "$TMP_ROOT/home with space/.local/bin" && pwd -P)/cccc"
+grep -Fq "✅ CCCC v$version installed successfully!" "$TMP_ROOT/bash-install.out"
+grep -Fq "📦 Installed to: $expected_bash_command" "$TMP_ROOT/bash-install.out"
+grep -Fq '⚡ Activate now: source ~/.bashrc' "$TMP_ROOT/bash-install.out"
+grep -Fq '🔍 Verify:       cccc doctor' "$TMP_ROOT/bash-install.out"
+grep -Fq '🎉 Open a new terminal and run: cccc' "$TMP_ROOT/bash-install.out"
 grep -Fq 'Other CCCC commands were left unchanged:' "$TMP_ROOT/bash-install.out"
 grep -Fq 'older-cccc/bin/cccc' "$TMP_ROOT/bash-install.out"
 [[ "$(checksum "$shadow_bin/cccc")" == "$shadow_hash" ]]
@@ -262,7 +266,7 @@ sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/zsh-install.out"
 for zsh_profile in .zprofile .zshrc; do
   test "$(grep -Fc '# CCCC' "$zsh_home/$zsh_profile")" -eq 1
 done
-grep -Fq 'Activate in this shell: source ~/.zshrc' "$TMP_ROOT/zsh-install.out"
+grep -Fq '⚡ Activate now: source ~/.zshrc' "$TMP_ROOT/zsh-install.out"
 
 missing_version=0.0.3-test
 make_release "$missing_version" valid "$missing_version" cccc

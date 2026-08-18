@@ -27,6 +27,7 @@ pub async fn run(home: HomeLayout) -> Result<()> {
 }
 
 async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> Result<()> {
+    crate::process_tree::protect_daemon_host().context("protect daemon process tree")?;
     home.initialize().context("initialize Rust home")?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
@@ -239,7 +240,23 @@ async fn shutdown_signal() -> Result<()> {
             _ = terminate.recv() => {},
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
+        let mut interrupt = ctrl_c()?;
+        let mut r#break = ctrl_break()?;
+        let mut close = ctrl_close()?;
+        let mut logoff = ctrl_logoff()?;
+        let mut shutdown = ctrl_shutdown()?;
+        tokio::select! {
+            _ = interrupt.recv() => {},
+            _ = r#break.recv() => {},
+            _ = close.recv() => {},
+            _ = logoff.recv() => {},
+            _ = shutdown.recv() => {},
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     tokio::signal::ctrl_c().await?;
     Ok(())
 }

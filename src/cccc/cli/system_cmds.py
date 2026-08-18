@@ -528,6 +528,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         "hermes",
         "kimi",
         "opencode",
+        "deepseek",
         "custom",
     ]
 
@@ -545,7 +546,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     cccc_cmd = get_cccc_mcp_stdio_command()
     prompt_assisted_runtimes = ("antigravity", "cursor", "kilo")
-    auto_mcp_runtimes = tuple(name for name in SUPPORTED_RUNTIMES if name not in {"custom", *prompt_assisted_runtimes})
+    auto_mcp_runtimes = tuple(
+        name for name in SUPPORTED_RUNTIMES if name not in {"custom", "deepseek", *prompt_assisted_runtimes}
+    )
 
     def _cmd_line(parts: list[str]) -> str:
         return " ".join(shlex.quote(p) for p in parts)
@@ -586,7 +589,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
     runtimes_to_setup = [runtime] if runtime else SUPPORTED_RUNTIMES
 
     for rt in runtimes_to_setup:
-        if rt in auto_mcp_runtimes:
+        if rt == "deepseek":
+            from ..daemon.actors.deepseek_setup import setup_deepseek_result
+
+            result, error = setup_deepseek_result()
+            results["mcp"][rt] = result
+            if error:
+                results["notes"].append(f"deepseek: {error}")
+        elif rt in auto_mcp_runtimes:
             _auto_setup(rt)
 
         elif rt in prompt_assisted_runtimes:

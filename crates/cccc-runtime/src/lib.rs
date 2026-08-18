@@ -1,9 +1,12 @@
 mod cancellation;
 mod command;
+pub mod deepseek_acp;
+pub mod deepseek_supervisor;
 mod history_access;
 mod manager;
 mod output;
 mod output_reader;
+mod process_tree;
 mod registry;
 mod session;
 mod session_history;
@@ -16,6 +19,8 @@ mod terminal_manager;
 #[cfg(all(test, unix))]
 mod terminal_manager_tests;
 mod terminal_modes;
+mod terminal_query_responder;
+mod terminal_response_writer;
 mod terminal_sequence_tracker;
 mod terminal_snapshot;
 #[cfg(test)]
@@ -24,7 +29,14 @@ mod transcript_archive;
 mod transcript_files;
 mod transcript_reader;
 
-pub use command::{default_command, detect_runtimes};
+pub use command::{
+    DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE,
+    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION,
+    DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE,
+    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NODE_RANGE, deepseek_external_preflight, deepseek_home,
+    deepseek_preflight, default_command, detect_runtimes, is_canonical_deepseek_config,
+    is_canonical_deepseek_patch, is_canonical_deepseek_profile_manifest,
+};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
     history_since, retained_history, retained_history_tail,

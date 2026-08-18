@@ -10,15 +10,17 @@ use crate::ops::{codex_mcp, runtime_hook_session};
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum LaunchIntegration {
     CodexHooks,
-    CodexMcpOnly,
     ClaudeHooks,
     None,
 }
 
 pub(super) fn launch_integration(actor: &Actor) -> LaunchIntegration {
     match (actor.runtime, actor.runtime_state_source) {
-        (ActorRuntime::Codex, RuntimeStateSource::Terminal) => LaunchIntegration::CodexHooks,
-        (ActorRuntime::Codex, _) => LaunchIntegration::CodexMcpOnly,
+        // PTY Codex actors need lifecycle hooks for working-state projection,
+        // including actors explicitly configured with app-server state.
+        (ActorRuntime::Codex, RuntimeStateSource::Terminal | RuntimeStateSource::AppServer) => {
+            LaunchIntegration::CodexHooks
+        }
         (ActorRuntime::Claude, RuntimeStateSource::Terminal) => LaunchIntegration::ClaudeHooks,
         _ => LaunchIntegration::None,
     }
@@ -79,17 +81,6 @@ pub(super) fn launch_serialized_with_permit(
             &mut command,
             &mut launch_env,
         ),
-        LaunchIntegration::CodexMcpOnly => {
-            codex_mcp::configure_mcp_only(
-                home,
-                &group.group_id,
-                &actor.id,
-                &mut command,
-                &mut launch_env,
-            );
-            clear_hook_identity(home, group, actor);
-            return spawn(home, group, actor, cwd, command, launch_env);
-        }
         LaunchIntegration::ClaudeHooks => crate::ops::claude_hooks::configure(
             home,
             &group.group_id,

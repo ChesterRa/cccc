@@ -38,7 +38,6 @@ import {
   restoreFailedSendComposerState,
   shouldShowInConversation,
   sortChatMessages,
-  shouldLockChatToBottomForSend,
   shouldRestoreDetachedScrollSnapshot,
   toVisibleConversationEvent,
 } from "../../src/hooks/useChatTab";
@@ -1266,71 +1265,6 @@ describe("shouldRestoreDetachedScrollSnapshot", () => {
 
     expect(
       shouldRestoreDetachedScrollSnapshot({ mode: "detached", anchorId: "", updatedAt: now }, now),
-    ).toBe(false);
-  });
-});
-
-describe("shouldLockChatToBottomForSend", () => {
-  it("locks to bottom only when the current chat is cleanly following", () => {
-    const now = 1_700_000_000_000;
-
-    expect(
-      shouldLockChatToBottomForSend({
-        currentAtBottom: true,
-        showScrollButton: false,
-        chatUnreadCount: 0,
-        scrollSnapshot: null,
-        now,
-      }),
-    ).toBe(true);
-
-    expect(
-      shouldLockChatToBottomForSend({
-        currentAtBottom: false,
-        showScrollButton: false,
-        chatUnreadCount: 0,
-        scrollSnapshot: null,
-        now,
-      }),
-    ).toBe(false);
-  });
-
-  it("does not force bottom while the user is browsing detached history", () => {
-    const now = 1_700_000_000_000;
-
-    expect(
-      shouldLockChatToBottomForSend({
-        currentAtBottom: true,
-        showScrollButton: true,
-        chatUnreadCount: 0,
-        scrollSnapshot: null,
-        now,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldLockChatToBottomForSend({
-        currentAtBottom: true,
-        showScrollButton: false,
-        chatUnreadCount: 2,
-        scrollSnapshot: null,
-        now,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldLockChatToBottomForSend({
-        currentAtBottom: true,
-        showScrollButton: false,
-        chatUnreadCount: 0,
-        scrollSnapshot: {
-          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
-          mode: "detached",
-          anchorId: "evt-older",
-          updatedAt: now - 1000,
-        },
-        now,
-      }),
     ).toBe(false);
   });
 });

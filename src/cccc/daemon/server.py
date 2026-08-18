@@ -109,6 +109,7 @@ from .ops.execution_queues import DaemonRequestExecutionQueue, GroupSpaceSyncRun
 from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
 from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
+from .actors import deepseek_runtime
 from .actors.runner_ops import stop_actor as runner_stop_actor
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
@@ -300,6 +301,7 @@ SUPPORTED_RUNTIMES = (
     "claude",
     "cline",
     "codex",
+    "deepseek",
     "copilot",
     "cursor",
     "devin",
@@ -343,6 +345,8 @@ def _normalize_runtime_command(runtime: str, command: list[str], *, env: Dict[st
     """
     rt = str(runtime or "").strip()
     cmd = [str(x) for x in (command or []) if str(x).strip()]
+    if rt == "deepseek" and not cmd:
+        return ["dsh-acp-demo"]
     if not cmd:
         return []
 
@@ -1270,6 +1274,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         im_stop_all=im_stop_all,
         codex_stop_all=codex_app_supervisor.stop_all,
         claude_stop_all=claude_app_supervisor.stop_all,
+        deepseek_stop_all=deepseek_runtime.stop_all,
         pty_stop_all=pty_runner.SUPERVISOR.stop_all,
         headless_stop_all=headless_runner.SUPERVISOR.stop_all,
         sock_path=p.sock_path,

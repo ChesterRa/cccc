@@ -37,6 +37,9 @@ tracing-subscriber.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+win32job.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

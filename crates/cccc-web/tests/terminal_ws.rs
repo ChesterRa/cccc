@@ -70,6 +70,7 @@ async fn websocket_attach_streams_full_replay_and_keeps_legacy_clients_compatibl
     assert_eq!(attach.first(), Some(&b'3'));
     let attach_payload: Value = serde_json::from_slice(&attach[1..]).expect("attach json");
     assert_eq!(attach_payload["terminal_writable"], false);
+    assert_eq!(attach_payload["terminal_response_owner"], "server_v1");
     assert_eq!(attach_payload["output_flow_control"]["protocol"], "ack_v1");
     assert_eq!(
         attach_payload["output_flow_control"]["window_bytes"],
