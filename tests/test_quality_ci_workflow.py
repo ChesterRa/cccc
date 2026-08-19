@@ -194,6 +194,7 @@ def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
         "crates/cccc-core/tests/context_python_interop.rs",
         "crates/cccc-core/tests/group_bridge_identity_interop.rs",
         "crates/cccc-core/tests/ledger_python_interop.rs",
+        "crates/cccc-core/tests/membership_interop.rs",
         "crates/cccc-core/tests/runtime_hook_identity_interop.rs",
         "crates/cccc-core/tests/runtime_hook_interop.rs",
         "crates/cccc-core/tests/shared_integration_state_interop.rs",

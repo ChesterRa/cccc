@@ -151,7 +151,7 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 DEFAULT_REMOTE_ACCESS: Dict[str, Any] = {
-    "provider": "off",          # off | manual | tailscale
+    "provider": "off",          # off | manual | tailscale | reach
     "mode": "tailnet_only",     # reserved for future extension
     "require_access_token": True,  # security-first default
     "enabled": False,           # desired state for provider control
@@ -295,7 +295,7 @@ def _merge_remote_access(raw: Any) -> Dict[str, Any]:
         return base
 
     provider = _as_str(raw.get("provider"), str(base["provider"])).lower()
-    if provider not in ("off", "manual", "tailscale"):
+    if provider not in ("off", "manual", "tailscale", "reach"):
         provider = "off"
     base["provider"] = provider
 
@@ -485,7 +485,7 @@ def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
 
         if "provider" in patch:
             provider = _as_str(patch.get("provider"), str(current["provider"])).lower()
-            if provider not in ("off", "manual", "tailscale"):
+            if provider not in ("off", "manual", "tailscale", "reach"):
                 provider = "off"
             raw["provider"] = provider
             changed = True

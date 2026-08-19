@@ -16,16 +16,14 @@ from ..util.process import find_subprocess_executable
 from .deepseek_runtime import (
     DEEPSEEK_ACP_PACKAGE,
     DEEPSEEK_ACP_VERSION,
-    DEEPSEEK_DSH_PACKAGE,
-    DEEPSEEK_DSH_VERSION,
     DEEPSEEK_MCP_CLIENT_PACKAGE,
     DEEPSEEK_MCP_CLIENT_VERSION,
     DEEPSEEK_NODE_RANGE,
     DEEPSEEK_PACKAGE_VERSIONS,
     _deepseek_executable,
     _is_canonical_deepseek_config,
-    _is_canonical_deepseek_patch,
-    deepseek_external_preflight_error,
+    deepseek_bootstrap_preflight_error,
+    deepseek_external_preflight_error as deepseek_external_preflight_error,
     deepseek_preflight_error,
     resolve_deepseek_home,
 )
@@ -252,11 +250,10 @@ def detect_runtime(name: str) -> RuntimeInfo:
     # packages/profile are installed later by the actor start boundary.
     if name == "deepseek":
         available = not bool(
-            deepseek_external_preflight_error(
-                [path or command],
-                env=discovery_env,
+            deepseek_preflight_error(
+                [path or command], runner="headless", env=discovery_env
             )
-        )
+        ) or not bool(deepseek_bootstrap_preflight_error(env=discovery_env))
     else:
         available = path is not None
     
@@ -442,7 +439,10 @@ def runtime_start_preflight_error(
     if rt == "deepseek":
         if runner_kind != "headless":
             return "setup_required: deepseek runtime requires the headless runner"
-        return deepseek_external_preflight_error(cmd, env=env)
+        ready_error = deepseek_preflight_error(cmd, runner="headless", env=env)
+        if not ready_error:
+            return ""
+        return deepseek_bootstrap_preflight_error(env=env)
 
     if runner_kind == "headless":
         return ""

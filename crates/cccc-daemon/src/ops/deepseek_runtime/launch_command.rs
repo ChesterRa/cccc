@@ -1,7 +1,11 @@
 use cccc_contracts::Actor;
+use std::collections::BTreeMap;
 use std::path::Path;
 
-pub(super) fn resolve(actor: &Actor) -> std::io::Result<Vec<String>> {
+pub(super) fn resolve(
+    actor: &Actor,
+    env: &BTreeMap<String, String>,
+) -> std::io::Result<Vec<String>> {
     let managed = actor
         .command
         .first()
@@ -12,11 +16,11 @@ pub(super) fn resolve(actor: &Actor) -> std::io::Result<Vec<String>> {
         return Ok(actor.command.clone());
     }
 
-    let dsh_home = cccc_runtime::deepseek_home(&actor.env)
-        .ok_or_else(|| std::io::Error::other("DSH_HOME cannot be inferred"))?;
+    let dsh_home = cccc_runtime::deepseek_home(env)
+        .ok_or_else(|| std::io::Error::other("DeepSeek runtime root cannot be inferred"))?;
     let executable = cccc_runtime::resolve_executable_in_path(
         "dsh-acp-demo",
-        actor.env.get("PATH").map(String::as_str),
+        env.get("PATH").map(String::as_str),
     )
     .ok_or_else(|| std::io::Error::other("deepseek executable not found: dsh-acp-demo"))?;
     Ok(vec![

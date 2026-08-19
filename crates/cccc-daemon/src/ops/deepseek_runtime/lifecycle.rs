@@ -32,7 +32,12 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     actor.env = launch_env(home, group, &actor);
     let executable = crate::ops::codex_mcp::resolve_cccc_executable()
         .ok_or_else(|| setup_required("CCCC executable is not available for DeepSeek setup"))?;
-    crate::deepseek_setup::ensure(&mut actor.env, &executable).map_err(setup_required)?;
+    crate::deepseek_setup::ensure(home, &mut actor.env, &executable).map_err(setup_required)?;
+    let session_root = actor
+        .env
+        .get("CCCC_DEEPSEEK_SESSION_ROOT")
+        .ok_or_else(|| setup_required("DeepSeek session root is not configured"))?;
+    std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
     let cwd = actor_runtime::working_directory(group, &actor)?;
     start(home, group, &actor, &cwd).map_err(OpError::io)
@@ -69,6 +74,18 @@ fn launch_env_from(
     );
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
+    env.insert(
+        "CCCC_DEEPSEEK_SESSION_ROOT".into(),
+        home.root()
+            .join("groups")
+            .join(&group.group_id)
+            .join("state")
+            .join("deepseek")
+            .join(&actor.id)
+            .join("sessions")
+            .to_string_lossy()
+            .into_owned(),
+    );
     env
 }
 
@@ -119,6 +136,17 @@ mod tests {
         assert_eq!(
             env.get("CCCC_ACTOR_ID").map(String::as_str),
             Some("deepseek")
+        );
+        assert_eq!(
+            env.get("CCCC_DEEPSEEK_SESSION_ROOT").map(String::as_str),
+            Some(
+                home.root()
+                    .join("groups")
+                    .join(&group.group_id)
+                    .join("state/deepseek/deepseek/sessions")
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
     }
 }

@@ -14,6 +14,7 @@ pub(super) struct TurnProjection<'a> {
     pub(super) stream_id: &'a str,
     pub(super) session_id: &'a str,
     pub(super) request_id: u64,
+    pub(super) attempt_id: &'a str,
     pub(super) message_text: &'a str,
 }
 
@@ -55,8 +56,8 @@ pub(super) fn persist_message_completed(projection: &TurnProjection<'_>) -> std:
             ("text".into(), json!(projection.message_text)),
         ]),
         Some(&format!(
-            "deepseek.message.completed:{}",
-            projection.event.id
+            "deepseek.message.completed:{}:{}",
+            projection.event.id, projection.attempt_id
         )),
     )
 }
@@ -101,13 +102,21 @@ pub(super) fn persist_terminal(
             json!(if failed { "failed" } else { "completed" }),
         ),
     ]);
+    let dedupe_key = if failed {
+        format!(
+            "deepseek.turn:{kind}:{}:{}",
+            projection.event.id, projection.attempt_id
+        )
+    } else {
+        format!("deepseek.turn:{kind}:{}", projection.event.id)
+    };
     if crate::ops::local_headless::append_event_with_dedupe(
         projection.home,
         &projection.group.group_id,
         &projection.actor.id,
         kind,
         data,
-        Some(&format!("deepseek.turn:{kind}:{}", projection.event.id)),
+        Some(&dedupe_key),
     )
     .is_err()
     {

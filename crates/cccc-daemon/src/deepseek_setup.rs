@@ -1,8 +1,9 @@
 use cccc_contracts::{
     DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION,
-    DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION, DEEPSEEK_LLM_ADAPTER_PACKAGE,
-    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION,
+    DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE,
+    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NPM_BEFORE, DEEPSEEK_RELEASE_VERSION,
 };
+use cccc_core::HomeLayout;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 const NODE_USE_ENV_PROXY: &str = "NODE_USE_ENV_PROXY";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -23,10 +24,12 @@ pub struct DeepSeekSetupOutcome {
 }
 
 pub fn ensure(
+    home: &HomeLayout,
     env: &mut BTreeMap<String, String>,
     cccc_executable: &Path,
 ) -> Result<DeepSeekSetupOutcome, String> {
     ensure_with(
+        home,
         env,
         cccc_executable,
         install_packages,
@@ -36,14 +39,22 @@ pub fn ensure(
 }
 
 fn ensure_with(
+    home: &HomeLayout,
     env: &mut BTreeMap<String, String>,
     cccc_executable: &Path,
     installer: impl Fn(&Path, &BTreeMap<String, String>) -> Result<(), String>,
     external_preflight: impl Fn(&[String], &BTreeMap<String, String>) -> Result<(), String>,
     ready_preflight: impl Fn(&[String], &BTreeMap<String, String>) -> Result<(), String>,
 ) -> Result<DeepSeekSetupOutcome, String> {
-    let dsh_home = cccc_runtime::deepseek_home(env)
-        .ok_or_else(|| "DSH_HOME cannot be inferred because HOME is not configured".to_owned())?;
+    let dsh_home = home
+        .root()
+        .join("runtimes")
+        .join("deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    env.insert(
+        "CCCC_HOME".into(),
+        home.root().to_string_lossy().into_owned(),
+    );
     env.insert("DSH_HOME".into(), dsh_home.to_string_lossy().into_owned());
     // Node's built-in fetch only honors HTTP(S)_PROXY when this opt-in is
     // enabled. Preserve an explicit actor or user value when one exists.
@@ -113,7 +124,7 @@ fn prepend_local_bin(env: &mut BTreeMap<String, String>, dsh_home: &Path) {
 }
 
 fn packages_ready(dsh_home: &Path) -> bool {
-    required_packages().iter().all(|(package, version)| {
+    let packages_match = required_packages().iter().all(|(package, version)| {
         fs::read(
             dsh_home
                 .join("node_modules")
@@ -130,12 +141,16 @@ fn packages_ready(dsh_home: &Path) -> bool {
         })
         .as_deref()
             == Some(*version)
-    })
+    });
+    let manifest_matches = fs::read(dsh_home.join("package.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+        .is_some_and(|manifest| cccc_runtime::is_canonical_deepseek_runtime_manifest(&manifest));
+    packages_match && manifest_matches && cccc_runtime::deepseek_lockfile_is_pinned(dsh_home)
 }
 
-fn required_packages() -> [(&'static str, &'static str); 5] {
+fn required_packages() -> [(&'static str, &'static str); 4] {
     [
-        (DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION),
         (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
         (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
         (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
@@ -144,10 +159,22 @@ fn required_packages() -> [(&'static str, &'static str); 5] {
 }
 
 fn install_packages(dsh_home: &Path, env: &BTreeMap<String, String>) -> Result<(), String> {
+    cccc_core::fs::write_json(
+        &dsh_home.join("package.json"),
+        &cccc_runtime::canonical_deepseek_runtime_manifest(),
+    )
+    .map_err(|error| format!("failed to write DeepSeek runtime manifest: {error}"))?;
     let mut command = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" });
     configure_process_group(&mut command);
     command
-        .args(["install", "--save-exact", "--no-audit", "--no-fund"])
+        .args([
+            "install",
+            "--save-exact",
+            "--no-audit",
+            "--no-fund",
+            "--before",
+            DEEPSEEK_NPM_BEFORE,
+        ])
         .args(required_packages().map(|(package, version)| format!("{package}@{version}")))
         .current_dir(dsh_home)
         .envs(env)
@@ -169,7 +196,7 @@ fn install_packages(dsh_home: &Path, env: &BTreeMap<String, String>) -> Result<(
             }
             Ok(None) => {
                 terminate_process_tree(&mut child);
-                return Err("DeepSeek package installation timed out after 120 seconds".into());
+                return Err("DeepSeek package installation timed out after 300 seconds".into());
             }
             Err(error) => {
                 terminate_process_tree(&mut child);
@@ -224,21 +251,22 @@ fn write_profile_files(profile: &Path, executable: &Path) -> std::io::Result<()>
                 DEEPSEEK_MCP_CLIENT_PACKAGE:DEEPSEEK_MCP_CLIENT_VERSION,
                 DEEPSEEK_ACP_APP_PACKAGE:DEEPSEEK_ACP_APP_VERSION,
                 DEEPSEEK_LLM_ADAPTER_PACKAGE:DEEPSEEK_LLM_ADAPTER_VERSION
-            },
-            "dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}
+            }
         }),
     )?;
     // YAML single-quoted scalars escape apostrophes by doubling them. A
     // backslash is literal in this scalar style and must not be doubled.
     let cccc_path = executable.to_string_lossy().replace('\'', "''");
-    let patch = format!(
-        "- insert:\n    - id: acp\n      name: '@deepseek-ai/dsh-acp'\n    - id: cccc-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        transport: stdio\n        serverName: cccc\n        command: '{cccc_path}'\n        args: [mcp]\n        env:\n          CCCC_HOME: !!js process.env.CCCC_HOME\n          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n        failOnStartupError: true\n"
-    );
-    cccc_core::fs::atomic_write(&profile.join("cordis.patch.yml"), patch.as_bytes())?;
     let config = format!(
-        "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{cccc_path}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n"
+        "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{cccc_path}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n"
     );
-    cccc_core::fs::atomic_write(&profile.join("cordis.yml"), config.as_bytes())
+    cccc_core::fs::atomic_write(&profile.join("cordis.yml"), config.as_bytes())?;
+    match fs::remove_file(profile.join("cordis.patch.yml")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -253,9 +281,12 @@ fn configure_process_group(_command: &mut Command) {}
 fn terminate_process_tree(child: &mut Child) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", child.id())])
-            .status();
+        use nix::sys::signal::{Signal, killpg};
+        use nix::unistd::Pid;
+
+        if let Ok(pid) = i32::try_from(child.id()) {
+            let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
+        }
     }
     #[cfg(windows)]
     {

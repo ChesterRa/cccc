@@ -14,8 +14,13 @@ def prepare_deepseek_setup_env(env: Dict[str, str]) -> tuple[Dict[str, str], Pat
     effective_env.update(env)
     dsh_home = resolve_deepseek_home(effective_env)
     if dsh_home is None:
-        raise RuntimeError("DSH_HOME cannot be inferred because HOME is not configured")
+        raise RuntimeError(
+            "DeepSeek runtime root cannot be inferred because CCCC_HOME and HOME are not configured"
+        )
 
+    cccc_home = dsh_home.parents[2]
+    effective_env["CCCC_HOME"] = str(cccc_home)
+    env["CCCC_HOME"] = str(cccc_home)
     effective_env["DSH_HOME"] = str(dsh_home)
     env["DSH_HOME"] = str(dsh_home)
     effective_env.setdefault(_NODE_USE_ENV_PROXY, "1")

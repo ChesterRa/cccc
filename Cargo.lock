@@ -486,6 +486,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -511,6 +512,7 @@ dependencies = [
  "futures-util",
  "mime_guess",
  "nix",
+ "percent-encoding",
  "regex",
  "reqwest 0.12.28",
  "serde",
@@ -525,6 +527,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width",
+ "url",
  "uuid",
  "win32job",
 ]

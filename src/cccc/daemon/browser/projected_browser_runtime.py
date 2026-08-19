@@ -1084,6 +1084,9 @@ def launch_projected_browser_runtime(
                 pages = list(getattr(context, "pages", []) or [])
                 page = pages[0] if pages else context.new_page()
                 page.set_viewport_size({"width": int(width), "height": int(height)})
+                target_url = str(url or "").strip()
+                if target_url and str(getattr(page, "url", "") or "").strip() != target_url:
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
                 cdp_session = context.new_cdp_session(page)
                 try:
                     cdp_session.send("Page.enable")

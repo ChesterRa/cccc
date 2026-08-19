@@ -25,6 +25,7 @@ from ...ports.web.runtime_control import (
 )
 from ...util.conv import coerce_bool
 from ...util.time import utc_now_iso
+from . import cloudflared_supervisor
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -389,12 +390,25 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
                     status = "stopped"
                 else:
                     status = "error"
+    elif provider == "reach":
+        from . import cloudflared_supervisor
+
+        reach_helper_running = bool(cloudflared_supervisor.status().get("running"))
+        if enabled and reach_helper_running:
+            status = "running"
+        elif enabled or reach_helper_running:
+            status = "error"
+        else:
+            status = "stopped"
+        diagnostics["reach_helper_running"] = reach_helper_running
+        if status == "running":
+            endpoint = _manual_endpoint(binding)
     else:
         provider = "off"
         status = "stopped"
         enabled = False
 
-    if provider in ("manual", "tailscale") and enabled:
+    if provider in ("manual", "tailscale", "reach") and enabled:
         if not bool(diagnostics.get("mode_supported")):
             status = "misconfigured"
         elif not bool(diagnostics.get("remote_listener_auth_requirement_satisfied")):
@@ -487,6 +501,11 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
     patch: Dict[str, Any] = {}
     if "provider" in args:
         patch["provider"] = str(args.get("provider") or "").strip().lower()
+        if patch["provider"] == "reach":
+            return _error(
+                "remote_access_invalid_config",
+                "reach is managed by cccc reach; use `cccc reach on`",
+            )
     if "mode" in args:
         patch["mode"] = _normalize_mode(args.get("mode"))
     if "require_access_token" in args:
@@ -507,6 +526,18 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
         return DaemonResponse(ok=True, result=_remote_access_state_payload(cfg))
 
     current = get_remote_access_settings()
+    reach_owns_runtime = (
+        str(current.get("provider") or "").strip().lower() == "reach"
+        and (
+            bool(current.get("enabled"))
+            or bool(cloudflared_supervisor.status().get("running"))
+        )
+    )
+    if reach_owns_runtime:
+        return _error(
+            "remote_access_invalid_config",
+            "reach is active; use `cccc reach off` before changing remote access configuration",
+        )
     old_binding = resolve_remote_access_web_binding()
     candidate_binding = dict(old_binding)
     if "web_host" in patch:
@@ -595,6 +626,11 @@ def handle_remote_access_start(args: Dict[str, Any]) -> DaemonResponse:
     if not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
         return _remote_unreachable_error(provider=provider, diagnostics=diagnostics)
 
+    if provider == "reach":
+        from .membership_ops import handle_membership_reach_on
+
+        return handle_membership_reach_on(args)
+
     if provider == "tailscale":
         if not _tailscale_installed():
             return _error("remote_access_not_installed", "tailscale is not installed")
@@ -638,6 +674,11 @@ def handle_remote_access_stop(args: Dict[str, Any]) -> DaemonResponse:
 
     cfg = get_remote_access_settings()
     provider = str(cfg.get("provider") or "off").strip().lower()
+
+    if provider == "reach":
+        from .membership_ops import handle_membership_reach_off
+
+        return handle_membership_reach_off(args)
 
     if provider == "tailscale" and _tailscale_installed():
         code, out, err = _run_command(["tailscale", "down"], timeout_s=20.0)

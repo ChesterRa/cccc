@@ -5,7 +5,6 @@ import json
 from cccc.kernel.actors import add_actor, update_actor
 from cccc.kernel.runtime import (
     DEEPSEEK_ACP_VERSION,
-    DEEPSEEK_DSH_VERSION,
     DEEPSEEK_MCP_CLIENT_VERSION,
     KNOWN_RUNTIMES,
     PRIMARY_RUNTIMES,
@@ -18,6 +17,7 @@ from cccc.contracts.v1.deepseek import (
     DEEPSEEK_NODE_RANGE,
     DEEPSEEK_PACKAGE_VERSIONS,
     DEEPSEEK_PROTOCOL_VERSION,
+    DEEPSEEK_RELEASE_VERSION,
 )
 from cccc.kernel.deepseek_acp import (
     ACPProtocolError,
@@ -30,6 +30,7 @@ from cccc.kernel.deepseek_acp import (
     validate_session_new_result,
     validate_session_update,
 )
+from cccc.kernel.deepseek_runtime import canonical_deepseek_runtime_manifest
 
 
 def _canonical_config(command) -> str:
@@ -37,7 +38,8 @@ def _canonical_config(command) -> str:
         "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n"
         "- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n"
         "  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n"
-        "    workspaceContext: false\n- id: cccc-mcp\n"
+        "    workspaceContext: false\n"
+        "    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n"
         "  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n"
         "    transport: stdio\n    serverName: cccc\n"
         f"    command: '{command}'\n    args: [mcp]\n    env:\n"
@@ -60,13 +62,29 @@ def _canonical_manifest(*, adapter_version: str = "0.1.0-rc.6") -> str:
                 "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6",
                 DEEPSEEK_LLM_ADAPTER_PACKAGE: adapter_version,
             },
-            "dsh": {
-                "profile": {
-                    "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]
-                }
-            },
         }
     ) + "\n"
+
+
+def _managed_home(tmp_path):
+    return tmp_path / "cccc-home" / "runtimes" / "deepseek" / DEEPSEEK_RELEASE_VERSION
+
+
+def _write_packages(home) -> None:
+    lock_packages = {"": {"dependencies": dict(DEEPSEEK_PACKAGE_VERSIONS)}}
+    for package, version in DEEPSEEK_PACKAGE_VERSIONS:
+        package_dir = home / "node_modules" / package
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / "package.json").write_text(
+            json.dumps({"version": version}) + "\n", encoding="utf-8"
+        )
+        lock_packages[f"node_modules/{package}"] = {"version": version}
+    (home / "package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3, "packages": lock_packages}), encoding="utf-8"
+    )
+    (home / "package.json").write_text(
+        json.dumps(canonical_deepseek_runtime_manifest()), encoding="utf-8"
+    )
 
 
 def test_deepseek_preflight_is_fail_closed_without_acp(tmp_path, monkeypatch) -> None:
@@ -77,39 +95,31 @@ def test_deepseek_preflight_is_fail_closed_without_acp(tmp_path, monkeypatch) ->
     node.write_text("#!/bin/sh\nprintf 'v24.0.0\\n'\n", encoding="utf-8")
     node.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path / "cccc-home"))
 
     error = deepseek_preflight_error([str(dsh), "--profile", "cccc-acp"], runner="headless")
 
     assert error.startswith("setup_required:")
-    assert DEEPSEEK_DSH_VERSION in error or DEEPSEEK_ACP_VERSION in error
+    assert DEEPSEEK_ACP_VERSION in error
 
 
-def test_deepseek_preflight_rejects_non_executable_dsh_and_patch_masquerade(tmp_path, monkeypatch) -> None:
+def test_deepseek_preflight_rejects_non_executable_dsh_and_missing_config(tmp_path, monkeypatch) -> None:
     dsh = tmp_path / "dsh"
     dsh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     dsh.chmod(0o644)
     node = tmp_path / "node"
     node.write_text("#!/bin/sh\nprintf 'v24.0.0\\n'\n", encoding="utf-8")
     node.chmod(0o755)
-    home = tmp_path / "dsh-home"
-    for package, version in DEEPSEEK_PACKAGE_VERSIONS:
-        package_dir = home / "node_modules" / package
-        package_dir.mkdir(parents=True)
-        (package_dir / "package.json").write_text(
-            json.dumps({"version": version}) + "\n", encoding="utf-8"
-        )
+    home = _managed_home(tmp_path)
+    _write_packages(home)
     profile = home / "profiles" / "cccc-acp"
     profile.mkdir(parents=True)
     (profile / "package.json").write_text(_canonical_manifest(), encoding="utf-8")
-    (profile / "cordis.patch.yml").write_text(
-        "this is not a patch @deepseek-ai/dsh-acp and serverName: cccc", encoding="utf-8"
-    )
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("DSH_HOME", str(home))
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path / "cccc-home"))
     assert "executable not found" in deepseek_preflight_error(["dsh"], runner="headless")
     dsh.chmod(0o755)
-    assert "ACP/CCCC" in deepseek_preflight_error([str(dsh)], runner="headless")
+    assert "config" in deepseek_preflight_error([str(dsh)], runner="headless")
 
 
 def test_deepseek_preflight_accepts_exact_fake_bundle(tmp_path, monkeypatch) -> None:
@@ -119,32 +129,24 @@ def test_deepseek_preflight_accepts_exact_fake_bundle(tmp_path, monkeypatch) -> 
     node = tmp_path / "node"
     node.write_text("#!/bin/sh\nprintf 'v24.0.0\\n'\n", encoding="utf-8")
     node.chmod(0o755)
-    home = tmp_path / "dsh-home"
-    for package, version in DEEPSEEK_PACKAGE_VERSIONS:
-        package_dir = home / "node_modules" / package
-        package_dir.mkdir(parents=True)
-        (package_dir / "package.json").write_text(
-            json.dumps({"version": version}) + "\n", encoding="utf-8"
-        )
+    home = _managed_home(tmp_path)
+    _write_packages(home)
     profile = home / "profiles" / "cccc-acp"
     profile.mkdir(parents=True)
     (profile / "package.json").write_text(_canonical_manifest(), encoding="utf-8")
-    (profile / "cordis.patch.yml").write_text(
-        "- insert:\n    - id: acp\n      name: '@deepseek-ai/dsh-acp'\n"
-        "    - id: cccc-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n"
-        "      config:\n        transport: stdio\n        serverName: cccc\n"
-        f"        command: '{dsh}'\n        args: [mcp]\n        env:\n"
-        "          CCCC_HOME: !!js process.env.CCCC_HOME\n"
-        "          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n"
-        "          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n"
-        "        failOnStartupError: true\n",
-        encoding="utf-8",
-    )
     (profile / "cordis.yml").write_text(_canonical_config(dsh), encoding="utf-8")
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("DSH_HOME", str(home))
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path / "cccc-home"))
 
     assert deepseek_preflight_error([str(dsh), "--profile", "cccc-acp"], runner="headless") == ""
+    lock_path = home / "package-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["packages"]["node_modules/@deepseek-ai/dsh-transitive"] = {
+        "version": "0.1.0-rc.7"
+    }
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    assert "dependency graph" in deepseek_preflight_error([str(dsh)], runner="headless")
+    _write_packages(home)
     adapter_manifest = home / "node_modules" / DEEPSEEK_LLM_ADAPTER_PACKAGE / "package.json"
     adapter_manifest.write_text('{"version":"0.1.0-rc.7"}\n', encoding="utf-8")
     mismatch = deepseek_preflight_error([str(dsh), "--profile", "cccc-acp"], runner="headless")
@@ -156,41 +158,26 @@ def test_deepseek_preflight_accepts_exact_fake_bundle(tmp_path, monkeypatch) -> 
     assert DEEPSEEK_LLM_ADAPTER_PACKAGE in missing
 
 
-def test_deepseek_preflight_rejects_effective_home_patch_override(tmp_path, monkeypatch) -> None:
+def test_deepseek_preflight_isolated_from_user_dsh_home_patch(tmp_path, monkeypatch) -> None:
     dsh = tmp_path / "dsh"
     dsh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     dsh.chmod(0o755)
     node = tmp_path / "node"
     node.write_text("#!/bin/sh\nprintf 'v24.0.0\\n'\n", encoding="utf-8")
     node.chmod(0o755)
-    home = tmp_path / "dsh-home"
-    for package, version in DEEPSEEK_PACKAGE_VERSIONS:
-        package_dir = home / "node_modules" / package
-        package_dir.mkdir(parents=True)
-        (package_dir / "package.json").write_text(
-            json.dumps({"version": version}) + "\n", encoding="utf-8"
-        )
+    home = _managed_home(tmp_path)
+    _write_packages(home)
     profile = home / "profiles" / "cccc-acp"
     profile.mkdir(parents=True)
     (profile / "package.json").write_text(_canonical_manifest(), encoding="utf-8")
-    (profile / "cordis.patch.yml").write_text(
-        "- insert:\n    - id: acp\n      name: '@deepseek-ai/dsh-acp'\n"
-        "    - id: cccc-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n"
-        "      config:\n        transport: stdio\n        serverName: cccc\n"
-        f"        command: '{dsh}'\n        args: [mcp]\n        env:\n"
-        "          CCCC_HOME: !!js process.env.CCCC_HOME\n"
-        "          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n"
-        "          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n"
-        "        failOnStartupError: true\n",
-        encoding="utf-8",
-    )
     (profile / "cordis.yml").write_text(_canonical_config(dsh), encoding="utf-8")
-    (home / "cordis.patch.yml").write_text("disable: dsh-acp\n", encoding="utf-8")
+    user_dsh = tmp_path / "user-dsh"
+    user_dsh.mkdir()
+    (user_dsh / "cordis.patch.yml").write_text("disable: dsh-acp\n", encoding="utf-8")
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("DSH_HOME", str(home))
-    error = deepseek_preflight_error([str(dsh), "--profile", "cccc-acp"], runner="headless")
-    assert error.startswith("setup_required:")
-    assert "overrides" in error
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path / "cccc-home"))
+    monkeypatch.setenv("DSH_HOME", str(user_dsh))
+    assert deepseek_preflight_error([str(dsh)], runner="headless") == ""
 
 
 def test_deepseek_preflight_ignores_actor_version_overrides(tmp_path, monkeypatch) -> None:
@@ -200,18 +187,10 @@ def test_deepseek_preflight_ignores_actor_version_overrides(tmp_path, monkeypatc
     node = tmp_path / "node"
     node.write_text("#!/bin/sh\nprintf 'v24.0.0\\n'\n", encoding="utf-8")
     node.chmod(0o755)
-    home = tmp_path / "dsh-home"
-    for package, version in DEEPSEEK_PACKAGE_VERSIONS:
-        package_dir = tmp_path / "node_modules" / package
-        package_dir.mkdir(parents=True)
-        (package_dir / "package.json").write_text(
-            json.dumps({"version": version}) + "\n", encoding="utf-8"
-        )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.setenv("DSH_HOME", str(home))
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path / "cccc-home"))
     monkeypatch.setenv("CCCC_NODE_VERSION", "24.0.0")
-    monkeypatch.setenv("CCCC_DEEPSEEK_DSH_VERSION", DEEPSEEK_DSH_VERSION)
     monkeypatch.setenv("CCCC_DEEPSEEK_ACP_VERSION", DEEPSEEK_ACP_VERSION)
     monkeypatch.setenv("CCCC_DEEPSEEK_MCP_CLIENT_VERSION", DEEPSEEK_ACP_VERSION)
 

@@ -14,6 +14,7 @@ mod capability_builtin;
 pub mod capability_legacy;
 #[cfg(test)]
 mod capability_legacy_tests;
+pub mod cloudflared;
 pub mod codex_hook_state;
 pub mod context;
 pub mod fs;
@@ -33,6 +34,7 @@ pub mod integration_state;
 pub mod ledger;
 pub mod ledger_archive;
 mod ledger_index;
+pub mod membership;
 pub mod memory;
 pub mod nomcp;
 pub mod path_input;

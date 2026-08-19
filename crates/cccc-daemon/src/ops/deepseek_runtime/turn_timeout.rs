@@ -25,8 +25,8 @@ fn append_timeout_terminal(projection: &TurnProjection<'_>) -> std::io::Result<(
             ),
         ]),
         Some(&format!(
-            "deepseek.turn:headless.turn.failed:{}",
-            projection.event.id
+            "deepseek.turn:headless.turn.failed:{}:{}",
+            projection.event.id, projection.attempt_id
         )),
     )
 }

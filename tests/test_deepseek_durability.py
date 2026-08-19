@@ -4,8 +4,7 @@ import json
 
 from cccc.kernel.group import Group
 
-def test_recovery_cap_fails_closed_and_marker_dedupe_survives_large_history(tmp_path, monkeypatch) -> None:
-    from cccc.daemon.messaging import deepseek_delivery
+def test_marker_dedupe_survives_large_history(tmp_path) -> None:
     from cccc.kernel.headless_events import append_headless_event
 
     group = Group(
@@ -13,12 +12,6 @@ def test_recovery_cap_fails_closed_and_marker_dedupe_survives_large_history(tmp_
         path=tmp_path,
         doc={"group_id": "deepseek-bounds", "actors": [{"id": "deepseek", "runtime": "deepseek", "runner": "headless"}], "automation": {}},
     )
-    path = tmp_path / "state" / "headless" / "events.jsonl"
-    path.parent.mkdir(parents=True)
-    path.write_bytes(b"x" * 128)
-    monkeypatch.setattr(deepseek_delivery, "_RECOVERY_MAX_BYTES", 64)
-    assert deepseek_delivery.recover_durable_terminals(group, actor_id="deepseek") == 0
-    path.unlink()
     first = append_headless_event(
         tmp_path,
         group_id=group.group_id,
@@ -27,16 +20,6 @@ def test_recovery_cap_fails_closed_and_marker_dedupe_survives_large_history(tmp_
         data={"event_id": "event-1"},
         dedupe_key="deepseek.update:event-1:0",
     )
-    path.write_text(path.read_text() + "x" * 128, encoding="utf-8")
-    second = append_headless_event(
-        tmp_path,
-        group_id=group.group_id,
-        actor_id="deepseek",
-        event_type="headless.message.delta",
-        data={"event_id": "event-1"},
-        dedupe_key="deepseek.update:event-1:0",
-    )
-    assert first["id"] == second["id"]
     for ordinal in range(1, 320):
         append_headless_event(
             tmp_path,
@@ -46,6 +29,18 @@ def test_recovery_cap_fails_closed_and_marker_dedupe_survives_large_history(tmp_
             data={"payload": "x" * 1024},
             dedupe_key=f"deepseek.update:event-1:{ordinal}",
         )
+    path = tmp_path / "state" / "headless" / "events.jsonl"
+    line_count = len(path.read_text(encoding="utf-8").splitlines())
+    second = append_headless_event(
+        tmp_path,
+        group_id=group.group_id,
+        actor_id="deepseek",
+        event_type="headless.message.delta",
+        data={"event_id": "event-1"},
+        dedupe_key="deepseek.update:event-1:0",
+    )
+    assert first["id"] == second["id"]
+    assert len(path.read_text(encoding="utf-8").splitlines()) == line_count
     assert len(path.read_text(encoding="utf-8").splitlines()) > 256
 
 

@@ -13,6 +13,7 @@ from .space_cmds import *  # noqa: F401,F403
 from .im_cmds import *  # noqa: F401,F403
 from .system_cmds import *  # noqa: F401,F403
 from .runtime_hook_cmd import cmd_runtime_hook
+from .membership_cmds import cmd_login, cmd_logout, cmd_reach
 
 
 def _apply_invocation_web_overrides(args: argparse.Namespace) -> tuple[dict[str, Optional[str]], dict[str, str]]:
@@ -310,6 +311,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon = sub.add_parser("daemon", help="Manage ccccd daemon")
     p_daemon.add_argument("action", choices=["start", "stop", "status", "run"], help="Action")
     p_daemon.set_defaults(func=cmd_daemon)
+
+    p_login = sub.add_parser("login", help="Bind this machine to a CCCC membership account")
+    p_login.set_defaults(func=cmd_login)
+
+    p_logout = sub.add_parser(
+        "logout",
+        help="Remove local membership identity (new login gets a new hostname)",
+    )
+    p_logout.set_defaults(func=cmd_logout)
+
+    p_reach = sub.add_parser("reach", help="Manage membership public HTTPS / MCP reachability")
+    reach_sub = p_reach.add_subparsers(dest="action", required=True)
+    reach_sub.add_parser("on", help="Request a tunnel and publish the stable hostname").set_defaults(func=cmd_reach)
+    reach_sub.add_parser("off", help="Stop the tunnel but keep this device logged in").set_defaults(func=cmd_reach)
+    reach_sub.add_parser("status", help="Show login, hostname, and reach state").set_defaults(func=cmd_reach)
+    reach_sub.add_parser("install", help="Download or upgrade the pinned cloudflared helper").set_defaults(func=cmd_reach)
 
     # IM Bridge commands
     p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord/Feishu/Lark/DingTalk/WeCom/Weixin)")

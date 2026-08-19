@@ -52,6 +52,86 @@ done"#;
 
 #[cfg(unix)]
 #[test]
+fn failed_attempt_output_does_not_hide_successful_retry() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("deepseek retry output", "").expect("group");
+    let script = r#"attempt=0
+while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  attempt=$((attempt + 1))
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  if [ "$attempt" -eq 1 ]; then
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}}'
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"message":"temporary"}}\n' "$rid"
+  else
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"complete"}}}}'
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$rid"
+  fi
+fi
+done"#;
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), script.into()];
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save");
+    start(&home, &group, &actor, temp.path()).expect("start");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = serde_json::json!({"to":["deepseek"],"text":"hello"})
+        .as_object()
+        .cloned()
+        .expect("event data");
+    let cancelled = AtomicBool::new(false);
+
+    assert!(!deliver(&home, &group, &actor, &event, &cancelled));
+    assert!(deliver(&home, &group, &actor, &event, &cancelled));
+
+    let events = std::fs::read_to_string(
+        store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("headless/events.jsonl"),
+    )
+    .expect("headless events")
+    .lines()
+    .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("event json"))
+    .collect::<Vec<_>>();
+    let deltas = events
+        .iter()
+        .filter(|event| {
+            event.get("type").and_then(serde_json::Value::as_str) == Some("headless.message.delta")
+        })
+        .filter_map(|event| {
+            event
+                .pointer("/data/delta")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    let completed = events
+        .iter()
+        .filter(|event| {
+            event.get("type").and_then(serde_json::Value::as_str)
+                == Some("headless.message.completed")
+        })
+        .filter_map(|event| {
+            event
+                .pointer("/data/text")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deltas, ["partial", "complete"]);
+    assert_eq!(completed, ["partial", "complete"]);
+    stop(&group.group_id, &actor.id);
+}
+
+#[cfg(unix)]
+#[test]
 fn missing_credential_is_structured_secret_free_and_stops_runtime() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

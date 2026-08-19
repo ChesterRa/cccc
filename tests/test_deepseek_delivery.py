@@ -36,7 +36,7 @@ def test_deepseek_delivery_persists_output_before_success(tmp_path) -> None:
         actor_id="deepseek",
         cwd=tmp_path,
         command=["sh", "-c", _fake_acp_script()],
-        env=dict(os.environ),
+        env={**os.environ, "CCCC_HOME": str(tmp_path / "cccc-home")},
     )
     try:
         message = PendingMessage(
@@ -65,6 +65,46 @@ def test_deepseek_delivery_persists_output_before_success(tmp_path) -> None:
         deepseek_runtime.stop(group_id=group.group_id, actor_id="deepseek")
 
 
+def test_large_event_log_reuses_the_durable_completion_marker(
+    tmp_path, monkeypatch
+) -> None:
+    from cccc.kernel.headless_events import append_headless_event
+
+    group = Group(
+        group_id="deepseek-large-recovery",
+        path=tmp_path,
+        doc={"group_id": "deepseek-large-recovery", "actors": [], "automation": {}},
+    )
+    event_id = "event-already-completed"
+    append_headless_event(
+        tmp_path,
+        group_id=group.group_id,
+        actor_id="deepseek",
+        event_type="headless.turn.completed",
+        data={"event_id": event_id},
+        dedupe_key=f"deepseek.turn:headless.turn.completed:{event_id}",
+    )
+    events = tmp_path / "state" / "headless" / "events.jsonl"
+    with events.open("ab") as handle:
+        handle.write(b"x" * (4 * 1024 * 1024 + 1) + b"\n")
+
+    class ExistingSession:
+        session_id = "existing-session"
+
+        def submit(self, _prompt: str) -> int:
+            raise AssertionError("a durable completed event must not be submitted again")
+
+    monkeypatch.setattr(deepseek_runtime, "get", lambda **_kwargs: ExistingSession())
+    message = PendingMessage(
+        event_id=event_id,
+        by="user",
+        to=["deepseek"],
+        text="do not repeat",
+        ts="2026-01-01T00:00:00Z",
+    )
+    assert deliver_messages(group, actor_id="deepseek", messages=[message]) is True
+
+
 def test_terminal_append_failure_keeps_source_delivery_failed(tmp_path, monkeypatch) -> None:
     group = Group(group_id="deepseek-terminal-failure", path=tmp_path, doc={"group_id": "deepseek-terminal-failure", "actors": [], "automation": {}})
     deepseek_runtime.start(
@@ -72,7 +112,7 @@ def test_terminal_append_failure_keeps_source_delivery_failed(tmp_path, monkeypa
         actor_id="deepseek",
         cwd=tmp_path,
         command=["sh", "-c", _fake_acp_script()],
-        env=dict(os.environ),
+        env={**os.environ, "CCCC_HOME": str(tmp_path / "cccc-home")},
     )
     import cccc.daemon.messaging.deepseek_delivery as adapter
 
@@ -234,6 +274,89 @@ def test_timeout_cancels_and_confirms_terminal_before_retry(tmp_path, monkeypatc
     events = (tmp_path / "state" / "headless" / "events.jsonl").read_text(encoding="utf-8")
     assert "headless.turn.failed" in events
     assert '"code":"timeout"' in events
+
+
+def test_failed_attempt_output_does_not_hide_successful_retry(tmp_path, monkeypatch) -> None:
+    group = Group(
+        group_id="deepseek-retry-output",
+        path=tmp_path,
+        doc={"group_id": "deepseek-retry-output", "actors": [], "automation": {}},
+    )
+
+    class FakeSupervisor:
+        session_id = "fake-session"
+
+        def __init__(self) -> None:
+            self.request_id = 2
+            self.frames: list[dict] = []
+
+        def submit(self, _prompt: str) -> int:
+            self.request_id += 1
+            text = "partial" if self.request_id == 3 else "complete"
+            terminal = (
+                {"jsonrpc": "2.0", "id": self.request_id, "error": {"message": "temporary"}}
+                if self.request_id == 3
+                else {
+                    "jsonrpc": "2.0",
+                    "id": self.request_id,
+                    "result": {"stopReason": "end_turn"},
+                }
+            )
+            self.frames = [
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": self.session_id,
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": text},
+                        },
+                    },
+                },
+                terminal,
+            ]
+            return self.request_id
+
+        def next_frame(self, *, timeout: float):
+            del timeout
+            return self.frames.pop(0)
+
+        def cancel(self) -> None:
+            raise AssertionError("terminal response must not be cancelled")
+
+        def respond_permission(self, *_args, **_kwargs) -> None:
+            raise AssertionError("no permission request expected")
+
+    supervisor = FakeSupervisor()
+    monkeypatch.setattr(deepseek_runtime, "get", lambda **_kwargs: supervisor)
+    message = PendingMessage(
+        event_id="event-retry-output",
+        by="user",
+        to=["deepseek"],
+        text="hello",
+        ts="2026-01-01T00:00:00Z",
+    )
+
+    assert deliver_messages(group, actor_id="deepseek", messages=[message]) is False
+    assert deliver_messages(group, actor_id="deepseek", messages=[message]) is True
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "headless" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [
+        event["data"]["delta"]
+        for event in events
+        if event["type"] == "headless.message.delta"
+    ] == ["partial", "complete"]
+    assert [
+        event["data"]["text"]
+        for event in events
+        if event["type"] == "headless.message.completed"
+    ] == ["partial", "complete"]
 
 
 def test_missing_credential_is_structured_secret_free_and_stops_runtime(

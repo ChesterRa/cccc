@@ -132,6 +132,8 @@ async fn scoped_token_cannot_access_global_management_routes() {
     for (method, path) in [
         ("GET", "/api/v1/remote_access"),
         ("POST", "/api/v1/remote_access/start"),
+        ("GET", "/api/v1/membership"),
+        ("POST", "/api/v1/membership/reach/on"),
         ("GET", "/api/v1/debug/tail_logs"),
         ("POST", "/api/v1/debug/clear_logs"),
         ("GET", "/api/v1/capabilities/allowlist"),

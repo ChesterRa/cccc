@@ -83,6 +83,37 @@ pub(crate) fn append_with_dedupe(
     result
 }
 
+pub(crate) fn contains_dedupe(home: &HomeLayout, group_id: &str, key: &str) -> io::Result<bool> {
+    if key.is_empty() {
+        return Ok(false);
+    }
+    let store = GroupStore::new(home.clone())?;
+    let directory = store.state_dir(group_id)?.join("headless");
+    let path = directory.join("events.jsonl");
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(directory.join("events.lock"))?;
+    lock.lock_exclusive()?;
+    let result = (|| {
+        let marker_dir = directory.join("events.dedupe");
+        fs::create_dir_all(&marker_dir)?;
+        recover_pending(&path, &marker_dir)?;
+        ensure_dedupe_index(&path, &marker_dir)?;
+        Ok(marker_matches(
+            &marker_dir.join(dedupe_marker_name(key)),
+            key,
+        ))
+    })();
+    FileExt::unlock(&lock).ok();
+    result
+}
+
 fn event_payload(
     group_id: &str,
     actor_id: &str,

@@ -1243,6 +1243,10 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         self.assertEqual(fake_cm.playwright.chromium.connect_calls, [("http://127.0.0.1:9222", {"timeout": 15000})])
         self.assertEqual(fake_cm.playwright.chromium.launch_calls, [])
+        self.assertEqual(
+            fake_cm.playwright.chromium.last_browser.contexts[0].pages[0].url,
+            "https://accounts.google.com",
+        )
         cmd = popen.call_args.args[0]
         self.assertIn("--app=https://accounts.google.com", cmd)
         self.assertNotIn("https://accounts.google.com", [arg for arg in cmd if not str(arg).startswith("--app=")])

@@ -26,7 +26,7 @@
     "source_event_id": "event-1",
     "ordinals": [0, 1],
     "expected_durable_updates": 2,
-    "dedupe_key": "deepseek.update:event-1:{ordinal}"
+    "dedupe_key": "deepseek.update:event-1:{attempt}:{ordinal}"
   },
   "frames": [
     {"name": "response", "line": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}", "id": 1, "valid": true},

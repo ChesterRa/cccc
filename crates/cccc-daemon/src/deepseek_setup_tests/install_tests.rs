@@ -14,8 +14,10 @@ fn concurrent_first_use_runs_the_installer_once() {
         let executable = executable.clone();
         let installs = Arc::clone(&installs);
         threads.push(std::thread::spawn(move || {
+            let home = test_home(&root);
             let mut env = test_env(&root);
             ensure_with(
+                &home,
                 &mut env,
                 &executable,
                 |home, env| {
@@ -45,9 +47,9 @@ fn npm_installer_writes_the_pinned_package_tuple() {
         &npm,
         r#"#!/bin/sh
 set -eu
+printf '%s\n' "$@" > npm-args.txt
 for spec in "$@"; do
   case "$spec" in
-    @deepseek-ai/dsh@*) name=dsh; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-acp@*) name=dsh-acp; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-mcp-client@*) name=dsh-mcp-client; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-acp-demo@*) name=dsh-acp-demo; version=0.1.0-rc.6 ;;
@@ -57,11 +59,12 @@ for spec in "$@"; do
   mkdir -p "node_modules/@deepseek-ai/$name"
   printf '{"version":"%s"}\n' "$version" > "node_modules/@deepseek-ai/$name/package.json"
 done
+printf '%s\n' '{"lockfileVersion":3,"packages":{"":{"dependencies":{"@deepseek-ai/dsh-acp":"0.1.0-rc.6","@deepseek-ai/dsh-mcp-client":"0.1.0-rc.6","@deepseek-ai/dsh-acp-demo":"0.1.0-rc.6","@deepseek-ai/dsh-llm-deepseek":"0.1.0-rc.6"}},"node_modules/@deepseek-ai/dsh-acp":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-mcp-client":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-acp-demo":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-llm-deepseek":{"version":"0.1.0-rc.6"}}}' > package-lock.json
 "#,
     )
     .expect("npm fixture");
     fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).expect("npm mode");
-    let dsh_home = temp.path().join(".dsh");
+    let dsh_home = temp.path().join("dsh-runtime");
     fs::create_dir(&dsh_home).expect("dsh home");
     let mut paths = vec![temp.path().to_path_buf()];
     paths.extend(std::env::split_paths(
@@ -76,4 +79,11 @@ done
     )]);
     install_packages(&dsh_home, &env).expect("install packages");
     assert!(packages_ready(&dsh_home));
+    let args = fs::read_to_string(dsh_home.join("npm-args.txt")).expect("npm args");
+    assert!(args.lines().any(|line| line == DEEPSEEK_NPM_BEFORE));
+    assert!(
+        !args
+            .lines()
+            .any(|line| line == "@deepseek-ai/dsh@0.1.0-rc.6")
+    );
 }

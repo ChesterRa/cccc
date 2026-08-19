@@ -111,6 +111,7 @@ def test_deepseek_subprocess_environment_inherits_daemon_values(monkeypatch) -> 
 
 def test_registry_runs_first_use_setup_before_starting_dsh(tmp_path, monkeypatch) -> None:
     calls = []
+    dsh_home = tmp_path / ".cccc/runtimes/deepseek/0.1.0-rc.6"
 
     class FakeSupervisor:
         def __init__(self, command, *, cwd, env):
@@ -130,7 +131,7 @@ def test_registry_runs_first_use_setup_before_starting_dsh(tmp_path, monkeypatch
             return True
 
     def setup(env):
-        dsh_home = tmp_path / ".dsh"
+        env["CCCC_HOME"] = str(tmp_path / ".cccc")
         env["DSH_HOME"] = str(dsh_home)
         calls.append(("setup", dict(env)))
         return DeepSeekSetupOutcome(
@@ -151,8 +152,13 @@ def test_registry_runs_first_use_setup_before_starting_dsh(tmp_path, monkeypatch
     )
     try:
         assert [call[0] for call in calls[:4]] == ["setup", "supervisor", "start", "handshake"]
-        assert calls[1][3]["DSH_HOME"] == str(tmp_path / ".dsh")
-        assert calls[1][1][-2:] == ["--config", str(tmp_path / ".dsh/profiles/cccc-acp/cordis.yml")]
+        assert calls[1][3]["DSH_HOME"] == str(dsh_home)
+        assert calls[1][3]["CCCC_GROUP_ID"] == "g-first-use"
+        assert calls[1][3]["CCCC_ACTOR_ID"] == "deepseek"
+        assert calls[1][3]["CCCC_DEEPSEEK_SESSION_ROOT"] == str(
+            tmp_path / ".cccc/groups/g-first-use/state/deepseek/deepseek/sessions"
+        )
+        assert calls[1][1][-2:] == ["--config", str(dsh_home / "profiles/cccc-acp/cordis.yml")]
     finally:
         deepseek_runtime.stop(group_id="g-first-use", actor_id="deepseek")
 

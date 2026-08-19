@@ -1,8 +1,33 @@
 // Included by the crate-level integration test harness.
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::access_tokens::AccessTokenStore;
-use cccc_core::{GroupStore, HomeLayout, Registry, group_scope, ledger, scope, settings};
+use cccc_core::{
+    GroupStore, HomeLayout, Registry, group_scope, ledger, membership, scope, settings,
+};
 use serde_json::{Map, Value, json};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::thread;
+
+fn membership_account_server(responses: Vec<(u16, &'static str)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind account fixture");
+    let address = listener.local_addr().expect("account address");
+    thread::spawn(move || {
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept().expect("account request");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            let reason = if status == 200 { "OK" } else { "Bad Request" };
+            write!(
+                stream,
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("account response");
+        }
+    });
+    format!("http://{address}")
+}
 
 #[test]
 fn remote_access_requires_secure_configuration_and_token() {
@@ -130,6 +155,302 @@ fn legacy_remote_access_mode_is_migrated_before_stop() {
             .remote_access["mode"],
         "tailnet_only"
     );
+}
+
+#[test]
+fn membership_verbs_fail_closed_when_the_account_plane_rejects_login() {
+    let origin = membership_account_server(vec![(500, r#"{"error":{"message":"unavailable"}}"#)]);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+
+    let status = ok(&home, "membership_status", json!({"by":"user"}));
+    assert_eq!(status.result["membership"]["logged_in"], false);
+
+    let login = raw(
+        &home,
+        "membership_login",
+        json!({"by":"user","account_origin":origin}),
+    );
+    assert_eq!(login.error.expect("login error").code, "membership_network");
+
+    let missing_token = raw(&home, "membership_reach_on", json!({"by":"user"}));
+    assert_eq!(missing_token.error.expect("gate").code, "membership_gate");
+
+    AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("admin", Vec::new(), true, None)
+        .expect("token");
+    let missing_login = raw(&home, "membership_reach_on", json!({"by":"user"}));
+    assert_eq!(
+        missing_login.error.expect("not logged in").code,
+        "membership_not_logged_in"
+    );
+
+    let rejected = raw(
+        &home,
+        "remote_access_configure",
+        json!({"provider":"reach","by":"user"}),
+    );
+    assert_eq!(
+        rejected.error.expect("configure").code,
+        "remote_access_invalid_config"
+    );
+
+    let logout = ok(&home, "membership_logout", json!({"by":"user"}));
+    assert!(
+        logout.result["membership"]["warning"]
+            .as_str()
+            .expect("warning")
+            .contains("new hostname")
+    );
+}
+
+#[test]
+fn membership_status_is_user_only_and_rust_login_reuses_python_credentials() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    std::fs::create_dir_all(membership::path(&home).parent().expect("parent")).expect("secrets");
+    std::fs::write(
+        membership::path(&home),
+        serde_json::to_vec_pretty(&json!({
+            "logged_in": true,
+            "device_id": "d-python",
+            "device_token": "device-secret",
+            "hostname": "https://d-python.example.test",
+            "tunnel_token": "tunnel-secret",
+            "disabled": false,
+            "last_error": null,
+            "pending_login": {"device_code":"pending-secret","interval":120}
+        }))
+        .expect("json"),
+    )
+    .expect("membership");
+
+    let denied = raw(&home, "membership_status", json!({"by":"peer1"}));
+    assert_eq!(denied.error.expect("denied").code, "permission_denied");
+
+    let login = raw(
+        &home,
+        "membership_login",
+        json!({"by":"user","account_origin":"http://127.0.0.1:1"}),
+    );
+    assert!(
+        login.ok,
+        "existing membership should be reused: {:?}",
+        login.error
+    );
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(membership::path(&home)).expect("saved membership"))
+            .expect("saved json");
+    assert_eq!(saved["device_token"], "device-secret");
+    assert_eq!(saved["tunnel_token"], "tunnel-secret");
+    assert_eq!(saved["pending_login"]["device_code"], "pending-secret");
+}
+
+#[test]
+fn rust_membership_login_and_poll_complete_the_device_flow() {
+    let origin = membership_account_server(vec![
+        (
+            200,
+            r#"{"device_code":"dc-rust","user_code":"RUST-CODE","verification_uri":"https://account.test/device","expires_in":600,"interval":120}"#,
+        ),
+        (
+            200,
+            r#"{"access_token":"device-token","device_id":"device-rust","hostname":"https://device-rust.example.test"}"#,
+        ),
+    ]);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    let started = ok(
+        &home,
+        "membership_login",
+        json!({"by":"user","account_origin":origin}),
+    );
+    assert_eq!(
+        started.result["membership"]["pending"]["user_code"],
+        "RUST-CODE"
+    );
+    assert_eq!(started.result["membership"]["pending"]["interval"], 120);
+    let granted = ok(
+        &home,
+        "membership_login_poll",
+        json!({"by":"user","account_origin":origin}),
+    );
+    assert_eq!(granted.result["membership"]["logged_in"], true);
+    assert_eq!(granted.result["membership"]["device_id"], "device-rust");
+    let stored = membership::load(&home).expect("membership state");
+    assert_eq!(stored.device_token.as_deref(), Some("device-token"));
+    assert_eq!(stored.account_origin.as_deref(), Some(origin.as_str()));
+    assert!(stored.pending_login.is_none());
+}
+
+#[test]
+fn rust_membership_status_applies_a_remote_cut() {
+    let origin = membership_account_server(vec![(
+        403,
+        r#"{"error":{"code":"disabled","message":"device disabled"}}"#,
+    )]);
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    membership::save(
+        &home,
+        &membership::MembershipState {
+            logged_in: true,
+            account_origin: Some(origin.clone()),
+            device_id: Some("device-rust".into()),
+            device_token: Some("device-token".into()),
+            hostname: Some("https://device-rust.example.test".into()),
+            ..membership::MembershipState::default()
+        },
+    )
+    .expect("membership");
+    settings::update(&home, |global| {
+        global
+            .remote_access
+            .insert("provider".into(), Value::String("reach".into()));
+        global
+            .remote_access
+            .insert("enabled".into(), Value::Bool(true));
+        global.remote_access.insert(
+            "web_public_url".into(),
+            Value::String("https://device-rust.example.test".into()),
+        );
+        Ok(())
+    })
+    .expect("settings");
+    let status = ok(
+        &home,
+        "membership_status",
+        json!({"by":"user","account_origin":origin}),
+    );
+    assert_eq!(status.result["membership"]["cut"], true);
+    assert_eq!(status.result["membership"]["online"], false);
+    let remote = settings::load(&home).expect("settings").remote_access;
+    assert_eq!(remote["enabled"], false);
+    assert_eq!(remote["web_public_url"], "");
+}
+
+#[test]
+fn rust_remote_access_does_not_report_reach_running_without_a_live_helper() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("admin", Vec::new(), true, Some("acc_reach_status"))
+        .expect("admin token");
+    settings::update(&home, |global| {
+        global
+            .remote_access
+            .insert("provider".into(), Value::String("reach".into()));
+        global
+            .remote_access
+            .insert("enabled".into(), Value::Bool(true));
+        global.remote_access.insert(
+            "web_public_url".into(),
+            Value::String("https://device-rust.example.test".into()),
+        );
+        Ok(())
+    })
+    .expect("settings");
+
+    let state = ok(&home, "remote_access_state", json!({"by":"user"}));
+    assert_eq!(state.result["remote_access"]["status"], "error");
+    assert_eq!(state.result["remote_access"]["endpoint"], Value::Null);
+    assert_eq!(
+        state.result["remote_access"]["diagnostics"]["reach_helper_running"],
+        false
+    );
+}
+
+#[test]
+fn rust_remote_access_rejects_configuration_while_reach_is_active() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    settings::update(&home, |global| {
+        global
+            .remote_access
+            .insert("provider".into(), Value::String("reach".into()));
+        global
+            .remote_access
+            .insert("enabled".into(), Value::Bool(true));
+        Ok(())
+    })
+    .expect("settings");
+
+    let changed = raw(
+        &home,
+        "remote_access_configure",
+        json!({"provider":"manual","web_port":9000,"by":"user"}),
+    );
+    assert_eq!(
+        changed.error.expect("ownership error").code,
+        "remote_access_invalid_config"
+    );
+    let remote = settings::load(&home).expect("settings").remote_access;
+    assert_eq!(remote["provider"], "reach");
+    assert_eq!(remote["enabled"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn rust_reach_off_stops_a_cloudflared_process_started_by_python() {
+    use std::os::unix::fs::symlink;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    let helper_dir = home.root().join("libexec").join("cloudflared");
+    std::fs::create_dir_all(&helper_dir).expect("helper dir");
+    let helper = helper_dir.join("cloudflared-test-helper");
+    symlink("/bin/sleep", &helper).expect("helper symlink");
+    let mut child = Command::new(&helper)
+        .arg("30")
+        .spawn()
+        .expect("cloudflared fixture");
+    std::fs::write(
+        helper_dir.join("cloudflared.pid"),
+        serde_json::to_vec(&json!({
+            "schema":1,
+            "pid":child.id(),
+            "executable":std::fs::canonicalize(&helper).expect("helper executable")
+        }))
+        .expect("pid marker"),
+    )
+    .expect("pid");
+    std::fs::write(helper_dir.join("cloudflared.token"), "secret").expect("token");
+    let mut global = settings::load(&home).expect("settings");
+    global
+        .remote_access
+        .insert("provider".into(), json!("reach"));
+    global.remote_access.insert("enabled".into(), json!(true));
+    settings::save(&home, &global).expect("settings save");
+
+    let stopped = raw(&home, "membership_reach_off", json!({"by":"user"}));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if child.try_wait().expect("wait").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !exited {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    assert!(stopped.ok, "reach off failed: {:?}", stopped.error);
+    assert!(exited, "tracked cloudflared process remained alive");
+    assert!(!helper_dir.join("cloudflared.pid").exists());
+    assert!(!helper_dir.join("cloudflared.token").exists());
 }
 
 #[test]

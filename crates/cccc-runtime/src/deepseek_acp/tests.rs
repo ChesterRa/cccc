@@ -32,7 +32,7 @@ fn shared_vectors_cover_valid_and_invalid_frames() {
     assert_ne!(terminal_stop_reason(cancelled), Some("end_turn"));
     assert_eq!(
         fixture["update_idempotency"]["dedupe_key"],
-        "deepseek.update:event-1:{ordinal}"
+        "deepseek.update:event-1:{attempt}:{ordinal}"
     );
     assert_eq!(fixture["update_idempotency"]["expected_durable_updates"], 2);
 }

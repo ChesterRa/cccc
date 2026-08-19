@@ -9,8 +9,6 @@ mod turn_timeout;
 
 pub use delivery::deliver;
 pub use lifecycle::apply;
-#[cfg(test)]
-use recovery::read_bounded_events;
 pub use recovery::recover;
 
 use cccc_contracts::Actor;
@@ -49,12 +47,27 @@ pub fn start(
     stop(&group.group_id, &actor.id);
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let mut supervisor = DeepSeekSupervisor::default();
-    let env = actor
-        .env
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<Vec<_>>();
-    let command = launch_command::resolve(actor)?;
+    let mut env = actor.env.clone();
+    env.insert(
+        "CCCC_HOME".into(),
+        home.root().to_string_lossy().into_owned(),
+    );
+    env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
+    env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
+    let session_root = home
+        .root()
+        .join("groups")
+        .join(&group.group_id)
+        .join("state/deepseek")
+        .join(&actor.id)
+        .join("sessions");
+    std::fs::create_dir_all(&session_root)?;
+    env.insert(
+        "CCCC_DEEPSEEK_SESSION_ROOT".into(),
+        session_root.to_string_lossy().into_owned(),
+    );
+    let command = launch_command::resolve(actor, &env)?;
+    let env = env.into_iter().collect::<Vec<_>>();
     supervisor
         .start(&command, cwd, &env)
         .map_err(std::io::Error::other)?;
@@ -78,7 +91,6 @@ pub fn start(
         .write()
         .map_err(|_| std::io::Error::other("deepseek cancel lock poisoned"))?
         .insert((group.group_id.clone(), actor.id.clone()), cancel_flag);
-    let _ = home;
     Ok(())
 }
 

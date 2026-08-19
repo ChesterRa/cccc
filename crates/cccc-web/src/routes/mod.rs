@@ -29,6 +29,7 @@ mod headless;
 mod headless_store;
 mod im;
 mod im_authorization;
+mod membership;
 mod messaging;
 mod messaging_cross_group;
 mod nomcp;
@@ -111,6 +112,7 @@ pub fn router() -> Router<AppState> {
         .merge(nomcp::routes())
         .merge(context::routes())
         .merge(diagnostics::routes())
+        .merge(membership::routes())
         .merge(remote_access::routes())
         .merge(runtime_activity::routes())
         .merge(settings::routes())

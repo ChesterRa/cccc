@@ -26,7 +26,27 @@ fn state(home: &HomeLayout) -> OpResult {
 
 fn configure(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
+    if request
+        .args
+        .get("provider")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("reach"))
+    {
+        return Err(OpError::new(
+            "remote_access_invalid_config",
+            "reach is managed by cccc reach; use `cccc reach on`",
+        ));
+    }
     let mut global = settings::load(home).map_err(OpError::io)?;
+    if text(&global.remote_access, "provider", "off") == "reach"
+        && (boolean(&global.remote_access, "enabled", false)
+            || super::membership_cloudflared::status(home).running)
+    {
+        return Err(OpError::new(
+            "remote_access_invalid_config",
+            "reach is active; use `cccc reach off` before changing remote access configuration",
+        ));
+    }
     let before_host = text(&global.remote_access, "web_host", "127.0.0.1");
     let before_port = number(&global.remote_access, "web_port", 8848);
     apply_configure_patch(&mut global.remote_access, request);
@@ -64,6 +84,13 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
             "remote_access_invalid_config",
             "remote access provider is off",
         ));
+    }
+    if provider == "reach" {
+        return if running {
+            super::membership::reach_on(home, request)
+        } else {
+            super::membership::reach_off(home, request)
+        };
     }
     let host = text(&global.remote_access, "web_host", "127.0.0.1");
     let public_url = text(&global.remote_access, "web_public_url", "");
@@ -140,10 +167,10 @@ fn apply_configure_patch(config: &mut Map<String, Value>, request: &DaemonReques
 
 fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {
     let provider = text(config, "provider", "off").to_ascii_lowercase();
-    if !matches!(provider.as_str(), "off" | "manual" | "tailscale") {
+    if !matches!(provider.as_str(), "off" | "manual" | "tailscale" | "reach") {
         return Err(OpError::new(
             "remote_access_invalid_config",
-            "provider must be off, manual, or tailscale",
+            "provider must be off, manual, tailscale, or reach",
         ));
     }
     let mode = match text(config, "mode", REMOTE_ACCESS_MODE)
@@ -194,6 +221,8 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     let public_url = text(config, "web_public_url", "");
     let (tokens, admin_tokens) = token_counts(home);
     let tailscale_installed = command_exists("tailscale");
+    let reach_helper_running =
+        provider == "reach" && super::membership_cloudflared::status(home).running;
     let reachable = remote_web_exposure(&host, &public_url);
     let allow_unauthenticated_listener = environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED");
     let allow_loopback_remote = environment_flag("CCCC_REMOTE_ALLOW_LOOPBACK");
@@ -236,12 +265,20 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
         "misconfigured"
     } else if provider == "tailscale" && !tailscale_installed {
         "not_installed"
+    } else if provider == "reach" {
+        if enabled && reach_helper_running {
+            "running"
+        } else if enabled || reach_helper_running {
+            "error"
+        } else {
+            "stopped"
+        }
     } else if enabled {
         "running"
     } else {
         "stopped"
     };
-    let endpoint = if enabled {
+    let endpoint = if status == "running" {
         if !public_url.is_empty() {
             Some(public_url.clone())
         } else {
@@ -285,7 +322,8 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
             "remote_listener_auth_requirement_satisfied":remote_listener_auth_requirement_satisfied,
             "allow_unauthenticated_listener_override":allow_unauthenticated_listener,
             "effective_require_access_token":effective_require_token,
-            "tailscale_installed":tailscale_installed
+            "tailscale_installed":tailscale_installed,
+            "reach_helper_running":reach_helper_running
             ,"desired_local_url":desired_local_url
             ,"desired_remote_url":desired_remote_url
             ,"live_runtime_present":live_runtime_present

@@ -98,6 +98,9 @@ async fn main() -> Result<()> {
         Some(CommandKind::Ledger(args)) => commands::messaging::ledger(&client, &home, args).await,
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,
+        Some(CommandKind::Login) => commands::membership::login(&client).await,
+        Some(CommandKind::Logout) => commands::membership::logout(&client).await,
+        Some(CommandKind::Reach { action }) => commands::membership::reach(&client, action).await,
         Some(CommandKind::Status) => commands::status::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Doctor(args)) => {
             commands::doctor::run(&home, PRODUCT_VERSION, args.all).await

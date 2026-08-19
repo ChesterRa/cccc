@@ -8,8 +8,6 @@ use serde_json::{Map, Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-const TURN_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Deliver one DeepSeek ACP prompt and persist provider output before the
 /// caller records a cursor completion.  A failed append deliberately returns
 /// false so the source event remains unread for recovery.
@@ -20,7 +18,14 @@ pub fn deliver(
     event: &Event,
     cancelled: &AtomicBool,
 ) -> bool {
-    deliver_with_timeout(home, group, actor, event, cancelled, TURN_TIMEOUT)
+    deliver_with_timeout(
+        home,
+        group,
+        actor,
+        event,
+        cancelled,
+        Duration::from_secs(cccc_contracts::DEEPSEEK_TURN_TIMEOUT_SECONDS),
+    )
 }
 
 pub(super) fn deliver_with_timeout(
@@ -42,6 +47,9 @@ pub(super) fn deliver_with_timeout(
     let Some(holder) = holder else {
         return false;
     };
+    if super::recovery::has_completed_event(home, group, actor, &event.id) {
+        return true;
+    }
     let payload = crate::ops::actor_delivery_render::render_batch(std::slice::from_ref(event));
     let Some(payload) = payload else {
         return false;
@@ -75,7 +83,8 @@ pub(super) fn deliver_with_timeout(
             )
         };
     }
-    let turn_id = format!("deepseek:{}", event.id);
+    let attempt_id = format!("{session_id}:{request_id}");
+    let turn_id = format!("deepseek:{}:{attempt_id}", event.id);
     let stream_id = format!("{turn_id}:message");
     if crate::ops::local_headless::append_event_with_dedupe(
         home,
@@ -89,7 +98,7 @@ pub(super) fn deliver_with_timeout(
             ("request_id".into(), json!(request_id)),
             ("status".into(), json!("started")),
         ]),
-        Some(&format!("deepseek.turn.started:{}", event.id)),
+        Some(&format!("deepseek.turn.started:{}:{attempt_id}", event.id)),
     )
     .is_err()
     {
@@ -108,6 +117,7 @@ pub(super) fn deliver_with_timeout(
                 stream_id: &stream_id,
                 session_id: &session_id,
                 request_id,
+                attempt_id: &attempt_id,
                 message_text: &message_text,
             }
         };
@@ -153,7 +163,7 @@ pub(super) fn deliver_with_timeout(
             let update = params.get("update").cloned().unwrap_or(Value::Null);
             let ordinal = update_ordinal;
             update_ordinal = update_ordinal.saturating_add(1);
-            let update_key = format!("deepseek.update:{}:{}", event.id, ordinal);
+            let update_key = format!("deepseek.update:{}:{attempt_id}:{ordinal}", event.id);
             let (kind, data) = if let Some(delta) = agent_message_text(&update) {
                 message_text.push_str(delta);
                 (

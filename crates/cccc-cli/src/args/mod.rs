@@ -112,6 +112,14 @@ pub enum CommandKind {
         #[command(subcommand)]
         action: RuntimeAction,
     },
+    /// Bind this machine to a CCCC membership account.
+    Login,
+    /// Remove local membership identity. The next login is a new hostname.
+    Logout,
+    Reach {
+        #[command(subcommand)]
+        action: ReachAction,
+    },
     Status,
     Doctor(DoctorArgs),
     Setup(SetupArgs),
@@ -132,6 +140,14 @@ pub enum CommandKind {
 pub enum HookAction {
     CodexState,
     ClaudeState,
+}
+
+#[derive(Debug, Clone, Copy, Subcommand)]
+pub enum ReachAction {
+    On,
+    Off,
+    Status,
+    Install,
 }
 
 #[derive(Debug, Subcommand)]
@@ -179,6 +195,46 @@ pub enum HermesAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_membership_verbs() {
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "login"])
+                .expect("login")
+                .command,
+            Some(CommandKind::Login)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "logout"])
+                .expect("logout")
+                .command,
+            Some(CommandKind::Logout)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "reach", "on"])
+                .expect("reach on")
+                .command,
+            Some(CommandKind::Reach {
+                action: ReachAction::On
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "reach", "status"])
+                .expect("reach status")
+                .command,
+            Some(CommandKind::Reach {
+                action: ReachAction::Status
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["cccc", "reach", "install"])
+                .expect("reach install")
+                .command,
+            Some(CommandKind::Reach {
+                action: ReachAction::Install
+            })
+        ));
+    }
 
     #[test]
     fn parses_exhibit_web_modes() {

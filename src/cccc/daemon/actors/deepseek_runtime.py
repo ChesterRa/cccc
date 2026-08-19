@@ -16,20 +16,35 @@ _SUPERVISORS: Dict[tuple[str, str], DeepSeekSupervisor] = {}
 
 def start(*, group_id: str, actor_id: str, cwd: Path, command: List[str], env: Dict[str, str]) -> DeepSeekSupervisor:
     key = (str(group_id), str(actor_id))
+    effective_env = dict(os.environ)
+    effective_env.update(env)
+    executable = Path(str(command[0] if command else "")).stem.lower()
+    # Setup owns the pinned ACP app and composition. Resolve the explicit
+    # config before taking the process registry lock because npm may be slow.
+    if executable in {"dsh", "dsh-acp-demo"}:
+        outcome = ensure_deepseek_setup(effective_env)
+        app = shutil.which("dsh-acp-demo", path=effective_env.get("PATH")) or str(command[0])
+        command = [app, "--config", str(outcome.profile / "cordis.yml")]
+    cccc_home = str(effective_env.get("CCCC_HOME") or "").strip()
+    if not cccc_home:
+        raise RuntimeError("CCCC_HOME is required for DeepSeek session persistence")
+    session_root = (
+        Path(cccc_home)
+        / "groups"
+        / str(group_id)
+        / "state"
+        / "deepseek"
+        / str(actor_id)
+        / "sessions"
+    )
+    session_root.mkdir(parents=True, exist_ok=True)
+    effective_env["CCCC_GROUP_ID"] = str(group_id)
+    effective_env["CCCC_ACTOR_ID"] = str(actor_id)
+    effective_env["CCCC_DEEPSEEK_SESSION_ROOT"] = str(session_root)
     with _LOCK:
         current = _SUPERVISORS.get(key)
         if current is not None:
             current.stop()
-        effective_env = dict(os.environ)
-        effective_env.update(env)
-        executable = Path(str(command[0] if command else "")).stem.lower()
-        # Setup owns the pinned ACP app and profile composition.  Resolve the
-        # app's config path at launch so legacy persisted `dsh --profile`
-        # commands cannot resurrect the one-shot headless entry.
-        if executable in {"dsh", "dsh-acp-demo"}:
-            outcome = ensure_deepseek_setup(effective_env)
-            app = shutil.which("dsh-acp-demo", path=effective_env.get("PATH")) or str(command[0])
-            command = [app, "--config", str(outcome.profile / "cordis.yml")]
         supervisor = DeepSeekSupervisor(command, cwd=str(cwd), env=effective_env)
         supervisor.start()
         try:

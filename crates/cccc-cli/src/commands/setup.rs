@@ -86,7 +86,7 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
 
 fn setup_deepseek(home: &HomeLayout, executable: &Path) -> Result<serde_json::Value> {
     let mut env = std::env::vars().collect();
-    match cccc_daemon::deepseek_setup::ensure(&mut env, executable) {
+    match cccc_daemon::deepseek_setup::ensure(home, &mut env, executable) {
         Ok(outcome) => Ok(json!({
             "runtime":"deepseek",
             "status":"ready",

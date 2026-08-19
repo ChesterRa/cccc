@@ -17,12 +17,16 @@ from ...contracts.v1.deepseek import (
     DEEPSEEK_ACP_APP_PACKAGE,
     DEEPSEEK_ACP_APP_VERSION,
     DEEPSEEK_ACP_VERSION,
-    DEEPSEEK_DSH_PACKAGE,
-    DEEPSEEK_DSH_VERSION,
     DEEPSEEK_LLM_ADAPTER_PACKAGE,
     DEEPSEEK_LLM_ADAPTER_VERSION,
     DEEPSEEK_MCP_CLIENT_PACKAGE,
     DEEPSEEK_MCP_CLIENT_VERSION,
+    DEEPSEEK_NPM_BEFORE,
+)
+from ...kernel.deepseek_runtime import (
+    canonical_deepseek_runtime_manifest,
+    deepseek_lockfile_is_pinned,
+    is_canonical_deepseek_runtime_manifest,
 )
 from ...kernel.runtime import (
     deepseek_external_preflight_error,
@@ -32,9 +36,8 @@ from ...util.file_lock import acquire_lockfile, release_lockfile
 from ...util.fs import atomic_write_json, atomic_write_text
 from .deepseek_setup_env import prepare_deepseek_setup_env
 
-_INSTALL_TIMEOUT_SECONDS = 120.0
+_INSTALL_TIMEOUT_SECONDS = 300.0
 _PACKAGES = (
-    (DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION),
     (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
     (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
     (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
@@ -98,19 +101,26 @@ def _packages_ready(dsh_home: Path) -> bool:
             return False
         if found != version:
             return False
-    return True
+    try:
+        manifest = json.loads((dsh_home / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return is_canonical_deepseek_runtime_manifest(manifest) and deepseek_lockfile_is_pinned(dsh_home)
 
 
 def _install_packages(dsh_home: Path, env: Dict[str, str]) -> None:
     npm = shutil.which("npm", path=env.get("PATH"))
     if not npm:
         raise RuntimeError("npm is required to install DeepSeek ACP/MCP packages")
+    atomic_write_json(dsh_home / "package.json", canonical_deepseek_runtime_manifest())
     command = [
         npm,
         "install",
         "--save-exact",
         "--no-audit",
         "--no-fund",
+        "--before",
+        DEEPSEEK_NPM_BEFORE,
         *(f"{package}@{version}" for package, version in _PACKAGES),
     ]
     process = subprocess.Popen(
@@ -126,7 +136,7 @@ def _install_packages(dsh_home: Path, env: Dict[str, str]) -> None:
         status = process.wait(timeout=_INSTALL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as exc:
         _terminate_process_tree(process)
-        raise RuntimeError("DeepSeek package installation timed out after 120 seconds") from exc
+        raise RuntimeError("DeepSeek package installation timed out after 300 seconds") from exc
     if status != 0:
         raise RuntimeError(f"DeepSeek package installation failed with exit code {status}")
 
@@ -183,30 +193,11 @@ def _write_profile_files(profile: Path, executable: Path) -> None:
                 DEEPSEEK_ACP_APP_PACKAGE: DEEPSEEK_ACP_APP_VERSION,
                 DEEPSEEK_LLM_ADAPTER_PACKAGE: DEEPSEEK_LLM_ADAPTER_VERSION,
             },
-            "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]}},
         },
     )
-    # YAML single-quoted scalars escape apostrophes by doubling them.  A
+    # YAML single-quoted scalars escape apostrophes by doubling them. A
     # backslash is literal in this scalar style and must not be doubled.
     cccc_path = str(executable).replace("'", "''")
-    atomic_write_text(
-        profile / "cordis.patch.yml",
-        "- insert:\n"
-        "    - id: acp\n"
-        "      name: '@deepseek-ai/dsh-acp'\n"
-        "    - id: cccc-mcp\n"
-        "      name: '@deepseek-ai/dsh-mcp-client'\n"
-        "      config:\n"
-        "        transport: stdio\n"
-        "        serverName: cccc\n"
-        f"        command: '{cccc_path}'\n"
-        "        args: [mcp]\n"
-        "        env:\n"
-        "          CCCC_HOME: !!js process.env.CCCC_HOME\n"
-        "          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n"
-        "          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n"
-        "        failOnStartupError: true\n",
-    )
     atomic_write_text(
         profile / "cordis.yml",
         "- id: llm-deepseek\n"
@@ -217,6 +208,7 @@ def _write_profile_files(profile: Path, executable: Path) -> None:
         "    provider: deepseek-official\n"
         "    model: deepseek-v4-flash\n"
         "    workspaceContext: false\n"
+        "    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n"
         "- id: cccc-mcp\n"
         "  name: '@deepseek-ai/dsh-mcp-client'\n"
         "  config:\n"
@@ -230,6 +222,7 @@ def _write_profile_files(profile: Path, executable: Path) -> None:
         "      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n"
         "    failOnStartupError: true\n",
     )
+    (profile / "cordis.patch.yml").unlink(missing_ok=True)
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:

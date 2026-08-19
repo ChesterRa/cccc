@@ -198,6 +198,29 @@ def _ensure_dedupe_index(path: Path, marker_dir: Path) -> None:
     os.replace(ready_tmp, ready)
 
 
+def has_headless_event_dedupe(group_dir: Path, dedupe_key: str) -> bool:
+    key = str(dedupe_key or "").strip()
+    if not key:
+        return False
+    path = headless_events_path(group_dir)
+    if not path.is_file():
+        return False
+    lock = acquire_lockfile(headless_events_lock_path(group_dir), blocking=True)
+    try:
+        marker_dir = path.parent / "events.dedupe"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        _recover_pending(path, marker_dir)
+        _ensure_dedupe_index(path, marker_dir)
+        marker = marker_dir / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.marker"
+        if not marker.is_file():
+            return False
+        return marker.read_text(encoding="utf-8").splitlines()[:1] == [key]
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    finally:
+        release_lockfile(lock)
+
+
 def append_headless_event(
     group_dir: Path,
     *,

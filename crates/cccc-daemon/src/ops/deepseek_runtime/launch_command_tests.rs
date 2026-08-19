@@ -5,7 +5,10 @@ use std::fs;
 #[test]
 fn managed_launch_uses_the_platform_resolved_acp_executable() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let dsh_home = temp.path().join("dsh");
+    let cccc_home = temp.path().join("cccc-home");
+    let dsh_home = cccc_home
+        .join("runtimes/deepseek")
+        .join(cccc_contracts::DEEPSEEK_RELEASE_VERSION);
     let bin = dsh_home.join("node_modules/.bin");
     fs::create_dir_all(&bin).expect("bin");
     let executable = bin.join(if cfg!(windows) {
@@ -25,7 +28,7 @@ fn managed_launch_uses_the_platform_resolved_acp_executable() {
     actor.command = vec!["dsh-acp-demo".into()];
     actor
         .env
-        .insert("DSH_HOME".into(), dsh_home.to_string_lossy().into_owned());
+        .insert("CCCC_HOME".into(), cccc_home.to_string_lossy().into_owned());
     actor.env.insert(
         "PATH".into(),
         std::env::join_paths([&bin])
@@ -34,7 +37,7 @@ fn managed_launch_uses_the_platform_resolved_acp_executable() {
             .into_owned(),
     );
 
-    let command = launch_command::resolve(&actor).expect("launch command");
+    let command = launch_command::resolve(&actor, &actor.env).expect("launch command");
 
     assert_eq!(command[0], executable.to_string_lossy());
     assert_eq!(command[1], "--config");

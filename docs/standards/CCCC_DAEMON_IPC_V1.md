@@ -2854,6 +2854,9 @@ Notes:
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
+- A `deepseek` actor MUST use the headless runner. Both daemon implementations MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
+- The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `src/cccc/contracts/v1/deepseek.py` / `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
+- Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold.
 
 #### `actor_new_session`
 
@@ -4514,7 +4517,7 @@ Result:
 ```ts
 {
   remote_access: {
-    provider: "off" | "manual" | "tailscale"
+    provider: "off" | "manual" | "tailscale" | "reach"
     mode: string
     require_access_token: boolean
     enabled: boolean
@@ -4614,7 +4617,83 @@ Result:
 { remote_access: Record<string, unknown> }
 ```
 
-### 8.17.1 Group Bridge delivery compatibility
+`provider=reach` is not set through `remote_access_configure`. It is owned by the membership reach verbs. Settings may persist `reach` after a successful `membership_reach_on`. While Reach is enabled or its tracked helper is still running, `remote_access_configure` MUST reject every configuration mutation; callers must complete `membership_reach_off` before changing provider, binding, or public URL.
+
+### 8.17.1 Membership reach
+
+Optional extension for third-party deployments. The bundled Python and Rust implementations both implement the complete operation set below; neither engine may advertise only a non-functional placeholder. Deployments without membership MAY return `unknown_op`.
+
+Stable error classes:
+
+- `membership_not_logged_in`
+- `membership_gate` – missing Admin Token, unauthenticated-listener override, or another remote provider is already on
+- `membership_disabled`
+- `membership_network`
+- `membership_subprocess`
+- `membership_unsupported_version`
+- `membership_unavailable` – account plane origin is not configured
+- `membership_not_in_reach`
+
+#### `membership_status`
+
+```ts
+{ by?: string }
+```
+
+```ts
+{
+  membership: {
+    logged_in: boolean
+    device_id?: string | null
+    hostname?: string | null
+    web_url?: string | null
+    connector_url?: string | null
+    online: boolean
+    cut: boolean
+    disabled: boolean
+    in_reach: boolean
+    account_origin?: string | null
+    last_error?: string | null
+    warning?: string
+  }
+}
+```
+
+`membership_status` is user-only because `web_url` and `connector_url` may contain local bearer credentials. Implementations MUST reject non-user callers before assembling those fields. Both URLs are assembled locally and MUST NOT be stored on the account plane. They are null while logged out; `connector_url` is also null until reach has both a hostname and a local connector secret to embed.
+
+Status refresh may observe an account-side Cut and must then stop the helper and persist the disabled state. Daemons therefore MUST serialize `membership_status` with membership mutations rather than treating it as a side-effect-free read.
+
+#### `membership_login` / `membership_login_poll` / `membership_logout`
+
+```ts
+{ by?: string }
+```
+
+`membership_login` starts RFC 8628 device-code login against `CCCC_ACCOUNT_ORIGIN` and returns `membership.pending` (`verification_uri`, `user_code`, `interval`). The selected account origin is persisted with the pending login and resulting device grant. Polling and every later authenticated device or Reach request MUST use that issuer-bound origin; a changed daemon environment or per-request override MUST NOT retarget an existing bearer token. The CLI prints the pending values and polls `membership_login_poll` until `logged_in` or a terminal error. The advertised interval is a minimum and MUST NOT be capped downward. On `slow_down`, subsequent polling waits MUST increase by at least five seconds. Logout deletes local membership secrets, stops any tracked reach helper, and clears retired public URLs. The result includes a warning that the next login is a new device and hostname.
+
+Requests send `CCCC-Membership-Version: 1`. An account plane that no longer supports the client returns `membership_unsupported_version`. `CCCC_ACCOUNT_ORIGIN` MUST use HTTPS, except that loopback HTTP is allowed for local development. Clients MUST NOT follow account-plane redirects because authenticated requests carry a device bearer token.
+
+#### `membership_reach_install`
+
+```ts
+{ upgrade?: boolean, by?: string }
+```
+
+Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its platform, version, and SHA-256 digest. With `upgrade=true`, an existing unpinned or mismatched managed binary is replaced. Installation does not enable remote access or start a tunnel.
+
+#### `membership_reach_on` / `membership_reach_off`
+
+```ts
+{ by?: string }
+```
+
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set, or if `manual`/`tailscale` is already enabled. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+
+The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that reach is online. If any authenticated device-status or Reach-issuance response reports the device disabled, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+
+Python and Rust share `CCCC_HOME/secrets/membership.json` and serialize every read-modify-write mutation with `CCCC_HOME/secrets/membership.json.lock`. Every writer MUST preserve the full v1 shape, including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and `pending_login`, so an engine switch cannot silently discard credentials, their issuer, or an in-progress login.
+
+### 8.17.2 Group Bridge delivery compatibility
 
 The daemon accepts the Python-compatible Group Bridge operations:
 

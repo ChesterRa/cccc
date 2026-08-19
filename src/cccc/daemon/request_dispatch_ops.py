@@ -21,6 +21,7 @@ from .messaging.delegation_relay_ops import try_handle_delegation_relay_op
 from .ops.diagnostics_ops import try_handle_diagnostics_op
 from .ops.daemon_core_ops import try_handle_daemon_core_op
 from .ops.remote_access_ops import try_handle_remote_access_op
+from .ops.membership_ops import try_handle_membership_op
 from .ops.hermes_runtime_ops import try_handle_hermes_runtime_op
 from .messaging.chat_ops import try_handle_chat_op
 from .messaging.slash_skill_dispatch_ops import try_handle_slash_skill_dispatch_op
@@ -131,6 +132,10 @@ def dispatch_request(
     remote_access_resp = try_handle_remote_access_op(op, args)
     if remote_access_resp is not None:
         return remote_access_resp, False
+
+    membership_resp = try_handle_membership_op(op, args)
+    if membership_resp is not None:
+        return membership_resp, False
 
     remote_send_resp = try_handle_remote_send_op(
         op,

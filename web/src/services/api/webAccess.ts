@@ -1,4 +1,9 @@
-import type { RemoteAccessState, WebAccessSession, WebBranding } from "../../types";
+import type {
+  MembershipState,
+  RemoteAccessState,
+  WebAccessSession,
+  WebBranding,
+} from "../../types";
 import {
   apiForm,
   apiJson,
@@ -64,6 +69,22 @@ export async function updateObservability(args: {
 
 export async function fetchRemoteAccessState() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access");
+}
+
+export async function fetchMembership() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership");
+}
+
+export async function startMembershipReach() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership/reach/on?by=user", {
+    method: "POST",
+  });
+}
+
+export async function stopMembershipReach() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership/reach/off?by=user", {
+    method: "POST",
+  });
 }
 
 export async function fetchWebAccessSession() {

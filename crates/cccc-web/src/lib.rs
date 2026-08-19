@@ -9,6 +9,7 @@ mod readonly;
 mod routes;
 mod shutdown;
 mod web_banner;
+mod web_runtime_state;
 
 use anyhow::Result;
 use axum::Router;
@@ -370,6 +371,16 @@ where
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
     ensure_listener_auth(&home, address)?;
+    if let Err(error) = web_runtime_state::write(
+        &home,
+        host,
+        address.port(),
+        web_mode.as_str(),
+        !matches!(restart_behavior, RestartBehavior::Disabled),
+    ) {
+        tracing::warn!(%error, "failed to record live Web binding");
+    }
+    let runtime_home = home.clone();
     web_banner::print(host, address.port());
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
@@ -422,6 +433,9 @@ where
         tracing::warn!("Web component shutdown timed out; cancelling remaining IM workers");
     }
     shutdown::browser_surfaces(&browser_surfaces).await;
+    if let Err(error) = web_runtime_state::clear_if_owner(&runtime_home) {
+        tracing::warn!(%error, "failed to clear live Web binding");
+    }
     server_result?;
     if restart.as_ref().is_some_and(|handle| handle.requested()) {
         match restart_behavior {

@@ -33,6 +33,7 @@ describe("group_bridge settings placement", () => {
   it("WebAccessTab no longer embeds the group_bridge form", () => {
     const src = readSource("./WebAccessTab.tsx");
     expect(src).not.toContain("GroupBridgeRegistrationSection");
+    expect(src).not.toContain("!keepReach && !membership?.hostname");
   });
 
   it("group Connections owns Group Bridge session pairing and always filters by current group", () => {
@@ -76,6 +77,9 @@ describe("group_bridge settings placement", () => {
     const src = readSource("./GroupBridgePairingSection.tsx");
     expect(src).toContain('t("group_bridge.connectRemoteCcccGroup")');
     expect(src).toContain('t("group_bridge.issuerEndpoint")');
+    expect(src).toContain("fetchMembership");
+    expect(src).toContain("membership?.online && !membership.disabled");
+    expect(src).toContain('t("group_bridge.reachHostnameHint")');
     expect(src).toContain('t("group_bridge.issuerEndpointLocalOnlyHelp")');
     expect(src).toContain('t("group_bridge.sameInstanceFallbackDetected")');
     expect(src).toContain('t("group_bridge.sameInstanceFallbackHelp")');
@@ -226,6 +230,8 @@ describe("group_bridge settings placement", () => {
       expect(locale.group_bridge?.createConnectionInfo).toBeTruthy();
       expect(locale.group_bridge?.issuerEndpoint).toBeTruthy();
       expect(locale.group_bridge?.issuerEndpointHelp).toBeTruthy();
+      expect(locale.group_bridge?.reachHostnameHint).toBeTruthy();
+      expect(locale.group_bridge?.useReachHostname).toBeTruthy();
       expect(locale.group_bridge?.issuerEndpointLocalOnlyHelp).toBeTruthy();
       expect(locale.group_bridge?.issuerEndpointInvalid).toBeTruthy();
       expect(locale.group_bridge?.unsafeIssuerEndpointBlocked).toBeTruthy();

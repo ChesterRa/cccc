@@ -32,11 +32,14 @@ mod transcript_reader;
 
 pub use command::{
     DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE,
-    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION,
-    DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE,
-    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NODE_RANGE, deepseek_external_preflight, deepseek_home,
-    deepseek_preflight, default_command, detect_runtimes, is_canonical_deepseek_config,
-    is_canonical_deepseek_patch, is_canonical_deepseek_profile_manifest,
+    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_LLM_ADAPTER_PACKAGE,
+    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION,
+    DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE, DEEPSEEK_RELEASE_VERSION,
+    DEEPSEEK_TURN_TIMEOUT_SECONDS, canonical_deepseek_runtime_manifest,
+    deepseek_bootstrap_preflight, deepseek_external_preflight, deepseek_home,
+    deepseek_lockfile_is_pinned, deepseek_preflight, default_command, detect_runtimes,
+    is_canonical_deepseek_config, is_canonical_deepseek_profile_manifest,
+    is_canonical_deepseek_runtime_manifest,
 };
 pub use executable::resolve_executable_in_path;
 pub use history_access::{

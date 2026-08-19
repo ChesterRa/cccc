@@ -2,9 +2,10 @@ use crate::executable::{is_executable_file, resolve_executable_in_path};
 use cccc_contracts::ActorRuntime;
 pub use cccc_contracts::{
     DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE,
-    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION,
-    DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE,
-    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NODE_RANGE,
+    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_LLM_ADAPTER_PACKAGE,
+    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION,
+    DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE, DEEPSEEK_RELEASE_VERSION,
+    DEEPSEEK_TURN_TIMEOUT_SECONDS,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -30,9 +31,9 @@ pub fn deepseek_preflight(
     env: &BTreeMap<String, String>,
 ) -> Result<(), String> {
     deepseek_external_preflight(command, env)?;
-    let dsh_home = deepseek_home(env).ok_or_else(|| "DSH_HOME is not configured".to_owned())?;
+    let dsh_home =
+        deepseek_home(env).ok_or_else(|| "CCCC_HOME and HOME are not configured".to_owned())?;
     for (package, version) in [
-        (DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION),
         (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
         (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
         (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
@@ -55,6 +56,19 @@ pub fn deepseek_preflight(
             return Err(format!("{package}@{version} is required"));
         }
     }
+    let runtime_manifest: Value = serde_json::from_slice(
+        &fs::read(dsh_home.join("package.json"))
+            .map_err(|_| "DeepSeek managed runtime manifest is missing")?,
+    )
+    .map_err(|_| "DeepSeek managed runtime manifest is invalid")?;
+    if !is_canonical_deepseek_runtime_manifest(&runtime_manifest) {
+        return Err("DeepSeek managed runtime dependency set is not canonical".to_owned());
+    }
+    if !deepseek_lockfile_is_pinned(&dsh_home) {
+        return Err(format!(
+            "DeepSeek dependency graph must be pinned to {DEEPSEEK_RELEASE_VERSION}"
+        ));
+    }
     let profile = dsh_home.join("profiles").join("cccc-acp");
     let manifest: Value = serde_json::from_slice(
         &fs::read(profile.join("package.json"))
@@ -64,35 +78,30 @@ pub fn deepseek_preflight(
     if !is_canonical_deepseek_profile_manifest(&manifest) {
         return Err("deepseek cccc-acp profile is unmanaged".to_owned());
     }
-    let patch = fs::read_to_string(profile.join("cordis.patch.yml"))
-        .map_err(|_| "deepseek cccc-acp profile patch is missing")?;
-    if !is_canonical_deepseek_patch(&patch) {
-        return Err("deepseek cccc-acp profile patch is incomplete".to_owned());
-    }
     let config = fs::read_to_string(profile.join("cordis.yml"))
         .map_err(|_| "deepseek cccc-acp profile config is missing")?;
     if !is_canonical_deepseek_config(&config) {
         return Err("deepseek cccc-acp profile config is invalid".to_owned());
     }
-    if let Ok(home_patch) = fs::read_to_string(dsh_home.join("cordis.patch.yml")) {
-        let lowered = home_patch.to_ascii_lowercase();
-        if lowered.contains("dsh-acp") || lowered.contains("servername: cccc") {
-            return Err("DSH_HOME cordis.patch.yml overrides ACP/MCP composition".to_owned());
-        }
-    }
     Ok(())
 }
 
 pub fn deepseek_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
-    env.get("DSH_HOME")
+    let root = env
+        .get("CCCC_HOME")
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .or_else(|| {
             env.get("HOME")
                 .or_else(|| env.get("USERPROFILE"))
                 .filter(|value| !value.trim().is_empty())
-                .map(|home| PathBuf::from(home).join(".dsh"))
-        })
+                .map(|home| PathBuf::from(home).join(".cccc"))
+        })?;
+    Some(
+        root.join("runtimes")
+            .join("deepseek")
+            .join(DEEPSEEK_RELEASE_VERSION),
+    )
 }
 
 pub fn deepseek_external_preflight(
@@ -103,6 +112,18 @@ pub fn deepseek_external_preflight(
     if resolve_executable_in_path(executable, env.get("PATH").map(String::as_str)).is_none() {
         return Err(format!("deepseek executable not found: {executable}"));
     }
+    deepseek_node_preflight(env)
+}
+
+pub fn deepseek_bootstrap_preflight(env: &BTreeMap<String, String>) -> Result<(), String> {
+    deepseek_node_preflight(env)?;
+    if resolve_executable_in_path("npm", env.get("PATH").map(String::as_str)).is_none() {
+        return Err("npm is required to install DeepSeek Harness".to_owned());
+    }
+    Ok(())
+}
+
+fn deepseek_node_preflight(env: &BTreeMap<String, String>) -> Result<(), String> {
     let mut node_command = Command::new("node");
     for (key, value) in env {
         if key != "CCCC_NODE_VERSION" {
@@ -125,6 +146,78 @@ pub fn deepseek_external_preflight(
     Ok(())
 }
 
+pub fn deepseek_lockfile_is_pinned(dsh_home: &std::path::Path) -> bool {
+    let Ok(raw) = fs::read(dsh_home.join("package-lock.json")) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&raw) else {
+        return false;
+    };
+    let Some(packages) = value.get("packages").and_then(Value::as_object) else {
+        return false;
+    };
+    if !packages
+        .get("")
+        .and_then(Value::as_object)
+        .and_then(|root| root.get("dependencies"))
+        .is_some_and(deepseek_dependencies_are_exact)
+    {
+        return false;
+    }
+    let mut matched = false;
+    for (lock_path, entry) in packages {
+        let name = lock_path
+            .rsplit("node_modules/")
+            .next()
+            .unwrap_or(lock_path);
+        if name != "@deepseek-ai/dsh" && !name.starts_with("@deepseek-ai/dsh-") {
+            continue;
+        }
+        matched = true;
+        if entry.get("version").and_then(Value::as_str) != Some(DEEPSEEK_RELEASE_VERSION) {
+            return false;
+        }
+    }
+    matched
+}
+
+pub fn canonical_deepseek_runtime_manifest() -> Value {
+    serde_json::json!({
+        "name": "cccc-deepseek-runtime",
+        "private": true,
+        "ccccManaged": true,
+        "dependencies": deepseek_dependency_map(),
+    })
+}
+
+pub fn is_canonical_deepseek_runtime_manifest(manifest: &Value) -> bool {
+    let Some(object) = manifest.as_object() else {
+        return false;
+    };
+    object.get("name") == Some(&Value::String("cccc-deepseek-runtime".to_owned()))
+        && object.get("private") == Some(&Value::Bool(true))
+        && object.get("ccccManaged") == Some(&Value::Bool(true))
+        && object
+            .get("dependencies")
+            .is_some_and(deepseek_dependencies_are_exact)
+}
+
+fn deepseek_dependencies_are_exact(value: &Value) -> bool {
+    value.as_object() == Some(&deepseek_dependency_map())
+}
+
+fn deepseek_dependency_map() -> serde_json::Map<String, Value> {
+    [
+        (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
+        (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
+        (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
+        (DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION),
+    ]
+    .into_iter()
+    .map(|(package, version)| (package.to_owned(), Value::String(version.to_owned())))
+    .collect()
+}
+
 /// Validate the dedicated ACP app composition. The old `dsh --profile
 /// cccc-acp` command booted the one-shot headless bundle and exited before ACP
 /// could accept initialize; the app composition is intentionally small and
@@ -140,6 +233,7 @@ pub fn is_canonical_deepseek_config(config: &str) -> bool {
         Some("    provider: deepseek-official"),
         Some("    model: deepseek-v4-flash"),
         Some("    workspaceContext: false"),
+        Some("    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT"),
         Some("- id: cccc-mcp"),
         Some("  name: '@deepseek-ai/dsh-mcp-client'"),
         Some("  config:"),
@@ -161,7 +255,7 @@ pub fn is_canonical_deepseek_config(config: &str) -> bool {
     {
         return false;
     }
-    let Some(path) = lines[13]
+    let Some(path) = lines[14]
         .strip_prefix("    command: '")
         .and_then(|value| value.strip_suffix('\''))
     else {
@@ -248,7 +342,7 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
             recommended_command: recommended.join(" "),
             name,
             available: if runtime == ActorRuntime::Deepseek {
-                deepseek_external_preflight(&recommended, &discovery_env).is_ok()
+                deepseek_catalog_available(&recommended, &discovery_env)
             } else {
                 matches!(runtime, ActorRuntime::WebModel | ActorRuntime::Custom) || path.is_some()
             },
@@ -257,6 +351,10 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
         }
     })
     .collect()
+}
+
+fn deepseek_catalog_available(command: &[String], env: &BTreeMap<String, String>) -> bool {
+    deepseek_preflight(command, env).is_ok() || deepseek_bootstrap_preflight(env).is_ok()
 }
 
 fn prepend_deepseek_bin(env: &mut BTreeMap<String, String>) {
@@ -345,71 +443,12 @@ pub fn is_canonical_deepseek_profile_manifest(manifest: &Value) -> bool {
     {
         return false;
     }
-    object
-        .get("dsh")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("profile"))
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("bundles"))
-        .and_then(Value::as_array)
-        .is_some_and(|bundles| {
-            if bundles.len() != 2 || bundles.iter().any(|item| item.as_str().is_none()) {
-                return false;
-            }
-            let mut names = bundles.iter().filter_map(Value::as_str).collect::<Vec<_>>();
-            names.sort_unstable();
-            names == ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]
-        })
-}
-
-pub fn is_canonical_deepseek_patch(patch: &str) -> bool {
-    let lines: Vec<&str> = patch.lines().collect();
-    if lines.len() != 15
-        || lines
-            .iter()
-            .any(|line| line.is_empty() || line.trim_start().starts_with('#'))
-    {
-        return false;
-    }
-    let expected = [
-        "- insert:",
-        "    - id: acp",
-        "      name: '@deepseek-ai/dsh-acp'",
-        "    - id: cccc-mcp",
-        "      name: '@deepseek-ai/dsh-mcp-client'",
-        "      config:",
-        "        transport: stdio",
-        "        serverName: cccc",
-        "        args: [mcp]",
-        "        env:",
-        "          CCCC_HOME: !!js process.env.CCCC_HOME",
-        "          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID",
-        "          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID",
-        "        failOnStartupError: true",
-    ];
-    for (index, wanted) in expected.iter().enumerate() {
-        let actual_index = if index < 8 { index } else { index + 1 };
-        if lines.get(actual_index).copied() != Some(*wanted) {
-            return false;
-        }
-    }
-    let command = lines[8];
-    let Some(path) = command
-        .strip_prefix("        command: '")
-        .and_then(|value| value.strip_suffix('\''))
-    else {
-        return false;
-    };
-    let path = path.replace("''", "'");
-    is_executable_file(std::path::Path::new(&path))
+    dependencies.len() == 4
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        deepseek_home, deepseek_preflight, default_command, detect_runtimes,
-        is_canonical_deepseek_patch,
-    };
+    use super::{deepseek_home, deepseek_preflight, default_command, detect_runtimes};
     use cccc_contracts::ActorRuntime;
     use std::collections::BTreeMap;
 
@@ -437,19 +476,23 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_home_defaults_to_the_user_home() {
+    fn deepseek_home_is_versioned_under_cccc_home() {
         let env = BTreeMap::from([("HOME".into(), "/users/test".into())]);
         assert_eq!(
             deepseek_home(&env),
-            Some(std::path::PathBuf::from("/users/test/.dsh"))
+            Some(std::path::PathBuf::from(
+                "/users/test/.cccc/runtimes/deepseek/0.1.0-rc.6"
+            ))
         );
         let env = BTreeMap::from([
             ("HOME".into(), "/users/test".into()),
-            ("DSH_HOME".into(), "/custom/dsh".into()),
+            ("CCCC_HOME".into(), "/custom/cccc".into()),
         ]);
         assert_eq!(
             deepseek_home(&env),
-            Some(std::path::PathBuf::from("/custom/dsh"))
+            Some(std::path::PathBuf::from(
+                "/custom/cccc/runtimes/deepseek/0.1.0-rc.6"
+            ))
         );
     }
 
@@ -471,11 +514,79 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn profile_patch_validation_rejects_keyword_masquerade() {
-        assert!(!is_canonical_deepseek_patch(
-            "this is not a patch @deepseek-ai/dsh-acp and serverName: cccc"
+    fn deepseek_bootstrap_preflight_needs_node_and_npm_not_the_managed_app() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (name, body) in [
+            ("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n"),
+            ("npm", "#!/bin/sh\nexit 0\n"),
+        ] {
+            let path = temp.path().join(name);
+            std::fs::write(&path, body).expect("fixture executable");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("permissions");
+        }
+        let env = BTreeMap::from([("PATH".into(), temp.path().display().to_string())]);
+        assert!(super::deepseek_bootstrap_preflight(&env).is_ok());
+        assert!(super::deepseek_external_preflight(&["dsh-acp-demo".into()], &env).is_err());
+        assert!(super::deepseek_catalog_available(
+            &["dsh-acp-demo".into()],
+            &env
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_catalog_rejects_an_unmanaged_app_without_npm() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (name, body) in [
+            ("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n"),
+            ("dsh-acp-demo", "#!/bin/sh\nexit 0\n"),
+        ] {
+            let path = temp.path().join(name);
+            std::fs::write(&path, body).expect("fixture executable");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("permissions");
+        }
+        let env = BTreeMap::from([
+            ("PATH".into(), temp.path().display().to_string()),
+            (
+                "CCCC_HOME".into(),
+                temp.path().join("cccc-home").display().to_string(),
+            ),
+        ]);
+        assert!(!super::deepseek_catalog_available(
+            &["dsh-acp-demo".into()],
+            &env
+        ));
+    }
+
+    #[test]
+    fn deepseek_lockfile_rejects_a_mixed_transitive_preview_release() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut packages = serde_json::json!({
+            "": {"dependencies": super::deepseek_dependency_map()},
+            "node_modules/@deepseek-ai/dsh-acp": {"version": "0.1.0-rc.6"}
+        });
+        std::fs::write(
+            temp.path().join("package-lock.json"),
+            serde_json::to_vec(&serde_json::json!({"packages": packages.clone()})).expect("json"),
+        )
+        .expect("lockfile");
+        assert!(super::deepseek_lockfile_is_pinned(temp.path()));
+        packages["node_modules/@deepseek-ai/dsh-transitive"] =
+            serde_json::json!({"version": "0.1.0-rc.7"});
+        std::fs::write(
+            temp.path().join("package-lock.json"),
+            serde_json::to_vec(&serde_json::json!({"packages": packages})).expect("json"),
+        )
+        .expect("lockfile");
+        assert!(!super::deepseek_lockfile_is_pinned(temp.path()));
     }
 
     #[test]
@@ -490,13 +601,11 @@ mod tests {
         ));
         for name in [
             "empty_shell",
-            "missing_bundle",
+            "extra_dependency",
             "wrong_version",
             "missing_app",
             "missing_adapter",
             "adapter_version_mismatch",
-            "non_string_bundle",
-            "nested_bundle",
             "truncated",
         ] {
             assert!(
@@ -522,9 +631,11 @@ mod tests {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
                 .expect("executable");
         }
-        let home = temp.path().join("dsh-home");
+        let cccc_home = temp.path().join("cccc-home");
+        let home = cccc_home
+            .join("runtimes/deepseek")
+            .join(super::DEEPSEEK_RELEASE_VERSION);
         for package in [
-            super::DEEPSEEK_DSH_PACKAGE,
             super::DEEPSEEK_ACP_PACKAGE,
             super::DEEPSEEK_MCP_CLIENT_PACKAGE,
             super::DEEPSEEK_ACP_APP_PACKAGE,
@@ -534,36 +645,58 @@ mod tests {
             std::fs::create_dir_all(&package_dir).expect("package");
             std::fs::write(
                 package_dir.join("package.json"),
-                format!("{{\"version\":\"{}\"}}\n", super::DEEPSEEK_DSH_VERSION),
+                format!("{{\"version\":\"{}\"}}\n", super::DEEPSEEK_RELEASE_VERSION),
             )
             .expect("manifest");
         }
+        let mut packages = [
+            super::DEEPSEEK_ACP_PACKAGE,
+            super::DEEPSEEK_MCP_CLIENT_PACKAGE,
+            super::DEEPSEEK_ACP_APP_PACKAGE,
+            super::DEEPSEEK_LLM_ADAPTER_PACKAGE,
+        ]
+        .into_iter()
+        .map(|package| {
+            (
+                format!("node_modules/{package}"),
+                serde_json::json!({"version": super::DEEPSEEK_RELEASE_VERSION}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+        packages.insert(
+            "".into(),
+            serde_json::json!({"dependencies": super::deepseek_dependency_map()}),
+        );
+        std::fs::write(
+            home.join("package.json"),
+            serde_json::to_vec(&super::canonical_deepseek_runtime_manifest())
+                .expect("runtime manifest"),
+        )
+        .expect("runtime manifest");
+        std::fs::write(
+            home.join("package-lock.json"),
+            serde_json::to_vec(&serde_json::json!({"lockfileVersion":3,"packages":packages}))
+                .expect("lock json"),
+        )
+        .expect("lockfile");
         let profile = home.join("profiles/cccc-acp");
         std::fs::create_dir_all(&profile).expect("profile");
         std::fs::write(
             profile.join("package.json"),
-            "{\"name\":\"dsh-profile-cccc-acp\",\"private\":true,\"ccccManaged\":true,\"dependencies\":{\"@deepseek-ai/dsh-acp\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-mcp-client\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-acp-demo\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-llm-deepseek\":\"0.1.0-rc.6\"},\"dsh\":{\"profile\":{\"bundles\":[\"@deepseek-ai/dsh-base\",\"@deepseek-ai/dsh-headless\"]}}}\n",
+            "{\"name\":\"dsh-profile-cccc-acp\",\"private\":true,\"ccccManaged\":true,\"dependencies\":{\"@deepseek-ai/dsh-acp\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-mcp-client\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-acp-demo\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-llm-deepseek\":\"0.1.0-rc.6\"}}\n",
         )
             .expect("profile manifest");
         std::fs::write(
-            profile.join("cordis.patch.yml"),
-            format!(
-                "- insert:\n    - id: acp\n      name: '@deepseek-ai/dsh-acp'\n    - id: cccc-mcp\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        transport: stdio\n        serverName: cccc\n        command: '{}'\n        args: [mcp]\n        env:\n          CCCC_HOME: !!js process.env.CCCC_HOME\n          CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n          CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n        failOnStartupError: true\n",
-                dsh.display()
-            ),
-        )
-            .expect("profile patch");
-        std::fs::write(
             profile.join("cordis.yml"),
             format!(
-                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
+                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
                 dsh.display()
             ),
         )
         .expect("profile config");
         let mut env = BTreeMap::new();
         env.insert("PATH".into(), temp.path().display().to_string());
-        env.insert("DSH_HOME".into(), home.display().to_string());
+        env.insert("CCCC_HOME".into(), cccc_home.display().to_string());
         env.insert("CCCC_NODE_VERSION".into(), "0.0.0".into());
         assert!(deepseek_preflight(&["dsh-acp-demo".into()], &env).is_ok());
         let adapter_manifest = home

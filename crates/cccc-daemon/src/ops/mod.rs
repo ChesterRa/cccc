@@ -42,6 +42,9 @@ mod hermes_runtime;
 mod im;
 pub(crate) mod local_headless;
 mod maintenance;
+mod membership;
+mod membership_account;
+mod membership_cloudflared;
 mod memory;
 mod message_idempotency;
 mod message_metadata;
@@ -93,6 +96,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpRes
         profiles::handle,
         diagnostics::handle,
         remote_access::handle,
+        membership::handle,
         runtime_state::handle,
         maintenance::handle,
         im::handle,

@@ -3,7 +3,6 @@ from __future__ import annotations
 from cccc.kernel.actors import add_actor, update_actor
 from cccc.kernel.runtime import (
     DEEPSEEK_ACP_VERSION,
-    DEEPSEEK_DSH_VERSION,
     DEEPSEEK_MCP_CLIENT_VERSION,
     KNOWN_RUNTIMES,
     PRIMARY_RUNTIMES,
@@ -15,7 +14,10 @@ from cccc.contracts.v1.deepseek import (
     DEEPSEEK_ACP_SDK_VERSION,
     DEEPSEEK_LLM_ADAPTER_VERSION,
     DEEPSEEK_NODE_RANGE,
+    DEEPSEEK_NPM_BEFORE,
     DEEPSEEK_PROTOCOL_VERSION,
+    DEEPSEEK_RELEASE_VERSION,
+    DEEPSEEK_TURN_TIMEOUT_SECONDS,
 )
 from cccc.kernel.deepseek_acp import (
     ACPProtocolError,
@@ -45,19 +47,30 @@ def test_deepseek_release_contract_matches_rust_source() -> None:
         encoding="utf-8"
     )
     expected = {
-        "DEEPSEEK_DSH_VERSION": DEEPSEEK_DSH_VERSION,
-        "DEEPSEEK_ACP_VERSION": DEEPSEEK_ACP_VERSION,
-        "DEEPSEEK_MCP_CLIENT_VERSION": DEEPSEEK_MCP_CLIENT_VERSION,
-        "DEEPSEEK_ACP_APP_VERSION": DEEPSEEK_ACP_APP_VERSION,
-        "DEEPSEEK_LLM_ADAPTER_VERSION": DEEPSEEK_LLM_ADAPTER_VERSION,
+        "DEEPSEEK_RELEASE_VERSION": DEEPSEEK_RELEASE_VERSION,
+        "DEEPSEEK_NPM_BEFORE": DEEPSEEK_NPM_BEFORE,
         "DEEPSEEK_NODE_RANGE": DEEPSEEK_NODE_RANGE,
         "DEEPSEEK_PROTOCOL_VERSION": str(DEEPSEEK_PROTOCOL_VERSION),
         "DEEPSEEK_ACP_SDK_VERSION": DEEPSEEK_ACP_SDK_VERSION,
+        "DEEPSEEK_TURN_TIMEOUT_SECONDS": str(DEEPSEEK_TURN_TIMEOUT_SECONDS),
     }
     for name, value in expected.items():
         match = re.search(rf"pub const {name}: [^=]+ = ([^;]+);", source)
         assert match is not None
         assert match.group(1).strip().strip('"') == value
+    assert {
+        DEEPSEEK_ACP_VERSION,
+        DEEPSEEK_MCP_CLIENT_VERSION,
+        DEEPSEEK_ACP_APP_VERSION,
+        DEEPSEEK_LLM_ADAPTER_VERSION,
+    } == {DEEPSEEK_RELEASE_VERSION}
+    for name in (
+        "DEEPSEEK_ACP_VERSION",
+        "DEEPSEEK_MCP_CLIENT_VERSION",
+        "DEEPSEEK_ACP_APP_VERSION",
+        "DEEPSEEK_LLM_ADAPTER_VERSION",
+    ):
+        assert f"pub const {name}: &str = DEEPSEEK_RELEASE_VERSION;" in source
 
 
 def test_deepseek_actor_is_forced_to_headless(tmp_path) -> None:
@@ -112,7 +125,10 @@ def test_shared_acp_vectors_are_consumed_by_python_parser() -> None:
     cancelled = fixture["cancelled_terminal"]["frame"]
     assert terminal_stop_reason(cancelled) == "cancelled"
     assert terminal_stop_reason(cancelled) != "end_turn"
-    assert fixture["update_idempotency"]["dedupe_key"] == "deepseek.update:event-1:{ordinal}"
+    assert (
+        fixture["update_idempotency"]["dedupe_key"]
+        == "deepseek.update:event-1:{attempt}:{ordinal}"
+    )
     assert fixture["update_idempotency"]["expected_durable_updates"] == 2
     assert fixture["protocol_version"] == DEEPSEEK_PROTOCOL_VERSION
     assert fixture["acp_sdk_version"] == DEEPSEEK_ACP_SDK_VERSION

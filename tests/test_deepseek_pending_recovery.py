@@ -69,7 +69,7 @@ def test_restart_skips_durably_completed_prefix_before_requeue(tmp_path) -> None
         actor_id="deepseek",
         event_type="headless.turn.completed",
         data={"event_id": events[0]["id"]},
-        dedupe_key=f"deepseek.turn.completed:{events[0]['id']}",
+        dedupe_key=f"deepseek.turn:headless.turn.completed:{events[0]['id']}",
     )
     throttle = delivery.DeliveryThrottle()
     with (

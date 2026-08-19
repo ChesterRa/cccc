@@ -180,6 +180,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/branding")
         || path.starts_with("/api/v1/fs/")
         || path.starts_with("/api/v1/registry/")
+        || path.starts_with("/api/v1/membership")
         || path.starts_with("/api/v1/remote_access")
         || path == "/api/v1/debug/tail_logs"
         || path == "/api/v1/debug/clear_logs"
@@ -253,6 +254,8 @@ mod tests {
         for (method, path) in [
             (Method::GET, "/api/v1/remote_access"),
             (Method::POST, "/api/v1/remote_access/start"),
+            (Method::GET, "/api/v1/membership"),
+            (Method::POST, "/api/v1/membership/reach/on"),
             (Method::GET, "/api/v1/debug/tail_logs"),
             (Method::POST, "/api/v1/debug/clear_logs"),
             (Method::GET, "/api/v1/capabilities/allowlist"),

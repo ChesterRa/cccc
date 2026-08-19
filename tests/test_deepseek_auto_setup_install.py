@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from cccc.contracts.v1.deepseek import DEEPSEEK_NPM_BEFORE
 from cccc.daemon.actors.deepseek_setup import _install_packages, _packages_ready
 
 
@@ -12,9 +13,9 @@ def test_npm_installer_writes_the_pinned_package_tuple(tmp_path, monkeypatch) ->
     npm.write_text(
         """#!/bin/sh
 set -eu
+printf '%s\n' "$@" > npm-args.txt
 for spec in "$@"; do
   case "$spec" in
-    @deepseek-ai/dsh@*) name=dsh; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-acp@*) name=dsh-acp; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-mcp-client@*) name=dsh-mcp-client; version=0.1.0-rc.6 ;;
     @deepseek-ai/dsh-acp-demo@*) name=dsh-acp-demo; version=0.1.0-rc.6 ;;
@@ -24,6 +25,7 @@ for spec in "$@"; do
   mkdir -p "node_modules/@deepseek-ai/$name"
   printf '{"version":"%s"}\\n' "$version" > "node_modules/@deepseek-ai/$name/package.json"
 done
+printf '%s\n' '{"lockfileVersion":3,"packages":{"":{"dependencies":{"@deepseek-ai/dsh-acp":"0.1.0-rc.6","@deepseek-ai/dsh-mcp-client":"0.1.0-rc.6","@deepseek-ai/dsh-acp-demo":"0.1.0-rc.6","@deepseek-ai/dsh-llm-deepseek":"0.1.0-rc.6"}},"node_modules/@deepseek-ai/dsh-acp":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-mcp-client":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-acp-demo":{"version":"0.1.0-rc.6"},"node_modules/@deepseek-ai/dsh-llm-deepseek":{"version":"0.1.0-rc.6"}}}' > package-lock.json
 """,
         encoding="utf-8",
     )
@@ -34,6 +36,9 @@ done
     monkeypatch.setenv("PATH", path)
     _install_packages(dsh_home, {**os.environ, "PATH": path})
     assert _packages_ready(dsh_home)
+    args = (dsh_home / "npm-args.txt").read_text(encoding="utf-8").splitlines()
+    assert DEEPSEEK_NPM_BEFORE in args
+    assert "@deepseek-ai/dsh@0.1.0-rc.6" not in args
 
 
 def test_python_setup_command_uses_the_same_automatic_setup(tmp_path, monkeypatch) -> None:

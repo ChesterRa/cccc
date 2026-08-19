@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { RefreshIcon } from "../../Icons";
@@ -75,6 +75,7 @@ export function GroupBridgePairingSection({
   const [trustCopyNotice, setTrustCopyNotice] = useState("");
   const [requestNotice, setRequestNotice] = useState("");
   const [issuerEndpoint, setIssuerEndpoint] = useState(defaultIssuerEndpoint);
+  const [reachHostname, setReachHostname] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [revokeBusyId, setRevokeBusyId] = useState("");
@@ -93,6 +94,20 @@ export function GroupBridgePairingSection({
   const parsed = useMemo(() => parseConnectionInfoInput(connectionInput), [connectionInput]);
   const localPeerId = identity?.peer_id || "";
   const localNodeId = identity?.node_id || "";
+  useEffect(() => {
+    let cancelled = false;
+    void api.fetchMembership().then((resp) => {
+      if (cancelled || !resp.ok) return;
+      const membership = resp.result?.membership;
+      const host =
+        membership?.online && !membership.disabled ? String(membership.hostname || "").trim() : "";
+      setReachHostname(host);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const inviteReady = canCreateInvite({ groupId: currentGroupId, busy, issuerEndpoint });
   const sameInstanceInput = isSameInstancePairingInput(parsed);
   const sessionConnectionInfoInput = isSessionConnectionInfoInput(parsed);
@@ -604,6 +619,26 @@ export function GroupBridgePairingSection({
               ? t("group_bridge.issuerEndpointLocalOnlyHelp")
               : t("group_bridge.issuerEndpointHelp")}
           </p>
+          {reachHostname ? (
+            <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3 text-xs leading-6 text-[var(--color-text-secondary)]">
+              <p>{t("group_bridge.reachHostnameHint")}</p>
+              <pre className="mt-2 overflow-auto break-all font-mono text-[11px] text-[var(--color-text-primary)]">
+                {reachHostname}
+              </pre>
+              <button
+                type="button"
+                className={`mt-2 ${secondaryButtonClass()}`}
+                onClick={() => {
+                  setIssuerEndpoint(reachHostname);
+                  void copyTextToClipboard(reachHostname).then((ok) => {
+                    if (ok) setCopyNotice(t("webAccess.copied"));
+                  });
+                }}
+              >
+                {t("group_bridge.useReachHostname")}
+              </button>
+            </div>
+          ) : null}
           {inviteError && (
             <p className="mt-3 text-xs font-medium text-rose-600 dark:text-rose-400">
               {inviteError}

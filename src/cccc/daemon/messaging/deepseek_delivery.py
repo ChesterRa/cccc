@@ -7,15 +7,12 @@ from __future__ import annotations
 
 import time
 import json
-from pathlib import Path
 from typing import Any, Iterable
 
 from ..actors import deepseek_runtime
+from ...contracts.v1.deepseek import DEEPSEEK_TURN_TIMEOUT_SECONDS
 from ...kernel.deepseek_acp import permission_request_id, terminal_stop_reason, validate_session_update
-from ...kernel.headless_events import append_headless_event, headless_events_path
-
-_RECOVERY_MAX_BYTES = 4 * 1024 * 1024
-_RECOVERY_MAX_LINES = 16_384
+from ...kernel.headless_events import append_headless_event, has_headless_event_dedupe
 _CANCEL_CONFIRM_SECONDS = 5.0
 _CREDENTIAL_ERROR_TOKENS = ("no api key", "deepseek_api_key")
 
@@ -38,8 +35,12 @@ def _normalize_turn_error(error: Any) -> tuple[Any, bool]:
     return error, False
 
 
-def _turn_id(event_id: str) -> str:
-    return f"deepseek:{event_id}"
+def _attempt_id(session_id: str, request_id: int) -> str:
+    return f"{session_id}:{request_id}"
+
+
+def _turn_id(event_id: str, attempt_id: str) -> str:
+    return f"deepseek:{event_id}:{attempt_id}"
 
 
 def _message_text(update: Any) -> str:
@@ -77,39 +78,20 @@ def _cancel_and_confirm(supervisor: Any, request_id: int) -> dict[str, Any] | No
             return frame
 
 
+def _has_durable_completion(group: Any, event_id: str) -> bool:
+    return has_headless_event_dedupe(
+        group.path, f"deepseek.turn:headless.turn.completed:{event_id}"
+    )
+
+
 def recover_durable_terminals(group: Any, *, actor_id: str, limit: int = 256) -> int:
     """Advance only the contiguous unread prefix covered by durable terminals."""
-    path = headless_events_path(group.path)
-    completed: set[str] = set()
-    try:
-        if path.stat().st_size > _RECOVERY_MAX_BYTES:
-            return 0
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if len(lines) > _RECOVERY_MAX_LINES:
-            return 0
-        for raw in lines:
-            payload = json.loads(raw)
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get("group_id") or "") != str(group.group_id):
-                continue
-            if str(payload.get("actor_id") or "") != str(actor_id):
-                continue
-            if str(payload.get("type") or "") != "headless.turn.completed":
-                continue
-            data = payload.get("data")
-            if isinstance(data, dict) and str(data.get("event_id") or ""):
-                completed.add(str(data["event_id"]))
-    except (OSError, ValueError, TypeError):
-        return 0
-    if not completed:
-        return 0
     from ...kernel.inbox import set_cursor, unread_messages
 
     recovered = 0
     for event in unread_messages(group, actor_id=str(actor_id), limit=max(1, int(limit or 256)), kind_filter="all"):
         event_id = str(event.get("id") or "")
-        if not event_id or event_id not in completed:
+        if not event_id or not _has_durable_completion(group, event_id):
             break
         try:
             set_cursor(
@@ -124,7 +106,13 @@ def recover_durable_terminals(group: Any, *, actor_id: str, limit: int = 256) ->
     return recovered
 
 
-def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], timeout: float = 30.0) -> bool:
+def deliver_messages(
+    group: Any,
+    *,
+    actor_id: str,
+    messages: Iterable[Any],
+    timeout: float = float(DEEPSEEK_TURN_TIMEOUT_SECONDS),
+) -> bool:
     supervisor = deepseek_runtime.get(group_id=str(group.group_id), actor_id=str(actor_id))
     if supervisor is None or not supervisor.session_id:
         return False
@@ -133,6 +121,8 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
         event_id = str(getattr(message, "event_id", "") or "").strip()
         if not event_id:
             return False
+        if _has_durable_completion(group, event_id):
+            continue
         prompt = render_single_message(message)
         if str(getattr(message, "kind", "chat.message") or "chat.message") == "chat.message":
             prompt = append_mcp_reply_reminder(prompt)
@@ -140,7 +130,8 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
         terminal_received = False
         try:
             request_id = supervisor.submit(prompt)
-            turn_id = _turn_id(event_id)
+            attempt_id = _attempt_id(str(supervisor.session_id), request_id)
+            turn_id = _turn_id(event_id, attempt_id)
             stream_id = f"{turn_id}:message"
             append_headless_event(
                 group.path,
@@ -154,7 +145,7 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
                     "request_id": request_id,
                     "status": "started",
                 },
-                dedupe_key=f"deepseek.turn.started:{event_id}",
+                dedupe_key=f"deepseek.turn.started:{event_id}:{attempt_id}",
             )
             update_ordinal = 0
             message_text = ""
@@ -209,7 +200,7 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
                         actor_id=str(actor_id),
                         event_type=event_type,
                         data=data,
-                        dedupe_key=f"deepseek.update:{event_id}:{ordinal}",
+                        dedupe_key=f"deepseek.update:{event_id}:{attempt_id}:{ordinal}",
                     )
                     continue
                 if method == "session/request_permission":
@@ -249,7 +240,7 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
                             "stream_id": stream_id,
                             "text": message_text,
                         },
-                        dedupe_key=f"deepseek.message.completed:{event_id}",
+                        dedupe_key=f"deepseek.message.completed:{event_id}:{attempt_id}",
                     )
                 error = frame.get("error")
                 credential_failure = False
@@ -273,7 +264,11 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
                         "error": error,
                         "status": "failed" if failed else "completed",
                     },
-                    dedupe_key=f"deepseek.turn:{terminal_type}:{event_id}",
+                    dedupe_key=(
+                        f"deepseek.turn:{terminal_type}:{event_id}"
+                        if terminal_type == "headless.turn.completed"
+                        else f"deepseek.turn:{terminal_type}:{event_id}:{attempt_id}"
+                    ),
                 )
                 if failed:
                     if credential_failure:

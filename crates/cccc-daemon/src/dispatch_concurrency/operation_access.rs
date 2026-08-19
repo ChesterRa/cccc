@@ -30,6 +30,7 @@ pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
         || request.op.starts_with("access_token_")
         || request.op.starts_with("group_bridge_")
         || request.op.starts_with("remote_access_")
+        || request.op.starts_with("membership_")
 }
 
 pub(super) fn is_read_only(op: &str) -> bool {

@@ -5,22 +5,24 @@ readiness checks.  Keep it data-only so setup, discovery and actor start all
 read the same tuple.
 """
 
-DEEPSEEK_DSH_PACKAGE = "@deepseek-ai/dsh"
-DEEPSEEK_DSH_VERSION = "0.1.0-rc.6"
+DEEPSEEK_RELEASE_VERSION = "0.1.0-rc.6"
+# npm's prerelease semver ranges otherwise resolve the rc.6 dependency graph
+# to rc.7 packages.  This cutoff is part of the compatibility contract.
+DEEPSEEK_NPM_BEFORE = "2026-08-14T00:00:00Z"
 DEEPSEEK_ACP_PACKAGE = "@deepseek-ai/dsh-acp"
-DEEPSEEK_ACP_VERSION = "0.1.0-rc.6"
+DEEPSEEK_ACP_VERSION = DEEPSEEK_RELEASE_VERSION
 DEEPSEEK_MCP_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client"
-DEEPSEEK_MCP_CLIENT_VERSION = "0.1.0-rc.6"
+DEEPSEEK_MCP_CLIENT_VERSION = DEEPSEEK_RELEASE_VERSION
 DEEPSEEK_ACP_APP_PACKAGE = "@deepseek-ai/dsh-acp-demo"
-DEEPSEEK_ACP_APP_VERSION = "0.1.0-rc.6"
+DEEPSEEK_ACP_APP_VERSION = DEEPSEEK_RELEASE_VERSION
 DEEPSEEK_LLM_ADAPTER_PACKAGE = "@deepseek-ai/dsh-llm-deepseek"
-DEEPSEEK_LLM_ADAPTER_VERSION = "0.1.0-rc.6"
+DEEPSEEK_LLM_ADAPTER_VERSION = DEEPSEEK_RELEASE_VERSION
 DEEPSEEK_NODE_RANGE = "^22.19.0 || >=24.0.0"
 DEEPSEEK_PROTOCOL_VERSION = 1
 DEEPSEEK_ACP_SDK_VERSION = "0.25.1"
+DEEPSEEK_TURN_TIMEOUT_SECONDS = 300
 
 DEEPSEEK_PACKAGE_VERSIONS = (
-    (DEEPSEEK_DSH_PACKAGE, DEEPSEEK_DSH_VERSION),
     (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
     (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
     (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
@@ -47,11 +49,4 @@ def is_canonical_profile_manifest(value: object) -> bool:
         return False
     if dependencies.get(DEEPSEEK_LLM_ADAPTER_PACKAGE) != DEEPSEEK_LLM_ADAPTER_VERSION:
         return False
-    profile = value.get("dsh", {}).get("profile") if isinstance(value.get("dsh"), dict) else None
-    bundles = profile.get("bundles") if isinstance(profile, dict) else None
-    return (
-        isinstance(bundles, list)
-        and len(bundles) == 2
-        and all(isinstance(item, str) for item in bundles)
-        and set(bundles) == {"@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"}
-    )
+    return set(dependencies) == {package for package, _version in DEEPSEEK_PACKAGE_VERSIONS}

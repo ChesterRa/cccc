@@ -1046,8 +1046,22 @@ export type AssistantVoicePromptDraftMutationResult = {
   event?: unknown;
 };
 
+export type MembershipState = {
+  logged_in: boolean;
+  device_id?: string | null;
+  hostname?: string | null;
+  web_url?: string | null;
+  connector_url?: string | null;
+  online?: boolean;
+  cut?: boolean;
+  disabled?: boolean;
+  in_reach?: boolean;
+  account_origin?: string | null;
+  last_error?: string | null;
+};
+
 export type RemoteAccessState = {
-  provider: "off" | "manual" | "tailscale" | string;
+  provider: "off" | "manual" | "tailscale" | "reach" | string;
   mode: string;
   require_access_token: boolean;
   enabled: boolean;
@@ -1491,7 +1505,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   codex: { label: "Codex CLI", desc: "" },
   deepseek: {
     label: "DeepSeek Harness",
-    desc: "ACP headless runtime with CCCC MCP; run cccc setup --runtime deepseek first",
+    desc: "Experimental ACP headless runtime; CCCC installs its pinned composition on first start",
   },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
   cursor: {

@@ -1521,6 +1521,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         return resp
 
+    @global_router.get("/api/v1/membership", dependencies=[Depends(require_admin)])
+    async def membership_get() -> Dict[str, Any]:
+        """Get local membership / reach status and copyable URLs."""
+        return await ctx.daemon({"op": "membership_status", "args": {"by": "user"}})
+
+    @global_router.post("/api/v1/membership/reach/on", dependencies=[Depends(require_admin)])
+    async def membership_reach_on(by: str = "user") -> Dict[str, Any]:
+        """Publish this machine through membership reach."""
+        return await ctx.daemon({"op": "membership_reach_on", "args": {"by": str(by or "user")}})
+
+    @global_router.post("/api/v1/membership/reach/off", dependencies=[Depends(require_admin)])
+    async def membership_reach_off(by: str = "user") -> Dict[str, Any]:
+        """Stop membership reach but keep this device logged in."""
+        return await ctx.daemon({"op": "membership_reach_off", "args": {"by": str(by or "user")}})
+
     @global_router.get("/api/v1/remote_access", dependencies=[Depends(require_admin)])
     async def remote_access_get() -> Dict[str, Any]:
         """Get global remote-access state."""

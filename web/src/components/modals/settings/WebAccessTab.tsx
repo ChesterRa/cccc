@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
+import type {
+  GroupMeta,
+  MembershipState,
+  RemoteAccessState,
+  WebAccessSession,
+} from "../../../types";
 import { InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
+import { ReachMembershipSection } from "./ReachMembershipSection";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
 import {
@@ -30,6 +36,7 @@ import {
   isLoopbackHost,
   isRemoteAccessBlockedByMissingAdminToken,
   isWildcardHost,
+  keepsActiveReach,
   type AccessGoal,
 } from "./webAccessReachabilityModel";
 
@@ -99,6 +106,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   const { t } = useTranslation("settings");
 
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
+  const [membership, setMembership] = useState<MembershipState | null>(null);
   const [webMode, setWebMode] = useState<WebModeState | null>(null);
   const [accessTokens, setAccessTokens] = useState<api.AccessTokenEntry[]>([]);
   const [session, setSession] = useState<WebAccessSession | null>(null);
@@ -109,11 +117,12 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   const [applyBusy, setApplyBusy] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const [reachBusy, setReachBusy] = useState(false);
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
 
-  const [provider, setProvider] = useState<"off" | "manual" | "tailscale">("off");
+  const [provider, setProvider] = useState<"off" | "manual" | "tailscale" | "reach">("off");
   const [mode, setMode] = useState("tailnet_only");
   const [webHost, setWebHost] = useState("127.0.0.1");
   const [webPort, setWebPort] = useState("8848");
@@ -187,11 +196,12 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     setBusy(true);
     setError("");
     try {
-      const [pingResp, remoteResp, groupsResp, sessionResp] = await Promise.all([
+      const [pingResp, remoteResp, groupsResp, sessionResp, membershipResp] = await Promise.all([
         api.fetchPing(),
         api.fetchRemoteAccessState(),
         api.fetchGroups(),
         api.fetchWebAccessSession(),
+        api.fetchMembership(),
       ]);
       if (pingResp.ok) {
         setWebMode(pingResp.result?.web || null);
@@ -199,7 +209,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       if (remoteResp.ok && remoteResp.result?.remote_access) {
         const state = remoteResp.result.remote_access;
         setRemoteState(state);
-        setProvider((state.provider as "off" | "manual" | "tailscale") || "off");
+        setProvider((state.provider as "off" | "manual" | "tailscale" | "reach") || "off");
         setMode(String(state.mode || "tailnet_only"));
         setWebHost(String(state.config?.web_host || state.diagnostics?.web_host || "127.0.0.1"));
         setWebPort(String(state.config?.web_port || state.diagnostics?.web_port || 8848));
@@ -208,6 +218,11 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         );
       } else if (!remoteResp.ok) {
         setError(remoteResp.error?.message || t("webAccess.loadFailed"));
+      }
+      if (membershipResp.ok && membershipResp.result?.membership) {
+        setMembership(membershipResp.result.membership);
+      } else if (!membershipResp.ok && membershipResp.error?.message) {
+        setMembership(null);
       }
       if (groupsResp.ok && groupsResp.result?.groups) {
         setGroups(groupsResp.result.groups);
@@ -340,10 +355,12 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       return {
         label: t("webAccess.summary.remoteEnabled"),
         detail:
-          remoteState.endpoint ||
-          t("webAccess.summary.remoteEnabledHint", {
-            provider: provider === "tailscale" ? "Tailscale" : t("webAccess.providers.manual"),
-          }),
+          savedProvider === "reach"
+            ? membership?.hostname || t("webAccess.reach.online")
+            : remoteState.endpoint ||
+              t("webAccess.summary.remoteEnabledHint", {
+                provider: provider === "tailscale" ? "Tailscale" : t("webAccess.providers.manual"),
+              }),
         tone: "good" as const,
       };
     }
@@ -352,7 +369,16 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       detail: t("webAccess.summary.remoteNeedsAttentionHint"),
       tone: "warn" as const,
     };
-  }, [applySupported, provider, remoteState, restartRequired, statusReason, t]);
+  }, [
+    applySupported,
+    membership,
+    provider,
+    remoteState,
+    restartRequired,
+    savedProvider,
+    statusReason,
+    t,
+  ]);
 
   const accessGoal = selectedAccessGoal;
   const remoteMethodValue = provider === "tailscale" ? "tailscale" : "manual";
@@ -581,9 +607,32 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       }
       const trimmedHost = webHost.trim();
       const trimmedPublicUrl = webPublicUrl.trim();
-      if (selectedAccessGoal === "public" && !trimmedPublicUrl) {
+      const keepReach = keepsActiveReach({
+        savedProvider,
+        draftProvider: provider,
+        goal: selectedAccessGoal,
+        savedMode,
+        draftMode: mode,
+        savedHost: savedWebHost,
+        draftHost: trimmedHost,
+        savedPort: savedWebPort,
+        draftPort: String(parsedPort),
+        savedPublicUrl: savedWebPublicUrl,
+        draftPublicUrl: trimmedPublicUrl,
+      });
+      if (selectedAccessGoal === "public" && !trimmedPublicUrl && !keepReach) {
         setError(t("webAccess.publicUrlRequired"));
         return;
+      }
+      if (savedProvider === "reach" && !keepReach) {
+        const stopped = await api.stopMembershipReach();
+        if (!stopped.ok) {
+          setError(stopped.error?.message || t("webAccess.reach.stopFailed"));
+          return;
+        }
+        if (stopped.result?.membership) {
+          setMembership(stopped.result.membership);
+        }
       }
       const effectiveProvider =
         selectedAccessGoal === "local"
@@ -601,20 +650,24 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       const manualEnabled =
         effectiveProvider === "manual" &&
         (!isLoopbackHost(trimmedHost) || Boolean(trimmedPublicUrl));
-      const resp = await api.updateRemoteAccessConfig({
-        provider: effectiveProvider,
-        mode,
-        enabled:
-          effectiveProvider === "manual"
-            ? manualEnabled
-            : effectiveProvider === "off"
-              ? false
-              : undefined,
-        requireAccessToken: true,
-        webHost,
-        webPort: parsedPort,
-        webPublicUrl,
-      });
+      const resp = await api.updateRemoteAccessConfig(
+        keepReach
+          ? { mode, requireAccessToken: true, webHost, webPort: parsedPort }
+          : {
+              provider: effectiveProvider,
+              mode,
+              enabled:
+                effectiveProvider === "manual"
+                  ? manualEnabled
+                  : effectiveProvider === "off"
+                    ? false
+                    : undefined,
+              requireAccessToken: true,
+              webHost,
+              webPort: parsedPort,
+              webPublicUrl,
+            },
+      );
       if (!resp.ok || !resp.result?.remote_access) {
         setError(resp.error?.message || t("webAccess.saveFailed"));
         return;
@@ -737,6 +790,42 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       setError(t("webAccess.stopFailed"));
     } finally {
       setStopBusy(false);
+    }
+  };
+
+  const handleReachOn = async () => {
+    setReachBusy(true);
+    setError("");
+    try {
+      const resp = await api.startMembershipReach();
+      if (!resp.ok || !resp.result?.membership) {
+        setError(resp.error?.message || t("webAccess.reach.startFailed"));
+        return;
+      }
+      setMembership(resp.result.membership);
+      await load();
+    } catch {
+      setError(t("webAccess.reach.startFailed"));
+    } finally {
+      setReachBusy(false);
+    }
+  };
+
+  const handleReachOff = async () => {
+    setReachBusy(true);
+    setError("");
+    try {
+      const resp = await api.stopMembershipReach();
+      if (!resp.ok || !resp.result?.membership) {
+        setError(resp.error?.message || t("webAccess.reach.stopFailed"));
+        return;
+      }
+      setMembership(resp.result.membership);
+      await load();
+    } catch {
+      setError(t("webAccess.reach.stopFailed"));
+    } finally {
+      setReachBusy(false);
     }
   };
 
@@ -1267,7 +1356,9 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
           <button
             type="button"
             onClick={() => void load()}
-            disabled={busy || saveBusy || startBusy || stopBusy || createBusy || editBusy}
+            disabled={
+              busy || saveBusy || startBusy || stopBusy || reachBusy || createBusy || editBusy
+            }
             className={secondaryButtonClass("sm")}
           >
             {busy ? t("common:loading") : t("webAccess.refresh")}
@@ -1609,6 +1700,16 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
+          <ReachMembershipSection
+            isDark={isDark}
+            membership={membership}
+            reachBusy={reachBusy}
+            onReachOn={() => void handleReachOn()}
+            onReachOff={() => void handleReachOff()}
+            onCopied={() => pushHint(t("webAccess.copied"))}
+            onCopyFailed={() => setError(t("common:copyFailed"))}
+          />
+
           <div className={settingsWorkspacePanelClass(isDark)}>
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
               {t("webAccess.accessGoalTitle")}
@@ -1818,7 +1919,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
             hasAdminToken={hasAdminToken}
             saveBusy={saveBusy}
             applyBusy={applyBusy}
-            endpoint={remoteState?.endpoint || null}
+            endpoint={membership?.online ? null : remoteState?.endpoint || null}
             onSave={() => void handleSaveReachability()}
             onApply={() => void handleApplyReachability()}
             onCopyEndpoint={async () => {

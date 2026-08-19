@@ -351,6 +351,17 @@ For accessing the Web UI from outside localhost:
 - `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
 - Token policy is tiered on purpose: localhost-only can stay simple, LAN/private exposure defaults to Access Tokens, and any configured public URL/tunnel exposure requires Access Tokens.
 
+Optional membership **Reach** is a managed public-HTTPS path for Linux and macOS preview users. Local CCCC remains fully usable without an account. First create an Admin Access Token in **Settings > Web Access**, then run:
+
+```bash
+cccc login
+cccc reach on
+cccc reach status
+cccc reach off
+```
+
+Reach installs a pinned `cloudflared` helper under `CCCC_HOME`; it does not upload your ledger or repository. Windows helper installation is not bundled in this release, so Reach is currently unavailable on Windows.
+
 ## IM Bridges
 
 Bridge your working group to your team's IM platform:
