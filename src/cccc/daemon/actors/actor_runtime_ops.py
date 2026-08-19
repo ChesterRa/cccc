@@ -499,9 +499,9 @@ def start_actor_process(
             except Exception:
                 pass
             try:
-                from ..messaging.deepseek_delivery import recover_durable_terminals
+                from ..messaging.deepseek_pending_recovery import recover_pending_messages
 
-                recover_durable_terminals(group, actor_id=actor_id, limit=256)
+                recover_pending_messages(group, actor_id=actor_id, limit=256)
             except Exception:
                 # Recovery is fail-closed; the unread source remains available
                 # for the normal delivery path if the cursor cannot be written.

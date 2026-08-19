@@ -27,10 +27,10 @@ from ...contracts.v1.deepseek import (
 from ...kernel.runtime import (
     deepseek_external_preflight_error,
     deepseek_preflight_error,
-    resolve_deepseek_home,
 )
 from ...util.file_lock import acquire_lockfile, release_lockfile
 from ...util.fs import atomic_write_json, atomic_write_text
+from .deepseek_setup_env import prepare_deepseek_setup_env
 
 _INSTALL_TIMEOUT_SECONDS = 120.0
 _PACKAGES = (
@@ -57,17 +57,7 @@ def ensure_deepseek_setup(
     external_preflight: Callable[..., str] = deepseek_external_preflight_error,
     ready_preflight: Callable[..., str] = deepseek_preflight_error,
 ) -> DeepSeekSetupOutcome:
-    effective_env = dict(os.environ)
-    effective_env.update(env)
-    dsh_home = resolve_deepseek_home(effective_env)
-    if dsh_home is None:
-        raise RuntimeError("DSH_HOME cannot be inferred because HOME is not configured")
-    effective_env["DSH_HOME"] = str(dsh_home)
-    env["DSH_HOME"] = str(dsh_home)
-    local_bin = str(dsh_home / "node_modules" / ".bin")
-    inherited_path = str(effective_env.get("PATH") or "")
-    effective_env["PATH"] = local_bin + (os.pathsep + inherited_path if inherited_path else "")
-    env["PATH"] = effective_env["PATH"]
+    effective_env, dsh_home = prepare_deepseek_setup_env(env)
     command = ["dsh-acp-demo"]
     error = external_preflight(command, env=effective_env)
     # The ACP app itself is one of the packages CCCC installs.  Permit the

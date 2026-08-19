@@ -360,6 +360,7 @@
     "changeCaptured": "変更内容あり",
     "commitmentsCount": "{{count}} 件のコミットメント",
     "showMore": "もっと見る",
+    "showMoreTasks": "さらに {{count}} 件表示",
     "showLess": "折りたたむ",
     "stale": "古い",
     "empty": {

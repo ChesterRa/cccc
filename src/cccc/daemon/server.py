@@ -110,6 +110,7 @@ from .ops.socket_special_ops import try_handle_socket_special_op
 from .ops.socket_accept_ops import handle_incoming_connection
 from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
 from .actors import deepseek_runtime
+from .actors.runner_ops import is_group_running as runner_group_running
 from .actors.runner_ops import stop_actor as runner_stop_actor
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
@@ -797,6 +798,8 @@ def _auto_wake_actor_running(wake_group: Any, actor_id: str) -> bool:
         return bool(codex_app_supervisor.actor_running(wake_group.group_id, actor_id))
     if runtime == "claude" and runner_effective == "headless":
         return bool(claude_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "deepseek" and runner_effective == "headless":
+        return bool(deepseek_runtime.running(group_id=wake_group.group_id, actor_id=actor_id))
     if runtime == "web_model" and runner_effective == "headless":
         return bool(_headless_state_running(wake_group.group_id, actor_id))
     if runner_effective == "headless":
@@ -1033,14 +1036,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         home=p.home,
         automation_tick=AUTOMATION.tick,
         load_group=load_group,
-        group_running=lambda gid: (
-            codex_app_supervisor.group_running(gid)
-            or
-            claude_app_supervisor.group_running(gid)
-            or
-            pty_runner.SUPERVISOR.group_running(gid)
-            or headless_runner.SUPERVISOR.group_running(gid)
-        ),
+        group_running=runner_group_running,
         tick_delivery=tick_delivery,
         compact_ledgers=_maybe_compact_ledgers,
         automation_interval_seconds=5.0,

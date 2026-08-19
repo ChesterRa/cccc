@@ -14,18 +14,35 @@ pub(super) fn fail_sent_request(
     request_id: u64,
     terminal_seen: bool,
 ) -> bool {
-    if !terminal_seen && cancel_and_confirm(supervisor, session_id, request_id).is_err() {
-        holder.running.store(false, Ordering::Release);
-        let _ = supervisor.stop();
-    }
+    let _ = settle_sent_request(holder, supervisor, session_id, request_id, terminal_seen);
     false
+}
+
+pub(super) fn settle_sent_request(
+    holder: &RuntimeEntry,
+    supervisor: &mut DeepSeekSupervisor,
+    session_id: &str,
+    request_id: u64,
+    terminal_seen: bool,
+) -> Result<Option<Value>, ()> {
+    if terminal_seen {
+        return Ok(None);
+    }
+    match cancel_and_confirm(supervisor, session_id, request_id) {
+        Ok(frame) => Ok(Some(frame)),
+        Err(()) => {
+            holder.running.store(false, Ordering::Release);
+            let _ = supervisor.stop();
+            Err(())
+        }
+    }
 }
 
 fn cancel_and_confirm(
     supervisor: &mut DeepSeekSupervisor,
     session_id: &str,
     request_id: u64,
-) -> Result<(), ()> {
+) -> Result<Value, ()> {
     supervisor.cancel().map_err(|_| ())?;
     let deadline = Instant::now() + CANCEL_CONFIRM_TIMEOUT;
     loop {
@@ -56,7 +73,7 @@ fn cancel_and_confirm(
             continue;
         }
         if frame.get("id") == Some(&json!(request_id)) {
-            return Ok(());
+            return Ok(frame);
         }
     }
 }

@@ -64,6 +64,7 @@ PTY_STARTUP_MAX_WAIT_SECONDS = 10.0  # Max wait for a fresh runtime to become re
 PTY_STARTUP_READY_GRACE_SECONDS = 1.0  # Extra safety delay after readiness is detected (user request)
 ASYNC_FLUSH_POLL_SECONDS = 0.25  # Short poll used when a one-shot kick loses the immediate flush window
 ASYNC_FLUSH_MAX_WAIT_SECONDS = 12.0  # Avoid keeping a kick thread alive indefinitely when delivery is impossible
+RECENT_EVENT_IDS_LIMIT = 1024  # Bound idempotency across recovery/live enqueue races.
 PTY_REPEAT_SUBMIT_DELAY_SECONDS = 0.2  # Short gap for runtimes that need a second Enter after pasted input.
 ### NOTE
 # Delivery is intentionally daemon-driven (single-writer). If a service needs to notify actors, it
@@ -297,6 +298,7 @@ class ActorDeliveryState:
     last_delivery_at: Optional[datetime] = None
     last_attempt_at: Optional[datetime] = None
     pending_messages: List[PendingMessage] = field(default_factory=list)
+    recent_event_ids: Dict[str, None] = field(default_factory=dict)
     delivered_chat_count: int = 0  # Count of delivered chat.message (per actor, in-memory)
     delivery_inflight: bool = False  # True while a background/synchronous delivery chain owns this actor
 
@@ -322,6 +324,14 @@ class DeliveryThrottle:
         if actor_id not in self._states[group_id]:
             self._states[group_id][actor_id] = ActorDeliveryState()
         return self._states[group_id][actor_id]
+
+    @staticmethod
+    def _remember_event_id(state: ActorDeliveryState, event_id: str) -> None:
+        if not event_id:
+            return
+        state.recent_event_ids[event_id] = None
+        while len(state.recent_event_ids) > RECENT_EVENT_IDS_LIMIT:
+            state.recent_event_ids.pop(next(iter(state.recent_event_ids)))
     
     def queue_message(
         self,
@@ -342,10 +352,23 @@ class DeliveryThrottle:
         notify_kind: str = "",
         notify_title: str = "",
         notify_message: str = "",
-    ) -> None:
-        """Queue a message for delivery."""
+        deduplicate_by_event_id: bool = False,
+    ) -> bool:
+        """Queue a message for delivery, optionally idempotent by canonical event ID."""
         with self._lock:
             state = self._get_state(group_id, actor_id)
+            event_key = str(event_id or "").strip()
+            if deduplicate_by_event_id and event_key:
+                if event_key in state.recent_event_ids or any(
+                    str(item.event_id or "").strip() == event_key for item in state.pending_messages
+                ):
+                    logger.debug(
+                        "[THROTTLE] queue_message: skip duplicate %s/%s event=%s",
+                        group_id,
+                        actor_id,
+                        event_key,
+                    )
+                    return False
             logger.debug(f"[THROTTLE] queue_message: {group_id}/{actor_id} event={event_id} text={text[:50]!r} pending_before={len(state.pending_messages)}")
             state.pending_messages.append(PendingMessage(
                 event_id=event_id,
@@ -363,6 +386,9 @@ class DeliveryThrottle:
                 notify_title=notify_title,
                 notify_message=notify_message,
             ))
+            if deduplicate_by_event_id and event_key:
+                self._remember_event_id(state, event_key)
+            return True
     
     def should_deliver(self, group_id: str, actor_id: str, min_interval_seconds: int) -> bool:
         """Check if we should deliver messages now."""
@@ -415,8 +441,18 @@ class DeliveryThrottle:
             state = self._get_state(group_id, actor_id)
             if state.delivery_inflight:
                 return 0
-            existing_ids = {str(item.event_id or "") for item in state.pending_messages}
-            recovered = [item for item in messages if str(item.event_id or "") not in existing_ids]
+            existing_ids = {str(item.event_id or "").strip() for item in state.pending_messages}
+            recovered: List[PendingMessage] = []
+            for item in messages:
+                event_key = str(item.event_id or "").strip()
+                if event_key in existing_ids:
+                    continue
+                if event_key and event_key in state.recent_event_ids:
+                    continue
+                recovered.append(item)
+                existing_ids.add(event_key)
+                if event_key:
+                    self._remember_event_id(state, event_key)
             state.pending_messages = recovered + state.pending_messages
             return len(recovered)
 
@@ -911,9 +947,10 @@ def queue_chat_message(
     source_user_name: Optional[str] = None,
     source_user_id: Optional[str] = None,
     ts: str = "",
-) -> None:
-    """Queue a chat message for throttled delivery."""
-    THROTTLE.queue_message(
+    deduplicate_by_event_id: bool = False,
+) -> bool:
+    """Queue one canonical chat event for throttled delivery."""
+    return THROTTLE.queue_message(
         group.group_id,
         actor_id,
         event_id=event_id,
@@ -927,6 +964,7 @@ def queue_chat_message(
         source_user_id=source_user_id,
         ts=ts,
         kind="chat.message",
+        deduplicate_by_event_id=deduplicate_by_event_id,
     )
 
 
@@ -953,6 +991,7 @@ def queue_system_notify(
         notify_kind=notify_kind,
         notify_title=title,
         notify_message=message,
+        deduplicate_by_event_id=True,
     )
 
 
@@ -1046,9 +1085,9 @@ def recover_group_unread_headless_messages(group: Group, *, limit: int = 256) ->
         runtime = str(actor.get("runtime") or "").strip().lower()
         if runtime == "deepseek":
             try:
-                from .deepseek_delivery import recover_durable_terminals
+                from .deepseek_pending_recovery import recover_pending_messages
 
-                recovered += recover_durable_terminals(
+                recovered += recover_pending_messages(
                     group,
                     actor_id=str(actor.get("id") or "").strip(),
                     limit=limit,
@@ -1066,86 +1105,15 @@ def recover_group_unread_headless_messages(group: Group, *, limit: int = 256) ->
     return recovered
 
 
+def refill_unread_runtime_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
+    from .runtime_pending_recovery import refill_unread_runtime_messages as refill
+
+    return refill(group, actor_id=actor_id, limit=limit)
+
+
 def _refill_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
-    """Continue normal live delivery from canonical unread events."""
-    aid = str(actor_id or "").strip()
-    actor = find_actor(group, aid)
-    if not aid or not isinstance(actor, dict):
-        return 0
-    if not bool(actor.get("enabled", True)) or str(actor.get("runner") or "pty").strip() != "pty":
-        return 0
-    from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
-    from .actor_turn_rendering import build_actor_delivery_text
-
-    if actor_uses_codex_app_server_state(actor):
-        return 0
-
-    recovered: List[PendingMessage] = []
-    for event in unread_messages(group, actor_id=aid, limit=max(1, int(limit or 256)), kind_filter="all"):
-        event_id = str(event.get("id") or "").strip()
-        event_ts = str(event.get("ts") or "").strip()
-        kind = str(event.get("kind") or "").strip()
-        data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        if not event_id:
-            continue
-        if kind == "chat.message":
-            refs = [item for item in data.get("refs", []) if isinstance(item, dict)] if isinstance(data.get("refs"), list) else []
-            attachments = (
-                [item for item in data.get("attachments", []) if isinstance(item, dict)]
-                if isinstance(data.get("attachments"), list)
-                else []
-            )
-            remote_reply_to = (
-                [str(item or "").strip() for item in data.get("remote_reply_to", []) if str(item or "").strip()]
-                if isinstance(data.get("remote_reply_to"), list)
-                else []
-            )
-            recipients = (
-                [str(item or "").strip() for item in data.get("to", []) if str(item or "").strip()]
-                if isinstance(data.get("to"), list)
-                else [aid]
-            )
-            recovered.append(PendingMessage(
-                event_id=event_id,
-                by=str(event.get("by") or "user").strip() or "user",
-                to=recipients or [aid],
-                text=build_actor_delivery_text(
-                    text=str(data.get("text") or ""),
-                    insight=data.get("insight"),
-                    priority=str(data.get("priority") or "normal"),
-                    reply_required=bool(data.get("reply_required")),
-                    event_id=event_id,
-                    refs=refs,
-                    attachments=attachments,
-                    src_group_id=str(data.get("src_group_id") or ""),
-                    src_event_id=str(data.get("src_event_id") or ""),
-                    remote_reply_to=remote_reply_to,
-                ),
-                reply_to=str(data.get("reply_to") or "") or None,
-                quote_text=str(data.get("quote_text") or "") or None,
-                source_platform=str(data.get("source_platform") or "") or None,
-                source_user_name=str(data.get("source_user_name") or "") or None,
-                source_user_id=str(data.get("source_user_id") or "") or None,
-                ts=event_ts,
-            ))
-            continue
-        if kind == "system.notify":
-            try:
-                notify = SystemNotifyData.model_validate(data)
-            except Exception:
-                continue
-            recovered.append(PendingMessage(
-                event_id=event_id,
-                by="system",
-                to=[aid],
-                text="",
-                kind="system.notify",
-                notify_kind=str(notify.kind),
-                notify_title=str(notify.title or ""),
-                notify_message=_render_system_notify_message_for_delivery(notify=notify, group=group),
-                ts=event_ts,
-            ))
-    return THROTTLE.recover_front(group.group_id, aid, recovered)
+    """Backward-compatible PTY recovery entrypoint."""
+    return refill_unread_runtime_messages(group, actor_id=actor_id, limit=limit)
 
 
 def dispatch_system_notify_event_to_actor(
@@ -1445,7 +1413,7 @@ def _finish_delivery_chain(group: Group, *, actor_id: str, reload_unread: bool =
     aid = str(actor_id or "").strip()
     THROTTLE.end_delivery(gid, aid)
     if reload_unread:
-        _refill_unread_pty_messages(group, actor_id=aid)
+        refill_unread_runtime_messages(group, actor_id=aid)
     if not THROTTLE.has_pending(gid, aid):
         return
     try:
@@ -1627,8 +1595,24 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             # losing the cursor write. Recover it before issuing a new prompt.
             recover_durable_terminals(group, actor_id=aid, limit=256)
 
-            delivered = bool(deliver_messages(group, actor_id=aid, messages=deliverable))
-            if delivered:
+            delivered_prefix: List[PendingMessage] = []
+            for index, message in enumerate(deliverable):
+                if not deliver_messages(group, actor_id=aid, messages=[message]):
+                    if delivered_prefix:
+                        _finalize_delivery_success(
+                            group,
+                            actor_id=aid,
+                            chat_total=sum(1 for item in delivered_prefix if item.kind == "chat.message"),
+                            deliverable=delivered_prefix,
+                            requeue=[],
+                        )
+                    undelivered = {id(item) for item in deliverable[index:] + requeue}
+                    THROTTLE.requeue_front(gid, aid, [item for item in messages if id(item) in undelivered])
+                    return False
+                delivered_prefix.append(message)
+
+            delivered = bool(delivered_prefix)
+            if delivered_prefix:
                 reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
@@ -1636,8 +1620,6 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
                     deliverable=deliverable,
                     requeue=requeue,
                 )
-            else:
-                THROTTLE.requeue_front(gid, aid, messages)
             return delivered
 
         # First PTY delivery is fully backgrounded so HTTP only observes durable append + enqueue.
@@ -1677,7 +1659,16 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if not background_started:
             THROTTLE.end_delivery(gid, aid)
             if reload_unread:
-                _refill_unread_pty_messages(group, actor_id=aid)
+                refill_unread_runtime_messages(group, actor_id=aid)
+
+
+def _actor_running_for_pending_flush(group: Group, *, actor_id: str) -> bool:
+    actor = find_actor(group, actor_id)
+    if isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "deepseek":
+        from ..actors import deepseek_runtime
+
+        return bool(deepseek_runtime.running(group_id=group.group_id, actor_id=actor_id))
+    return bool(pty_runner.SUPERVISOR.actor_running(group.group_id, actor_id))
 
 
 def request_flush_pending_messages(group: Group, *, actor_id: str) -> bool:
@@ -1693,15 +1684,17 @@ def request_flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         _ASYNC_FLUSH_IN_FLIGHT.add(key)
 
     def _run() -> None:
+        reschedule_after_success = False
         try:
             deadline = time.monotonic() + ASYNC_FLUSH_MAX_WAIT_SECONDS
             while True:
                 delivered = flush_pending_messages(group, actor_id=aid)
                 if delivered:
+                    reschedule_after_success = True
                     return
                 if not THROTTLE.has_pending(gid, aid):
                     return
-                if not pty_runner.SUPERVISOR.actor_running(gid, aid):
+                if not _actor_running_for_pending_flush(group, actor_id=aid):
                     return
                 try:
                     if str(get_group_state(group) or "").strip() == "paused":
@@ -1719,6 +1712,8 @@ def request_flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         finally:
             with _ASYNC_FLUSH_LOCK:
                 _ASYNC_FLUSH_IN_FLIGHT.discard(key)
+            if reschedule_after_success and THROTTLE.has_pending(gid, aid):
+                request_flush_pending_messages(group, actor_id=aid)
 
     threading.Thread(target=_run, name=f"cccc-delivery-flush-{gid}-{aid}", daemon=True).start()
     return True

@@ -67,7 +67,7 @@ _READONLY_ACTOR_HANDOFF_ONCE: set[str] = set()
 _READONLY_ACTOR_GENERATION: Dict[str, int] = {}
 _READONLY_ACTOR_CACHE_LOCK = threading.Lock()
 _READONLY_ACTOR_TTL_S = 0.8
-_STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude", "web_model"})
+_STANDARD_WEB_HEADLESS_RUNTIMES = frozenset({"codex", "claude", "deepseek", "web_model"})
 
 
 def _resolve_terminal_attach_mode(query_params: Any, *, read_only: bool) -> tuple[str, bool]:
@@ -422,7 +422,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             status_code=400,
             detail={
                 "code": "headless_internal_only",
-                "message": "This headless runtime is internal-only. Standard Web headless mode currently supports codex, claude, and web_model.",
+                "message": "This headless runtime is internal-only. Standard Web headless mode currently supports codex, claude, deepseek, and web_model.",
                 "details": {
                     "source": source,
                     "hint": "Use PTY for unsupported runtimes in standard Web mode. Other headless runtimes remain reserved for internal/developer workflows.",

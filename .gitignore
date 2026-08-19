@@ -10,6 +10,7 @@
 .mypy_cache/**
 .tox/**
 .coverage
+/.project-harness/pre-commit-gate.ok
 
 # Local virtualenv
 /.venv/

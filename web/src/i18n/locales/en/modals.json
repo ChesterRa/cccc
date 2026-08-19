@@ -360,6 +360,7 @@
     "changeCaptured": "change captured",
     "commitmentsCount": "{{count}} commitments",
     "showMore": "Show more",
+    "showMoreTasks": "Show {{count}} more",
     "showLess": "Show less",
     "stale": "Stale",
     "empty": {

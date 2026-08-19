@@ -261,9 +261,9 @@ def autostart_running_groups(
                         command=effective_cmd,
                         env=_launch_env(),
                     )
-                    from ..messaging.deepseek_delivery import recover_durable_terminals
+                    from ..messaging.deepseek_pending_recovery import recover_pending_messages
 
-                    recover_durable_terminals(group, actor_id=actor_id, limit=256)
+                    recover_pending_messages(group, actor_id=actor_id, limit=256)
                 elif effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,

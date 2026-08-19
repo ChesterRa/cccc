@@ -292,9 +292,9 @@ def handle_group_start(
                     env=_launch_env(),
                 )
                 write_headless_state(group.group_id, aid)
-                from ..messaging.deepseek_delivery import recover_durable_terminals
+                from ..messaging.deepseek_pending_recovery import recover_pending_messages
 
-                recover_durable_terminals(group, actor_id=aid, limit=256)
+                recover_pending_messages(group, actor_id=aid, limit=256)
             elif runner_effective == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,

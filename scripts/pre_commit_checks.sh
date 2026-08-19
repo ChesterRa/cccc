@@ -188,48 +188,50 @@ needs_rust=0
 python_tests=()
 rust_files=()
 
-for file in "${changed_files[@]}"; do
-  case "$file" in
-    web/*)
-      needs_web=1
-      ;;
-    package.json|package-lock.json|npm-shrinkwrap.json)
-      needs_web=1
-      ;;
-    tests/*.py)
-      needs_python=1
-      append_unique_python_source "$file"
-      append_unique_test "$file"
-      ;;
-    src/cccc/daemon/codex_app_sessions.py|src/cccc/daemon/claude_app_sessions.py)
-      needs_python=1
-      append_unique_python_source "$file"
-      append_unique_test "tests/test_codex_app_flow.py"
-      ;;
-    src/cccc/daemon/space/*|src/cccc/providers/notebooklm/*)
-      needs_python=1
-      append_unique_python_source "$file"
-      append_unique_test "tests/test_group_space_ops.py"
-      ;;
-    src/cccc/daemon/assistants/voice_*|src/cccc/daemon/assistants/local_*asr*.py|src/cccc/daemon/assistants/sherpa_*.py)
-      needs_python=1
-      append_unique_python_source "$file"
-      append_unique_test "tests/test_assistant_ops.py"
-      ;;
-    src/cccc/**/*.py|src/cccc/*.py|pyproject.toml|uv.lock)
-      needs_python=1
-      append_unique_python_source "$file"
-      ;;
-    *.py)
-      needs_python=1
-      append_unique_python_source "$file"
-      ;;
-    Cargo.toml|Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|*.rs)
-      needs_rust=1
-      rust_files+=("$file")
-      ;;
-  esac
-done
+if [[ ${#changed_files[@]} -gt 0 ]]; then
+  for file in "${changed_files[@]}"; do
+    case "$file" in
+      web/*)
+        needs_web=1
+        ;;
+      package.json|package-lock.json|npm-shrinkwrap.json)
+        needs_web=1
+        ;;
+      tests/*.py)
+        needs_python=1
+        append_unique_python_source "$file"
+        append_unique_test "$file"
+        ;;
+      src/cccc/daemon/codex_app_sessions.py|src/cccc/daemon/claude_app_sessions.py)
+        needs_python=1
+        append_unique_python_source "$file"
+        append_unique_test "tests/test_codex_app_flow.py"
+        ;;
+      src/cccc/daemon/space/*|src/cccc/providers/notebooklm/*)
+        needs_python=1
+        append_unique_python_source "$file"
+        append_unique_test "tests/test_group_space_ops.py"
+        ;;
+      src/cccc/daemon/assistants/voice_*|src/cccc/daemon/assistants/local_*asr*.py|src/cccc/daemon/assistants/sherpa_*.py)
+        needs_python=1
+        append_unique_python_source "$file"
+        append_unique_test "tests/test_assistant_ops.py"
+        ;;
+      src/cccc/**/*.py|src/cccc/*.py|pyproject.toml|uv.lock)
+        needs_python=1
+        append_unique_python_source "$file"
+        ;;
+      *.py)
+        needs_python=1
+        append_unique_python_source "$file"
+        ;;
+      Cargo.toml|Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|*.rs)
+        needs_rust=1
+        rust_files+=("$file")
+        ;;
+    esac
+  done
+fi
 
 if [[ "$full" == "1" ]]; then
   needs_web=1

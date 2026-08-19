@@ -2,6 +2,58 @@ import unittest
 
 
 class TestDeliveryThrottle(unittest.TestCase):
+    def test_recovered_event_is_not_queued_again_after_worker_takes_it(self) -> None:
+        from cccc.daemon.messaging.delivery import DeliveryThrottle, PendingMessage
+
+        for kind in ("chat.message", "system.notify"):
+            with self.subTest(kind=kind):
+                throttle = DeliveryThrottle()
+                recovered = PendingMessage(
+                    event_id="e1", by="user", to=["a1"], text="recovered", kind=kind
+                )
+                self.assertEqual(throttle.recover_front("g1", "a1", [recovered]), 1)
+                self.assertEqual(
+                    [item.event_id for item in throttle.take_pending("g1", "a1")], ["e1"]
+                )
+                self.assertFalse(
+                    throttle.queue_message(
+                        "g1",
+                        "a1",
+                        event_id="e1",
+                        by="user",
+                        to=["a1"],
+                        text="post-commit duplicate",
+                        kind=kind,
+                        deduplicate_by_event_id=True,
+                    )
+                )
+                self.assertFalse(throttle.has_pending("g1", "a1"))
+
+    def test_system_notify_queue_is_idempotent_by_event_id(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from cccc.daemon.messaging import delivery
+
+        throttle = delivery.DeliveryThrottle()
+        group = SimpleNamespace(group_id="g1")
+        with patch.object(delivery, "THROTTLE", throttle):
+            for _ in range(2):
+                delivery.queue_system_notify(
+                    group,
+                    actor_id="a1",
+                    event_id="notify-1",
+                    notify_kind="info",
+                    title="Notice",
+                    message="Run once",
+                )
+
+        pending = throttle.take_pending("g1", "a1")
+        self.assertEqual(
+            [(item.event_id, item.kind) for item in pending],
+            [("notify-1", "system.notify")],
+        )
+
     def test_reset_actor_keeps_pending_messages(self) -> None:
         from cccc.daemon.messaging.delivery import DeliveryThrottle
 

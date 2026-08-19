@@ -14,6 +14,7 @@ from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 
 TRANSPORT_SKIP = "skip"
 TRANSPORT_PTY = "pty"
+TRANSPORT_DEEPSEEK_HEADLESS = "deepseek_headless"
 TRANSPORT_CODEX_APP_SERVER = "codex_app_server"
 TRANSPORT_CODEX_HEADLESS = "codex_headless"
 TRANSPORT_CLAUDE_HEADLESS = "claude_headless"
@@ -47,6 +48,7 @@ def plan_actor_chat_delivery(
     effective_runner_kind: Callable[[str], str],
     codex_headless_running: Callable[[str, str], bool],
     claude_headless_running: Callable[[str, str], bool],
+    deepseek_headless_running: Optional[Callable[[str, str], bool]] = None,
     web_model_browser_delivery_enabled: Optional[Callable[[str, dict[str, Any]], bool]] = None,
 ) -> ActorDeliveryDecision:
     """Decide how one actor should receive one canonical chat event."""
@@ -119,6 +121,24 @@ def plan_actor_chat_delivery(
                 actor_id=actor_id,
                 transport=TRANSPORT_SKIP,
                 reason="claude_headless_not_running",
+                runtime=runtime,
+                runner_kind=runner_kind,
+                runner_effective=runner_effective,
+            )
+        if runtime == "deepseek":
+            if deepseek_headless_running is not None and deepseek_headless_running(group_id, actor_id):
+                return ActorDeliveryDecision(
+                    actor_id=actor_id,
+                    transport=TRANSPORT_DEEPSEEK_HEADLESS,
+                    reason="deepseek_headless_running",
+                    runtime=runtime,
+                    runner_kind=runner_kind,
+                    runner_effective=runner_effective,
+                )
+            return ActorDeliveryDecision(
+                actor_id=actor_id,
+                transport=TRANSPORT_SKIP,
+                reason="deepseek_headless_not_running",
                 runtime=runtime,
                 runner_kind=runner_kind,
                 runner_effective=runner_effective,

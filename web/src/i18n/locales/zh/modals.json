@@ -360,6 +360,7 @@
     "changeCaptured": "已记录变化",
     "commitmentsCount": "{{count}} 项承诺",
     "showMore": "展开全文",
+    "showMoreTasks": "再显示 {{count}} 项",
     "showLess": "收起",
     "stale": "陈旧",
     "empty": {

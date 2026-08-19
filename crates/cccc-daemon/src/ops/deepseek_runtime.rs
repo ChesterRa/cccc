@@ -1,8 +1,11 @@
 //! Rust-side DeepSeek process lifecycle registry.
 mod delivery;
+mod delivery_projection;
+mod launch_command;
 mod lifecycle;
 mod recovery;
 mod turn_failure;
+mod turn_timeout;
 
 pub use delivery::deliver;
 pub use lifecycle::apply;
@@ -51,36 +54,7 @@ pub fn start(
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
-    let command = if actor
-        .command
-        .first()
-        .is_some_and(|value| value == "dsh" || value.ends_with("dsh-acp-demo"))
-    {
-        let dsh_home = actor
-            .env
-            .get("DSH_HOME")
-            .cloned()
-            .or_else(|| actor.env.get("HOME").map(|home| format!("{home}/.dsh")))
-            .ok_or_else(|| std::io::Error::other("DSH_HOME cannot be inferred"))?;
-        let executable = actor
-            .env
-            .get("PATH")
-            .and_then(|path| {
-                std::env::split_paths(path).find(|dir| dir.join("dsh-acp-demo").is_file())
-            })
-            .map(|path| path.join("dsh-acp-demo"))
-            .unwrap_or_else(|| Path::new("dsh-acp-demo").to_path_buf());
-        vec![
-            executable.to_string_lossy().into_owned(),
-            "--config".into(),
-            Path::new(&dsh_home)
-                .join("profiles/cccc-acp/cordis.yml")
-                .to_string_lossy()
-                .into_owned(),
-        ]
-    } else {
-        actor.command.clone()
-    };
+    let command = launch_command::resolve(actor)?;
     supervisor
         .start(&command, cwd, &env)
         .map_err(std::io::Error::other)?;
@@ -189,5 +163,11 @@ mod dedupe_tests;
 #[path = "deepseek_runtime/delivery_tests.rs"]
 mod delivery_tests;
 #[cfg(test)]
+#[path = "deepseek_runtime/launch_command_tests.rs"]
+mod launch_command_tests;
+#[cfg(test)]
 #[path = "deepseek_runtime/recovery_tests.rs"]
 mod recovery_tests;
+#[cfg(test)]
+#[path = "deepseek_runtime/timeout_tests.rs"]
+mod timeout_tests;

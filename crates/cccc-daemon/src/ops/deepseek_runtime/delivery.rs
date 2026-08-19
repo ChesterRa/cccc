@@ -1,25 +1,14 @@
+use super::delivery_projection::{TurnProjection, agent_message_text, persist_terminal};
 use super::turn_failure::fail_sent_request;
+use super::turn_timeout::settle_timed_out_request;
 use super::{cancellation_requested, sessions};
 use cccc_contracts::{Actor, Event};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-fn normalize_turn_error(error: Value) -> (Value, bool) {
-    let searchable = error.to_string().to_ascii_lowercase();
-    if searchable.contains("no api key") || searchable.contains("deepseek_api_key") {
-        return (
-            json!({
-                "code": "credential_unavailable",
-                "category": "environment",
-                "message": "DeepSeek API credential is not configured"
-            }),
-            true,
-        );
-    }
-    (error, false)
-}
+const TURN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Deliver one DeepSeek ACP prompt and persist provider output before the
 /// caller records a cursor completion.  A failed append deliberately returns
@@ -30,6 +19,17 @@ pub fn deliver(
     actor: &Actor,
     event: &Event,
     cancelled: &AtomicBool,
+) -> bool {
+    deliver_with_timeout(home, group, actor, event, cancelled, TURN_TIMEOUT)
+}
+
+pub(super) fn deliver_with_timeout(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    cancelled: &AtomicBool,
+    turn_timeout: Duration,
 ) -> bool {
     if cancelled.load(Ordering::Acquire) {
         return false;
@@ -63,6 +63,7 @@ pub fn deliver(
         Ok(id) if id > 0 => id,
         _ => return false,
     };
+    let turn_deadline = Instant::now() + turn_timeout;
     macro_rules! fail {
         ($terminal_seen:expr) => {
             return fail_sent_request(
@@ -96,16 +97,46 @@ pub fn deliver(
     }
     let mut update_ordinal = 0_u64;
     let mut message_text = String::new();
+    macro_rules! projection {
+        () => {
+            TurnProjection {
+                home,
+                group,
+                actor,
+                event,
+                turn_id: &turn_id,
+                stream_id: &stream_id,
+                session_id: &session_id,
+                request_id,
+                message_text: &message_text,
+            }
+        };
+    }
+    macro_rules! timeout {
+        () => {{
+            let projection = projection!();
+            return settle_timed_out_request(&holder, &mut supervisor, &projection);
+        }};
+    }
     loop {
         if cancelled.load(Ordering::Acquire) || cancellation_requested(&group.group_id, &actor.id) {
             fail!(false);
         }
-        let frame = match supervisor.next_frame(Duration::from_millis(200)) {
+        let remaining = turn_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            timeout!();
+        }
+        let frame = match supervisor.next_frame(remaining.min(Duration::from_millis(200))) {
             Ok(frame) => frame,
-            Err(cccc_runtime::deepseek_supervisor::SupervisorError::Timeout)
-                if !cancelled.load(Ordering::Acquire)
-                    && !cancellation_requested(&group.group_id, &actor.id) =>
-            {
+            Err(cccc_runtime::deepseek_supervisor::SupervisorError::Timeout) => {
+                if cancelled.load(Ordering::Acquire)
+                    || cancellation_requested(&group.group_id, &actor.id)
+                {
+                    fail!(false);
+                }
+                if Instant::now() >= turn_deadline {
+                    timeout!();
+                }
                 continue;
             }
             Err(_) => {
@@ -204,82 +235,11 @@ pub fn deliver(
             continue;
         }
         if frame.get("id") == Some(&json!(request_id)) {
-            let stop_reason = cccc_runtime::deepseek_acp::terminal_stop_reason(&frame);
-            let cancelled = stop_reason == Some("cancelled");
-            let failed = frame.get("error").is_some() || stop_reason != Some("end_turn");
-            let kind = if failed {
-                "headless.turn.failed"
-            } else {
-                "headless.turn.completed"
-            };
-            if !message_text.is_empty()
-                && crate::ops::local_headless::append_event_with_dedupe(
-                    home,
-                    &group.group_id,
-                    &actor.id,
-                    "headless.message.completed",
-                    Map::from_iter([
-                        ("event_id".into(), json!(event.id)),
-                        ("turn_id".into(), json!(turn_id)),
-                        ("stream_id".into(), json!(stream_id)),
-                        ("text".into(), json!(message_text)),
-                    ]),
-                    Some(&format!("deepseek.message.completed:{}", event.id)),
-                )
-                .is_err()
-            {
-                fail!(true);
-            }
-            let (error, credential_failure) = if cancelled {
-                (
-                    json!({"message":"DeepSeek ACP turn was cancelled","code":"cancelled"}),
-                    false,
-                )
-            } else {
-                normalize_turn_error(frame.get("error").cloned().unwrap_or(Value::Null))
-            };
-            let data = Map::from_iter([
-                ("event_id".into(), json!(event.id)),
-                ("turn_id".into(), json!(turn_id)),
-                ("session_id".into(), json!(session_id)),
-                ("request_id".into(), json!(request_id)),
-                (
-                    "result".into(),
-                    frame.get("result").cloned().unwrap_or(Value::Null),
-                ),
-                ("error".into(), error),
-                (
-                    "status".into(),
-                    json!(if failed { "failed" } else { "completed" }),
-                ),
-            ]);
-            if crate::ops::local_headless::append_event_with_dedupe(
-                home,
-                &group.group_id,
-                &actor.id,
-                kind,
-                data,
-                Some(&format!("deepseek.turn:{}:{}", kind, event.id)),
-            )
-            .is_err()
-            {
-                fail!(true);
-            }
-            if credential_failure {
-                holder.running.store(false, Ordering::Release);
-                let _ = supervisor.stop();
-            }
-            return !failed;
+            let projection = projection!();
+            return persist_terminal(&holder, &mut supervisor, &projection, &frame);
         }
         // A response for an unknown id is rejected by the strict parser. A
         // notification with an unknown method is ignored only after protocol
         // validation, preserving forward-compatible ACP notifications.
     }
-}
-
-fn agent_message_text(update: &Value) -> Option<&str> {
-    (update.get("sessionUpdate").and_then(Value::as_str) == Some("agent_message_chunk"))
-        .then(|| update.pointer("/content/text").and_then(Value::as_str))
-        .flatten()
-        .filter(|text| !text.is_empty())
 }

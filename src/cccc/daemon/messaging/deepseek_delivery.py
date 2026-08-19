@@ -128,14 +128,14 @@ def deliver_messages(group: Any, *, actor_id: str, messages: Iterable[Any], time
     supervisor = deepseek_runtime.get(group_id=str(group.group_id), actor_id=str(actor_id))
     if supervisor is None or not supervisor.session_id:
         return False
-    # Import lazily to avoid delivery <-> adapter import cycles.
-    from .delivery import render_single_message
-
+    from .delivery import append_mcp_reply_reminder, render_single_message  # Avoid import cycle.
     for message in messages:
         event_id = str(getattr(message, "event_id", "") or "").strip()
         if not event_id:
             return False
         prompt = render_single_message(message)
+        if str(getattr(message, "kind", "chat.message") or "chat.message") == "chat.message":
+            prompt = append_mcp_reply_reminder(prompt)
         request_id: int | None = None
         terminal_received = False
         try:

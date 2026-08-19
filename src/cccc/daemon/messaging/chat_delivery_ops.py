@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
-from ...contracts.v1 import SystemNotifyData
-from ...kernel.actors import find_actor, list_actors
+from ...kernel.actors import list_actors
 from ...kernel.group import load_group
+from ..actors import deepseek_runtime
 from ..actors.runner_ops import _effective_runner_kind as default_effective_runner_kind
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -19,6 +19,7 @@ from .actor_delivery_planner import (
     TRANSPORT_CLAUDE_HEADLESS,
     TRANSPORT_CODEX_APP_SERVER,
     TRANSPORT_CODEX_HEADLESS,
+    TRANSPORT_DEEPSEEK_HEADLESS,
     TRANSPORT_PTY,
     TRANSPORT_WEB_MODEL_BROWSER,
     event_with_effective_to,
@@ -27,6 +28,8 @@ from .actor_delivery_planner import (
 from .actor_turn_rendering import build_actor_delivery_text, build_actor_headless_delivery_text
 from ..actors.web_model_browser_delivery import schedule_web_model_browser_delivery, web_model_browser_delivery_enabled
 from .chat_support_ops import schedule_headless_post_wake_delivery
+from .chat_queue_payload import build_chat_queue_payload
+from .headless_notify_ops import notify_headless_targets
 from .delivery import (
     append_mcp_reply_reminder,
     emit_system_notify,
@@ -35,48 +38,6 @@ from .delivery import (
     request_flush_pending_messages,
     should_deliver_message,
 )
-
-
-def notify_headless_targets(
-    *,
-    group: Any,
-    by: str,
-    event_id: str,
-    priority: str,
-    reply_required: bool,
-    event: dict[str, Any],
-    skip_actor_ids: Optional[set[str]] = None,
-) -> None:
-    try:
-        headless_targets = get_headless_targets_for_message(group, event=event, by=by)
-        skip_ids = {str(item).strip() for item in (skip_actor_ids or set()) if str(item).strip()}
-        if reply_required:
-            notify_title = "Need reply"
-            notify_priority = "urgent" if priority == "attention" else "high"
-        else:
-            notify_title = "Needs acknowledgement" if priority == "attention" else "New message"
-            notify_priority = "urgent" if priority == "attention" else "high"
-        for actor_id in headless_targets:
-            if actor_id in skip_ids:
-                continue
-            actor = find_actor(group, actor_id)
-            if isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "web_model":
-                continue
-            emit_system_notify(
-                group,
-                by="system",
-                notify=SystemNotifyData(
-                    kind="info",
-                    priority=notify_priority,
-                    title=notify_title,
-                    message=f"New message from {by}. Check your inbox.",
-                    target_actor_id=actor_id,
-                    requires_ack=False,
-                    context={"event_id": event_id, "from": by},
-                ),
-            )
-    except Exception:
-        pass
 
 
 def deliver_chat_message(
@@ -123,17 +84,21 @@ def deliver_chat_message(
             effective_runner_kind=effective_runner_kind,
             codex_headless_running=codex_actor_running,
             claude_headless_running=claude_actor_running,
+            deepseek_headless_running=deepseek_runtime.running,
             web_model_browser_delivery_enabled=web_model_browser_delivery_enabled,
         )
         actor_id = decision.actor_id
+        queue_after_deepseek_wake = actor_id in woken and decision.reason == "deepseek_headless_not_running"
         if decision.transport in {
             TRANSPORT_CODEX_HEADLESS,
             TRANSPORT_CODEX_APP_SERVER,
             TRANSPORT_CLAUDE_HEADLESS,
+            TRANSPORT_DEEPSEEK_HEADLESS,
             TRANSPORT_WEB_MODEL_BROWSER,
-        } and current_runtime_group is None:
-            logger.debug("[chat-delivery] defer actor=%s while group delivery is disabled", actor_id)
-            continue
+        } or queue_after_deepseek_wake:
+            if current_runtime_group is None:
+                logger.debug("[chat-delivery] defer actor=%s while group delivery is disabled", actor_id)
+                continue
         if decision.transport in {TRANSPORT_CODEX_HEADLESS, TRANSPORT_CODEX_APP_SERVER}:
             delivered = bool(
                 codex_submit_user_message(
@@ -162,24 +127,26 @@ def deliver_chat_message(
             )
             if delivered:
                 skip_headless_notify_actor_ids.add(actor_id)
-        elif decision.transport == TRANSPORT_PTY:
-            kwargs: dict[str, Any] = {
-                "actor_id": actor_id,
-                "event_id": event_id,
-                "by": by,
-                "to": effective_to,
-                "text": delivery_text,
-                "ts": event_ts,
-            }
-            if clean_reply_to:
-                kwargs["reply_to"] = clean_reply_to
-                kwargs["quote_text"] = quote_text
-            else:
-                kwargs["source_platform"] = source_platform or None
-                kwargs["source_user_name"] = source_user_name or None
-                kwargs["source_user_id"] = source_user_id or None
+        elif decision.transport in {TRANSPORT_DEEPSEEK_HEADLESS, TRANSPORT_PTY} or queue_after_deepseek_wake:
+            is_deepseek_queue = decision.transport == TRANSPORT_DEEPSEEK_HEADLESS or queue_after_deepseek_wake
+            kwargs = build_chat_queue_payload(
+                actor_id=actor_id,
+                event_id=event_id,
+                by=by,
+                effective_to=effective_to,
+                delivery_text=delivery_text,
+                event_ts=event_ts,
+                reply_to=clean_reply_to,
+                quote_text=quote_text,
+                source_platform=source_platform,
+                source_user_name=source_user_name,
+                source_user_id=source_user_id,
+                deduplicate_by_event_id=is_deepseek_queue,
+            )
             queue_chat_message(group, **kwargs)
             request_flush_pending_messages(group, actor_id=actor_id)
+            if is_deepseek_queue:
+                skip_headless_notify_actor_ids.add(actor_id)
         elif decision.transport == TRANSPORT_WEB_MODEL_BROWSER:
             if schedule_web_model_browser_delivery(
                 group_id=group.group_id,
@@ -219,6 +186,8 @@ def deliver_chat_message(
             priority=priority,
             reply_required=reply_required,
             event=event_with_effective_to(event, effective_to),
+            emit_notify=emit_system_notify,
+            target_resolver=get_headless_targets_for_message,
             skip_actor_ids=skip_headless_notify_actor_ids,
         )
 

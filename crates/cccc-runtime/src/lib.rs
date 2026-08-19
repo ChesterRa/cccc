@@ -2,6 +2,7 @@ mod cancellation;
 mod command;
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
+mod executable;
 mod history_access;
 mod manager;
 mod output;
@@ -37,6 +38,7 @@ pub use command::{
     deepseek_preflight, default_command, detect_runtimes, is_canonical_deepseek_config,
     is_canonical_deepseek_patch, is_canonical_deepseek_profile_manifest,
 };
+pub use executable::resolve_executable_in_path;
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
     history_since, retained_history, retained_history_tail,
