@@ -129,6 +129,19 @@ pub(super) fn process_is_alive(pid: u32) -> bool {
     {
         return false;
     }
+    #[cfg(not(target_os = "linux"))]
+    if Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout)
+                    .trim_start()
+                    .starts_with('Z')
+        })
+    {
+        return false;
+    }
     let Ok(pid) = i32::try_from(pid) else {
         return false;
     };
@@ -156,37 +169,7 @@ pub(super) fn process_is_alive(_pid: u32) -> bool {
     false
 }
 
-#[cfg(target_os = "macos")]
-fn process_executable(pid: u32) -> Option<PathBuf> {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-
-    #[link(name = "proc")]
-    unsafe extern "C" {
-        fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, buffer_size: u32) -> i32;
-    }
-
-    let mut buffer = [0_u8; 4096];
-    let pid = i32::try_from(pid).ok()?;
-    // SAFETY: `buffer` is writable for exactly `buffer.len()` bytes and remains
-    // alive for the duration of the system call.
-    let length = unsafe { proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
-    if length <= 0 {
-        return None;
-    }
-    let length = usize::try_from(length).ok()?;
-    if length > buffer.len() {
-        return None;
-    }
-    let bytes = &buffer[..length];
-    let end = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(bytes.len());
-    std::fs::canonicalize(Path::new(OsStr::from_bytes(&bytes[..end]))).ok()
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn process_executable(pid: u32) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     if let Ok(path) = std::fs::read_link(format!("/proc/{pid}/exe")) {
@@ -575,33 +558,26 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn start_reaps_the_child_when_pid_tracking_cannot_be_written() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::symlink;
 
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
         let helper = cloudflared::install_dir(&home).join("cloudflared-pid-fixture");
-        let observed_pid = temp.path().join("observed.pid");
         std::fs::create_dir_all(helper.parent().expect("parent")).expect("dir");
-        std::fs::write(&helper, "#!/bin/sh\necho $$ > \"$1\"\nexec sleep 30\n").expect("helper");
-        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700))
-            .expect("permissions");
+        symlink("/bin/sleep", &helper).expect("helper");
         std::fs::create_dir_all(pid_path(&home)).expect("blocking pid directory");
         write_token(&home, "secret-token").expect("token");
 
-        let error = start_command(
-            &home,
-            &[
-                helper.to_string_lossy().into_owned(),
-                observed_pid.to_string_lossy().into_owned(),
-            ],
-        )
-        .expect_err("pid tracking must fail");
+        let error = start_command(&home, &[helper.to_string_lossy().into_owned(), "30".into()])
+            .expect_err("pid tracking must fail");
 
         assert!(error.message.contains("failed to track cloudflared"));
-        let pid = std::fs::read_to_string(observed_pid)
-            .expect("observed pid")
-            .trim()
+        let pid = error
+            .message
+            .strip_prefix("failed to track cloudflared process ")
+            .and_then(|message| message.split_once(':').map(|(pid, _)| pid))
+            .expect("tracked pid")
             .parse::<u32>()
             .expect("pid");
         assert!(wait_for_exit(pid, Duration::from_secs(2)));

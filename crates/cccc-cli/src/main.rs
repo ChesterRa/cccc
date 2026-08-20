@@ -18,6 +18,7 @@ use std::fs::OpenOptions;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DAEMON_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+#[cfg(any(not(windows), test))]
 const DAEMON_OWNER_HANDOFF_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[tokio::main]
@@ -139,22 +140,45 @@ async fn launch(
     instance.hold_until_process_exit();
     replace_incompatible_daemon(&home, &client).await?;
     let mut embedded_daemon = None;
+    #[cfg(windows)]
+    let mut detached_daemon_owned = false;
     // Event-driven loss detection for the embedded daemon: polling in
     // `wait_for_daemon_loss` stays as the fallback for an external daemon.
+    #[cfg(windows)]
+    let (_daemon_exit_tx, daemon_exit_rx) = tokio::sync::watch::channel(false);
+    #[cfg(not(windows))]
     let (daemon_exit_tx, mut daemon_exit_rx) = tokio::sync::watch::channel(false);
     if !ping(&client).await {
-        let daemon_home = home.clone();
-        embedded_daemon = Some(tokio::spawn(async move {
-            let result = cccc_daemon::run(daemon_home).await;
-            let _ = daemon_exit_tx.send(true);
-            result
-        }));
-        let _ = wait_for_daemon(
-            &client,
-            &mut daemon_exit_rx,
-            std::time::Duration::from_secs(30),
-        )
-        .await;
+        // Running the daemon as a task inside the Web host is unreliable on
+        // Windows once the daemon installs its kill-on-close Job object. In
+        // particular, hosts launched through `cargo run` can fail to publish a
+        // ready daemon and then hang while the task is cancelled. The existing
+        // detached launcher gives the daemon its own process and Job lifetime.
+        #[cfg(windows)]
+        {
+            let executable = std::env::current_exe()?;
+            detached_daemon_owned = matches!(
+                DetachedDaemon::new(executable, ["daemon", "run"])
+                    .start(&home)
+                    .await?,
+                StartOutcome::Started(_)
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            let daemon_home = home.clone();
+            embedded_daemon = Some(tokio::spawn(async move {
+                let result = cccc_daemon::run(daemon_home).await;
+                let _ = daemon_exit_tx.send(true);
+                result
+            }));
+            let _ = wait_for_daemon(
+                &client,
+                &mut daemon_exit_rx,
+                std::time::Duration::from_secs(30),
+            )
+            .await;
+        }
     }
     if !ping(&client).await {
         finish_embedded_daemon(&client, embedded_daemon.take()).await;
@@ -198,6 +222,10 @@ async fn launch(
         }
     };
     cccc_mcp::shutdown(&home).await;
+    #[cfg(windows)]
+    if detached_daemon_owned && let Err(error) = stop_daemon(&client, &home).await {
+        eprintln!("failed to stop Web-owned daemon: {error}");
+    }
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
     shutdown_watchdog.abort();
     result
@@ -377,6 +405,7 @@ async fn ping(client: &DaemonClient) -> bool {
         .is_ok_and(|response| is_compatible_daemon(&response))
 }
 
+#[cfg(any(not(windows), test))]
 async fn wait_for_daemon(
     client: &DaemonClient,
     daemon_exited: &mut tokio::sync::watch::Receiver<bool>,
