@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+const STDOUT_FRAME_CAPACITY: usize = 512;
+
 impl DeepSeekSupervisor {
     pub fn start(
         &mut self,
@@ -44,7 +46,7 @@ impl DeepSeekSupervisor {
             .as_mut()
             .and_then(|child| child.stderr.take())
             .ok_or_else(|| io::Error::other("deepseek stderr pipe unavailable"))?;
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(STDOUT_FRAME_CAPACITY);
         let thread = std::thread::Builder::new()
             .name("cccc-deepseek-acp-stdout".into())
             .spawn(move || {
@@ -183,14 +185,34 @@ fn read_bounded_frame(reader: &mut BufReader<impl std::io::Read>) -> io::Result<
         let newline = available.iter().position(|byte| *byte == b'\n');
         let take = newline.map_or(available.len(), |index| index + 1);
         if frame.len() + take > deepseek_acp::MAX_FRAME_BYTES {
-            // Return one byte over the cap; the protocol parser fails closed
-            // without allowing an unterminated stdout line to grow unbounded.
+            let record_ended = newline.is_some();
+            reader.consume(take);
+            if !record_ended {
+                discard_frame_remainder(reader)?;
+            }
+            // Return one byte over the cap so the protocol parser fails closed
+            // exactly once for this physical NDJSON record.
             return Ok(Some(vec![0; deepseek_acp::MAX_FRAME_BYTES + 1]));
         }
         frame.extend_from_slice(&available[..take]);
         reader.consume(take);
         if newline.is_some() {
             return Ok(Some(frame));
+        }
+    }
+}
+
+fn discard_frame_remainder(reader: &mut BufReader<impl std::io::Read>) -> io::Result<()> {
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(());
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(available.len(), |index| index + 1);
+        reader.consume(take);
+        if newline.is_some() {
+            return Ok(());
         }
     }
 }
@@ -249,4 +271,31 @@ fn terminate_process_group(child: &mut Child) {
     let _ = Command::new("taskkill")
         .args(["/PID", &child.id().to_string(), "/T", "/F"])
         .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_bounded_frame;
+    use crate::deepseek_acp;
+    use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn oversized_frame_is_discarded_as_one_physical_record() {
+        let valid = b"{\"jsonrpc\":\"2.0\",\"method\":\"session/update\"}\n";
+        let mut bytes = vec![b'x'; deepseek_acp::MAX_FRAME_BYTES + 1];
+        bytes.push(b'\n');
+        bytes.extend_from_slice(valid);
+        let mut reader = BufReader::new(Cursor::new(bytes));
+
+        let oversized = read_bounded_frame(&mut reader)
+            .expect("oversized read")
+            .expect("oversized frame");
+        assert!(oversized.len() > deepseek_acp::MAX_FRAME_BYTES);
+        assert_eq!(
+            read_bounded_frame(&mut reader)
+                .expect("valid read")
+                .expect("valid frame"),
+            valid
+        );
+    }
 }

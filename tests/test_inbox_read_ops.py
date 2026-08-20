@@ -1089,6 +1089,76 @@ class TestInboxReadOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_deepseek_cursor_gap_check_scans_only_the_reverse_tail(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "deepseek-cursor-gap", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "deepseek",
+                    "runtime": "deepseek",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            events = []
+            for text in ("first", "second", "third"):
+                sent, _ = self._call(
+                    "send",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "to": ["deepseek"],
+                        "text": text,
+                    },
+                )
+                self.assertTrue(sent.ok, getattr(sent, "error", None))
+                events.append((sent.result or {})["event"])
+
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import set_cursor
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            with self.assertRaisesRegex(ValueError, "cannot skip"):
+                set_cursor(
+                    group,
+                    "deepseek",
+                    event_id=events[1]["id"],
+                    ts=events[1]["ts"],
+                )
+
+            set_cursor(
+                group,
+                "deepseek",
+                event_id=events[0]["id"],
+                ts=events[0]["ts"],
+            )
+            with patch(
+                "cccc.kernel.inbox.iter_source_lines",
+                side_effect=AssertionError("must not reparse the ledger prefix"),
+            ):
+                cursor = set_cursor(
+                    group,
+                    "deepseek",
+                    event_id=events[1]["id"],
+                    ts=events[1]["ts"],
+                )
+            self.assertEqual(cursor["event_id"], events[1]["id"])
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

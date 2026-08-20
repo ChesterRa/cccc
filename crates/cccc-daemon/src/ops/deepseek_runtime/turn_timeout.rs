@@ -1,5 +1,5 @@
 use super::RuntimeEntry;
-use super::delivery_projection::{TurnProjection, persist_message_completed, persist_terminal};
+use super::delivery_projection::{TurnProjection, persist_message_completed};
 use super::turn_failure::settle_sent_request;
 use cccc_runtime::deepseek_supervisor::DeepSeekSupervisor;
 use serde_json::{Map, json};
@@ -36,7 +36,7 @@ pub(super) fn settle_timed_out_request(
     supervisor: &mut DeepSeekSupervisor,
     projection: &TurnProjection<'_>,
 ) -> bool {
-    let Ok(Some(frame)) = settle_sent_request(
+    let Ok(Some(_terminal)) = settle_sent_request(
         holder,
         supervisor,
         projection.session_id,
@@ -45,12 +45,9 @@ pub(super) fn settle_timed_out_request(
     ) else {
         return false;
     };
-    if cccc_runtime::deepseek_acp::terminal_stop_reason(&frame) == Some("cancelled") {
-        if persist_message_completed(projection).is_err() {
-            return false;
-        }
-        let _ = append_timeout_terminal(projection);
+    if persist_message_completed(projection).is_err() {
         return false;
     }
-    persist_terminal(holder, supervisor, projection, &frame)
+    let _ = append_timeout_terminal(projection);
+    false
 }

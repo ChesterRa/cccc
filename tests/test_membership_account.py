@@ -15,6 +15,7 @@ from cccc.kernel.membership_account import (
     poll_device_login,
     start_device_login,
 )
+from cccc.kernel.membership import normalize_reach_hostname
 
 
 class FakeAccount:
@@ -172,6 +173,49 @@ class TestMembershipAccountClient(unittest.TestCase):
         self.assertIn({"origin_port": 9000}, account.payloads)
         device = fetch_device("https://account.test", "devtok", transport=account)
         self.assertFalse(device["disabled"])
+
+    def test_rejects_non_https_or_non_origin_reach_hostnames(self) -> None:
+        for hostname in (
+            "http://attacker.example.test",
+            "https://user@attacker.example.test",
+            "https://attacker.example.test/path",
+            "https://attacker.example.test/?redirect=1",
+            "https://attacker.example.test:not-a-port",
+        ):
+            with self.subTest(hostname=hostname):
+
+                def transport(method, url, headers, body, timeout_s):
+                    _ = method, url, headers, body, timeout_s
+                    return 200, {"hostname": hostname, "tunnel_token": "tun-1"}
+
+                with self.assertRaises(AccountError) as rejected:
+                    issue_reach(
+                        "https://account.test",
+                        "devtok",
+                        origin_port=9000,
+                        transport=transport,
+                    )
+                self.assertEqual(rejected.exception.code, "membership_network")
+
+    def test_reach_hostname_normalization_is_canonical_and_strict(self) -> None:
+        self.assertEqual(
+            normalize_reach_hostname("HTTPS://D-AbC.Example.Test:443/"),
+            "https://d-abc.example.test",
+        )
+        self.assertEqual(
+            normalize_reach_hostname("https://[2001:db8::1]:8443"),
+            "https://[2001:db8::1]:8443",
+        )
+        for hostname in (
+            "https://exa mple.example.test",
+            "https://%65xample.example.test",
+            "https://_service.example.test",
+            "https://-host.example.test",
+            "https://host-.example.test",
+            "https://example.test\\evil",
+        ):
+            with self.subTest(hostname=hostname):
+                self.assertIsNone(normalize_reach_hostname(hostname))
 
     def test_rejects_non_url_origin(self) -> None:
         with self.assertRaises(AccountError) as ctx:

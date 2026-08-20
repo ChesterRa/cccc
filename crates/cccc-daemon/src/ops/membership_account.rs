@@ -3,7 +3,7 @@ use reqwest::blocking::Client;
 use serde_json::{Map, Value, json};
 use std::io::Read;
 use std::time::Duration;
-use url::Url;
+use url::{Host, Url};
 
 const CLIENT_VERSION: &str = "1";
 const VERSION_HEADER: &str = "CCCC-Membership-Version";
@@ -66,11 +66,58 @@ pub(super) struct DeviceStatus {
     pub device_id: Option<String>,
     pub hostname: Option<String>,
     pub disabled: bool,
+    pub online: Option<bool>,
 }
 
 pub(super) struct AccountClient {
     origin: Url,
     client: Client,
+}
+
+pub(super) fn canonical_reach_hostname(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+        || value.contains(['%', '\\'])
+    {
+        return None;
+    }
+    let candidate = if value.contains("://") {
+        value.to_owned()
+    } else {
+        format!("https://{value}")
+    };
+    let parsed = Url::parse(&candidate).ok()?;
+    let host = parsed.host()?;
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return None;
+    }
+    if let Host::Domain(hostname) = host {
+        let dns_hostname = hostname.strip_suffix('.').unwrap_or(hostname);
+        if dns_hostname.is_empty()
+            || dns_hostname.len() > 253
+            || dns_hostname.split('.').any(|label| {
+                label.is_empty()
+                    || label.len() > 63
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+                    || !label
+                        .bytes()
+                        .all(|character| character.is_ascii_alphanumeric() || character == b'-')
+            })
+        {
+            return None;
+        }
+    }
+    Some(parsed.origin().ascii_serialization())
 }
 
 impl AccountClient {
@@ -161,10 +208,18 @@ impl AccountClient {
                 "account service returned an incomplete device grant",
             ));
         }
+        let raw_hostname = non_blank(&data, "hostname");
+        let hostname = raw_hostname.as_deref().and_then(canonical_reach_hostname);
+        if raw_hostname.is_some() && hostname.is_none() {
+            return Err(AccountError::new(
+                "membership_network",
+                "account service returned an unsafe reach hostname",
+            ));
+        }
         Ok(DeviceGrant {
             device_token,
             device_id,
-            hostname: non_blank(&data, "hostname"),
+            hostname,
         })
     }
 
@@ -179,16 +234,18 @@ impl AccountClient {
             Some(json!({"origin_port":origin_port})),
             Some(device_token),
         )?;
-        let hostname = text(&data, "hostname");
+        let hostname = non_blank(&data, "hostname")
+            .as_deref()
+            .and_then(canonical_reach_hostname);
         let tunnel_token = text(&data, "tunnel_token");
-        if hostname.is_empty() || tunnel_token.is_empty() {
+        if hostname.is_none() || tunnel_token.is_empty() {
             return Err(AccountError::new(
                 "membership_network",
-                "account service returned incomplete reach credentials",
+                "account service returned incomplete or unsafe reach credentials",
             ));
         }
         Ok(ReachCredentials {
-            hostname: hostname.trim_end_matches('/').into(),
+            hostname: hostname.expect("hostname was validated"),
             tunnel_token,
         })
     }
@@ -197,11 +254,14 @@ impl AccountClient {
         let data = self.request(Method::GET, "/v1/device", None, Some(device_token))?;
         Ok(DeviceStatus {
             device_id: non_blank(&data, "device_id"),
-            hostname: non_blank(&data, "hostname"),
+            hostname: non_blank(&data, "hostname")
+                .as_deref()
+                .and_then(canonical_reach_hostname),
             disabled: data
                 .get("disabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            online: data.get("online").and_then(Value::as_bool),
         })
     }
 
@@ -464,5 +524,47 @@ mod tests {
         let device = client.fetch_device("token").expect("device");
         assert_eq!(device.device_id.as_deref(), Some("d-1"));
         assert!(!device.disabled);
+    }
+
+    #[test]
+    fn reach_rejects_non_https_or_non_origin_hostnames() {
+        for hostname in [
+            "http://attacker.example.test",
+            "https://user@attacker.example.test",
+            "https://attacker.example.test/path",
+            "https://attacker.example.test/?redirect=1",
+            "https://attacker.example.test:not-a-port",
+        ] {
+            let body = format!(r#"{{"hostname":"{hostname}","tunnel_token":"tunnel"}}"#);
+            let leaked: &'static str = Box::leak(body.into_boxed_str());
+            let origin = server(vec![(200, leaked)]);
+            let error = AccountClient::new(&origin)
+                .expect("client")
+                .issue_reach("token", 9000)
+                .expect_err("unsafe hostname");
+            assert_eq!(error.code, "membership_network", "{hostname}");
+        }
+    }
+
+    #[test]
+    fn reach_hostname_normalization_is_canonical_and_strict() {
+        assert_eq!(
+            canonical_reach_hostname("HTTPS://D-AbC.Example.Test:443/"),
+            Some("https://d-abc.example.test".to_owned())
+        );
+        assert_eq!(
+            canonical_reach_hostname("https://[2001:db8::1]:8443"),
+            Some("https://[2001:db8::1]:8443".to_owned())
+        );
+        for hostname in [
+            "https://exa mple.example.test",
+            "https://%65xample.example.test",
+            "https://_service.example.test",
+            "https://-host.example.test",
+            "https://host-.example.test",
+            "https://example.test\\evil",
+        ] {
+            assert_eq!(canonical_reach_hostname(hostname), None, "{hostname}");
+        }
     }
 }

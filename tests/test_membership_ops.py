@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,7 +73,49 @@ class TestMembershipOps(unittest.TestCase):
         else:
             os.environ["CCCC_ACCOUNT_TIMEOUT_S"] = self._old_timeout
 
-    def _record_live_web(self, port: int = 8848) -> None:
+    def _record_live_web(self, port: int = 0) -> int:
+        class ReadyHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path != "/api/v1/ready":
+                    self.send_error(404)
+                    return
+                body = b'{"ok":true,"result":{"web":"ready"}}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", port), ReadyHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop_server() -> None:
+            server.shutdown()
+            thread.join(1.0)
+            server.server_close()
+
+        self.addCleanup(stop_server)
+        live_port = int(server.server_address[1])
+        write_web_runtime_state(
+            pid=os.getpid(),
+            host="127.0.0.1",
+            port=live_port,
+            mode="normal",
+            supervisor_managed=True,
+            supervisor_pid=None,
+            launch_source="test",
+        )
+        return live_port
+
+    def test_reach_origin_rejects_a_recorded_port_that_is_not_listening(self) -> None:
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        port = int(listener.getsockname()[1])
+        listener.close()
         write_web_runtime_state(
             pid=os.getpid(),
             host="127.0.0.1",
@@ -80,6 +125,9 @@ class TestMembershipOps(unittest.TestCase):
             supervisor_pid=None,
             launch_source="test",
         )
+
+        with self.assertRaisesRegex(RuntimeError, "not accepting connections"):
+            membership_ops._live_web_port()
 
     def test_reach_origin_rejects_a_live_web_binding_that_cannot_accept_loopback(
         self,
@@ -227,7 +275,7 @@ class TestMembershipOps(unittest.TestCase):
             [sys.executable, "-c", "import time; time.sleep(30)"]
         )
         update_remote_access_settings({"web_port": 9000})
-        self._record_live_web(9123)
+        live_port = self._record_live_web()
         create_access_token("admin", is_admin=True, custom_token="acc_admin_fixture")
         save_membership(
             {
@@ -239,7 +287,7 @@ class TestMembershipOps(unittest.TestCase):
         )
         resp = handle_membership_reach_on({"by": "user"})
         self.assertTrue(resp.ok, resp.error)
-        self.assertIn({"origin_port": 9123}, account.payloads)
+        self.assertIn({"origin_port": live_port}, account.payloads)
         helper_pid = cloudflared_supervisor.running_pid()
         self.assertIsNotNone(helper_pid)
         membership = resp.result["membership"]
@@ -317,6 +365,40 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(again.ok)
         self.assertEqual(again.error.code, "membership_disabled")
 
+    def test_status_fails_closed_when_cut_cannot_stop_the_helper(self) -> None:
+        account = FakeAccount()
+        account.disabled = True
+        set_account_transport_for_tests(account)
+        save_membership(
+            {
+                "logged_in": True,
+                "device_id": "d_abc",
+                "device_token": "devtok",
+                "account_origin": "https://account.test",
+            }
+        )
+        update_remote_access_settings(
+            {
+                "provider": "reach",
+                "enabled": True,
+                "web_public_url": "https://old.example.test",
+            }
+        )
+
+        with patch.object(
+            cloudflared_supervisor,
+            "stop",
+            side_effect=RuntimeError("tracked helper did not exit"),
+        ):
+            response = handle_membership_status({"by": "user"})
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error.code, "membership_subprocess")
+        self.assertTrue(load_membership()["disabled"])
+        remote = get_remote_access_settings()
+        self.assertTrue(remote["enabled"])
+        self.assertEqual(remote["web_public_url"], "https://old.example.test")
+
     def test_reach_issuance_disabled_applies_cut_and_stops_the_existing_helper(
         self,
     ) -> None:
@@ -373,6 +455,22 @@ class TestMembershipOps(unittest.TestCase):
             status.result["membership"]["hostname"], "https://d-abc.example.test"
         )
 
+    def test_status_never_embeds_local_credentials_in_an_unsafe_hostname(self) -> None:
+        create_access_token(
+            "admin", is_admin=True, custom_token="acc_admin_must_not_escape"
+        )
+        save_membership(
+            {"logged_in": True, "hostname": "http://attacker.example.test"}
+        )
+
+        status = handle_membership_status({"by": "user"})
+
+        self.assertTrue(status.ok)
+        membership = status.result["membership"]
+        self.assertIsNone(membership["hostname"])
+        self.assertIsNone(membership["web_url"])
+        self.assertIsNone(membership["connector_url"])
+
     def test_settings_preserve_reach_provider(self) -> None:
         update_remote_access_settings({"provider": "reach", "enabled": False})
         self.assertEqual(get_remote_access_settings()["provider"], "reach")
@@ -392,6 +490,39 @@ class TestMembershipOps(unittest.TestCase):
         remote = resp.result["remote_access"]
         self.assertNotEqual(remote["status"], "running")
         self.assertIsNone(remote["endpoint"])
+
+    def test_membership_status_requires_the_account_tunnel_to_be_online(self) -> None:
+        class OfflineAccount(FakeAccount):
+            def __call__(self, method, url, headers, body, timeout_s):
+                if url.endswith("/v1/device"):
+                    self.calls.append((method, url))
+                    return 200, {
+                        "device_id": "d_abc",
+                        "hostname": "https://d-abc.example.test",
+                        "disabled": False,
+                        "online": False,
+                    }
+                return super().__call__(method, url, headers, body, timeout_s)
+
+        set_account_transport_for_tests(OfflineAccount())
+        save_membership(
+            {
+                "logged_in": True,
+                "device_id": "d_abc",
+                "device_token": "devtok",
+                "account_origin": "https://account.test",
+                "hostname": "https://d-abc.example.test",
+            }
+        )
+        update_remote_access_settings({"provider": "reach", "enabled": True})
+
+        with patch.object(
+            cloudflared_supervisor, "status", return_value={"running": True, "pid": 123}
+        ):
+            response = handle_membership_status({"by": "user"})
+
+        self.assertTrue(response.ok)
+        self.assertFalse(response.result["membership"]["online"])
 
     def test_configure_rejects_setting_reach(self) -> None:
         resp = handle_remote_access_configure({"provider": "reach", "by": "user"})

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import queue
+
 from cccc.runners.deepseek import DeepSeekSupervisor
 
 
@@ -51,3 +53,22 @@ def test_failed_write_rolls_back_active_request_and_protocol_slot(tmp_path) -> N
 
     assert supervisor._active_request_id is None
     assert 3 not in supervisor._protocol.pending
+
+
+def test_permission_request_id_collision_does_not_complete_the_active_prompt(
+    tmp_path,
+) -> None:
+    supervisor = DeepSeekSupervisor([], cwd=str(tmp_path), env={})
+    supervisor._active_request_id = 3
+    supervisor._frames = queue.Queue()
+    supervisor._frames.put_nowait(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "session/request_permission",
+            "params": {"sessionId": "session", "options": []},
+        }
+    )
+
+    assert supervisor.next_frame(timeout=0.1)["method"] == "session/request_permission"
+    assert supervisor._active_request_id == 3

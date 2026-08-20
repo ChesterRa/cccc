@@ -158,7 +158,7 @@ done"#;
 
 #[cfg(unix)]
 #[test]
-fn end_turn_arriving_during_timeout_settlement_is_successful() {
+fn end_turn_arriving_during_timeout_settlement_remains_timed_out() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -187,7 +187,7 @@ done"#;
         .cloned()
         .expect("event data");
 
-    assert!(delivery::deliver_with_timeout(
+    assert!(!delivery::deliver_with_timeout(
         &home,
         &group,
         &actor,
@@ -203,8 +203,8 @@ done"#;
             .join("headless/events.jsonl"),
     )
     .expect("headless events");
-    assert!(events.contains("headless.turn.completed"));
-    assert!(!events.contains("headless.turn.failed"));
-    assert!(!events.contains("\"code\":\"timeout\""));
+    assert!(!events.contains("headless.turn.completed"));
+    assert!(events.contains("headless.turn.failed"));
+    assert!(events.contains("\"code\":\"timeout\""));
     stop(&group.group_id, &actor.id);
 }

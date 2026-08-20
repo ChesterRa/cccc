@@ -48,14 +48,29 @@ fn summary_preserves_every_editable_task_field() {
 }
 
 #[test]
-fn full_context_keeps_task_details_and_uses_board_ids() {
+fn full_context_keeps_task_objects_in_the_board_projection() {
     let result = project(document(), "v1".into(), "full");
     let task = &result["coordination"]["tasks"][0];
 
     assert_eq!(task["notes"], "large private notes");
     assert_eq!(task["checklist"][0]["text"], "measure");
-    assert_eq!(result["board"]["planned"], json!(["task-1"]));
+    assert_eq!(result["board"]["planned"][0]["id"], "task-1");
+    assert_eq!(result["board"]["planned"][0]["task_type"], "standard");
     assert_eq!(result["board"]["active"], json!([]));
     assert_eq!(result["tasks_summary"]["blocked"], 1);
     assert_eq!(result["attention"]["blocked"][0]["id"], "task-1");
+}
+
+#[test]
+fn waiting_on_actor_or_external_is_blocked_without_a_blocked_by_list() {
+    for waiting_on in ["actor", "external"] {
+        let mut document = document();
+        document.tasks[0].insert("blocked_by".into(), json!([]));
+        document.tasks[0].insert("waiting_on".into(), json!(waiting_on));
+
+        let summary = project(document, "v1".into(), "summary");
+
+        assert_eq!(summary["attention"]["blocked"], 1, "{waiting_on}");
+        assert_eq!(summary["tasks_summary"]["blocked"], 1, "{waiting_on}");
+    }
 }

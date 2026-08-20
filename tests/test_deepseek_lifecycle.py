@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import io
 import os
+import queue
+import threading
+import time
+from types import SimpleNamespace
 
 from cccc.daemon.actors import deepseek_runtime
 from cccc.daemon.actors.deepseek_setup import DeepSeekSetupOutcome
@@ -15,7 +20,7 @@ from cccc.runners.deepseek_streams import merge_subprocess_env
 
 
 def _fake_acp_script() -> str:
-    return r'''while IFS= read -r line; do
+    return r"""while IFS= read -r line; do
 if printf '%s' "$line" | grep -q '"method":"initialize"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
 elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
@@ -26,7 +31,7 @@ elif printf '%s' "$line" | grep -q '"prompt":\[' && printf '%s' "$line" | grep -
 else
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"error":{"message":"prompt must be ContentBlock[]"}}'
 fi
-done'''
+done"""
 
 
 def test_fake_acp_handshake_update_and_generation_cleanup(tmp_path) -> None:
@@ -40,15 +45,78 @@ def test_fake_acp_handshake_update_and_generation_cleanup(tmp_path) -> None:
         assert supervisor.handshake(timeout=2.0) == "fake-session"
         assert supervisor.submit("hello") == 3
         update = supervisor.next_frame(timeout=2.0)
-        assert validate_session_update(update, "fake-session")["sessionId"] == "fake-session"
+        assert (
+            validate_session_update(update, "fake-session")["sessionId"]
+            == "fake-session"
+        )
         assert supervisor.next_frame(timeout=2.0)["id"] == 3
     finally:
         supervisor.stop()
     assert not supervisor.is_running()
 
 
+def test_unterminated_final_frame_does_not_block_when_frame_queue_is_full(
+    tmp_path,
+) -> None:
+    supervisor = DeepSeekSupervisor(["unused"], cwd=str(tmp_path), env={})
+    process = SimpleNamespace(
+        stdout=io.BytesIO(b'{"jsonrpc":"2.0","id":1,"result":{}}')
+    )
+    frames: queue.Queue[object] = queue.Queue(maxsize=1)
+    frames.put_nowait({"occupied": True})
+    supervisor.generation = "generation"
+    supervisor._process = process
+    supervisor._protocol.register(1)
+    reader = threading.Thread(
+        target=supervisor._read_stdout,
+        args=(process, "generation", frames),
+        daemon=True,
+    )
+
+    reader.start()
+    reader.join(timeout=0.2)
+    blocked = reader.is_alive()
+    if blocked:
+        frames.get_nowait()
+        reader.join(timeout=1.0)
+
+    assert not blocked
+    assert isinstance(supervisor._reader_error, Exception)
+    assert supervisor._stopping.is_set()
+
+
+def test_dropped_eof_sentinel_is_still_observed_without_waiting_for_timeout(
+    tmp_path,
+) -> None:
+    supervisor = DeepSeekSupervisor(["unused"], cwd=str(tmp_path), env={})
+    process = SimpleNamespace(stdout=io.BytesIO(b""))
+    frames: queue.Queue[object] = queue.Queue(maxsize=1)
+    frames.put_nowait({"jsonrpc": "2.0", "method": "session/update"})
+    supervisor._frames = frames
+    supervisor.generation = "generation"
+    supervisor._process = process
+    reader = threading.Thread(
+        target=supervisor._read_stdout,
+        args=(process, "generation", frames),
+        daemon=True,
+    )
+
+    reader.start()
+    reader.join(timeout=1.0)
+    assert not reader.is_alive()
+    assert supervisor.next_frame(timeout=0.1)["method"] == "session/update"
+    started = time.monotonic()
+    try:
+        supervisor.next_frame(timeout=0.5)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("reader EOF must terminate the ACP generation")
+    assert time.monotonic() - started < 0.2
+
+
 def test_permission_request_is_answered_and_stop_clears_pending(tmp_path) -> None:
-    script = r'''while IFS= read -r line; do
+    script = r"""while IFS= read -r line; do
 if printf '%s' "$line" | grep -q '"method":"initialize"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
 elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
@@ -58,8 +126,10 @@ else
   read -r response
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
 fi
-done'''
-    supervisor = DeepSeekSupervisor(["sh", "-c", script], cwd=str(tmp_path), env=dict(os.environ))
+done"""
+    supervisor = DeepSeekSupervisor(
+        ["sh", "-c", script], cwd=str(tmp_path), env=dict(os.environ)
+    )
     supervisor.start()
     try:
         supervisor.handshake(timeout=2.0)
@@ -73,7 +143,9 @@ done'''
     assert not supervisor.is_running()
 
 
-def test_python_daemon_registers_deepseek_and_restores_default_command(tmp_path) -> None:
+def test_python_daemon_registers_deepseek_and_restores_default_command(
+    tmp_path,
+) -> None:
     actor = {
         "id": "deepseek",
         "runtime": "deepseek",
@@ -97,7 +169,10 @@ def test_python_daemon_registers_deepseek_and_restores_default_command(tmp_path)
     )
     expected = ["dsh-acp-demo"]
     assert launch["command"] == expected
-    assert _normalize_profile_command(runtime="deepseek", runner="headless", command=[]) == expected
+    assert (
+        _normalize_profile_command(runtime="deepseek", runner="headless", command=[])
+        == expected
+    )
 
 
 def test_deepseek_subprocess_environment_inherits_daemon_values(monkeypatch) -> None:
@@ -109,7 +184,9 @@ def test_deepseek_subprocess_environment_inherits_daemon_values(monkeypatch) -> 
     assert env["ACTOR_ONLY"] == "yes"
 
 
-def test_registry_runs_first_use_setup_before_starting_dsh(tmp_path, monkeypatch) -> None:
+def test_registry_runs_first_use_setup_before_starting_dsh(
+    tmp_path, monkeypatch
+) -> None:
     calls = []
     dsh_home = tmp_path / ".cccc/runtimes/deepseek/0.1.0-rc.6"
 
@@ -151,14 +228,22 @@ def test_registry_runs_first_use_setup_before_starting_dsh(tmp_path, monkeypatch
         env={},
     )
     try:
-        assert [call[0] for call in calls[:4]] == ["setup", "supervisor", "start", "handshake"]
+        assert [call[0] for call in calls[:4]] == [
+            "setup",
+            "supervisor",
+            "start",
+            "handshake",
+        ]
         assert calls[1][3]["DSH_HOME"] == str(dsh_home)
         assert calls[1][3]["CCCC_GROUP_ID"] == "g-first-use"
         assert calls[1][3]["CCCC_ACTOR_ID"] == "deepseek"
         assert calls[1][3]["CCCC_DEEPSEEK_SESSION_ROOT"] == str(
             tmp_path / ".cccc/groups/g-first-use/state/deepseek/deepseek/sessions"
         )
-        assert calls[1][1][-2:] == ["--config", str(dsh_home / "profiles/cccc-acp/cordis.yml")]
+        assert calls[1][1][-2:] == [
+            "--config",
+            str(dsh_home / "profiles/cccc-acp/cordis.yml"),
+        ]
     finally:
         deepseek_runtime.stop(group_id="g-first-use", actor_id="deepseek")
 
@@ -188,7 +273,9 @@ def _deepseek_group(path) -> Group:
     )
 
 
-def test_group_start_routes_deepseek_to_dedicated_registry(tmp_path, monkeypatch) -> None:
+def test_group_start_routes_deepseek_to_dedicated_registry(
+    tmp_path, monkeypatch
+) -> None:
     import cccc.daemon.group.group_lifecycle_ops as ops
 
     group = _deepseek_group(tmp_path / "group")
@@ -197,12 +284,18 @@ def test_group_start_routes_deepseek_to_dedicated_registry(tmp_path, monkeypatch
     monkeypatch.setattr(ops, "load_group", lambda _group_id: group)
     monkeypatch.setattr(ops, "ensure_deepseek_setup", lambda _env: None)
     monkeypatch.setattr(ops, "require_group_permission", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(ops, "runtime_start_preflight_error", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr(ops.deepseek_runtime, "start", lambda **kwargs: starts.append(kwargs))
+    monkeypatch.setattr(
+        ops, "runtime_start_preflight_error", lambda *_args, **_kwargs: ""
+    )
+    monkeypatch.setattr(
+        ops.deepseek_runtime, "start", lambda **kwargs: starts.append(kwargs)
+    )
     monkeypatch.setattr(
         ops.headless_runner.SUPERVISOR,
         "start_actor",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("generic headless route used")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("generic headless route used")
+        ),
     )
     response = handle_group_start(
         {"group_id": group.group_id, "by": "user"},
@@ -239,12 +332,18 @@ def test_autostart_routes_deepseek_to_dedicated_registry(tmp_path, monkeypatch) 
     starts = []
     monkeypatch.setattr(ops, "load_group", lambda _group_id: group)
     monkeypatch.setattr(ops, "ensure_deepseek_setup", lambda _env: None)
-    monkeypatch.setattr(ops, "runtime_start_preflight_error", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr(ops.deepseek_runtime, "start", lambda **kwargs: starts.append(kwargs))
+    monkeypatch.setattr(
+        ops, "runtime_start_preflight_error", lambda *_args, **_kwargs: ""
+    )
+    monkeypatch.setattr(
+        ops.deepseek_runtime, "start", lambda **kwargs: starts.append(kwargs)
+    )
     monkeypatch.setattr(
         ops.headless_runner.SUPERVISOR,
         "start_actor",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("generic headless route used")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("generic headless route used")
+        ),
     )
     autostart_running_groups(
         home,

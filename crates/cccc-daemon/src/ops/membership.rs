@@ -5,7 +5,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
-use super::membership_account::{AccountClient, AccountError};
+use super::membership_account::{AccountClient, AccountError, canonical_reach_hostname};
 use super::membership_cloudflared::{self, RuntimeError};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, string_arg};
 
@@ -36,8 +36,12 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
-    refresh_cut_from_account(home);
-    object(status_payload(home)?)
+    let account_online = refresh_cut_from_account(home)?;
+    let mut payload = status_payload(home)?;
+    if account_online == Some(false) {
+        payload["membership"]["online"] = Value::Bool(false);
+    }
+    object(payload)
 }
 
 fn login(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -223,7 +227,7 @@ fn reach_on_with(
             "not logged in; run `cccc login`",
         );
     }
-    refresh_cut_from_account(home);
+    let _account_online = refresh_cut_from_account(home)?;
     let state = membership::load(home).map_err(OpError::io)?;
     if state.disabled {
         return fail(home, "membership_disabled", "this device has been disabled");
@@ -365,32 +369,34 @@ fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
     Ok(json!({"membership":body}))
 }
 
-fn refresh_cut_from_account(home: &HomeLayout) {
+fn refresh_cut_from_account(home: &HomeLayout) -> Result<Option<bool>, OpError> {
     let Ok(state) = membership::load(home) else {
-        return;
+        return Ok(None);
     };
     let Some(token) = state.device_token.as_deref().filter(|_| state.logged_in) else {
-        return;
+        return Ok(None);
     };
     let origin = match bound_account_origin(&state) {
         Ok(origin) => origin,
-        Err(_) => return,
+        Err(_) => return Ok(None),
     };
     let client = match AccountClient::new(&origin) {
         Ok(client) => client,
-        Err(_) => return,
+        Err(_) => return Ok(None),
     };
     let remote = match client.fetch_device(token) {
         Ok(remote) => remote,
         Err(error) if error.code == "membership_disabled" => {
-            let _ = mark_cut(home, None, None);
-            return;
+            mark_cut(home, None, None)?;
+            return Ok(Some(false));
         }
-        Err(_) => return,
+        Err(_) => return Ok(None),
     };
     if remote.disabled {
-        let _ = mark_cut(home, remote.device_id, remote.hostname);
+        mark_cut(home, remote.device_id, remote.hostname)?;
+        return Ok(Some(false));
     }
+    Ok(remote.online)
 }
 
 fn mark_cut(
@@ -409,9 +415,14 @@ fn mark_cut(
         Ok(())
     })
     .map_err(OpError::io)?;
-    if let Err(error) = membership_cloudflared::stop(home) {
-        let _ = remember_error(home, &error.message);
-    }
+    membership_cloudflared::stop(home).map_err(|error| {
+        let message = format!(
+            "failed to stop cloudflared after membership cut: {}",
+            error.message
+        );
+        let _ = remember_error(home, &message);
+        OpError::new("membership_subprocess", message)
+    })?;
     let remote = settings::load(home).map_err(OpError::io)?.remote_access;
     if text(&remote, "provider", "off") == "reach" {
         settings::update(home, |global| {
@@ -433,16 +444,7 @@ fn mark_cut(
 }
 
 fn public_urls(home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, OpError> {
-    let hostname = hostname
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            if value.starts_with("http://") || value.starts_with("https://") {
-                value.trim_end_matches('/').to_owned()
-            } else {
-                format!("https://{}", value.trim_end_matches('/'))
-            }
-        });
+    let hostname = hostname.and_then(canonical_reach_hostname);
     let Some(origin) = hostname else {
         return Ok(PublicUrls {
             hostname: None,
@@ -559,7 +561,7 @@ fn live_web_port(home: &HomeLayout) -> Result<u16, OpError> {
             "CCCC Web must accept connections on 127.0.0.1 before reach can start",
         ));
     }
-    runtime
+    let port = runtime
         .get("port")
         .and_then(Value::as_u64)
         .and_then(|port| u16::try_from(port).ok())
@@ -569,7 +571,25 @@ fn live_web_port(home: &HomeLayout) -> Result<u16, OpError> {
                 "membership_gate",
                 "CCCC Web runtime port is invalid; restart `cccc` before enabling reach",
             )
+        })?;
+    let ready = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(300))
+        .timeout(std::time::Duration::from_millis(500))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .and_then(|client| {
+            client
+                .get(format!("http://127.0.0.1:{port}/api/v1/ready"))
+                .send()
         })
+        .is_ok_and(|response| response.status().is_success());
+    if !ready {
+        return Err(OpError::new(
+            "membership_gate",
+            "CCCC Web recorded binding is not accepting connections on 127.0.0.1; restart `cccc` before enabling reach",
+        ));
+    }
+    Ok(port)
 }
 
 fn pending_expired(pending: &Map<String, Value>) -> bool {
@@ -848,16 +868,64 @@ mod tests {
     }
 
     #[test]
+    fn public_urls_never_embed_local_credentials_in_an_unsafe_hostname() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", Vec::new(), true, Some("acc_admin_must_not_escape"))
+            .expect("admin token");
+
+        let urls = public_urls(&home, Some("http://attacker.example.test")).expect("urls");
+
+        assert!(urls.hostname.is_none());
+        assert!(urls.web.is_none());
+        assert!(urls.connector.is_none());
+    }
+
+    #[test]
     fn reach_uses_the_recorded_live_web_port() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept readiness probe");
+            let mut request = [0_u8; 1024];
+            let count = stream.read(&mut request).expect("read readiness probe");
+            assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /api/v1/ready "));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{{\"ok\":true,\"result\":{{\"web\":\"ready\"}}}}"
+            )
+            .expect("readiness response");
+        });
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
         fs::write_json(
             &home.daemon_dir().join("web_runtime.json"),
-            &json!({"pid":std::process::id(),"host":"127.0.0.1","port":9123}),
+            &json!({"pid":std::process::id(),"host":"127.0.0.1","port":port}),
         )
         .expect("runtime state");
-        assert_eq!(live_web_port(&home).expect("live port"), 9123);
+        assert_eq!(live_web_port(&home).expect("live port"), port);
+    }
+
+    #[test]
+    fn reach_rejects_a_recorded_web_port_that_is_not_listening() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind closed fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        drop(listener);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        fs::write_json(
+            &home.daemon_dir().join("web_runtime.json"),
+            &json!({"pid":std::process::id(),"host":"127.0.0.1","port":port}),
+        )
+        .expect("runtime state");
+        let error = live_web_port(&home).expect_err("closed binding must fail");
+        assert_eq!(error.code, "membership_gate");
+        assert!(error.message.contains("not accepting connections"));
     }
 
     #[test]
@@ -938,6 +1006,110 @@ mod tests {
         let remote = settings::load(&home).expect("settings").remote_access;
         assert_eq!(remote["enabled"], false);
         assert_eq!(remote["web_public_url"], "");
+    }
+
+    #[test]
+    fn status_fails_closed_when_cut_cannot_stop_the_tracked_helper() {
+        let (origin, _requests) = account_server(vec![(
+            403,
+            r#"{"error":{"code":"disabled","message":"device disabled"}}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("device-rust".into()),
+                device_token: Some("device-token".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        settings::update(&home, |global| {
+            global
+                .remote_access
+                .insert("provider".into(), Value::String("reach".into()));
+            global
+                .remote_access
+                .insert("enabled".into(), Value::Bool(true));
+            global.remote_access.insert(
+                "web_public_url".into(),
+                Value::String("https://old.example.test".into()),
+            );
+            Ok(())
+        })
+        .expect("settings");
+        let helper_dir = home.root().join("libexec").join("cloudflared");
+        std::fs::create_dir_all(&helper_dir).expect("helper dir");
+        std::fs::write(helper_dir.join("cloudflared.pid"), "malformed").expect("pid marker");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_status".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let error = status(&home, &request).expect_err("cut cleanup must fail closed");
+        assert_eq!(error.code, "membership_subprocess");
+        assert!(membership::load(&home).expect("membership").disabled);
+        let remote = settings::load(&home).expect("settings").remote_access;
+        assert_eq!(remote["enabled"], true);
+        assert_eq!(remote["web_public_url"], "https://old.example.test");
+    }
+
+    #[test]
+    fn membership_status_requires_the_account_tunnel_to_be_online() {
+        let (origin, _requests) = account_server(vec![(
+            200,
+            r#"{"device_id":"device-rust","hostname":"https://device-rust.example.test","disabled":false,"online":false}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("device-rust".into()),
+                device_token: Some("device-token".into()),
+                hostname: Some("https://device-rust.example.test".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        settings::update(&home, |global| {
+            global
+                .remote_access
+                .insert("provider".into(), Value::String("reach".into()));
+            global
+                .remote_access
+                .insert("enabled".into(), Value::Bool(true));
+            Ok(())
+        })
+        .expect("settings");
+        let executable = std::env::current_exe()
+            .expect("current exe")
+            .canonicalize()
+            .expect("canonical current exe");
+        let helper_dir = home.root().join("libexec").join("cloudflared");
+        std::fs::create_dir_all(&helper_dir).expect("helper dir");
+        fs::write_json(
+            &helper_dir.join("cloudflared.pid"),
+            &json!({"schema":1,"pid":std::process::id(),"executable":executable}),
+        )
+        .expect("helper marker");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_status".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let result = status(&home, &request).expect("status");
+
+        assert_eq!(result["membership"]["online"], false);
     }
 
     #[test]

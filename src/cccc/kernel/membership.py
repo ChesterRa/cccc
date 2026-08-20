@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 from ..paths import ensure_home
 from ..util.file_lock import acquire_lockfile, release_lockfile
@@ -67,6 +68,72 @@ def default_state() -> Dict[str, Any]:
 def _as_optional_text(value: Any) -> Optional[str]:
     text = str(value or "").strip()
     return text or None
+
+
+def normalize_reach_hostname(value: Any) -> Optional[str]:
+    text = _as_optional_text(value)
+    if text is None:
+        return None
+    if any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in text
+    ):
+        return None
+    candidate = text if "://" in text else f"https://{text}"
+    try:
+        parsed = urlparse(candidate)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or "?" in candidate
+        or "#" in candidate
+        or "%" in parsed.netloc
+        or "\\" in parsed.netloc
+    ):
+        return None
+
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            canonical_host = hostname.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            return None
+        dns_host = (
+            canonical_host[:-1] if canonical_host.endswith(".") else canonical_host
+        )
+        labels = dns_host.split(".")
+        if (
+            not dns_host
+            or len(dns_host) > 253
+            or any(
+                not label
+                or len(label) > 63
+                or label.startswith("-")
+                or label.endswith("-")
+                or not all(
+                    character.isascii() and (character.isalnum() or character == "-")
+                    for character in label
+                )
+                for label in labels
+            )
+        ):
+            return None
+    else:
+        canonical_host = (
+            f"[{address.compressed}]" if address.version == 6 else address.compressed
+        )
+
+    port_suffix = f":{port}" if port is not None and port != 443 else ""
+    return f"https://{canonical_host}{port_suffix}"
 
 
 def _as_optional_account_origin(value: Any) -> Optional[str]:
@@ -267,15 +334,7 @@ def _first_connector_secret(home: Optional[Path] = None) -> Optional[tuple[str, 
 def public_urls(
     hostname: Optional[str], home: Optional[Path] = None
 ) -> Dict[str, Optional[str]]:
-    host = _as_optional_text(hostname)
-    if host:
-        host = host.rstrip("/")
-        if host.startswith("http://") or host.startswith("https://"):
-            origin = host
-        else:
-            origin = f"https://{host}"
-    else:
-        origin = None
+    origin = normalize_reach_hostname(hostname)
     web_url = None
     connector_url = None
     if origin:

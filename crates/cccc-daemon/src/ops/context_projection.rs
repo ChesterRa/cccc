@@ -107,6 +107,16 @@ fn status(task: &Map<String, Value>) -> &str {
         .unwrap_or("planned")
 }
 
+fn is_blocked(task: &Map<String, Value>) -> bool {
+    task.get("blocked_by")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+        || matches!(
+            task.get("waiting_on").and_then(Value::as_str),
+            Some("actor" | "external")
+        )
+}
+
 fn task_summary(tasks: &[Map<String, Value>], attention: &Value) -> Value {
     let count = |wanted| tasks.iter().filter(|task| status(task) == wanted).count();
     let attention = attention.as_object();
@@ -136,14 +146,7 @@ fn attention(tasks: &[Map<String, Value>], full: bool) -> Value {
     let live = tasks
         .iter()
         .filter(|task| !matches!(status(task), "done" | "archived"));
-    let blocked = live
-        .clone()
-        .filter(|task| {
-            task.get("blocked_by")
-                .and_then(Value::as_array)
-                .is_some_and(|items| !items.is_empty())
-        })
-        .count();
+    let blocked = live.clone().filter(|task| is_blocked(task)).count();
     let waiting_user = live
         .clone()
         .filter(|task| task.get("waiting_on").and_then(Value::as_str) == Some("user"))
@@ -161,10 +164,7 @@ fn attention(tasks: &[Map<String, Value>], full: bool) -> Value {
                 .iter()
                 .filter(|task| status(task) != "done" && status(task) != "archived")
                 .filter(|task| match wanted {
-                    "blocked" => task
-                        .get("blocked_by")
-                        .and_then(Value::as_array)
-                        .is_some_and(|items| !items.is_empty()),
+                    "blocked" => is_blocked(task),
                     "waiting_user" => {
                         task.get("waiting_on").and_then(Value::as_str) == Some("user")
                     }
@@ -201,8 +201,8 @@ fn board(tasks: &[Map<String, Value>]) -> Value {
                 tasks
                     .iter()
                     .filter(|task| status(task) == wanted)
-                    .filter_map(|task| task.get("id").and_then(Value::as_str))
-                    .map(|task_id| Value::String(task_id.into()))
+                    .cloned()
+                    .map(Value::Object)
                     .collect(),
             ),
         );

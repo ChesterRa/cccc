@@ -123,6 +123,18 @@ fn process_deepseek_batch(
             Ok(_) | Err(_) => return false,
         }
     }
+    if !actor.enabled
+        && let Err(error) = actor_runtime::persist_lifecycle(home, group, &actor.id, true, None)
+    {
+        crate::ops::deepseek_runtime::stop(&group.group_id, &actor.id);
+        tracing::warn!(
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            message = %error.message,
+            "failed to persist auto-woken DeepSeek actor"
+        );
+        return false;
+    }
     for job in jobs {
         if cancelled.load(Ordering::Acquire)
             || !crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled)
@@ -340,8 +352,8 @@ pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) ->
 
 #[cfg(test)]
 mod tests {
-    use super::submit_sequence;
-    use cccc_contracts::{Actor, ActorRuntime, ActorSubmit};
+    use super::*;
+    use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, Event};
 
     #[test]
     fn repeats_enter_only_for_tuis_that_can_drop_the_first_submit() {
@@ -368,5 +380,57 @@ mod tests {
 
         actor.submit = ActorSubmit::None;
         assert!(submit_sequence(&actor).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_auto_wake_persists_the_enabled_lifecycle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("deepseek auto-wake", "").expect("group");
+        let script = r#"while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "${rid:-3}"
+fi
+done"#;
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.enabled = false;
+        actor.command = vec!["sh".into(), "-c".into(), script.into()];
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        crate::ops::deepseek_runtime::start(&home, &group, &actor, temp.path())
+            .expect("start fake DeepSeek runtime");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = serde_json::json!({"to":["deepseek"],"text":"wake"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        let job = DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event,
+            advances_cursor: false,
+        };
+
+        assert!(process_deepseek_batch(
+            &[job],
+            &home,
+            &group,
+            &actor,
+            &mut None,
+            &AtomicBool::new(false),
+        ));
+        let saved = store.load(&group.group_id).expect("reload group");
+        assert!(saved.actors[0].enabled);
+        crate::ops::deepseek_runtime::stop(&group.group_id, &actor.id);
     }
 }

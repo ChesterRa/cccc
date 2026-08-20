@@ -616,48 +616,49 @@ def _cursor_has_unread_gap(
     target_event_id: str,
 ) -> bool:
     """Return whether a target cursor would skip an earlier actor-visible event."""
-    # Keep this invariant independent from the public unread iterator: callers
-    # may replace/index that iterator during recovery, but cursor advancement
-    # still needs one stable append-order view for the gap check.
-    events: List[Dict[str, Any]] = []
-    event_coordinates: List[Tuple[int, int]] = []
-    for source in list_ledger_sources(group.ledger_path.parent):
-        abs_path = source.get("abs_path")
-        if not isinstance(abs_path, Path) or not abs_path.exists():
-            continue
-        source_seq = int(source.get("seq") or 0)
-        line_no = 0
-        for raw_line in iter_source_lines(abs_path):
-            line_no += 1
-            try:
-                event = json.loads(str(raw_line).strip())
-            except Exception:
-                continue
-            if isinstance(event, dict):
-                events.append(event)
-                event_coordinates.append((source_seq, line_no))
-    positions = {
-        str(event.get("id") or "").strip(): index
-        for index, event in enumerate(events)
-        if str(event.get("id") or "").strip()
-    }
-    target = positions.get(str(target_event_id or "").strip())
-    if target is None:
+    current_id = str(current_event_id or "").strip()
+    target_id = str(target_event_id or "").strip()
+    positions = _ledger_positions(group, [current_id, target_id])
+    target_position = positions.get(target_id)
+    if target_position is None:
         raise ValueError(f"cursor target is not present in ledger: {target_event_id}")
-    current = positions.get(str(current_event_id or "").strip(), -1)
-    if current >= target:
+
+    current_position = positions.get(current_id)
+    generation_position = actor_generation_positions(group, [actor_id]).get(actor_id)
+    stop_at_current = current_position is not None and (
+        generation_position is None or current_position >= generation_position
+    )
+    lower_bound = (
+        current_position
+        if stop_at_current
+        else generation_position
+        if generation_position is not None
+        else (-1, -1)
+    )
+    if lower_bound >= target_position:
         return False
-    generation = actor_generation_positions(group, [actor_id]).get(actor_id)
-    for index, event in enumerate(events[current + 1 : target], start=current + 1):
+
+    target_seen = False
+    for event in iter_events_reverse(group.ledger_path):
+        event_id = str(event.get("id") or "").strip()
+        if not target_seen:
+            if event_id == target_id:
+                target_seen = True
+            continue
+        if stop_at_current and event_id == current_id:
+            return False
+        if not stop_at_current and str(event.get("kind") or "") == "actor.add":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            actor = data.get("actor") if isinstance(data.get("actor"), dict) else {}
+            if str(actor.get("id") or "").strip() == actor_id:
+                return False
         if str(event.get("by") or "").strip() == actor_id:
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=event):
             continue
-        current_position = event_coordinates[index]
-        if generation is not None:
-            if current_position < generation:
-                continue
         return True
+    if not target_seen:
+        raise ValueError(f"cursor target is not present in ledger: {target_event_id}")
     return False
 
 

@@ -194,6 +194,7 @@ def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
     result = {
         "id": task.id,
         "title": task.title,
+        "outcome": task.outcome,
         "parent_id": task.parent_id,
         "status": task.status.value if isinstance(task.status, TaskStatus) else str(task.status),
         "archived_from": task.archived_from,
@@ -203,6 +204,17 @@ def _task_to_summary_dict(task: Task) -> Dict[str, Any]:
         "waiting_on": task.waiting_on.value if isinstance(task.waiting_on, WaitingOn) else str(task.waiting_on),
         "handoff_to": task.handoff_to,
         "task_type": normalize_task_type(task.task_type),
+        "notes": task.notes,
+        "checklist": [
+            {
+                "id": item.id,
+                "text": item.text,
+                "status": item.status.value
+                if isinstance(item.status, ChecklistStatus)
+                else str(item.status),
+            }
+            for item in task.checklist
+        ],
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "progress": task.progress,
@@ -720,7 +732,6 @@ def _build_context_summary_result(
     ordered_agents: List[AgentState],
     attention: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
-    actors_runtime = _build_actor_runtime_states(storage, ordered_agents)
     return {
         "version": storage.compute_version(),
         "coordination": {
@@ -728,8 +739,12 @@ def _build_context_summary_result(
             "tasks": [_task_to_summary_dict(task) for task in _sort_tasks(tasks)],
         },
         "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
-        "actors_runtime": actors_runtime,
-        "attention": attention,
+        "actors_runtime": [],
+        "attention": {
+            "blocked": len(attention.get("blocked") or []),
+            "waiting_user": len(attention.get("waiting_user") or []),
+            "pending_handoffs": len(attention.get("pending_handoffs") or []),
+        },
         "tasks_summary": _tasks_summary(tasks, attention=attention),
         "meta": context.meta if isinstance(context.meta, dict) else {},
     }
@@ -765,9 +780,6 @@ def _rebuild_summary_snapshot(group_id: str, *, max_attempts: int = 3) -> bool:
     if storage is None:
         return False
     attempts = max(1, int(max_attempts or 1))
-    last_result: Optional[Dict[str, Any]] = None
-    last_basis: Optional[Dict[str, Any]] = None
-    last_version = ""
     for _ in range(attempts):
         before_basis = storage.summary_basis()
         before_version = storage.compute_version()
@@ -785,9 +797,6 @@ def _rebuild_summary_snapshot(group_id: str, *, max_attempts: int = 3) -> bool:
         )
         after_basis = storage.summary_basis()
         after_version = storage.compute_version()
-        last_result = result
-        last_basis = after_basis
-        last_version = after_version
         if before_basis == after_basis and before_version == after_version:
             storage.save_summary_snapshot(
                 basis=after_basis,
@@ -795,13 +804,6 @@ def _rebuild_summary_snapshot(group_id: str, *, max_attempts: int = 3) -> bool:
                 result=_with_summary_snapshot_meta(result, state="hit"),
             )
             return True
-    if last_result is not None and last_basis is not None:
-        storage.save_summary_snapshot(
-            basis=last_basis,
-            version=last_version,
-            result=_with_summary_snapshot_meta(last_result, state="hit"),
-        )
-        return True
     return False
 
 

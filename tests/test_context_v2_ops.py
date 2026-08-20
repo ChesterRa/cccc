@@ -226,6 +226,94 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_summary_context_preserves_task_editor_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            created, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "task.create",
+                        "title": "Editable task",
+                        "outcome": "Keep the outcome",
+                        "notes": "Keep the notes",
+                        "checklist": [
+                            {
+                                "text": "Keep the checklist item",
+                                "status": "in_progress",
+                            }
+                        ],
+                    }
+                ],
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+
+            from cccc.daemon.context.context_ops import (
+                _rebuild_summary_snapshot,
+                _wait_for_summary_snapshot_rebuild,
+            )
+
+            self.assertTrue(_wait_for_summary_snapshot_rebuild(gid))
+            self.assertTrue(_rebuild_summary_snapshot(gid))
+            summary, _ = self._summary_context(gid)
+
+            self.assertTrue(summary.ok, getattr(summary, "error", None))
+            task = summary.result["coordination"]["tasks"][0]
+            self.assertEqual(task["outcome"], "Keep the outcome")
+            self.assertEqual(task["notes"], "Keep the notes")
+            self.assertEqual(
+                task["checklist"],
+                [
+                    {
+                        "id": "C001",
+                        "text": "Keep the checklist item",
+                        "status": "in_progress",
+                    }
+                ],
+            )
+        finally:
+            cleanup()
+
+    def test_summary_context_compacts_attention_without_runtime_probes(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            created, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "task.create",
+                        "title": "Waiting task",
+                        "outcome": "Wait for the dependency",
+                        "waiting_on": "external",
+                    }
+                ],
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+
+            from cccc.daemon.context.context_ops import (
+                _rebuild_summary_snapshot,
+                _wait_for_summary_snapshot_rebuild,
+            )
+
+            self.assertTrue(_wait_for_summary_snapshot_rebuild(gid))
+            with patch(
+                "cccc.daemon.context.context_ops._build_actor_runtime_states",
+                side_effect=AssertionError("summary must not probe live runtimes"),
+            ):
+                self.assertTrue(_rebuild_summary_snapshot(gid))
+
+            summary, _ = self._summary_context(gid)
+            self.assertTrue(summary.ok, getattr(summary, "error", None))
+            self.assertEqual(summary.result["attention"]["blocked"], 1)
+            self.assertEqual(summary.result["attention"]["waiting_user"], 0)
+            self.assertEqual(summary.result["attention"]["pending_handoffs"], 0)
+            self.assertEqual(summary.result["actors_runtime"], [])
+            self.assertEqual(summary.result["tasks_summary"]["blocked"], 1)
+        finally:
+            cleanup()
+
     def test_summary_context_rebuilds_after_context_sync(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -422,6 +510,47 @@ class TestContextV2Ops(unittest.TestCase):
             self.assertEqual(kwargs["basis"], newer_basis)
             self.assertEqual(kwargs["version"], "ctxv:2")
             self.assertEqual(str(kwargs["result"].get("version") or ""), "ctxv:2")
+        finally:
+            cleanup()
+
+    def test_rebuild_summary_snapshot_does_not_publish_an_unstable_read(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+
+            from cccc.daemon.context.context_ops import (
+                _rebuild_summary_snapshot,
+                _wait_for_summary_snapshot_rebuild,
+            )
+            from cccc.kernel.context import ContextStorage
+
+            self.assertTrue(_wait_for_summary_snapshot_rebuild(gid))
+            basis_1 = {
+                "context_rev": 1,
+                "tasks_rev": 0,
+                "agents_rev": 0,
+                "actors_rev": 0,
+            }
+            basis_2 = {**basis_1, "context_rev": 2}
+            basis_3 = {**basis_1, "context_rev": 3}
+
+            with (
+                patch.object(
+                    ContextStorage,
+                    "summary_basis",
+                    autospec=True,
+                    side_effect=[basis_1, basis_2, basis_2, basis_3],
+                ),
+                patch.object(
+                    ContextStorage,
+                    "save_summary_snapshot",
+                    autospec=True,
+                ) as mock_save,
+            ):
+                rebuilt = _rebuild_summary_snapshot(gid, max_attempts=2)
+
+            self.assertFalse(rebuilt)
+            mock_save.assert_not_called()
         finally:
             cleanup()
 

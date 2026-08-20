@@ -126,7 +126,10 @@ def plan_actor_chat_delivery(
                 runner_effective=runner_effective,
             )
         if runtime == "deepseek":
-            if deepseek_headless_running is not None and deepseek_headless_running(group_id, actor_id):
+            if deepseek_headless_running is not None and deepseek_headless_running(
+                group_id=group_id,
+                actor_id=actor_id,
+            ):
                 return ActorDeliveryDecision(
                     actor_id=actor_id,
                     transport=TRANSPORT_DEEPSEEK_HEADLESS,

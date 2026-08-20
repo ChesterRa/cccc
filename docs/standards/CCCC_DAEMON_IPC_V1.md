@@ -1371,7 +1371,7 @@ Result:
 
 Args:
 ```ts
-{ group_id: string }
+{ group_id: string; detail?: "summary" | "full" }
 ```
 
 Result:
@@ -3469,6 +3469,7 @@ Result:
     }
     updated_at?: string | null
   }>
+  actors_runtime?: Array<Record<string, unknown>>
   tasks_summary: {
     total: number
     done: number
@@ -3494,6 +3495,14 @@ Result:
 
 Notes:
 - Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
+- Daemon IPC defaults `detail` to `full`; the Web HTTP route defaults it to
+  `summary` for routine refreshes.
+- `detail="summary"` omits `board`, recent coordination notes, and live runtime
+  probing. Its `attention` fields are counts, but each task in
+  `coordination.tasks` MUST retain every task-editor field, including
+  `outcome`, `notes`, and `checklist`, so a summary refresh cannot erase a
+  client's editable draft.
+- `detail="full"` returns the complete task objects and board projections.
 
 #### `context_sync`
 
@@ -4687,9 +4696,9 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set, or if `manual`/`tailscale` is already enabled. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set, or if `manual`/`tailscale` is already enabled. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
-The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that reach is online. If any authenticated device-status or Reach-issuance response reports the device disabled, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 
 Python and Rust share `CCCC_HOME/secrets/membership.json` and serialize every read-modify-write mutation with `CCCC_HOME/secrets/membership.json.lock`. Every writer MUST preserve the full v1 shape, including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and `pending_login`, so an engine switch cannot silently discard credentials, their issuer, or an in-progress login.
 

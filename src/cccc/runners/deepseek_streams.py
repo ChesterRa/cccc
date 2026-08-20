@@ -1,4 +1,5 @@
 """Bounded stdout/stderr readers for the DeepSeek ACP supervisor."""
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,9 @@ class DeepSeekStreamMixin:
                     if self.generation != generation or self._process is not process:
                         return
                     with self._protocol_lock:
-                        frame = self._protocol.feed_line(bytes(buffer[:-1]).rstrip(b"\\r"))
+                        frame = self._protocol.feed_line(
+                            bytes(buffer[:-1]).rstrip(b"\\r")
+                        )
                     try:
                         frames.put_nowait(frame)
                     except queue.Full as exc:
@@ -44,16 +47,21 @@ class DeepSeekStreamMixin:
                     buffer.clear()
             if buffer and self.generation == generation and self._process is process:
                 with self._protocol_lock:
-                    frames.put(self._protocol.feed_line(bytes(buffer)))
+                    frame = self._protocol.feed_line(bytes(buffer))
+                try:
+                    frames.put_nowait(frame)
+                except queue.Full as exc:
+                    raise ACPProtocolError("deepseek frame queue is full") from exc
         except (ACPProtocolError, UnicodeError, ValueError, OSError) as exc:
             self._reader_error = exc
             self._stopping.set()
         finally:
-            try:
-                if self.generation == generation and self._process is process:
+            if self.generation == generation and self._process is process:
+                self._stopping.set()
+                try:
                     frames.put_nowait(None)
-            except queue.Full:
-                pass
+                except queue.Full:
+                    pass
 
     def _read_stderr(self) -> None:
         process = self._process

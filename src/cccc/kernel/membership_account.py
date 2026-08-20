@@ -10,6 +10,8 @@ import urllib.request
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urljoin, urlparse
 
+from .membership import normalize_reach_hostname
+
 CLIENT_VERSION = 1
 VERSION_HEADER = "CCCC-Membership-Version"
 USER_AGENT = "cccc-membership"
@@ -252,15 +254,20 @@ def poll_device_login(
     )
     token = str(data.get("access_token") or data.get("device_token") or "").strip()
     device_id = str(data.get("device_id") or "").strip()
-    hostname = str(data.get("hostname") or "").strip()
+    raw_hostname = str(data.get("hostname") or "").strip()
+    hostname = normalize_reach_hostname(raw_hostname)
     if not token or not device_id:
         raise AccountError(
             "membership_network", "account service returned an incomplete device grant"
         )
+    if raw_hostname and hostname is None:
+        raise AccountError(
+            "membership_network", "account service returned an unsafe reach hostname"
+        )
     return {
         "device_token": token,
         "device_id": device_id,
-        "hostname": hostname or None,
+        "hostname": hostname,
     }
 
 
@@ -287,14 +294,14 @@ def issue_reach(
         token=device_token,
         transport=transport,
     )
-    hostname = str(data.get("hostname") or "").strip()
+    hostname = normalize_reach_hostname(data.get("hostname"))
     tunnel_token = str(data.get("tunnel_token") or "").strip()
     if not hostname or not tunnel_token:
         raise AccountError(
             "membership_network",
-            "account service returned incomplete reach credentials",
+            "account service returned incomplete or unsafe reach credentials",
         )
-    return {"hostname": hostname.rstrip("/"), "tunnel_token": tunnel_token}
+    return {"hostname": hostname, "tunnel_token": tunnel_token}
 
 
 def fetch_device(
@@ -304,9 +311,10 @@ def fetch_device(
     transport: Optional[Transport] = None,
 ) -> Dict[str, Any]:
     data = request(origin, "GET", "/v1/device", token=device_token, transport=transport)
+    online = data.get("online")
     return {
         "device_id": str(data.get("device_id") or "").strip() or None,
-        "hostname": str(data.get("hostname") or "").strip() or None,
+        "hostname": normalize_reach_hostname(data.get("hostname")),
         "disabled": bool(data.get("disabled")),
-        "online": bool(data.get("online")),
+        "online": online if isinstance(online, bool) else None,
     }

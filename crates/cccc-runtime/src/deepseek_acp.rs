@@ -79,6 +79,12 @@ impl NdjsonSession {
         }
         Ok(value)
     }
+
+    pub(crate) fn discard_pending(&mut self, id: &Value) {
+        if let Ok(key) = id_key(id) {
+            self.pending.remove(&key);
+        }
+    }
 }
 
 fn id_key(value: &Value) -> Result<String, ProtocolError> {

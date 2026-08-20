@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.access_tokens import list_access_tokens
@@ -36,7 +36,7 @@ from ...kernel.settings import (
     update_remote_access_settings,
 )
 from ...ports.web.runtime_control import allow_unauthenticated_web_listener
-from ...ports.web.runtime_control import read_web_runtime_state
+from ...ports.web.runtime_control import read_web_runtime_state, wait_for_web_ready
 from ...util.process import pid_is_alive
 from ...util.time import utc_now_iso
 from . import cloudflared_supervisor
@@ -100,7 +100,7 @@ def _cloudflared_fail(exc: CloudflaredError) -> DaemonResponse:
     return _error(exc.code, exc.message)
 
 
-def _apply_cut(remote: Dict[str, Any]) -> None:
+def _apply_cut(remote: Dict[str, Any]) -> Optional[str]:
     def mark_cut(current: Dict[str, Any]) -> None:
         current["disabled"] = True
         if remote.get("hostname"):
@@ -110,7 +110,9 @@ def _apply_cut(remote: Dict[str, Any]) -> None:
     try:
         cloudflared_supervisor.stop()
     except RuntimeError as stop_error:
-        remember_membership_error(str(stop_error))
+        message = f"failed to stop cloudflared after membership cut: {stop_error}"
+        remember_membership_error(message)
+        return message
     remote_cfg = get_remote_access_settings()
     if str(remote_cfg.get("provider") or "") == "reach":
         update_remote_access_settings(
@@ -120,22 +122,25 @@ def _apply_cut(remote: Dict[str, Any]) -> None:
                 "updated_at": utc_now_iso(),
             }
         )
+    return None
 
 
-def _refresh_cut_from_account() -> None:
+def _refresh_cut_from_account() -> Tuple[Optional[str], Optional[bool]]:
     state = load_membership()
     origin = _bound_origin(state)
     token = state.get("device_token")
     if not origin or not token or not state.get("logged_in"):
-        return
+        return None, None
     try:
         remote = fetch_device(origin, str(token), transport=_transport)
     except AccountError as exc:
         if exc.code != "membership_disabled":
-            return
+            return None, None
         remote = {"disabled": True}
     if remote.get("disabled"):
-        _apply_cut(remote)
+        return _apply_cut(remote), False
+    online = remote.get("online")
+    return None, online if isinstance(online, bool) else None
 
 
 def _live_web_port() -> int:
@@ -155,11 +160,15 @@ def _live_web_port() -> int:
         raise RuntimeError(
             "CCCC Web must accept connections on 127.0.0.1 before reach can start"
         )
+    if not wait_for_web_ready(host="127.0.0.1", port=port, timeout_s=0.5):
+        raise RuntimeError(
+            "CCCC Web recorded binding is not accepting connections on 127.0.0.1; "
+            "restart `cccc` before enabling reach"
+        )
     return port
 
 
 def _status_payload() -> Dict[str, Any]:
-    _refresh_cut_from_account()
     state = load_membership()
     remote = get_remote_access_settings()
     provider = str(remote.get("provider") or "off").strip().lower()
@@ -214,7 +223,13 @@ def handle_membership_status(args: Dict[str, Any]) -> DaemonResponse:
     denied = _require_user(args)
     if denied is not None:
         return denied
-    return DaemonResponse(ok=True, result=_status_payload())
+    cleanup_error, account_online = _refresh_cut_from_account()
+    if cleanup_error:
+        return _error("membership_subprocess", cleanup_error)
+    result = _status_payload()
+    if account_online is False:
+        result["membership"]["online"] = False
+    return DaemonResponse(ok=True, result=result)
 
 
 def handle_membership_login(args: Dict[str, Any]) -> DaemonResponse:
@@ -360,7 +375,9 @@ def handle_membership_reach_on(args: Dict[str, Any]) -> DaemonResponse:
     if not state.get("logged_in") or not state.get("device_token"):
         remember_membership_error("not logged in")
         return _error("membership_not_logged_in", "not logged in; run `cccc login`")
-    _refresh_cut_from_account()
+    cleanup_error, _account_online = _refresh_cut_from_account()
+    if cleanup_error:
+        return _error("membership_subprocess", cleanup_error)
     state = load_membership()
     if state.get("disabled"):
         remember_membership_error("this device has been disabled")
@@ -391,7 +408,8 @@ def handle_membership_reach_on(args: Dict[str, Any]) -> DaemonResponse:
         )
     except AccountError as exc:
         if exc.code == "membership_disabled":
-            _apply_cut({"disabled": True})
+            if cleanup_error := _apply_cut({"disabled": True}):
+                return _error("membership_subprocess", cleanup_error)
         return _account_fail(exc)
 
     def store_reach(current: Dict[str, Any]) -> None:

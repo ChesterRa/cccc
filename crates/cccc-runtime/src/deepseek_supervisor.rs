@@ -100,11 +100,12 @@ impl DeepSeekSupervisor {
             "jsonrpc":"2.0", "id":request_id, "method":"session/prompt",
             "params":{"sessionId":session_id,"prompt":[{"type":"text","text":prompt}]}
         });
-        self.protocol.register(&serde_json::json!(request_id))?;
-        let child = self.child.as_mut().ok_or(SupervisorError::NotRunning)?;
-        let stdin = child.stdin.as_mut().ok_or(SupervisorError::NotRunning)?;
-        writeln!(stdin, "{payload}").map_err(SupervisorError::Io)?;
-        stdin.flush().map_err(SupervisorError::Io)?;
+        let id = serde_json::json!(request_id);
+        self.protocol.register(&id)?;
+        if let Err(error) = self.write_frame(&payload) {
+            self.protocol.discard_pending(&id);
+            return Err(error);
+        }
         self.active_request_id = Some(request_id);
         Ok(Some(request_id))
     }
@@ -136,9 +137,10 @@ impl DeepSeekSupervisor {
                 self.pending_permissions.insert(id.to_string());
             }
         }
-        if self
-            .active_request_id
-            .is_some_and(|id| value.get("id") == Some(&serde_json::json!(id)))
+        if value.get("method").is_none()
+            && self
+                .active_request_id
+                .is_some_and(|id| value.get("id") == Some(&serde_json::json!(id)))
         {
             self.active_request_id = None;
         }
@@ -196,8 +198,13 @@ impl DeepSeekSupervisor {
         payload: &serde_json::Value,
         id: u64,
     ) -> Result<(), SupervisorError> {
-        self.protocol.register(&serde_json::json!(id))?;
-        self.write_frame(payload)
+        let id = serde_json::json!(id);
+        self.protocol.register(&id)?;
+        if let Err(error) = self.write_frame(payload) {
+            self.protocol.discard_pending(&id);
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn send_notification(&mut self, payload: &serde_json::Value) -> Result<(), SupervisorError> {

@@ -12,6 +12,12 @@ from cccc.daemon.messaging.actor_delivery_planner import (
 
 def _planner_decision(*, running: bool):
     actor = {"id": "deepseek-1", "runner": "headless", "runtime": "deepseek"}
+
+    def deepseek_running(*, group_id: str, actor_id: str) -> bool:
+        assert group_id == "g-test"
+        assert actor_id == "deepseek-1"
+        return running
+
     return plan_actor_chat_delivery(
         group=SimpleNamespace(group_id="g-test", doc={"actors": [actor]}),
         actor=actor,
@@ -25,7 +31,7 @@ def _planner_decision(*, running: bool):
         effective_runner_kind=lambda value: value or "pty",
         codex_headless_running=lambda _group_id, _actor_id: False,
         claude_headless_running=lambda _group_id, _actor_id: False,
-        deepseek_headless_running=lambda _group_id, _actor_id: running,
+        deepseek_headless_running=deepseek_running,
     )
 
 
@@ -90,6 +96,7 @@ def test_send_queues_deepseek_once_and_suppresses_generic_notify(
     with (
         patch(
             "cccc.daemon.messaging.chat_delivery_ops.deepseek_runtime.running",
+            autospec=True,
             return_value=running,
         ),
         patch(

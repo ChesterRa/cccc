@@ -1,4 +1,5 @@
 """Serialized request/response coordination for the DeepSeek ACP supervisor."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,8 @@ from ..kernel.deepseek_acp import ACPProtocolError
 
 class DeepSeekRequestMixin:
     def next_frame(self, timeout: float = 5.0) -> Dict[str, Any]:
+        if self._frames.empty() and self._stopping.is_set():
+            raise RuntimeError("deepseek ACP process ended") from self._reader_error
         try:
             frame = self._frames.get(timeout=max(0.1, float(timeout)))
         except queue.Empty as exc:
@@ -19,11 +22,17 @@ class DeepSeekRequestMixin:
             raise RuntimeError("deepseek ACP process ended") from self._reader_error
         if frame.get("method") == "session/request_permission" and "id" in frame:
             self._pending_permissions.add(frame.get("id"))
-        if "id" in frame and frame.get("id") == self._active_request_id:
+        if (
+            "method" not in frame
+            and "id" in frame
+            and frame.get("id") == self._active_request_id
+        ):
             self._active_request_id = None
         return frame
 
-    def respond_permission(self, request_id: Any, options: Any, *, stopping: bool = False) -> None:
+    def respond_permission(
+        self, request_id: Any, options: Any, *, stopping: bool = False
+    ) -> None:
         from ..kernel.deepseek_acp import permission_outcome
 
         self._send_notification(
@@ -44,7 +53,11 @@ class DeepSeekRequestMixin:
                 turn = self.queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            if turn.generation != self.generation or self._process is None or self._process.stdin is None:
+            if (
+                turn.generation != self.generation
+                or self._process is None
+                or self._process.stdin is None
+            ):
                 continue
             frame = {
                 "jsonrpc": "2.0",
@@ -89,7 +102,9 @@ class DeepSeekRequestMixin:
         process = self._process
         if process is None or process.stdin is None or self._stopping.is_set():
             raise RuntimeError("deepseek supervisor is not running")
-        process.stdin.write((json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8"))
+        process.stdin.write(
+            (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
+        )
         process.stdin.flush()
 
     def _recv_response(self, request_id: int, timeout: float) -> Dict[str, Any]:
@@ -98,13 +113,17 @@ class DeepSeekRequestMixin:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("deepseek ACP response timed out")
+            if self._frames.empty() and self._stopping.is_set():
+                raise RuntimeError("deepseek ACP process ended") from self._reader_error
             try:
                 frame = self._frames.get(timeout=remaining)
             except queue.Empty as exc:
                 raise TimeoutError("deepseek ACP response timed out") from exc
             if frame is None:
                 if self._reader_error is not None:
-                    raise RuntimeError("deepseek ACP reader stopped") from self._reader_error
+                    raise RuntimeError(
+                        "deepseek ACP reader stopped"
+                    ) from self._reader_error
                 raise RuntimeError("deepseek ACP process ended before responding")
             if "id" not in frame:
                 continue
