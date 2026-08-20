@@ -293,6 +293,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -322,11 +325,11 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+        run: python scripts/upload_python_release.py --repository testpypi dist/*
 
       - name: Upload stable distribution to PyPI
         if: steps.channel.outputs.prerelease == 'false'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload --repository-url https://upload.pypi.org/legacy/ dist/*
+        run: python scripts/upload_python_release.py --repository pypi dist/*

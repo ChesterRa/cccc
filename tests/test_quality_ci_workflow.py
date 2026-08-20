@@ -466,7 +466,7 @@ def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
     assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/verify_python_release_set.py dist" in collect_runs
-    assert "python -m twine upload" in _runs(jobs["publish"])
+    assert "scripts/upload_python_release.py" in _runs(jobs["publish"])
     assert "cccc rust" not in release_runs
     for source_test in ("cargo test", "pytest", "context_python_interop", "python_storage_interop"):
         assert source_test not in release_runs
@@ -491,7 +491,7 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
-    assert "python -m twine upload" in _runs(release["jobs"]["publish"])
+    assert "scripts/upload_python_release.py" in _runs(release["jobs"]["publish"])
 
     assert set(rust_candidate["on"]) == {"push", "workflow_dispatch"}
     assert rust_candidate["on"]["push"]["tags"] == ["v*"]
@@ -582,7 +582,11 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
 def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
     publish = _release_workflow()["jobs"]["publish"]
     classify = next(step for step in publish["steps"] if step.get("id") == "channel")
-    uploads = [step for step in publish["steps"] if "twine upload" in step.get("run", "")]
+    uploads = [
+        step
+        for step in publish["steps"]
+        if "upload_python_release.py" in step.get("run", "")
+    ]
 
     assert "secrets." not in classify["run"]
     assert "token=" not in classify["run"]
@@ -593,6 +597,10 @@ def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
     assert {step["env"]["TWINE_PASSWORD"] for step in uploads} == {
         "${{ secrets.TEST_PYPI_API_TOKEN }}",
         "${{ secrets.PYPI_API_TOKEN }}",
+    }
+    assert {step["run"] for step in uploads} == {
+        "python scripts/upload_python_release.py --repository testpypi dist/*",
+        "python scripts/upload_python_release.py --repository pypi dist/*",
     }
     assert all("steps.channel.outputs.token" not in str(step) for step in publish["steps"])
 
