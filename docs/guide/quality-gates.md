@@ -96,7 +96,7 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | `rust-test` | Python-free Rust workspace plus installer/release source contracts |
 | `rust-process-lifecycle` | Serial combined daemon/Web lifecycle tests, isolated from the parallel workspace suite |
 | `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
-| `windows-smoke` | Windows PTY compatibility tests plus forced daemon Job Object process-tree cleanup |
+| `windows-smoke` | Windows PTY compatibility, combined Web startup-failure cleanup, and forced daemon Job Object process-tree cleanup |
 | `ci-required` | Stable aggregate result for branch protection; fails when any required job fails or is skipped |
 
 The Rust pull-request jobs are self-contained: they do not install or execute

@@ -60,7 +60,7 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
         "python-tests": "25",
         "python-compat": "15",
         "package": "25",
-        "windows-smoke": "20",
+        "windows-smoke": "30",
         "rust-lint": "15",
         "rust-test": "45",
         "rust-process-lifecycle": "15",
@@ -187,6 +187,12 @@ def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
     assert "--test-threads=1" in lifecycle_runs
     assert "cargo fmt --all --check" in _runs(jobs["rust-lint"])
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _runs(jobs["rust-lint"])
+    windows_runs = _runs(jobs["windows-smoke"])
+    assert "cargo test --package cccc --test integration --locked" in windows_runs
+    assert (
+        "daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon"
+        in windows_runs
+    )
 
 
 def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
@@ -236,7 +242,10 @@ def test_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
     assert "$startInfo.UseShellExecute = $false" in windows_installer
     assert "[int]$TimeoutMilliseconds = 35000" in windows_installer
     assert "$process.WaitForExit($TimeoutMilliseconds)" in windows_installer
-    assert "Stdout = [string]$stdoutTask.Result" in windows_installer
+    assert "$stdoutTask.Wait(1000)" in windows_installer
+    assert "$stderrTask.Wait(1000)" in windows_installer
+    assert "Stdout = $stdout" in windows_installer
+    assert "Stderr = $stderr" in windows_installer
 
 
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
@@ -457,7 +466,7 @@ def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
     assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/verify_python_release_set.py dist" in collect_runs
-    assert "python -m twine upload" in _runs(jobs["publish"])
+    assert "scripts/upload_python_release.py" in _runs(jobs["publish"])
     assert "cccc rust" not in release_runs
     for source_test in ("cargo test", "pytest", "context_python_interop", "python_storage_interop"):
         assert source_test not in release_runs
@@ -482,7 +491,7 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
-    assert "python -m twine upload" in _runs(release["jobs"]["publish"])
+    assert "scripts/upload_python_release.py" in _runs(release["jobs"]["publish"])
 
     assert set(rust_candidate["on"]) == {"push", "workflow_dispatch"}
     assert rust_candidate["on"]["push"]["tags"] == ["v*"]
@@ -573,7 +582,11 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
 def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
     publish = _release_workflow()["jobs"]["publish"]
     classify = next(step for step in publish["steps"] if step.get("id") == "channel")
-    uploads = [step for step in publish["steps"] if "twine upload" in step.get("run", "")]
+    uploads = [
+        step
+        for step in publish["steps"]
+        if "upload_python_release.py" in step.get("run", "")
+    ]
 
     assert "secrets." not in classify["run"]
     assert "token=" not in classify["run"]
@@ -584,6 +597,10 @@ def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
     assert {step["env"]["TWINE_PASSWORD"] for step in uploads} == {
         "${{ secrets.TEST_PYPI_API_TOKEN }}",
         "${{ secrets.PYPI_API_TOKEN }}",
+    }
+    assert {step["run"] for step in uploads} == {
+        "python scripts/upload_python_release.py --repository testpypi dist/*",
+        "python scripts/upload_python_release.py --repository pypi dist/*",
     }
     assert all("steps.channel.outputs.token" not in str(step) for step in publish["steps"])
 

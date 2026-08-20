@@ -57,6 +57,26 @@ Notes:
 - `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
 - In that case, run `cccc daemon stop` (or clean stale runtime state) before retrying start.
 
+## Membership and Reach Commands
+
+Membership is optional. Local CCCC remains usable without an account. Reach is
+a Linux/macOS preview and requires an Admin Access Token in **Settings > Web
+Access** before publishing the local Web surface.
+
+```bash
+cccc login             # Bind this machine through device authorization
+cccc logout            # Remove the local membership identity
+cccc reach install     # Install or upgrade the pinned cloudflared helper
+cccc reach on          # Publish the authenticated Web surface
+cccc reach status      # Show account, hostname, Web, and connector state
+cccc reach off         # Stop publication without removing local identity
+```
+
+The Web URL and ChatGPT connector URL are distinct secrets. Rotating a token,
+cutting access, or logging out changes the connector URL. Windows helper
+installation is not included in this release candidate, so Reach is unavailable
+there.
+
 ## Group Commands
 
 ### `cccc attach`

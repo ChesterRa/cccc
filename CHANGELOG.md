@@ -6,8 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.35-rc1] — 2026-08-20
+
+### Added
+- **DeepSeek Harness is now a first-class managed headless runtime.** CCCC installs the pinned ACP composition under `CCCC_HOME`, isolates provider sessions per actor, projects structured turn events, and keeps failed or interrupted delivery retryable without duplicating committed work.
+- **Optional membership and Reach are available as an explicit preview on Linux and macOS.** `cccc login`, `cccc logout`, and `cccc reach` bind a machine account, supervise a checksum-pinned `cloudflared`, and expose separately labeled Web and ChatGPT connector URLs without uploading the local ledger or repository.
+- **Windows project browsing now includes available drive roots**, allowing attached scopes to be selected outside the current drive from the Web UI.
+
+### Changed
+- **Runtime restoration and message delivery use stronger lifecycle boundaries.** Group restore is serialized with lifecycle mutations, large legacy headless histories migrate through bounded indexes, and delivery completion advances only across a contiguous committed prefix.
+- **Web task coordination and chat following were split into focused components.** Task Board controls, cards, columns, virtual-message anchoring, and send-follow behavior now avoid stale scroll requests and oversized container components.
+- **The combined Rust Web/daemon launcher owns only the Windows daemon process it created.** Startup waits through legacy-daemon handoff, shutdown leaves a replacement owner untouched, and failed Web startup cleans up the detached daemon before returning.
+
 ### Fixed
 - **Windows standalone updates and daemon recovery no longer fail on expected stopped-state diagnostics.** PowerShell 5.1 now checks daemon commands by process exit code without promoting native stderr into a terminating installer error, empty restart diagnostics are null-safe, and a verified replacement is retained when only runtime restart fails. The Rust daemon publishes IPC before restoring actors in a detached worker, serializes each Group restore with lifecycle mutations, and keeps slow or failed recovery diagnosable without blocking daemon readiness; stale unlocked daemon files continue to be reclaimed through the operating-system lock.
+- **DeepSeek delivery, recovery, timeout, and write-failure paths now preserve one durable outcome.** Turn and operation identities are bounded, pending work survives restarts, and a provider failure cannot silently advance the inbox cursor.
+- **Daemon process and ledger locks now fail safely across restart races.** Stale unlocked files are reclaimed, owned process trees are bounded, and competing daemon owners are not terminated during cleanup.
+
+### Tests
+- Added deterministic DeepSeek ACP, durability, recovery, timeout, projection, and setup coverage across Python and Rust.
+- Added membership, Reach, cloudflared supervision, cross-engine state, Windows updater, daemon handoff, process-tree, and combined Web startup-failure coverage.
 
 ## [0.4.34] — 2026-08-16
 

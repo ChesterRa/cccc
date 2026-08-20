@@ -86,6 +86,31 @@ fn daemon_stop_waits_for_the_combined_web_process_to_exit() {
     assert_web_lock_released(&home);
 }
 
+#[test]
+fn combined_web_bind_failure_stops_its_owned_daemon() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let installed = temp.path().join(executable_name("cccc"));
+    std::fs::copy(env!("CARGO_BIN_EXE_cccc"), &installed).expect("copy cccc");
+    let home = temp.path().join("home");
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("occupy Web port");
+    let port = occupied.local_addr().expect("occupied address").port();
+
+    let output = run(
+        &installed,
+        &home,
+        &["--host", "127.0.0.1", "--port", &port.to_string()],
+    );
+
+    assert!(
+        !output.status.success(),
+        "combined CCCC unexpectedly served an occupied port: {}",
+        detail(&output)
+    );
+    wait_for_daemon_exit(&home);
+    assert_daemon_lock_released(&home);
+    assert_web_lock_released(&home);
+}
+
 fn assert_daemon_lock_released(home: &Path) {
     let lock_path = home.join("daemon").join("ccccd.lock");
     let lock = OpenOptions::new()

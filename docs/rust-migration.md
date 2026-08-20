@@ -26,9 +26,9 @@ to pass, together with measured operational value relative to maintenance cost.
 Rust promotion does not imply Python retirement; changing the default engine or
 retiring an implementation is a separate product decision.
 
-Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
-The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
-Cargo workspace uses SemVer `0.4.34-rc2`; release validation normalizes those
+Prereleases use one canonical product identity and tag such as `v0.4.35-rc1`.
+The Python manifest represents that identity as PEP 440 `0.4.35rc1`, while the
+Cargo workspace uses SemVer `0.4.35-rc1`; release validation normalizes those
 ecosystem-specific spellings before comparing them.
 
 ## Install and update
