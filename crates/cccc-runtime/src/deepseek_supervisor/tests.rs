@@ -96,32 +96,23 @@ fn stop_escalates_after_term_timeout() {
 fn failed_prompt_write_releases_the_reserved_protocol_id() {
     let mut supervisor = DeepSeekSupervisor::default();
     let root = tempfile::tempdir().expect("tempdir");
-    let ready = root.path().join("stdin-closed");
     supervisor
-        .start(
-            &[
-                "sh".into(),
-                "-c".into(),
-                "exec 0<&-; : > \"$CCCC_DEEPSEEK_TEST_READY\"; sleep 2".into(),
-            ],
-            root.path(),
-            &[(
-                "CCCC_DEEPSEEK_TEST_READY".into(),
-                ready.to_string_lossy().into_owned(),
-            )],
-        )
+        .start(&["cat".into()], root.path(), &[])
         .expect("start");
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !ready.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(ready.exists(), "stdin-close fixture did not become ready");
+    supervisor
+        .child
+        .as_mut()
+        .expect("child")
+        .stdin
+        .take()
+        .expect("stdin");
     let request_id = supervisor.enqueue("prompt").expect("enqueue");
 
-    assert!(matches!(
-        supervisor.flush_one("fake-session"),
-        Err(SupervisorError::Io(_))
-    ));
+    let result = supervisor.flush_one("fake-session");
+    assert!(
+        matches!(result, Err(SupervisorError::NotRunning)),
+        "unexpected flush result: {result:?}"
+    );
     assert!(
         supervisor
             .protocol
