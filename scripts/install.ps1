@@ -144,10 +144,14 @@ function Invoke-CcccCommand(
       throw "$CommandPath $($Arguments -join ' ') timed out"
     }
     $process.WaitForExit()
+    # A successfully detached daemon can inherit these pipe handles after the
+    # launcher exits. Do not wait forever for EOF from that child process.
+    $stdout = if ($stdoutTask.Wait(1000)) { [string]$stdoutTask.Result } else { "" }
+    $stderr = if ($stderrTask.Wait(1000)) { [string]$stderrTask.Result } else { "" }
     return [PSCustomObject]@{
       ExitCode = $process.ExitCode
-      Stdout = [string]$stdoutTask.Result
-      Stderr = [string]$stderrTask.Result
+      Stdout = $stdout
+      Stderr = $stderr
     }
   } finally {
     $process.Dispose()
