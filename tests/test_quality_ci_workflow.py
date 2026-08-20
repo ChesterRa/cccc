@@ -60,7 +60,7 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
         "python-tests": "25",
         "python-compat": "15",
         "package": "25",
-        "windows-smoke": "20",
+        "windows-smoke": "30",
         "rust-lint": "15",
         "rust-test": "45",
         "rust-process-lifecycle": "15",
@@ -187,6 +187,12 @@ def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
     assert "--test-threads=1" in lifecycle_runs
     assert "cargo fmt --all --check" in _runs(jobs["rust-lint"])
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _runs(jobs["rust-lint"])
+    windows_runs = _runs(jobs["windows-smoke"])
+    assert "cargo test --package cccc --test integration --locked" in windows_runs
+    assert (
+        "daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon"
+        in windows_runs
+    )
 
 
 def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:

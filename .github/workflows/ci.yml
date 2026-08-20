@@ -235,7 +235,7 @@ jobs:
   windows-smoke:
     needs: web
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -267,6 +267,13 @@ jobs:
         uses: dtolnay/rust-toolchain@1.88.0
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Verify combined Web startup failure releases its daemon
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc --test integration --locked
+          daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon
+          -- --test-threads=1
 
       - name: Verify abrupt daemon process-tree cleanup
         timeout-minutes: 10

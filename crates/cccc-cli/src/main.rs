@@ -1,5 +1,7 @@
 mod args;
 mod commands;
+#[cfg(any(windows, test))]
+mod detached_daemon_owner;
 mod hook_receiver;
 mod shutdown;
 mod web_instance;
@@ -140,49 +142,51 @@ async fn launch(
     instance.hold_until_process_exit();
     replace_incompatible_daemon(&home, &client).await?;
     let mut embedded_daemon = None;
-    #[cfg(windows)]
-    let mut detached_daemon_owned = false;
     // Event-driven loss detection for the embedded daemon: polling in
     // `wait_for_daemon_loss` stays as the fallback for an external daemon.
     #[cfg(windows)]
     let (_daemon_exit_tx, daemon_exit_rx) = tokio::sync::watch::channel(false);
     #[cfg(not(windows))]
     let (daemon_exit_tx, mut daemon_exit_rx) = tokio::sync::watch::channel(false);
-    if !ping(&client).await {
+    let daemon_missing = !ping(&client).await;
+    #[cfg(windows)]
+    let detached_daemon = if daemon_missing {
         // Running the daemon as a task inside the Web host is unreliable on
         // Windows once the daemon installs its kill-on-close Job object. In
         // particular, hosts launched through `cargo run` can fail to publish a
         // ready daemon and then hang while the task is cancelled. The existing
         // detached launcher gives the daemon its own process and Job lifetime.
-        #[cfg(windows)]
-        {
-            let executable = std::env::current_exe()?;
-            detached_daemon_owned = matches!(
-                DetachedDaemon::new(executable, ["daemon", "run"])
-                    .start(&home)
-                    .await?,
-                StartOutcome::Started(_)
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            let daemon_home = home.clone();
-            embedded_daemon = Some(tokio::spawn(async move {
-                let result = cccc_daemon::run(daemon_home).await;
-                let _ = daemon_exit_tx.send(true);
-                result
-            }));
-            let _ = wait_for_daemon(
-                &client,
-                &mut daemon_exit_rx,
-                std::time::Duration::from_secs(30),
-            )
-            .await;
-        }
+        detached_daemon_owner::OwnedDetachedDaemon::start(&home, &client).await?
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    if daemon_missing {
+        let daemon_home = home.clone();
+        embedded_daemon = Some(tokio::spawn(async move {
+            let result = cccc_daemon::run(daemon_home).await;
+            let _ = daemon_exit_tx.send(true);
+            result
+        }));
+        let _ = wait_for_daemon(
+            &client,
+            &mut daemon_exit_rx,
+            std::time::Duration::from_secs(30),
+        )
+        .await;
     }
     if !ping(&client).await {
+        #[cfg(windows)]
+        if let Some(owner) = detached_daemon.as_ref()
+            && let Err(error) = owner.stop(&client, &home).await
+        {
+            eprintln!("failed to stop Web-owned daemon after startup failure: {error}");
+        }
         finish_embedded_daemon(&client, embedded_daemon.take()).await;
-        bail!("embedded Rust daemon failed to start");
+        bail!(
+            "Rust daemon failed to become ready; see {}",
+            home.daemon_dir().join("ccccd.log").display()
+        );
     }
     let shutdown_watchdog = tokio::spawn(shutdown::watch_for_interrupt());
     let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
@@ -223,7 +227,9 @@ async fn launch(
     };
     cccc_mcp::shutdown(&home).await;
     #[cfg(windows)]
-    if detached_daemon_owned && let Err(error) = stop_daemon(&client, &home).await {
+    if let Some(owner) = detached_daemon.as_ref()
+        && let Err(error) = owner.stop(&client, &home).await
+    {
         eprintln!("failed to stop Web-owned daemon: {error}");
     }
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
@@ -403,6 +409,19 @@ async fn ping(client: &DaemonClient) -> bool {
     call(client, "ping", json!({}))
         .await
         .is_ok_and(|response| is_compatible_daemon(&response))
+}
+
+#[cfg(windows)]
+async fn wait_for_compatible_daemon(client: &DaemonClient, deadline: tokio::time::Instant) -> bool {
+    loop {
+        if ping(client).await {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 
 #[cfg(any(not(windows), test))]

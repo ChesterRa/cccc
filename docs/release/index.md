@@ -4,7 +4,18 @@ import { withBase } from 'vitepress'
 const releaseModules = import.meta.glob('./v*_release_notes.md')
 
 function compareSemverDesc(a, b) {
-  const parse = (version) => version.split('.').map((part) => Number(part) || 0)
+  const parse = (version) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)(\d+))?$/.exec(version)
+    if (!match) return [0, 0, 0, 0, 0]
+    const phase = { alpha: 1, beta: 2, rc: 3 }
+    return [
+      Number(match[1]),
+      Number(match[2]),
+      Number(match[3]),
+      match[4] ? phase[match[4]] : 4,
+      Number(match[5] || 0),
+    ]
+  }
   const left = parse(a)
   const right = parse(b)
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
@@ -15,7 +26,9 @@ function compareSemverDesc(a, b) {
 }
 
 const releases = Object.keys(releaseModules)
-  .map((fileName) => /^\.\/v(\d+\.\d+\.\d+)_release_notes\.md$/.exec(fileName))
+  .map((fileName) =>
+    /^\.\/v(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\d+)?)_release_notes\.md$/.exec(fileName),
+  )
   .filter(Boolean)
   .map((match) => ({
     version: match[1],
