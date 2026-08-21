@@ -187,11 +187,12 @@ def autostart_running_groups(
                     ok_mcp = False
             if not ok_mcp and runtime in auto_mcp_runtimes:
                 logger.warning(
-                    "MCP server 'cccc' is not installed for %s/%s (runtime=%s); actor will start but tools may not work.",
+                    "Autostart skipped for %s/%s: MCP server 'cccc' is not ready (runtime=%s).",
                     group_id,
                     actor_id,
                     runtime,
                 )
+                continue
 
             clear_preamble_sent(group, actor_id)
 

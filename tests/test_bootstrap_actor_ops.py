@@ -643,6 +643,67 @@ class TestBootstrapActorOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_autostart_skips_managed_runtime_when_mcp_is_not_ready(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "devin-bootstrap", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "devin-peer",
+                    "runtime": "devin",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            assert group is not None
+            group.doc["running"] = True
+            group.doc["state"] = "active"
+            group.save()
+
+            with patch(
+                "cccc.daemon.group.bootstrap_actor_ops.pty_runner.SUPERVISOR.start_actor",
+                side_effect=AssertionError("actor must not start without its managed MCP entry"),
+            ), patch(
+                "cccc.daemon.group.bootstrap_actor_ops.runtime_start_preflight_error",
+                return_value="",
+            ):
+                autostart_running_groups(
+                    home,
+                    effective_runner_kind=lambda runner: runner,
+                    find_scope_url=lambda _group, _scope_key: str(Path(".").resolve()),
+                    supported_runtimes=("devin",),
+                    ensure_mcp_installed=lambda _runtime, _cwd, **_kwargs: False,
+                    auto_mcp_runtimes=("devin",),
+                    pty_supported=lambda: True,
+                    merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
+                    inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+                    prepare_pty_env=lambda env: dict(env),
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    pty_backlog_bytes=lambda: 1024,
+                    write_headless_state=lambda _gid, _aid: None,
+                    write_pty_state=lambda _gid, _aid, _pid: None,
+                    clear_preamble_sent=lambda _group, _aid: None,
+                    throttle_reset_actor=lambda _gid, _aid: None,
+                    automation_on_resume=lambda _group: None,
+                    get_group_state=lambda _group: "idle",
+                    load_actor_private_env=lambda _gid, _aid: {},
+                    update_actor_private_env=lambda *_args, **_kwargs: {},
+                    delete_actor_private_env=lambda _gid, _aid: None,
+                )
+        finally:
+            cleanup()
+
 
     def test_global_profile_start_persists_explicit_scope(self) -> None:
         """Global profile attach persists profile_scope='global' and start resolves via explicit ref."""

@@ -57,9 +57,22 @@ def _entry_command_matches_expected(command: Any, args: Any, expected_cmd: list[
     if not actual_command:
         return not strict
     expected_command = _normalize_mcp_command_value(expected_cmd[0])
-    if _normalize_mcp_command_value(actual_command) != expected_command:
+    if not _mcp_command_paths_equal(actual_command, expected_command):
         return False
     return _normalize_mcp_arg_values(args) == _normalize_mcp_arg_values(expected_cmd[1:])
+
+
+def _mcp_command_paths_equal(actual: str, expected: str) -> bool:
+    actual_normalized = _normalize_mcp_command_value(actual)
+    expected_normalized = _normalize_mcp_command_value(expected)
+    if actual_normalized == expected_normalized:
+        return True
+    try:
+        actual_resolved = _normalize_mcp_command_value(str(Path(actual_normalized).resolve(strict=False)))
+        expected_resolved = _normalize_mcp_command_value(str(Path(expected_normalized).resolve(strict=False)))
+        return actual_resolved == expected_resolved
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _mcp_transport_matches(entry: Dict[str, Any]) -> bool:
@@ -141,18 +154,98 @@ def _devin_debug_args(output: str) -> list[str]:
 
 def _devin_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> bool:
     text = str(output or "")
-    if "stdio" not in text.lower():
-        return False
+
+    entry = _devin_json_entry(text)
+    if entry is not None:
+        return _json_mcp_entry_matches_expected(entry, expected_cmd)
+
     command = _devin_debug_string_field(text, "command")
-    if not command:
-        return False
-    args = _devin_debug_args(text)
-    return _entry_command_matches_expected(
-        command,
-        args,
-        expected_cmd,
-        strict=sys.platform.startswith("win"),
-    )
+    if command and "stdio" in text.lower():
+        args = _devin_debug_args(text)
+        return _entry_command_matches_expected(
+            command,
+            args,
+            expected_cmd,
+            strict=sys.platform.startswith("win"),
+        )
+
+    values = _parse_mcp_get_output(text)
+    if (values.get("server") or values.get("name")) and str(
+        values.get("server") or values.get("name")
+    ).strip().lower() == "cccc":
+        transport = str(values.get("transport") or values.get("type") or "stdio").strip().lower()
+        if values.get("command") and transport in {"", "stdio", "local"}:
+            return _entry_command_matches_expected(
+                values.get("command"),
+                values.get("args"),
+                expected_cmd,
+                strict=sys.platform.startswith("win"),
+            )
+
+    command_line = _devin_list_command(text, "cccc")
+    return bool(command_line) and _command_line_matches_expected(command_line, expected_cmd)
+
+
+def _devin_json_entry(output: str) -> Dict[str, Any] | None:
+    try:
+        document = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    def find(value: Any) -> Dict[str, Any] | None:
+        if isinstance(value, dict):
+            direct = value.get("cccc")
+            if isinstance(direct, dict):
+                return direct
+            servers = value.get("mcpServers") or value.get("servers")
+            if isinstance(servers, dict) and isinstance(servers.get("cccc"), dict):
+                return servers["cccc"]
+            if str(value.get("name") or value.get("server") or "").strip().lower() == "cccc":
+                return value
+            for child in value.values():
+                found = find(child)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find(child)
+                if found is not None:
+                    return found
+        return None
+
+    return find(document)
+
+
+def _devin_list_command(output: str, server_name: str) -> str:
+    in_server = False
+    for raw in str(output or "").splitlines():
+        line = raw.strip()
+        bullet = re.match(r"^(?:[-*\u2022]\s*)?([^:]+?)\s*$", line)
+        if bullet and ":" not in line:
+            candidate = bullet.group(1).strip().lower()
+            if candidate == server_name.lower():
+                in_server = True
+                continue
+            if in_server:
+                break
+        if in_server and line.lower().startswith("command:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _command_line_matches_expected(command_line: str, expected_cmd: list[str]) -> bool:
+    for posix in (True, False):
+        try:
+            parts = shlex.split(command_line, posix=posix)
+        except ValueError:
+            continue
+        if parts and _entry_command_matches_expected(parts[0], parts[1:], expected_cmd, strict=True):
+            return True
+    if len(expected_cmd) == 2:
+        suffix = expected_cmd[1]
+        if command_line.rstrip().endswith(f" {suffix}"):
+            return _mcp_command_paths_equal(command_line.rstrip()[: -(len(suffix) + 1)], expected_cmd[0])
+    return False
 
 
 def _claude_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> bool:
@@ -780,9 +873,15 @@ def _runtime_mcp_state(runtime: str, *, cwd: Path | None = None, env: Dict[str, 
         if cwd is not None:
             kwargs["cwd"] = cwd
         result = _run_cli(["devin", "mcp", "get", "cccc"], **kwargs)
-        if result.returncode != 0:
-            return "missing"
-        return "ready" if _devin_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
+        state = "missing"
+        if result.returncode == 0:
+            state = "ready" if _devin_mcp_entry_matches_expected(result.stdout, expected_cmd) else "stale"
+            if state == "ready":
+                return state
+        listed = _run_cli(["devin", "mcp", "list"], **kwargs)
+        if listed.returncode == 0 and _devin_mcp_entry_matches_expected(listed.stdout, expected_cmd):
+            return "ready"
+        return state
 
     if runtime == "kiro":
         return _kiro_mcp_state(expected_cmd, cwd=cwd, env=env)
