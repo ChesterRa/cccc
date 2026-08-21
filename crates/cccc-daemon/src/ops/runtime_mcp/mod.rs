@@ -161,13 +161,7 @@ fn inspect(
             env,
             expected,
         ),
-        ActorRuntime::Devin => inspect_cli(
-            runtime,
-            &["devin", "mcp", "get", "cccc"],
-            cwd,
-            env,
-            expected,
-        ),
+        ActorRuntime::Devin => inspect_devin(cwd, env, expected),
         ActorRuntime::Grok => inspect_cli(
             runtime,
             &["grok", "mcp", "list", "--json"],
@@ -176,6 +170,35 @@ fn inspect(
             expected,
         ),
         _ => Ok(state::json_state(runtime, cwd, env, expected)),
+    }
+}
+
+fn inspect_devin(
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    expected: &[String],
+) -> Result<Report, OpError> {
+    let inspected = inspect_cli(
+        ActorRuntime::Devin,
+        &["devin", "mcp", "get", "cccc"],
+        cwd,
+        env,
+        expected,
+    )?;
+    if inspected.state == State::Ready {
+        return Ok(inspected);
+    }
+    let listed = inspect_cli(
+        ActorRuntime::Devin,
+        &["devin", "mcp", "list"],
+        cwd,
+        env,
+        expected,
+    )?;
+    if listed.state == State::Ready {
+        Ok(listed)
+    } else {
+        Ok(inspected)
     }
 }
 

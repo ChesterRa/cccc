@@ -274,6 +274,43 @@ class TestMcpInstall(unittest.TestCase):
             self.assertTrue(is_mcp_installed("devin"))
         mock_run.assert_called_once_with(["devin", "mcp", "get", "cccc"], timeout=10, env=None)
 
+    def test_is_mcp_installed_devin_parses_json_output(self) -> None:
+        output = json.dumps(
+            {"mcpServers": {"cccc": {"transport": "stdio", "command": "/abs/cccc", "args": ["mcp"]}}}
+        )
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=output, stderr=""),
+        ):
+            self.assertTrue(is_mcp_installed("devin"))
+
+    def test_is_mcp_installed_devin_parses_key_value_output(self) -> None:
+        output = "Server: cccc\nTransport: stdio\nCommand: /abs/cccc\nArgs: mcp\n"
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]), patch(
+            "cccc.daemon.mcp_install._run_cli",
+            return_value=Mock(returncode=0, stdout=output, stderr=""),
+        ):
+            self.assertTrue(is_mcp_installed("devin"))
+
+    def test_is_mcp_installed_devin_falls_back_to_list_output(self) -> None:
+        outputs = [
+            Mock(returncode=2, stdout="", stderr="unknown subcommand: get"),
+            Mock(
+                returncode=0,
+                stdout='Configured MCP servers:\n\n  • cccc\n    Command: "/path with spaces/cccc" mcp\n',
+                stderr="",
+            ),
+        ]
+        with patch(
+            "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+            return_value=["/path with spaces/cccc", "mcp"],
+        ), patch("cccc.daemon.mcp_install._run_cli", side_effect=outputs) as mock_run:
+            self.assertTrue(is_mcp_installed("devin"))
+        self.assertEqual(
+            [call.args[0] for call in mock_run.call_args_list],
+            [["devin", "mcp", "get", "cccc"], ["devin", "mcp", "list"]],
+        )
+
     def test_is_mcp_installed_devin_rejects_wrong_stdio_command(self) -> None:
         output = (
             'Server: cccc\n'
