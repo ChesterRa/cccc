@@ -7,7 +7,7 @@ use serde_json::Map;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,9 +34,19 @@ impl DetachedDaemon {
     }
 
     pub async fn start(&self, home: &HomeLayout) -> Result<StartOutcome> {
+        Ok(match self.start_owned(home).await? {
+            None => StartOutcome::AlreadyRunning,
+            Some(child) => StartOutcome::Started(child.id()),
+        })
+    }
+
+    /// Start a detached daemon while retaining the operating-system process
+    /// handle. Owners that must later stop exactly the process they created
+    /// should use this instead of relying on a reusable PID.
+    pub async fn start_owned(&self, home: &HomeLayout) -> Result<Option<Child>> {
         home.initialize()?;
         if ping(home).await {
-            return Ok(StartOutcome::AlreadyRunning);
+            return Ok(None);
         }
 
         let paths = DaemonPaths::new(home.clone());
@@ -57,7 +67,7 @@ impl DetachedDaemon {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
             if ping(home).await {
-                return Ok(StartOutcome::Started(child.id()));
+                return Ok(Some(child));
             }
             if let Some(status) = child.try_wait().context("poll Rust daemon process")? {
                 anyhow::bail!(

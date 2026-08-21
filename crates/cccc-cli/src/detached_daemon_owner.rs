@@ -5,26 +5,15 @@ use cccc_client::DaemonClient;
 #[cfg(windows)]
 use cccc_core::HomeLayout;
 #[cfg(windows)]
-use cccc_daemon::{DetachedDaemon, StartOutcome};
+use cccc_daemon::DetachedDaemon;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ownership {
-    Owned,
-    NotRunning,
-    Replaced,
-}
-
-fn ownership(owned_pid: u32, running_pid: Option<u32>) -> Ownership {
-    match running_pid {
-        Some(running_pid) if running_pid == owned_pid => Ownership::Owned,
-        Some(_) => Ownership::Replaced,
-        None => Ownership::NotRunning,
-    }
+fn shutdown_args(expected_pid: u32) -> serde_json::Value {
+    serde_json::json!({"expected_pid":expected_pid})
 }
 
 #[cfg(windows)]
 pub(crate) struct OwnedDetachedDaemon {
-    pid: u32,
+    child: std::process::Child,
 }
 
 #[cfg(windows)]
@@ -38,15 +27,15 @@ impl OwnedDetachedDaemon {
 
             let executable = std::env::current_exe()?;
             match DetachedDaemon::new(executable, ["daemon", "run"])
-                .start(home)
+                .start_owned(home)
                 .await?
             {
-                StartOutcome::Started(pid) => {
-                    let owner = Self { pid };
+                Some(child) => {
+                    let mut owner = Self { child };
                     if super::wait_for_compatible_daemon(client, deadline).await {
                         return Ok(Some(owner));
                     }
-                    let cleanup = owner.stop(client, home).await;
+                    let cleanup = owner.stop(client).await;
                     if let Err(error) = cleanup {
                         bail!(
                             "Rust daemon failed to become compatible and cleanup failed: {error}; see {}",
@@ -58,7 +47,7 @@ impl OwnedDetachedDaemon {
                         home.daemon_dir().join("ccccd.log").display()
                     );
                 }
-                StartOutcome::AlreadyRunning => {
+                None => {
                     if tokio::time::Instant::now() >= deadline {
                         bail!(
                             "existing daemon did not hand off to the Rust daemon; see {}",
@@ -71,57 +60,72 @@ impl OwnedDetachedDaemon {
         }
     }
 
-    pub(crate) async fn stop(&self, client: &DaemonClient, home: &HomeLayout) -> Result<()> {
-        match ownership(self.pid, super::running_daemon_pid(client).await) {
-            Ownership::Replaced => return Ok(()),
-            Ownership::Owned => {
-                if super::stop_daemon(client, home)
-                    .await
-                    .is_ok_and(|response| response.ok)
-                {
-                    return Ok(());
-                }
-            }
-            Ownership::NotRunning => {}
-        }
-
-        let pid = self.pid.to_string();
-        let output = std::process::Command::new("taskkill")
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .output()
-            .map_err(|error| {
-                anyhow::anyhow!("failed to run taskkill for daemon {}: {error}", self.pid)
-            })?;
-
-        if matches!(
-            ownership(self.pid, super::running_daemon_pid(client).await),
-            Ownership::Replaced
-        ) {
+    pub(crate) async fn stop(&mut self, client: &DaemonClient) -> Result<()> {
+        if self.wait_for_exit(std::time::Duration::ZERO).await? {
             return Ok(());
         }
-        if !output.status.success()
-            && super::wait_for_daemon_lock_release(home, std::time::Duration::from_millis(100))
-                .await
-                .is_err()
+
+        // A shutdown may legitimately wait behind an in-flight global write.
+        // Give it the full lifecycle deadline and fence it with the exact PID
+        // we spawned so DaemonClient's descriptor retry cannot stop a
+        // replacement daemon.
+        let deadline = tokio::time::Instant::now() + super::DAEMON_SHUTDOWN_TIMEOUT;
+        let lifecycle_client = client.clone().with_timeout(super::DAEMON_SHUTDOWN_TIMEOUT);
+        let _ = super::call(
+            &lifecycle_client,
+            "shutdown",
+            shutdown_args(self.child.id()),
+        )
+        .await;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if self.wait_for_exit(remaining).await? {
+            return Ok(());
+        }
+        self.terminate_owned().await
+    }
+
+    async fn terminate_owned(&mut self) -> Result<()> {
+        if self.wait_for_exit(std::time::Duration::ZERO).await? {
+            return Ok(());
+        }
+        if let Err(error) = self.child.kill()
+            && !self.wait_for_exit(std::time::Duration::ZERO).await?
         {
             bail!(
-                "failed to terminate daemon {}: {}",
-                self.pid,
-                String::from_utf8_lossy(&output.stderr).trim()
+                "failed to terminate owned daemon {}: {error}",
+                self.child.id()
             );
         }
-        super::wait_for_daemon_lock_release(home, super::DAEMON_SHUTDOWN_TIMEOUT).await
+        if self.wait_for_exit(super::DAEMON_SHUTDOWN_TIMEOUT).await? {
+            return Ok(());
+        }
+        bail!(
+            "owned daemon {} did not exit within {} seconds",
+            self.child.id(),
+            super::DAEMON_SHUTDOWN_TIMEOUT.as_secs()
+        )
+    }
+
+    async fn wait_for_exit(&mut self, timeout: std::time::Duration) -> Result<bool> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if self.child.try_wait()?.is_some() {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Ownership, ownership};
+    use super::shutdown_args;
 
     #[test]
-    fn only_the_spawned_daemon_is_owned() {
-        assert_eq!(ownership(41, Some(41)), Ownership::Owned);
-        assert_eq!(ownership(41, None), Ownership::NotRunning);
-        assert_eq!(ownership(41, Some(42)), Ownership::Replaced);
+    fn shutdown_is_fenced_to_the_spawned_daemon() {
+        assert_eq!(shutdown_args(41), serde_json::json!({"expected_pid":41}));
     }
 }

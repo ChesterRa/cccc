@@ -52,7 +52,7 @@ fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "home_get" => Some(object(
             json!({"home": home.root(), "environment": "CCCC_HOME"}),
         )),
-        "shutdown" => Some(object(json!({"shutting_down": true}))),
+        "shutdown" => Some(shutdown(request)),
         _ => None,
     };
     if let Some(result) = core {
@@ -60,6 +60,24 @@ fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     ops::handle(home, request)?
         .ok_or_else(|| OpError::new("unknown_op", format!("unknown operation: {}", request.op)))?
+}
+
+fn shutdown(request: &DaemonRequest) -> OpResult {
+    if let Some(value) = request.args.get("expected_pid") {
+        let expected_pid = value.as_u64().filter(|pid| *pid > 0).ok_or_else(|| {
+            OpError::new("invalid_args", "expected_pid must be a positive integer")
+        })?;
+        let current_pid = u64::from(std::process::id());
+        if expected_pid != current_pid {
+            return Err(OpError::new(
+                "daemon_owner_mismatch",
+                format!(
+                    "shutdown expected daemon pid {expected_pid}, but connected daemon pid is {current_pid}"
+                ),
+            ));
+        }
+    }
+    object(json!({"shutting_down": true}))
 }
 
 pub fn required_arg(request: &DaemonRequest, name: &str) -> Result<String, OpError> {
@@ -135,8 +153,9 @@ impl OpError {
 
 #[cfg(test)]
 mod tests {
-    use super::first_non_blank_arg;
+    use super::{dispatch, first_non_blank_arg};
     use cccc_contracts::DaemonRequest;
+    use cccc_core::HomeLayout;
     use serde_json::json;
 
     #[test]
@@ -154,5 +173,60 @@ mod tests {
             first_non_blank_arg(&request, &["primary", "legacy"]).as_deref(),
             Some("value")
         );
+    }
+
+    #[test]
+    fn shutdown_rejects_a_different_daemon_pid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let request = DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: json!({"expected_pid":u64::from(std::process::id()) + 1})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let response = dispatch(&home, &request);
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("owner mismatch").code,
+            "daemon_owner_mismatch"
+        );
+    }
+
+    #[test]
+    fn shutdown_accepts_its_own_daemon_pid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let request = DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: json!({"expected_pid":std::process::id()})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        assert!(dispatch(&home, &request).ok);
+    }
+
+    #[test]
+    fn shutdown_rejects_an_invalid_expected_pid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let request = DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: json!({"expected_pid":0})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let response = dispatch(&home, &request);
+        assert!(!response.ok);
+        assert_eq!(response.error.expect("invalid pid").code, "invalid_args");
     }
 }

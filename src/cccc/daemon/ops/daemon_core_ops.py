@@ -55,6 +55,19 @@ def try_handle_daemon_core_op(
         )
 
     if op == "shutdown":
+        expected_pid = args.get("expected_pid")
+        if expected_pid is not None:
+            if isinstance(expected_pid, bool) or not isinstance(expected_pid, int) or expected_pid <= 0:
+                return _error("invalid_args", "expected_pid must be a positive integer"), False
+            current_pid = pid_provider()
+            if expected_pid != current_pid:
+                return (
+                    _error(
+                        "daemon_owner_mismatch",
+                        f"shutdown expected daemon pid {expected_pid}, but connected daemon pid is {current_pid}",
+                    ),
+                    False,
+                )
         return DaemonResponse(ok=True, result={"message": "shutting down"}), True
 
     if op == "observability_get":

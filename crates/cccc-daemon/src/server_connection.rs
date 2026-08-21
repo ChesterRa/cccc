@@ -169,4 +169,38 @@ mod tests {
         client.shutdown().await.expect("shutdown");
         assert!(task.await.expect("join").is_ok());
     }
+
+    #[tokio::test]
+    async fn mismatched_shutdown_fence_does_not_signal_the_daemon() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let (mut client, server) = tokio::io::duplex(1024);
+        let (shutdown, receiver) = watch::channel(false);
+        let lock = DispatchLocks::default();
+        let task = tokio::spawn(async move { handle(server, home, &shutdown, &lock).await });
+        client
+            .write_all(
+                format!(
+                    "{{\"v\":1,\"op\":\"shutdown\",\"args\":{{\"expected_pid\":{}}}}}\n",
+                    u64::from(std::process::id()) + 1
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write");
+        let mut response = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut response)
+            .await
+            .expect("read");
+        let response: cccc_contracts::DaemonResponse =
+            serde_json::from_str(&response).expect("response");
+        assert_eq!(
+            response.error.expect("owner mismatch").code,
+            "daemon_owner_mismatch"
+        );
+        assert!(!*receiver.borrow());
+        client.shutdown().await.expect("shutdown connection");
+        assert!(task.await.expect("join").is_ok());
+    }
 }

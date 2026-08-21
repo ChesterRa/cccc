@@ -368,7 +368,17 @@ Notes:
 
 #### `shutdown`
 
-Args: none
+Args:
+```ts
+{ expected_pid?: number }
+```
+
+When `expected_pid` is present, it MUST be a positive integer matching the
+receiving daemon's current process ID. A mismatch MUST return
+`daemon_owner_mismatch` and MUST NOT begin shutdown. This optional fence lets a
+lifecycle owner avoid stopping a replacement daemon after an IPC descriptor
+handoff. Omitting `expected_pid` preserves the normal administrator shutdown
+behavior.
 
 Result:
 ```ts

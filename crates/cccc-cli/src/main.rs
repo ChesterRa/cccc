@@ -150,7 +150,7 @@ async fn launch(
     let (daemon_exit_tx, mut daemon_exit_rx) = tokio::sync::watch::channel(false);
     let daemon_missing = !ping(&client).await;
     #[cfg(windows)]
-    let detached_daemon = if daemon_missing {
+    let mut detached_daemon = if daemon_missing {
         // Running the daemon as a task inside the Web host is unreliable on
         // Windows once the daemon installs its kill-on-close Job object. In
         // particular, hosts launched through `cargo run` can fail to publish a
@@ -177,8 +177,8 @@ async fn launch(
     }
     if !ping(&client).await {
         #[cfg(windows)]
-        if let Some(owner) = detached_daemon.as_ref()
-            && let Err(error) = owner.stop(&client, &home).await
+        if let Some(owner) = detached_daemon.as_mut()
+            && let Err(error) = owner.stop(&client).await
         {
             eprintln!("failed to stop Web-owned daemon after startup failure: {error}");
         }
@@ -227,8 +227,8 @@ async fn launch(
     };
     cccc_mcp::shutdown(&home).await;
     #[cfg(windows)]
-    if let Some(owner) = detached_daemon.as_ref()
-        && let Err(error) = owner.stop(&client, &home).await
+    if let Some(owner) = detached_daemon.as_mut()
+        && let Err(error) = owner.stop(&client).await
     {
         eprintln!("failed to stop Web-owned daemon: {error}");
     }

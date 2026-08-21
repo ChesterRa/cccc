@@ -56,6 +56,20 @@ class TestDaemonCoreOps(unittest.TestCase):
             shutdown, should_stop = self._call("shutdown", {})
             self.assertTrue(shutdown.ok, getattr(shutdown, "error", None))
             self.assertTrue(should_stop)
+
+            fenced, should_stop = self._call("shutdown", {"expected_pid": os.getpid()})
+            self.assertTrue(fenced.ok, getattr(fenced, "error", None))
+            self.assertTrue(should_stop)
+
+            mismatched, should_stop = self._call("shutdown", {"expected_pid": os.getpid() + 1})
+            self.assertFalse(mismatched.ok)
+            self.assertEqual(getattr(mismatched.error, "code", ""), "daemon_owner_mismatch")
+            self.assertFalse(should_stop)
+
+            invalid, should_stop = self._call("shutdown", {"expected_pid": 0})
+            self.assertFalse(invalid.ok)
+            self.assertEqual(getattr(invalid.error, "code", ""), "invalid_args")
+            self.assertFalse(should_stop)
         finally:
             cleanup()
 
