@@ -59,7 +59,7 @@ pub(super) fn validate(
     let action = rule.entry("action").or_insert_with(|| {
         json!({
             "kind":"notify","title":"","snippet_ref":null,"message":"",
-            "priority":"normal","requires_ack":false
+            "priority":"normal"
         })
     });
     let action_kind = validate_action(action)?;
@@ -174,14 +174,7 @@ fn validate_action(value: &mut Value) -> Result<String, OpError> {
         "notify" => {
             reject_unknown(
                 action,
-                &[
-                    "kind",
-                    "title",
-                    "snippet_ref",
-                    "message",
-                    "priority",
-                    "requires_ack",
-                ],
+                &["kind", "title", "snippet_ref", "message", "priority"],
                 "notify action",
             )?;
             for key in ["title", "message"] {
@@ -212,15 +205,6 @@ fn validate_action(value: &mut Value) -> Result<String, OpError> {
                 }
                 None => {
                     action.insert("priority".into(), json!("normal"));
-                }
-                _ => {}
-            }
-            match action.get("requires_ack") {
-                Some(value) if value.as_bool().is_none() => {
-                    return Err(invalid("notify requires_ack must be a boolean"));
-                }
-                None => {
-                    action.insert("requires_ack".into(), Value::Bool(false));
                 }
                 _ => {}
             }

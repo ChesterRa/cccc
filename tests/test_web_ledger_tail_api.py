@@ -54,12 +54,12 @@ class TestWebLedgerTailApi(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"})
+            send, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"})
             self.assertTrue(send.ok, getattr(send, "error", None))
 
             with self._client() as client:
                 resp = client.get(
-                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&lines=50&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&lines=50&with_read_status=true&with_obligation_status=true"
                 )
 
             self.assertEqual(resp.status_code, 200)
@@ -75,7 +75,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_attention_ack_status_is_stable_across_cold_and_warm_reads(self) -> None:
+    def test_request_reply_has_no_mail_read_status_across_cold_and_warm_reads(self) -> None:
         _, cleanup = self._with_home()
         try:
             create, _ = self._call(
@@ -104,27 +104,28 @@ class TestWebLedgerTailApi(unittest.TestCase):
                     "by": "user",
                     "to": ["peer1"],
                     "text": "read is not ack",
-                    "priority": "attention",
-                    "reply_required": True,
+                    "message_mode": "request_reply",
                 },
             )
             self.assertTrue(send.ok, getattr(send, "error", None))
             event_id = str(((send.result or {}).get("event") or {}).get("id") or "").strip()
             self.assertTrue(event_id)
             marked, _ = self._call(
-                "inbox_mark_read",
+                "inbox_read",
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "event_id": event_id,
+                    "limit": 1,
                     "by": "user",
                 },
             )
             self.assertTrue(marked.ok, getattr(marked, "error", None))
+            self.assertEqual((marked.result or {}).get("messages"), [])
+            self.assertIsNone((marked.result or {}).get("event"))
 
             path = (
                 f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10"
-                "&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+                "&with_read_status=true&with_obligation_status=true"
             )
             with self._client() as client:
                 responses = [client.get(path), client.get(path)]
@@ -146,17 +147,17 @@ class TestWebLedgerTailApi(unittest.TestCase):
                         for event in result.get("events") or []
                         if str(event.get("id") or "") == event_id
                     )
-                    ack_status = payload.get("_ack_status") or {}
                     obligation_status = payload.get("_obligation_status") or {}
+                    read_status = payload.get("_read_status")
                 else:
                     payload = (result.get("statuses") or {}).get(event_id) or {}
-                    ack_status = payload.get("ack_status") or {}
                     obligation_status = payload.get("obligation_status") or {}
-                self.assertEqual(ack_status.get("peer1"), False)
-                self.assertEqual(
-                    (obligation_status.get("peer1") or {}).get("acked"),
-                    False,
-                )
+                    read_status = payload.get("read_status")
+                peer_status = obligation_status.get("peer1") or {}
+                self.assertIsNone(read_status)
+                self.assertTrue(bool(peer_status.get("reply_requested")))
+                self.assertFalse(bool(peer_status.get("replied")))
+                self.assertNotIn("ack_status", payload)
         finally:
             cleanup()
 
@@ -211,6 +212,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -228,7 +230,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
 
             later, _ = self._call(
                 "send",
-                {"group_id": src_group_id, "by": "user", "to": ["user"], "text": "later"},
+                {"message_mode": "send", "group_id": src_group_id, "by": "user", "to": ["user"], "text": "later"},
             )
             self.assertTrue(later.ok, getattr(later, "error", None))
             later_event = ((later.result or {}).get("event") or {}) if isinstance(later.result, dict) else {}
@@ -286,7 +288,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             for idx in range(3):
                 send, _ = self._call(
                     "send",
-                    {"group_id": group_id, "by": "user", "to": ["peer1"], "text": f"msg-{idx}"},
+                    {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["peer1"], "text": f"msg-{idx}"},
                 )
                 self.assertTrue(send.ok, getattr(send, "error", None))
 
@@ -328,7 +330,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             for idx in range(3):
                 send, _ = self._call(
                     "send",
-                    {"group_id": group_id, "by": "user", "to": ["peer1"], "text": f"chat-{idx}"},
+                    {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["peer1"], "text": f"chat-{idx}"},
                 )
                 self.assertTrue(send.ok, getattr(send, "error", None))
                 notify, _ = self._call(
@@ -341,7 +343,6 @@ class TestWebLedgerTailApi(unittest.TestCase):
                         "title": f"notify-{idx}",
                         "message": f"notify-{idx}",
                         "target_actor_id": "peer1",
-                        "requires_ack": False,
                     },
                 )
                 self.assertTrue(notify.ok, getattr(notify, "error", None))
@@ -381,7 +382,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"})
+            send, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"})
             self.assertTrue(send.ok, getattr(send, "error", None))
 
             with self._client() as client:
@@ -418,7 +419,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["web-1"], "text": "please check"})
+            send, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["web-1"], "text": "please check"})
             self.assertTrue(send.ok, getattr(send, "error", None))
             sent_event = (send.result or {}).get("event") or {}
             event_id = str(sent_event.get("id") or "").strip()
@@ -450,7 +451,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
                     json={"event_ids": [event_id]},
                 )
                 tail_resp = client.get(
-                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10&with_read_status=true&with_obligation_status=true"
                 )
 
             self.assertEqual(statuses_resp.status_code, 200)
@@ -494,7 +495,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            send, _ = self._call("send", {"group_id": group_id, "by": "user", "to": ["web-1"], "text": "start new chat"})
+            send, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["web-1"], "text": "start new chat"})
             self.assertTrue(send.ok, getattr(send, "error", None))
             sent_event = (send.result or {}).get("event") or {}
             event_id = str(sent_event.get("id") or "").strip()
@@ -540,7 +541,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
                     json={"event_ids": [event_id]},
                 )
                 tail_resp = client.get(
-                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+                    f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10&with_read_status=true&with_obligation_status=true"
                 )
 
             self.assertEqual(statuses_resp.status_code, 200)
@@ -581,6 +582,7 @@ class TestWebLedgerTailApi(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["web-1"],

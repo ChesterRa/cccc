@@ -12,7 +12,6 @@ from ...kernel.group import load_group
 from ..runner_state_ops import headless_state_running, web_model_group_running
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
-from ...util.time import utc_now_iso
 from . import deepseek_runtime
 
 
@@ -77,34 +76,6 @@ def handle_headless_set_status(args: Dict[str, Any]) -> DaemonResponse:
 
     state = headless_runner.SUPERVISOR.get_state(group_id=group_id, actor_id=actor_id)
     return DaemonResponse(ok=True, result={"state": state.model_dump() if state else None})
-
-
-def handle_headless_ack_message(args: Dict[str, Any]) -> DaemonResponse:
-    """Acknowledge processing of a message (called by agent via MCP)."""
-    group_id = str(args.get("group_id") or "").strip()
-    actor_id = str(args.get("actor_id") or "").strip()
-    message_id = str(args.get("message_id") or "").strip()
-
-    if not group_id:
-        return _error("missing_group_id", "missing group_id")
-    if not actor_id:
-        return _error("missing_actor_id", "missing actor_id")
-    if not message_id:
-        return _error("missing_message_id", "missing message_id")
-
-    group = load_group(group_id)
-    if group is None:
-        return _error("group_not_found", f"group not found: {group_id}")
-
-    ok = headless_runner.SUPERVISOR.set_last_message(
-        group_id=group_id,
-        actor_id=actor_id,
-        message_id=message_id,
-    )
-    if not ok:
-        return _error("session_not_found", f"headless session not found: {actor_id}")
-
-    return DaemonResponse(ok=True, result={"message_id": message_id, "acked_at": utc_now_iso()})
 
 
 def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
@@ -180,6 +151,4 @@ def try_handle_headless_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResp
         return handle_headless_status(args)
     if op == "headless_set_status":
         return handle_headless_set_status(args)
-    if op == "headless_ack_message":
-        return handle_headless_ack_message(args)
     return None

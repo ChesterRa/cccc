@@ -4,7 +4,8 @@ use cccc_core::HomeLayout;
 use serde_json::json;
 
 use crate::args::{
-    InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
+    CancelReplyArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs, SendArgs,
+    TailArgs, TrackedSendArgs,
 };
 use crate::commands::common::{call, group, print};
 
@@ -28,7 +29,7 @@ pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> R
             "message_send",
             json!({
                 "group_id":group_id,"text":args.text,"by":sender(args.by),
-                "to":args.recipients,"priority":args.priority,"reply_required":args.reply_required,
+                "to":args.recipients,"message_mode":args.mode.replace('-', "_"),
                 "scope_key":scope_key
             }),
         )
@@ -47,12 +48,12 @@ pub async fn tracked(
             "tracked_send",
             json!({
                 "group_id":group(home,args.group_id)?,"text":args.text,"by":sender(args.by),
-                "to":args.recipients,"priority":args.priority,"title":args.title,
+                "to":args.recipients,"task_priority":args.task_priority,"title":args.title,
                 "outcome":args.outcome,
                 "checklist":args.checklist.lines().filter(|line|!line.trim().is_empty())
                     .map(|line|json!({"text":line.trim()})).collect::<Vec<_>>(),
                 "assignee":args.assignee,"waiting_on":args.waiting_on,"handoff_to":args.handoff_to,
-                "notes":args.notes,"reply_required":!args.no_reply_required,
+                "notes":args.notes,
                 "idempotency_key":args.idempotency_key
             }),
         )
@@ -68,7 +69,51 @@ pub async fn reply(client: &DaemonClient, home: &HomeLayout, args: ReplyArgs) ->
             json!({
                 "group_id":group(home,args.group_id)?,"reply_to":args.reply_to,
                 "text":args.text,"by":sender(args.by),"to":args.recipients,
-                "priority":args.priority,"reply_required":args.reply_required
+                "message_mode":args.mode
+            }),
+        )
+        .await?,
+    )
+}
+
+pub async fn deliver(client: &DaemonClient, home: &HomeLayout, args: DeliverArgs) -> Result<()> {
+    let actor_ids = args
+        .actor_ids
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !actor_ids.is_empty(),
+        "deliver requires at least one --to actor id"
+    );
+    print(
+        call(
+            client,
+            "message_deliver",
+            json!({
+                "group_id":group(home,args.group_id)?,"source_event_id":args.event_id,
+                "by":sender(args.by),"actor_ids":actor_ids,
+                "force_ambiguous":args.force_ambiguous
+            }),
+        )
+        .await?,
+    )
+}
+
+pub async fn cancel_reply(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    args: CancelReplyArgs,
+) -> Result<()> {
+    print(
+        call(
+            client,
+            "reply_request_cancel",
+            json!({
+                "group_id":group(home,args.group_id)?,"source_event_id":args.event_id,
+                "by":sender(args.by)
             }),
         )
         .await?,
@@ -121,33 +166,12 @@ pub async fn inbox(client: &DaemonClient, home: &HomeLayout, args: InboxArgs) ->
     let group_id = group(home, args.group_id)?;
     let response = call(
         client,
-        "inbox_list",
+        "inbox_read",
         json!({"group_id":group_id,"actor_id":args.actor_id,
-            "by":args.by,"limit":args.limit,"kind_filter":args.kind_filter}),
+            "by":args.by,"limit":args.limit}),
     )
     .await?;
-    if args.mark_read
-        && response.ok
-        && let Some(event_id) = response.result["messages"]
-            .as_array()
-            .and_then(|items| items.last())
-            .and_then(|event| event["id"].as_str())
-    {
-        let marked = call(
-            client,
-            "inbox_mark_read",
-            json!({"group_id":group_id,"actor_id":args.actor_id,"by":args.by,"event_id":event_id}),
-        )
-        .await?;
-        if !marked.ok {
-            return print(marked);
-        }
-    }
     print(response)
-}
-
-pub async fn read(client: &DaemonClient, home: &HomeLayout, args: ReadArgs) -> Result<()> {
-    print(call(client, "inbox_mark_read", json!({"group_id":group(home,args.group_id)?,"actor_id":args.actor_id,"event_id":args.event_id,"by":args.by})).await?)
 }
 
 pub async fn ledger(client: &DaemonClient, home: &HomeLayout, args: LedgerArgs) -> Result<()> {

@@ -28,7 +28,14 @@ class TestSystemNotifyOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
-    def test_system_notify_and_notify_ack(self) -> None:
+    def test_mcp_notify_rejects_retired_ack_action(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with self.assertRaises(mcp_server.MCPError) as raised:
+            mcp_server.handle_tool_call("cccc_notify", {"action": "ack"})
+        self.assertEqual(raised.exception.code, "invalid_action")
+
+    def test_system_notify_normalizes_kind_and_priority_without_ack_state(self) -> None:
         _, cleanup = self._with_home()
         try:
             create, _ = self._call(
@@ -36,14 +43,11 @@ class TestSystemNotifyOps(unittest.TestCase):
             )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
-            self.assertTrue(group_id)
-
             add, _ = self._call(
                 "actor_add",
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "title": "Peer 1",
                     "runtime": "codex",
                     "runner": "headless",
                     "by": "user",
@@ -61,163 +65,50 @@ class TestSystemNotifyOps(unittest.TestCase):
                     "title": "notify",
                     "message": "hello",
                     "target_actor_id": "peer1",
-                    "requires_ack": True,
                 },
             )
             self.assertTrue(notify.ok, getattr(notify, "error", None))
-            notify_event = (
-                (notify.result or {}).get("event")
-                if isinstance(notify.result, dict)
-                else {}
-            )
-            self.assertIsInstance(notify_event, dict)
-            assert isinstance(notify_event, dict)
-            self.assertEqual(str(notify_event.get("kind") or ""), "system.notify")
-            notify_data = (
-                notify_event.get("data")
-                if isinstance(notify_event.get("data"), dict)
-                else {}
-            )
-            self.assertIsInstance(notify_data, dict)
-            assert isinstance(notify_data, dict)
-            self.assertEqual(str(notify_data.get("kind") or ""), "info")
-            self.assertEqual(str(notify_data.get("priority") or ""), "normal")
-            self.assertEqual(str(notify_data.get("im_visibility") or ""), "internal")
+            event = (notify.result or {}).get("event") or {}
+            self.assertEqual(event.get("kind"), "system.notify")
+            data = event.get("data") or {}
+            self.assertEqual(data.get("kind"), "info")
+            self.assertEqual(data.get("priority"), "normal")
+            self.assertEqual(data.get("im_visibility"), "internal")
+            self.assertNotIn("requires_ack", data)
+        finally:
+            cleanup()
 
-            notify_event_id = str(notify_event.get("id") or "").strip()
-            self.assertTrue(notify_event_id)
+    def test_generic_notify_ack_contract_is_removed(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "notify-no-ack", "topic": "", "by": "user"}
+            )
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            notify, _ = self._call(
+                "system_notify",
+                {
+                    "group_id": group_id,
+                    "by": "system",
+                    "title": "notice",
+                    "message": "notice",
+                    "requires_ack": True,
+                },
+            )
+            self.assertFalse(notify.ok)
+            self.assertEqual(getattr(notify.error, "code", ""), "unsupported_notify_field")
 
             ack, _ = self._call(
                 "notify_ack",
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "notify_event_id": notify_event_id,
+                    "notify_event_id": "old-event",
                     "by": "peer1",
                 },
             )
-            self.assertTrue(ack.ok, getattr(ack, "error", None))
-            ack_event = (
-                (ack.result or {}).get("event") if isinstance(ack.result, dict) else {}
-            )
-            self.assertIsInstance(ack_event, dict)
-            assert isinstance(ack_event, dict)
-            self.assertEqual(str(ack_event.get("kind") or ""), "system.notify_ack")
-        finally:
-            cleanup()
-
-    def test_notify_ack_enforces_self_only_and_recipient_boundary(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            create, _ = self._call(
-                "group_create",
-                {"title": "notify-ack-boundary", "topic": "", "by": "user"},
-            )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            self.assertTrue(group_id)
-            stopped, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
-            self.assertTrue(stopped.ok, getattr(stopped, "error", None))
-            for actor_id in ("peer1", "peer2"):
-                added, _ = self._call(
-                    "actor_add",
-                    {
-                        "group_id": group_id,
-                        "actor_id": actor_id,
-                        "runtime": "custom",
-                        "runner": "pty",
-                        "command": ["sh", "-c", "exit 0"],
-                        "by": "user",
-                    },
-                )
-                self.assertTrue(added.ok, getattr(added, "error", None))
-
-            def notify(target_actor_id):
-                response, _ = self._call(
-                    "system_notify",
-                    {
-                        "group_id": group_id,
-                        "by": "system",
-                        "title": "notice",
-                        "message": "notice",
-                        "target_actor_id": target_actor_id,
-                        "requires_ack": True,
-                    },
-                )
-                self.assertTrue(response.ok, getattr(response, "error", None))
-                return str(((response.result or {}).get("event") or {}).get("id") or "")
-
-            targeted = notify("peer1")
-            defaulted = notify("peer1")
-            broadcast = notify(None)
-            sent, _ = self._call(
-                "send",
-                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "chat"},
-            )
-            self.assertTrue(sent.ok, getattr(sent, "error", None))
-            chat_id = str(((sent.result or {}).get("event") or {}).get("id") or "")
-
-            invalid_cases = (
-                (
-                    {"actor_id": "peer1", "notify_event_id": targeted, "by": "user"},
-                    "permission_denied",
-                ),
-                (
-                    {"actor_id": "peer2", "notify_event_id": targeted, "by": "peer2"},
-                    "event_not_for_actor",
-                ),
-                (
-                    {"actor_id": "ghost", "notify_event_id": targeted, "by": "ghost"},
-                    "unknown_actor",
-                ),
-                (
-                    {"actor_id": "peer1", "notify_event_id": chat_id, "by": "peer1"},
-                    "invalid_event_kind",
-                ),
-                (
-                    {
-                        "actor_id": "peer1",
-                        "notify_event_id": "missing-event",
-                        "by": "peer1",
-                    },
-                    "event_not_found",
-                ),
-            )
-            for args, expected_code in invalid_cases:
-                response, _ = self._call("notify_ack", {"group_id": group_id, **args})
-                self.assertFalse(response.ok)
-                self.assertEqual(getattr(response.error, "code", ""), expected_code)
-
-            valid_cases = (
-                {"actor_id": "peer1", "notify_event_id": targeted, "by": "peer1"},
-                {"actor_id": "peer1", "notify_event_id": defaulted},
-                {"actor_id": "peer2", "notify_event_id": broadcast, "by": "peer2"},
-            )
-            for args in valid_cases:
-                response, _ = self._call("notify_ack", {"group_id": group_id, **args})
-                self.assertTrue(response.ok, getattr(response, "error", None))
-                event = (response.result or {}).get("event") or {}
-                self.assertEqual(event.get("kind"), "system.notify_ack")
-                self.assertEqual(event.get("by"), args["actor_id"])
-
-            ledger = (
-                Path(os.environ["CCCC_HOME"]) / "groups" / group_id / "ledger.jsonl"
-            )
-            ack_rows = [
-                row
-                for row in (
-                    json.loads(line)
-                    for line in ledger.read_text(encoding="utf-8").splitlines()
-                )
-                if row.get("kind") == "system.notify_ack"
-            ]
-            self.assertEqual(len(ack_rows), 3)
-            self.assertTrue(
-                all(
-                    row.get("by") == row.get("data", {}).get("actor_id")
-                    for row in ack_rows
-                )
-            )
+            self.assertFalse(ack.ok)
+            self.assertEqual(getattr(ack.error, "code", ""), "unknown_op")
         finally:
             cleanup()
 
@@ -270,7 +161,6 @@ class TestSystemNotifyOps(unittest.TestCase):
                         "title": "notify",
                         "message": "hello",
                         "target_actor_id": "peer1",
-                        "requires_ack": False,
                     },
                 )
 
@@ -299,7 +189,6 @@ class TestSystemNotifyOps(unittest.TestCase):
                 title="Voice Secretary input available",
                 message='New Secretary input is waiting. Call MCP tool cccc_voice_secretary_document(action="read_new_input").',
                 target_actor_id="voice-secretary",
-                requires_ack=False,
                 context={
                     "kind": "voice_secretary_input",
                     "reason": "new_input",
@@ -331,7 +220,6 @@ class TestSystemNotifyOps(unittest.TestCase):
                 title="Voice Secretary input available",
                 message="Secretary input is ready in this notification's input_envelope.",
                 target_actor_id="voice-secretary",
-                requires_ack=False,
                 context={
                     "kind": "voice_secretary_input",
                     "reason": "new_input",
@@ -367,7 +255,6 @@ class TestSystemNotifyOps(unittest.TestCase):
                 title="Voice Secretary action request",
                 message="Please review the weather plan.",
                 target_actor_id="lead",
-                requires_ack=True,
                 context={
                     "kind": "voice_secretary_action_request",
                     "request_id": "voice-request-1",
@@ -420,7 +307,6 @@ class TestSystemNotifyOps(unittest.TestCase):
                     "title": "idle",
                     "message": "group auto idled",
                     "target_actor_id": "foreman1",
-                    "requires_ack": False,
                 },
             )
             self.assertTrue(notify.ok, getattr(notify, "error", None))

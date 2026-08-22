@@ -14,7 +14,6 @@ from .actors.actor_add_ops import try_handle_actor_add_op
 from .actors.actor_lifecycle_ops import try_handle_actor_lifecycle_op
 from .actors.actor_membership_ops import try_handle_actor_membership_op
 from .actors.actor_update_ops import try_handle_actor_update_op
-from .messaging.inbox_ack_ops import try_handle_inbox_ack_op
 from .messaging.inbox_read_ops import try_handle_inbox_read_op
 from .ops.maintenance_ops import try_handle_maintenance_op
 from .messaging.delegation_relay_ops import try_handle_delegation_relay_op
@@ -372,10 +371,6 @@ def dispatch_request(
     if inbox_read_resp is not None:
         return inbox_read_resp, False
 
-    inbox_ack_resp = try_handle_inbox_ack_op(op, args)
-    if inbox_ack_resp is not None:
-        return inbox_ack_resp, False
-
     maintenance_resp = try_handle_maintenance_op(
         op,
         args,
@@ -414,7 +409,6 @@ def dispatch_request(
     slash_skill_resp = try_handle_slash_skill_dispatch_op(
         op,
         args,
-        coerce_bool=deps.coerce_bool_default_false,
         effective_runner_kind=deps.effective_runner_kind,
         auto_wake_recipients=deps.auto_wake_recipients,
     )
@@ -441,11 +435,7 @@ def dispatch_request(
     if web_model_runtime_resp is not None:
         return web_model_runtime_resp, False
 
-    system_notify_resp = try_handle_system_notify_op(
-        op,
-        args,
-        coerce_bool=deps.coerce_bool_default_false,
-    )
+    system_notify_resp = try_handle_system_notify_op(op, args)
     if system_notify_resp is not None:
         return system_notify_resp, False
 

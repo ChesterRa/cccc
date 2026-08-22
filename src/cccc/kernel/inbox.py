@@ -5,7 +5,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple
 
 from .context import ContextStorage
 from ..util.fs import atomic_write_json, read_json
@@ -14,12 +14,10 @@ from ..util.time import parse_utc_iso, utc_now_iso
 from .actors import find_actor, get_effective_role, is_internal_actor, list_actors
 from .group import Group
 from .ledger_index import (
-    lookup_chat_ack_actor_ids,
-    lookup_chat_reply_actor_ids,
     lookup_event_by_id,
     lookup_event_positions,
-    lookup_event_with_chat_ack_indexed,
     lookup_events_by_ids,
+    lookup_latest_actor_add_boundaries,
     lookup_latest_actor_add_positions,
     search_event_ids_indexed,
 )
@@ -30,7 +28,8 @@ from .ledger_state_snapshot import can_replay_from_basis, current_ledger_basis, 
 # Message kind filter
 MessageKindFilter = Literal["all", "chat", "notify"]
 
-_UNREAD_INDEX_SCHEMA = 2
+_UNREAD_INDEX_SCHEMA = 3
+_MAIL_CURSOR_SCHEMA = 1
 _FULL_EVENT_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 
@@ -129,12 +128,34 @@ def iter_events_reverse(ledger_path: Path, *, block_size: int = 65536) -> Iterab
                 yield ev
 
 
+def _latest_actor_add_event_ids(group: Group, actor_ids: Iterable[str]) -> Dict[str, str]:
+    """Return the latest actor.add event id for each requested actor."""
+    normalized = [
+        str(actor_id or "").strip()
+        for actor_id in actor_ids
+        if str(actor_id or "").strip() and str(actor_id or "").strip() != "user"
+    ]
+    if not normalized:
+        return {}
+    return {
+        actor_id: event_id
+        for actor_id, (event_id, _position) in lookup_latest_actor_add_boundaries(
+            group.ledger_path, normalized
+        ).items()
+        if event_id
+    }
+
+
 def _cursor_path(group: Group) -> Path:
     return group.path / "state" / "read_cursors.json"
 
 
 def _cursor_lock_path(group: Group) -> Path:
     return _cursor_path(group).with_name("read_cursors.json.lock")
+
+
+def _pending_read_path(group: Group) -> Path:
+    return _cursor_path(group).with_name("read_cursors.pending.json")
 
 
 def _unread_index_path(group: Group) -> Path:
@@ -300,28 +321,20 @@ def _apply_unread_delta(
     actors: List[Dict[str, Any]],
     counts: Dict[str, int],
     events: List[Dict[str, Any]],
-    kind_filter: MessageKindFilter,
 ) -> Dict[str, int]:
     next_counts = {aid: max(0, int(counts.get(aid, 0))) for aid in counts}
     actor_ids = [str(actor.get("id") or "").strip() for actor in actors if str(actor.get("id") or "").strip()]
     actor_roles = {aid: get_effective_role(group, aid) for aid in actor_ids}
 
-    if kind_filter == "chat":
-        allowed_kinds = {"chat.message"}
-    elif kind_filter == "notify":
-        allowed_kinds = {"system.notify"}
-    else:
-        allowed_kinds = {"chat.message", "system.notify"}
-
     # `events` is the suffix after the persisted ledger basis. Its append order is
     # authoritative even if two timestamps collide or the wall clock moves backwards.
     for ev in events:
         ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds:
+        if not _is_mail_message(ev):
             continue
         ev_by = str(ev.get("by") or "").strip()
         for aid in actor_ids:
-            if ev_kind == "chat.message" and ev_by == aid:
+            if ev_by == aid:
                 continue
             if not is_message_for_actor(group, actor_id=aid, event=ev, role=actor_roles.get(aid)):
                 continue
@@ -333,7 +346,6 @@ def get_indexed_unread_counts(
     group: Group,
     *,
     actors: List[Dict[str, Any]],
-    kind_filter: MessageKindFilter = "all",
 ) -> Dict[str, int]:
     """Return unread counts from the persisted unread snapshot when possible.
 
@@ -372,7 +384,6 @@ def get_indexed_unread_counts(
                 actors=actors,
                 counts={aid: max(0, int(snapshot_counts.get(aid, 0))) for aid in actor_ids},
                 events=delta_events,
-                kind_filter=kind_filter,
             )
             _save_unread_index(
                 group,
@@ -397,7 +408,6 @@ def get_indexed_unread_counts(
                 actors=actors,
                 counts={aid: max(0, int((seeded.get("counts") if isinstance(seeded.get("counts"), dict) else {}).get(aid, 0))) for aid in actor_ids},
                 events=delta_events,
-                kind_filter=kind_filter,
             )
             _save_unread_index(
                 group,
@@ -408,7 +418,7 @@ def get_indexed_unread_counts(
             )
             return next_counts
 
-    rebuilt = batch_unread_counts(group, actor_ids=actor_ids, kind_filter=kind_filter)
+    rebuilt = batch_unread_counts(group, actor_ids=actor_ids)
     out = {aid: max(0, int(rebuilt.get(aid, 0))) for aid in actor_ids}
     _save_unread_index(
         group,
@@ -420,32 +430,150 @@ def get_indexed_unread_counts(
     return out
 
 
-def load_cursors(group: Group) -> Dict[str, Any]:
-    """Load read cursors for all actors."""
+def _load_cursors_raw(group: Group) -> Dict[str, Any]:
     p = _cursor_path(group)
     if not p.exists():
         return {}
     doc = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(doc, dict):
         raise ValueError(f"read cursor document must be an object: {p}")
+    if doc.get("schema") != _MAIL_CURSOR_SCHEMA:
+        # Pre-Mail cursor documents tracked direct delivery as well as Inbox
+        # consumption. They are not valid boundaries for the Mail projection.
+        return {}
+    cursors = doc.get("cursors")
+    if not isinstance(cursors, dict):
+        raise ValueError(f"Mail cursor document is missing cursors: {p}")
+    return cursors
+
+
+def _load_pending_read(group: Group) -> Dict[str, Any]:
+    path = _pending_read_path(group)
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict) or doc.get("schema") != 1:
+        raise ValueError(f"pending Mail read document is invalid: {path}")
+    if str(doc.get("group_id") or "").strip() != group.group_id:
+        raise ValueError(f"pending Mail read belongs to another group: {path}")
+    actor_id = str(doc.get("actor_id") or "").strip()
+    expected = doc.get("expected")
+    target = doc.get("target")
+    if not actor_id or not isinstance(expected, dict) or not isinstance(target, dict):
+        raise ValueError(f"pending Mail read document is incomplete: {path}")
+    if not str(target.get("event_id") or "").strip():
+        raise ValueError(f"pending Mail read target is missing event_id: {path}")
     return doc
+
+
+def _pending_read_has_fact(group: Group, pending: Dict[str, Any]) -> bool:
+    actor_id = str(pending.get("actor_id") or "").strip()
+    target = pending.get("target") if isinstance(pending.get("target"), dict) else {}
+    target_event_id = str(target.get("event_id") or "").strip()
+    for event in iter_events_reverse(group.ledger_path):
+        if str(event.get("kind") or "") != "mail.read":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if (
+            str(data.get("actor_id") or "").strip() == actor_id
+            and str(data.get("event_id") or "").strip() == target_event_id
+        ):
+            return True
+    return False
+
+
+def _clear_pending_read(group: Group) -> None:
+    try:
+        _pending_read_path(group).unlink()
+    except FileNotFoundError:
+        return
+
+
+def _recover_pending_read_locked(group: Group) -> None:
+    pending = _load_pending_read(group)
+    if not pending:
+        return
+    if not _pending_read_has_fact(group, pending):
+        _clear_pending_read(group)
+        return
+
+    actor_id = str(pending.get("actor_id") or "").strip()
+    expected = pending.get("expected") if isinstance(pending.get("expected"), dict) else {}
+    target = pending.get("target") if isinstance(pending.get("target"), dict) else {}
+    cursors = _load_cursors_raw(group)
+    current = cursors.get(actor_id) if isinstance(cursors.get(actor_id), dict) else {}
+    current_event_id = str(current.get("event_id") or "").strip()
+    current_ts = str(current.get("ts") or "")
+    target_event_id = str(target.get("event_id") or "").strip()
+    if current_event_id == target_event_id or (
+        current_event_id
+        and _cursor_record_covers_event(
+            current,
+            {"id": target_event_id, "ts": str(target.get("ts") or "")},
+            positions=_ledger_positions(group, [current_event_id, target_event_id]),
+        )
+    ):
+        _clear_pending_read(group)
+        return
+    if current_event_id != str(expected.get("event_id") or "").strip() or current_ts != str(
+        expected.get("ts") or ""
+    ):
+        raise RuntimeError("pending Mail read cursor changed concurrently")
+    cursors[actor_id] = dict(target)
+    _save_cursors(group, cursors)
+    _clear_pending_read(group)
+
+
+def recover_pending_read(group: Group) -> None:
+    """Finish or discard an interrupted Mail read transaction."""
+    lock = acquire_lockfile(_cursor_lock_path(group), blocking=True)
+    try:
+        _recover_pending_read_locked(group)
+    finally:
+        release_lockfile(lock)
+
+
+def load_cursors(group: Group) -> Dict[str, Any]:
+    """Load effective Mail cursors, including a ledger-committed pending read."""
+    cursors = _load_cursors_raw(group)
+    pending = _load_pending_read(group)
+    if pending and _pending_read_has_fact(group, pending):
+        actor_id = str(pending.get("actor_id") or "").strip()
+        target = pending.get("target") if isinstance(pending.get("target"), dict) else {}
+        current = cursors.get(actor_id) if isinstance(cursors.get(actor_id), dict) else {}
+        current_event_id = str(current.get("event_id") or "").strip()
+        target_event_id = str(target.get("event_id") or "").strip()
+        if not current_event_id or not _cursor_record_covers_event(
+            current,
+            {"id": target_event_id, "ts": str(target.get("ts") or "")},
+            positions=_ledger_positions(group, [current_event_id, target_event_id]),
+        ):
+            cursors[actor_id] = dict(target)
+    return cursors
 
 
 def _save_cursors(group: Group, doc: Dict[str, Any]) -> None:
     p = _cursor_path(group)
     p.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(p, doc)
+    atomic_write_json(p, {"schema": _MAIL_CURSOR_SCHEMA, "cursors": doc})
 
 
-def get_cursor(group: Group, actor_id: str) -> Tuple[str, str]:
-    """Get an actor's read cursor: (event_id, ts)."""
+def get_cursor_details(group: Group, actor_id: str) -> Tuple[str, str, str]:
+    """Get an actor's Mail cursor: (event_id, ts, updated_at)."""
     cursors = load_cursors(group)
     cur = cursors.get(actor_id)
     if isinstance(cur, dict):
         event_id = str(cur.get("event_id") or "")
         ts = str(cur.get("ts") or "")
-        return event_id, ts
-    return "", ""
+        updated_at = str(cur.get("updated_at") or "")
+        return event_id, ts, updated_at
+    return "", "", ""
+
+
+def get_cursor(group: Group, actor_id: str) -> Tuple[str, str]:
+    """Get an actor's Mail cursor: (event_id, ts)."""
+    event_id, ts, _updated_at = get_cursor_details(group, actor_id)
+    return event_id, ts
 
 
 def _cursor_boundaries(
@@ -596,129 +724,104 @@ def _event_after_cursor_boundary(
     return True, True
 
 
-def cursor_covers_event(group: Group, *, actor_id: str, event: Dict[str, Any]) -> bool:
-    """Return whether the cursor is at or after an event in append-only ledger order."""
-    cursor_event_id, cursor_ts = get_cursor(group, actor_id)
-    event_id = str(event.get("id") or "").strip()
-    positions = _ledger_positions(group, [cursor_event_id, event_id])
-    return _cursor_record_covers_event(
-        {"event_id": cursor_event_id, "ts": cursor_ts},
-        event,
-        positions=positions,
-    )
-
-
-def _cursor_has_unread_gap(
+def commit_read_cursor(
     group: Group,
-    *,
     actor_id: str,
-    current_event_id: str,
-    target_event_id: str,
-) -> bool:
-    """Return whether a target cursor would skip an earlier actor-visible event."""
-    current_id = str(current_event_id or "").strip()
-    target_id = str(target_event_id or "").strip()
-    positions = _ledger_positions(group, [current_id, target_id])
-    target_position = positions.get(target_id)
-    if target_position is None:
-        raise ValueError(f"cursor target is not present in ledger: {target_event_id}")
+    *,
+    expected_event_id: str,
+    expected_ts: str,
+    event_id: str,
+    ts: str,
+    append_read_event: Callable[[], Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Atomically claim one consuming read against the current cursor.
 
-    current_position = positions.get(current_id)
-    generation_position = actor_generation_positions(group, [actor_id]).get(actor_id)
-    stop_at_current = current_position is not None and (
-        generation_position is None or current_position >= generation_position
-    )
-    lower_bound = (
-        current_position
-        if stop_at_current
-        else generation_position
-        if generation_position is not None
-        else (-1, -1)
-    )
-    if lower_bound >= target_position:
-        return False
+    The cursor compare-and-set prevents concurrent readers from returning the
+    same unread prefix. A small recovery marker makes the ledger append the
+    authoritative commit: a crash after ``mail.read`` but before the cursor
+    projection is saved is completed on the next read instead of replaying or
+    silently skipping Mail.
+    """
 
-    target_seen = False
-    for event in iter_events_reverse(group.ledger_path):
-        event_id = str(event.get("id") or "").strip()
-        if not target_seen:
-            if event_id == target_id:
-                target_seen = True
-            continue
-        if stop_at_current and event_id == current_id:
-            return False
-        if not stop_at_current and str(event.get("kind") or "") == "actor.add":
-            data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            actor = data.get("actor") if isinstance(data.get("actor"), dict) else {}
-            if str(actor.get("id") or "").strip() == actor_id:
-                return False
-        if str(event.get("by") or "").strip() == actor_id:
-            continue
-        if not is_message_for_actor(group, actor_id=actor_id, event=event):
-            continue
-        return True
-    if not target_seen:
-        raise ValueError(f"cursor target is not present in ledger: {target_event_id}")
-    return False
-
-
-def _requires_contiguous_cursor(group: Group, actor_id: str) -> bool:
-    actor = find_actor(group, actor_id)
-    return isinstance(actor, dict) and str(actor.get("runtime") or "").strip().lower() == "deepseek"
-
-
-def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[str, Any]:
-    """Set an actor's read cursor (monotonic forward-only)."""
     lock = acquire_lockfile(_cursor_lock_path(group), blocking=True)
     try:
-        # Read, monotonicity validation, merge, and atomic replace are one
-        # critical section shared with the Rust daemon's fs2 lock.
-        cursors = load_cursors(group)
-        cur = cursors.get(actor_id)
-
-        if isinstance(cur, dict):
-            current_event_id = str(cur.get("event_id") or "").strip()
-            target_event_id = str(event_id or "").strip()
-            if current_event_id == target_event_id or cursor_covers_event(
-                group,
-                actor_id=actor_id,
-                event={"id": target_event_id, "ts": str(ts or "")},
-            ):
-                return dict(cur)
-            if _requires_contiguous_cursor(group, actor_id) and _cursor_has_unread_gap(
-                group,
-                actor_id=actor_id,
-                current_event_id=current_event_id,
-                target_event_id=target_event_id,
-            ):
-                raise ValueError("read cursor cannot skip an unread event")
-        elif _requires_contiguous_cursor(group, actor_id) and _cursor_has_unread_gap(
-            group,
-            actor_id=actor_id,
-            current_event_id="",
-            target_event_id=str(event_id or "").strip(),
+        _recover_pending_read_locked(group)
+        cursors = _load_cursors_raw(group)
+        current = cursors.get(actor_id)
+        current_event_id = (
+            str(current.get("event_id") or "").strip()
+            if isinstance(current, dict)
+            else ""
+        )
+        current_ts = (
+            str(current.get("ts") or "") if isinstance(current, dict) else ""
+        )
+        if current_event_id != str(expected_event_id or "").strip() or current_ts != str(
+            expected_ts or ""
         ):
-            raise ValueError("read cursor cannot skip an unread event")
+            raise RuntimeError("read cursor changed concurrently")
 
-        cursors[str(actor_id)] = {
-            "event_id": str(event_id),
-            "ts": str(ts),
+        target_event_id = str(event_id or "").strip()
+        if not target_event_id:
+            raise ValueError("read cursor target event_id is required")
+        if current_event_id and _cursor_record_covers_event(
+            current,
+            {"id": target_event_id, "ts": str(ts or "")},
+            positions=_ledger_positions(group, [current_event_id, target_event_id]),
+        ):
+            raise RuntimeError("read cursor changed concurrently")
+        # This consuming operation returns the complete unread Mail prefix
+        # through target_event_id. Non-Mail ledger events are intentionally
+        # outside this projection and do not participate in its cursor.
+
+        next_cursor = {
+            "event_id": target_event_id,
+            "ts": str(ts or ""),
             "updated_at": utc_now_iso(),
         }
+        pending = {
+            "schema": 1,
+            "group_id": group.group_id,
+            "actor_id": actor_id,
+            "expected": {
+                "event_id": current_event_id,
+                "ts": current_ts,
+            },
+            "target": next_cursor,
+        }
+        atomic_write_json(_pending_read_path(group), pending)
+        try:
+            read_event = append_read_event()
+        except Exception as append_error:
+            try:
+                _clear_pending_read(group)
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    f"{append_error}; pending Mail read cleanup failed: {cleanup_error}"
+                ) from append_error
+            raise
+        cursors[actor_id] = next_cursor
         _save_cursors(group, cursors)
-        return dict(cursors[str(actor_id)])
+        try:
+            _clear_pending_read(group)
+        except OSError:
+            # Both durable facts are committed; a retained marker is
+            # idempotently cleared by the next consuming read.
+            pass
+        return next_cursor, read_event
     finally:
         release_lockfile(lock)
 
 
 def delete_cursor(group: Group, actor_id: str) -> bool:
-    """Delete an actor's read cursor entry (used when an actor is removed)."""
+    """Delete an actor's Mail cursor entry (used when an actor is removed)."""
     aid = str(actor_id or "").strip()
     if not aid:
         return False
     lock = acquire_lockfile(_cursor_lock_path(group), blocking=True)
     try:
-        cursors = load_cursors(group)
+        _recover_pending_read_locked(group)
+        cursors = _load_cursors_raw(group)
         if aid not in cursors:
             return False
         cursors.pop(aid, None)
@@ -728,195 +831,55 @@ def delete_cursor(group: Group, actor_id: str) -> bool:
         release_lockfile(lock)
 
 
-def _collect_chat_acks(group: Group, *, event_ids: set[str]) -> Dict[str, set[str]]:
-    """Collect acked recipients for a set of message event IDs.
-
-    Ledger is the source of truth: we derive ack status by scanning chat.ack events.
-    """
-    out: Dict[str, set[str]] = {}
+def _message_outcomes(
+    group: Group,
+    *,
+    event_ids: set[str],
+) -> tuple[
+    Dict[str, Dict[str, int]],
+    Dict[str, int],
+    Dict[str, Dict[str, str]],
+]:
+    replies: Dict[str, Dict[str, int]] = {}
+    cancellations: Dict[str, int] = {}
+    deliveries: Dict[str, Dict[str, str]] = {}
     if not event_ids:
-        return out
-    try:
-        return lookup_chat_ack_actor_ids(group.ledger_path, event_ids)
-    except Exception:
-        pass
-
-    for ev in iter_events(group.ledger_path):
-        if str(ev.get("kind") or "") != "chat.ack":
-            continue
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-        target_event_id = str(data.get("event_id") or "").strip()
-        if not target_event_id or target_event_id not in event_ids:
-            continue
-        actor_id = str(data.get("actor_id") or "").strip()
-        if not actor_id:
-            continue
-        out.setdefault(target_event_id, set()).add(actor_id)
-
-    return out
-
-
-def _collect_chat_replies(group: Group, *, event_ids: set[str]) -> Dict[str, set[str]]:
-    """Collect replied recipients for a set of message event IDs.
-
-    A recipient is considered replied when they send a chat.message with
-    data.reply_to == target_event_id.
-    """
-    out: Dict[str, set[str]] = {}
-    if not event_ids:
-        return out
-    try:
-        return lookup_chat_reply_actor_ids(group.ledger_path, event_ids)
-    except Exception:
-        pass
-
-    for ev in iter_events(group.ledger_path):
-        if str(ev.get("kind") or "") != "chat.message":
-            continue
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-        target_event_id = str(data.get("reply_to") or "").strip()
-        if not target_event_id or target_event_id not in event_ids:
-            continue
-        actor_id = str(ev.get("by") or "").strip()
-        if not actor_id:
-            continue
-        out.setdefault(target_event_id, set()).add(actor_id)
-
-    return out
+        return replies, cancellations, deliveries
+    for position, event in enumerate(iter_events(group.ledger_path)):
+        kind = str(event.get("kind") or "")
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if kind == "chat.message":
+            source_event_id = str(data.get("reply_to") or "").strip()
+            actor_id = str(event.get("by") or "").strip()
+            if source_event_id in event_ids and actor_id:
+                replies.setdefault(source_event_id, {}).setdefault(actor_id, position)
+        elif kind == "chat.reply_request.cancelled":
+            source_event_id = str(data.get("source_event_id") or "").strip()
+            if source_event_id in event_ids:
+                cancellations.setdefault(source_event_id, position)
+        elif kind == "runtime.delivery":
+            source_event_id = str(data.get("source_event_id") or "").strip()
+            actor_id = str(data.get("actor_id") or "").strip()
+            state = str(data.get("state") or "").strip()
+            if source_event_id in event_ids and actor_id and state:
+                deliveries.setdefault(source_event_id, {})[actor_id] = state
+    return replies, cancellations, deliveries
 
 
-def has_chat_ack(group: Group, *, event_id: str, actor_id: str) -> bool:
-    """Return True if a chat.ack already exists for (event_id, actor_id)."""
-    eid = str(event_id or "").strip()
-    aid = str(actor_id or "").strip()
-    if not eid or not aid:
-        return False
-    for ev in iter_events(group.ledger_path):
-        if str(ev.get("kind") or "") != "chat.ack":
-            continue
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-        if str(data.get("event_id") or "").strip() != eid:
-            continue
-        if str(data.get("actor_id") or "").strip() != aid:
-            continue
-        return True
-    return False
-
-
-def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str, Dict[str, bool]]:
-    """Compute per-recipient ack status for attention chat messages.
-
-    Returns:
-      { "<message_event_id>": { "<recipient_id>": bool, ... }, ... }
-
-    Notes:
-    - Only includes chat.message events with data.priority == "attention".
-    - Recipient expansion is based on the message "to" tokens and the actor roster,
-      excluding the sender and actors whose current generation starts after the message.
-    - "user" is included only if explicitly targeted (to includes "user" or "@user").
-    """
-    actors = list_actors(group)
-
-    attention_ids: set[str] = set()
-    for ev in events:
-        if str(ev.get("kind") or "") != "chat.message":
-            continue
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-        if str(data.get("priority") or "normal").strip() != "attention":
-            continue
-        # Outbound cross-group records are not ACK-tracked in the source group.
-        if str(data.get("dst_group_id") or "").strip():
-            continue
-        event_id = str(ev.get("id") or "").strip()
-        if event_id:
-            attention_ids.add(event_id)
-
-    acked_by_message = _collect_chat_acks(group, event_ids=attention_ids)
-    actor_ids = [
-        str(actor.get("id") or "").strip()
-        for actor in actors
-        if isinstance(actor, dict) and str(actor.get("id") or "").strip()
-    ]
-    positions = _ledger_positions(group, attention_ids)
-    generations = actor_generation_positions(group, actor_ids)
-
-    result: Dict[str, Dict[str, bool]] = {}
-
-    for ev in events:
-        if str(ev.get("kind") or "") != "chat.message":
-            continue
-
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-
-        priority = str(data.get("priority") or "normal").strip()
-        if priority != "attention":
-            continue
-        # Outbound cross-group records are not ACK-tracked in the source group.
-        if str(data.get("dst_group_id") or "").strip():
-            continue
-
-        event_id = str(ev.get("id") or "").strip()
-        if not event_id:
-            continue
-
-        by = str(ev.get("by") or "").strip()
-
-        to_raw = data.get("to")
-        to_tokens = [str(x).strip() for x in to_raw] if isinstance(to_raw, list) else []
-        to_set = {t for t in to_tokens if t}
-
-        recipients: List[str] = []
-        for actor in actors:
-            if not isinstance(actor, dict):
-                continue
-            aid = str(actor.get("id") or "").strip()
-            if not aid or aid == "user" or aid == by:
-                continue
-            if not actor_existed_at_event(
-                group,
-                actor=actor,
-                event=ev,
-                positions=positions,
-                generations=generations,
-            ):
-                continue
-            if not is_message_for_actor(group, actor_id=aid, event=ev):
-                continue
-            recipients.append(aid)
-
-        if by != "user" and ("user" in to_set or "@user" in to_set):
-            recipients.append("user")
-
-        acked_set = acked_by_message.get(event_id, set())
-        status: Dict[str, bool] = {}
-        for rid in recipients:
-            status[rid] = rid in acked_set
-        result[event_id] = status
-
-    return result
-
-
-def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, bool]]]:
+def get_obligation_status_batch(
+    group: Group,
+    events: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """Compute per-recipient obligation status for chat messages.
 
     Returns:
       {
         "<message_event_id>": {
           "<recipient_id>": {
-            "read": bool,
-            "acked": bool,
             "replied": bool,
-            "reply_required": bool,
+            "reply_requested": bool,
+            "cancelled": bool,
+            "delivery_state": str,
           },
           ...
         },
@@ -929,7 +892,6 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
     - "user" is included only when explicitly targeted.
     """
     actors = list_actors(group)
-    cursors = load_cursors(group)
 
     target_ids: set[str] = set()
     for ev in events:
@@ -944,14 +906,8 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
         if event_id:
             target_ids.add(event_id)
 
-    acked_by_message = _collect_chat_acks(group, event_ids=target_ids)
-    replied_by_message = _collect_chat_replies(group, event_ids=target_ids)
-    cursor_event_ids = [
-        str(cursor.get("event_id") or "").strip()
-        for cursor in cursors.values()
-        if isinstance(cursor, dict) and str(cursor.get("event_id") or "").strip()
-    ]
-    positions = _ledger_positions(group, [*target_ids, *cursor_event_ids])
+    replies, cancellations, deliveries = _message_outcomes(group, event_ids=target_ids)
+    positions = _ledger_positions(group, target_ids)
     actor_ids = [
         str(actor.get("id") or "").strip()
         for actor in actors
@@ -959,7 +915,7 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
     ]
     generations = actor_generation_positions(group, actor_ids)
 
-    result: Dict[str, Dict[str, Dict[str, bool]]] = {}
+    result: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     for ev in events:
         if str(ev.get("kind") or "") != "chat.message":
@@ -976,8 +932,7 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
             continue
 
         by = str(ev.get("by") or "").strip()
-        is_attention = str(data.get("priority") or "normal").strip() == "attention"
-        reply_required = bool(data.get("reply_required") is True)
+        reply_requested = str(data.get("message_mode") or "") == "request_reply"
 
         to_raw = data.get("to")
         to_tokens = [str(x).strip() for x in to_raw] if isinstance(to_raw, list) else []
@@ -1005,22 +960,25 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
         if by != "user" and ("user" in to_set or "@user" in to_set):
             recipients.append("user")
 
-        acked_set = acked_by_message.get(event_id, set())
-        replied_set = replied_by_message.get(event_id, set())
+        reply_positions = replies.get(event_id, {})
+        cancellation_position = cancellations.get(event_id)
+        delivery_states = deliveries.get(event_id, {})
 
-        status: Dict[str, Dict[str, bool]] = {}
+        status: Dict[str, Dict[str, Any]] = {}
         for rid in recipients:
-            cur = cursors.get(rid)
-            read = _cursor_record_covers_event(cur, ev, positions=positions)
-
-            replied = rid in replied_set
-            acked = rid in acked_set
+            reply_position = reply_positions.get(rid)
+            cancelled = bool(
+                reply_requested
+                and cancellation_position is not None
+                and (reply_position is None or cancellation_position < reply_position)
+            )
+            replied = bool(reply_position is not None and not cancelled)
 
             status[rid] = {
-                "read": read,
-                "acked": acked,
                 "replied": replied,
-                "reply_required": reply_required,
+                "reply_requested": reply_requested,
+                "cancelled": cancelled,
+                "delivery_state": delivery_states.get(rid, ""),
             }
 
         result[event_id] = status
@@ -1069,6 +1027,8 @@ def is_message_for_actor(
         data = event.get("data")
         if not isinstance(data, dict):
             return False
+        if str(data.get("kind") or "") in {"mail_notice", "reply_notice"}:
+            return False
         target = str(data.get("target_actor_id") or "").strip()
         if actor_internal:
             return bool(target) and target == actor_id
@@ -1106,33 +1066,29 @@ def is_message_for_actor(
     return False
 
 
-def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter: MessageKindFilter = "all") -> List[Dict[str, Any]]:
-    """Get unread events for an actor.
+def _is_mail_message(event: Dict[str, Any]) -> bool:
+    if str(event.get("kind") or "") != "chat.message":
+        return False
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    return str(data.get("message_mode") or "") == "mail"
 
-    Args:
-        group: Working group
-        actor_id: Actor id
-        limit: Max results (0 = unlimited)
-        kind_filter:
-            - "all": chat.message + system.notify
-            - "chat": chat.message only
-            - "notify": system.notify only
-    """
+
+def unread_messages(group: Group, *, actor_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Return the actor's unread Mail projection in ledger append order."""
     cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
     cursor_seen = not bool(cursor_event_id)
-
-    # Determine which kinds to include.
-    if kind_filter == "chat":
-        allowed_kinds = {"chat.message"}
-    elif kind_filter == "notify":
-        allowed_kinds = {"system.notify"}
-    else:
-        allowed_kinds = {"chat.message", "system.notify"}
+    generation_event_id = _latest_actor_add_event_ids(group, [actor_id]).get(actor_id, "")
+    generation_seen = not bool(generation_event_id)
 
     out: List[Dict[str, Any]] = []
     for ev in iter_events(group.ledger_path):
-        ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
+        event_id = str(ev.get("id") or "").strip()
+        if event_id == generation_event_id:
+            generation_seen = True
+        if (
+            not generation_seen
+            or (not _is_mail_message(ev) and event_id != cursor_event_id)
+        ):
             continue
         after_cursor, cursor_seen = _event_after_cursor_boundary(
             ev,
@@ -1140,12 +1096,10 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
             cursor_dt=cursor_dt,
             cursor_seen=cursor_seen,
         )
-        if not after_cursor or ev_kind not in allowed_kinds:
+        if not after_cursor or not _is_mail_message(ev):
             continue
-        # Exclude messages sent by the actor itself.
-        if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
+        if str(ev.get("by") or "") == actor_id:
             continue
-        # Check delivery/visibility rules.
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
         out.append(ev)
@@ -1154,29 +1108,22 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
     return out
 
 
-def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter = "all") -> int:
-    """Count unread events for an actor.
-
-    Args:
-        group: Working group
-        actor_id: Actor id
-        kind_filter: Same semantics as unread_messages()
-    """
+def unread_count(group: Group, *, actor_id: str) -> int:
+    """Count unread Mail for an actor."""
     cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
     cursor_seen = not bool(cursor_event_id)
-
-    # Determine which kinds to include.
-    if kind_filter == "chat":
-        allowed_kinds = {"chat.message"}
-    elif kind_filter == "notify":
-        allowed_kinds = {"system.notify"}
-    else:
-        allowed_kinds = {"chat.message", "system.notify"}
+    generation_event_id = _latest_actor_add_event_ids(group, [actor_id]).get(actor_id, "")
+    generation_seen = not bool(generation_event_id)
 
     count = 0
     for ev in iter_events(group.ledger_path):
-        ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
+        event_id = str(ev.get("id") or "").strip()
+        if event_id == generation_event_id:
+            generation_seen = True
+        if (
+            not generation_seen
+            or (not _is_mail_message(ev) and event_id != cursor_event_id)
+        ):
             continue
         after_cursor, cursor_seen = _event_after_cursor_boundary(
             ev,
@@ -1184,9 +1131,9 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
             cursor_dt=cursor_dt,
             cursor_seen=cursor_seen,
         )
-        if not after_cursor or ev_kind not in allowed_kinds:
+        if not after_cursor or not _is_mail_message(ev):
             continue
-        if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
+        if str(ev.get("by") or "") == actor_id:
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
@@ -1194,13 +1141,35 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
     return count
 
 
+def mail_pending_summary(group: Group, *, actor_id: str) -> Dict[str, Any]:
+    """Return every unread Mail item without mutating the Mail cursor.
+
+    Reply and manual-delivery facts suppress the one-shot active notice, but
+    they do not consume Mail.  Natural hints therefore mirror the Inbox
+    projection exactly instead of exposing the smaller notice-eligible set.
+    """
+
+    pending = unread_messages(group, actor_id=actor_id, limit=0)
+    if not pending:
+        return {}
+    oldest = parse_utc_iso(str(pending[0].get("ts") or ""))
+    now = parse_utc_iso(utc_now_iso())
+    oldest_age_seconds = 0
+    if oldest is not None and now is not None:
+        oldest_age_seconds = max(0, int((now - oldest).total_seconds()))
+    return {
+        "count": len(pending),
+        "oldest_age_seconds": oldest_age_seconds,
+        "action": "cccc_inbox_read()",
+    }
+
+
 def batch_unread_counts(
     group: Group,
     *,
     actor_ids: List[str],
-    kind_filter: MessageKindFilter = "all",
 ) -> Dict[str, int]:
-    """Count unread events for multiple actors in a single ledger pass.
+    """Count unread Mail for multiple actors in a single ledger pass.
 
     This remains O(n * m) where n = actors and m = events, but it avoids
     re-reading/parsing the ledger for each actor and loads cursors once.
@@ -1208,8 +1177,6 @@ def batch_unread_counts(
     Args:
         group: Working group
         actor_ids: List of actor ids to count for
-        kind_filter: Same semantics as unread_messages()
-
     Returns:
         Dict mapping actor_id -> unread count
     """
@@ -1221,14 +1188,9 @@ def batch_unread_counts(
     cursor_boundaries = _cursor_boundaries(group, actor_ids, cursors=cursors)
     cursor_seen = {aid: not bool(cursor_boundaries[aid][0]) for aid in actor_ids}
     cursor_anchor_ids = {boundary[0] for boundary in cursor_boundaries.values() if boundary[0]}
-
-    # Determine which kinds to include
-    if kind_filter == "chat":
-        allowed_kinds = {"chat.message"}
-    elif kind_filter == "notify":
-        allowed_kinds = {"system.notify"}
-    else:
-        allowed_kinds = {"chat.message", "system.notify"}
+    generation_event_ids = _latest_actor_add_event_ids(group, actor_ids)
+    generation_anchor_ids = set(generation_event_ids.values())
+    generation_seen = {aid: aid not in generation_event_ids for aid in actor_ids}
 
     # Initialize counts
     counts: Dict[str, int] = {aid: 0 for aid in actor_ids}
@@ -1238,15 +1200,22 @@ def batch_unread_counts(
 
     # Single pass through the ledger
     for ev in iter_events(group.ledger_path):
-        ev_kind = str(ev.get("kind") or "")
         event_id = str(ev.get("id") or "").strip()
-        if ev_kind not in allowed_kinds and event_id not in cursor_anchor_ids:
+        if (
+            not _is_mail_message(ev)
+            and event_id not in cursor_anchor_ids
+            and event_id not in generation_anchor_ids
+        ):
             continue
 
         ev_by = str(ev.get("by") or "")
 
         # Check each actor
         for aid in actor_ids:
+            if event_id == generation_event_ids.get(aid, ""):
+                generation_seen[aid] = True
+            if not generation_seen[aid]:
+                continue
             cursor_event_id, cursor_dt = cursor_boundaries[aid]
             after_cursor, cursor_seen[aid] = _event_after_cursor_boundary(
                 ev,
@@ -1254,10 +1223,9 @@ def batch_unread_counts(
                 cursor_dt=cursor_dt,
                 cursor_seen=cursor_seen[aid],
             )
-            if not after_cursor or ev_kind not in allowed_kinds:
+            if not after_cursor or not _is_mail_message(ev):
                 continue
-            # Exclude messages sent by the actor itself
-            if ev_kind == "chat.message" and ev_by == aid:
+            if ev_by == aid:
                 continue
             # Check delivery/visibility rules (pass pre-computed role)
             if not is_message_for_actor(group, actor_id=aid, event=ev, role=actor_roles[aid]):
@@ -1265,49 +1233,6 @@ def batch_unread_counts(
             counts[aid] += 1
 
     return counts
-
-
-def latest_unread_event(
-    group: Group,
-    *,
-    actor_id: str,
-    kind_filter: MessageKindFilter = "all",
-) -> Optional[Dict[str, Any]]:
-    """Get the latest unread event for an actor (or None if none).
-
-    This is used for safe bulk-clear flows (mark-all-read): advance the cursor
-    only up to the latest currently-unread message, without requiring clients
-    to enumerate every event_id.
-    """
-    cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
-    cursor_seen = not bool(cursor_event_id)
-
-    if kind_filter == "chat":
-        allowed_kinds = {"chat.message"}
-    elif kind_filter == "notify":
-        allowed_kinds = {"system.notify"}
-    else:
-        allowed_kinds = {"chat.message", "system.notify"}
-
-    last: Optional[Dict[str, Any]] = None
-    for ev in iter_events(group.ledger_path):
-        ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
-            continue
-        after_cursor, cursor_seen = _event_after_cursor_boundary(
-            ev,
-            cursor_event_id=cursor_event_id,
-            cursor_dt=cursor_dt,
-            cursor_seen=cursor_seen,
-        )
-        if not after_cursor or ev_kind not in allowed_kinds:
-            continue
-        if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
-            continue
-        if not is_message_for_actor(group, actor_id=actor_id, event=ev):
-            continue
-        last = ev
-    return last
 
 
 def resolve_event_id(group: Group, event_id: str) -> str:
@@ -1359,40 +1284,6 @@ def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def find_event_with_chat_ack(group: Group, *, event_id: str, actor_id: str) -> Tuple[Optional[Dict[str, Any]], bool]:
-    """Find an event and whether a matching chat.ack already exists."""
-    raw_event_id = str(event_id or "").strip()
-    wanted = raw_event_id if _is_full_event_id(raw_event_id) else resolve_event_id(group, raw_event_id)
-    actor = str(actor_id or "").strip()
-    if not wanted:
-        return None, False
-
-    found_event, found_ack = lookup_event_with_chat_ack_indexed(group.ledger_path, event_id=wanted, actor_id=actor)
-    if found_event is not None:
-        return found_event, found_ack
-
-    for ev in iter_events_reverse(group.ledger_path):
-        kind = str(ev.get("kind") or "").strip()
-        if found_event is None and str(ev.get("id") or "").strip() == wanted:
-            found_event = ev
-            if found_ack:
-                break
-            continue
-        if found_ack or kind != "chat.ack":
-            continue
-        data = ev.get("data")
-        if not isinstance(data, dict):
-            continue
-        if str(data.get("event_id") or "").strip() != wanted:
-            continue
-        if actor and str(data.get("actor_id") or "").strip() != actor:
-            continue
-        found_ack = True
-        if found_event is not None:
-            break
-    return found_event, found_ack
-
-
 def get_quote_text(group: Group, event_id: str, max_len: int = 100) -> Optional[str]:
     """Get a short quoted snippet for reply_to rendering."""
     ev = find_event(group, event_id)
@@ -1411,12 +1302,12 @@ def get_quote_text(group: Group, event_id: str, max_len: int = 100) -> Optional[
 
 
 def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
-    """Get per-actor read status for a chat.message event."""
+    """Get per-actor read status for one Mail event."""
     ev = find_event(group, event_id)
     if ev is None:
         return {}
 
-    if str(ev.get("kind") or "") != "chat.message":
+    if not _is_mail_message(ev):
         return {}
 
     return get_read_status_batch(group, [ev]).get(str(ev.get("id") or ""), {})
@@ -1426,14 +1317,14 @@ def get_read_status_batch(
     group: Group,
     events: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, bool]]:
-    """Batch compute per-actor read status for multiple chat.message events.
+    """Batch compute per-actor Mail read status.
 
     This is an optimized version of get_read_status() that loads cursors and
     actors only once, avoiding N+1 queries.
 
     Args:
         group: Working group
-        events: List of events (only chat.message events will be processed)
+        events: List of events (only Mail messages will be processed)
 
     Returns:
         Dict mapping event_id -> {actor_id: bool}
@@ -1462,7 +1353,7 @@ def get_read_status_batch(
     result: Dict[str, Dict[str, bool]] = {}
 
     for ev in events:
-        if str(ev.get("kind") or "") != "chat.message":
+        if not _is_mail_message(ev):
             continue
 
         event_id = str(ev.get("id") or "")

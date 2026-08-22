@@ -95,9 +95,14 @@ async fn main() -> Result<()> {
             commands::messaging::tracked(&client, &home, args).await
         }
         Some(CommandKind::Reply(args)) => commands::messaging::reply(&client, &home, args).await,
+        Some(CommandKind::Deliver(args)) => {
+            commands::messaging::deliver(&client, &home, args).await
+        }
+        Some(CommandKind::CancelReply(args)) => {
+            commands::messaging::cancel_reply(&client, &home, args).await
+        }
         Some(CommandKind::Tail(args)) => commands::messaging::tail(&client, &home, args).await,
         Some(CommandKind::Inbox(args)) => commands::messaging::inbox(&client, &home, args).await,
-        Some(CommandKind::Read(args)) => commands::messaging::read(&client, &home, args).await,
         Some(CommandKind::Ledger(args)) => commands::messaging::ledger(&client, &home, args).await,
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,

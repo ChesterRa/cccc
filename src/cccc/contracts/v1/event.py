@@ -17,7 +17,7 @@ from .assistant import (
     AssistantVoiceSessionData,
 )
 from .message import ChatMessageData, ChatReactionData, ChatStreamData
-from .notify import NotifyAckData, SystemNotifyData
+from .notify import SystemNotifyData
 from .presentation import PresentationCardType
 
 
@@ -44,12 +44,12 @@ EventKind = Literal[
     "context.sync",
     "chat.message",
     "chat.stream",
-    "chat.ack",
-    "chat.read",
+    "mail.read",
     "chat.reaction",
+    "chat.reply_request.cancelled",
     "chat.cross_group_receipt",
+    "runtime.delivery",
     "system.notify",
-    "system.notify_ack",
     "assistant.settings_update",
     "assistant.status_update",
     "assistant.voice.document",
@@ -207,28 +207,44 @@ class ContextSyncData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatReadData(BaseModel):
-    """Read receipt: an actor marks messages read up to a given event."""
+class MailReadData(BaseModel):
+    """Mail receipt: an actor consumes Mail up to a given event."""
 
-    actor_id: str  # Actor who marked as read
-    event_id: str  # The last read event_id (inclusive)
+    actor_id: str  # Actor who consumed the Mail
+    event_id: str  # The last consumed Mail event_id (inclusive)
 
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatAckData(BaseModel):
-    """Acknowledgement for an attention message (per-message, per-recipient)."""
+class ChatReplyRequestCancelledData(BaseModel):
+    """Cancellation of outstanding reply obligations for one source message."""
 
-    actor_id: str  # Actor who acknowledged (or "user")
-    event_id: str  # Target message event_id
+    source_event_id: str
+    src_group_id: str = ""
+    src_event_id: str = ""
+    src_message_event_id: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RuntimeDeliveryData(BaseModel):
+    """Daemon-authored handoff evidence for one message recipient."""
+
+    actor_id: str
+    source_event_id: str
+    delivery_id: str
+    state: Literal["claimed", "accepted", "failed", "ambiguous"]
+    transport: str
+    reason: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ChatCrossGroupReceiptData(BaseModel):
-    """Append-only link from a local source message to its delivered target event."""
+    """Append-only link from a local source event to its delivered target event."""
 
     source_event_id: str
+    operation: Literal["remote_send", "reply_request_cancel"] = "remote_send"
     dst_group_id: str
     dst_event_id: str = ""
     remote_event_id: str = ""
@@ -294,12 +310,12 @@ _KIND_TO_MODEL = {
     "context.sync": ContextSyncData,
     "chat.message": ChatMessageData,
     "chat.stream": ChatStreamData,
-    "chat.ack": ChatAckData,
-    "chat.read": ChatReadData,
+    "mail.read": MailReadData,
     "chat.reaction": ChatReactionData,
+    "chat.reply_request.cancelled": ChatReplyRequestCancelledData,
     "chat.cross_group_receipt": ChatCrossGroupReceiptData,
+    "runtime.delivery": RuntimeDeliveryData,
     "system.notify": SystemNotifyData,
-    "system.notify_ack": NotifyAckData,
     "assistant.settings_update": AssistantSettingsUpdateData,
     "assistant.status_update": AssistantStatusUpdateData,
     "assistant.voice.document": AssistantVoiceDocumentData,

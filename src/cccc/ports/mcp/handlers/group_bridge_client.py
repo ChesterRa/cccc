@@ -82,7 +82,8 @@ def _bridge_targets(group_id: str) -> List[Dict[str, Any]]:
                     "tool": "cccc_message_send",
                     "dst_group_id": remote_group_id,
                     "to": ["@foreman"],
-                    "note": "Use this shape to send a normal message to the remote group's foreman.",
+                    "mode": "mail",
+                    "note": "Use this non-interrupting shape unless delayed awareness would cause concrete loss.",
                 },
                 "recommended_remote_access": {
                     "discover": 'cccc_remote_access(action="list")',

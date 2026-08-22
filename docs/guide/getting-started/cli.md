@@ -112,6 +112,7 @@ cccc tracked-send "Please implement the feature and reply with validation eviden
 ```bash
 # Find the event ID from cccc tail
 cccc reply evt_abc123 "Thanks, that looks good!"
+cccc reply evt_abc123 "Non-urgent follow-up" --mode mail
 ```
 
 ## Common Commands
@@ -147,7 +148,7 @@ cccc send "msg" --to @foreman      # Ask the coordinator
 cccc send "msg" --to @all          # Explicit broadcast, not default task dispatch
 cccc tracked-send "work" --to assistant --title "Task title" --outcome "Done criterion"
 cccc reply <event_id> "response"   # Reply to message
-cccc inbox --actor-id assistant    # View unread for one actor
+cccc inbox --actor-id assistant    # Read unread Mail for one actor
 cccc tail -n 50                    # Recent events
 cccc tail -f                       # Follow events
 ```

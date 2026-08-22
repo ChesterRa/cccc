@@ -422,7 +422,7 @@ fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     )?;
     let mut event = Event::new("system.notify", &group_id);
     event.by = "voice-secretary".into();
-    event.data=json!({"kind":"voice_secretary_request","title":"Voice Secretary request","text":text,"to":[target],"priority":string_arg(request,"priority").unwrap_or_else(||"normal".into()),"requires_ack":request.args.get("requires_ack").and_then(Value::as_bool).unwrap_or(false),"context":{"kind":"voice_secretary_action_request","request":item}}).as_object().cloned().unwrap_or_default();
+    event.data=json!({"kind":"voice_secretary_request","title":"Voice Secretary request","text":text,"to":[target],"priority":string_arg(request,"priority").unwrap_or_else(||"normal".into()),"context":{"kind":"voice_secretary_action_request","request":item}}).as_object().cloned().unwrap_or_default();
     cccc_core::ledger::append(&store.ledger_path(&group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);

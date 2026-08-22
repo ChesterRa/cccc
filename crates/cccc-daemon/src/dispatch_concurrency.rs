@@ -229,13 +229,10 @@ mod tests {
         for op in [
             "group_set_state",
             "headless_set_status",
-            "inbox_mark_read",
-            "inbox_mark_all_read",
+            "inbox_read",
             "ledger_snapshot",
             "runtime_wait_next_turn",
-            "web_model_runtime_wait_next_turn",
             "runtime_complete_turn",
-            "web_model_runtime_complete_turn",
             "web_model_browser_delivery_record",
             "future_unknown_operation",
         ] {

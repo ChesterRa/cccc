@@ -28,9 +28,8 @@ import {
   saveSelectedGroupId,
   beginGroupRequestEpoch,
   settingsRequestEpochByGroup,
-  updateAckAtIndex,
+  updateObligationAtIndex,
   updateReadThroughIndex,
-  updateReplyAtIndex,
 } from "./groupStoreCore";
 import { createGroupStoreAsyncActions } from "./groupStoreAsyncActions";
 import type { GroupState } from "./groupStoreTypes";
@@ -539,20 +538,38 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const actorId = String(actor.id || "").trim();
         if (!targets.has(actorId)) return actor;
         changed = true;
+        return { ...actor, unread_count: Math.max(0, Number(actor.unread_count || 0)) + 1 };
+      });
+
+      if (!changed) return state;
+      const gid = String(state.selectedGroupId || "").trim();
+      if (gid) {
+        saveGroupView(gid, { actors: next });
+      }
+      return { actors: next };
+    }),
+  incrementWebModelQueued: (actorIds) =>
+    set((state) => {
+      if (!state.actors.length || !actorIds.length) return state;
+      const targets = new Set(actorIds.map((id) => String(id || "").trim()).filter(Boolean));
+      if (targets.size === 0) return state;
+
+      let changed = false;
+      const next = state.actors.map((actor) => {
+        const actorId = String(actor.id || "").trim();
         const runtime = String(actor.runtime || "")
           .trim()
           .toLowerCase();
         const workingState = String(actor.effective_working_state || "")
           .trim()
           .toLowerCase();
-        const webModelQueuedCount =
-          runtime === "web_model" && workingState === "working"
-            ? Math.max(0, Number(actor.web_model_queued_count || 0)) + 1
-            : actor.web_model_queued_count;
+        if (!targets.has(actorId) || runtime !== "web_model" || workingState !== "working") {
+          return actor;
+        }
+        changed = true;
         return {
           ...actor,
-          unread_count: Math.max(0, Number(actor.unread_count || 0)) + 1,
-          web_model_queued_count: webModelQueuedCount,
+          web_model_queued_count: Math.max(0, Number(actor.web_model_queued_count || 0)) + 1,
         };
       });
 
@@ -721,7 +738,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       );
     }),
 
-  updateAckStatus: (eventId, actorId, groupId) =>
+  updateObligationStatus: (eventId, statusPatch, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
@@ -733,7 +750,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
       const liveResult =
         eventIndex >= 0
-          ? updateAckAtIndex(bucket.events, eventIndex, actorId)
+          ? updateObligationAtIndex(bucket.events, eventIndex, statusPatch)
           : { next: bucket.events, changed: false };
       let nextWindow = bucket.chatWindow;
       let didChange = liveResult.changed;
@@ -743,44 +760,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
         );
         if (windowIndex >= 0) {
-          const windowResult = updateAckAtIndex(bucket.chatWindow.events, windowIndex, actorId);
-          if (windowResult.changed) {
-            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
-            didChange = true;
-          }
-        }
-      }
-
-      if (!didChange) return state;
-      return (
-        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
-        state
-      );
-    }),
-
-  updateReplyStatus: (eventId, actorId, groupId) =>
-    set((state) => {
-      const gid = resolveChatGroupId(state, groupId);
-      if (!gid) return state;
-      const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-      );
-      if (eventIndex < 0 && !bucket.chatWindow) return state;
-
-      const liveResult =
-        eventIndex >= 0
-          ? updateReplyAtIndex(bucket.events, eventIndex, actorId)
-          : { next: bucket.events, changed: false };
-      let nextWindow = bucket.chatWindow;
-      let didChange = liveResult.changed;
-
-      if (bucket.chatWindow) {
-        const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
-        );
-        if (windowIndex >= 0) {
-          const windowResult = updateReplyAtIndex(bucket.chatWindow.events, windowIndex, actorId);
+          const windowResult = updateObligationAtIndex(
+            bucket.chatWindow.events,
+            windowIndex,
+            statusPatch,
+          );
           if (windowResult.changed) {
             nextWindow = { ...bucket.chatWindow, events: windowResult.next };
             didChange = true;

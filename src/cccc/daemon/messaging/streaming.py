@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 STREAMABLE_KINDS_V1: Set[str] = {
     "chat.message",
     "chat.stream",
-    "chat.ack",
     "system.notify",
-    "system.notify_ack",
     "actor.start",
     "actor.stop",
     "actor.restart",

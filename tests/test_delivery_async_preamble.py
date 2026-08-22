@@ -1,13 +1,23 @@
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 
 class TestAsyncFirstDelivery(unittest.TestCase):
     def _group(self):
-        return SimpleNamespace(group_id="g-test", doc={})
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+        return SimpleNamespace(
+            group_id="g-test",
+            doc={},
+            path=root,
+            ledger_path=root / "ledger.jsonl",
+        )
 
     def test_first_flush_returns_without_waiting_for_preamble_submit(self) -> None:
         from cccc.daemon.messaging import delivery
@@ -226,8 +236,6 @@ class TestAsyncFirstDelivery(unittest.TestCase):
             return_value=(None, None),
         ), patch(
             "cccc.daemon.messaging.delivery.pty_submit_text", side_effect=fake_submit
-        ), patch(
-            "cccc.daemon.messaging.delivery._get_auto_mark_on_delivery", return_value=False
         ), patch.object(
             delivery, "DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS", 0
         ):

@@ -40,7 +40,7 @@ def _handle_send(group, args: dict, *, wakes: list[tuple[list[str], str]] | None
 
     with _quiet_chat_commit():
         return handle_send(
-            {"group_id": group.group_id, **args},
+            {"message_mode": "send", "group_id": group.group_id, **args},
             coerce_bool=coerce_bool,
             normalize_attachments=lambda _group, raw: list(raw or []),
             effective_runner_kind=lambda value: value,
@@ -98,7 +98,6 @@ def test_insight_contract_normalizes_and_bounds_plain_text() -> None:
     ("by", "to"),
     [
         ("peer1", ["peer2"]),
-        ("peer1", ["user", "peer2"]),
         ("peer1", ["@all"]),
         ("peer2", []),
     ],
@@ -119,6 +118,23 @@ def test_strict_peer_send_requires_insight_for_real_peer_audiences(peer_group, b
     assert response.error.code == "peer_insight_required"
     assert response.error.details["delivery_state"] == "not_sent"
     assert response.error.details["new_side_effects"] is False
+
+
+def test_mixed_human_and_agent_audience_is_rejected_before_insight_gate(peer_group) -> None:
+    response = _handle_send(
+        peer_group,
+        {
+            "by": "peer1",
+            "to": ["user", "peer2"],
+            "text": "ambiguous audience",
+            "require_peer_insight": True,
+        },
+    )
+
+    assert not response.ok
+    assert response.error is not None
+    assert response.error.code == "mixed_recipient_kinds"
+    assert response.error.details["to"] == ["user", "peer2"]
 
 
 def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_effects(peer_group) -> None:
@@ -175,18 +191,6 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
     wake_group.assert_not_called()
     sync_peer_addresses.assert_not_called()
     assert list(iter_events(peer_group.ledger_path)) == before
-
-
-def test_post_message_nudge_audits_insight_origin_without_dynamic_scene_logic() -> None:
-    from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
-
-    assert "Step outside its mental track now" in POST_MESSAGE_NUDGE
-    assert "fresh owner accountable for the real outcome" in POST_MESSAGE_NUDGE
-    assert "no loyalty to the exchange, its momentum, or its frame" in POST_MESSAGE_NUDGE
-    assert "stayed beside the message instead of rising above its working level" in POST_MESSAGE_NUDGE
-    assert "no higher-order perspective entered the exchange" in POST_MESSAGE_NUDGE
-    assert "whether an unsettled decision needs another independent mind" in POST_MESSAGE_NUDGE
-    assert "If nothing material changes, quietly resume" in POST_MESSAGE_NUDGE
 
 
 def test_disabled_visible_peer_still_triggers_gate(peer_group) -> None:
@@ -503,7 +507,7 @@ def test_cross_group_file_send_stores_and_dispatches_after_valid_preflight(
     assert request["op"] == "send_cross_group"
     assert request["args"]["attachments"] == [attachment]
     assert request["args"]["insight"] == "The report may not cover rollback behavior."
-    assert result["post_message_nudge"]["kind"] == "whole_situation_reconstruction"
+    assert "post_message_nudge" not in result
 
 
 def test_actor_delivery_projects_one_provisional_label_after_supporting_material() -> None:
@@ -513,8 +517,7 @@ def test_actor_delivery_projects_one_provisional_label_after_supporting_material
     rendered = build_actor_delivery_text(
         text="Main body",
         insight="The plan may be wrong.",
-        priority="normal",
-        reply_required=False,
+        message_mode="send",
         event_id="evt-1",
         refs=[{"kind": "url", "url": "https://example.com"}],
         attachments=[{"title": "report.txt", "path": "state/blobs/report.txt", "bytes": 10}],

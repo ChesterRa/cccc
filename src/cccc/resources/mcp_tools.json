@@ -32,16 +32,7 @@
           "type": "integer",
           "default": 50,
           "minimum": 1,
-          "maximum": 1000
-        },
-        "inbox_kind_filter": {
-          "type": "string",
-          "enum": [
-            "all",
-            "chat",
-            "notify"
-          ],
-          "default": "all"
+          "maximum": 200
         }
       },
       "required": []
@@ -65,11 +56,8 @@
     }
   },
   {
-    "name": "cccc_inbox_list",
-    "description": "List unread inbox entries (chat/notify/all).",
-    "annotations": {
-      "readOnlyHint": true
-    },
+    "name": "cccc_inbox_read",
+    "description": "Read and consume the next ordered Mail batch. Only mode=mail messages participate in this inbox and its cursor; Send and Send + Reply are delivered directly and are not returned here. Bootstrap previews do not consume Mail.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -85,24 +73,18 @@
           "type": "integer",
           "default": 50,
           "minimum": 1,
-          "maximum": 1000
-        },
-        "kind_filter": {
-          "type": "string",
-          "enum": [
-            "all",
-            "chat",
-            "notify"
-          ],
-          "default": "all"
+          "maximum": 200
         }
       },
       "required": []
     }
   },
   {
-    "name": "cccc_inbox_mark_read",
-    "description": "Mark inbox as read: action=read(event_id) or action=read_all(kind_filter).",
+    "name": "cccc_message_history",
+    "description": "Inspect actor-visible chat history without changing Mail read state. Use this when you explicitly need past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
+    "annotations": {
+      "readOnlyHint": true
+    },
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -114,26 +96,25 @@
           "type": "string",
           "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
         },
-        "action": {
+        "mode": {
           "type": "string",
-          "enum": [
-            "read",
-            "read_all"
-          ],
-          "default": "read"
+          "enum": ["all", "send", "request_reply", "mail"],
+          "default": "all",
+          "description": "Optional delivery-mode filter."
         },
-        "event_id": {
+        "query": {
           "type": "string",
-          "description": "Required when action=read"
+          "description": "Optional case-insensitive text search."
         },
-        "kind_filter": {
+        "before_event_id": {
           "type": "string",
-          "enum": [
-            "all",
-            "chat",
-            "notify"
-          ],
-          "default": "all"
+          "description": "Return messages older than this visible history event."
+        },
+        "limit": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": []
@@ -141,7 +122,7 @@
   },
   {
     "name": "cccc_message_send",
-    "description": "Start a new visible chat message. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; use @all only when the whole group needs it. For a trusted remote Group Bridge target, get remote_group_id from cccc_remote_access(action=\"list\") and send with dst_group_id=<remote_group_id>, to=[\"@foreman\"] unless a more specific remote recipient is known.",
+    "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -176,19 +157,18 @@
                 "type": "string"
               }
             }
-          ]
+          ],
+          "description": "One audience domain only: user alone, or one/more agent IDs/selectors. Never mix user and agents."
         },
-        "priority": {
+        "mode": {
           "type": "string",
           "enum": [
-            "normal",
-            "attention"
+            "mail",
+            "send",
+            "request_reply"
           ],
-          "default": "normal"
-        },
-        "reply_required": {
-          "type": "boolean",
-          "default": false
+          "default": "mail",
+          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; send requests best-effort prompt delivery now; request_reply uses the same delivery path and creates a reply obligation for concrete recipients."
         },
         "idempotency_key": {
           "type": "string",
@@ -296,17 +276,10 @@
         "notes": {
           "type": "string"
         },
-        "priority": {
+        "task_priority": {
           "type": "string",
-          "enum": [
-            "normal",
-            "attention"
-          ],
-          "default": "normal"
-        },
-        "reply_required": {
-          "type": "boolean",
-          "default": true
+          "default": "normal",
+          "description": "Task-domain priority. This does not affect message delivery."
         },
         "idempotency_key": {
           "type": "string",
@@ -327,7 +300,7 @@
   },
   {
     "name": "cccc_message_reply",
-    "description": "Reply to a visible chat message (by event_id/reply_to). Use only for the thread you are answering; set `to` explicitly if the audience differs.",
+    "description": "Reply to a visible chat message (by event_id/reply_to). Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -366,19 +339,17 @@
                 "type": "string"
               }
             }
-          ]
+          ],
+          "description": "One audience domain only: user alone, or one/more agent IDs/selectors. Never mix user and agents."
         },
-        "priority": {
+        "mode": {
           "type": "string",
           "enum": [
-            "normal",
-            "attention"
+            "send",
+            "mail"
           ],
-          "default": "normal"
-        },
-        "reply_required": {
-          "type": "boolean",
-          "default": false
+          "default": "send",
+          "description": "send: prompt the recipient now; mail: agent-only Inbox storage without an immediate prompt. Either fulfills the original reply request."
         },
         "refs": {
           "type": "array",
@@ -393,6 +364,68 @@
       },
       "required": [
         "text"
+      ]
+    }
+  },
+  {
+    "name": "cccc_message_deliver",
+    "description": "Send an existing message to selected actor runtimes without creating a duplicate chat message. Use this to promote Mail to Send or retry a blocked/failed delivery. Ambiguous delivery requires force_ambiguous=true because the recipient may already have received the prompt.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
+        },
+        "actor_id": {
+          "type": "string",
+          "description": "Sender actor ID (optional if CCCC_ACTOR_ID is set)"
+        },
+        "source_event_id": {
+          "type": "string",
+          "description": "Existing chat.message event ID"
+        },
+        "actor_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Explicit recipient actor IDs from the original message"
+        },
+        "force_ambiguous": {
+          "type": "boolean",
+          "default": false,
+          "description": "Retry despite ambiguous prior delivery; may produce a duplicate prompt"
+        }
+      },
+      "required": [
+        "source_event_id",
+        "actor_ids"
+      ]
+    }
+  },
+  {
+    "name": "cccc_reply_request_cancel",
+    "description": "Cancel every still-open reply obligation for an existing Send + Reply message. This does not delete the message or prevent later voluntary replies.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
+        },
+        "actor_id": {
+          "type": "string",
+          "description": "Sender actor ID (optional if CCCC_ACTOR_ID is set)"
+        },
+        "source_event_id": {
+          "type": "string",
+          "description": "Existing request_reply chat.message event ID"
+        }
+      },
+      "required": [
+        "source_event_id"
       ]
     }
   },
@@ -528,10 +561,6 @@
             "urgent"
           ],
           "default": "normal"
-        },
-        "requires_ack": {
-          "type": "boolean",
-          "default": true
         }
       },
       "required": []
@@ -589,7 +618,7 @@
   },
   {
     "name": "cccc_file",
-    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; use send to attach an active-scope local file back to the user, peers, or a trusted remote Group Bridge target.",
+    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; use send to attach an active-scope local file to user alone or one/more agents, never both. Mail is agent-only. A trusted remote Group Bridge group may be selected with dst_group_id.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -640,19 +669,17 @@
               }
             }
           ],
-          "description": "Optional recipient or recipients for action=send. For remote Group Bridge file sends, use [\"@foreman\"] unless a more specific remote recipient is known."
+          "description": "Optional recipient or recipients for action=send. Choose user alone or one/more agent IDs/selectors; never mix both domains. For remote Group Bridge file sends, use [\"@foreman\"] unless a more specific remote recipient is known."
         },
-        "priority": {
+        "mode": {
           "type": "string",
           "enum": [
-            "normal",
-            "attention"
+            "mail",
+            "send",
+            "request_reply"
           ],
-          "default": "normal"
-        },
-        "reply_required": {
-          "type": "boolean",
-          "default": false
+          "default": "mail",
+          "description": "For action=send: mail stores in an agent Inbox without an immediate prompt and cannot target user; send uses best-effort immediate Push; request_reply adds a concrete reply request."
         },
         "rel_path": {
           "type": "string",
@@ -1383,10 +1410,7 @@
   },
   {
     "name": "cccc_runtime_wait_next_turn",
-    "description": "Pull one coalesced unread CCCC turn for a website-model runtime actor when no turn was browser-delivered into the web chat. This does not mark messages read; call cccc_runtime_complete_turn after processing.",
-    "annotations": {
-      "readOnlyHint": true
-    },
+    "description": "Accept one coalesced pending direct-delivery turn for a website-model runtime actor when no turn was browser-delivered into the web chat. A second call while a turn is active returns turn_in_progress. This records runtime delivery and never changes the separate Mail cursor.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1403,15 +1427,6 @@
           "default": 20,
           "minimum": 1,
           "maximum": 20
-        },
-        "kind_filter": {
-          "type": "string",
-          "enum": [
-            "all",
-            "chat",
-            "notify"
-          ],
-          "default": "all"
         }
       },
       "required": []
@@ -1419,7 +1434,7 @@
   },
   {
     "name": "cccc_runtime_complete_turn",
-    "description": "Commit a processed website-model runtime turn, whether it was browser-delivered or pulled. status=done or partial marks the supplied event_ids read for the actor; failed/cancelled leaves them unread for retry.",
+    "description": "Close the actor's exact active website-model runtime turn after processing. Completion records runtime progress only and never advances the separate Mail cursor; call cccc_inbox_read only when you intend to consume Mail.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1439,9 +1454,6 @@
           "items": {
             "type": "string"
           }
-        },
-        "latest_event_id": {
-          "type": "string"
         },
         "status": {
           "type": "string",
@@ -2720,7 +2732,7 @@
   },
   {
     "name": "cccc_headless",
-    "description": "Headless runner control: action=status|set_status|ack_message.",
+    "description": "Headless runner control: action=status|set_status.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2736,8 +2748,7 @@
           "type": "string",
           "enum": [
             "status",
-            "set_status",
-            "ack_message"
+            "set_status"
           ],
           "default": "status"
         },
@@ -2762,7 +2773,7 @@
   },
   {
     "name": "cccc_notify",
-    "description": "System notifications: action=send|ack.",
+    "description": "Send an internal system notification. This does not create a generic acknowledgement obligation.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2777,8 +2788,7 @@
         "action": {
           "type": "string",
           "enum": [
-            "send",
-            "ack"
+            "send"
           ],
           "default": "send"
         },
@@ -2804,13 +2814,6 @@
             "urgent"
           ],
           "default": "normal"
-        },
-        "requires_ack": {
-          "type": "boolean",
-          "default": false
-        },
-        "notify_event_id": {
-          "type": "string"
         }
       },
       "required": []

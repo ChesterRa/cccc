@@ -35,12 +35,12 @@ Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作
 
 ## 为什么选择 CCCC
 
-多智能体开发的现实是：协作记录散落在终端滚动缓冲区里、重启即消失；agent 到底有没有*读到*你的消息无从得知；启停、恢复、催办分散在多个工具里；出门之后长时间运行的协作组就彻底失控。这些不是小问题——它们是绝大多数多智能体方案停留在"脆弱 demo"阶段的根本原因。
+多智能体开发的现实是：协作记录散落在终端滚动缓冲区里、重启即消失；消息已存储、交给 runtime、经 Inbox 消费和得到回复经常混为一谈；启停、恢复、催办分散在多个工具里；出门之后长时间运行的协作组就彻底失控。这些不是小问题——它们是绝大多数多智能体方案停留在"脆弱 demo"阶段的根本原因。
 
 CCCC 让你的 agent 作为一套持久、可协调的系统运行：
 
 - **协作可持久** — 工作状态进入 append-only ledger，而不是埋在终端滚动缓冲区里。
-- **触达可验证** — 消息具备路由、已读、ACK、reply-required 追踪，而不是"发过去了应该看到了"。
+- **触达事实可见** — 路由、存储、runtime 投递、已读和回复各自记录，不再把“已发送”当作“已看到”。
 - **控制面统一** — Web UI、CLI、MCP、IM 桥接全部围绕同一 daemon 运作，不会出现多套状态。
 - **多运行时是默认能力** — Claude Code、Codex CLI、ChatGPT Web、Grok Build 以及其它一线 runtime 可以在同一协作组内协同工作。
 - **Group Bridge 连接远端协作组** — 可信 CCCC group 可以显式互发消息，并在授权后读取或操作彼此的本地资源。
@@ -53,7 +53,7 @@ CCCC 只需一条安装命令，不需要数据库、不需要消息队列、不
 | 能力 | 实现方式 |
 |---|---|
 | **唯一事实源** | append-only ledger（`ledger.jsonl`）记录所有消息和事件 — 可回放、可审计、永不丢失 |
-| **可靠的消息语义** | 已读游标、attention ACK、reply-required 义务追踪 — 谁看到了什么一清二楚 |
+| **可靠的消息语义** | Send / Send + Reply / Mail 三种模式，投递、已读、回复事实分离；只含 Mail 的 Inbox 按 ledger 顺序消费 — runtime 接收不冒充已读 |
 | **统一控制面** | Web UI、CLI、MCP 工具、IM 桥接全部对接同一 daemon — 不存在状态分裂 |
 | **多运行时编排** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web 等 17 种一线运行时可混用，此外还支持 `custom` 运行时兜底 |
 | **Group Bridge** | 连接跨机器或跨团队的可信远端协作组，从显式消息开始，并可按需授予 read/full 本地访问权限 |
@@ -283,25 +283,26 @@ Group Bridge 将 CCCC 从一个本地 working group 扩展为一组可信协作�
 CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"：
 
 - **收件人路由** — `@all`、`@peers`、`@foreman`，或指定 actor ID
-- **已读游标** — 每个 agent 通过 MCP 显式标记已读
+- **三种明确模式** — Send 主动投递，Send + Reply 要求具体回复，Mail 只进入 Inbox 而不立即打断
+- **事实彼此分离** — `runtime.delivery`、Mail 已读游标、回复、取消和任务完成互不冒充
+- **消费式 Inbox 读取** — `cccc_inbox_read` 按顺序返回下一批 Mail，并原子推进 Mail 游标
 - **回复与引用** — 结构化的 `reply_to` + 引用上下文
-- **Attention ACK** — 高优先级消息要求显式确认
-- **Reply-required 义务** — 持续追踪直到收件人回复
-- **自动唤醒** — 收到消息时，已停用的 actor 自动启动
+- **回复请求** — Send + Reply 持续追踪到收件人回复或发送方取消
+- **生命周期边界** — paused、stopped 或 disabled actor 不会被消息投递静默唤醒
 - **远端协作组收件人** — Group Bridge 目标以显式 remote recipient 出现，而不是隐藏广播
 
-普通 `send` 适合聊天、询问和轻量请求。需要明确负责人、完成标准、证据、交接或验收轨迹的委派工作，应使用 `tracked-send`。`@all` 仍可用于公告或紧急共享约束，但不应作为具体任务分派的默认方式。
+有用但可以延后查看的 agent 信息使用 Mail；延迟知晓的代价高于打断时使用 Send；还必须得到具体回答时才使用 Send + Reply。Mail 不能发给人类用户。单条消息只能发给 `user`，或发给一个/多个 agent，不能混合两类受众；需要同时通知时应拆成两条消息。需要明确负责人、完成标准、证据、交接或验收轨迹的委派工作，应使用 `tracked-send`。`@all` 仍可用于公告或紧急共享约束，但不应作为具体任务分派的默认方式。
 
-消息会通过 daemon 管理的投递链路送达到各 actor 运行时，daemon 对每条消息的触达状态持续追踪。
+主动投递通过 daemon 管理的链路执行，其 `runtime.delivery` 事实与 Inbox 已读状态和回复始终分开。
 
 ## 自动化与策略
 
-内置规则引擎处理运维关切，免去人工盯盘：
+少量投递计时器与自动化规则处理运维关切，同时避免把每条消息都变成 prompt：
 
 | 策略 | 功能 |
 |------|------|
-| **催办（Nudge）** | 可配置超时后提醒 agent 处理未读消息 |
-| **Reply-required 跟进** | 必回消息逾期时升级提醒 |
+| **Mail 提醒** | 明确收件人的 Mail 等待到配置期限后，最多发送一次不含正文的提醒 |
+| **回复提醒** | 已投递的 Send + Reply 尚未回复时，最多发送一次提醒 |
 | **Actor 空闲检测** | agent 沉默时通知 foreman |
 | **Keepalive** | 周期性向 foreman 发送签到提醒 |
 | **静默检测** | 整个协作组无活动时告警 |
@@ -391,8 +392,7 @@ cccc reply <event_id> "回复"
 cccc tail -n 50 -f             # 实时追踪 ledger
 
 # 收件箱
-cccc inbox                     # 查看未读消息
-cccc inbox --mark-read         # 全部标为已读
+cccc inbox --actor-id <id>     # 读取并消费下一批未读 Mail
 
 # 运维
 cccc doctor                    # 环境检查
@@ -411,7 +411,7 @@ Agent 通过一套紧凑的 action-oriented MCP surface 与 CCCC 交互。核心
 | 能力面 | 示例 |
 |--------|------|
 | **会话与指引** | `cccc_bootstrap`、`cccc_help`、`cccc_project_info` |
-| **消息与文件** | `cccc_inbox_list`、`cccc_inbox_mark_read`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
+| **消息与文件** | `cccc_inbox_read`、`cccc_message_history`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
 | **协作组与 actor 控制** | `cccc_group`、`cccc_actor` |
 | **协调与状态** | `cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_context_sync` |
 | **远端协作组访问** | `cccc_remote_access`、`cccc_remote_context`、`cccc_remote_repo`、`cccc_remote_git`、`cccc_remote_apply_patch`、`cccc_remote_exec_command` |

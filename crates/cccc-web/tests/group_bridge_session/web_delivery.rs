@@ -16,6 +16,7 @@ pub(super) async fn complete_web_delivery_over_session(
             .json(&json!({
                 "dst_group_id":"g_sender",
                 "text":"web over reverse session",
+                "message_mode":"send",
                 "to":["@foreman"],
                 "client_id":"web-session-once",
                 "remote_reply_to_event_id":"remote-parent-event"
@@ -55,7 +56,7 @@ pub(super) async fn complete_web_delivery_over_session(
                 "type":"response",
                 "response_to":frame["request_id"],
                 "result":{"ok":true,"receipt":{
-                    "status":"delivered","event_id":"remote-web-session"
+                    "status":"sent","event_id":"remote-web-session"
                 }}
             })
             .to_string()
@@ -79,6 +80,7 @@ pub(super) async fn complete_web_delivery_over_session(
         .json(&json!({
             "dst_group_id":"g_sender",
             "text":"web over reverse session",
+            "message_mode":"send",
             "to":["@foreman"],
             "client_id":"web-session-once",
             "remote_reply_to_event_id":"remote-parent-event"

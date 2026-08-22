@@ -23,7 +23,7 @@ from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .mcp_install import ensure_mcp_installed
-from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
+from .messaging.delivery import render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from .codex_app_thread_ops import prepare_codex_app_tui_resume, start_codex_app_thread
 from .codex_config_ops import inject_codex_openai_base_url_config
@@ -972,7 +972,7 @@ class CodexAppSession:
                 (
                     "First call MCP tool "
                     f'cccc_bootstrap(actor_id="{self.actor_id}", group_id="{self.group_id}", '
-                    'inbox_kind_filter="all", inbox_limit=10).'
+                    "inbox_limit=10)."
                 ),
                 "Pass actor_id explicitly; do not rely on environment variables for startup/bootstrap.",
                 "If cccc_bootstrap fails, stop this bootstrap turn instead of continuing with normal work.",
@@ -1455,12 +1455,6 @@ class CodexAppSession:
                         },
                     )
                 else:
-                    auto_mark_headless_delivery_started(
-                        group_id=self.group_id,
-                        actor_id=self.actor_id,
-                        event_id=payload.event_id,
-                        ts=payload.ts,
-                    )
                     self._emit(
                         "headless.turn.started",
                         {

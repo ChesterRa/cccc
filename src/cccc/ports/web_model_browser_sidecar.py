@@ -2592,14 +2592,6 @@ def build_chatgpt_web_model_health_snapshot(
             if delivery_state == "pending_bind"
             and last_error == "conversation_url_pending"
             else last_error,
-            "cursor_committed": raw_delivery_status
-            in {
-                "submitted",
-                "pending_new_chat_bind",
-                "submission_ambiguous",
-                "legacy_submission_unverified",
-                "bound",
-            },
             "mode": "image_compat"
             if str(session.get("delivery_mode") or "") == "image_compat"
             else "standard",

@@ -52,8 +52,7 @@ pub(super) async fn notify(
                 "priority":"normal",
                 "title":"Help updated",
                 "message":"Group help changed. Run `cccc_help` now to refresh your effective protocol reference.",
-                "target_actor_id":actor_id,
-                "requires_ack":false
+                "target_actor_id":actor_id
             })),
         )
         .await;

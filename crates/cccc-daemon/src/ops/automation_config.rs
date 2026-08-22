@@ -272,7 +272,7 @@ fn default_rules() -> Value {
     json!([{
         "id":"standup","enabled":false,"scope":"group","owner_actor_id":null,
         "to":["@foreman"],"trigger":{"kind":"interval","every_seconds":900},
-        "action":{"kind":"notify","priority":"normal","requires_ack":false,
+        "action":{"kind":"notify","priority":"normal",
             "title":"Stand-up reminder","snippet_ref":"standup","message":""}
     }])
 }

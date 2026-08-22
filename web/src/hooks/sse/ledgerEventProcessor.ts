@@ -1,18 +1,19 @@
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import type { Actor, ChatMessageData, LedgerEvent } from "../../types";
 import {
-  extractChatAckData,
-  extractChatReadData,
+  extractMailReadData,
+  extractCancelledSourceEventId,
+  extractRuntimeDeliveryData,
   getActorRefreshMode,
   getRecipientActorIdsForEvent,
   hasRenderableChatMessageContent,
-  initializeAckStatus,
   initializeObligationStatus,
   initializeReadStatus,
   isActorActivityEvent,
-  isChatAckEvent,
   isChatMessageEvent,
-  isChatReadEvent,
+  isMailReadEvent,
+  isReplyRequestCancelledEvent,
+  isRuntimeDeliveryEvent,
   isContextSyncEvent,
   isPresentationClearEvent,
   isPresentationPublishEvent,
@@ -39,9 +40,9 @@ export type LedgerEventProcessorDeps = {
   onContextSync: () => void;
   appendEvent: GroupState["appendEvent"];
   updateReadStatus: GroupState["updateReadStatus"];
-  updateAckStatus: GroupState["updateAckStatus"];
-  updateReplyStatus: GroupState["updateReplyStatus"];
+  updateObligationStatus: GroupState["updateObligationStatus"];
   incrementActorUnread: GroupState["incrementActorUnread"];
+  incrementWebModelQueued: GroupState["incrementWebModelQueued"];
   updateActorActivity: GroupState["updateActorActivity"];
   updateGroupRuntimeState: GroupState["updateGroupRuntimeState"];
   promoteStreamingEventsByPrefix: GroupState["promoteStreamingEventsByPrefix"];
@@ -53,14 +54,6 @@ export type LedgerEventProcessorDeps = {
   markPresentationSlotAttention: ModalState["markPresentationSlotAttention"];
   clearPresentationSlotAttention: ModalState["clearPresentationSlotAttention"];
 };
-
-function getNotifyTargetActorId(event: LedgerEvent): string {
-  if (event.kind !== "system.notify" || !event.data || typeof event.data !== "object") return "";
-  const actorId = String(
-    (event.data as { target_actor_id?: unknown }).target_actor_id || "",
-  ).trim();
-  return actorId && actorId !== "user" ? actorId : "";
-}
 
 export function processLedgerEvent(
   groupId: string,
@@ -101,24 +94,35 @@ export function processLedgerEvent(
     }
     return;
   }
-  if (isChatReadEvent(event)) {
-    const data = extractChatReadData(event);
+  if (isMailReadEvent(event)) {
+    const data = extractMailReadData(event);
     if (data) deps.updateReadStatus(data.eventId, data.actorId, groupId);
     if (getActorRefreshMode(event) === "unread") {
       void deps.refreshActors(groupId, { includeUnread: true });
     }
     return;
   }
-  if (isChatAckEvent(event)) {
-    const data = extractChatAckData(event);
-    if (data) deps.updateAckStatus(data.eventId, data.actorId, groupId);
+  if (isRuntimeDeliveryEvent(event)) {
+    const data = extractRuntimeDeliveryData(event);
+    if (data) {
+      deps.updateObligationStatus(
+        data.eventId,
+        { actorId: data.actorId, deliveryState: data.state },
+        groupId,
+      );
+    }
     return;
   }
-
+  if (isReplyRequestCancelledEvent(event)) {
+    const sourceEventId = extractCancelledSourceEventId(event);
+    if (sourceEventId) {
+      deps.updateObligationStatus(sourceEventId, { cancelled: true }, groupId);
+    }
+    return;
+  }
   const reconciliation = reconcileCanonicalOutboxEvent(event, groupId);
   const nextEvent = reconciliation.event;
   initializeReadStatus(nextEvent, deps.actors);
-  initializeAckStatus(nextEvent, deps.actors);
   initializeObligationStatus(nextEvent, deps.actors);
   deps.appendEvent(nextEvent, groupId);
 
@@ -138,13 +142,14 @@ export function processLedgerEvent(
 
     const replyTo = String(data?.reply_to || "").trim();
     const replyBy = String(nextEvent.by || "").trim();
-    if (replyTo && replyBy) deps.updateReplyStatus(replyTo, replyBy, groupId);
+    if (replyTo && replyBy) {
+      deps.updateObligationStatus(replyTo, { actorId: replyBy, replied: true }, groupId);
+    }
     if (hasRenderableChatMessageContent(nextEvent) && replyBy && replyBy !== "user") {
       deps.clearEmptyStreamingEventsForActor(replyBy, groupId);
     }
     if (replyBy !== "user") {
-      const needsAttention =
-        String(data?.priority || "normal").trim() === "attention" || !!data?.reply_required;
+      const needsAttention = data?.message_mode === "request_reply";
       for (const ref of getPresentationMessageRefs(data?.refs)) {
         if (needsAttention || getPresentationRefStatus(ref, data, event) === "needs_user") {
           const slotId = String(ref.slot_id || "").trim();
@@ -152,15 +157,18 @@ export function processLedgerEvent(
         }
       }
     }
-    const recipients = getRecipientActorIdsForEvent(nextEvent, deps.actors);
-    if (recipients.length > 0) deps.incrementActorUnread(recipients);
+    if (data?.message_mode === "mail") {
+      const recipients = getRecipientActorIdsForEvent(nextEvent, deps.actors);
+      if (recipients.length > 0) deps.incrementActorUnread(recipients);
+    } else if (data?.message_mode === "send" || data?.message_mode === "request_reply") {
+      const recipients = getRecipientActorIdsForEvent(nextEvent, deps.actors);
+      if (recipients.length > 0) deps.incrementWebModelQueued(recipients);
+    }
   }
 
   if (shouldIncrementUnread(nextEvent, deps.activeTab === "chat", deps.chatAtBottom)) {
     deps.incrementChatUnread(groupId);
   }
-  const notifyActorId = getNotifyTargetActorId(nextEvent);
-  if (notifyActorId) deps.incrementActorUnread([notifyActorId]);
   const refreshMode = getActorRefreshMode(nextEvent);
   if (refreshMode === "unread") {
     void deps.refreshActors(groupId, { includeUnread: true });

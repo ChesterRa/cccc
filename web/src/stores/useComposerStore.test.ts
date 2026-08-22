@@ -78,8 +78,7 @@ describe("useComposerStore voice document drafts", () => {
           replyTarget: null,
           quotedPresentationRef: null,
           quotedVoiceDocumentRef: ref,
-          priority: "normal",
-          replyRequired: false,
+          messageMode: "send",
         },
       },
     });
@@ -114,8 +113,7 @@ describe("useComposerStore voice document drafts", () => {
           replyTarget: null,
           quotedPresentationRef: null,
           quotedVoiceDocumentRef: ref,
-          priority: "normal",
-          replyRequired: false,
+          messageMode: "send",
         },
       },
     });

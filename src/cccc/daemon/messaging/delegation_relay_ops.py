@@ -119,8 +119,7 @@ def handle_relay_user_delegation(
             "by": sender,
             "text": contact_text,
             "to": [target_actor_id],
-            "priority": "normal",
-            "reply_required": False,
+            "message_mode": "send",
         },
     )
     if not relay_resp.ok:

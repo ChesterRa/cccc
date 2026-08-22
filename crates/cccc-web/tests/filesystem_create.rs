@@ -77,3 +77,20 @@ async fn create_directory_rejects_nested_names() {
     assert_eq!(payload["error"]["code"], "INVALID_NAME");
     assert!(!temp.path().join("nested").exists());
 }
+
+#[tokio::test]
+async fn create_directory_rejects_implicit_process_cwd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let app = cccc_web::app(home);
+    for parent in ["", ".", "relative"] {
+        let (status, payload) = post(
+            app.clone(),
+            None,
+            json!({"parent": parent, "name": "must-not-be-created"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{parent:?}: {payload}");
+        assert_eq!(payload["error"]["code"], "INVALID_PARENT");
+    }
+}

@@ -5,9 +5,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from cccc.contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 
 
 class TestWebGroupBridgePairingRoutes(unittest.TestCase):
+    def test_group_bridge_websocket_rejects_message_contract_mismatch(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group_bridge.ws_auth import sign_session_hello
+
+            client = self._client()
+            with client.websocket_connect("/api/group-bridge/session/ws") as ws:
+                hello = sign_session_hello(
+                    {"target_group_id": "g_local", "src_group_id": "g_remote"}
+                )
+                hello["message_contract_version"] = 999
+                ws.send_json(hello)
+                rejected = ws.receive_json()
+            self.assertFalse(rejected["ok"])
+            self.assertEqual(rejected["error"]["code"], "contract_version_mismatch")
+        finally:
+            cleanup()
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()
@@ -87,7 +105,7 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "remote_peer_id": "peer_remote",
-                    "request": {"op": "remote_send", "payload": {"text": "hi"}},
+                    "request": {"op": "remote_send", "payload": {"message_mode": "send", "text": "hi"}},
                     "timeout": 1.0,
                 },
             )
@@ -123,6 +141,7 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
         self,
     ) -> None:
         from cccc.kernel.group import create_group
+        from cccc.kernel.actors import add_actor
         from cccc.kernel.group_bridge.credentials import (
             create_pairing_remote_send_credential,
         )
@@ -141,6 +160,7 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
             group = create_group(
                 load_registry(), title="receiver", topic=""
             )
+            add_actor(group, actor_id="peer1", title="Foreman")
             invite = create_pairing_invite(
                 group_id=group.group_id, ttl_seconds=600
             )
@@ -165,6 +185,9 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
                 client=("198.51.100.10", 50000),
             )
             payload = {
+                "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                "op": "remote_send",
+                "message_mode": "send",
                 "source_group_id": "g_rust_sender",
                 "src_group_id": "g_rust_sender",
                 "source_by": "rust-agent",
@@ -202,6 +225,97 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
             self.assertEqual(
                 events[0]["data"]["source_user_id"],
                 "peer_rust_sender",
+            )
+        finally:
+            cleanup()
+
+    def test_authenticated_reply_request_cancellation_reaches_the_remote_message_once(self) -> None:
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.group_bridge.credentials import create_pairing_remote_send_credential
+        from cccc.kernel.group_bridge.pairing import (
+            approve_pairing_request,
+            create_pairing_invite,
+            create_pairing_request,
+        )
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            from cccc.ports.web.app import create_app
+
+            group = create_group(load_registry(), title="receiver", topic="")
+            add_actor(group, actor_id="peer1", title="Foreman")
+            invite = create_pairing_invite(group_id=group.group_id, ttl_seconds=600)
+            pairing_request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_rust_sender",
+                requester_peer_id="peer_rust_sender",
+                requester_endpoint="http://rust.example:8848",
+            )
+            credential = create_pairing_remote_send_credential(
+                group_id=group.group_id,
+                remote_group_id="g_rust_sender",
+                remote_peer_id="peer_rust_sender",
+                request_id=pairing_request["request_id"],
+            )
+            approve_pairing_request(pairing_request["request_id"], approver_user_id="owner")
+            client = TestClient(create_app(), client=("198.51.100.10", 50000))
+            headers = {"Authorization": f"Bearer {credential['token']}"}
+            delivered = client.post(
+                "/api/group-bridge/session/send",
+                json={
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                    "op": "remote_send",
+                    "message_mode": "request_reply",
+                    "source_group_id": "g_rust_sender",
+                    "src_group_id": "g_rust_sender",
+                    "source_by": "rust-agent",
+                    "src_event_id": "rust-source-event",
+                    "idempotency_key": "rust-delivery-1",
+                    "text": "please answer",
+                    "to": ["peer1"],
+                },
+                headers=headers,
+            )
+            self.assertEqual(delivered.status_code, 200, delivered.text)
+            remote_source_event_id = delivered.json()["event_id"]
+            cancellation = {
+                "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                "op": "reply_request_cancel",
+                "source_group_id": "g_rust_sender",
+                "src_group_id": "g_rust_sender",
+                "idempotency_key": "rust-cancel-1",
+                "payload": {
+                    "source_group_id": "g_rust_sender",
+                    "source_message_event_id": "rust-source-event",
+                    "source_cancel_event_id": "rust-cancel-event",
+                    "remote_source_event_id": remote_source_event_id,
+                },
+            }
+            first = client.post(
+                "/api/group-bridge/session/send",
+                json=cancellation,
+                headers=headers,
+            )
+            second = client.post(
+                "/api/group-bridge/session/send",
+                json=cancellation,
+                headers=headers,
+            )
+
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(second.status_code, 200, second.text)
+            cancellations = [
+                event
+                for event in iter_events(group.ledger_path)
+                if event.get("kind") == "chat.reply_request.cancelled"
+            ]
+            self.assertEqual(len(cancellations), 1)
+            self.assertEqual(
+                (cancellations[0].get("data") or {}).get("source_event_id"),
+                remote_source_event_id,
             )
         finally:
             cleanup()
@@ -299,7 +413,8 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
             ensure_ledger_layout(group_dir)
             atomic_write_text(
                 group_dir / "group.yaml",
-                "v: 1\ngroup_id: g_local\ntitle: Local\nactive_scope_key: ''\nscopes: []\nactors: []\n",
+                "v: 1\ngroup_id: g_local\ntitle: Local\nactive_scope_key: ''\nscopes: []\n"
+                "actors:\n  - id: peer1\n    title: Foreman\n    enabled: true\n",
             )
             client = self._client()
             headers = self._admin_header()
@@ -352,10 +467,16 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
                     "type": "request",
                     "request_id": "req-1",
                     "op": "remote_send",
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "idempotency_key": "ws-message-1",
-                    "payload": {"text": "hello over ws", "to": ["@foreman"]},
+                    "payload": {
+                        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                        "message_mode": "send",
+                        "text": "hello over ws",
+                        "to": ["@foreman"],
+                    },
                 })
                 response = ws.receive_json()
 
@@ -400,6 +521,7 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
 
             with client.websocket_connect("/api/group-bridge/session/ws") as ws:
                 ws.send_json({
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "remote_peer_id": "peer_remote",

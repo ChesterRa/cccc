@@ -2492,10 +2492,12 @@ fn python_interop_share_persisted_control_plane_state() {
 
     let mut event = Event::new("chat.message", group_id);
     event.by = "user".into();
-    event.data = object(json!({"to":["peer"],"text":"interop"}));
+    event.data = object(json!({"to":["peer"],"text":"interop","message_mode":"mail"}));
     ledger::append(&groups.ledger_path(group_id).expect("ledger path"), &event)
         .expect("ledger event");
-    inbox::mark_read(&home, group_id, "peer", &event.id).expect("Rust cursor");
+    let group = groups.load(group_id).expect("group for Rust Mail read");
+    let consumed = inbox::consume_unread(&home, &group, "peer", "peer", 1).expect("Rust Mail read");
+    assert_eq!(consumed.messages[0].id, event.id);
     groups
         .mutate(group_id, |group| {
             group.automation = json!({
@@ -2623,7 +2625,9 @@ fn python_interop_share_persisted_control_plane_state() {
 import sys
 from cccc.kernel.active import load_active, set_active_group_id
 from cccc.kernel.group import load_group
-from cccc.kernel.inbox import get_cursor, set_cursor
+from cccc.kernel.inbox import get_cursor
+from cccc.kernel.ledger import append_event
+from cccc.daemon.messaging.inbox_read_ops import handle_inbox_read
 from cccc.kernel.settings import load_settings, save_settings
 from cccc.daemon.actors.actor_profile_store import (
     get_actor_profile,
@@ -2689,7 +2693,22 @@ assert group is not None
 event_id, ts = get_cursor(group, "peer")
 assert event_id
 assert ts
-set_cursor(group, "peer", event_id="python-cursor", ts="2999-01-01T00:00:00Z")
+python_mail = append_event(
+    group.ledger_path,
+    kind="chat.message",
+    group_id=group_id,
+    scope_key="",
+    by="user",
+    data={"to": ["peer"], "text": "python cursor", "message_mode": "mail"},
+)
+consumed = handle_inbox_read({
+    "group_id": group_id,
+    "actor_id": "peer",
+    "by": "peer",
+    "limit": 1,
+})
+assert consumed.ok, consumed.error
+assert consumed.result["messages"][0]["id"] == python_mail["id"]
 
 automation = load_automation_state(group)
 assert automation["rules"]["rust-rule"]["last_fired_at"]
@@ -2776,10 +2795,16 @@ enqueue_space_job(
             .expect("profile secrets")["PYTHON_SECRET"],
         "from-python"
     );
-    assert_eq!(
-        inbox::cursor(&home, group_id, "peer").expect("Rust cursor"),
-        Some("python-cursor".into())
-    );
+    let python_cursor = inbox::cursor(&home, group_id, "peer")
+        .expect("Rust cursor")
+        .expect("Python cursor event");
+    let cursor_event = ledger::read_all(&groups.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger")
+        .into_iter()
+        .find(|event| event.id == python_cursor)
+        .expect("Python cursor resolves to a ledger event");
+    assert_eq!(cursor_event.data["message_mode"], "mail");
+    assert_eq!(cursor_event.data["text"], "python cursor");
     assert!(
         cccc_core::automation::tick_group(&home, group_id, false)
             .expect("Rust reads Python automation")
@@ -3183,14 +3208,13 @@ fn python_interop_share_inbox_order_status_and_actor_generation() {
     );
     let groups = GroupStore::new(home.clone()).expect("groups");
     let ledger_path = groups.ledger_path(group_id).expect("ledger path");
-    let append = |timestamp: &str, text: &str, attention: bool| {
+    let append = |timestamp: &str, text: &str, request_reply: bool| {
         let mut event = Event::new("chat.message", group_id);
         event.ts = timestamp.into();
         event.by = "user".into();
         event.data = object(json!({
             "to":["peer"],"text":text,
-            "priority":if attention { "attention" } else { "normal" },
-            "reply_required":attention
+            "message_mode":if request_reply { "request_reply" } else { "mail" }
         }));
         ledger::append(&ledger_path, &event).expect("append message");
         event
@@ -3200,10 +3224,8 @@ fn python_interop_share_inbox_order_status_and_actor_generation() {
     let third = append("2000-01-01T00:00:00Z", "regressed timestamp", false);
     call(
         &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,"actor_id":"peer","event_id":first.id,"by":"peer"
-        }),
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer","by":"peer","limit":1}),
     );
 
     let output = python(&repo, temp.path())
@@ -3215,36 +3237,38 @@ from cccc.daemon.server import handle_request
 from cccc.kernel.group import load_group
 from cccc.kernel.inbox import find_event, get_read_status_batch
 
-group_id, first_id, second_id, third_id, second_ts = sys.argv[1:]
+group_id, first_id, second_id, third_id, third_ts = sys.argv[1:]
 
 def call(op, args):
     response, _ = handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
     assert response.ok, (op, response)
     return response.result
 
-inbox = call("inbox_list", {
+inbox = call("inbox_peek", {
     "group_id": group_id, "actor_id": "peer", "by": "peer", "limit": 10,
 })
-assert [event["id"] for event in inbox["messages"]] == [second_id, third_id]
+assert [event["id"] for event in inbox["messages"]] == [third_id]
 group = load_group(group_id)
 assert group is not None
 events = [find_event(group, event_id) for event_id in (first_id, second_id, third_id)]
 assert all(event is not None for event in events)
 statuses = get_read_status_batch(group, events)
 assert statuses[first_id]["peer"] is True
-assert statuses[second_id]["peer"] is False
-marked = call("inbox_mark_read", {
-    "group_id": group_id, "actor_id": "peer", "event_id": second_id, "by": "peer",
+assert second_id not in statuses
+assert statuses[third_id]["peer"] is False
+marked = call("inbox_read", {
+    "group_id": group_id, "actor_id": "peer", "by": "peer", "limit": 1,
 })
-assert marked["cursor"]["event_id"] == second_id
-assert marked["cursor"]["ts"] == second_ts
+assert [event["id"] for event in marked["messages"]] == [third_id]
+assert marked["cursor"]["event_id"] == third_id
+assert marked["cursor"]["ts"] == third_ts
 "#,
         )
         .arg(group_id)
         .arg(&first.id)
         .arg(&second.id)
         .arg(&third.id)
-        .arg(&second.ts)
+        .arg(&third.ts)
         .output()
         .expect("Python advances Rust cursor");
     assert!(
@@ -3255,7 +3279,7 @@ assert marked["cursor"]["ts"] == second_ts
 
     let inbox = call(
         &home,
-        "inbox_list",
+        "inbox_peek",
         json!({"group_id":group_id,"actor_id":"peer","by":"peer","limit":10}),
     );
     assert_eq!(
@@ -3265,29 +3289,23 @@ assert marked["cursor"]["ts"] == second_ts
             .iter()
             .map(|event| event["id"].as_str().expect("event id"))
             .collect::<Vec<_>>(),
-        vec![third.id.as_str()]
+        Vec::<&str>::new()
     );
     let statuses = call(
         &home,
         "ledger_statuses",
         json!({"group_id":group_id,"event_ids":[second.id]}),
     );
-    assert_eq!(
-        statuses["statuses"][&second.id]["read_status"]["peer"],
-        true
+    assert!(
+        statuses["statuses"][&second.id]
+            .get("read_status")
+            .is_none()
     );
     assert_eq!(
-        statuses["statuses"][&second.id]["obligation_status"]["peer"]["acked"],
+        statuses["statuses"][&second.id]["obligation_status"]["peer"]["reply_requested"],
         true
     );
-    call(
-        &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,"actor_id":"peer","event_id":third.id,"by":"peer"
-        }),
-    );
-
+    assert!(statuses["statuses"][&second.id].get("ack_status").is_none());
     let output = python(&repo, temp.path())
         .arg(
             r#"
@@ -3304,7 +3322,7 @@ def call(op, args):
     assert response.ok, (op, response)
     return response.result
 
-inbox = call("inbox_list", {
+inbox = call("inbox_peek", {
     "group_id": group_id, "actor_id": "peer", "by": "peer", "limit": 10,
 })
 assert inbox["messages"] == []
@@ -3319,7 +3337,7 @@ call("actor_add", {
     "group_id": group_id, "actor_id": "peer", "runtime": "custom", "runner": "pty",
     "command": ["sh", "-c", "exit 0"], "by": "user",
 })
-inbox = call("inbox_list", {
+inbox = call("inbox_peek", {
     "group_id": group_id, "actor_id": "peer", "by": "peer", "limit": 10,
 })
 assert inbox["messages"] == []
@@ -3337,7 +3355,7 @@ assert inbox["messages"] == []
 
     let inbox = call(
         &home,
-        "inbox_list",
+        "inbox_peek",
         json!({"group_id":group_id,"actor_id":"peer","by":"peer","limit":10}),
     );
     assert!(inbox["messages"].as_array().expect("messages").is_empty());

@@ -35,20 +35,8 @@ pub(super) fn normalize_chat_preflight(
     data: &mut Map<String, Value>,
     allow_sender_only_audience: bool,
 ) -> Result<(), OpError> {
-    let priority = match data.get("priority") {
-        None | Some(Value::Null) => "normal".into(),
-        Some(Value::String(value)) if value.trim().is_empty() => "normal".into(),
-        Some(Value::String(value)) => value.trim().to_owned(),
-        Some(_) => String::new(),
-    };
-    if !matches!(priority.as_str(), "normal" | "attention") {
-        return Err(OpError::new(
-            "invalid_priority",
-            "priority must be 'normal' or 'attention'",
-        ));
-    }
-    data.insert("priority".into(), Value::String(priority));
-
+    let message_mode = normalize_chat_contract_fields(data)?;
+    validate_destination_audience(data)?;
     let raw = data
         .get("to")
         .and_then(Value::as_array)
@@ -63,7 +51,19 @@ pub(super) fn normalize_chat_preflight(
     let mut recipients = actors::resolve_recipients(group, &raw)
         .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?;
     if recipients.is_empty() && raw.is_empty() {
-        recipients.push(default_local_recipient(group, by).into());
+        recipients.push(default_recipient(group).into());
+    }
+    validate_message_audience(&recipients, &message_mode)?;
+    if message_mode == "request_reply"
+        && (raw.is_empty()
+            || raw
+                .iter()
+                .any(|recipient| matches!(recipient.trim(), "@all" | "@peers" | "@foreman")))
+    {
+        return Err(OpError::new(
+            "concrete_recipients_required",
+            "request_reply requires one or more explicit concrete recipients",
+        ));
     }
     if !allow_sender_only_audience {
         reject_sender_only_audience(group, by, &recipients)?;
@@ -72,9 +72,71 @@ pub(super) fn normalize_chat_preflight(
     normalize_peer_insight(group, by, data)?;
     data.entry("format")
         .or_insert_with(|| Value::String("plain".into()));
-    data.entry("reply_required").or_insert(Value::Bool(false));
     super::message_metadata::add_sender_snapshot(group, by, data);
     Ok(())
+}
+
+fn validate_destination_audience(data: &Map<String, Value>) -> Result<(), OpError> {
+    let has_destination = data
+        .get("dst_group_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if !has_destination {
+        return Ok(());
+    }
+    let Some(message_mode) = data
+        .get("dst_message_mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    if !matches!(message_mode, "send" | "request_reply" | "mail") {
+        return Err(OpError::new(
+            "invalid_message_mode",
+            "dst_message_mode must be send, request_reply, or mail",
+        ));
+    }
+    let recipients = data
+        .get("dst_to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    validate_message_audience(&recipients, message_mode)
+}
+
+pub(super) fn normalize_chat_contract_fields(
+    data: &mut Map<String, Value>,
+) -> Result<String, OpError> {
+    if ["priority", "reply_required", "requires_ack"]
+        .iter()
+        .any(|key| data.contains_key(*key))
+    {
+        return Err(OpError::new(
+            "unsupported_message_field",
+            "chat messages use message_mode; priority, reply_required, and requires_ack are not supported",
+        ));
+    }
+    let message_mode = data
+        .get("message_mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "send" | "request_reply" | "mail"))
+        .ok_or_else(|| {
+            OpError::new(
+                "invalid_message_mode",
+                "message_mode is required and must be send, request_reply, or mail",
+            )
+        })?
+        .to_owned();
+    data.insert("message_mode".into(), Value::String(message_mode.clone()));
+    Ok(message_mode)
 }
 
 pub(super) fn apply_cross_group_recipient(
@@ -122,14 +184,6 @@ pub(super) fn apply_cross_group_recipient(
     Ok(())
 }
 
-fn default_local_recipient(group: &GroupDoc, by: &str) -> &'static str {
-    if actors::visible(group).any(|actor| actor.id == by) {
-        "user"
-    } else {
-        default_recipient(group)
-    }
-}
-
 fn reject_sender_only_audience(
     group: &GroupDoc,
     by: &str,
@@ -164,6 +218,18 @@ fn reject_sender_only_audience(
 }
 
 pub(super) fn normalize_remote_chat_data(data: &mut Map<String, Value>) -> Result<(), OpError> {
+    let message_mode = normalize_chat_contract_fields(data)?;
+    let recipients = data
+        .get("to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    validate_message_audience(&recipients, &message_mode)?;
     let required = data
         .remove("require_peer_insight")
         .and_then(|value| value.as_bool())
@@ -177,6 +243,35 @@ pub(super) fn normalize_remote_chat_data(data: &mut Map<String, Value>) -> Resul
         .filter_map(Value::as_str)
         .any(|recipient| !matches!(recipient.trim(), "" | "user" | "@user"));
     require_peer_insight(required, peer_facing, data)
+}
+
+pub(crate) fn validate_message_audience(
+    recipients: &[String],
+    message_mode: &str,
+) -> Result<(), OpError> {
+    let has_user = recipients
+        .iter()
+        .any(|recipient| matches!(recipient.trim(), "user" | "@user"));
+    let has_agent = recipients
+        .iter()
+        .any(|recipient| !matches!(recipient.trim(), "" | "user" | "@user"));
+    if has_user && has_agent {
+        let mut error = OpError::new(
+            "mixed_recipient_kinds",
+            "one message cannot address user and agents together; send separate messages",
+        );
+        error.details.insert("to".into(), json!(recipients));
+        return Err(error);
+    }
+    if has_user && message_mode == "mail" {
+        let mut error = OpError::new(
+            "mail_requires_actor_recipient",
+            "Mail is only available for agent Inbox recipients; use Send or Send + Reply for user",
+        );
+        error.details.insert("to".into(), json!(recipients));
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn normalize_peer_insight(

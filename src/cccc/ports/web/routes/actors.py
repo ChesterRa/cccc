@@ -336,8 +336,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not gid:
             return await fetcher()
 
-        ttl_s = _READONLY_ACTOR_TTL_S if ctx.read_only else 0.0
         suffix = str(cache_suffix or "readonly").strip() or "readonly"
+        ttl_s = _READONLY_ACTOR_TTL_S if ctx.read_only else 0.0
+        # Mail can be consumed through Web, MCP, CLI, or another engine. Keep
+        # coalescing truly concurrent reads, but never hand an unread-bearing
+        # result to a later private-UI request after the original read finished.
+        allow_handoff = suffix not in {"unread", "unread_internal"}
         cache_key = f"actors:{gid}:{suffix}"
         now = time.monotonic()
         inflight_entry: Optional[Dict[str, Any]] = None
@@ -348,7 +352,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             hit = _READONLY_ACTOR_CACHE.get(cache_key)
             if ttl_s > 0 and hit is not None and hit[0] > now:
                 return hit[1]
-            if ttl_s <= 0 and hit is not None and cache_key in _READONLY_ACTOR_HANDOFF_ONCE:
+            if (
+                ttl_s <= 0
+                and allow_handoff
+                and hit is not None
+                and cache_key in _READONLY_ACTOR_HANDOFF_ONCE
+            ):
                 _READONLY_ACTOR_HANDOFF_ONCE.discard(cache_key)
                 _READONLY_ACTOR_CACHE.pop(cache_key, None)
                 return hit[1]
@@ -378,7 +387,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 if current_generation == fetch_generation and _READONLY_ACTOR_INFLIGHT.get(cache_key) is inflight_entry:
                     if ttl_s > 0:
                         _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic() + ttl_s, val)
-                    elif int(inflight_entry.get("waiters", 1)) <= 1:
+                    elif allow_handoff and int(inflight_entry.get("waiters", 1)) <= 1:
                         _READONLY_ACTOR_CACHE[cache_key] = (time.monotonic(), val)
                         _READONLY_ACTOR_HANDOFF_ONCE.add(cache_key)
                 if inflight_entry is not None:

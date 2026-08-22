@@ -9,7 +9,7 @@ use std::time::Duration;
 static DAEMON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn directed_message_auto_wakes_a_stopped_actor() {
+async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("auto-wake-test", true).await;
 
@@ -25,12 +25,41 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     let sent = call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake up"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake up","message_mode":"send"}),
     )
     .await;
-    assert_eq!(sent.result["delivery"]["state"], "queued");
-    assert_eq!(sent.result["delivery"]["online"], 0);
-    assert_eq!(sent.result["delivery"]["queued"], 1);
+    assert_eq!(sent.result["message_mode"], "send");
+    assert!(sent.result.get("delivery").is_none());
+
+    let actors = call(
+        &client,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await;
+    assert_eq!(actors.result["actors"][0]["enabled"], false);
+    assert_eq!(actors.result["actors"][0]["running"], false);
+    let inbox = call(
+        &client,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+    )
+    .await;
+    assert_eq!(inbox.result["messages"], json!([]));
+    let history = call(
+        &client,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","mode":"send"}),
+    )
+    .await;
+    assert_eq!(history.result["messages"][0]["data"]["text"], "wake up");
+
+    call(
+        &client,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
 
     wait_for_terminal(&client, &group_id, "MESSAGE:[cccc] user → peer1: wake up").await;
     let actors = call(
@@ -41,19 +70,6 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     .await;
     assert_eq!(actors.result["actors"][0]["enabled"], true);
     assert_eq!(actors.result["actors"][0]["running"], true);
-    wait_until_async(|| async {
-        let inbox = call(
-            &client,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .await;
-        inbox.result["messages"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    })
-    .await;
-
     call(
         &client,
         "group_set_state",
@@ -63,7 +79,7 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-C"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-C","message_mode":"send"}),
     )
     .await;
     call(
@@ -73,15 +89,15 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     )
     .await;
 
-    let output = wait_for_terminal(&client, &group_id, "Unread collaboration messages").await;
-    assert!(!output.contains("message-C"));
+    let output = wait_for_terminal(&client, &group_id, "message-C").await;
+    assert!(output.contains("message-C"));
     let inbox = call(
         &client,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     )
     .await;
-    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-C");
+    assert_eq!(inbox.result["messages"], json!([]));
 
     shutdown(&client, daemon).await;
     drop(temp);
@@ -101,10 +117,10 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
     let sent = call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"stay stopped"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"stay stopped","message_mode":"send"}),
     )
     .await;
-    assert_eq!(sent.result["delivery"]["queued"], 0);
+    assert_eq!(sent.result["message_mode"], "send");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!cccc_runtime::status(&group_id, "peer1").is_ok_and(|status| status.running));
     let group = call(
@@ -120,16 +136,22 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
 }
 
 #[tokio::test]
-async fn failed_session_recovery_summarizes_ordered_unread_work() {
+async fn resume_delivers_paused_messages_in_order_without_creating_mail() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
-    let (temp, daemon, client, group_id) = setup("failed-session-recovery", false).await;
+    let (temp, daemon, client, group_id) = setup("paused-session-recovery", false).await;
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"paused","by":"user"}),
+    )
+    .await;
     call(
         &client,
         "actor_update",
         json!({
             "group_id":group_id,
             "actor_id":"peer1",
-            "patch":{"command":["sh","-c","exit 0"]},
+            "patch":{"command":["sh","-c","stty -echo; while IFS= read -r line; do printf 'RECOVERED:%s\\n' \"$line\"; done"]},
             "by":"user"
         }),
     )
@@ -143,43 +165,13 @@ async fn failed_session_recovery_summarizes_ordered_unread_work() {
     call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A"}),
-    )
-    .await;
-    tokio::time::sleep(Duration::from_secs(8)).await;
-
-    let failed_inbox = call(
-        &client,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    )
-    .await;
-    assert_eq!(
-        failed_inbox.result["messages"][0]["data"]["text"],
-        "message-A"
-    );
-
-    call(
-        &client,
-        "group_set_state",
-        json!({"group_id":group_id,"state":"paused","by":"user"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A","message_mode":"send"}),
     )
     .await;
     call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-B"}),
-    )
-    .await;
-    call(
-        &client,
-        "actor_update",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'RECOVERED:%s' \"$message\"; sleep 2"]},
-            "by":"user"
-        }),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-B","message_mode":"send"}),
     )
     .await;
     call(
@@ -189,50 +181,57 @@ async fn failed_session_recovery_summarizes_ordered_unread_work() {
     )
     .await;
 
-    let output = wait_for_terminal(&client, &group_id, "2 unread collaboration messages").await;
-    assert!(!output.contains("message-A"));
-    assert!(!output.contains("message-B"));
+    let output = wait_for_terminal(&client, &group_id, "message-B").await;
+    assert!(output.contains("message-A"));
+    assert!(output.contains("message-B"));
     let inbox = call(
         &client,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     )
     .await;
-    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-A");
-    assert_eq!(inbox.result["messages"][1]["data"]["text"], "message-B");
+    assert_eq!(inbox.result["messages"], json!([]));
+    let history = call(
+        &client,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","mode":"send"}),
+    )
+    .await;
+    assert_eq!(history.result["messages"][0]["data"]["text"], "message-B");
+    assert_eq!(history.result["messages"][1]["data"]["text"], "message-A");
 
     shutdown(&client, daemon).await;
     drop(temp);
 }
 
 #[tokio::test]
-async fn actor_start_summarizes_unread_after_a_failed_session_without_new_work() {
+async fn actor_start_delivers_work_that_arrived_while_the_actor_was_paused() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
-    let (temp, daemon, client, group_id) = setup("failed-session-start-recovery", false).await;
+    let (temp, daemon, client, group_id) = setup("actor-start-recovery", false).await;
     call(
         &client,
-        "actor_update",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "patch":{"command":["sh","-c","exit 0"]},
-            "by":"user"
-        }),
+        "group_set_state",
+        json!({"group_id":group_id,"state":"paused","by":"user"}),
     )
     .await;
     call(
         &client,
-        "actor_restart",
+        "actor_stop",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     )
     .await;
     call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A","message_mode":"send"}),
     )
     .await;
-    tokio::time::sleep(Duration::from_secs(8)).await;
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"active","by":"user"}),
+    )
+    .await;
 
     call(
         &client,
@@ -240,7 +239,7 @@ async fn actor_start_summarizes_unread_after_a_failed_session_without_new_work()
         json!({
             "group_id":group_id,
             "actor_id":"peer1",
-            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'RECOVERED:%s' \"$message\"; sleep 2"]},
+            "patch":{"command":["sh","-c","stty -echo; while IFS= read -r line; do printf 'RECOVERED:%s\\n' \"$line\"; done"]},
             "by":"user"
         }),
     )
@@ -252,15 +251,15 @@ async fn actor_start_summarizes_unread_after_a_failed_session_without_new_work()
     )
     .await;
 
-    let output = wait_for_terminal(&client, &group_id, "Unread collaboration messages").await;
-    assert!(!output.contains("message-A"));
+    let output = wait_for_terminal(&client, &group_id, "message-A").await;
+    assert!(output.contains("message-A"));
     let inbox = call(
         &client,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     )
     .await;
-    assert_eq!(inbox.result["messages"][0]["data"]["text"], "message-A");
+    assert_eq!(inbox.result["messages"], json!([]));
 
     shutdown(&client, daemon).await;
     drop(temp);
@@ -391,20 +390,5 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
             "condition timed out"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-async fn wait_until_async<F, Fut>(mut condition: F)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(7);
-    while !condition().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "condition timed out"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

@@ -23,10 +23,17 @@ pub fn routes() -> Router<AppState> {
             post(slash_skill_dispatch),
         )
         .route("/api/v1/groups/{group_id}/reply", post(reply))
-        .route("/api/v1/groups/{group_id}/events/{event_id}/ack", post(ack))
+        .route(
+            "/api/v1/groups/{group_id}/messages/{source_event_id}/deliver",
+            post(message_deliver),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/messages/{source_event_id}/reply-request/cancel",
+            post(reply_request_cancel),
+        )
         .route(
             "/api/v1/groups/{group_id}/inbox/{actor_id}",
-            get(inbox_list),
+            get(inbox_peek),
         )
         .route(
             "/api/v1/groups/{group_id}/inbox/{actor_id}/read",
@@ -86,33 +93,46 @@ async fn reply(
 ) -> ApiResult {
     daemon_body(&state, "reply", group_id, body).await
 }
-async fn ack(
+async fn message_deliver(
     State(state): State<AppState>,
-    Path((group_id, event_id)): Path<(String, String)>,
+    Path((group_id, source_event_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let _ = body_object(body)?;
-    let actor_id = "user";
-    call(
-        &state,
-        "chat_ack",
-        object(json!({"group_id":group_id,"event_id":event_id,"actor_id":actor_id,"by":actor_id})),
-    )
-    .await
+    let mut args = body_object(body)?;
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("source_event_id".into(), Value::String(source_event_id));
+    args.insert("by".into(), Value::String("user".into()));
+    call(&state, "message_deliver", args).await
 }
-async fn inbox_list(
+async fn reply_request_cancel(
+    State(state): State<AppState>,
+    Path((group_id, source_event_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    if !args.is_empty() {
+        return Err(ApiError::bad(
+            "reply-request cancellation body must be empty",
+        ));
+    }
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("source_event_id".into(), Value::String(source_event_id));
+    args.insert("by".into(), Value::String("user".into()));
+    call(&state, "reply_request_cancel", args).await
+}
+async fn inbox_peek(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
     Query(query): Query<InboxQuery>,
 ) -> ApiResult {
     call(
         &state,
-        "inbox_list",
+        "inbox_peek",
         object(json!({
             "group_id":group_id,
             "actor_id":actor_id,
             "by":"user",
-            "limit":query.limit.unwrap_or(50).clamp(1, 1000),
+            "limit":query.limit.unwrap_or(50),
         })),
     )
     .await
@@ -130,7 +150,8 @@ async fn inbox_read(
     let mut args = body_object(body)?;
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("actor_id".into(), Value::String(actor_id));
-    call(&state, "inbox_mark_read", args).await
+    args.insert("by".into(), Value::String("user".into()));
+    call(&state, "inbox_read", args).await
 }
 
 async fn send_upload(
@@ -194,13 +215,52 @@ async fn upload(
             insert_upload_field(&mut args, name, value)?;
         }
     }
+    if is_reply {
+        let message_mode = args
+            .get("message_mode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("send")
+            .to_owned();
+        if !matches!(message_mode.as_str(), "send" | "mail") {
+            return Err(ApiError::bad_code(
+                "invalid_message_mode",
+                "reply message_mode must be send or mail",
+                json!({}),
+            ));
+        }
+        args.insert("message_mode".into(), Value::String(message_mode));
+    }
+    args.insert("group_id".into(), Value::String(group_id.into()));
+    let mut preflight_args = args.clone();
+    preflight_args.insert(
+        "operation".into(),
+        Value::String(if is_reply { "reply" } else { "send" }.into()),
+    );
+    preflight_args.insert(
+        "has_attachments".into(),
+        Value::Bool(!staged_uploads.is_empty()),
+    );
+    let Json(preflight_response) = call(state, "message_upload_preflight", preflight_args).await?;
+    let preflight = preflight_response
+        .get("result")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if preflight.get("duplicate").and_then(Value::as_bool) == Some(true) {
+        let result = preflight
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        return Ok(Json(json!({"ok":true,"result":result})));
+    }
     for (upload, filename, content_type) in staged_uploads {
         let blob = upload
             .finish()
             .map_err(|error| ApiError::bad(error.to_string()))?;
         attachments.push(json!({"kind":"file","path":blob.path,"title":filename,"mime_type":content_type,"bytes":blob.bytes,"sha256":blob.sha256}));
     }
-    args.insert("group_id".into(), Value::String(group_id.into()));
     args.insert("attachments".into(), Value::Array(attachments));
     call(state, if is_reply { "reply" } else { "send" }, args).await
 }
@@ -212,10 +272,24 @@ pub(super) fn insert_upload_field(
 ) -> Result<(), ApiError> {
     match name.as_str() {
         "to_json" => {
-            args.insert(
-                "to".into(),
-                serde_json::from_str(&value).unwrap_or_else(|_| json!([])),
-            );
+            let recipients = serde_json::from_str::<Value>(&value).map_err(|error| {
+                ApiError::bad_code("invalid_recipient", error.to_string(), json!({}))
+            })?;
+            let recipients = recipients.as_array().ok_or_else(|| {
+                ApiError::bad_code(
+                    "invalid_recipient",
+                    "to_json must be a JSON array",
+                    json!({}),
+                )
+            })?;
+            if recipients.iter().any(|item| !item.is_string()) {
+                return Err(ApiError::bad_code(
+                    "invalid_recipient",
+                    "to_json entries must be strings",
+                    json!({}),
+                ));
+            }
+            args.insert("to".into(), Value::Array(recipients.clone()));
         }
         "refs_json" => {
             let refs = serde_json::from_str::<Value>(&value).map_err(|error| {
@@ -232,12 +306,6 @@ pub(super) fn insert_upload_field(
                         .cloned()
                         .collect(),
                 ),
-            );
-        }
-        "reply_required" => {
-            args.insert(
-                name,
-                Value::Bool(matches!(value.as_str(), "true" | "1" | "yes")),
             );
         }
         _ => {

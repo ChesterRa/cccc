@@ -3,6 +3,7 @@ import type { OutboxEntry } from "../../stores/chatOutboxStore";
 import type { GroupChatBucket } from "../../stores/groupStoreCore";
 import { getChatSession } from "../../stores/useUIStore";
 import type { Actor, ChatMessageData, GroupDoc, LedgerEvent } from "../../types";
+import { projectMessageMode } from "../../utils/crossGroupRecipients";
 import { isFormalChatMessageEvent } from "../../utils/chatSend";
 import { hasRenderableChatMessageContent } from "../../utils/ledgerEventHandlers";
 import {
@@ -90,13 +91,15 @@ export function useChatMessageView(input: {
       mergeVisibleChatMessages(canonical, [], pending, orderState),
       new Map(),
     );
-    if (input.chatFilter === "attention") {
+    if (input.chatFilter === "mail") {
       return ordered.filter(
-        (event) => String((event.data as ChatMessageData)?.priority || "normal") === "attention",
+        (event) => projectMessageMode(event.data as ChatMessageData) === "mail",
       );
     }
-    if (input.chatFilter === "task") {
-      return ordered.filter((event) => !!(event.data as ChatMessageData)?.reply_required);
+    if (input.chatFilter === "request_reply") {
+      return ordered.filter(
+        (event) => projectMessageMode(event.data as ChatMessageData) === "request_reply",
+      );
     }
     if (input.chatFilter === "user") {
       return ordered.filter((event) => {

@@ -427,7 +427,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
-                "op": "inbox_list",
+                "op": "inbox_peek",
                 "args": {
                     "group_id": group_id,
                     "actor_id": actor_id,
@@ -438,16 +438,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.post("/inbox/{actor_id}/read")
-    async def inbox_mark_read(
+    async def inbox_read(
         group_id: str, actor_id: str, req: InboxReadRequest
     ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
-                "op": "inbox_mark_read",
+                "op": "inbox_read",
                 "args": {
                     "group_id": group_id,
                     "actor_id": actor_id,
-                    "event_id": req.event_id,
+                    "limit": req.limit,
                     "by": req.by,
                 },
             }

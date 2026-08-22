@@ -52,6 +52,7 @@ class TestChatReplyIdempotency(unittest.TestCase):
             original, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -109,6 +110,7 @@ class TestChatReplyIdempotency(unittest.TestCase):
             original, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -164,6 +166,7 @@ class TestChatReplyIdempotency(unittest.TestCase):
             original, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -188,7 +191,7 @@ class TestChatReplyIdempotency(unittest.TestCase):
             self.assertTrue(first.ok, getattr(first, "error", None))
 
             with mock.patch(
-                "cccc.daemon.messaging.chat_ops.find_event_with_chat_ack",
+                "cccc.daemon.messaging.chat_ops.find_event",
                 side_effect=AssertionError("full-id replay should use raw idempotency lookup first"),
             ):
                 second, _ = self._call("reply", dict(payload))
@@ -212,6 +215,7 @@ class TestChatReplyIdempotency(unittest.TestCase):
             original, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],

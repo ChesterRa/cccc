@@ -17,7 +17,7 @@ import {
 import { formatFullTime, formatMessageTimestamp } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
-import { projectCrossGroupRecipients } from "../utils/crossGroupRecipients";
+import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { isGroupBridgeInboundMessage } from "../utils/groupBridgeMessages";
 import { getPresentationMessageRefs } from "../utils/presentationRefs";
 import { getVoiceDocumentMessageRefs } from "../utils/voiceDocumentRefs";
@@ -37,7 +37,6 @@ import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 import {
   buildToLabel,
   buildVisibleReadStatusEntries,
-  computeAckSummary,
   computeObligationSummary,
   getSenderDisplayName,
 } from "./messageBubble/model";
@@ -422,8 +421,9 @@ export const MessageBubble = memo(
       typeof msgData?.sender_avatar_path === "string"
         ? String(msgData.sender_avatar_path || "").trim()
         : "";
-    const isAttention = String(msgData?.priority || "normal") === "attention";
-    const replyRequired = !!msgData?.reply_required;
+    const displayedMessageMode = projectMessageMode(msgData);
+    const replyRequested = displayedMessageMode === "request_reply";
+    const isMail = displayedMessageMode === "mail";
     const srcGroupId =
       typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
     const srcEventId =
@@ -543,7 +543,6 @@ export const MessageBubble = memo(
     const blobGroupId = String(ev.group_id || "").trim() || groupId;
 
     const readStatus = ev._read_status;
-    const ackStatus = ev._ack_status;
     const recipients = msgData?.to;
 
     const visibleReadStatusEntries = useMemo(() => {
@@ -564,22 +563,8 @@ export const MessageBubble = memo(
         const ids = Object.keys(os);
         return ids.length === 1 && ids[0] === "user";
       }
-      if (ackStatus && typeof ackStatus === "object") {
-        const ids = Object.keys(ackStatus);
-        return ids.length === 1 && ids[0] === "user";
-      }
       return isDirectUserMessage;
-    }, [ackStatus, ev._obligation_status, isDirectUserMessage, isUserMessage]);
-
-    const ackSummary = useMemo(() => {
-      return computeAckSummary({
-        hideDirectUserObligationSummary,
-        isAttention,
-        replyRequired,
-        ackStatus,
-        isUserMessage,
-      });
-    }, [ackStatus, hideDirectUserObligationSummary, isAttention, isUserMessage, replyRequired]);
+    }, [ev._obligation_status, isDirectUserMessage, isUserMessage]);
 
     const obligationSummary = useMemo(() => {
       return computeObligationSummary({
@@ -787,24 +772,24 @@ export const MessageBubble = memo(
               "relative max-w-full min-w-0 md:w-auto",
               isUserMessage ? "w-auto self-end" : "w-full",
             )}
-            style={isAttention ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
+            style={replyRequested ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
           >
-            {isAttention && (
+            {replyRequested && (
               <span
                 className={classNames(
                   "absolute -top-2 z-10 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
                   isUserMessage ? "left-3" : "right-3",
-                  "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border-amber-300 dark:border-amber-700",
+                  "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-200 border-violet-200 dark:border-violet-800",
                 )}
               >
-                {t("important")}
+                {t("needReply")}
               </span>
             )}
             <MessageBubbleSurface
               isUserMessage={isUserMessage}
               isStreaming={isStreaming}
               motionClass={bubbleMotionClass}
-              isAttention={isAttention}
+              replyRequested={replyRequested}
               isHighlighted={Boolean(isHighlighted)}
             >
               <MessageBubbleBody
@@ -847,14 +832,14 @@ export const MessageBubble = memo(
           <MessageFooter
             readOnly={readOnly}
             obligationSummary={obligationSummary}
-            ackSummary={ackSummary}
             visibleReadStatusEntries={visibleReadStatusEntries}
             webModelDeliveryStatus={webModelDeliveryStatus}
             readPreviewEntries={readPreviewEntries}
             readPreviewOverflow={readPreviewOverflow}
             displayNameMap={displayNameMap}
             isDark={isDark}
-            replyRequired={replyRequired}
+            isMail={isMail}
+            replyRequested={replyRequested}
             copiedMessageText={copiedMessageText}
             copyableMessageText={copyableMessageText}
             onCopyMessageText={() => void handleCopyMessageText()}

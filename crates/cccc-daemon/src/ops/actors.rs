@@ -2,7 +2,7 @@ use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
-use cccc_core::{GroupDoc, GroupStore, HomeLayout, group_scope, inbox, web_model_connectors};
+use cccc_core::{GroupDoc, GroupStore, HomeLayout, group_scope, web_model_connectors};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -123,14 +123,6 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
     };
-    if let Err(error) = inbox::advance(home, &group_id, &added.id, &event.id) {
-        tracing::warn!(
-            %error,
-            group_id = %group_id,
-            actor_id = %added.id,
-            "failed to initialize actor inbox cursor"
-        );
-    }
     object(json!({"actor": added, "event": event}))
 }
 
@@ -662,7 +654,7 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
     if enabled {
         match GroupStore::new(home.clone()).and_then(|store| store.load(&group_id)) {
             Ok(current_group) => {
-                actor_delivery::dispatch_unread_notice(home, &current_group, &actor_id);
+                actor_delivery::dispatch_unread(home, &current_group, &actor_id);
             }
             Err(error) => tracing::warn!(
                 %error,
@@ -751,7 +743,7 @@ fn rollback_actor_lifecycle(
         failures.push(format!("restore previous runtime: {}", error.message));
     }
     if original_actor.enabled && original_group.running {
-        actor_delivery::dispatch_unread_notice(home, original_group, &original_actor.id);
+        actor_delivery::dispatch_unread(home, original_group, &original_actor.id);
     }
     if failures.is_empty() {
         original

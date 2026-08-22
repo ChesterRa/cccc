@@ -45,21 +45,35 @@
     "deleteTitle": "永久删除此工作组"
   },
   "inbox": {
-    "title": "收件箱 · {{actorId}}",
-    "unreadMessages": "{{count}} 条未读消息",
-    "markAllRead": "全部标为已读",
-    "noUnread": "没有未读消息"
+    "title": "Mail · {{actorId}}",
+    "unreadMessages": "{{count}} 条未读 Mail",
+    "markAllRead": "将当前 Mail 标为已读",
+    "noUnread": "没有未读 Mail"
   },
   "recipients": {
     "replyStatus": "回复状态",
-    "acknowledgements": "确认状态",
+    "deliveryStatus": "投递状态",
     "recipients": "收件人",
     "toLabel": "发送给 {{label}}",
     "recipientStatusAria": "收件人状态",
     "noTracking": "此消息没有收件人追踪信息。",
     "legendReply": "图例：○ 待回复 · ↩ 已回复",
-    "legendAck": "图例：○ 待确认 · ✓ 已确认",
-    "legendRead": "图例：✓ 待读 · ✓✓ 已读"
+    "legendRead": "图例：✓ 待读 · ✓✓ 已读",
+    "legendDelivery": "图例：○ 待投递 · ✓ 已交给 Runtime",
+    "inInbox": "已进入收件箱",
+    "notDelivered": "尚未投递",
+    "deliveryClaimed": "正在发送…",
+    "deliveryAccepted": "已投递到 Runtime",
+    "deliveryFailed": "投递失败",
+    "deliveryAmbiguous": "投递状态不确定",
+    "sendNow": "立即发送",
+    "retry": "重试",
+    "retryAnyway": "仍然重试",
+    "sending": "正在发送…",
+    "retryAmbiguousConfirm": "收件人可能已经收到这次 Prompt。仍然重试吗？",
+    "cancelReplyRequest": "取消回复请求",
+    "cancelReplyConfirm": "取消这条消息所有尚未完成的回复义务吗？",
+    "cancelling": "正在取消…"
   },
   "relay": {
     "title": "转发消息",

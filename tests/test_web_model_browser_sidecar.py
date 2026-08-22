@@ -149,7 +149,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(target.get("next_delivery"), "new_chat")
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "pending_bind")
-        self.assertTrue(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual(delivery.get("last_error"), "")
         self.assertEqual(
             (snapshot.get("next_action") or {}).get("recommended"), "wait_for_chat_bind"
@@ -185,7 +185,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual((snapshot.get("target") or {}).get("state"), "bound")
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "bound")
-        self.assertTrue(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
         self.assertEqual(snapshot.get("tone"), "ready")
 
@@ -377,7 +377,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "submitting")
-        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
 
     def test_health_snapshot_reports_ambiguous_browser_delivery_as_attention_not_failure(
@@ -406,7 +406,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "ambiguous")
-        self.assertTrue(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual(
             (snapshot.get("next_action") or {}).get("recommended"), "inspect_error"
         )
@@ -456,7 +456,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "failed")
-        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual(
             (snapshot.get("next_action") or {}).get("recommended"),
             "retry_delivery",
@@ -486,7 +486,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "ambiguous")
-        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
 
     def test_health_snapshot_does_not_age_deferred_delivery_into_failure(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
@@ -516,7 +516,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "submitting")
         self.assertEqual(delivery.get("label"), "Waiting to submit")
-        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
 
     def test_health_snapshot_ages_out_stale_browser_delivery_submitting(self) -> None:
@@ -549,7 +549,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         delivery = snapshot.get("delivery") or {}
         self.assertEqual(delivery.get("state"), "failed")
         self.assertEqual(delivery.get("last_error"), "delivery_submitting_stale")
-        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertNotIn("cursor_committed", delivery)
         self.assertEqual(
             (snapshot.get("next_action") or {}).get("recommended"), "retry_delivery"
         )

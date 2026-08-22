@@ -9,6 +9,13 @@ from .group import Group
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 from .peer_insight import TEAM_MODE_SEED
 
+MESSAGE_DELIVERY_GUIDANCE = (
+    'New messages: use mode="mail" unless delayed awareness would cost more than interrupting the recipient; '
+    'then use mode="send". Use mode="request_reply" only when a concrete reply is also required. Do not send '
+    "routine noise; use cccc_message_reply for an existing event. Mail is agent-only. Never mix user and agent "
+    "recipients in one message; send separate messages when both audiences need different actions."
+)
+
 
 def render_role_system_prompt(
     *,
@@ -129,11 +136,9 @@ def render_role_system_prompt(
         lines.extend(scope_lines)
     
     # Keep this stable and short. CCCC route details belong in cccc_help.
-    visible_reply_line = "- Use cccc_message_reply for replies; use cccc_message_send for new messages."
-
     core_lines = [
         "CCCC Protocol:",
-        visible_reply_line,
+        f"- {MESSAGE_DELIVERY_GUIDANCE}",
         "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs.",
         "- Terminal output is not delivered.",
     ]

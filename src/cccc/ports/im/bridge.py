@@ -1528,6 +1528,7 @@ class IMBridge:
                     "text": msg_text,
                     "by": "user",
                     "to": canonical_to,
+                    "message_mode": "send",
                     "path": "",
                     "attachments": stored_attachments,
                     "source_platform": source_platform or None,

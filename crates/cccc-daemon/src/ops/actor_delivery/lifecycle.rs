@@ -8,7 +8,6 @@ pub fn shutdown_actor(group_id: &str, actor_id: &str) {
     if let Some(worker) = worker {
         worker.shutdown();
     }
-    remove_completions(|item| item.group_id == group_id && item.actor_id == actor_id);
     clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
 }
 
@@ -29,7 +28,6 @@ pub fn shutdown_group(group_id: &str) {
     for worker in removed {
         worker.shutdown();
     }
-    remove_completions(|item| item.group_id == group_id);
     clear_in_flight(|item| item.0 == group_id);
 }
 
@@ -50,12 +48,6 @@ pub fn shutdown_all() {
     }
     if let Ok(mut pending) = in_flight().lock() {
         pending.clear();
-    }
-}
-
-fn remove_completions(mut remove: impl FnMut(&DeliveryCompletion) -> bool) {
-    if let Ok(mut completions) = completions().lock() {
-        completions.retain(|item| !remove(item));
     }
 }
 

@@ -59,29 +59,6 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertNotIn("### Todo and Scope Discipline", body)
         self.assertNotIn("### Planning and Scope Gates", body)
 
-    def test_mcp_reminder_line_stays_single_purpose(self) -> None:
-        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
-
-        self.assertIn("Use cccc_message_reply for replies", MCP_REMINDER_LINE)
-        self.assertIn("use cccc_message_send for new messages", MCP_REMINDER_LINE)
-        self.assertIn("Terminal output is not delivered.", MCP_REMINDER_LINE)
-        self.assertIn("Verify reply_to/to", MCP_REMINDER_LINE)
-        self.assertIn("avoid routine @all", MCP_REMINDER_LINE)
-        self.assertIn("Use cccc_help if unsure", MCP_REMINDER_LINE)
-        self.assertNotIn("Reply via MCP", MCP_REMINDER_LINE)
-        self.assertNotIn("cccc_message_send / cccc_message_reply", MCP_REMINDER_LINE)
-        self.assertNotIn("not the job", MCP_REMINDER_LINE)
-        self.assertNotIn("resume active work", MCP_REMINDER_LINE)
-        self.assertNotIn("open loops", MCP_REMINDER_LINE)
-        self.assertNotIn("highest-value", MCP_REMINDER_LINE)
-        self.assertNotIn("Serve the real objective", MCP_REMINDER_LINE)
-        self.assertNotIn("natural #group requests", MCP_REMINDER_LINE)
-        self.assertNotIn('cccc_group(action="resolve"', MCP_REMINDER_LINE)
-        self.assertNotIn("dst_group_id", MCP_REMINDER_LINE)
-        self.assertNotIn("#group", MCP_REMINDER_LINE)
-        self.assertIn("to", MCP_REMINDER_LINE)
-        self.assertNotIn("Help: cccc_help", MCP_REMINDER_LINE)
-
     def test_default_standup_stays_short_ritual(self) -> None:
         from cccc.kernel.group import _DEFAULT_AUTOMATION_STANDUP_SNIPPET
 

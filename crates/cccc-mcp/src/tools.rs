@@ -33,7 +33,7 @@ mod tests {
             .filter_map(|tool| tool["name"].as_str())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(catalog.len(), 59);
+        assert_eq!(catalog.len(), 61);
         assert_eq!(names.len(), catalog.len());
         assert!(names.contains("cccc_code_exec"));
         assert!(names.contains("cccc_memory_admin"));

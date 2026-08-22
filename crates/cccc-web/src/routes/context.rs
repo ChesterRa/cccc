@@ -99,7 +99,6 @@ async fn ledger_tail(
             "limit":limit,
             "kind":query.get("kind"),
             "with_read_status":query_bool(&query, "with_read_status")?,
-            "with_ack_status":query_bool(&query, "with_ack_status")?,
             "with_obligation_status":query_bool(&query, "with_obligation_status")?,
         })),
     )
@@ -122,7 +121,6 @@ async fn ledger_search(
             "after":query.get("after"),
             "limit":query.get("limit"),
             "with_read_status":query_bool(&query, "with_read_status")?,
-            "with_ack_status":query_bool(&query, "with_ack_status")?,
             "with_obligation_status":query_bool(&query, "with_obligation_status")?,
         })),
     )
@@ -156,7 +154,6 @@ async fn ledger_window(
             "before":query.get("before"),
             "after":query.get("after"),
             "with_read_status":query_bool(&query, "with_read_status")?,
-            "with_ack_status":query_bool(&query, "with_ack_status")?,
             "with_obligation_status":query_bool(&query, "with_obligation_status")?,
         })),
     )

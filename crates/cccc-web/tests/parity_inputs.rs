@@ -2,8 +2,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use cccc_contracts::Event;
-use cccc_core::{GroupStore, HomeLayout, ledger};
+use cccc_core::{GroupStore, HomeLayout};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -79,35 +78,6 @@ async fn invalid_refs_json_is_rejected_before_upload_commit() {
 }
 
 #[tokio::test]
-async fn web_ack_is_fixed_to_user_identity() {
-    let (_temp, home, group_id, daemon) = running_home("ack identity").await;
-    let store = GroupStore::new(home.clone()).expect("store");
-    let mut message = Event::new("chat.message", &group_id);
-    message.id = "message-1".into();
-    message.by = "peer-author".into();
-    message.data.insert("text".into(), json!("hello"));
-    message.data.insert("priority".into(), json!("attention"));
-    message.data.insert("to".into(), json!(["user"]));
-    ledger::append(&store.ledger_path(&group_id).expect("ledger"), &message).expect("append");
-
-    let response = cccc_web::app(home.clone())
-        .oneshot(
-            Request::post(format!("/api/v1/groups/{group_id}/events/message-1/ack"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"by":"peer-reviewer"}"#))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let status = response.status();
-    let payload = response_json(response).await;
-    shutdown(home, daemon).await;
-    assert_eq!(status, StatusCode::OK, "unexpected response: {payload}");
-    assert_eq!(payload["result"]["event"]["by"], "user");
-    assert_eq!(payload["result"]["event"]["data"]["actor_id"], "user");
-}
-
-#[tokio::test]
 async fn group_update_http_surface_returns_the_standard_receipt() {
     let (_temp, home, group_id, daemon) = running_home("group update").await;
     let app = cccc_web::app(home.clone());
@@ -168,6 +138,45 @@ async fn capability_install_http_surface_uses_the_canonical_daemon_operation() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["error"]["code"], "missing_install_target");
+}
+
+#[tokio::test]
+async fn message_control_http_routes_use_existing_event_operations() {
+    let (_temp, home, group_id, daemon) = running_home("message controls").await;
+    let app = cccc_web::app(home.clone());
+    let deliver = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/groups/{group_id}/messages/missing-event/deliver"
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"actor_ids":["peer-1"]}"#))
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+    let deliver_status = deliver.status();
+    let deliver = response_json(deliver).await;
+    let cancel = app
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/groups/{group_id}/messages/missing-event/reply-request/cancel"
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+    let cancel_status = cancel.status();
+    let cancel = response_json(cancel).await;
+    shutdown(home, daemon).await;
+
+    assert_eq!(deliver_status, StatusCode::NOT_FOUND);
+    assert_eq!(deliver["error"]["code"], "event_not_found");
+    assert_eq!(cancel_status, StatusCode::NOT_FOUND);
+    assert_eq!(cancel["error"]["code"], "event_not_found");
 }
 
 #[tokio::test]

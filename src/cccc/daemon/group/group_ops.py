@@ -8,7 +8,12 @@ from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import get_effective_role, is_voice_secretary_actor, list_actors
-from ...kernel.help_markdown import _select_help_markdown, parse_help_markdown, update_actor_help_note
+from ...kernel.help_markdown import (
+    _select_help_markdown,
+    compose_effective_help_markdown,
+    parse_help_markdown,
+    update_actor_help_note,
+)
 from ..actors.private_env_ops import copy_group_private_env
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..actors import deepseek_runtime
@@ -176,8 +181,14 @@ def _help_document(group: Group) -> Dict[str, Any]:
     prompt_file = read_group_prompt_file(group, HELP_FILENAME)
     override = str(prompt_file.content or "") if prompt_file.found else ""
     overridden = bool(override.strip())
+    builtin = str(load_builtin_help_markdown() or "")
     return {
-        "content": override if overridden else str(load_builtin_help_markdown() or ""),
+        "content": override if overridden else builtin,
+        "effective_content": (
+            compose_effective_help_markdown(builtin=builtin, overlay=override)
+            if overridden
+            else builtin
+        ),
         "source": "home" if overridden else "builtin",
         "path": str(prompt_file.path or ""),
         "source_path": str(prompt_file.path or "") if overridden else "cccc.resources/cccc-help.md",
@@ -239,7 +250,7 @@ def handle_group_help_get(args: Dict[str, Any]) -> DaemonResponse:
             "filename": HELP_FILENAME,
             "overridden": prompt["overridden"],
             "markdown": _select_help_markdown(
-                str(prompt["content"]),
+                str(prompt["effective_content"]),
                 role=role or None,
                 actor_id=canonical_actor_id or None,
                 include_voice_secretary=voice_secretary,
@@ -488,13 +499,6 @@ _RESET_ACTOR_CONFIG_KEYS = {
 
 
 _RESET_AUTOMATION_TIMING_KEYS = {
-    "nudge_after_seconds",
-    "reply_required_nudge_after_seconds",
-    "attention_ack_nudge_after_seconds",
-    "unread_nudge_after_seconds",
-    "nudge_digest_min_interval_seconds",
-    "nudge_max_repeats_per_obligation",
-    "nudge_escalate_after_repeats",
     "actor_idle_timeout_seconds",
     "keepalive_delay_seconds",
     "keepalive_max_per_actor",

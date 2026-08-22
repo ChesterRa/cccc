@@ -76,12 +76,43 @@ describe("useGroupStore selection and archive persistence", () => {
       toText: "",
       replyTarget: null,
       quotedPresentationRef: null,
-      priority: "normal",
-      replyRequired: false,
+      quotedVoiceDocumentRef: null,
+      preferredMessageMode: "send",
+      messageMode: "send",
       destGroupId: "",
       drafts: {},
       normalToTextByGroup: {},
     });
+  });
+
+  it("applies delivery and first-terminal reply facts to message obligations", () => {
+    const source: LedgerEvent = {
+      id: "message-1",
+      kind: "chat.message",
+      data: { text: "hello", to: ["peer1", "peer2"], message_mode: "request_reply" },
+      _obligation_status: {
+        peer1: { replied: false, reply_requested: true, cancelled: false, delivery_state: "" },
+        peer2: {
+          replied: true,
+          reply_requested: true,
+          cancelled: false,
+          delivery_state: "accepted",
+        },
+      },
+    };
+
+    const delivered = groupStoreCore.updateObligationAtIndex([source], 0, {
+      actorId: "peer1",
+      deliveryState: "accepted",
+    });
+    expect(delivered.next[0]._obligation_status?.peer1.delivery_state).toBe("accepted");
+
+    const cancelled = groupStoreCore.updateObligationAtIndex(delivered.next, 0, {
+      cancelled: true,
+    });
+    expect(cancelled.next[0]._obligation_status?.peer1.cancelled).toBe(true);
+    expect(cancelled.next[0]._obligation_status?.peer2.cancelled).toBe(false);
+    expect(cancelled.next[0]._obligation_status?.peer2.replied).toBe(true);
   });
 
   it("initializes selectedGroupId from localStorage", async () => {
@@ -726,6 +757,35 @@ describe("useGroupStore actors fetch policy", () => {
     expect(useGroupStore.getState().actors).toEqual([
       { id: "peer-1", running: true, unread_count: 3 },
     ]);
+  });
+
+  it("keeps Mail unread and Web Model direct queue projections independent", () => {
+    useGroupStore.setState({
+      groups: [{ group_id: "g-demo", title: "Demo", topic: "", state: "active" }],
+      groupOrder: ["g-demo"],
+      selectedGroupId: "g-demo",
+      actors: [
+        {
+          id: "peer-1",
+          runtime: "web_model",
+          effective_working_state: "working",
+          unread_count: 2,
+          web_model_queued_count: 4,
+        },
+      ],
+    });
+
+    useGroupStore.getState().incrementActorUnread(["peer-1"]);
+    expect(useGroupStore.getState().actors[0]).toMatchObject({
+      unread_count: 3,
+      web_model_queued_count: 4,
+    });
+
+    useGroupStore.getState().incrementWebModelQueued(["peer-1"]);
+    expect(useGroupStore.getState().actors[0]).toMatchObject({
+      unread_count: 3,
+      web_model_queued_count: 5,
+    });
   });
 
   it("updateActorActivity persists the latest working-state truth into the selected-group snapshot", () => {

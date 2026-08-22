@@ -228,9 +228,6 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
                     state.task_id = Some(turn_id.clone());
                     state.updated_at = utc_now();
                 }
-                if turn.control_kind.is_empty() {
-                    output::mark_read(&session, &turn);
-                }
                 output::emit_turn(&session, &turn, "headless.turn.started", &turn_id);
                 output::announce_turn(&session);
                 let mut completed = match session.completion.0.lock() {

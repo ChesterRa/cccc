@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(replacement.topic, "keep topic");
         assert_eq!(replacement.automation["version"], json!(7));
         assert_eq!(replacement.automation["rules"], json!([{"id":"keep-rule"}]));
-        assert_eq!(replacement.automation["nudge_after_seconds"], json!(123));
+        assert!(!replacement.automation.contains_key("nudge_after_seconds"));
         assert_eq!(
             replacement.automation["help_nudge_interval_seconds"],
             json!(777)

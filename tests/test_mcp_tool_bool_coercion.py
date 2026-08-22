@@ -6,6 +6,20 @@ from unittest.mock import patch
 
 
 class TestMcpToolBoolCoercion(unittest.TestCase):
+    def test_inbox_and_history_limits_are_not_coerced_before_daemon_validation(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_resolve_self_actor_id", return_value="peer1"
+        ), patch.object(mcp_server, "inbox_read", return_value={"ok": True}) as inbox_read, patch.object(
+            mcp_server, "message_history", return_value={"ok": True}
+        ) as message_history:
+            mcp_server.handle_tool_call("cccc_inbox_read", {"limit": "2"})
+            mcp_server.handle_tool_call("cccc_message_history", {"limit": "2"})
+
+        self.assertEqual(inbox_read.call_args.kwargs["limit"], "2")
+        self.assertEqual(message_history.call_args.kwargs["limit"], "2")
+
     def test_headless_codex_message_send_is_allowed(self) -> None:
         from cccc.ports.mcp.handlers import cccc_messaging
 
@@ -146,6 +160,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                     path="report.md",
                     text="final report",
                     to=["user"],
+                    mode="send",
                 )
 
             self.assertTrue(out.get("ok"))
@@ -155,6 +170,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertEqual(args.get("text"), "final report")
             self.assertEqual(args.get("by"), "peer1")
             self.assertEqual(args.get("to"), ["user"])
+            self.assertEqual(args.get("message_mode"), "send")
             attachments = args.get("attachments")
             self.assertIsInstance(attachments, list)
             self.assertEqual(len(attachments), 1)
@@ -435,29 +451,6 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("text"), r"regex \\t token")
-
-
-    def test_notify_send_requires_ack_string_false(self) -> None:
-        from cccc.ports.mcp import server as mcp_server
-
-        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
-            mcp_server, "_resolve_self_actor_id", return_value="peer1"
-        ), patch.object(mcp_server, "notify_send", return_value={"ok": True}) as mock_notify_send:
-            mcp_server.handle_tool_call(
-                "cccc_notify",
-                {
-                    "action": "send",
-                    "kind": "info",
-                    "title": "t",
-                    "message": "m",
-                    "requires_ack": "false",
-                },
-            )
-            self.assertTrue(mock_notify_send.called)
-            kwargs = mock_notify_send.call_args.kwargs
-            self.assertEqual(kwargs.get("group_id"), "g_test")
-            self.assertEqual(kwargs.get("actor_id"), "peer1")
-            self.assertFalse(bool(kwargs.get("requires_ack")))
 
     def test_terminal_tail_strip_ansi_string_false(self) -> None:
         from cccc.ports.mcp import server as mcp_server

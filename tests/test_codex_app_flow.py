@@ -613,6 +613,7 @@ class TestCodexAppFlow(unittest.TestCase):
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "hello codex",
@@ -675,6 +676,7 @@ class TestCodexAppFlow(unittest.TestCase):
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "/install https://github.com/obra/superpowers",
@@ -720,12 +722,12 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_headless_codex_auto_mark_waits_for_runtime_acceptance(self) -> None:
+    def test_send_headless_codex_records_delivery_without_advancing_read_cursor(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_send
-        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
-        from cccc.daemon.messaging.delivery import auto_mark_headless_delivery_started
+        from cccc.daemon.messaging.runtime_delivery import latest_delivery_state
         from cccc.kernel.group import load_group
         from cccc.kernel.inbox import get_cursor, unread_count
+        from cccc.kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
 
         _, cleanup = self._with_home()
         try:
@@ -750,8 +752,6 @@ class TestCodexAppFlow(unittest.TestCase):
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
-            group.doc["delivery"] = {"auto_mark_on_delivery": True}
-            group.save()
             before_cursor_event_id, before_cursor_ts = get_cursor(group, "peer1")
 
             with (
@@ -763,6 +763,7 @@ class TestCodexAppFlow(unittest.TestCase):
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "hello codex",
@@ -783,7 +784,7 @@ class TestCodexAppFlow(unittest.TestCase):
             submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
             self.assertIn("[cccc] user → peer1", submitted_text)
             self.assertIn("hello codex", submitted_text)
-            self.assertIn(MCP_REMINDER_LINE, submitted_text)
+            self.assertNotIn(MESSAGE_DELIVERY_GUIDANCE, submitted_text)
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
 
@@ -797,30 +798,19 @@ class TestCodexAppFlow(unittest.TestCase):
             cursor_event_id, cursor_ts = get_cursor(group, "peer1")
             self.assertEqual(cursor_event_id, before_cursor_event_id)
             self.assertEqual(cursor_ts, before_cursor_ts)
-            self.assertEqual(unread_count(group, actor_id="peer1"), 1)
-
-            ledger_events = self._ledger_events(group)
-            self.assertFalse(any(str(item.get("kind") or "") == "system.notify" for item in ledger_events))
-            self.assertNotEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
-
-            marked = auto_mark_headless_delivery_started(
-                group_id=group_id,
-                actor_id="peer1",
-                event_id=str(event.get("id") or ""),
-                ts=str(event.get("ts") or ""),
-            )
-            self.assertTrue(marked)
-
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
-            self.assertEqual(cursor_event_id, str(event.get("id") or ""))
-            self.assertEqual(cursor_ts, str(event.get("ts") or ""))
             self.assertEqual(unread_count(group, actor_id="peer1"), 0)
 
             ledger_events = self._ledger_events(group)
-            self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
+            self.assertFalse(any(str(item.get("kind") or "") == "system.notify" for item in ledger_events))
+            self.assertNotEqual(str(ledger_events[-1].get("kind") or ""), "mail.read")
+            delivery = latest_delivery_state(
+                group,
+                actor_id="peer1",
+                source_event_id=str(event.get("id") or ""),
+            )
+            self.assertIsNotNone(delivery)
+            delivery_data = (delivery or {}).get("data") if isinstance((delivery or {}).get("data"), dict) else {}
+            self.assertEqual(delivery_data.get("state"), "accepted")
         finally:
             cleanup()
 
@@ -939,10 +929,10 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
                 patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "look at this",
@@ -995,10 +985,10 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
                 patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "hello codex",
@@ -1083,6 +1073,7 @@ class TestCodexAppFlow(unittest.TestCase):
             send_resp, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "text": "hello codex",
@@ -1101,7 +1092,6 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch("cccc.daemon.messaging.chat_delivery_ops.queue_chat_message") as queue_chat_message,
                 patch("cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages") as request_flush_pending_messages,
                 patch("cccc.daemon.messaging.chat_ops.flush_pending_messages"),
-                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=[]),
             ):
                 resp = handle_reply(
                     {
@@ -1127,12 +1117,12 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_headless_codex_auto_mark_waits_for_runtime_acceptance(self) -> None:
+    def test_reply_headless_codex_records_delivery_without_advancing_read_cursor(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_reply
-        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
-        from cccc.daemon.messaging.delivery import auto_mark_headless_delivery_started
+        from cccc.daemon.messaging.runtime_delivery import latest_delivery_state
         from cccc.kernel.group import load_group
-        from cccc.kernel.inbox import get_cursor, latest_unread_event, set_cursor, unread_count
+        from cccc.kernel.inbox import get_cursor, unread_count
+        from cccc.kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
 
         _, cleanup = self._with_home()
         try:
@@ -1157,6 +1147,7 @@ class TestCodexAppFlow(unittest.TestCase):
             send_resp, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "text": "hello codex",
@@ -1173,19 +1164,9 @@ class TestCodexAppFlow(unittest.TestCase):
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
-            group.doc["delivery"] = {"auto_mark_on_delivery": True}
-            group.save()
-
             stale_notify_count = sum(1 for item in self._ledger_events(group) if str(item.get("kind") or "") == "system.notify")
-            last_unread = latest_unread_event(group, actor_id="peer1")
-            self.assertIsNotNone(last_unread)
-            assert last_unread is not None
-            set_cursor(
-                group,
-                "peer1",
-                event_id=str(last_unread.get("id") or ""),
-                ts=str(last_unread.get("ts") or ""),
-            )
+            before_cursor = get_cursor(group, "peer1")
+            self.assertEqual(before_cursor, ("", ""))
 
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.actor_running", return_value=True),
@@ -1213,7 +1194,10 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
-            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
+            self.assertNotIn(
+                MESSAGE_DELIVERY_GUIDANCE,
+                str(submit_user_message.call_args.kwargs.get("text") or ""),
+            )
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
 
@@ -1225,39 +1209,27 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
             cursor_event_id, cursor_ts = get_cursor(group, "peer1")
-            self.assertEqual(cursor_event_id, str(last_unread.get("id") or ""))
-            self.assertEqual(cursor_ts, str(last_unread.get("ts") or ""))
-            self.assertEqual(unread_count(group, actor_id="peer1"), 1)
+            self.assertEqual((cursor_event_id, cursor_ts), before_cursor)
+            self.assertEqual(unread_count(group, actor_id="peer1"), 0)
 
             ledger_events = self._ledger_events(group)
             notify_count = sum(1 for item in ledger_events if str(item.get("kind") or "") == "system.notify")
             self.assertEqual(notify_count, stale_notify_count)
-
-            marked = auto_mark_headless_delivery_started(
-                group_id=group_id,
+            delivery = latest_delivery_state(
+                group,
                 actor_id="peer1",
-                event_id=str(event.get("id") or ""),
-                ts=str(event.get("ts") or ""),
+                source_event_id=str(event.get("id") or ""),
             )
-            self.assertTrue(marked)
-
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-            cursor_event_id, cursor_ts = get_cursor(group, "peer1")
-            self.assertEqual(cursor_event_id, str(event.get("id") or ""))
-            self.assertEqual(cursor_ts, str(event.get("ts") or ""))
-            self.assertEqual(unread_count(group, actor_id="peer1"), 0)
-
-            ledger_events = self._ledger_events(group)
-            self.assertEqual(str(ledger_events[-1].get("kind") or ""), "chat.read")
+            self.assertIsNotNone(delivery)
+            delivery_data = (delivery or {}).get("data") if isinstance((delivery or {}).get("data"), dict) else {}
+            self.assertEqual(delivery_data.get("state"), "accepted")
         finally:
             cleanup()
 
     def test_reply_routes_running_headless_codex_actor_without_extra_info_notify(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_reply
-        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
         from cccc.kernel.group import load_group
+        from cccc.kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
 
         _, cleanup = self._with_home()
         try:
@@ -1282,6 +1254,7 @@ class TestCodexAppFlow(unittest.TestCase):
             send_resp, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "text": "hello codex",
@@ -1326,7 +1299,10 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
-            self.assertIn(MCP_REMINDER_LINE, str(submit_user_message.call_args.kwargs.get("text") or ""))
+            self.assertNotIn(
+                MESSAGE_DELIVERY_GUIDANCE,
+                str(submit_user_message.call_args.kwargs.get("text") or ""),
+            )
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()
 
@@ -1338,7 +1314,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_codex_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
+    def test_codex_turn_loop_announces_started_after_runtime_accepts_turn(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
         home, cleanup = self._with_home()
@@ -1359,16 +1335,8 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit"),
                 patch.object(session._turn_done, "wait", return_value=True),
-                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started", return_value=True) as auto_mark,
             ):
                 session._turn_loop()
-
-            auto_mark.assert_called_once_with(
-                group_id="g_test",
-                actor_id="peer1",
-                event_id="evt-1",
-                ts="2026-04-08T00:00:00Z",
-            )
         finally:
             cleanup()
 
@@ -1402,7 +1370,6 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
                 patch.object(session._turn_done, "wait", return_value=True),
-                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started", return_value=True),
             ):
                 session._turn_loop()
 
@@ -1480,7 +1447,6 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session, "_write_stdin", side_effect=finish_before_returning),
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
-                patch("cccc.daemon.claude_app_sessions.auto_mark_headless_delivery_started", return_value=True),
             ):
                 session._turn_loop()
 
@@ -1544,7 +1510,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_claude_turn_loop_auto_marks_only_after_runtime_accepts_turn(self) -> None:
+    def test_claude_turn_loop_announces_started_after_runtime_accepts_turn(self) -> None:
         from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
 
         home, cleanup = self._with_home()
@@ -1564,16 +1530,8 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit"),
                 patch.object(session._turn_done, "wait", return_value=True),
-                patch("cccc.daemon.claude_app_sessions.auto_mark_headless_delivery_started", return_value=True) as auto_mark,
             ):
                 session._turn_loop()
-
-            auto_mark.assert_called_once_with(
-                group_id="g_test",
-                actor_id="peer1",
-                event_id="evt-1",
-                ts="2026-04-08T00:00:00Z",
-            )
         finally:
             cleanup()
 
@@ -1684,7 +1642,7 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_codex_control_turn_uses_control_events_and_skips_auto_mark(self) -> None:
+    def test_codex_control_turn_uses_control_events(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
         home, cleanup = self._with_home()
@@ -1705,11 +1663,8 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session, "_persist_state"),
                 patch.object(session, "_emit") as emit,
                 patch.object(session._turn_done, "wait", return_value=True),
-                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started") as auto_mark,
             ):
                 session._turn_loop()
-
-            auto_mark.assert_not_called()
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertEqual(event_types.count("headless.control.started"), 1)
             self.assertNotIn("headless.turn.started", event_types)
@@ -1834,11 +1789,8 @@ class TestCodexAppFlow(unittest.TestCase):
                 patch.object(session._turn_done, "wait", side_effect=[False, True]),
                 patch("cccc.daemon.codex_app_sessions._TURN_STALL_SECONDS", 0.0),
                 patch("cccc.daemon.codex_app_sessions._TURN_WAIT_POLL_SECONDS", 0.0),
-                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started") as auto_mark,
             ):
                 session._turn_loop()
-
-            auto_mark.assert_not_called()
             event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
             self.assertIn("headless.control.started", event_types)
             self.assertIn("headless.control.stalled", event_types)
@@ -2722,7 +2674,6 @@ class TestCodexAppFlow(unittest.TestCase):
                         title="Need review",
                         message="Please refresh your inbox.",
                         target_actor_id="peer1",
-                        requires_ack=False,
                     ),
                 )
 
@@ -2776,7 +2727,6 @@ class TestCodexAppFlow(unittest.TestCase):
                         title="Need review",
                         message="Please refresh your inbox.",
                         target_actor_id="peer1",
-                        requires_ack=False,
                     ),
                 )
 

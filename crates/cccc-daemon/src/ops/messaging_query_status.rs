@@ -11,7 +11,6 @@ pub(super) fn decorate(
 ) -> Result<Vec<Value>, OpError> {
     let include = [
         ("with_read_status", "read_status", "_read_status"),
-        ("with_ack_status", "ack_status", "_ack_status"),
         (
             "with_obligation_status",
             "obligation_status",

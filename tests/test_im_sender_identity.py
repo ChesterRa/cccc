@@ -666,6 +666,7 @@ class TestImSenderIdentity(unittest.TestCase):
                     {
                         "op": "send",
                         "args": {
+                            "message_mode": "send",
                             "group_id": group_id,
                             "text": "普通消息",
                             "by": "user",

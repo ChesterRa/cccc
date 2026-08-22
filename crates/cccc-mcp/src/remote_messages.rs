@@ -95,19 +95,16 @@ async fn send_new(
         .cloned()
         .unwrap_or(Value::Bool(true));
     let mut payload = Map::new();
-    for field in [
-        "text",
-        "format",
-        "priority",
-        "reply_required",
-        "to",
-        "refs",
-        "attachments",
-    ] {
+    for field in ["text", "format", "mode", "to", "refs", "attachments"] {
         if let Some(value) = args.get(field).cloned() {
             payload.insert(field.into(), value);
         }
     }
+    let message_mode = payload
+        .remove("mode")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "mail".into());
+    payload.insert("message_mode".into(), Value::String(message_mode));
     let result = daemon(
         client,
         "remote_send",
@@ -209,10 +206,25 @@ fn validate_remote_payload(args: &Map<String, Value>) -> Result<(), String> {
             "suggested_user_message is only supported for messages in the current group".into(),
         );
     }
-    if let Some(priority) = text(args, "priority")
-        && !matches!(priority, "normal" | "attention")
+    if ["priority", "reply_required", "requires_ack"]
+        .iter()
+        .any(|field| args.contains_key(*field))
     {
-        return Err("priority must be normal or attention".into());
+        return Err(
+            "use mode; legacy priority/reply_required/requires_ack fields are not supported".into(),
+        );
+    }
+    let mode = text(args, "mode").unwrap_or("mail");
+    if !matches!(mode, "send" | "request_reply" | "mail") {
+        return Err("mode must be mail, send, or request_reply".into());
+    }
+    if mode == "request_reply"
+        && (recipients(args).is_empty()
+            || recipients(args)
+                .iter()
+                .any(|recipient| matches!(recipient.as_str(), "@all" | "@peers" | "@foreman")))
+    {
+        return Err("request_reply requires one or more explicit concrete recipients".into());
     }
     if recipients(args)
         .iter()
@@ -387,6 +399,7 @@ mod tests {
                 json!({
                     "group_id":group_id,"by":"helper","dst_group_id":"g_remote",
                     "to":["user"],"text":"through the live reverse session",
+                    "mode":"send",
                     "insight":"The live route must preserve the same peer perspective as HTTP delivery."
                 })
                 .as_object()
@@ -414,7 +427,10 @@ mod tests {
         let mut complete_args = route.as_object().cloned().expect("complete route");
         complete_args.insert("generation".into(), opened["generation"].clone());
         complete_args.insert("response_to".into(), frame["request_id"].clone());
-        complete_args.insert("result".into(), json!({"ok":true,"receipt":{"status":"delivered","remote_event_id":"remote-session-event"}}));
+        complete_args.insert(
+            "result".into(),
+            json!({"ok":true,"receipt":{"status":"sent","remote_event_id":"remote-session-event"}}),
+        );
         daemon(&client, "group_bridge_session_complete", complete_args)
             .await
             .expect("complete");
@@ -457,7 +473,7 @@ mod tests {
                          Json(body): Json<Value>| async move {
                             captured.lock().expect("capture").push(body);
                             Json(json!({"ok":true,"result":{"receipt":{
-                                "status":"delivered","remote_event_id":"remote-http-fallback"
+                                "status":"sent","remote_event_id":"remote-http-fallback"
                             }}}))
                         },
                     ),
@@ -505,7 +521,7 @@ mod tests {
                 &send_client,
                 json!({
                     "group_id":group_id,"by":"helper","dst_group_id":"g_remote",
-                    "to":["user"],"text":"fall back after session failure"
+                    "to":["user"],"text":"fall back after session failure","mode":"send"
                 })
                 .as_object()
                 .cloned()
@@ -620,7 +636,7 @@ mod tests {
                          Json(body): Json<Value>| async move {
                             captured.lock().expect("capture").push(body);
                             Json(json!({"ok":true,"result":{"receipt":{
-                                "status":"delivered","remote_event_id":"remote-reply",
+                                "status":"sent","remote_event_id":"remote-reply",
                                 "transport":"group_bridge_session"
                             }}}))
                         },
@@ -1037,6 +1053,8 @@ mod tests {
             json!({"to":["#remote"]}),
             json!({"to":["@foreman"],"refs":[{"kind":"task_ref"}]}),
             json!({"to":["@foreman"],"priority":"urgent"}),
+            json!({"to":["@foreman"],"mode":"request_reply"}),
+            json!({"to":["peer1"],"mode":"later"}),
         ] {
             validate_remote_payload(args.as_object().expect("args"))
                 .expect_err("invalid remote payload");

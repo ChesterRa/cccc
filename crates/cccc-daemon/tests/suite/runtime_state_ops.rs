@@ -1,5 +1,5 @@
 use cccc_contracts::{DaemonRequest, DaemonResponse};
-use cccc_core::HomeLayout;
+use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 
 #[test]
@@ -38,7 +38,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         call(
             &home,
             "send",
-            json!({"group_id":group_id,"by":"user","to":["headless1"],"text":text}),
+            json!({"group_id":group_id,"by":"user","to":["headless1"],"text":text,"message_mode":"send"}),
         );
     }
     let turn = call(
@@ -56,11 +56,14 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         .expect("coalesced text");
     assert!(coalesced.contains("[cccc] user → headless1: first"));
     assert!(coalesced.contains("[cccc] user → headless1: second"));
-    assert!(coalesced.contains("Use cccc_message_reply for replies"));
+    assert!(!coalesced.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
     assert!(
         turn.result["turn"]["system_prompt"]
             .as_str()
-            .is_some_and(|prompt| prompt.contains("headless1"))
+            .is_some_and(|prompt| {
+                prompt.contains("headless1")
+                    && prompt.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE)
+            })
     );
     let event_ids = turn.result["turn"]["event_ids"]
         .as_array()
@@ -78,7 +81,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     assert!(!rejected.ok);
     assert_eq!(
         rejected.error.as_ref().map(|error| error.code.as_str()),
-        Some("non_contiguous_turn_events")
+        Some("completion_conflict")
     );
     let stale = raw_call(
         &home,
@@ -96,14 +99,176 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         "runtime_complete_turn",
         json!({"group_id":group_id,"actor_id":"headless1","by":"headless1","status":"done","event_ids":event_ids}),
     );
-    assert_eq!(completed.result["cursor_committed"], true);
+    assert!(completed.result.get("cursor_committed").is_none());
     assert_eq!(completed.result["turn_id"], turn_id);
+    let inbox = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
+    );
+    assert_eq!(
+        inbox.result["messages"],
+        json!([]),
+        "direct runtime work must not enter the Mail Inbox"
+    );
     let idle = call(
         &home,
         "runtime_wait_next_turn",
         json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
     );
     assert_eq!(idle.result["status"], "idle");
+}
+
+#[test]
+fn web_model_queue_and_mail_unread_are_reported_independently() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"web model queue state"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"web1",
+            "runtime":"web_model",
+            "runner":"headless",
+            "by":"user"
+        }),
+    );
+    GroupStore::new(home.clone())
+        .expect("group store")
+        .mutate(group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("enable structured runtime fixture");
+    let active = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["web1"],"text":"active turn",
+            "message_mode":"send"
+        }),
+    );
+    let turn = call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
+    );
+    assert_eq!(turn.result["status"], "work_available");
+    assert_eq!(
+        turn.result["turn"]["event_ids"][0],
+        active.result["event"]["id"]
+    );
+
+    let queued = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["web1"],"text":"queued direct",
+            "message_mode":"request_reply"
+        }),
+    );
+    let mail = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["web1"],"text":"mail only",
+            "message_mode":"mail"
+        }),
+    );
+    let listed = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user","include_unread":true}),
+    );
+    let actor = listed.result["actors"]
+        .as_array()
+        .and_then(|actors| actors.iter().find(|actor| actor["id"] == "web1"))
+        .expect("web model actor");
+    assert_eq!(actor["web_model_queued_count"], 1);
+    assert_eq!(
+        actor["web_model_queued_after_event_id"],
+        active.result["event"]["id"]
+    );
+    assert_eq!(
+        actor["web_model_queued_latest_event_id"],
+        queued.result["event"]["id"]
+    );
+    assert_eq!(actor["unread_count"], 1);
+
+    let inbox = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
+    );
+    assert_eq!(
+        inbox.result["messages"][0]["id"],
+        mail.result["event"]["id"]
+    );
+    assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn runtime_wait_rejects_an_unknown_explicit_transport_without_claiming_work() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"invalid transport"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"web1","runtime":"web_model",
+            "runner":"headless","by":"user"
+        }),
+    );
+    GroupStore::new(home.clone())
+        .expect("group store")
+        .mutate(group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("enable structured runtime fixture");
+    call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["web1"],"text":"pending",
+            "message_mode":"send"
+        }),
+    );
+
+    let response = raw_call(
+        &home,
+        "runtime_wait_next_turn",
+        json!({
+            "group_id":group_id,"actor_id":"web1","by":"web1","transport":"web_model_typo"
+        }),
+    );
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_transport")
+    );
+    let ledger_path = GroupStore::new(home.clone())
+        .expect("group store")
+        .ledger_path(group_id)
+        .expect("ledger path");
+    assert!(
+        cccc_core::ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .all(|event| event.kind != "runtime.delivery")
+    );
 }
 
 #[cfg(unix)]
@@ -340,29 +505,10 @@ done
     let sent = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"do the work"}),
+        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"do the work","message_mode":"send"}),
     );
-    assert_eq!(sent.result["delivery"]["queued"], 1);
+    assert_eq!(sent.result["message_mode"], "send");
     let event_id = sent.result["event"]["id"].as_str().expect("event id");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    loop {
-        let unread = call(
-            &home,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"codex-headless","unread_only":true}),
-        );
-        let still_unread = unread.result["messages"]
-            .as_array()
-            .is_some_and(|events| events.iter().any(|event| event["id"] == event_id));
-        if !still_unread {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "headless message was not consumed"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
     let headless_events_path = home
         .groups_dir()
         .join(group_id)
@@ -410,6 +556,16 @@ done
         started_index < terminal_index,
         "provider terminal event preceded turn acceptance: {headless_events:?}"
     );
+    let inbox = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"codex-headless"}),
+    );
+    assert_eq!(
+        inbox.result["messages"],
+        json!([]),
+        "direct provider work must not enter the Mail Inbox"
+    );
     assert!(headless_events.iter().any(|event| {
         event["type"] == "headless.control.started" && event["data"]["control_kind"] == "bootstrap"
     }));
@@ -435,7 +591,7 @@ done
     let failed = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"fail this turn"}),
+        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"fail this turn","message_mode":"send"}),
     );
     let failed_event_id = failed.result["event"]["id"]
         .as_str()
@@ -443,7 +599,7 @@ done
     let succeeded = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"continue after failure"}),
+        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"continue after failure","message_mode":"send"}),
     );
     let succeeded_event_id = succeeded.result["event"]["id"]
         .as_str()
@@ -576,29 +732,38 @@ done
     let sent = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["claude-headless"],"text":"do the work"}),
+        json!({"group_id":group_id,"by":"user","to":["claude-headless"],"text":"do the work","message_mode":"send"}),
     );
-    assert_eq!(sent.result["delivery"]["queued"], 1);
+    assert_eq!(sent.result["message_mode"], "send");
     let event_id = sent.result["event"]["id"].as_str().expect("event id");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
-        let unread = call(
+        let statuses = call(
             &home,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"claude-headless"}),
+            "ledger_statuses",
+            json!({"group_id":group_id,"event_ids":[event_id]}),
         );
-        let consumed = unread.result["messages"]
-            .as_array()
-            .is_some_and(|events| events.iter().all(|event| event["id"] != event_id));
-        if consumed {
+        if statuses.result["statuses"][event_id]["obligation_status"]["claude-headless"]["delivery_state"]
+            == "accepted"
+        {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "Claude headless message was not consumed"
+            "Claude headless message was not accepted by the runtime"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    let inbox = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"claude-headless","by":"claude-headless"}),
+    );
+    assert_eq!(
+        inbox.result["messages"],
+        json!([]),
+        "direct provider work must not enter the Mail Inbox"
+    );
     call(
         &home,
         "group_stop",

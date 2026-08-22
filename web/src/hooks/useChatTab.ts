@@ -11,6 +11,7 @@ import {
 import {
   getEffectiveComposerDestGroupId,
   isComposerGroupSettled,
+  normalizeReplyMessageMode,
 } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
@@ -168,8 +169,7 @@ export function useChatTab({
     replyTarget,
     quotedPresentationRef,
     quotedVoiceDocumentRef,
-    priority,
-    replyRequired,
+    messageMode,
     destGroupId,
     setComposerText,
     setComposerFiles,
@@ -178,8 +178,6 @@ export function useChatTab({
     setReplyTarget,
     setQuotedPresentationRef,
     setQuotedVoiceDocumentRef,
-    setPriority,
-    setReplyRequired,
     setMessageMode,
     setDestGroupId,
     upsertDraft,
@@ -391,8 +389,6 @@ export function useChatTab({
   const dispatchSlashSkillMessage = useSlashSkillDispatch({
     selectedGroupId,
     toTokens,
-    priority,
-    replyRequired,
     groupSendBlockedReason,
     clearDraft,
     setChatUnreadCount,
@@ -606,7 +602,6 @@ export function useChatTab({
         composerFilesCount: composerFilesSnapshot.length,
         hasReplyTarget: !!composerStateSnapshot.replyTarget,
         replyTarget: composerStateSnapshot.replyTarget,
-        replyRequired: composerStateSnapshot.replyRequired,
         hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
         hasQuotedVoiceDocumentRef: !!composerStateSnapshot.quotedVoiceDocumentRef,
         sendGroupId: slashGuardSendGroupId,
@@ -641,13 +636,15 @@ export function useChatTab({
         groups: composerRouteGroups,
       }),
     ];
-    const prioritySnapshot = composerStateSnapshot.priority;
-    const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
+    const messageModeSnapshot = replyTargetSnapshot
+      ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
+      : composerStateSnapshot.messageMode;
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
-    const prio = replyRequiredSnapshot ? "attention" : prioritySnapshot || "normal";
     const assistantTargets =
-      sendsLocal && !sendsCrossGroup ? resolveAssistantTargets(localToTokensSnapshot) : [];
+      sendsLocal && !sendsCrossGroup && messageModeSnapshot !== "mail"
+        ? resolveAssistantTargets(localToTokensSnapshot)
+        : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -675,8 +672,7 @@ export function useChatTab({
           replyTarget: replyTargetSnapshot,
           quotedPresentationRef: quotedPresentationRefSnapshot,
           quotedVoiceDocumentRef: quotedVoiceDocumentRefSnapshot,
-          priority: prioritySnapshot,
-          replyRequired: replyRequiredSnapshot,
+          messageMode: messageModeSnapshot,
         },
         {
           setComposerText,
@@ -684,8 +680,7 @@ export function useChatTab({
           setReplyTarget,
           setQuotedPresentationRef,
           setQuotedVoiceDocumentRef,
-          setPriority,
-          setReplyRequired,
+          setMessageMode,
           setToText,
           upsertDraft,
         },
@@ -757,8 +752,7 @@ export function useChatTab({
         groupId: selectedGroupId,
         text: txt,
         to: localToTokensSnapshot,
-        priority: prio,
-        replyRequired: replyRequiredSnapshot,
+        messageMode: messageModeSnapshot,
         replyTarget: replyTargetSnapshot,
         refs: refsSnapshot,
         files: composerFilesSnapshot,
@@ -777,8 +771,7 @@ export function useChatTab({
         localTo: localToTokensSnapshot,
         crossTo: crossToTokensSnapshot,
         files: composerFilesSnapshot,
-        priority: prio,
-        replyRequired: replyRequiredSnapshot,
+        messageMode: messageModeSnapshot,
         localId,
         refs: refsSnapshot,
         replyTarget: replyTargetSnapshot,
@@ -871,8 +864,7 @@ export function useChatTab({
     setReplyTarget,
     setQuotedPresentationRef,
     setQuotedVoiceDocumentRef,
-    setPriority,
-    setReplyRequired,
+    setMessageMode,
     setToText,
     setDestGroupId,
     upsertDraft,
@@ -998,10 +990,7 @@ export function useChatTab({
     selectedRemoteGroupIds,
     toggleRemoteGroupRecipient,
     clearRecipients,
-    priority,
-    replyRequired,
-    setPriority,
-    setReplyRequired,
+    messageMode,
     setMessageMode,
     destGroupId: sendGroupId,
     setDestGroupId,

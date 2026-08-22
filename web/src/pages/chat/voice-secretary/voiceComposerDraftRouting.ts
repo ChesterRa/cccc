@@ -36,8 +36,7 @@ export function routeVoiceTextToComposerGroup(input: {
     replyTarget: draft?.replyTarget || null,
     quotedPresentationRef: draft?.quotedPresentationRef || null,
     quotedVoiceDocumentRef: draft?.quotedVoiceDocumentRef || null,
-    priority: draft?.priority || "normal",
-    replyRequired: draft?.replyRequired || false,
+    messageMode: draft?.messageMode || state.preferredMessageMode,
   }));
   return "draft";
 }

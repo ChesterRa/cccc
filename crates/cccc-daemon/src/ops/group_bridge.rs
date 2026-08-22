@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg};
 
+pub(super) mod cancellation;
 mod payload;
 mod reply;
 mod result_projection;
@@ -33,6 +34,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "remote_send" => remote_send(home, request),
         "remote_delivery_status" => delivery_status(home, request),
         "group_bridge_receive_remote_send" => receive(home, request),
+        "group_bridge_receive_reply_request_cancel" => cancellation::receive(home, request),
         "group_bridge_session_open" => session_runtime::open(home, request),
         "group_bridge_session_close" => session_runtime::close(home, request),
         "group_bridge_session_poll" => session_runtime::poll(home, request),
@@ -101,7 +103,7 @@ fn retry_pending_for_route(
     if route_ids.is_empty() {
         return;
     }
-    let pending = items(&state, "deliveries")
+    let mut pending = items(&state, "deliveries")
         .iter()
         .filter(|receipt| {
             receipt["status"] == "retrying"
@@ -113,6 +115,7 @@ fn retry_pending_for_route(
         })
         .cloned()
         .collect::<Vec<_>>();
+    pending.sort_by_key(|receipt| (receipt["operation"] == "reply_request_cancel") as u8);
     for receipt in pending {
         let Some(registration_id) = receipt["registration_id"].as_str() else {
             continue;
@@ -120,6 +123,10 @@ fn retry_pending_for_route(
         let Some(idempotency_key) = receipt["idempotency_key"].as_str() else {
             continue;
         };
+        if receipt["operation"].as_str() == Some("reply_request_cancel") {
+            let _ = cancellation::retry(home, group_id, registration_id, idempotency_key);
+            continue;
+        }
         let payload = receipt
             .get("source_record_payload")
             .filter(|value| value.is_object())
@@ -155,8 +162,9 @@ pub(super) fn prepare_reply(
     group: &cccc_core::GroupDoc,
     target: &cccc_contracts::Event,
     request: &DaemonRequest,
+    message_mode: &str,
 ) -> Result<Option<reply::PreparedReply>, OpError> {
-    reply::prepare(home, group, target, request)
+    reply::prepare(home, group, target, request, message_mode)
 }
 
 fn remote_send_without_source_record(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -190,6 +198,15 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     let remote_group_id =
         nonempty(&route, &["remote_group_id", "target_group_id"]).unwrap_or_default();
     let existing = find_delivery(&state, &registration_id, &idempotency_key);
+    if existing
+        .as_ref()
+        .is_some_and(|receipt| receipt["operation"] != "remote_send")
+    {
+        return Err(OpError::new(
+            "contract_version_mismatch",
+            "Group Bridge delivery does not use the current operation contract",
+        ));
+    }
     if let Some(result) = result_projection::deduped(home, &group_id, &remote_group_id, &existing) {
         return result;
     }
@@ -211,7 +228,8 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         .and_then(|receipt| receipt["source_record_payload"].as_object())
         .cloned();
     let mut record_payload = stored_record.unwrap_or_else(|| payload.clone());
-    let mut body = if let Some(stored_body) = stored_body {
+    let mut body = if let Some(mut stored_body) = stored_body {
+        validate_remote_payload(&mut stored_body)?;
         stored_body
     } else {
         if let Some(insight) = request.args.get("insight").cloned() {
@@ -247,6 +265,10 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
                 .unwrap_or_else(|| json!("user")),
         );
         body.insert("idempotency_key".into(), json!(idempotency_key));
+        body.insert(
+            "message_contract_version".into(),
+            json!(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION),
+        );
         if let Some(value) = request.args.get("source_event_id").cloned() {
             body.insert("src_event_id".into(), value);
         }
@@ -277,6 +299,10 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     if !body.contains_key("idempotency_key") {
         body.insert("idempotency_key".into(), json!(idempotency_key));
     }
+    body.insert(
+        "message_contract_version".into(),
+        json!(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION),
+    );
     let persisted_source_event_id = existing
         .as_ref()
         .and_then(|receipt| receipt["source_event_id"].as_str())
@@ -290,7 +316,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         .filter(|value| !value.is_empty());
     let source_event =
         if let Some(event_id) = persisted_source_event_id.or(requested_source_event_id) {
-            validated_source_event(home, &group_id, &remote_group_id, event_id)?
+            validated_source_event(home, &group_id, &remote_group_id, event_id, &record_payload)?
         } else if record_source {
             ensure_source_event(home, &remote_group_id, &record_payload, &body, request)?
         } else {
@@ -306,7 +332,8 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         body.insert("src_event_id".into(), json!(source_event_id));
     }
     let mut sending_receipt = json!({
-        "ok":false,"status":"sending","registration_id":registration_id,
+        "operation":"remote_send","ok":false,"status":"sending",
+        "registration_id":registration_id,
         "idempotency_key":idempotency_key,"remote_group_id":remote_group_id,
         "src_group_id":group_id,"dst_group_id":remote_group_id,
         "transport":"group_bridge_session","attempt":attempt,"max_attempts":5,
@@ -318,6 +345,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     }
     store_delivery(home, sending_receipt.clone())?;
     let session_request = json!({
+        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
         "op":"remote_send",
         "src_group_id":group_id,
         "target_group_id":remote_group_id,
@@ -334,6 +362,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
                 "group_id":group_id,
                 "remote_group_id":remote_group_id,
                 "remote_peer_id":route["remote_peer_id"],
+                "operation":"remote_send",
                 "idempotency_key":idempotency_key,
                 "payload":body,
                 "timeout_ms":5_000
@@ -358,7 +387,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     let remote_result = outgoing_session_remote.map(Ok).unwrap_or_else(|| {
         match (endpoint.as_deref(), credential.as_deref()) {
             (Some(endpoint), Some(credential)) => {
-                post_delivery(endpoint, credential, &idempotency_key, &body)
+                post_delivery(endpoint, credential, "remote_send", &idempotency_key, &body)
             }
             _ => Err(OpError::new(
                 "peer_session_unavailable",
@@ -371,6 +400,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         Err(error) => {
             let terminal = attempt >= 5;
             let mut receipt = json!({
+                "operation":"remote_send",
                 "ok":false,"status":if terminal{"failed"}else{"retrying"},
                 "registration_id":registration_id,"idempotency_key":idempotency_key,
                 "remote_group_id":remote_group_id,"src_group_id":group_id,
@@ -453,6 +483,7 @@ fn validated_source_event(
     source_group_id: &str,
     destination_group_id: &str,
     source_event_id: &str,
+    remote_payload: &Map<String, Value>,
 ) -> Result<Value, OpError> {
     let event = result_projection::find_source_event(home, source_group_id, source_event_id);
     if event["id"].as_str() != Some(source_event_id) {
@@ -463,10 +494,14 @@ fn validated_source_event(
     }
     if event["kind"] != "chat.message"
         || event["data"]["dst_group_id"].as_str() != Some(destination_group_id)
+        || event["data"]["to"] != json!(["user"])
+        || event["data"]["message_mode"] != "send"
+        || event["data"]["dst_to"] != remote_payload["to"]
+        || event["data"]["dst_message_mode"] != remote_payload["message_mode"]
     {
         return Err(OpError::new(
             "source_event_mismatch",
-            "Group Bridge source event does not match this remote destination",
+            "Group Bridge source event does not match the canonical remote destination record",
         ));
     }
     Ok(event)
@@ -491,7 +526,7 @@ fn ensure_source_event(
         "client_id".into(),
         json!(source_client_id(&registration_id, &idempotency_key)),
     );
-    dispatch_message(home, "send_cross_group_remote_record", record)?
+    let event = dispatch_message(home, "send_cross_group_remote_record", record)?
         .get("source_event")
         .filter(|event| event.is_object())
         .cloned()
@@ -500,7 +535,20 @@ fn ensure_source_event(
                 "source_event_missing",
                 "Group Bridge source message was not persisted",
             )
-        })
+        })?;
+    let event_id = event["id"].as_str().ok_or_else(|| {
+        OpError::new(
+            "source_event_missing",
+            "Group Bridge source message has no id",
+        )
+    })?;
+    validated_source_event(
+        home,
+        &source_group_id,
+        destination_group_id,
+        event_id,
+        record_payload,
+    )
 }
 
 fn source_client_id(registration_id: &str, idempotency_key: &str) -> String {
@@ -528,6 +576,18 @@ fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_object)
         .cloned()
         .ok_or_else(|| OpError::new("invalid_payload", "payload must be an object"))?;
+    if payload
+        .get("message_contract_version")
+        .and_then(Value::as_u64)
+        != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION)
+    {
+        return Err(OpError::new(
+            "contract_version_mismatch",
+            "Group Bridge message contract version does not match",
+        ));
+    }
+    payload.remove("message_contract_version");
+    payload.remove("op");
     validate_remote_payload(&mut payload)?;
     let state = bridge_state(home)?;
     let registration = items(&state, "registrations")
@@ -609,6 +669,7 @@ fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn post_delivery(
     endpoint: &str,
     credential: &str,
+    operation: &str,
     idempotency_key: &str,
     payload: &Map<String, Value>,
 ) -> Result<Value, OpError> {
@@ -621,10 +682,28 @@ fn post_delivery(
         "{}/api/group-bridge/session/send",
         endpoint.trim_end_matches('/')
     );
+    let body = if operation == "remote_send" {
+        let mut body = payload.clone();
+        body.insert("op".into(), json!(operation));
+        body.insert(
+            "message_contract_version".into(),
+            json!(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION),
+        );
+        Value::Object(body)
+    } else {
+        json!({
+            "op":operation,
+            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+            "source_group_id":payload.get("source_group_id").cloned().unwrap_or(Value::Null),
+            "src_group_id":payload.get("source_group_id").cloned().unwrap_or(Value::Null),
+            "idempotency_key":idempotency_key,
+            "payload":payload,
+        })
+    };
     let response = client
         .post(url)
         .bearer_auth(credential)
-        .json(&Value::Object(payload.clone()))
+        .json(&body)
         .send()
         .map_err(|error| OpError::new("remote_transport_error", error.to_string()))?;
     let status = response.status();
@@ -634,63 +713,7 @@ fn post_delivery(
     if status.is_success() && value.get("error").is_none() && value["result"]["isError"] != true {
         return Ok(value);
     }
-    let mut arguments = payload.clone();
-    for key in [
-        "source_group_id",
-        "src_group_id",
-        "source_group_title",
-        "source_by",
-        "idempotency_key",
-        "dst_group_id",
-        "group_id",
-        "by",
-    ] {
-        arguments.remove(key);
-    }
-    arguments.insert("client_id".into(), json!(idempotency_key));
-    let fallback = client
-        .post(format!(
-            "{}/mcp/group-bridge",
-            endpoint.trim_end_matches('/')
-        ))
-        .bearer_auth(credential)
-        .json(&json!({
-            "jsonrpc":"2.0","id":idempotency_key,"method":"tools/call",
-            "params":{"name":"cccc_message_send","arguments":arguments}
-        }))
-        .send()
-        .map_err(|error| OpError::new("remote_transport_error", error.to_string()))?;
-    let fallback_status = fallback.status();
-    let fallback_value = fallback
-        .json::<Value>()
-        .map_err(|error| OpError::new("remote_transport_error", error.to_string()))?;
-    if fallback_status.is_success()
-        && fallback_value.get("error").is_none()
-        && fallback_value["result"]["isError"] != true
-    {
-        let remote_event_id = fallback_value["result"]["content"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["text"].as_str())
-            .find_map(|text| serde_json::from_str::<Value>(text).ok())
-            .and_then(|result| {
-                result
-                    .pointer("/event/id")
-                    .or_else(|| result.pointer("/result/event/id"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
-        Ok(json!({"receipt":{
-            "status":"sent","idempotency_key":idempotency_key,
-            "remote_event_id":remote_event_id,"transport":"group_bridge_mcp"
-        }}))
-    } else {
-        Err(OpError::new(
-            "remote_delivery_failed",
-            format!("session={value}; mcp={fallback_value}"),
-        ))
-    }
+    Err(OpError::new("remote_delivery_failed", value.to_string()))
 }
 
 fn delivery_succeeded(value: &Value) -> bool {

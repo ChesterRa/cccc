@@ -27,7 +27,7 @@ CCCC should own collaboration state and control-plane semantics; other systems c
 Use CCCC when you need:
 - multiple coding agents with persistent shared context
 - operationally reliable human-in-the-loop collaboration
-- message-level accountability (read/ack/reply-required)
+- message-level accountability (delivery/read/reply facts)
 - remote/mobile operations via IM bridge
 
 ## Non-Ideal Scenarios

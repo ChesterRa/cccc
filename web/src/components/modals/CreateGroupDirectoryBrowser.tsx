@@ -42,6 +42,10 @@ export function CreateGroupDirectoryBrowser({
     if (showCreateForm) inputRef.current?.focus();
   }, [showCreateForm]);
   useEffect(() => {
+    setDirectoryName("");
+    setShowCreateForm(false);
+  }, [currentDir]);
+  useEffect(() => {
     if (!error) return;
     setDirectoryName("");
     setShowCreateForm(false);

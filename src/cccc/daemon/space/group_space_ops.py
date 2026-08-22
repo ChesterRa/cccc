@@ -939,7 +939,6 @@ def _emit_artifact_async_notify(
             title=title,
             message=message,
             target_actor_id=target_actor_id,
-            requires_ack=False,
             context=context,
         )
         emit_system_notify(group, by="system", notify=notify)

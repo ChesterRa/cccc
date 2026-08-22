@@ -16,7 +16,7 @@ import {
   ChevronDownIcon,
   ReplyIcon,
   CloseIcon,
-  AlertIcon,
+  InboxIcon,
   SparklesIcon,
 } from "../../components/Icons";
 import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
@@ -69,7 +69,7 @@ import {
   startComposerHistory,
   type ComposerHistorySession,
 } from "./chatComposerHistory";
-import { getComposerMessageMode, type ComposerMessageMode } from "../../stores/useComposerStore";
+import { normalizeReplyMessageMode, type ComposerMessageMode } from "../../stores/useComposerStore";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
@@ -146,8 +146,7 @@ export interface ChatComposerProps {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
-  priority: "normal" | "attention";
-  replyRequired: boolean;
+  messageMode: ComposerMessageMode;
   setMessageMode: (mode: ComposerMessageMode) => void;
   onSendMessage: () => void;
 
@@ -203,8 +202,7 @@ export function ChatComposer({
   composerRef,
   composerText,
   setComposerText,
-  priority,
-  replyRequired,
+  messageMode,
   setMessageMode,
   onSendMessage,
   showMentionMenu,
@@ -869,14 +867,19 @@ export function ChatComposer({
     recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
   });
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
-  const modeOptions: Array<{ key: ComposerMessageMode; label: string; description: string }> = [
-    { key: "normal", label: t("modeNormal"), description: t("modeNormalDesc") },
-    { key: "attention", label: t("modeImportant"), description: t("modeImportantDesc") },
-    { key: "reply", label: t("modeNeedReply"), description: t("modeNeedReplyDesc") },
+  const allModeOptions: Array<{ key: ComposerMessageMode; label: string; description: string }> = [
+    { key: "send", label: t("modeSend"), description: t("modeSendDesc") },
+    { key: "request_reply", label: t("modeSendReply"), description: t("modeSendReplyDesc") },
+    { key: "mail", label: t("modeMail"), description: t("modeMailDesc") },
   ];
+  const modeOptions = replyTarget
+    ? allModeOptions.filter((option) => option.key !== "request_reply")
+    : allModeOptions;
 
-  const messageMode = getComposerMessageMode(priority, replyRequired);
-  const activeMode = modeOptions.find((opt) => opt.key === messageMode) || modeOptions[0];
+  const effectiveMessageMode: ComposerMessageMode = replyTarget
+    ? normalizeReplyMessageMode(messageMode)
+    : messageMode;
+  const activeMode = modeOptions.find((opt) => opt.key === effectiveMessageMode) || modeOptions[0];
 
   const recentChatExcerpt = useMemo(
     () => buildRecentChatExcerptForVoicePrompt(recentMessages),
@@ -886,9 +889,7 @@ export function ChatComposer({
   const composerAssistantContext = useMemo<Record<string, unknown>>(
     () => ({
       recipients: toTokens,
-      message_mode: messageMode,
-      priority,
-      reply_required: replyRequired,
+      message_mode: effectiveMessageMode,
       reply_target: replyTarget
         ? `${replyTarget.by || "unknown"}: ${String(replyTarget.text || "").slice(0, 240)}`
         : "",
@@ -900,12 +901,10 @@ export function ChatComposer({
       recent_chat_excerpt: recentChatExcerpt,
     }),
     [
-      messageMode,
-      priority,
+      effectiveMessageMode,
       quotedPresentationRef,
       quotedVoiceDocumentRef,
       recentChatExcerpt,
-      replyRequired,
       replyTarget,
       toTokens,
     ],
@@ -1296,14 +1295,14 @@ export function ChatComposer({
                       ? isDark
                         ? "text-[var(--color-text-tertiary)]"
                         : "text-gray-400"
-                      : messageMode === "reply"
+                      : effectiveMessageMode === "request_reply"
                         ? isDark
                           ? "bg-violet-500/18 text-violet-200 hover:bg-violet-500/26"
                           : "bg-violet-100 text-violet-700 hover:bg-violet-200"
-                        : messageMode === "attention"
+                        : effectiveMessageMode === "mail"
                           ? isDark
-                            ? "bg-amber-500/18 text-amber-200 hover:bg-amber-500/26"
-                            : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                            ? "bg-sky-500/14 text-sky-200 hover:bg-sky-500/22"
+                            : "bg-sky-50 text-sky-700 hover:bg-sky-100"
                           : isDark
                             ? "text-slate-200 hover:bg-white/10"
                             : "text-gray-700 hover:bg-black/5",
@@ -1315,12 +1314,12 @@ export function ChatComposer({
                   aria-expanded={showModeMenu}
                   title={t("messageMode", { mode: activeMode.label })}
                 >
-                  {messageMode === "reply" ? (
+                  {effectiveMessageMode === "request_reply" ? (
                     <ReplyIcon size={13} />
-                  ) : messageMode === "attention" ? (
-                    <AlertIcon size={13} />
+                  ) : effectiveMessageMode === "mail" ? (
+                    <InboxIcon size={13} />
                   ) : (
-                    <span className="text-[11px] font-black italic leading-none">N</span>
+                    <SendIcon size={13} />
                   )}
                   <span className="hidden sm:inline">{activeMode.label}</span>
                   <ChevronDownIcon size={12} className="opacity-70" />
@@ -1335,7 +1334,7 @@ export function ChatComposer({
                     aria-label={t("messageTypeOptions")}
                   >
                     {modeOptions.map((opt) => {
-                      const active = messageMode === opt.key;
+                      const active = effectiveMessageMode === opt.key;
                       return (
                         <button
                           key={opt.key}
@@ -1360,25 +1359,25 @@ export function ChatComposer({
                           <span
                             className={classNames(
                               "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
-                              opt.key === "reply"
+                              opt.key === "request_reply"
                                 ? isDark
                                   ? "bg-violet-500/25 text-violet-200"
                                   : "bg-violet-100 text-violet-700"
-                                : opt.key === "attention"
+                                : opt.key === "mail"
                                   ? isDark
-                                    ? "bg-amber-500/25 text-amber-200"
-                                    : "bg-amber-100 text-amber-700"
+                                    ? "bg-sky-500/20 text-sky-200"
+                                    : "bg-sky-50 text-sky-700"
                                   : isDark
                                     ? "bg-slate-700 text-slate-200"
                                     : "bg-gray-100 text-gray-700",
                             )}
                           >
-                            {opt.key === "reply" ? (
+                            {opt.key === "request_reply" ? (
                               <ReplyIcon size={13} />
-                            ) : opt.key === "attention" ? (
-                              <AlertIcon size={13} />
+                            ) : opt.key === "mail" ? (
+                              <InboxIcon size={13} />
                             ) : (
-                              <span className="text-[11px] font-black italic leading-none">N</span>
+                              <SendIcon size={13} />
                             )}
                           </span>
                           <span className="min-w-0 flex-1">

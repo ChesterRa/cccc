@@ -1,4 +1,5 @@
 import type { ChatMessageData, LedgerEvent } from "../../types";
+import { projectMessageMode } from "../../utils/crossGroupRecipients";
 
 export function getMessageRowGrouping(
   previousMessage: LedgerEvent | undefined,
@@ -13,13 +14,13 @@ export function getMessageRowGrouping(
   const sender = String(message.by || "").trim();
   const previousData = previousMessage.data as ChatMessageData;
   const data = message.data as ChatMessageData;
+  const previousMode = projectMessageMode(previousData);
+  const mode = projectMessageMode(data);
   const preventsCollapse =
     !previousSender ||
     previousSender !== sender ||
-    previousData?.priority === "attention" ||
-    data?.priority === "attention" ||
-    !!previousData?.reply_required ||
-    !!data?.reply_required ||
+    previousMode !== mode ||
+    mode === "request_reply" ||
     !!data?.reply_to ||
     !previousMessage.ts ||
     !message.ts;

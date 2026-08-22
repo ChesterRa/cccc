@@ -70,8 +70,7 @@ export function getPresentationRefStatus(
     raw === "needs_user" || raw === "resolved" || raw === "open"
       ? (raw as PresentationRefStatus)
       : null;
-  const needsReply = !!message?.reply_required;
-  const needsAck = trimString(message?.priority) === "attention";
+  const needsReply = message?.message_mode === "request_reply";
   const obligationStatus = event?._obligation_status;
   const userObligation =
     obligationStatus &&
@@ -83,11 +82,8 @@ export function getPresentationRefStatus(
       : null;
 
   if (userObligation) {
-    if (needsReply || !!userObligation.reply_required) {
+    if (needsReply || !!userObligation.reply_requested) {
       return userObligation.replied ? "resolved" : "needs_user";
-    }
-    if (needsAck) {
-      return userObligation.acked ? "resolved" : "needs_user";
     }
   }
 
@@ -96,23 +92,13 @@ export function getPresentationRefStatus(
     typeof obligationStatus === "object" &&
     Object.keys(obligationStatus).length > 0 &&
     !Object.prototype.hasOwnProperty.call(obligationStatus, "user") &&
-    (needsReply || needsAck)
+    needsReply
   ) {
     return rawStatus || "open";
   }
 
-  const ackStatus = event?._ack_status;
-  if (needsAck && ackStatus && typeof ackStatus === "object") {
-    if (Object.prototype.hasOwnProperty.call(ackStatus, "user")) {
-      return ackStatus.user ? "resolved" : "needs_user";
-    }
-    if (Object.keys(ackStatus).length > 0) {
-      return rawStatus || "open";
-    }
-  }
-
   if (rawStatus) return rawStatus;
-  if (needsReply || needsAck) {
+  if (needsReply) {
     return "needs_user";
   }
   return "open";

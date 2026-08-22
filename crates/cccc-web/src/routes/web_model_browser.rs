@@ -385,14 +385,6 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         "bound" => "bound",
         _ => "idle",
     };
-    let cursor_committed = matches!(
-        internal_delivery_status,
-        "submitted"
-            | "pending_new_chat_bind"
-            | "submission_ambiguous"
-            | "legacy_submission_unverified"
-            | "bound"
-    );
     let (target_state, target_label, target_reason) = if invalid_target {
         (
             "invalid",
@@ -546,7 +538,6 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "last_submission_evidence":submission_evidence,
             "last_send_selector":send_selector,
             "last_error":if delivery_state == "pending_bind" && last_error == "conversation_url_pending" {""} else {last_error},
-            "cursor_committed":cursor_committed,
             "mode":delivery_mode
         },
         "next_action":{"recommended":next_action,"label":next_label,"reason":next_reason}

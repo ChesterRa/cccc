@@ -1,10 +1,9 @@
-// DeliveryTab configures PTY delivery read-cursor behavior.
-import React from "react";
+// DeliveryTab configures runtime delivery pacing and one-shot reminder windows.
 import { useTranslation } from "react-i18next";
 
 import { ClockIcon } from "../../Icons";
+import { NumberInputRow } from "./automationUtils";
 import {
-  labelClass,
   primaryButtonClass,
   settingsWorkspaceActionBarClass,
   settingsWorkspaceBodyClass,
@@ -16,73 +15,18 @@ import {
 interface DeliveryTabProps {
   isDark: boolean;
   busy: boolean;
-  autoMarkOnDelivery: boolean;
-  setAutoMarkOnDelivery: (v: boolean) => void;
+  minIntervalSeconds: number;
+  setMinIntervalSeconds: (v: number) => void;
+  mailNoticeAfterSeconds: number;
+  setMailNoticeAfterSeconds: (v: number) => void;
+  replyNoticeAfterSeconds: number;
+  setReplyNoticeAfterSeconds: (v: number) => void;
   onSave: () => void;
-  onAutoSave?: (field: string, value: boolean) => void;
 }
 
-const ToggleRow = ({
-  label,
-  checked,
-  onChange,
-  isDark,
-  helperText,
-  onAutoSave,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (val: boolean) => void;
-  isDark: boolean;
-  helperText?: React.ReactNode;
-  onAutoSave?: (newValue: boolean) => void;
-}) => (
-  <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-    <label className="flex items-center justify-between cursor-pointer">
-      <span className={`pr-4 ${labelClass(isDark)}`}>{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => {
-          const newValue = !checked;
-          onChange(newValue);
-          onAutoSave?.(newValue);
-        }}
-        className={`
-          relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring
-          focus:outline-none focus:ring-2 focus:ring-offset-2
-          ${
-            checked
-              ? "border-emerald-500 bg-emerald-500 focus:ring-emerald-500"
-              : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] focus:ring-offset-white dark:focus:ring-offset-slate-900"
-          }
-        `}
-      >
-        <span
-          className={`
-            absolute left-0.5 inline-block h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transform transition-transform duration-300 ease-spring
-            ${checked ? "translate-x-5" : "translate-x-0"}
-          `}
-        />
-      </button>
-    </label>
-    {helperText && (
-      <div className="mt-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
-        {helperText}
-      </div>
-    )}
-  </div>
-);
-
 export function DeliveryTab(props: DeliveryTabProps) {
-  const { isDark, busy, onSave, onAutoSave } = props;
+  const { isDark, busy, onSave } = props;
   const { t } = useTranslation("settings");
-
-  const autoSave = (field: string, getValue: () => boolean) => {
-    if (!onAutoSave) return;
-    setTimeout(() => onAutoSave(field, getValue()), 0);
-  };
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -98,15 +42,34 @@ export function DeliveryTab(props: DeliveryTabProps) {
           </div>
         </div>
 
-        <div className={settingsWorkspaceBodyClass}>
-          <ToggleRow
-            isDark={isDark}
-            label={t("delivery.autoMarkRead")}
-            checked={props.autoMarkOnDelivery}
-            onChange={props.setAutoMarkOnDelivery}
-            helperText={t("delivery.autoMarkReadHelp")}
-            onAutoSave={(newValue) => autoSave("auto_mark_on_delivery", () => newValue)}
-          />
+        <div className={`${settingsWorkspaceBodyClass} grid grid-cols-1 gap-3 lg:grid-cols-3`}>
+          <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+            <NumberInputRow
+              isDark={isDark}
+              label={t("delivery.minInterval")}
+              value={props.minIntervalSeconds}
+              onChange={props.setMinIntervalSeconds}
+              helperText={t("delivery.minIntervalHelp")}
+            />
+          </div>
+          <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+            <NumberInputRow
+              isDark={isDark}
+              label={t("delivery.mailNotice")}
+              value={props.mailNoticeAfterSeconds}
+              onChange={props.setMailNoticeAfterSeconds}
+              helperText={t("delivery.mailNoticeHelp")}
+            />
+          </div>
+          <div className={settingsWorkspaceSoftPanelClass(isDark)}>
+            <NumberInputRow
+              isDark={isDark}
+              label={t("delivery.replyNotice")}
+              value={props.replyNoticeAfterSeconds}
+              onChange={props.setReplyNoticeAfterSeconds}
+              helperText={t("delivery.replyNoticeHelp")}
+            />
+          </div>
         </div>
 
         <div className={settingsWorkspaceActionBarClass(isDark)}>

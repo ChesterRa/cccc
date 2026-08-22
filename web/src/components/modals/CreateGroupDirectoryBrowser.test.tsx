@@ -85,4 +85,39 @@ describe("CreateGroupDirectoryBrowser", () => {
     expect(container.textContent).not.toContain("createGroup.newFolder");
     expect(container.textContent).not.toContain("stale");
   });
+
+  it("discards an unfinished folder name when the parent changes", async () => {
+    const newFolderButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "createGroup.newFolder",
+    );
+    await act(async () => newFolderButton?.click());
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="createGroup.folderName"]',
+    );
+    await act(async () => {
+      if (!input) return;
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "wrong-parent");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      root.render(
+        <CreateGroupDirectoryBrowser
+          dirItems={[]}
+          currentDir="/other-projects"
+          parentDir="/"
+          driveLocations={[]}
+          creatingDirectory={false}
+          onSelect={vi.fn()}
+          onFetch={vi.fn()}
+          onCreateDirectory={onCreateDirectory}
+        />,
+      );
+    });
+
+    expect(container.querySelector('input[aria-label="createGroup.folderName"]')).toBeNull();
+    expect(onCreateDirectory).not.toHaveBeenCalled();
+  });
 });

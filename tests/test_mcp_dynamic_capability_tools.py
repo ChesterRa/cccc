@@ -253,7 +253,6 @@ class TestMcpDynamicCapabilityTools(unittest.TestCase):
                     "request_text": "Please review this action request.",
                     "summary": "Spoken task detected.",
                     "document_path": "docs/voice-secretary/notes.md",
-                    "requires_ack": True,
                 },
             )
 

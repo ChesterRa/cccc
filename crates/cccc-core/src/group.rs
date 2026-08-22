@@ -10,13 +10,6 @@ use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
 pub const AUTOMATION_TIMING_KEYS: &[&str] = &[
-    "nudge_after_seconds",
-    "reply_required_nudge_after_seconds",
-    "attention_ack_nudge_after_seconds",
-    "unread_nudge_after_seconds",
-    "nudge_digest_min_interval_seconds",
-    "nudge_max_repeats_per_obligation",
-    "nudge_escalate_after_repeats",
     "actor_idle_timeout_seconds",
     "keepalive_delay_seconds",
     "keepalive_max_per_actor",

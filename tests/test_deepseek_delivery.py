@@ -8,7 +8,6 @@ from cccc.daemon.messaging.deepseek_delivery import deliver_messages
 from cccc.daemon.messaging.delivery import PendingMessage
 from cccc.kernel.group import Group
 from cccc.kernel.headless_events import read_headless_replay_events
-from cccc.kernel.inbox import set_cursor
 from cccc.kernel.ledger import append_event
 
 
@@ -132,64 +131,6 @@ def test_terminal_append_failure_keeps_source_delivery_failed(tmp_path, monkeypa
         assert "headless.turn.completed" not in raw
     finally:
         deepseek_runtime.stop(group_id=group.group_id, actor_id="deepseek")
-
-
-def test_deepseek_cursor_rejects_a_gap_before_advancing(tmp_path) -> None:
-    actor = {"id": "deepseek", "runtime": "deepseek", "runner": "headless", "enabled": True}
-    group = Group(
-        group_id="deepseek-gap",
-        path=tmp_path,
-        doc={"group_id": "deepseek-gap", "actors": [actor], "automation": {}},
-    )
-    first = append_event(group.ledger_path, kind="chat.message", group_id=group.group_id, scope_key="", by="user", data={"to": ["deepseek"], "text": "first"})
-    second = append_event(group.ledger_path, kind="chat.message", group_id=group.group_id, scope_key="", by="user", data={"to": ["deepseek"], "text": "second"})
-    try:
-        set_cursor(group, "deepseek", event_id=second["id"], ts=second["ts"])
-    except ValueError as exc:
-        assert "skip" in str(exc)
-    else:
-        raise AssertionError("deepseek cursor must not skip the unread prefix")
-    assert first["id"] != second["id"]
-
-
-def test_deepseek_cursor_keeps_continuity_after_an_active_actor_add(tmp_path) -> None:
-    actor = {"id": "deepseek", "runtime": "deepseek", "runner": "headless", "enabled": True}
-    group = Group(
-        group_id="deepseek-generation",
-        path=tmp_path,
-        doc={"group_id": "deepseek-generation", "actors": [actor], "automation": {}},
-    )
-    append_event(
-        group.ledger_path,
-        kind="actor.add",
-        group_id=group.group_id,
-        scope_key="",
-        by="user",
-        data={"actor": actor},
-    )
-    first = append_event(
-        group.ledger_path,
-        kind="chat.message",
-        group_id=group.group_id,
-        scope_key="",
-        by="user",
-        data={"to": ["deepseek"], "text": "first"},
-    )
-    second = append_event(
-        group.ledger_path,
-        kind="chat.message",
-        group_id=group.group_id,
-        scope_key="",
-        by="user",
-        data={"to": ["deepseek"], "text": "second"},
-    )
-    try:
-        set_cursor(group, "deepseek", event_id=second["id"], ts=second["ts"])
-    except ValueError as exc:
-        assert "skip" in str(exc)
-    else:
-        raise AssertionError("deepseek cursor must not skip the first post-add message")
-    assert first["id"] != second["id"]
 
 
 def test_shared_durability_vector_preserves_failed_prefix() -> None:

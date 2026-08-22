@@ -24,16 +24,6 @@ def headless_set_status(
     )
 
 
-def headless_ack_message(*, group_id: str, actor_id: str, message_id: str) -> Dict[str, Any]:
-    """Acknowledge processed message."""
-    return _call_daemon_or_raise(
-        {
-            "op": "headless_ack_message",
-            "args": {"group_id": group_id, "actor_id": actor_id, "message_id": message_id},
-        }
-    )
-
-
 def _handle_headless_namespace(
     name: str,
     arguments: Dict[str, Any],
@@ -42,7 +32,6 @@ def _handle_headless_namespace(
     resolve_self_actor_id: Callable[[Dict[str, Any]], str],
     headless_status_fn: Callable[..., Dict[str, Any]],
     headless_set_status_fn: Callable[..., Dict[str, Any]],
-    headless_ack_message_fn: Callable[..., Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     if name == "cccc_headless":
         gid = resolve_group_id(arguments)
@@ -57,13 +46,9 @@ def _handle_headless_namespace(
                 status=str(arguments.get("status") or ""),
                 task_id=arguments.get("task_id"),
             )
-        if action == "ack_message":
-            return headless_ack_message_fn(
-                group_id=gid, actor_id=aid, message_id=str(arguments.get("message_id") or "")
-            )
         raise MCPError(
             code="invalid_request",
-            message="cccc_headless action must be one of: status/set_status/ack_message",
+            message="cccc_headless action must be one of: status/set_status",
         )
 
     return None

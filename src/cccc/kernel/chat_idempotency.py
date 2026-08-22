@@ -41,6 +41,7 @@ def find_existing_reply_result(
         return {
             "event": event,
             "event_id": str(event.get("id") or "").strip(),
+            "message_mode": str(data.get("message_mode") or "send").strip(),
             "replayed": True,
             "message_sent": True,
             "partial_failure": False,

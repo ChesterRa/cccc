@@ -3,11 +3,13 @@ import type {
   Actor,
   LedgerEvent,
   MessageRef,
+  MessageMode,
   OptimisticAttachment,
   ReplyTarget,
 } from "../../types";
 import type { ComposerSendPlanTarget } from "../composerSendPlan";
 import type { SendMessageResponse } from "./chatComposerState";
+import { normalizeReplyMessageMode } from "../../stores/composerMessageMode";
 
 export function buildAssistantPlaceholders(
   actors: Actor[],
@@ -25,6 +27,7 @@ export function buildAssistantPlaceholders(
     data: {
       text: "",
       to: ["user"],
+      message_mode: "send",
       stream_id: `local:${localId}:${actor.id}`,
       pending_event_id: localId,
       pending_placeholder: true,
@@ -46,8 +49,7 @@ export function buildOptimisticMessage(input: {
   groupId: string;
   text: string;
   to: string[];
-  priority: "normal" | "attention";
-  replyRequired: boolean;
+  messageMode: MessageMode;
   replyTarget: ReplyTarget;
   refs: MessageRef[];
   files: File[];
@@ -69,8 +71,9 @@ export function buildOptimisticMessage(input: {
     data: {
       text: input.text,
       to: input.to,
-      priority: input.priority,
-      reply_required: input.replyRequired,
+      message_mode: input.replyTarget
+        ? normalizeReplyMessageMode(input.messageMode)
+        : input.messageMode,
       client_id: input.localId,
       reply_to: input.replyTarget?.eventId || null,
       quote_text: input.replyTarget?.text || undefined,
@@ -88,8 +91,7 @@ export async function dispatchPreparedMessage(input: {
   localTo: string[];
   crossTo: string[];
   files: File[];
-  priority: "normal" | "attention";
-  replyRequired: boolean;
+  messageMode: MessageMode;
   localId: string;
   refs: MessageRef[];
   replyTarget: ReplyTarget;
@@ -101,6 +103,8 @@ export async function dispatchPreparedMessage(input: {
   const files = input.files.length > 0 ? input.files : undefined;
   let response: SendMessageResponse | undefined;
   let successfulSendCount = 0;
+  const replyMessageMode = normalizeReplyMessageMode(input.messageMode);
+  const effectiveMessageMode = input.replyTarget ? replyMessageMode : input.messageMode;
   if (input.replyTarget && input.remoteReplyGroupId) {
     const recipients = input.remoteReplyTo.length > 0 ? input.remoteReplyTo : input.crossTo;
     response = await api.sendCrossGroupMessage(
@@ -108,8 +112,7 @@ export async function dispatchPreparedMessage(input: {
       input.remoteReplyGroupId,
       input.text,
       recipients.length > 0 ? recipients : ["@foreman"],
-      input.priority,
-      input.replyRequired,
+      replyMessageMode,
       files,
       {
         replyTo: input.replyTarget.eventId,
@@ -126,12 +129,12 @@ export async function dispatchPreparedMessage(input: {
       input.localTo,
       input.replyTarget.eventId,
       files,
-      input.priority,
-      input.replyRequired,
       input.localId,
       input.refs,
       input.replyTarget.text,
+      replyMessageMode,
     );
+    if (response.ok) successfulSendCount += 1;
   } else {
     const localTargets = input.sendPlanTargets.filter((target) => !target.isCrossGroup);
     for (const _target of localTargets) {
@@ -140,8 +143,7 @@ export async function dispatchPreparedMessage(input: {
         input.text,
         input.localTo,
         files,
-        input.priority,
-        input.replyRequired,
+        effectiveMessageMode,
         input.localId,
         input.refs,
       );
@@ -167,8 +169,7 @@ export async function dispatchPreparedMessage(input: {
           target.groupId,
           input.text,
           recipients,
-          input.priority,
-          input.replyRequired,
+          effectiveMessageMode,
           files,
         );
         if (!response.ok) break;

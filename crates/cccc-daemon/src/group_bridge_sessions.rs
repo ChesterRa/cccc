@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use cccc_core::group_bridge_identity::GroupBridgeIdentity;
 use cccc_core::{HomeLayout, group_bridge_legacy};
 use futures_util::{SinkExt, StreamExt};
@@ -170,6 +170,9 @@ async fn connect_once(
                 .unwrap_or("remote rejected Group Bridge session")
         ));
     }
+    if ready["message_contract_version"].as_u64() != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
+        return Err("Group Bridge message contract version does not match".into());
+    }
 
     let (command_tx, mut command_rx) = tokio_mpsc::unbounded_channel();
     register(config, command_tx);
@@ -246,7 +249,14 @@ async fn connect_once(
 }
 
 fn receive_request(home: &HomeLayout, config: &RouteConfig, frame: &Value) -> Value {
-    if frame["op"].as_str() != Some("remote_send") {
+    if frame["message_contract_version"].as_u64() != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
+        return json!({
+            "ok":false,
+            "error":{"code":"contract_version_mismatch","message":"Group Bridge message contract version does not match"}
+        });
+    }
+    let operation = frame["op"].as_str().unwrap_or("");
+    if !matches!(operation, "remote_send" | "reply_request_cancel") {
         return json!({
             "ok":false,
             "error":{"code":"unsupported_op","message":"unsupported Group Bridge session operation"}
@@ -254,7 +264,11 @@ fn receive_request(home: &HomeLayout, config: &RouteConfig, frame: &Value) -> Va
     }
     let request = DaemonRequest {
         v: 1,
-        op: "group_bridge_receive_remote_send".into(),
+        op: if operation == "reply_request_cancel" {
+            "group_bridge_receive_reply_request_cancel".into()
+        } else {
+            "group_bridge_receive_remote_send".into()
+        },
         args: Map::from_iter([
             ("target_group_id".into(), json!(config.local_group_id)),
             ("src_group_id".into(), json!(config.remote_group_id)),
@@ -455,7 +469,13 @@ mod tests {
             assert_eq!(hello["src_group_id"], "g_local");
             socket
                 .send(Message::Text(
-                    json!({"ok":true,"type":"ready"}).to_string().into(),
+                    json!({
+                        "ok":true,
+                        "type":"ready",
+                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+                    })
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .expect("ready");
@@ -570,15 +590,17 @@ mod tests {
             state.insert(
                 "deliveries".into(),
                 json!([{
+                    "operation":"remote_send",
                     "registration_id":config.registration_id.clone(),
                     "idempotency_key":"resume-on-connect","status":"retrying",
                     "attempt":1,"max_attempts":5,
                     "source_record_payload":{
-                        "text":"resume after reconnect","to":["user"],"source_by":"user"
+                        "text":"resume after reconnect","to":["user"],"source_by":"user",
+                        "message_mode":"send"
                     },
                     "payload":{
                         "text":"resume after reconnect","to":["user"],"source_by":"user",
-                        "format":"plain","priority":"normal","reply_required":false,
+                        "format":"plain","message_mode":"send",
                         "refs":[],"attachments":[]
                     }
                 }]),
@@ -599,7 +621,13 @@ mod tests {
             );
             socket
                 .send(Message::Text(
-                    json!({"ok":true,"type":"ready"}).to_string().into(),
+                    json!({
+                        "ok":true,
+                        "type":"ready",
+                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+                    })
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .expect("ready");
@@ -628,7 +656,7 @@ mod tests {
                     json!({
                         "type":"response","response_to":request["request_id"],
                         "result":{"ok":true,"receipt":{
-                            "status":"delivered","event_id":"remote-resumed"
+                            "status":"sent","event_id":"remote-resumed"
                         }}
                     })
                     .to_string()
@@ -712,7 +740,13 @@ mod tests {
             let _ = second.next().await.expect("second hello");
             second
                 .send(Message::Text(
-                    json!({"ok":true,"type":"ready"}).to_string().into(),
+                    json!({
+                        "ok":true,
+                        "type":"ready",
+                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+                    })
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .expect("ready");

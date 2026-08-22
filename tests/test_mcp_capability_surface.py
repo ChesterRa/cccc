@@ -41,7 +41,7 @@ class TestMcpCapabilitySurface(unittest.TestCase):
     def test_core_surface_budget_is_small(self) -> None:
         total = len(MCP_TOOLS)
         core = len(CORE_TOOL_NAMES)
-        self.assertEqual(core, 13, msg=f"unexpected lean core size: core={core}, total={total}")
+        self.assertEqual(core, 15, msg=f"unexpected lean core size: core={core}, total={total}")
 
     def test_capability_runtime_tools_are_core_and_admin_tools_are_packaged(self) -> None:
         core = set(CORE_TOOL_NAMES)

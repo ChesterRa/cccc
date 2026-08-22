@@ -134,22 +134,24 @@ fn inbox_filters_targeted_messages_and_persists_cursor() {
         .expect("actors");
     let mut message = Event::new("chat.message", &group_id);
     message.by = "lead".into();
-    message.data = json!({"text": "hello", "to": ["peer"]})
+    message.data = json!({"text": "hello", "to": ["peer"], "message_mode": "mail"})
         .as_object()
         .cloned()
         .unwrap_or_else(Map::<String, Value>::new);
     ledger::append(&store.ledger_path(&group_id).expect("path"), &message).expect("append");
     let group = store.load(&group_id).expect("load");
-    let unread = inbox::list_unread(&home, &group, "peer", 50, "all").expect("unread");
+    let unread = inbox::list_unread(&home, &group, "peer", 50).expect("unread");
     assert_eq!(unread.len(), 1);
     let unread_many =
         inbox::list_unread_many(&home, &group, &["lead".to_owned(), "peer".to_owned()], 50)
             .expect("batch unread");
     assert!(unread_many["lead"].is_empty());
     assert_eq!(unread_many["peer"], unread);
-    inbox::mark_read(&home, &group_id, "peer", &message.id).expect("mark read");
+    let consumed = inbox::consume_unread(&home, &group, "peer", "peer", 50).expect("consume Mail");
+    assert_eq!(consumed.messages, vec![message]);
+    assert_eq!(consumed.read_event.expect("mail.read").kind, "mail.read");
     assert!(
-        inbox::list_unread(&home, &group, "peer", 50, "all")
+        inbox::list_unread(&home, &group, "peer", 50)
             .expect("read inbox")
             .is_empty()
     );
@@ -234,26 +236,4 @@ fn system_notification_respects_its_explicit_actor_target() {
 
     assert!(inbox::is_for_actor(&group, &notification, "peer"));
     assert!(!inbox::is_for_actor(&group, &notification, "lead"));
-}
-
-#[test]
-fn legacy_chat_notice_is_folded_into_its_source_message() {
-    let (_temp, _home, store, group_id) = fixture();
-    store
-        .mutate(&group_id, |group| actors::add(group, Actor::new("peer")))
-        .expect("actor");
-    let group = store.load(&group_id).expect("load");
-    let mut notification = Event::new("system.notify", &group_id);
-    notification.by = "system".into();
-    notification.data = json!({
-        "target_actor_id": "peer",
-        "title": "New message",
-        "message": "New message from user. Check your inbox.",
-        "context": {"event_id": "source-message", "from": "user"}
-    })
-    .as_object()
-    .cloned()
-    .expect("notification data");
-
-    assert!(!inbox::is_for_actor(&group, &notification, "peer"));
 }

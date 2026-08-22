@@ -11,11 +11,11 @@ from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import targets_any_agent
+from ...kernel.peer_insight import PeerRecipientError, validate_message_audience
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from .actor_turn_rendering import SLASH_SKILL_CONTROL_KIND, build_actor_headless_delivery_text
 from .chat_delivery_ops import deliver_chat_message
-from .delivery import append_mcp_reply_reminder
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -56,23 +56,27 @@ def _render_hidden_skill_turn(*, task_text: str, command: str, capability_id: st
 def handle_slash_skill_dispatch(
     args: Dict[str, Any],
     *,
-    coerce_bool: Callable[[Any], bool],
     effective_runner_kind: Callable[[str], str],
     auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
 ) -> DaemonResponse:
+    legacy_fields = sorted(
+        key for key in ("priority", "reply_required", "requires_ack", "message_mode") if key in args
+    )
+    if legacy_fields:
+        return _error(
+            "unsupported_message_field",
+            "slash skill dispatch uses fixed message_mode=send",
+            details={"fields": legacy_fields},
+        )
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip() or "user"
     task_text = str(args.get("task_text") or args.get("text") or "").strip()
     command = str(args.get("command") or "").strip()
     capability_id = str(args.get("capability_id") or "").strip()
-    priority = str(args.get("priority") or "normal").strip() or "normal"
-    reply_required = coerce_bool(args.get("reply_required"))
     reply_to = str(args.get("reply_to") or "").strip()
     quote_text = str(args.get("quote_text") or "").strip()
     client_id = str(args.get("client_id") or "").strip()
 
-    if priority not in ("normal", "attention"):
-        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if not task_text:
@@ -93,6 +97,10 @@ def handle_slash_skill_dispatch(
         return _error("invalid_recipient", str(e))
     if not effective_to:
         effective_to = ["@foreman"]
+    try:
+        validate_message_audience(effective_to, message_mode="send")
+    except PeerRecipientError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
     if not targets_any_agent(effective_to):
         return _error("no_agent_recipients", "slash skill dispatch requires at least one actor recipient")
 
@@ -103,7 +111,8 @@ def handle_slash_skill_dispatch(
                 ok=True,
                 result={
                     "hidden": True,
-                    "delivered": True,
+                    "accepted": True,
+                    "message_mode": "send",
                     "replayed": True,
                     "event_id": str(existing.get("event_id") or ""),
                     "command": command,
@@ -122,8 +131,7 @@ def handle_slash_skill_dispatch(
         "client_id": client_id,
         "text": delivery_text,
         "format": "plain",
-        "priority": priority,
-        "reply_required": reply_required,
+        "message_mode": "send",
         "reply_to": reply_to or None,
         "quote_text": quote_text or None,
         "to": effective_to,
@@ -150,14 +158,12 @@ def handle_slash_skill_dispatch(
     )
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
-    headless_delivery_text = append_mcp_reply_reminder(
-        build_actor_headless_delivery_text(
-            by=by,
-            to=effective_to,
-            body=delivery_text,
-            reply_to=reply_to,
-            quote_text=quote_text,
-        )
+    headless_delivery_text = build_actor_headless_delivery_text(
+        by=by,
+        to=effective_to,
+        body=delivery_text,
+        reply_to=reply_to,
+        quote_text=quote_text,
     )
     deliver_chat_message(
         group=group,
@@ -168,8 +174,7 @@ def handle_slash_skill_dispatch(
         headless_delivery_text=headless_delivery_text,
         event_id=event_id,
         event_ts=event_ts,
-        priority=priority,
-        reply_required=reply_required,
+        message_mode="send",
         effective_runner_kind=effective_runner_kind,
         codex_actor_running=codex_app_supervisor.actor_running,
         claude_actor_running=claude_app_supervisor.actor_running,
@@ -184,7 +189,8 @@ def handle_slash_skill_dispatch(
         ok=True,
         result={
             "hidden": True,
-            "delivered": True,
+            "accepted": True,
+            "message_mode": "send",
             "event_id": event_id,
             "command": command,
             "capability_id": capability_id,
@@ -197,7 +203,6 @@ def try_handle_slash_skill_dispatch_op(
     op: str,
     args: Dict[str, Any],
     *,
-    coerce_bool: Callable[[Any], bool],
     effective_runner_kind: Callable[[str], str],
     auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
 ) -> Optional[DaemonResponse]:
@@ -205,7 +210,6 @@ def try_handle_slash_skill_dispatch_op(
         return None
     return handle_slash_skill_dispatch(
         args,
-        coerce_bool=coerce_bool,
         effective_runner_kind=effective_runner_kind,
         auto_wake_recipients=auto_wake_recipients,
     )

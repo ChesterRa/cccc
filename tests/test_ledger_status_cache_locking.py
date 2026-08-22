@@ -45,8 +45,8 @@ class TestLedgerStatusCacheLocking(unittest.TestCase):
                 conn.execute(
                     """
                     INSERT INTO message_status_meta(
-                        event_id, ts, is_attention, has_obligation
-                    ) VALUES('event-1', '', 0, 0)
+                        event_id, ts, has_obligation, has_read_status
+                    ) VALUES('event-1', '', 0, 1)
                     """
                 )
                 conn.commit()

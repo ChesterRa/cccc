@@ -4,7 +4,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use base64::Engine;
 use cccc_client::DaemonClient;
-use cccc_contracts::{Actor, ActorRole, DaemonRequest};
+use cccc_contracts::{Actor, ActorRole, DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION};
 use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
 use ed25519_dalek::{Signer, SigningKey};
@@ -50,7 +50,11 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
         connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
     assert_eq!(
         next_socket_json(&mut socket).await,
-        json!({"ok":true,"type":"ready"})
+        json!({
+            "ok":true,
+            "type":"ready",
+            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+        })
     );
     assert!(session_ready(&home, &group.group_id, &peer_id).await);
     complete_client_initiated_delivery(&mut socket).await;
@@ -70,7 +74,11 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
         connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
     assert_eq!(
         next_socket_json(&mut socket).await,
-        json!({"ok":true,"type":"ready"})
+        json!({
+            "ok":true,
+            "type":"ready",
+            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+        })
     );
     assert!(session_ready(&home, &group.group_id, &peer_id).await);
     complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "second").await;
@@ -86,12 +94,15 @@ async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
                 "type":"request",
                 "request_id":"client-request",
                 "op":"remote_send",
+                "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                 "src_group_id":"g_sender",
                 "idempotency_key":"client-delivery",
                 "payload":{
                     "source_by":"sender-agent",
+                    "src_event_id":"client-source-message",
                     "text":"hello from the outbound Rust session",
-                    "to":["@foreman"]
+                    "to":["foreman"],
+                    "message_mode":"request_reply"
                 }
             })
             .to_string()
@@ -106,6 +117,40 @@ async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
         response["result"]["receipt"]["status"], "sent",
         "{response}"
     );
+    let remote_source_event_id = response["result"]["event"]["id"]
+        .as_str()
+        .expect("remote source event id");
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type":"request",
+                "request_id":"client-cancellation",
+                "op":"reply_request_cancel",
+                "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                "src_group_id":"g_sender",
+                "idempotency_key":"client-cancellation",
+                "payload":{
+                    "source_group_id":"g_sender",
+                    "source_message_event_id":"client-source-message",
+                    "source_cancel_event_id":"client-cancel-event",
+                    "remote_source_event_id":remote_source_event_id
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("client cancellation");
+    let cancellation = next_socket_json(socket).await;
+    assert_eq!(cancellation["type"], "response", "{cancellation}");
+    assert_eq!(
+        cancellation["response_to"], "client-cancellation",
+        "{cancellation}"
+    );
+    assert_eq!(
+        cancellation["result"]["event"]["kind"],
+        "chat.reply_request.cancelled"
+    );
 }
 
 async fn connect_signed_socket(
@@ -118,10 +163,18 @@ async fn connect_signed_socket(
         tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws"))
             .await
             .expect("connect signed");
-    let material = json!({"protocol":"/cccc/group_bridge/session-ws/1.0.0","remote_peer_id":peer_id,"src_group_id":"g_sender","target_group_id":group_id}).to_string();
+    let material = json!({
+        "protocol":"/cccc/group_bridge/session-ws/1.0.0",
+        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+        "remote_peer_id":peer_id,
+        "src_group_id":"g_sender",
+        "target_group_id":group_id
+    })
+    .to_string();
     let signature = signing.sign(material.as_bytes());
     socket.send(WsMessage::Text(json!({
         "target_group_id":group_id,"src_group_id":"g_sender","remote_peer_id":peer_id,
+        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
         "public_key":base64::engine::general_purpose::STANDARD.encode(signing.verifying_key().to_bytes()),
         "signature":base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
     }).to_string().into())).await.expect("hello");
@@ -149,13 +202,13 @@ async fn complete_daemon_delivery(
     let client = DaemonClient::new(home.clone());
     let request = daemon_request(
         "group_bridge_session_deliver",
-        json!({"group_id":group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"idempotency_key":key,"payload":{"text":key},"timeout_ms":2_000}),
+        json!({"group_id":group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"operation":"remote_send","idempotency_key":key,"payload":{"text":key},"timeout_ms":2_000}),
     );
     let task = tokio::spawn(async move { client.call(&request).await });
     let frame = next_socket_json(socket).await;
     assert_eq!(frame["type"], "request");
     assert_eq!(frame["op"], "remote_send");
-    socket.send(WsMessage::Text(json!({"type":"response","response_to":frame["request_id"],"result":{"ok":true,"receipt":{"status":"delivered","remote_event_id":format!("remote-{key}")}}}).to_string().into())).await.expect("response");
+    socket.send(WsMessage::Text(json!({"type":"response","response_to":frame["request_id"],"result":{"ok":true,"receipt":{"status":"sent","remote_event_id":format!("remote-{key}")}}}).to_string().into())).await.expect("response");
     let response = task.await.expect("join").expect("delivery call");
     assert!(response.ok, "{response:?}");
     assert_eq!(
@@ -249,6 +302,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         "source_group_id":"g_sender","source_group_title":"Sender",
         "source_by":"sender-agent","src_event_id":"sender-event-1",
         "idempotency_key":"delivery-1","text":"hello remote","to":["@foreman"],
+        "message_mode":"send",
         "attachments":[{
             "kind":"file","title":"evidence.txt","mime_type":"text/plain",
             "bytes":8,"sha256":"remote-sha","content_base64":"ZXZpZGVuY2U="
@@ -267,7 +321,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         .oneshot(request(
             &json!({
                 "idempotency_key":"delivery-without-source","text":"hello remote",
-                "to":["@foreman"]
+                "to":["@foreman"],"message_mode":"send"
             }),
             Some("secret-test"),
         ))
@@ -280,7 +334,8 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         .oneshot(request(
             &json!({
                 "source_group_id":"g_sender","source_group_title":"Sender",
-                "idempotency_key":"delivery-without-recipient","text":"hello remote","to":[]
+                "idempotency_key":"delivery-without-recipient","text":"hello remote","to":[],
+                "message_mode":"send"
             }),
             Some("secret-test"),
         ))
@@ -306,6 +361,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
             &json!({
                 "source_group_id":"g_sender","idempotency_key":"delivery-with-refs",
                 "text":"hello remote","to":["@foreman"],
+                "message_mode":"send",
                 "refs":[{"kind":"task_ref","task_id":"task-1"}]
             }),
             Some("secret-test"),
@@ -360,6 +416,94 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
 }
 
 #[tokio::test]
+async fn authenticated_reply_request_cancellation_reaches_the_remote_message_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("receiver", "").expect("group");
+    seed_foreman(&home, &group.group_id);
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[{
+                "registration_id":"greg_cancel","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "transport":"group_bridge_session","credential":"cancel-secret","status":"active"
+            }],
+            "trusts":[{
+                "trust_id":"trust_cancel","registration_id":"greg_cancel",
+                "transport":"group_bridge_session","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"messages"
+            }]
+        });
+        Ok(())
+    })
+    .expect("bridge state");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let app = cccc_web::app(home.clone());
+    let delivered = app
+        .clone()
+        .oneshot(request(
+            &json!({
+                "op":"remote_send","source_group_id":"g_sender","src_group_id":"g_sender",
+                "source_by":"sender-agent","src_event_id":"sender-message-1",
+                "idempotency_key":"delivery-cancel-source","text":"please answer",
+                "to":["foreman"],"message_mode":"request_reply"
+            }),
+            Some("cancel-secret"),
+        ))
+        .await
+        .expect("delivery response");
+    let delivered_status = delivered.status();
+    let delivered: Value = serde_json::from_slice(
+        &delivered
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("delivery json");
+    assert_eq!(delivered_status, StatusCode::OK, "{delivered}");
+    let remote_source_event_id = delivered["result"]["event"]["id"]
+        .as_str()
+        .expect("remote source event id");
+    let cancellation = json!({
+        "op":"reply_request_cancel","source_group_id":"g_sender","src_group_id":"g_sender",
+        "idempotency_key":"cancel-1",
+        "payload":{
+            "source_group_id":"g_sender",
+            "source_message_event_id":"sender-message-1",
+            "source_cancel_event_id":"sender-cancel-1",
+            "remote_source_event_id":remote_source_event_id
+        }
+    });
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(request(&cancellation, Some("cancel-secret")))
+            .await
+            .expect("cancellation response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let cancellations = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+        .expect("events")
+        .into_iter()
+        .filter(|event| event.kind == "chat.reply_request.cancelled")
+        .collect::<Vec<_>>();
+    assert_eq!(cancellations.len(), 1);
+    assert_eq!(
+        cancellations[0].data["source_event_id"],
+        remote_source_event_id
+    );
+    assert_eq!(cancellations[0].data["src_event_id"], "sender-cancel-1");
+    daemon.abort();
+}
+
+#[tokio::test]
 async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_foreman() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -388,7 +532,8 @@ async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_for
     let response = cccc_web::app(home.clone())
         .oneshot(request(
             &json!({"source_group_id":"g_sender","text":"must not append",
-                "to":["@foreman"],"idempotency_key":"missing-foreman"}),
+                "to":["@foreman"],"idempotency_key":"missing-foreman",
+                "message_mode":"send"}),
             Some("bridge-secret"),
         ))
         .await
@@ -455,7 +600,11 @@ async fn signed_python_style_websocket_is_authorized_without_bearer_token() {
 }
 
 #[tokio::test]
-async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
+async fn cross_group_send_does_not_downgrade_to_legacy_remote_mcp() {
+    async fn unexpected_legacy_mcp() -> StatusCode {
+        panic!("current-contract delivery must not downgrade to legacy MCP")
+    }
+
     let remote = Router::new()
         .route(
             "/api/group-bridge/session/send",
@@ -466,18 +615,7 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
                 )
             }),
         )
-        .route(
-            "/mcp/group-bridge",
-            post(|Json(request): Json<Value>| async move {
-                assert_eq!(request["params"]["name"], "cccc_message_send");
-                assert_eq!(request["params"]["arguments"]["text"], "hello legacy");
-                assert_eq!(request["params"]["arguments"]["to"], json!(["@foreman"]));
-                Json(json!({
-                    "jsonrpc":"2.0","id":request["id"],
-                    "result":{"content":[{"type":"text","text":"{\"event\":{\"id\":\"remote-event\"}}"}]}
-                }))
-            }),
-        );
+        .route("/mcp/group-bridge", post(unexpected_legacy_mcp));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
@@ -513,7 +651,8 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
                 json!({
-                    "dst_group_id":"g_remote","text":"hello legacy",
+                    "dst_group_id":"g_remote","text":"hello current contract",
+                    "message_mode":"send",
                     "client_id":"legacy-send-1"
                 })
                 .to_string(),
@@ -533,8 +672,11 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
     )
     .expect("json");
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["result"]["receipt"]["transport"], "group_bridge_mcp");
-    assert_eq!(body["result"]["receipt"]["remote_event_id"], "remote-event");
+    assert_eq!(
+        body["result"]["receipt"]["transport"],
+        "group_bridge_session"
+    );
+    assert_eq!(body["result"]["receipt"]["status"], "retrying");
 
     daemon.abort();
     remote_task.abort();
@@ -741,7 +883,8 @@ async fn revoked_trust_invalidates_credential_and_removes_registration() {
     let denied = app
         .oneshot(request(
             &json!({
-                "source_group_id":"g_sender","text":"must fail","to":["@foreman"]
+                "source_group_id":"g_sender","text":"must fail","to":["@foreman"],
+                "message_mode":"send"
             }),
             Some("revoked-token"),
         ))
@@ -917,7 +1060,7 @@ async fn connect_bridge_socket(
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(home)).await });
     let (socket, _) = tokio_tungstenite::connect_async(format!(
-        "ws://{address}/api/group-bridge/session/ws?token=ws-token"
+        "ws://{address}/api/group-bridge/session/ws?token=ws-token&message_contract_version={GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}"
     ))
     .await
     .expect("connect");
@@ -944,13 +1087,19 @@ async fn expect_socket_closed(socket: &mut TestSocket) {
 }
 
 fn request(payload: &Value, credential: Option<&str>) -> Request<Body> {
+    let mut payload = payload.as_object().cloned().expect("payload object");
+    payload.insert(
+        "message_contract_version".into(),
+        json!(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION),
+    );
+    payload.entry("op").or_insert_with(|| json!("remote_send"));
     let mut builder = Request::post("/api/group-bridge/session/send")
         .header(header::CONTENT_TYPE, "application/json");
     if let Some(credential) = credential {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {credential}"));
     }
     builder
-        .body(Body::from(payload.to_string()))
+        .body(Body::from(Value::Object(payload).to_string()))
         .expect("request")
 }
 

@@ -107,6 +107,28 @@ def test_planner_skips_sender_and_non_targeted_actor() -> None:
     assert other_decision.reason == "not_targeted"
 
 
+def test_planner_respects_explicitly_disabled_actor() -> None:
+    actor = {
+        "id": "peer1",
+        "enabled": False,
+        "runner": "pty",
+        "runtime": "codex",
+    }
+    decision = plan_actor_chat_delivery(
+        group=_group(actor),
+        actor=actor,
+        event=_event(),
+        by="user",
+        effective_to=["peer1"],
+        effective_runner_kind=_runner,
+        codex_headless_running=lambda _group_id, _actor_id: False,
+        claude_headless_running=lambda _group_id, _actor_id: False,
+    )
+
+    assert decision.transport == TRANSPORT_SKIP
+    assert decision.reason == "actor_disabled"
+
+
 def test_planner_routes_running_codex_headless_actor() -> None:
     actor = {"id": "peer1", "runner": "headless", "runtime": "codex"}
     seen: list[tuple[str, str]] = []
@@ -238,6 +260,7 @@ def test_handle_send_uses_same_planner_for_claude_headless_actor(monkeypatch, tm
     ):
         resp = handle_send(
             {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "text": "hello claude",
@@ -302,6 +325,7 @@ def test_handle_send_schedules_browser_delivery_for_web_model_actor(monkeypatch,
     ):
         resp = handle_send(
             {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "text": "hello web model",
@@ -380,10 +404,10 @@ def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, t
         ) as claude_submit,
         patch("cccc.daemon.messaging.chat_delivery_ops.web_model_browser_delivery_enabled", return_value=True),
         patch("cccc.daemon.messaging.chat_delivery_ops.schedule_web_model_browser_delivery") as web_schedule,
-        patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
     ):
         resp = handle_send(
             {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "text": "keep this unread while paused",
@@ -403,4 +427,3 @@ def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, t
     codex_submit.assert_not_called()
     claude_submit.assert_not_called()
     web_schedule.assert_not_called()
-    emit_notify.assert_not_called()

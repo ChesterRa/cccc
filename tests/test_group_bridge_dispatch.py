@@ -61,7 +61,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                 src_group_id="g_local",
                 registration_id=rid,
                 idempotency_key="k1",
-                payload={"text": "hi"},
+                payload={"message_mode": "send", "text": "hi"},
             )
             self.assertEqual(r1["status"], "queued")
             # Re-enqueue same key must not create a second receipt.
@@ -69,7 +69,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                 src_group_id="g_local",
                 registration_id=rid,
                 idempotency_key="k1",
-                payload={"text": "changed"},
+                payload={"message_mode": "send", "text": "changed"},
             )
             stored = get_receipt(rid, "k1")
             self.assertEqual(stored["status"], "queued")
@@ -85,7 +85,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
 
             fake = _CountingTransport(
@@ -107,42 +107,6 @@ class TestGroupBridgeDispatch(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_python_replays_rust_delivered_receipt_without_network_recall(self) -> None:
-        from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued
-        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
-        from cccc.kernel.group_bridge.receipts import record_receipt
-
-        _, cleanup = self._with_home()
-        try:
-            reg = self._make_registration()
-            rid = reg["registration_id"]
-            record_receipt(
-                rid,
-                "rust-success",
-                {
-                    "ok": True,
-                    "status": "delivered",
-                    "remote_event_id": "remote-rust-1",
-                    "transport": "group_bridge_session",
-                },
-            )
-            fake = _CountingTransport(
-                RemoteSendResult(ok=True, status="sent", remote_event_id="duplicate", transport="fake")
-            )
-
-            replay = deliver_enqueued(
-                registration_id=rid,
-                idempotency_key="rust-success",
-                transport_factory=lambda _name: fake,
-                credential="secret",
-            )
-
-            self.assertEqual(replay["status"], "delivered")
-            self.assertEqual(replay["remote_event_id"], "remote-rust-1")
-            self.assertEqual(fake.calls, 0)
-        finally:
-            cleanup()
-
     def test_deliver_preserves_full_payload(self) -> None:
         from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult
@@ -154,8 +118,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             payload = {
                 "text": "hello world",
                 "to": ["@all", "peer-x"],
-                "priority": "attention",
-                "reply_required": True,
+                "message_mode": "request_reply",
                 "refs": [{"kind": "url", "url": "https://x"}],
             }
             enqueue_remote_send(src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload=payload)
@@ -176,8 +139,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             p = captured["env"].payload
             self.assertEqual(p.text, "hello world")
             self.assertEqual(p.to, ["@all", "peer-x"])
-            self.assertEqual(p.priority, "attention")
-            self.assertTrue(p.reply_required)
+            self.assertEqual(p.message_mode, "request_reply")
             self.assertEqual(p.refs, [{"kind": "url", "url": "https://x"}])
         finally:
             cleanup()
@@ -195,6 +157,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                 rid,
                 "rust-retry",
                 {
+                    "operation": "remote_send",
                     "ok": False,
                     "status": "retrying",
                     "src_group_id": "g_local",
@@ -202,8 +165,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                     "payload": {
                         "text": "hello from Rust",
                         "to": ["@foreman"],
-                        "priority": "attention",
-                        "reply_required": True,
+                        "message_mode": "request_reply",
                         "refs": [],
                         "attachments": [],
                         "source_by": "peer-rust",
@@ -251,7 +213,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                 src_group_id="g_local",
                 registration_id=rid,
                 idempotency_key="delivery-key",
-                payload={"text": "hi"},
+                payload={"message_mode": "send", "text": "hi"},
                 source_event_id="local-event-1",
             )
 
@@ -277,6 +239,91 @@ class TestGroupBridgeDispatch(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_reply_request_cancellation_waits_for_and_reuses_remote_source_event(self) -> None:
+        from cccc.daemon.group_bridge.remote_dispatch import (
+            deliver_enqueued,
+            enqueue_remote_send,
+            enqueue_reply_request_cancel,
+        )
+        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+
+        home, cleanup = self._with_home()
+        try:
+            reg = self._make_registration()
+            rid = reg["registration_id"]
+            enqueue_remote_send(
+                src_group_id="g_local",
+                registration_id=rid,
+                idempotency_key="message-key",
+                payload={"message_mode": "request_reply", "text": "answer this", "to": ["@foreman"]},
+                source_event_id="source-message-1",
+                home=home,
+            )
+
+            class CapturingTransport:
+                transport = "group_bridge_session"
+                capabilities = frozenset()
+
+                def __init__(self) -> None:
+                    self.cancel_envelope = None
+
+                def deliver(self, envelope):  # type: ignore[no-untyped-def]
+                    return RemoteSendResult(
+                        ok=True,
+                        status="sent",
+                        remote_event_id="remote-message-1",
+                        transport=self.transport,
+                    )
+
+                def cancel_reply_request(self, envelope):  # type: ignore[no-untyped-def]
+                    self.cancel_envelope = envelope
+                    return RemoteSendResult(
+                        ok=True,
+                        status="sent",
+                        remote_event_id="remote-cancel-1",
+                        transport=self.transport,
+                    )
+
+            transport = CapturingTransport()
+            delivered = deliver_enqueued(
+                registration_id=rid,
+                idempotency_key="message-key",
+                home=home,
+                transport_factory=lambda _name: transport,
+                credential="secret",
+            )
+            self.assertEqual(delivered["remote_event_id"], "remote-message-1")
+
+            enqueue_reply_request_cancel(
+                src_group_id="g_local",
+                registration_id=rid,
+                idempotency_key="cancel-key",
+                source_cancel_event_id="source-cancel-1",
+                source_message_event_id="source-message-1",
+                home=home,
+            )
+            cancelled = deliver_enqueued(
+                registration_id=rid,
+                idempotency_key="cancel-key",
+                home=home,
+                transport_factory=lambda _name: transport,
+                credential="secret",
+            )
+
+            self.assertEqual(cancelled["operation"], "reply_request_cancel")
+            self.assertEqual(cancelled["status"], "sent")
+            self.assertIsNotNone(transport.cancel_envelope)
+            self.assertEqual(
+                transport.cancel_envelope.payload.remote_source_event_id,
+                "remote-message-1",
+            )
+            self.assertEqual(
+                transport.cancel_envelope.payload.source_cancel_event_id,
+                "source-cancel-1",
+            )
+        finally:
+            cleanup()
+
     def test_deliver_passes_session_registration_metadata_to_target(self) -> None:
         from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult
@@ -291,7 +338,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
                 remote_peer_id="peer-remote",
             )
             rid = reg["registration_id"]
-            enqueue_remote_send(src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"})
+            enqueue_remote_send(src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"})
 
             captured = {}
 
@@ -323,7 +370,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             fake = _CountingTransport(
                 RemoteSendResult(ok=False, status="failed", error_code="unauthorized", retriable=False, transport="fake")
@@ -350,7 +397,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
 
             class FlakyTransport:
@@ -403,7 +450,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
             update_receipt(rid, "k1", status="retrying", next_attempt_at=future)
@@ -427,7 +474,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             update_receipt(rid, "k1", attempt=4, max_attempts=5)
             fake = _CountingTransport(
@@ -460,7 +507,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             old = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
             update_receipt(rid, "k1", status="sending", last_attempt_at=old)
@@ -481,7 +528,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="fake")
@@ -506,7 +553,7 @@ class TestGroupBridgeDispatch(unittest.TestCase):
             reg = self._make_registration()
             rid = reg["registration_id"]
             enqueue_remote_send(
-                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}
+                src_group_id="g_local", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}
             )
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="fake")

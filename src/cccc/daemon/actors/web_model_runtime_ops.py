@@ -9,13 +9,23 @@ from typing import Any, Dict, List, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import cursor_covers_event, find_event, get_cursor, has_chat_ack, is_message_for_actor, set_cursor, unread_messages
+from ...kernel.inbox import find_event, is_message_for_actor
 from ...kernel.ledger_index import lookup_event_positions
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...util.time import utc_now_iso
 from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
-from ..runner_state_ops import update_headless_state, web_model_actor_running
+from ..messaging.runtime_delivery import (
+    append_delivery_state,
+    latest_delivery_state,
+    pending_runtime_delivery_events,
+    pending_runtime_delivery_sources,
+)
+from ..runner_state_ops import (
+    read_headless_state,
+    update_headless_state,
+    web_model_actor_running,
+)
 
 
 _MAX_TURN_EVENTS = 20
@@ -71,7 +81,6 @@ def _append_browser_delivery_event(
     event_ids: List[str],
     delivery_id: str,
     browser_delivery: Dict[str, Any],
-    cursor_committed: bool,
 ) -> tuple[Optional[Dict[str, Any]], Optional[DaemonResponse]]:
     state = _clean_text(browser_delivery.get("state")).lower()
     data: Dict[str, Any] = {
@@ -80,7 +89,6 @@ def _append_browser_delivery_event(
         "event_ids": event_ids,
         "latest_event_id": event_ids[-1],
         "delivery_id": delivery_id,
-        "cursor_committed": cursor_committed,
         "delivery_transport": "projected_session",
     }
     for field in _BROWSER_DELIVERY_METADATA_FIELDS:
@@ -110,11 +118,6 @@ def _coerce_limit(value: Any) -> int:
     return max(1, min(limit, _MAX_TURN_EVENTS))
 
 
-def _normalize_kind_filter(value: Any) -> str:
-    kind_filter = _clean_text(value).lower() or "all"
-    return kind_filter if kind_filter in {"all", "chat", "notify"} else "all"
-
-
 def _compact_event(event: Dict[str, Any]) -> Dict[str, Any]:
     data = event.get("data")
     return {
@@ -127,11 +130,22 @@ def _compact_event(event: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _coalesced_text(messages: List[Dict[str, Any]], *, actor_id: str = "") -> str:
-    out = render_actor_event_batch_for_delivery(messages, actor_id=actor_id)
+def render_web_model_coalesced_text(
+    messages: List[Dict[str, Any]], *, group: Any, actor_id: str = ""
+) -> str:
+    out = render_actor_event_batch_for_delivery(
+        messages,
+        actor_id=actor_id,
+        group=group,
+    )
     if len(out) <= _MAX_COALESCED_TEXT_CHARS:
         return out
-    return out[: _MAX_COALESCED_TEXT_CHARS - 80].rstrip() + "\n\n[cccc] coalesced turn text truncated"
+    truncation = "\n\n[cccc] coalesced turn text truncated"
+    hint_marker = "\n\n[cccc] MAIL PENDING:"
+    body, marker, hint_tail = out.rpartition(hint_marker)
+    suffix = f"{marker}{hint_tail}" if marker else ""
+    available = max(1, _MAX_COALESCED_TEXT_CHARS - len(truncation) - len(suffix))
+    return f"{(body if marker else out)[:available].rstrip()}{truncation}{suffix}"
 
 
 def _turn_id(*, group_id: str, actor_id: str, messages: List[Dict[str, Any]]) -> str:
@@ -230,7 +244,7 @@ def _web_model_actor_running(group_id: str, actor_id: str, actor: Dict[str, Any]
 
 
 def web_model_queued_turn_info(group: Any, *, actor_id: str, headless_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Summarize unread work that arrived after the active web-model turn."""
+    """Summarize pending direct work that arrived after the active turn."""
 
     if not isinstance(headless_state, dict):
         return {"queued_count": 0}
@@ -241,27 +255,38 @@ def web_model_queued_turn_info(group: Any, *, actor_id: str, headless_state: Opt
     if not active_turn_id or not active_latest_event_id:
         return {"queued_count": 0}
 
+    pending = pending_runtime_delivery_sources(
+        group,
+        actor_id=actor_id,
+        transport="",
+        limit=10_000,
+    )
+    event_ids = [_clean_text(event.get("id")) for event in pending]
+    try:
+        positions = lookup_event_positions(
+            group.ledger_path,
+            [active_latest_event_id, *event_ids],
+        )
+    except Exception:
+        return {"queued_count": 0}
+    active_position = positions[0] if positions else None
+    if active_position is None:
+        return {"queued_count": 0}
+
     queued_count = 0
     queued_oldest_event_id = ""
     queued_latest_event_id = ""
     queued_latest_ts = ""
-    seen_active_latest = False
-    for event in unread_messages(group, actor_id=actor_id, limit=0, kind_filter="all"):
+    for event, position in zip(pending, positions[1:]):
         event_id = _clean_text(event.get("id"))
-        if not event_id:
+        if not event_id or position is None or position <= active_position:
             continue
-        if seen_active_latest:
-            queued_count += 1
-            if not queued_oldest_event_id:
-                queued_oldest_event_id = event_id
-            queued_latest_event_id = event_id
-            queued_latest_ts = _clean_text(event.get("ts"))
-            continue
-        if event_id == active_latest_event_id:
-            seen_active_latest = True
+        queued_count += 1
+        if not queued_oldest_event_id:
+            queued_oldest_event_id = event_id
+        queued_latest_event_id = event_id
+        queued_latest_ts = _clean_text(event.get("ts"))
 
-    if not seen_active_latest:
-        return {"queued_count": 0}
     return {
         "queued_count": queued_count,
         "queued_after_event_id": active_latest_event_id,
@@ -288,9 +313,23 @@ def decorate_web_model_queued_turn_info(
         actor["web_model_queued_latest_ts"] = queued_info.get("queued_latest_ts")
 
 
-def handle_web_model_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonResponse:
+def handle_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonResponse:
     group_id = _clean_text(args.get("group_id"))
     actor_id = _clean_text(args.get("actor_id") or args.get("by"))
+    by = _clean_text(args.get("by")) or actor_id
+    if by != actor_id:
+        return _error("permission_denied", "wait_next_turn must be called by the runtime actor")
+    if "kind_filter" in args:
+        return _error(
+            "unsupported_field",
+            "runtime delivery does not support Inbox kind filters",
+        )
+    transport = _clean_text(args.get("transport")) or "web_model_pull"
+    if transport not in {"web_model_pull", "web_model_browser"}:
+        return _error(
+            "invalid_transport",
+            "runtime delivery transport must be web_model_pull or web_model_browser",
+        )
     group, actor, err = _validate_group_actor(group_id, actor_id)
     if err is not None:
         return err
@@ -301,20 +340,36 @@ def handle_web_model_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonRespo
             details={"group_id": group_id, "actor_id": actor_id},
         )
     if not _web_model_actor_running(group_id, actor_id, actor):
-        cursor_event_id, cursor_ts = get_cursor(group, actor_id)
         return DaemonResponse(
             ok=True,
             result={
                 "status": "stopped",
                 "turn": None,
-                "cursor": {"event_id": cursor_event_id, "ts": cursor_ts},
                 "instructions": "This CCCC web_model actor is stopped. Do not continue polling until the actor is started again.",
             },
         )
+    active_state = read_headless_state(group_id, actor_id)
+    active_turn_id = _clean_text(active_state.get("active_turn_id"))
+    if _clean_text(active_state.get("status")).lower() == "working" and active_turn_id:
+        return DaemonResponse(
+            ok=True,
+            result={
+                "status": "turn_in_progress",
+                "turn": None,
+                "active_turn_id": active_turn_id,
+                "event_ids": list(active_state.get("active_event_ids") or []),
+                "instructions": "Finish the active turn with cccc_runtime_complete_turn before requesting more work.",
+            },
+        )
     limit = _coerce_limit(args.get("limit"))
-    kind_filter = _normalize_kind_filter(args.get("kind_filter"))
-    messages = unread_messages(group, actor_id=actor_id, limit=limit, kind_filter=kind_filter)  # type: ignore[arg-type]
-    cursor_event_id, cursor_ts = get_cursor(group, actor_id)
+    messages = pending_runtime_delivery_events(
+        group,
+        actor_id=actor_id,
+        actor_created_at=_clean_text(actor.get("created_at")),
+        transport=transport,
+        limit=limit,
+        claim_unclaimed_chat=True,
+    )
     if not messages:
         update_headless_state(group_id, actor_id, status="waiting", active_turn_id="", latest_event_id="")
         return DaemonResponse(
@@ -322,9 +377,8 @@ def handle_web_model_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonRespo
             result={
                 "status": "idle",
                 "turn": None,
-                "cursor": {"event_id": cursor_event_id, "ts": cursor_ts},
                 "suggested_retry_after_ms": 5000,
-                "instructions": "No unread work is available. Call cccc_runtime_wait_next_turn again after a short wait.",
+                "instructions": "No pending direct work is available. Call cccc_runtime_wait_next_turn again after a short wait.",
             },
         )
 
@@ -339,13 +393,16 @@ def handle_web_model_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonRespo
         "latest_event_id": str(latest.get("id") or ""),
         "latest_ts": str(latest.get("ts") or ""),
         "messages": compact_messages,
-        "coalesced_text": _coalesced_text(compact_messages, actor_id=actor_id),
+        "coalesced_text": render_web_model_coalesced_text(
+            compact_messages,
+            group=group,
+            actor_id=actor_id,
+        ),
         "system_prompt": render_system_prompt(group=group, actor=actor),
         "delivery": {
-            "mode": "cursor_on_complete",
-            "cursor_committed": False,
+            "mode": "runtime_delivery",
+            "transport": transport,
             "max_events": limit,
-            "kind_filter": kind_filter,
             "web_model_mode": web_model_delivery_preference(group, actor_id=actor_id)["mode"],
         },
         "instructions": (
@@ -360,8 +417,19 @@ def handle_web_model_runtime_wait_next_turn(args: Dict[str, Any]) -> DaemonRespo
         status="working",
         active_turn_id=str(turn.get("turn_id") or ""),
         latest_event_id=str(turn.get("latest_event_id") or ""),
+        active_event_ids=list(turn.get("event_ids") or []),
     )
-    return DaemonResponse(ok=True, result={"status": "work_available", "turn": turn, "cursor": {"event_id": cursor_event_id, "ts": cursor_ts}})
+    if transport == "web_model_pull":
+        for event_id in turn["event_ids"]:
+            append_delivery_state(
+                group,
+                actor_id=actor_id,
+                actor_created_at=_clean_text(actor.get("created_at")),
+                source_event_id=event_id,
+                state="accepted",
+                transport=transport,
+            )
+    return DaemonResponse(ok=True, result={"status": "work_available", "turn": turn})
 
 
 def handle_web_model_runtime_recover_turn(args: Dict[str, Any]) -> DaemonResponse:
@@ -396,12 +464,19 @@ def handle_web_model_runtime_recover_turn(args: Dict[str, Any]) -> DaemonRespons
         )
     ]
     latest = ordered[-1]
-    if not cursor_covers_event(group, actor_id=actor_id, event=latest):
-        return _error(
-            "turn_not_committed",
-            "turn recovery only accepts events already covered by the actor cursor",
-            details={"latest_event_id": _clean_text(latest.get("id"))},
+    for event in ordered:
+        delivery = latest_delivery_state(
+            group,
+            actor_id=actor_id,
+            source_event_id=_clean_text(event.get("id")),
         )
+        delivery_data = delivery.get("data") if isinstance(delivery, dict) and isinstance(delivery.get("data"), dict) else {}
+        if _clean_text(delivery_data.get("state")) not in {"accepted", "ambiguous"}:
+            return _error(
+                "turn_not_delivered",
+                "turn recovery only accepts events already handed to this runtime",
+                details={"event_id": _clean_text(event.get("id"))},
+            )
     compact_messages = [_compact_event(event) for event in ordered]
     turn = {
         "turn_id": _turn_id(group_id=group_id, actor_id=actor_id, messages=compact_messages),
@@ -412,11 +487,14 @@ def handle_web_model_runtime_recover_turn(args: Dict[str, Any]) -> DaemonRespons
         "latest_event_id": _clean_text(latest.get("id")),
         "latest_ts": _clean_text(latest.get("ts")),
         "messages": compact_messages,
-        "coalesced_text": _coalesced_text(compact_messages, actor_id=actor_id),
+        "coalesced_text": render_web_model_coalesced_text(
+            compact_messages,
+            group=group,
+            actor_id=actor_id,
+        ),
         "system_prompt": render_system_prompt(group=group, actor=actor),
         "delivery": {
-            "mode": "recovery_no_cursor_mutation",
-            "cursor_committed": True,
+            "mode": "recovery_no_delivery_mutation",
             "web_model_mode": web_model_delivery_preference(group, actor_id=actor_id)["mode"],
         },
     }
@@ -436,7 +514,13 @@ def _valid_turn_events(group: Any, *, actor_id: str, event_ids: List[str]) -> tu
             return [], _error("event_not_found", f"event not found: {event_id}")
         if str(event.get("kind") or "") not in {"chat.message", "system.notify"}:
             return [], _error("invalid_event_kind", "turn event kind must be chat.message or system.notify", details={"event_id": event_id})
-        if not is_message_for_actor(group, actor_id=actor_id, event=event):
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        is_daemon_notice = (
+            str(event.get("kind") or "") == "system.notify"
+            and str(data.get("kind") or "") in {"mail_notice", "reply_notice"}
+            and str(data.get("target_actor_id") or "").strip() == actor_id
+        )
+        if not is_daemon_notice and not is_message_for_actor(group, actor_id=actor_id, event=event):
             return [], _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}", details={"event_id": event_id})
         events.append(event)
     return events, None
@@ -460,63 +544,21 @@ def _latest_event_by_ledger_order(group: Any, events: List[Dict[str, Any]]) -> O
     return max(ranked, key=lambda item: item[0])[1]
 
 
-def _validate_unread_prefix_complete(group: Any, *, actor_id: str, event_ids: List[str], latest_event_id: str) -> Optional[DaemonResponse]:
-    completed = {str(item or "").strip() for item in event_ids if str(item or "").strip()}
-    prefix: List[str] = []
-    for event in unread_messages(group, actor_id=actor_id, limit=0, kind_filter="all"):
-        event_id = str(event.get("id") or "").strip()
-        if not event_id:
-            continue
-        prefix.append(event_id)
-        if event_id == latest_event_id:
-            break
-    if latest_event_id not in prefix:
-        return _error("turn_not_unread", "latest_event_id is not currently unread for this actor", details={"latest_event_id": latest_event_id})
-    missing = [event_id for event_id in prefix if event_id not in completed]
-    if missing:
-        return _error(
-            "non_contiguous_turn_events",
-            "complete_turn event_ids must include every currently unread event up to latest_event_id",
-            details={"missing_event_ids": missing, "latest_event_id": latest_event_id},
-        )
-    return None
-
-
-def _append_attention_acks(group: Any, *, actor_id: str, by: str, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for event in events:
-        if str(event.get("kind") or "") != "chat.message":
-            continue
-        data = event.get("data")
-        if not isinstance(data, dict):
-            continue
-        if str(data.get("priority") or "normal").strip() != "attention":
-            continue
-        event_id = str(event.get("id") or "").strip()
-        sender = str(event.get("by") or "").strip()
-        if not event_id or sender == actor_id or has_chat_ack(group, event_id=event_id, actor_id=actor_id):
-            continue
-        out.append(
-            append_event(
-                group.ledger_path,
-                kind="chat.ack",
-                group_id=group.group_id,
-                scope_key="",
-                by=by,
-                data={"actor_id": actor_id, "event_id": event_id},
-            )
-        )
-    return out
-
-
-def commit_web_model_delivered_turn(
+def record_web_model_delivery_outcome(
     group: Any,
     *,
     actor_id: str,
     turn: Dict[str, Any],
     by: str = "",
+    state: str = "accepted",
+    reason: str = "",
 ) -> Dict[str, Any]:
-    """Commit a turn after the runtime has received it through a delivery adapter."""
+    """Record browser handoff facts without mutating the actor's read cursor."""
+
+    del by
+    delivery_state = _clean_text(state).lower()
+    if delivery_state not in {"accepted", "failed", "ambiguous"}:
+        return {"ok": False, "error": "invalid_delivery_state", "message": "state must be accepted, failed, or ambiguous"}
 
     raw_event_ids = turn.get("event_ids")
     event_ids = [str(item or "").strip() for item in raw_event_ids] if isinstance(raw_event_ids, list) else []
@@ -535,65 +577,34 @@ def commit_web_model_delivered_turn(
             "message": str(getattr(err, "message", "") or "invalid turn events"),
         }
 
-    cursor = {"event_id": get_cursor(group, actor_id)[0], "ts": get_cursor(group, actor_id)[1]}
-    read_event: Optional[Dict[str, Any]] = None
-    ack_events: List[Dict[str, Any]] = []
-    latest = _latest_event_by_ledger_order(group, events)
-    if latest is None:
-        return {
-            "ok": False,
-            "error": "ledger_position_unavailable",
-            "message": "turn events could not be resolved in ledger order",
-        }
-
-    latest_event_id = str(latest.get("id") or "").strip()
-    latest_ts = str(latest.get("ts") or "").strip()
-    if cursor_covers_event(group, actor_id=actor_id, event=latest):
-        return {
-            "ok": True,
-            "cursor_committed": True,
-            "cursor": cursor,
-            "read_event": None,
-            "ack_events": [],
-            "processed_event_ids": [str(event.get("id") or "") for event in events],
-        }
-
-    prefix_err = _validate_unread_prefix_complete(
-        group,
-        actor_id=actor_id,
-        event_ids=[str(event.get("id") or "") for event in events],
-        latest_event_id=latest_event_id,
-    )
-    if prefix_err is not None:
-        err = prefix_err.error
-        return {
-            "ok": False,
-            "error": str(getattr(err, "code", "") or "invalid_unread_prefix"),
-            "message": str(getattr(err, "message", "") or "turn does not match unread prefix"),
-        }
-
-    committed_by = _clean_text(by) or actor_id
-    cursor = set_cursor(group, actor_id, event_id=latest_event_id, ts=latest_ts)
-    read_event = append_event(
-        group.ledger_path,
-        kind="chat.read",
-        group_id=group.group_id,
-        scope_key="",
-        by=committed_by,
-        data={"actor_id": actor_id, "event_id": latest_event_id},
-    )
-    ack_events = _append_attention_acks(group, actor_id=actor_id, by=committed_by, events=events)
+    actor = find_actor(group, actor_id) or {}
+    recorded: List[Dict[str, Any]] = []
+    for event in events:
+        source_event_id = _clean_text(event.get("id"))
+        latest = latest_delivery_state(group, actor_id=actor_id, source_event_id=source_event_id)
+        latest_data = latest.get("data") if isinstance(latest, dict) and isinstance(latest.get("data"), dict) else {}
+        if _clean_text(latest_data.get("state")) == delivery_state:
+            continue
+        recorded.append(
+            append_delivery_state(
+                group,
+                actor_id=actor_id,
+                actor_created_at=_clean_text(actor.get("created_at")),
+                source_event_id=source_event_id,
+                state=delivery_state,
+                transport="web_model_browser",
+                reason=_clean_text(reason),
+            )
+        )
     return {
         "ok": True,
-        "cursor_committed": True,
-        "cursor": cursor,
-        "read_event": read_event,
-        "ack_events": ack_events,
+        "delivery_state": delivery_state,
+        "delivery_events": recorded,
         "processed_event_ids": [str(event.get("id") or "") for event in events],
     }
 
 
-def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonResponse:
+def handle_runtime_complete_turn(args: Dict[str, Any]) -> DaemonResponse:
     group_id = _clean_text(args.get("group_id"))
     actor_id = _clean_text(args.get("actor_id") or args.get("by"))
     by = _clean_text(args.get("by")) or actor_id
@@ -614,12 +625,15 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
     status = _clean_text(args.get("status")).lower() or "done"
     if status not in _COMPLETE_STATUSES:
         return _error("invalid_status", "status must be one of: done, partial, failed, cancelled")
+    if "latest_event_id" in args:
+        return _error(
+            "unsupported_field",
+            "complete_turn requires the exact active event_ids",
+        )
     raw_event_ids = args.get("event_ids")
-    event_ids = [str(item or "").strip() for item in raw_event_ids] if isinstance(raw_event_ids, list) else []
-    if not event_ids:
-        latest_event_id = _clean_text(args.get("latest_event_id"))
-        if latest_event_id:
-            event_ids = [latest_event_id]
+    if isinstance(raw_event_ids, list) and any(not isinstance(item, str) for item in raw_event_ids):
+        return _error("invalid_event_ids", "event_ids must contain only strings")
+    event_ids = [item.strip() for item in raw_event_ids] if isinstance(raw_event_ids, list) else []
     if not event_ids:
         return _error("missing_event_ids", "event_ids is required")
     if len(event_ids) > _MAX_TURN_EVENTS:
@@ -628,45 +642,57 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
     events, event_err = _valid_turn_events(group, actor_id=actor_id, event_ids=event_ids)
     if event_err is not None:
         return event_err
-    cursor = {"event_id": get_cursor(group, actor_id)[0], "ts": get_cursor(group, actor_id)[1]}
-    read_event: Optional[Dict[str, Any]] = None
-    ack_events: List[Dict[str, Any]] = []
-    cursor_committed = False
-    committed_latest_event_id = ""
-    if status in {"done", "partial"}:
-        latest = _latest_event_by_ledger_order(group, events)
-        if latest is None:
+    active_state = read_headless_state(group_id, actor_id)
+    active_turn_id = _clean_text(active_state.get("active_turn_id"))
+    turn_id = _clean_text(args.get("turn_id")) or active_turn_id
+    if not active_turn_id or turn_id != active_turn_id:
+        return _error(
+            "stale_turn",
+            "turn_id does not match the actor's active structured turn",
+        )
+    active_event_ids = [
+        _clean_text(item)
+        for item in (
+            active_state.get("active_event_ids")
+            if isinstance(active_state.get("active_event_ids"), list)
+            else []
+        )
+        if _clean_text(item)
+    ]
+    if event_ids != active_event_ids:
+        return _error(
+            "completion_conflict",
+            "event_ids do not match the actor's active structured turn",
+        )
+    for event_id in event_ids:
+        delivery = latest_delivery_state(
+            group,
+            actor_id=actor_id,
+            source_event_id=event_id,
+        )
+        delivery_data = (
+            delivery.get("data")
+            if isinstance(delivery, dict) and isinstance(delivery.get("data"), dict)
+            else {}
+        )
+        if _clean_text(delivery_data.get("state")) not in {"accepted", "ambiguous"}:
             return _error(
-                "ledger_position_unavailable",
-                "turn events could not be resolved in ledger order",
+                "turn_not_delivered",
+                "complete_turn only accepts events already handed to this runtime",
+                details={"event_id": event_id},
             )
-        latest_event_id = str(latest.get("id") or "").strip()
-        committed_latest_event_id = latest_event_id
-        latest_ts = str(latest.get("ts") or "").strip()
-        if not cursor_covers_event(group, actor_id=actor_id, event=latest):
-            prefix_err = _validate_unread_prefix_complete(
-                group,
-                actor_id=actor_id,
-                event_ids=[str(event.get("id") or "") for event in events],
-                latest_event_id=latest_event_id,
-            )
-            if prefix_err is not None:
-                return prefix_err
-            cursor = set_cursor(group, actor_id, event_id=latest_event_id, ts=latest_ts)
-            read_event = append_event(
-                group.ledger_path,
-                kind="chat.read",
-                group_id=group.group_id,
-                scope_key="",
-                by=by,
-                data={"actor_id": actor_id, "event_id": latest_event_id},
-            )
-            ack_events = _append_attention_acks(group, actor_id=actor_id, by=by, events=events)
-        cursor_committed = True
-
     followup_delivery_scheduled = False
-    if cursor_committed and status in {"done", "partial"}:
-        update_headless_state(group_id, actor_id, status="waiting", active_turn_id="", latest_event_id="")
+    latest = _latest_event_by_ledger_order(group, events)
+    latest_event_id = _clean_text(latest.get("id")) if isinstance(latest, dict) else ""
+    if status in {"done", "partial"}:
+        update_headless_state(
+            group_id,
+            actor_id,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+            active_event_ids=[],
+        )
         try:
             from .web_model_browser_delivery import (
                 schedule_web_model_browser_delivery,
@@ -677,12 +703,19 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
                 followup_delivery_scheduled = schedule_web_model_browser_delivery(
                     group_id=group_id,
                     actor_id=actor_id,
-                    trigger_event_id=committed_latest_event_id,
+                    trigger_event_id=latest_event_id,
                 )
         except Exception:
             followup_delivery_scheduled = False
     elif status in {"failed", "cancelled"}:
-        update_headless_state(group_id, actor_id, status="waiting", active_turn_id="", latest_event_id="")
+        update_headless_state(
+            group_id,
+            actor_id,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+            active_event_ids=[],
+        )
 
     try:
         from .web_model_browser_recovery_watcher import close_web_model_browser_reload_window
@@ -700,11 +733,7 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
         ok=True,
         result={
             "status": status,
-            "turn_id": _clean_text(args.get("turn_id")),
-            "cursor_committed": cursor_committed,
-            "cursor": cursor,
-            "read_event": read_event,
-            "ack_events": ack_events,
+            "turn_id": turn_id,
             "processed_event_ids": [str(event.get("id") or "") for event in events],
             "followup_delivery_scheduled": followup_delivery_scheduled,
             "summary": _clean_text(args.get("summary")),
@@ -745,6 +774,11 @@ def handle_web_model_browser_delivery_record(args: Dict[str, Any]) -> DaemonResp
         return browser_delivery_err
     if browser_delivery is None:
         return _error("missing_browser_delivery", "browser_delivery is required")
+    if "cursor_committed" in args:
+        return _error(
+            "unsupported_field",
+            "browser delivery observations do not mutate the Mail cursor",
+        )
     event, event_err = _append_browser_delivery_event(
         group,
         actor_id=actor_id,
@@ -752,7 +786,6 @@ def handle_web_model_browser_delivery_record(args: Dict[str, Any]) -> DaemonResp
         event_ids=event_ids,
         delivery_id=delivery_id,
         browser_delivery=browser_delivery,
-        cursor_committed=bool(args.get("cursor_committed")),
     )
     if event_err is not None:
         return event_err
@@ -764,12 +797,12 @@ def try_handle_web_model_runtime_op(op: str, args: Dict[str, Any]) -> Optional[D
         return handle_web_model_delivery_preferences_get(args)
     if op == "web_model_delivery_preferences_update":
         return handle_web_model_delivery_preferences_update(args)
-    if op == "web_model_runtime_wait_next_turn":
-        return handle_web_model_runtime_wait_next_turn(args)
+    if op == "runtime_wait_next_turn":
+        return handle_runtime_wait_next_turn(args)
     if op == "web_model_runtime_recover_turn":
         return handle_web_model_runtime_recover_turn(args)
     if op == "web_model_browser_delivery_record":
         return handle_web_model_browser_delivery_record(args)
-    if op == "web_model_runtime_complete_turn":
-        return handle_web_model_runtime_complete_turn(args)
+    if op == "runtime_complete_turn":
+        return handle_runtime_complete_turn(args)
     return None

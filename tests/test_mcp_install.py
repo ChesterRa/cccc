@@ -292,6 +292,33 @@ class TestMcpInstall(unittest.TestCase):
         ):
             self.assertTrue(is_mcp_installed("devin"))
 
+    def test_is_mcp_installed_devin_accepts_equivalent_command_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            bin_dir = Path(td) / "bin"
+            bin_dir.mkdir()
+            executable = bin_dir / "cccc"
+            executable.write_text("", encoding="utf-8")
+            equivalent = bin_dir / ".." / "bin" / "cccc"
+            output = json.dumps(
+                {
+                    "mcpServers": {
+                        "cccc": {
+                            "transport": "stdio",
+                            "command": str(equivalent),
+                            "args": ["mcp"],
+                        }
+                    }
+                }
+            )
+            with patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=[str(executable), "mcp"],
+            ), patch(
+                "cccc.daemon.mcp_install._run_cli",
+                return_value=Mock(returncode=0, stdout=output, stderr=""),
+            ):
+                self.assertTrue(is_mcp_installed("devin"))
+
     def test_is_mcp_installed_devin_falls_back_to_list_output(self) -> None:
         outputs = [
             Mock(returncode=2, stdout="", stderr="unknown subcommand: get"),

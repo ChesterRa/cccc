@@ -318,6 +318,7 @@ async fn file(
         crate::repo::resolve(root, raw, false)?
     };
     if action == "send" {
+        let message_mode = file_message_mode(args)?;
         let group_id = args
             .get("group_id")
             .and_then(Value::as_str)
@@ -325,35 +326,37 @@ async fn file(
         if raw.starts_with("state/blobs/") {
             return Err("send expects a file under the active project scope".into());
         }
-        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-        let blob =
-            cccc_core::blobs::store(home, group_id, &bytes).map_err(|error| error.to_string())?;
-        let title = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("attachment");
         let mut request = args.clone();
         request.remove("action");
         request.remove("path");
         request.remove("rel_path");
+        request.remove("mode");
+        request.insert("message_mode".into(), Value::String(message_mode));
         crate::argument_normalization::normalize_message_author(&mut request);
-        request.insert(
-            "attachments".into(),
-            json!([{
-                "kind":"file",
-                "path":blob.path,
-                "title":title,
-                "mime_type":mime_guess::from_path(&path).first_or_octet_stream().to_string(),
-                "bytes":blob.bytes,
-                "sha256":blob.sha256,
-                "content_base64":base64::engine::general_purpose::STANDARD.encode(&bytes)
-            }]),
-        );
         if request
             .get("dst_group_id")
             .and_then(Value::as_str)
             .is_some_and(|value| !value.trim().is_empty())
         {
+            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+            let blob = cccc_core::blobs::store(home, group_id, &bytes)
+                .map_err(|error| error.to_string())?;
+            let title = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("attachment");
+            request.insert(
+                "attachments".into(),
+                json!([{
+                    "kind":"file",
+                    "path":blob.path,
+                    "title":title,
+                    "mime_type":mime_guess::from_path(&path).first_or_octet_stream().to_string(),
+                    "bytes":blob.bytes,
+                    "sha256":blob.sha256,
+                    "content_base64":base64::engine::general_purpose::STANDARD.encode(&bytes)
+                }]),
+            );
             let result = crate::remote_messages::try_send(home, client, request)
                 .await
                 .ok_or(
@@ -361,15 +364,14 @@ async fn file(
                 )??;
             return Ok(json!({"sent":true,"attachment":blob,"result":result}));
         }
-        if let Some(attachments) = request.get_mut("attachments").and_then(Value::as_array_mut) {
-            for attachment in attachments {
-                if let Some(item) = attachment.as_object_mut() {
-                    item.remove("content_base64");
-                }
-            }
-        }
-        let result = daemon(client, "send", request).await?;
-        return Ok(json!({"sent":true,"attachment":blob,"result":result}));
+        request.insert("paths".into(), json!([path.to_string_lossy().into_owned()]));
+        let result = daemon(client, "send_files", request).await?;
+        let attachment = result["event"]["data"]["attachments"]
+            .as_array()
+            .and_then(|attachments| attachments.first())
+            .cloned()
+            .unwrap_or(Value::Null);
+        return Ok(json!({"sent":true,"attachment":attachment,"result":result}));
     }
     if action == "blob_path" || action == "info" {
         return Ok(json!({"path":path,"bytes":path.metadata().map(|meta|meta.len()).unwrap_or(0)}));
@@ -402,6 +404,18 @@ fn first_non_blank<'a>(args: &'a Map<String, Value>, names: &[&str]) -> Option<&
 fn action(args: &Map<String, Value>) -> &str {
     args.get("action").and_then(Value::as_str).unwrap_or("read")
 }
+fn file_message_mode(args: &Map<String, Value>) -> Result<String, String> {
+    let mode = args
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("mail")
+        .trim();
+    if matches!(mode, "mail" | "send" | "request_reply") {
+        Ok(mode.to_owned())
+    } else {
+        Err("mode must be mail, send, or request_reply".into())
+    }
+}
 fn timeout(args: &Map<String, Value>) -> u64 {
     args.get("timeout_s")
         .or_else(|| args.get("timeout_seconds"))
@@ -415,7 +429,7 @@ fn bounded(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_codex_patch, command, timeout};
+    use super::{apply_codex_patch, command, file_message_mode, timeout};
     use serde_json::json;
 
     #[test]
@@ -440,6 +454,28 @@ mod tests {
             .expect("arguments");
 
         assert_eq!(command(&args).expect("command"), ["printf", "fallback"]);
+    }
+
+    #[test]
+    fn file_send_maps_the_tool_mode_to_the_canonical_message_mode() {
+        let omitted = json!({}).as_object().cloned().expect("omitted arguments");
+        assert_eq!(file_message_mode(&omitted).expect("default mode"), "mail");
+        let explicit = json!({"mode":"request_reply"})
+            .as_object()
+            .cloned()
+            .expect("explicit arguments");
+        assert_eq!(
+            file_message_mode(&explicit).expect("explicit mode"),
+            "request_reply"
+        );
+        let invalid = json!({"mode":"attention"})
+            .as_object()
+            .cloned()
+            .expect("invalid arguments");
+        assert_eq!(
+            file_message_mode(&invalid).expect_err("invalid mode"),
+            "mode must be mail, send, or request_reply"
+        );
     }
 
     #[test]

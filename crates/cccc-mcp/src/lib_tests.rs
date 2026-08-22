@@ -107,7 +107,7 @@ async fn protocol_and_tool_execution_errors_use_distinct_envelopes() {
 }
 
 #[test]
-fn unscoped_fallback_remains_the_thirteen_core_tools() {
+fn unscoped_fallback_remains_the_fifteen_core_tools() {
     let names = crate::core_tools(crate::tools::catalog())
         .into_iter()
         .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
@@ -121,10 +121,12 @@ fn unscoped_fallback_remains_the_thirteen_core_tools() {
         "cccc_coordination",
         "cccc_file",
         "cccc_help",
-        "cccc_inbox_list",
-        "cccc_inbox_mark_read",
+        "cccc_inbox_read",
+        "cccc_message_history",
+        "cccc_message_deliver",
         "cccc_message_reply",
         "cccc_message_send",
+        "cccc_reply_request_cancel",
         "cccc_task",
     ]
     .into_iter()

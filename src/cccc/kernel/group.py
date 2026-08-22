@@ -68,13 +68,6 @@ _DEFAULT_AUTOMATION_BUILTIN_SNIPPETS = {
 }
 
 _LEGACY_FLAT_AUTOMATION_KEYS = {
-    "nudge_after_seconds",
-    "reply_required_nudge_after_seconds",
-    "attention_ack_nudge_after_seconds",
-    "unread_nudge_after_seconds",
-    "nudge_digest_min_interval_seconds",
-    "nudge_max_repeats_per_obligation",
-    "nudge_escalate_after_repeats",
     "actor_idle_timeout_seconds",
     "keepalive_delay_seconds",
     "keepalive_max_per_actor",
@@ -85,7 +78,6 @@ _LEGACY_FLAT_AUTOMATION_KEYS = {
 _LEGACY_FLAT_SECTION_KEYS = {
     "default_send_to": ("messaging", "default_send_to"),
     "min_interval_seconds": ("delivery", "min_interval_seconds"),
-    "auto_mark_on_delivery": ("delivery", "auto_mark_on_delivery"),
     "terminal_transcript_visibility": ("terminal_transcript", "visibility"),
     "terminal_transcript_notify_tail": ("terminal_transcript", "notify_tail"),
     "terminal_transcript_notify_lines": ("terminal_transcript", "notify_lines"),
@@ -225,7 +217,6 @@ def _default_automation_ruleset() -> Dict[str, Any]:
                 "action": {
                     "kind": "notify",
                     "priority": "normal",
-                    "requires_ack": False,
                     "title": "Stand-up reminder",
                     "snippet_ref": "standup",
                     "message": "",
@@ -247,11 +238,6 @@ def default_new_group_automation_doc() -> Dict[str, Any]:
     doc = default_automation_ruleset_doc()
     doc.update(
         {
-            "nudge_after_seconds": 0,
-            # Explicit message obligations retain reliability reminders.
-            "reply_required_nudge_after_seconds": 300,
-            "attention_ack_nudge_after_seconds": 600,
-            "unread_nudge_after_seconds": 0,
             "actor_idle_timeout_seconds": 0,
             "keepalive_delay_seconds": 0,
             "silence_timeout_seconds": 0,
@@ -377,6 +363,11 @@ def create_group(
             "actors": [],
             # Single-layer storage: automation rules/snippets live in group.yaml under CCCC_HOME.
             "automation": default_new_group_automation_doc(),
+            "delivery": {
+                "min_interval_seconds": 0,
+                "mail_notice_after_seconds": 1800,
+                "reply_notice_after_seconds": 900,
+            },
         }
         atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 
@@ -596,6 +587,11 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "actors": [],
         # Keep deterministic defaults consistent with create_group().
         "automation": default_new_group_automation_doc(),
+        "delivery": {
+            "min_interval_seconds": 0,
+            "mail_notice_after_seconds": 1800,
+            "reply_notice_after_seconds": 900,
+        },
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 

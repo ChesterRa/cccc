@@ -72,7 +72,6 @@ pub(super) fn deliver(
             "text":"New voice input is ready.",
             "to":[ACTOR_ID],
             "priority":"normal",
-            "requires_ack":false,
             "context":{"kind":"voice_secretary_input","input_envelope":input}
         })
         .as_object()

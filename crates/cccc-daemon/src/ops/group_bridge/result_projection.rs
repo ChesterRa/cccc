@@ -7,16 +7,11 @@ pub(super) fn deduped(
     existing: &Option<Value>,
 ) -> Option<OpResult> {
     let mut receipt = existing.clone()?;
-    if !matches!(
-        receipt["status"].as_str().unwrap_or(""),
-        "delivered" | "sent" | "failed"
-    ) {
+    if !matches!(receipt["status"].as_str().unwrap_or(""), "sent" | "failed") {
         return None;
     }
-    if matches!(
-        receipt["status"].as_str().unwrap_or(""),
-        "delivered" | "sent"
-    ) && let Err(error) = project_success(home, group_id, destination_group_id, &mut receipt)
+    if receipt["status"] == "sent"
+        && let Err(error) = project_success(home, group_id, destination_group_id, &mut receipt)
     {
         tracing::warn!(
             %group_id,
@@ -51,19 +46,21 @@ pub(super) fn project_success(
     destination_group_id: &str,
     receipt: &mut Value,
 ) -> Result<(), OpError> {
-    if receipt["projected"] == true
-        || !matches!(
-            receipt["status"].as_str().unwrap_or(""),
-            "delivered" | "sent"
-        )
-    {
+    if receipt["projected"] == true || receipt["status"] != "sent" {
         return Ok(());
     }
+    let Some(operation) = receipt["operation"]
+        .as_str()
+        .filter(|operation| matches!(*operation, "remote_send" | "reply_request_cancel"))
+    else {
+        return Ok(());
+    };
     let source_event_id = receipt["source_event_id"]
         .as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    let operation = operation.to_owned();
     let remote_event_id = receipt["remote_event_id"]
         .as_str()
         .map(str::trim)
@@ -114,6 +111,7 @@ pub(super) fn project_success(
         event.by = "system".into();
         event.data = json!({
             "source_event_id":source_event_id,
+            "operation":operation,
             "dst_group_id":destination_group_id,
             "dst_event_id":"",
             "remote_event_id":remote_event_id,

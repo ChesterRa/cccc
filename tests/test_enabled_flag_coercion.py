@@ -128,6 +128,7 @@ class TestEnabledFlagCoercion(unittest.TestCase):
                             {
                                 "op": "send",
                                 "args": {
+                                    "message_mode": "send",
                                     "group_id": gid,
                                     "by": "user",
                                     "text": "wake up",
@@ -138,23 +139,14 @@ class TestEnabledFlagCoercion(unittest.TestCase):
                     )
 
                 self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
-                deadline = time.monotonic() + 1.0
-                while time.monotonic() < deadline and start_mock.call_count < 1:
-                    time.sleep(0.01)
-                self.assertEqual(start_mock.call_count, 1)
+                self.assertEqual(start_mock.call_count, 0)
 
-                actor_after = None
-                deadline = time.monotonic() + 1.0
-                while time.monotonic() < deadline:
-                    after = load_group(gid)
-                    self.assertIsNotNone(after)
-                    assert after is not None
-                    actor_after = find_actor(after, "peer1")
-                    if actor_after is not None and coerce_bool((actor_after or {}).get("enabled"), default=False):
-                        break
-                    time.sleep(0.01)
+                after = load_group(gid)
+                self.assertIsNotNone(after)
+                assert after is not None
+                actor_after = find_actor(after, "peer1")
                 self.assertIsNotNone(actor_after)
-                self.assertTrue(coerce_bool((actor_after or {}).get("enabled"), default=False))
+                self.assertFalse(coerce_bool((actor_after or {}).get("enabled"), default=True))
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

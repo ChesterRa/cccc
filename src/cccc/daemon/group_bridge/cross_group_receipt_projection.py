@@ -29,9 +29,12 @@ def project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path]
 def _project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path] = None) -> bool:
     source = receipt if isinstance(receipt, dict) else {}
     status = str(source.get("status") or "").strip()
-    if status not in {"sent", "delivered"}:
+    if status != "sent":
         return False
     canonical_status = "sent"
+    operation = str(source.get("operation") or "").strip()
+    if operation not in {"remote_send", "reply_request_cancel"}:
+        return False
     source_event_id = str(source.get("source_event_id") or "").strip()
     remote_event_id = str(source.get("remote_event_id") or "").strip()
     registration_id = str(source.get("registration_id") or "").strip()
@@ -72,6 +75,7 @@ def _project_remote_send_receipt(receipt: Dict[str, Any], *, home: Optional[Path
         by="system",
         data={
             "source_event_id": source_event_id,
+            "operation": operation,
             "dst_group_id": dst_group_id,
             "dst_event_id": "",
             "remote_event_id": remote_event_id,

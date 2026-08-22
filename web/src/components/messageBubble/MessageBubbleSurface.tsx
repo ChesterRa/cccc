@@ -8,14 +8,14 @@ interface MessageBubbleSurfaceProps {
   isUserMessage: boolean;
   isStreaming: boolean;
   motionClass: string;
-  isAttention: boolean;
+  replyRequested: boolean;
   isHighlighted: boolean;
 }
 
 function sharedClasses({
   isStreaming,
   motionClass,
-  isAttention,
+  replyRequested,
   isHighlighted,
 }: Omit<MessageBubbleSurfaceProps, "children" | "isUserMessage">): string {
   return classNames(
@@ -23,7 +23,7 @@ function sharedClasses({
     "transition-[opacity,transform,box-shadow,background-color,border-color] duration-200 ease-out",
     isStreaming ? "translate-y-0 opacity-95" : "translate-y-0 opacity-100",
     motionClass,
-    isAttention ? "ring-1 ring-amber-400/40 dark:ring-amber-500/40" : "",
+    replyRequested ? "ring-1 ring-violet-400/35 dark:ring-violet-500/35" : "",
     isHighlighted ? "outline outline-2 outline-[var(--glass-accent-border)] outline-offset-2" : "",
   );
 }
@@ -33,10 +33,10 @@ export function MessageBubbleSurface({
   isUserMessage,
   isStreaming,
   motionClass,
-  isAttention,
+  replyRequested,
   isHighlighted,
 }: MessageBubbleSurfaceProps) {
-  const className = sharedClasses({ isStreaming, motionClass, isAttention, isHighlighted });
+  const className = sharedClasses({ isStreaming, motionClass, replyRequested, isHighlighted });
 
   if (isUserMessage) {
     return (

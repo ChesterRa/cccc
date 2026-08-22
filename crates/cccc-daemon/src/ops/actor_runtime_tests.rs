@@ -161,7 +161,7 @@ async fn detached_restore_waits_for_the_group_mutation_lock() {
 }
 
 #[test]
-fn restore_delivers_one_unread_notice_without_advancing_cursor() {
+fn restore_recovers_one_pending_send_without_advancing_read_cursor() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -193,7 +193,7 @@ fn restore_delivers_one_unread_notice_without_advancing_cursor() {
         .expect("configure group");
     let mut event = cccc_contracts::Event::new("chat.message", &group_id);
     event.by = "user".into();
-    event.data = json!({"to":["peer1"],"text":"message-before-restart"})
+    event.data = json!({"to":["peer1"],"text":"message-before-restart","message_mode":"send"})
         .as_object()
         .cloned()
         .expect("event data");
@@ -214,13 +214,18 @@ fn restore_delivers_one_unread_notice_without_advancing_cursor() {
             },
         );
         let text = response.result["text"].as_str().unwrap_or_default();
-        if text.contains("Unread collaboration messages") {
-            assert!(!text.contains("message-before-restart"));
+        if text.contains("RESTORED:") {
+            let restored = text
+                .rsplit_once("RESTORED:")
+                .map(|(_, restored)| restored)
+                .expect("restored turn boundary");
+            assert!(restored.contains("message-before-restart"));
+            assert!(!restored.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "restored actor did not receive unread summary: {response:?}"
+            "restored actor did not recover the pending Send: {response:?}"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }

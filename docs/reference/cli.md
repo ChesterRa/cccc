@@ -170,8 +170,14 @@ cccc send "Hello"                  # No --to: default recipient policy applies (
 cccc send "Hello" --to @foreman    # Send to foreman
 cccc send "Hello" --to peer-1      # Send to specific actor
 cccc send "Announcement" --to @all # Explicit broadcast
+cccc send "Please answer" --to peer-1 --mode request-reply
+cccc send "For later" --to peer-1 --mode mail
 cccc send "Review this scope" --path src/api
 ```
+
+`--mode` accepts `send`, `request-reply`, or `mail` and defaults to `send`.
+`request-reply` requires concrete recipients; `mail` remains in Inbox without an
+immediate runtime prompt.
 
 ### `cccc tracked-send`
 
@@ -184,15 +190,43 @@ cccc tracked-send "Please implement this and reply with validation evidence." \
   --outcome "Feature is implemented and validation evidence is reported"
 ```
 
-The Rust CLI also forwards `--checklist`, `--assignee`, `--waiting-on`, `--handoff-to`,
-`--notes`, `--priority`, `--no-reply-required`, and `--idempotency-key` to the daemon.
+The CLI also forwards `--checklist`, `--assignee`, `--waiting-on`, `--handoff-to`,
+`--notes`, `--task-priority`, and `--idempotency-key` to the daemon. The linked
+message always uses Send.
 
 ### `cccc reply`
 
 Reply to a message.
 
 ```bash
-cccc reply <event_id> "Reply text" --to peer-1 --priority attention --reply-required
+cccc reply <event_id> "Reply text" --to peer-1
+cccc reply <event_id> "Reply for later" --to peer-1 --mode mail
+```
+
+`--mode` accepts `send` or `mail` and defaults to `send`. Both modes close a
+matching Send + Reply obligation; Mail stores the reply without immediately
+prompting the recipient. Mail is agent-only. A send or reply may address
+`user` alone or one/more agents, but never both in the same message.
+
+### `cccc deliver`
+
+Promote an existing Mail to Send, or retry a blocked/failed delivery, without
+creating another chat message.
+
+```bash
+cccc deliver <event_id> --to peer-1
+cccc deliver <event_id> --to peer-1 --force-ambiguous
+```
+
+`--force-ambiguous` is required when prior delivery may already have reached the
+runtime and therefore may produce a duplicate prompt.
+
+### `cccc cancel-reply`
+
+Cancel every still-open reply obligation for an existing Send + Reply message.
+
+```bash
+cccc cancel-reply <event_id>
 ```
 
 ### `cccc inbox`
@@ -200,9 +234,8 @@ cccc reply <event_id> "Reply text" --to peer-1 --priority attention --reply-requ
 View inbox.
 
 ```bash
-cccc inbox --actor-id <id>         # View actor unread messages
-cccc inbox --actor-id <id> --mark-read
-cccc inbox --actor-id <id> --kind-filter notify
+cccc inbox --actor-id <id>         # Read and consume the next unread Mail batch
+cccc inbox --actor-id <id> --limit 10
 ```
 
 ### `cccc tail`

@@ -7,7 +7,9 @@ Detailed feature documentation for CCCC.
 ### Core Contracts
 
 - Messages are first-class citizens: once sent, they're committed to the ledger
-- Read receipts are explicit: agents call MCP to mark as read
+- Delivery intent is explicit: `mail`, `send`, or `request_reply`
+- Inbox reads are consuming: `cccc_inbox_read` returns the next ordered batch
+  and commits its read boundary
 - Reply/quote are structured: `reply_to` + `quote_text`
 - @mention enables precise delivery
 
@@ -17,36 +19,44 @@ Detailed feature documentation for CCCC.
 # CLI
 cccc send "Hello"                 # No --to: default recipient policy applies (default foreman)
 cccc send "Hello" --to @foreman
+cccc send "Background context" --to peer-a --mode mail
+cccc send "Please answer" --to peer-a --mode request-reply
 cccc send "Announcement" --to @all # Explicit broadcast
 cccc tracked-send "Delegated work" --to assistant --title "Task title" --outcome "Done criterion"
 cccc reply <event_id> "Reply text"
 
 # MCP
-cccc_message_send(text="Hello", to=["@foreman"], insight="This direction may still be framed too narrowly.")
+cccc_message_send(text="Hello", to=["@foreman"], mode="send", insight="This direction may still be framed too narrowly.")
 cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
 cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
 
-### Read Receipts
+Each message has one audience domain: `user` alone, or one/more agents. Mixed
+human/agent recipient lists are rejected. Mail is agent-only; use Send or Send +
+Reply for the human user.
 
-- Agents call `cccc_inbox_mark_read(event_id)` to mark as read
-- Read is cumulative: marking X means X and all before are read
-- Cursors stored in `state/read_cursors.json`
+### Mail Inbox Reads
+
+- Agents call `cccc_inbox_read()` to fetch and consume the next Mail batch
+- Bootstrap and Web polling use Mail-only internal peek semantics and do not consume it
+- Read is cumulative in Mail append order; direct Send traffic is not replayed
+- The schema-versioned Mail cursor is stored in `state/read_cursors.json`
+- Past direct traffic is available explicitly through `cccc_message_history`
 
 ### Delivery Mechanism
 
 ```
 Message written to ledger
     ↓
-Daemon parses the "to" field
+message_mode=mail → Inbox only
+message_mode=send → claim and hand off to the runtime now
+message_mode=request_reply → Send plus a concrete reply obligation
     ↓
-For each target actor:
-    ├─ PTY running → inject into terminal
-    └─ Otherwise → leave in inbox
+Daemon records runtime.delivery for each attempted handoff
     ↓
-Wait for agent to call mark_read
+Agent consumes deferred Mail with cccc_inbox_read
 ```
 
 Delivery format:
@@ -146,7 +156,8 @@ System Prompt (thin layer)
 MCP Tools (protocol + execution interface)
 ├── cccc_help: On-demand CCCC protocol reference
 ├── cccc_capability_use: Invoke hidden tools without mounting every pack
-├── cccc_inbox_list / cccc_inbox_mark_read: Inbox
+├── cccc_inbox_read: Consume the next Mail batch
+├── cccc_message_history: Inspect actor-visible chat history without consuming Mail
 └── cccc_message_send / cccc_message_reply: Send/reply
 
 Ledger (complete memory)
@@ -165,10 +176,10 @@ Ledger (complete memory)
 
 ```
 1. Cold start or resume → Call cccc_bootstrap
-2. Need the full unread queue → Call cccc_inbox_list
+2. Need deferred messages → Call cccc_inbox_read
 3. Do the work with the agent runtime's normal tools and judgment
 4. Reply visibly with cccc_message_reply
-5. Mark handled inbox items read
+5. The returned Inbox batch is already marked read
 ```
 
 ## Automation
@@ -216,28 +227,30 @@ Notes:
 - Notifications are durable ledger events for enabled matching recipients, so
   the recipient runtime does not need to be running when the rule fires.
 
-### Built-in Automation
+### Built-in Delivery and Automation
 
 | Behavior | Config | Default | Description |
 |----------|--------|---------|-------------|
-| Nudge | `nudge_after_seconds` | 0s | Optional digest follow-up for pending unread or obligation items |
-| Reply-required nudge | `reply_required_nudge_after_seconds` | 300s | Reliability follow-up for required-reply obligations |
-| Attention-ack nudge | `attention_ack_nudge_after_seconds` | 600s | Reliability follow-up for attention messages lacking ACK |
-| Unread nudge | `unread_nudge_after_seconds` | 0s | Optional reminder when unread backlog keeps accumulating |
+| Mail notice | `delivery.mail_notice_after_seconds` | 1800s | One content-free Inbox reminder for a concrete pending Mail batch; no repeat or escalation |
+| Reply notice | `delivery.reply_notice_after_seconds` | 900s | One content-free reminder after an accepted `request_reply` remains unanswered |
 | Actor idle | `actor_idle_timeout_seconds` | 0s | Optional actor idle notification to foreman; `0` disables it by default |
 | Keepalive | `keepalive_delay_seconds` | 0s | Optional follow-up after an actor declares a next step and then goes quiet |
 | Silence check | `silence_timeout_seconds` | 0s | Optional group-level silence review and idle transition; `0` disables it |
 | Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 0s / 0 | Optional prompt to revisit `cccc_help` |
 
-These are defaults written for newly created groups. Heuristic steering stays off by default, while explicit reply/attention obligations retain reliability reminders. Existing groups are not migrated; legacy groups that omit these fields retain the daemon's compatibility fallbacks until explicitly changed.
+These are defaults written for newly created groups. Heuristic steering stays
+off by default. Mail and reply notices are bounded delivery semantics, not
+periodic automation: paused/stopped actors are not woken, notices never include
+message bodies, and no universal runtime-idle detector is assumed.
 
 ### Delivery Policy
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a PTY delivery succeeds |
+| `min_interval_seconds` | `0` | Optional per-actor spacing between runtime handoffs; `0` disables throttling |
 
-Low-level delivery throttling via `min_interval_seconds` remains supported in daemon/API settings for compatibility, but it is no longer exposed in the default Web settings UI.
+Runtime handoff and Inbox read are separate facts. A successful
+`runtime.delivery` never advances the Inbox cursor.
 
 ## Runtime-Only Actor Secrets
 

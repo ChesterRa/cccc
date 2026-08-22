@@ -67,6 +67,7 @@ class TestGroupStateOps(unittest.TestCase):
             cleanup()
 
     def test_resume_from_paused_recovers_headless_unread_work(self) -> None:
+        from cccc.daemon.messaging.runtime_delivery import latest_delivery_state
         from cccc.kernel.actors import add_actor
         from cccc.kernel.group import load_group, set_group_state
         from cccc.kernel.inbox import get_cursor
@@ -89,14 +90,14 @@ class TestGroupStateOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"to": ["peer1"], "text": "resume this work", "priority": "normal"},
+                data={"to": ["peer1"], "text": "resume this work", "message_mode": "send"},
             )
             group = set_group_state(group, state="paused")
 
             with (
                 patch("cccc.daemon.codex_app_sessions.SUPERVISOR.actor_running", return_value=True),
                 patch(
-                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_control_message",
+                    "cccc.daemon.codex_app_sessions.SUPERVISOR.submit_user_message",
                     return_value=True,
                 ) as submit,
             ):
@@ -107,7 +108,13 @@ class TestGroupStateOps(unittest.TestCase):
 
             self.assertTrue(active.ok, getattr(active, "error", None))
             submit.assert_called_once()
-            self.assertEqual(submit.call_args.kwargs.get("event_id"), f"unread-recovery:{unread['id']}")
+            self.assertEqual(submit.call_args.kwargs.get("event_id"), unread["id"])
+            delivery = latest_delivery_state(
+                group,
+                actor_id="peer1",
+                source_event_id=unread["id"],
+            )
+            self.assertEqual((delivery or {}).get("data", {}).get("state"), "accepted")
             self.assertEqual(get_cursor(group, "peer1"), ("", ""))
         finally:
             cleanup()

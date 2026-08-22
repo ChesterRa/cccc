@@ -10,7 +10,8 @@ pub use integrations::{
     SpaceCredentialAction, SpaceJobsAction,
 };
 pub use messaging::{
-    InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
+    CancelReplyArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs, SendArgs,
+    TailArgs, TrackedSendArgs,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -97,11 +98,13 @@ pub enum CommandKind {
     Prompt(PromptArgs),
     Im(ImArgs),
     Space(SpaceArgs),
+    /// Read and consume the next unread Mail batch for an actor.
     Inbox(InboxArgs),
-    Read(ReadArgs),
     Send(SendArgs),
     TrackedSend(TrackedSendArgs),
     Reply(ReplyArgs),
+    Deliver(DeliverArgs),
+    CancelReply(CancelReplyArgs),
     Tail(TailArgs),
     Ledger(LedgerArgs),
     Daemon {
@@ -353,7 +356,8 @@ mod tests {
             "lead",
             "--notes",
             "note",
-            "--no-reply-required",
+            "--task-priority",
+            "high",
             "--idempotency-key",
             "retry-1",
         ])
@@ -362,7 +366,32 @@ mod tests {
             panic!("wrong command");
         };
         assert_eq!(args.title, "Task");
-        assert!(args.no_reply_required);
+        assert_eq!(args.task_priority, "high");
         assert_eq!(args.idempotency_key, "retry-1");
+    }
+
+    #[test]
+    fn parses_message_delivery_control_commands() {
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "deliver",
+            "event-1",
+            "--to",
+            "peer-1,peer-2",
+            "--force-ambiguous",
+        ])
+        .expect("deliver");
+        let Some(CommandKind::Deliver(args)) = cli.command else {
+            panic!("wrong command");
+        };
+        assert_eq!(args.event_id, "event-1");
+        assert_eq!(args.actor_ids, ["peer-1,peer-2"]);
+        assert!(args.force_ambiguous);
+
+        let cli = Cli::try_parse_from(["cccc", "cancel-reply", "event-2"]).expect("cancel reply");
+        let Some(CommandKind::CancelReply(args)) = cli.command else {
+            panic!("wrong command");
+        };
+        assert_eq!(args.event_id, "event-2");
     }
 }

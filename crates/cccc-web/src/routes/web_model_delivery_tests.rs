@@ -174,9 +174,10 @@ async fn browser_session_projects_the_shared_target_contract() {
         bound["result"]["health_snapshot"]["delivery"]["state"],
         "bound"
     );
-    assert_eq!(
-        bound["result"]["health_snapshot"]["delivery"]["cursor_committed"],
-        true
+    assert!(
+        bound["result"]["health_snapshot"]["delivery"]
+            .get("cursor_committed")
+            .is_none()
     );
 
     integration_state::group_update(
@@ -246,16 +247,16 @@ async fn python_pending_new_chat_handoff_never_resubmits_before_url_binding() {
     let first = daemon_sync(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"Python already submitted this batch"}),
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"Python already submitted this batch","message_mode":"send"}),
     );
     let first_turn = daemon_sync(
         &home,
-        "web_model_runtime_wait_next_turn",
+        "runtime_wait_next_turn",
         json!({"group_id":group_id,"actor_id":"web1"}),
     );
     daemon_sync(
         &home,
-        "web_model_runtime_complete_turn",
+        "runtime_complete_turn",
         json!({
             "group_id":group_id,
             "actor_id":"web1",
@@ -335,7 +336,7 @@ async fn python_pending_new_chat_handoff_never_resubmits_before_url_binding() {
     let second = client
         .call(&request(
             "send",
-            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"wait for the Python-created chat URL"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"wait for the Python-created chat URL","message_mode":"send"}),
         ))
         .await
         .expect("send later turn");
@@ -378,7 +379,7 @@ async fn python_pending_new_chat_handoff_never_resubmits_before_url_binding() {
         .expect("send click number");
     let still_unread = client
         .call(&request(
-            "web_model_runtime_wait_next_turn",
+            "runtime_wait_next_turn",
             json!({"group_id":group_id,"actor_id":"web1"}),
         ))
         .await
@@ -426,7 +427,7 @@ async fn browser_session_inspection_does_not_deliver_or_commit_messages() {
     daemon_sync(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"must remain unread"}),
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"must remain unread","message_mode":"send"}),
     );
     let (shutdown, _) = broadcast::channel(2);
     let (app, _, _, _) = crate::app_with_shutdown(
@@ -448,7 +449,7 @@ async fn browser_session_inspection_does_not_deliver_or_commit_messages() {
     .await;
     let turn = daemon_sync(
         &home,
-        "web_model_runtime_wait_next_turn",
+        "runtime_wait_next_turn",
         json!({"group_id":group_id,"actor_id":"web1"}),
     );
 
@@ -596,13 +597,13 @@ async fn delivery_preference_persists_through_rust_web_and_daemon_turns() {
     client
         .call(&request(
             "send",
-            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"mode snapshot"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"mode snapshot","message_mode":"send"}),
         ))
         .await
         .expect("send");
     let wait = client
         .call(&request(
-            "web_model_runtime_wait_next_turn",
+            "runtime_wait_next_turn",
             json!({"group_id":group_id,"actor_id":"web1"}),
         ))
         .await
@@ -853,7 +854,7 @@ async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
 
     assert_eq!(
         names.len(),
-        31,
+        33,
         "unexpected Web Model tool surface: {names:?}"
     );
     assert!(names.contains("cccc_code_exec"));
@@ -990,7 +991,7 @@ async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
     let sent = client
         .call(&request(
             "send",
-            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"hello browser"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"hello browser","message_mode":"send"}),
         ))
         .await
         .expect("send");
@@ -1018,7 +1019,7 @@ async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
     .await;
     let idle = client
         .call(&request(
-            "web_model_runtime_wait_next_turn",
+            "runtime_wait_next_turn",
             json!({"group_id":group_id,"actor_id":"web1"}),
         ))
         .await
@@ -1102,9 +1103,10 @@ async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
         inspected["result"]["health_snapshot"]["delivery"]["state"],
         "submitted"
     );
-    assert_eq!(
-        inspected["result"]["health_snapshot"]["delivery"]["cursor_committed"],
-        true
+    assert!(
+        inspected["result"]["health_snapshot"]["delivery"]
+            .get("cursor_committed")
+            .is_none()
     );
     assert_eq!(
         connectors["result"]["connectors"][0]["last_call_status"],
@@ -1529,7 +1531,7 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
     let sent = client
         .call(&request(
             "send",
-            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"at most once prompt"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"at most once prompt","message_mode":"send"}),
         ))
         .await
         .expect("send");
@@ -1551,7 +1553,7 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
         .expect("send click number");
     let runtime_after = client
         .call(&request(
-            "web_model_runtime_wait_next_turn",
+            "runtime_wait_next_turn",
             json!({"group_id":group_id,"actor_id":"web1"}),
         ))
         .await
@@ -1587,9 +1589,10 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
         inspected["result"]["health_snapshot"]["delivery"]["state"],
         "ambiguous"
     );
-    assert_eq!(
-        inspected["result"]["health_snapshot"]["delivery"]["cursor_committed"],
-        true
+    assert!(
+        inspected["result"]["health_snapshot"]["delivery"]
+            .get("cursor_committed")
+            .is_none()
     );
     assert_eq!(
         inspected["result"]["health_snapshot"]["next_action"]["recommended"],
@@ -1625,7 +1628,7 @@ async fn interrupted_dispatch_is_fenced_and_later_turns_still_deliver() {
     let second = client
         .call(&request(
             "send",
-            json!({"group_id":fixture.group_id,"by":"user","to":["web1"],"text":"later turn still delivers"}),
+            json!({"group_id":fixture.group_id,"by":"user","to":["web1"],"text":"later turn still delivers","message_mode":"send"}),
         ))
         .await
         .expect("send later turn");
@@ -1830,11 +1833,11 @@ impl LegacyPendingFixture {
         let sent = daemon_sync(
             &home,
             "send",
-            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"legacy pending task"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"legacy pending task","message_mode":"send"}),
         );
         let wait = daemon_sync(
             &home,
-            "web_model_runtime_wait_next_turn",
+            "runtime_wait_next_turn",
             json!({"group_id":group_id,"actor_id":"web1"}),
         );
         let turn = wait["turn"].clone();
@@ -1844,7 +1847,7 @@ impl LegacyPendingFixture {
         ) {
             daemon_sync(
                 &home,
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 json!({
                     "group_id":group_id,
                     "actor_id":"web1",

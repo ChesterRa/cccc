@@ -2,18 +2,17 @@ import unittest
 
 
 class TestGroupBridgeContracts(unittest.TestCase):
-    def test_payload_defaults_and_forbid_extra(self) -> None:
+    def test_payload_requires_message_mode_and_forbids_extra(self) -> None:
         from cccc.contracts.v1.group_bridge import RemoteSendPayload
 
-        p = RemoteSendPayload(text="hi")
-        self.assertEqual(p.priority, "normal")
-        self.assertFalse(p.reply_required)
+        p = RemoteSendPayload(text="hi", message_mode="send")
+        self.assertEqual(p.message_mode, "send")
         self.assertEqual(p.to, [])
         self.assertEqual(p.refs, [])
         self.assertEqual(p.attachments, [])
         self.assertEqual(p.source_by, "")
         with self.assertRaises(Exception):
-            RemoteSendPayload(text="hi", bogus=1)
+            RemoteSendPayload(text="hi", message_mode="send", bogus=1)
 
     def test_registration_record_has_no_raw_token_field(self) -> None:
         from cccc.contracts.v1.group_bridge import RegistrationRecord
@@ -58,7 +57,7 @@ class TestGroupBridgeContracts(unittest.TestCase):
             src_group_id="g1",
             registration_id="r1",
             idempotency_key="k1",
-            payload=RemoteSendPayload(text="hi"),
+            payload=RemoteSendPayload(text="hi", message_mode="send"),
         )
         self.assertEqual(env.payload.text, "hi")
         self.assertEqual(env.idempotency_key, "k1")

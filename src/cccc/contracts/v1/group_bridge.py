@@ -13,10 +13,17 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
 
+from .message import MessageMode
+
 from pydantic import BaseModel, ConfigDict, Field
 
 RegistrationStatus = Literal["active", "unauthorized", "revoked", "error"]
 RemoteSendStatus = Literal["queued", "sending", "retrying", "sent", "failed"]
+GroupBridgeOperation = Literal["remote_send", "reply_request_cancel"]
+
+# Current explicitly negotiated Group Bridge message contract. Version 2 adds
+# one-audience-domain validation and makes Mail agent-only.
+GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION = 2
 
 
 class RemoteSendPayload(BaseModel):
@@ -28,8 +35,7 @@ class RemoteSendPayload(BaseModel):
 
     text: str
     format: Literal["plain", "markdown"] = "plain"
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = False
+    message_mode: MessageMode
     to: List[str] = Field(default_factory=list)
     refs: List[Dict[str, object]] = Field(default_factory=list)
     attachments: List[Dict[str, object]] = Field(default_factory=list)
@@ -45,6 +51,17 @@ class RemoteSendEnvelope(BaseModel):
     registration_id: str
     idempotency_key: str
     payload: RemoteSendPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RemoteReplyRequestCancelPayload(BaseModel):
+    """Control payload that cancels a relayed request-reply message."""
+
+    source_group_id: str
+    source_message_event_id: str
+    source_cancel_event_id: str
+    remote_source_event_id: str
 
     model_config = ConfigDict(extra="forbid")
 

@@ -23,14 +23,12 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 group = load_group(group_id)
                 self.assertIsNotNone(group)
                 assert group is not None
-                group.doc["automation"]["nudge_after_seconds"] = 123
+                group.doc["automation"]["keepalive_delay_seconds"] = 123
                 group.doc["messaging"] = {"default_send_to": "foreman"}
                 group.doc["settings"] = {
-                    "nudge_after_seconds": 999,
-                    "nudge_digest_min_interval_seconds": 777,
+                    "keepalive_delay_seconds": 999,
                     "default_send_to": "broadcast",
                     "min_interval_seconds": 42,
-                    "auto_mark_on_delivery": False,
                     "terminal_transcript_visibility": "all",
                     "terminal_transcript_notify_tail": False,
                     "terminal_transcript_notify_lines": 37,
@@ -42,11 +40,9 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 promoted = load_group(group_id)
                 self.assertIsNotNone(promoted)
                 assert promoted is not None
-                self.assertEqual(promoted.doc["automation"]["nudge_after_seconds"], 123)
-                self.assertEqual(promoted.doc["automation"]["nudge_digest_min_interval_seconds"], 777)
+                self.assertEqual(promoted.doc["automation"]["keepalive_delay_seconds"], 123)
                 self.assertEqual(promoted.doc["messaging"]["default_send_to"], "foreman")
-                self.assertEqual(promoted.doc["delivery"]["min_interval_seconds"], 42)
-                self.assertFalse(promoted.doc["delivery"]["auto_mark_on_delivery"])
+                self.assertEqual(promoted.doc["delivery"]["min_interval_seconds"], 0)
                 self.assertEqual(promoted.doc["terminal_transcript"]["visibility"], "all")
                 self.assertFalse(promoted.doc["terminal_transcript"]["notify_tail"])
                 self.assertEqual(promoted.doc["terminal_transcript"]["notify_lines"], 37)
@@ -58,7 +54,7 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_group_settings_update_defaults_auto_mark_on_delivery_to_true(self) -> None:
+    def test_group_settings_update_returns_delivery_notice_defaults(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request
 
@@ -91,7 +87,9 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
 
                 settings = ((update_resp.result or {}).get("settings") or {})
-                self.assertTrue(bool(settings.get("auto_mark_on_delivery")))
+                self.assertEqual(settings.get("mail_notice_after_seconds"), 1800)
+                self.assertEqual(settings.get("reply_notice_after_seconds"), 900)
+                self.assertNotIn("auto_mark_on_delivery", settings)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
@@ -121,13 +119,6 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 self.assertIsNotNone(group)
                 assert group is not None
                 group.doc["automation"] = {
-                    "nudge_after_seconds": "bad",
-                    "reply_required_nudge_after_seconds": -1,
-                    "attention_ack_nudge_after_seconds": "bad",
-                    "unread_nudge_after_seconds": 100,
-                    "nudge_digest_min_interval_seconds": "bad",
-                    "nudge_max_repeats_per_obligation": "bad",
-                    "nudge_escalate_after_repeats": -3,
                     "actor_idle_timeout_seconds": "bad",
                     "keepalive_delay_seconds": "bad",
                     "keepalive_max_per_actor": -2,
@@ -136,8 +127,9 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                     "help_nudge_min_messages": "bad",
                 }
                 group.doc["delivery"] = {
-                    "auto_mark_on_delivery": "false",
                     "min_interval_seconds": "bad",
+                    "mail_notice_after_seconds": -1,
+                    "reply_notice_after_seconds": "bad",
                 }
                 group.doc["terminal_transcript"] = {
                     "visibility": "foreman",
@@ -161,13 +153,6 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
 
                 settings = ((update_resp.result or {}).get("settings") or {})
-                self.assertEqual(settings.get("nudge_after_seconds"), 300)
-                self.assertEqual(settings.get("reply_required_nudge_after_seconds"), 0)
-                self.assertEqual(settings.get("attention_ack_nudge_after_seconds"), 600)
-                self.assertEqual(settings.get("unread_nudge_after_seconds"), 100)
-                self.assertEqual(settings.get("nudge_digest_min_interval_seconds"), 120)
-                self.assertEqual(settings.get("nudge_max_repeats_per_obligation"), 3)
-                self.assertEqual(settings.get("nudge_escalate_after_repeats"), 0)
                 self.assertEqual(settings.get("actor_idle_timeout_seconds"), 0)
                 self.assertEqual(settings.get("keepalive_delay_seconds"), 120)
                 self.assertEqual(settings.get("keepalive_max_per_actor"), 0)
@@ -175,7 +160,9 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 self.assertEqual(settings.get("help_nudge_interval_seconds"), 600)
                 self.assertEqual(settings.get("help_nudge_min_messages"), 10)
                 self.assertEqual(settings.get("min_interval_seconds"), 0)
-                self.assertFalse(bool(settings.get("auto_mark_on_delivery")))
+                self.assertEqual(settings.get("mail_notice_after_seconds"), 0)
+                self.assertEqual(settings.get("reply_notice_after_seconds"), 900)
+                self.assertNotIn("auto_mark_on_delivery", settings)
                 self.assertEqual(settings.get("terminal_transcript_notify_lines"), 20)
         finally:
             if old_home is None:

@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict
 from urllib.parse import urlparse, urlunparse
 
 from ...kernel.group_bridge.pairing import get_local_identity
+from ...contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 from .ws_auth import sign_session_hello
 from .ws_peer import ThreadGroupBridgeWsPeer
 from .ws_session import GroupBridgeWsSession, register_session, unregister_session
@@ -70,6 +71,14 @@ def connect_group_bridge_session_once(
         ready = _ws_recv_json(ws)
         if not bool(ready.get("ok")):
             return {"ok": False, "error": ready.get("error") or {"code": "session_rejected", "message": "remote rejected Group Bridge session"}}
+        if ready.get("message_contract_version") != GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "contract_version_mismatch",
+                    "message": "Group Bridge message contract version does not match",
+                },
+            }
         _set_ws_timeout(ws, idle_tick_value)
         peer = ThreadGroupBridgeWsPeer(lambda payload: _ws_send_json(ws, payload, send_lock=send_lock))
         session = GroupBridgeWsSession(

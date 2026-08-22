@@ -3,8 +3,8 @@ CCCC MCP Server - IM-style Agent Collaboration Tools
 
 Static MCP surface (role and capability-pack visibility may hide some tools):
 - cccc_help / cccc_bootstrap / cccc_project_info
-- cccc_inbox_list / cccc_inbox_mark_read
-- cccc_message_send / cccc_message_reply
+- cccc_inbox_read / cccc_message_history
+- cccc_message_send / cccc_message_reply / cccc_message_deliver / cccc_reply_request_cancel
 - cccc_file / cccc_repo / cccc_repo_edit / cccc_apply_patch / cccc_shell / cccc_exec_command / cccc_write_stdin / cccc_git / cccc_voice_secretary_document / cccc_voice_secretary_request / cccc_group / cccc_actor / cccc_runtime_list
 - cccc_capability_search / cccc_capability_enable / cccc_capability_state / cccc_capability_install / cccc_capability_use
 - cccc_space / cccc_automation
@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 from ...kernel.actors import find_actor, get_effective_role, is_voice_secretary_actor
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
+from ...kernel.inbox import mail_pending_summary
 from ...kernel.capabilities import (
     BUILTIN_CAPABILITY_PACKS,
     CAPABILITY_ADMIN_TOOLS,
@@ -62,9 +63,8 @@ from .handlers.cccc_core import (  # noqa: F401
     _append_runtime_help_addenda,
     _build_context_hygiene_hint,
     bootstrap,
-    inbox_list,
-    inbox_mark_all_read,
-    inbox_mark_read,
+    inbox_read,
+    message_history,
     project_info,
 )
 from .handlers.cccc_messaging import (  # noqa: F401
@@ -72,8 +72,10 @@ from .handlers.cccc_messaging import (  # noqa: F401
     blob_path,
     blob_read,
     file_send,
+    message_deliver,
     message_reply,
     message_send,
+    reply_request_cancel,
     tracked_send,
 )
 from .handlers.group_bridge_client import (  # noqa: F401
@@ -188,14 +190,12 @@ from .handlers.debug import (  # noqa: F401
 )
 from .handlers.headless import (  # noqa: F401
     _handle_headless_namespace as _handle_headless_namespace_impl,
-    headless_ack_message,
     headless_set_status,
     headless_status,
 )
 from .handlers.memory import _handle_memory_namespace as _handle_memory_namespace_impl  # noqa: F401
 from .handlers.notify import (  # noqa: F401
     _handle_notify_namespace as _handle_notify_namespace_impl,
-    notify_ack,
     notify_send,
 )
 from ...kernel.help_markdown import _select_help_markdown
@@ -403,8 +403,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         return bootstrap(
             group_id=gid,
             actor_id=aid,
-            inbox_limit=min(max(int(arguments.get("inbox_limit") or 50), 1), 1000),
-            inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
+            inbox_limit=min(max(int(arguments.get("inbox_limit") or 50), 1), 200),
         )
 
     if name == "cccc_project_info":
@@ -412,36 +411,39 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         return project_info(group_id=gid)
 
     # --- Inbox ---
-    if name == "cccc_inbox_list":
+    if name == "cccc_inbox_read":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
-        return inbox_list(
+        return inbox_read(
             group_id=gid,
             actor_id=aid,
-            limit=min(max(int(arguments.get("limit") or 50), 1), 1000),
-            kind_filter=str(arguments.get("kind_filter") or "all"),
+            limit=arguments.get("limit", 50),
         )
 
-    if name == "cccc_inbox_mark_read":
+    if name == "cccc_message_history":
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
-        action = str(arguments.get("action") or "read").strip().lower()
-        if action == "read_all":
-            return inbox_mark_all_read(
-                group_id=gid,
-                actor_id=aid,
-                kind_filter=str(arguments.get("kind_filter") or "all"),
-            )
-        if action == "read":
-            return inbox_mark_read(
-                group_id=gid,
-                actor_id=aid,
-                event_id=str(arguments.get("event_id") or ""),
-            )
-        raise MCPError(code="invalid_request", message="cccc_inbox_mark_read action must be 'read' or 'read_all'")
+        return message_history(
+            group_id=gid,
+            actor_id=aid,
+            limit=arguments.get("limit", 50),
+            mode=str(arguments.get("mode") or "all"),
+            query=str(arguments.get("query") or ""),
+            before_event_id=str(arguments.get("before_event_id") or ""),
+        )
 
     # --- Messaging ---
     if name == "cccc_message_send":
+        legacy_fields = [
+            field
+            for field in ("priority", "message_priority", "reply_required", "requires_ack")
+            if field in arguments
+        ]
+        if legacy_fields:
+            raise MCPError(
+                code="unsupported_message_fields",
+                message="use mode; legacy priority/reply_required/requires_ack fields are not supported",
+            )
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
@@ -455,8 +457,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             text=str(arguments.get("text") or ""),
             insight=arguments.get("insight"),
             to=to_val,
-            priority=str(arguments.get("priority") or "normal"),
-            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            mode=str(arguments.get("mode") or "mail"),
             idempotency_key=str(arguments.get("idempotency_key") or ""),
             refs=refs_val,
             suggested_user_message=str(arguments.get("suggested_user_message") or ""),
@@ -499,6 +500,16 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         return remote_write_stdin(group_id=gid, arguments=arguments)
 
     if name == "cccc_tracked_send":
+        legacy_fields = [
+            field
+            for field in ("priority", "message_priority", "reply_required", "requires_ack")
+            if field in arguments
+        ]
+        if legacy_fields:
+            raise MCPError(
+                code="unsupported_message_fields",
+                message="cccc_tracked_send uses task_priority and fixed Send delivery",
+            )
         gid = _resolve_group_id(arguments)
         aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
@@ -520,8 +531,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             waiting_on=str(arguments.get("waiting_on") or ""),
             handoff_to=str(arguments.get("handoff_to") or ""),
             notes=str(arguments.get("notes") or ""),
-            priority=str(arguments.get("priority") or "normal"),
-            reply_required=coerce_bool(arguments.get("reply_required"), default=True),
+            task_priority=str(arguments.get("task_priority") or "normal"),
             idempotency_key=str(arguments.get("idempotency_key") or ""),
             refs=refs_val,
         )
@@ -541,10 +551,35 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             text=str(arguments.get("text") or ""),
             insight=arguments.get("insight"),
             to=to_val_reply,
-            priority=str(arguments.get("priority") or "normal"),
-            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+            mode=str(arguments.get("mode") or "send"),
             refs=refs_val_reply,
             suggested_user_message=str(arguments.get("suggested_user_message") or ""),
+        )
+
+    if name == "cccc_message_deliver":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        raw_actor_ids = arguments.get("actor_ids")
+        actor_ids = (
+            [str(item or "").strip() for item in raw_actor_ids if str(item or "").strip()]
+            if isinstance(raw_actor_ids, list)
+            else []
+        )
+        return message_deliver(
+            group_id=gid,
+            actor_id=aid,
+            source_event_id=str(arguments.get("source_event_id") or ""),
+            actor_ids=actor_ids,
+            force_ambiguous=coerce_bool(arguments.get("force_ambiguous"), default=False),
+        )
+
+    if name == "cccc_reply_request_cancel":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return reply_request_cancel(
+            group_id=gid,
+            actor_id=aid,
+            source_event_id=str(arguments.get("source_event_id") or ""),
         )
 
     if name == "cccc_voice_secretary_document":
@@ -655,7 +690,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     "source_event_id": str(arguments.get("source_event_id") or ""),
                     "source_request_id": str(arguments.get("source_request_id") or ""),
                     "priority": str(arguments.get("priority") or "normal"),
-                    "requires_ack": coerce_bool(arguments.get("requires_ack"), default=True),
                     "by": VOICE_SECRETARY_ACTOR_ID,
                 },
             }
@@ -715,8 +749,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 insight=arguments.get("insight"),
                 dst_group_id=str(arguments.get("dst_group_id") or ""),
                 to=to_val_file,
-                priority=str(arguments.get("priority") or "normal"),
-                reply_required=coerce_bool(arguments.get("reply_required"), default=False),
+                mode=str(arguments.get("mode") or "mail"),
             )
         raise MCPError(code="invalid_request", message="cccc_file action must be send|blob_path|info|read")
 
@@ -959,13 +992,12 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             limit = 20
         return _call_daemon_or_raise(
             {
-                "op": "web_model_runtime_wait_next_turn",
+                "op": "runtime_wait_next_turn",
                 "args": {
                     "group_id": gid,
                     "actor_id": aid,
                     "by": aid,
                     "limit": min(max(limit, 1), 20),
-                    "kind_filter": str(arguments.get("kind_filter") or "all"),
                 },
             },
             timeout_s=120.0,
@@ -978,14 +1010,13 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         event_ids = [str(item or "").strip() for item in raw_event_ids] if isinstance(raw_event_ids, list) else []
         return _call_daemon_or_raise(
             {
-                "op": "web_model_runtime_complete_turn",
+                "op": "runtime_complete_turn",
                 "args": {
                     "group_id": gid,
                     "actor_id": aid,
                     "by": aid,
                     "turn_id": str(arguments.get("turn_id") or ""),
                     "event_ids": event_ids,
-                    "latest_event_id": str(arguments.get("latest_event_id") or ""),
                     "status": str(arguments.get("status") or "done"),
                     "summary": str(arguments.get("summary") or ""),
                 },
@@ -1310,7 +1341,7 @@ def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[
                 raise MCPError(code="invalid_request", message="target_actor_id is required for clear")
             return actor_notes_clear(group_id=gid, target_actor_id=target, by=by)
         raise MCPError(code="invalid_request", message="cccc_actor_notes action must be get|set|clear")
-    return _handle_context_namespace_impl(
+    result = _handle_context_namespace_impl(
         name,
         arguments,
         resolve_group_id=_resolve_group_id,
@@ -1331,6 +1362,37 @@ def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[
         agent_state_update_fn=agent_state_update,
         agent_state_clear_fn=agent_state_clear,
     )
+    if (
+        name == "cccc_task"
+        and result is not None
+        and _is_task_mail_boundary(arguments)
+    ):
+        try:
+            group_id = _resolve_group_id(arguments)
+            actor_id = _resolve_self_actor_id(arguments)
+            group = load_group(group_id)
+            if group is not None and actor_id not in {"", "user", "system"}:
+                pending = mail_pending_summary(group, actor_id=actor_id)
+                if pending:
+                    result = dict(result)
+                    result["mail_pending"] = pending
+        except Exception:
+            # Mail context is advisory; a committed task mutation remains successful.
+            pass
+    return result
+
+
+def _is_task_mail_boundary(arguments: Dict[str, Any]) -> bool:
+    action = str(arguments.get("action") or "list").strip().lower()
+    if action not in {"create", "update", "move"}:
+        return False
+    if str(arguments.get("status") or "").strip().lower() == "done":
+        return True
+    waiting_on = str(arguments.get("waiting_on") or "").strip().lower()
+    blocked_by = arguments.get("blocked_by")
+    return waiting_on in {"actor", "external"} or bool(
+        isinstance(blocked_by, list) and blocked_by
+    )
 
 
 def _handle_headless_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1341,7 +1403,6 @@ def _handle_headless_namespace(name: str, arguments: Dict[str, Any]) -> Optional
         resolve_self_actor_id=_resolve_self_actor_id,
         headless_status_fn=headless_status,
         headless_set_status_fn=headless_set_status,
-        headless_ack_message_fn=headless_ack_message,
     )
 
 
@@ -1352,8 +1413,6 @@ def _handle_notify_namespace(name: str, arguments: Dict[str, Any]) -> Optional[D
         resolve_group_id=_resolve_group_id,
         resolve_self_actor_id=_resolve_self_actor_id,
         notify_send_fn=notify_send,
-        notify_ack_fn=notify_ack,
-        coerce_bool_fn=coerce_bool,
     )
 
 

@@ -1,6 +1,7 @@
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
 use base64::Engine;
+use cccc_contracts::GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io;
@@ -62,6 +63,7 @@ impl GroupBridgeIdentity {
             "target_group_id":target_group_id.trim(),
             "src_group_id":src_group_id.trim(),
             "remote_peer_id":self.peer_id,
+            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
         });
         let material = session_hello_material(&hello)?;
         let key = Ed25519KeyPair::from_seed_unchecked(&self.private_key)
@@ -86,6 +88,7 @@ impl GroupBridgeIdentity {
 pub fn session_hello_material(hello: &Value) -> io::Result<Vec<u8>> {
     serde_json::to_vec(&json!({
         "protocol":SESSION_PROTOCOL,
+        "message_contract_version":hello["message_contract_version"],
         "remote_peer_id":hello["remote_peer_id"].as_str().unwrap_or("").trim(),
         "src_group_id":hello["src_group_id"].as_str().unwrap_or("").trim(),
         "target_group_id":hello["target_group_id"].as_str().unwrap_or("").trim(),

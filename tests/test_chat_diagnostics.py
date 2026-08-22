@@ -34,7 +34,7 @@ class TestChatDiagnostics(unittest.TestCase):
             self.assertLogs("cccc.daemon.server", level="INFO") as logs,
         ):
             resp = handle_send(
-                {"group_id": "g_diag", "by": "user", "to": ["user"], "text": "hello"},
+                {"message_mode": "send", "group_id": "g_diag", "by": "user", "to": ["user"], "text": "hello"},
                 coerce_bool=coerce_bool,
                 normalize_attachments=lambda _group, _raw: [],
                 effective_runner_kind=lambda runner: str(runner or "pty"),
@@ -78,7 +78,7 @@ class TestChatDiagnostics(unittest.TestCase):
                 patch("cccc.daemon.messaging.chat_ops.schedule_chat_side_effects"),
             ):
                 resp = handle_send(
-                    {"group_id": "g_diag", "by": "user", "to": ["user"], "text": "hello"},
+                    {"message_mode": "send", "group_id": "g_diag", "by": "user", "to": ["user"], "text": "hello"},
                     coerce_bool=coerce_bool,
                     normalize_attachments=lambda _group, _raw: [],
                     effective_runner_kind=lambda runner: str(runner or "pty"),
@@ -101,7 +101,7 @@ class TestChatDiagnostics(unittest.TestCase):
 
         with self.assertLogs("cccc.daemon.server", level="INFO") as logs:
             resp = handle_send(
-                {"group_id": "g_diag", "by": "user", "priority": "urgent", "text": "hello"},
+                {"group_id": "g_diag", "by": "user", "message_mode": "urgent", "text": "hello"},
                 coerce_bool=coerce_bool,
                 normalize_attachments=lambda _group, _raw: [],
                 effective_runner_kind=lambda runner: str(runner or "pty"),
@@ -114,13 +114,13 @@ class TestChatDiagnostics(unittest.TestCase):
 
         self.assertFalse(resp.ok)
         self.assertIsNotNone(resp.error)
-        self.assertEqual(resp.error.code, "invalid_priority")
+        self.assertEqual(resp.error.code, "invalid_message_mode")
         messages = [record.getMessage() for record in logs.records]
         self.assertEqual(1, sum(message.startswith("chat request start ") for message in messages))
         done = [message for message in messages if message.startswith("chat request done ")]
         self.assertEqual(1, len(done))
         self.assertIn("ok=False", done[0])
-        self.assertIn("error=invalid_priority", done[0])
+        self.assertIn("error=invalid_message_mode", done[0])
 
 
 if __name__ == "__main__":

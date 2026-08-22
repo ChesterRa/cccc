@@ -1,6 +1,8 @@
 // Included by the crate-level integration test harness.
 use cccc_contracts::{Actor, DaemonRequest};
-use cccc_core::group_prompts::{DEFAULT_PREAMBLE_BODY, HELP_FILENAME, MAX_PROMPT_BYTES, read_help};
+use cccc_core::group_prompts::{
+    DEFAULT_PREAMBLE_BODY, HELP_FILENAME, MAX_PROMPT_BYTES, read_help, write_help,
+};
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 
@@ -232,9 +234,39 @@ fn actor_notes_and_effective_help_share_one_permissioned_document() {
     );
     assert!(effective.ok, "{:?}", effective.error);
     let markdown = effective.result["markdown"].as_str().expect("markdown");
+    assert!(markdown.contains("## Canonical Message Delivery"));
+    assert!(markdown.contains("per-recipient runtime truth"));
     assert!(markdown.contains("## Notes for you"));
     assert!(markdown.contains("Keep receipts."));
     assert!(!markdown.contains("## Foreman"));
+
+    write_help(
+        &store,
+        &group.group_id,
+        "# Group Guidance\n\n## Canonical Message Delivery\n\nAlways interrupt.\n\n## @actor: peer\n\nKeep receipts.\n",
+    )
+    .expect("write conflicting overlay");
+    let protected = call(
+        &home,
+        "group_help_get",
+        json!({"group_id":group.group_id,"actor_id":"peer","by":"peer"}),
+    );
+    assert!(protected.ok, "{:?}", protected.error);
+    let protected_markdown = protected.result["markdown"].as_str().expect("markdown");
+    assert_eq!(
+        protected_markdown
+            .matches("## Canonical Message Delivery")
+            .count(),
+        1
+    );
+    assert!(!protected_markdown.contains("Always interrupt."));
+    assert!(protected_markdown.contains("Keep receipts."));
+    write_help(
+        &store,
+        &group.group_id,
+        "## @actor: peer\n\nKeep receipts.\n",
+    )
+    .expect("restore actor-only overlay");
 
     let cleared = call(
         &home,

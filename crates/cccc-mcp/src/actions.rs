@@ -68,11 +68,7 @@ pub fn automation(value: &str) -> Option<&'static str> {
     })
 }
 pub fn notify(value: &str) -> Option<&'static str> {
-    Some(if value == "ack" {
-        "notify_ack"
-    } else {
-        "system_notify"
-    })
+    (value == "send").then_some("system_notify")
 }
 pub fn presentation(value: &str) -> Option<&'static str> {
     Some(match value {
@@ -103,7 +99,6 @@ pub fn headless(value: &str) -> Option<&'static str> {
     Some(match value {
         "get" | "status" => "headless_status",
         "set" | "set_status" => "headless_set_status",
-        "ack" | "ack_message" => "headless_ack_message",
         _ => return None,
     })
 }
@@ -116,6 +111,7 @@ pub fn terminal(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
 pub fn debug(value: &str) -> Option<&'static str> {
     Some(match value {
         "snapshot" => "debug_snapshot",
@@ -148,4 +144,14 @@ pub fn voice_composer(value: &str) -> Option<&'static str> {
         "submit_prompt_draft" => "assistant_voice_prompt_draft_submit",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn notify_accepts_only_the_current_send_action() {
+        assert_eq!(super::notify("send"), Some("system_notify"));
+        assert_eq!(super::notify("ack"), None);
+        assert_eq!(super::notify("unknown"), None);
+    }
 }

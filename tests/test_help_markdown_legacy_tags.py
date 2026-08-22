@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 
+from cccc.kernel.help_markdown import compose_effective_help_markdown
 from cccc.ports.mcp.utils.help_markdown import (
     _select_help_markdown,
     build_help_markdown,
@@ -12,6 +13,23 @@ _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "help_markdown_legacy_
 
 
 class TestHelpMarkdownLegacyTags(unittest.TestCase):
+    def test_effective_help_keeps_builtin_delivery_contract_and_strips_overlay_copy(self) -> None:
+        effective = compose_effective_help_markdown(
+            builtin=(
+                "# Help\n\n## Canonical Message Delivery\n\nUse Mail first.\n\n"
+                "## Other\n\nBuilt-in."
+            ),
+            overlay=(
+                "# Group\n\n## Canonical Message Delivery\n\nAlways interrupt.\n\n"
+                "## Notes\n\nLocal."
+            ),
+        )
+
+        self.assertIn("Use Mail first.", effective)
+        self.assertNotIn("Always interrupt.", effective)
+        self.assertIn("Local.", effective)
+        self.assertEqual(effective.count("## Canonical Message Delivery"), 1)
+
     def test_parse_help_markdown_preserves_legacy_pet_block_as_extra(self) -> None:
         markdown = """
 Shared guidance.

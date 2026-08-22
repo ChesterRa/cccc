@@ -7,7 +7,15 @@ from typing import Any
 from ..util.conv import coerce_bool
 
 
-FAST_QUEUE_OPS = {"send", "send_files", "tracked_send", "reply", "chat_ack"}
+FAST_QUEUE_OPS = {
+    "send",
+    "send_files",
+    "tracked_send",
+    "reply",
+    "inbox_read",
+    "reply_request_cancel",
+    "message_deliver",
+}
 
 READ_QUEUE_OPS = {
     "branding_get",
@@ -18,6 +26,9 @@ READ_QUEUE_OPS = {
     "group_space_status",
     "im_list_authorized",
     "im_list_pending",
+    "inbox_peek",
+    "message_history",
+    "message_upload_preflight",
     "actor_notes_get",
     "actor_list",
     "actor_profile_list",

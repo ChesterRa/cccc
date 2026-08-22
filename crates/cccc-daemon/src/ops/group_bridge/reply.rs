@@ -1,5 +1,5 @@
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::{GroupDoc, HomeLayout, actors};
+use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult};
@@ -14,6 +14,7 @@ pub(in crate::ops) struct PreparedReply {
     remote_event_id: String,
     remote_group_id: String,
     remote_to: Vec<String>,
+    remote_message_mode: String,
     local_to: Vec<String>,
     payload: Map<String, Value>,
 }
@@ -23,6 +24,7 @@ pub(super) fn prepare(
     group: &GroupDoc,
     target: &Event,
     request: &DaemonRequest,
+    message_mode: &str,
 ) -> Result<Option<PreparedReply>, OpError> {
     let inbound_bridge_sender = target.by.starts_with("group_bridge:");
     if !inbound_bridge_sender
@@ -70,7 +72,7 @@ pub(super) fn prepare(
     }
 
     let explicit_to = recipients(request.args.get("to"));
-    let (local_to, remote_to) = if explicit_to.is_empty() {
+    let remote_to = if explicit_to.is_empty() {
         let remote_to = default_remote_recipients(target);
         if remote_to.is_empty() {
             return Err(OpError::new(
@@ -78,25 +80,18 @@ pub(super) fn prepare(
                 "Group Bridge replies require an explicit recipient when the remote sender did not provide a return recipient",
             ));
         }
-        (vec!["user".into()], remote_to)
+        remote_to
     } else {
-        let resolved = actors::resolve_recipients(group, &explicit_to).map_err(OpError::invalid)?;
-        (resolved.clone(), resolved)
+        explicit_to
     };
 
     let mut payload = Map::new();
-    for key in [
-        "text",
-        "format",
-        "priority",
-        "reply_required",
-        "refs",
-        "attachments",
-    ] {
+    for key in ["text", "format", "refs", "attachments"] {
         if let Some(value) = request.args.get(key).cloned() {
             payload.insert(key.into(), value);
         }
     }
+    payload.insert("message_mode".into(), json!(message_mode));
     payload.insert("to".into(), json!(remote_to));
     normalize_outbound_payload(request, &mut payload)?;
 
@@ -111,7 +106,8 @@ pub(super) fn prepare(
             .to_owned(),
         remote_group_id,
         remote_to,
-        local_to,
+        remote_message_mode: message_mode.into(),
+        local_to: vec!["user".into()],
         payload,
     }))
 }
@@ -123,8 +119,10 @@ impl PreparedReply {
         args: &mut Map<String, Value>,
     ) {
         args.insert("to".into(), json!(self.local_to));
+        args.insert("message_mode".into(), json!("send"));
         args.insert("dst_group_id".into(), json!(self.remote_group_id));
         args.insert("dst_to".into(), json!(self.remote_to));
+        args.insert("dst_message_mode".into(), json!(self.remote_message_mode));
         for key in [
             "source_platform",
             "source_user_name",

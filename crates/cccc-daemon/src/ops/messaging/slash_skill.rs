@@ -13,6 +13,15 @@ pub(super) struct Dispatch {
 }
 
 pub(super) fn prepare(home: &HomeLayout, request: &DaemonRequest) -> Result<Dispatch, OpError> {
+    if ["priority", "reply_required", "requires_ack", "message_mode"]
+        .iter()
+        .any(|key| request.args.contains_key(*key))
+    {
+        return Err(OpError::new(
+            "unsupported_message_field",
+            "slash skill dispatch uses fixed message_mode=send",
+        ));
+    }
     let task_text = required_arg(request, "task_text")?.trim().to_owned();
     let command = required_arg(request, "command")?.trim().to_owned();
     let capability_id = required_arg(request, "capability_id")?.trim().to_owned();
@@ -54,6 +63,9 @@ pub(super) fn prepare(home: &HomeLayout, request: &DaemonRequest) -> Result<Disp
         }]),
     );
     forwarded.args.insert("attachments".into(), json!([]));
+    forwarded
+        .args
+        .insert("message_mode".into(), Value::String("send".into()));
 
     Ok(Dispatch {
         request: forwarded,
@@ -76,7 +88,8 @@ pub(super) fn response(dispatch: &Dispatch, sent: &Map<String, Value>) -> OpResu
         .unwrap_or_else(|| json!([]));
     let mut result = json!({
         "hidden":true,
-        "delivered":true,
+        "accepted":true,
+        "message_mode":"send",
         "event_id":event_id,
         "command":dispatch.command,
         "capability_id":dispatch.capability_id,

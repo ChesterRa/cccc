@@ -1,5 +1,6 @@
 import type {
   Actor,
+  ChatMessageData,
   GroupContext,
   GroupDoc,
   GroupMeta,
@@ -11,6 +12,7 @@ import type {
   HeadlessPreviewSession,
   LedgerEvent,
   LedgerEventStatusPayload,
+  ObligationStatus,
   StreamingActivity,
 } from "../types";
 import { dedupeStreamingActivities, type StreamingReplySession } from "./chatStreamingSessions";
@@ -923,8 +925,10 @@ export function mergeLedgerEventStatuses(
     changed = true;
     return {
       ...event,
-      _read_status: patch.read_status ?? event._read_status,
-      _ack_status: patch.ack_status ?? event._ack_status,
+      _read_status:
+        (event.data as ChatMessageData | undefined)?.message_mode === "mail"
+          ? (patch.read_status ?? event._read_status)
+          : undefined,
       _obligation_status: patch.obligation_status ?? event._obligation_status,
       _web_model_delivery_status:
         patch.web_model_delivery_status ?? event._web_model_delivery_status,
@@ -938,101 +942,76 @@ export function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number
   let changed = false;
   for (let i = 0; i <= endIndex; i += 1) {
     const message = next[i];
-    if (!message || message.kind !== "chat.message") continue;
+    if (
+      !message ||
+      message.kind !== "chat.message" ||
+      (message.data as ChatMessageData | undefined)?.message_mode !== "mail"
+    )
+      continue;
     const readStatus: Record<string, boolean> | null =
       message._read_status && typeof message._read_status === "object"
         ? { ...message._read_status }
         : null;
-    const obligationStatus =
-      message._obligation_status && typeof message._obligation_status === "object"
-        ? { ...message._obligation_status }
-        : null;
     if (!readStatus || !Object.prototype.hasOwnProperty.call(readStatus, actorId)) continue;
     if (readStatus[actorId] === true) continue;
     readStatus[actorId] = true;
-    if (
-      obligationStatus &&
-      Object.prototype.hasOwnProperty.call(obligationStatus, actorId) &&
-      typeof obligationStatus[actorId] === "object"
-    ) {
-      obligationStatus[actorId] = { ...obligationStatus[actorId], read: true };
-      next[i] = { ...message, _read_status: readStatus, _obligation_status: obligationStatus };
-    } else {
-      next[i] = { ...message, _read_status: readStatus };
-    }
+    next[i] = { ...message, _read_status: readStatus };
     changed = true;
   }
   return { next, changed };
 }
 
-export function updateAckAtIndex(messages: LedgerEvent[], index: number, actorId: string) {
+export type ObligationStatusPatch = {
+  actorId?: string;
+  replied?: true;
+  cancelled?: true;
+  deliveryState?: string;
+};
+
+export function updateObligationAtIndex(
+  messages: LedgerEvent[],
+  index: number,
+  patch: ObligationStatusPatch,
+) {
   const next = messages.slice();
   const message = next[index];
   if (!message || message.kind !== "chat.message") return { next, changed: false };
 
-  const ackStatus: Record<string, boolean> | null =
-    message._ack_status && typeof message._ack_status === "object"
-      ? { ...message._ack_status }
-      : null;
   const obligationStatus =
     message._obligation_status && typeof message._obligation_status === "object"
       ? { ...message._obligation_status }
       : null;
-  if (
-    !ackStatus ||
-    !Object.prototype.hasOwnProperty.call(ackStatus, actorId) ||
-    ackStatus[actorId] === true
-  ) {
-    return { next, changed: false };
-  }
+  if (!obligationStatus) return { next, changed: false };
 
-  ackStatus[actorId] = true;
-  if (
-    obligationStatus &&
-    Object.prototype.hasOwnProperty.call(obligationStatus, actorId) &&
-    typeof obligationStatus[actorId] === "object"
-  ) {
-    obligationStatus[actorId] = { ...obligationStatus[actorId], acked: true };
-    next[index] = { ...message, _ack_status: ackStatus, _obligation_status: obligationStatus };
-  } else {
-    next[index] = { ...message, _ack_status: ackStatus };
+  const actorId = String(patch.actorId || "").trim();
+  const recipientIds = actorId ? [actorId] : Object.keys(obligationStatus);
+  let changed = false;
+  for (const recipientId of recipientIds) {
+    if (
+      !Object.prototype.hasOwnProperty.call(obligationStatus, recipientId) ||
+      typeof obligationStatus[recipientId] !== "object"
+    ) {
+      continue;
+    }
+    const previous = obligationStatus[recipientId] as ObligationStatus;
+    const updated = { ...previous };
+    if (patch.deliveryState !== undefined && updated.delivery_state !== patch.deliveryState) {
+      updated.delivery_state = patch.deliveryState;
+    }
+    if (patch.replied && !updated.cancelled) updated.replied = true;
+    if (patch.cancelled && !updated.replied) updated.cancelled = true;
+    if (
+      updated.delivery_state === previous.delivery_state &&
+      updated.replied === previous.replied &&
+      updated.cancelled === previous.cancelled
+    ) {
+      continue;
+    }
+    obligationStatus[recipientId] = updated;
+    changed = true;
   }
-  return { next, changed: true };
-}
-
-export function updateReplyAtIndex(messages: LedgerEvent[], index: number, actorId: string) {
-  const next = messages.slice();
-  const message = next[index];
-  if (!message || message.kind !== "chat.message") return { next, changed: false };
-
-  const ackStatus: Record<string, boolean> | null =
-    message._ack_status && typeof message._ack_status === "object"
-      ? { ...message._ack_status }
-      : null;
-  const obligationStatus =
-    message._obligation_status && typeof message._obligation_status === "object"
-      ? { ...message._obligation_status }
-      : null;
-  if (
-    !obligationStatus ||
-    !Object.prototype.hasOwnProperty.call(obligationStatus, actorId) ||
-    typeof obligationStatus[actorId] !== "object"
-  ) {
-    return { next, changed: false };
-  }
-
-  const previous = obligationStatus[actorId];
-  if (previous.replied && previous.acked) {
-    return { next, changed: false };
-  }
-
-  obligationStatus[actorId] = { ...previous, replied: true, acked: true };
-  if (ackStatus && Object.prototype.hasOwnProperty.call(ackStatus, actorId)) {
-    ackStatus[actorId] = true;
-    next[index] = { ...message, _ack_status: ackStatus, _obligation_status: obligationStatus };
-  } else {
-    next[index] = { ...message, _obligation_status: obligationStatus };
-  }
+  if (!changed) return { next, changed: false };
+  next[index] = { ...message, _obligation_status: obligationStatus };
   return { next, changed: true };
 }
 

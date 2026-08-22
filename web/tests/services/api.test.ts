@@ -937,8 +937,7 @@ describe("api.message refs", () => {
       "please review",
       ["worker-1"],
       undefined,
-      "normal",
-      false,
+      "send",
       "client-1",
       refs,
     );
@@ -952,8 +951,7 @@ describe("api.message refs", () => {
           by: "user",
           to: ["worker-1"],
           path: "",
-          priority: "normal",
-          reply_required: false,
+          message_mode: "send",
           client_id: "client-1",
           refs,
         }),
@@ -965,7 +963,8 @@ describe("api.message refs", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({ ok: true, result: { delivered: true } }),
+      text: async () =>
+        JSON.stringify({ ok: true, result: { accepted: true, message_mode: "send" } }),
     });
 
     const api = await import("../../src/services/api");
@@ -974,8 +973,6 @@ describe("api.message refs", () => {
       command: "/using-superpowers",
       capabilityId: "skill:agent_self_proposed:using-superpowers",
       to: ["worker-1"],
-      priority: "attention",
-      replyRequired: true,
       clientId: "client-1",
       replyTo: "evt-parent",
       quoteText: "原始消息",
@@ -990,8 +987,6 @@ describe("api.message refs", () => {
           command: "/using-superpowers",
           capability_id: "skill:agent_self_proposed:using-superpowers",
           to: ["worker-1"],
-          priority: "attention",
-          reply_required: true,
           client_id: "client-1",
           reply_to: "evt-parent",
           quote_text: "原始消息",
@@ -1012,14 +1007,7 @@ describe("api.message refs", () => {
     });
 
     const api = await import("../../src/services/api");
-    await api.sendCrossGroupMessage(
-      "g-src",
-      "g-dst",
-      "route this",
-      ["@foreman"],
-      "attention",
-      true,
-    );
+    await api.sendCrossGroupMessage("g-src", "g-dst", "route this", ["@foreman"], "request_reply");
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-src/send_cross_group",
@@ -1030,8 +1018,7 @@ describe("api.message refs", () => {
           by: "user",
           dst_group_id: "g-dst",
           to: ["@foreman"],
-          priority: "attention",
-          reply_required: true,
+          message_mode: "request_reply",
         }),
       }),
     );
@@ -1045,21 +1032,12 @@ describe("api.message refs", () => {
     });
 
     const api = await import("../../src/services/api");
-    await api.sendCrossGroupMessage(
-      "g-src",
-      "g-dst",
-      "你好",
-      ["@foreman"],
-      "normal",
-      false,
-      undefined,
-      {
-        replyTo: "evt-original",
-        quoteText: "原消息",
-        clientId: "local-1",
-        remoteReplyToEventId: "evt-remote-original",
-      },
-    );
+    await api.sendCrossGroupMessage("g-src", "g-dst", "你好", ["@foreman"], "send", undefined, {
+      replyTo: "evt-original",
+      quoteText: "原消息",
+      clientId: "local-1",
+      remoteReplyToEventId: "evt-remote-original",
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-src/send_cross_group",
@@ -1070,8 +1048,7 @@ describe("api.message refs", () => {
           by: "user",
           dst_group_id: "g-dst",
           to: ["@foreman"],
-          priority: "normal",
-          reply_required: false,
+          message_mode: "send",
           reply_to: "evt-original",
           quote_text: "原消息",
           client_id: "local-1",
@@ -1095,8 +1072,7 @@ describe("api.message refs", () => {
       "g-dst",
       "你好",
       ["@foreman"],
-      "attention",
-      true,
+      "request_reply",
       [file],
       {
         replyTo: "evt-local-source",
@@ -1117,8 +1093,7 @@ describe("api.message refs", () => {
     expect(form.get("quote_text")).toBe("原消息");
     expect(form.get("client_id")).toBe("local-1");
     expect(form.get("remote_reply_to_event_id")).toBe("evt-remote-original");
-    expect(form.get("reply_required")).toBe("true");
-    expect(form.get("priority")).toBe("attention");
+    expect(form.get("message_mode")).toBe("request_reply");
   });
 
   it("sends tracked delegation payloads through the daemon endpoint", async () => {
@@ -1136,6 +1111,7 @@ describe("api.message refs", () => {
       to: ["reviewer"],
       outcome: "Review evidence reported.",
       checklist: [{ text: "Inspect code" }],
+      task_priority: "high",
       idempotency_key: "req-1",
       refs,
     });
@@ -1155,8 +1131,7 @@ describe("api.message refs", () => {
           waiting_on: "actor",
           handoff_to: "",
           notes: "",
-          priority: "normal",
-          reply_required: true,
+          task_priority: "high",
           idempotency_key: "req-1",
           refs,
         }),
@@ -1182,10 +1157,10 @@ describe("api.message refs", () => {
       ["worker-2"],
       "evt-parent",
       [file],
-      "attention",
-      true,
       "client-2",
       refs,
+      "",
+      "mail",
     );
 
     const [url, requestInit] = fetchMock.mock.calls[0] ?? [];
@@ -1195,9 +1170,9 @@ describe("api.message refs", () => {
     );
     const form = requestInit.body as FormData;
     expect(form.get("reply_to")).toBe("evt-parent");
-    expect(form.get("reply_required")).toBe("true");
     expect(form.get("client_id")).toBe("client-2");
     expect(form.get("refs_json")).toBe(JSON.stringify(refs));
+    expect(form.get("message_mode")).toBe("mail");
     expect(form.get("files")).toBe(file);
   });
 });

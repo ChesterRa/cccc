@@ -133,20 +133,15 @@ export function SettingsModal({
   const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
 
   // Automation + delivery settings state
-  const [nudgeSeconds, setNudgeSeconds] = useState(300);
-  const [replyRequiredNudgeSeconds, setReplyRequiredNudgeSeconds] = useState(300);
-  const [attentionAckNudgeSeconds, setAttentionAckNudgeSeconds] = useState(600);
-  const [unreadNudgeSeconds, setUnreadNudgeSeconds] = useState(900);
-  const [nudgeDigestMinIntervalSeconds, setNudgeDigestMinIntervalSeconds] = useState(120);
-  const [nudgeMaxRepeatsPerObligation, setNudgeMaxRepeatsPerObligation] = useState(3);
-  const [nudgeEscalateAfterRepeats, setNudgeEscalateAfterRepeats] = useState(2);
+  const [minIntervalSeconds, setMinIntervalSeconds] = useState(0);
+  const [mailNoticeAfterSeconds, setMailNoticeAfterSeconds] = useState(1800);
+  const [replyNoticeAfterSeconds, setReplyNoticeAfterSeconds] = useState(900);
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [keepaliveMax, setKeepaliveMax] = useState(3);
   const [silenceSeconds, setSilenceSeconds] = useState(0);
   const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
-  const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(true);
 
   // Messaging policy
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
@@ -233,20 +228,15 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen && settings) {
-      setNudgeSeconds(settings.nudge_after_seconds);
-      setReplyRequiredNudgeSeconds(settings.reply_required_nudge_after_seconds ?? 300);
-      setAttentionAckNudgeSeconds(settings.attention_ack_nudge_after_seconds ?? 600);
-      setUnreadNudgeSeconds(settings.unread_nudge_after_seconds ?? 900);
-      setNudgeDigestMinIntervalSeconds(settings.nudge_digest_min_interval_seconds ?? 120);
-      setNudgeMaxRepeatsPerObligation(settings.nudge_max_repeats_per_obligation ?? 3);
-      setNudgeEscalateAfterRepeats(settings.nudge_escalate_after_repeats ?? 2);
+      setMinIntervalSeconds(settings.min_interval_seconds ?? 0);
+      setMailNoticeAfterSeconds(settings.mail_notice_after_seconds ?? 1800);
+      setReplyNoticeAfterSeconds(settings.reply_notice_after_seconds ?? 900);
       setIdleSeconds(settings.actor_idle_timeout_seconds);
       setKeepaliveSeconds(settings.keepalive_delay_seconds);
       setKeepaliveMax(settings.keepalive_max_per_actor ?? 3);
       setSilenceSeconds(settings.silence_timeout_seconds);
       setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
       setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
-      setAutoMarkOnDelivery(settings.auto_mark_on_delivery ?? true);
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
       setTerminalNotifyTail(Boolean(settings.terminal_transcript_notify_tail));
@@ -541,18 +531,15 @@ export function SettingsModal({
   // ============ Handlers ============
 
   const handleSaveDeliverySettings = async () => {
-    await onUpdateSettings({ auto_mark_on_delivery: autoMarkOnDelivery });
+    await onUpdateSettings({
+      min_interval_seconds: minIntervalSeconds,
+      mail_notice_after_seconds: mailNoticeAfterSeconds,
+      reply_notice_after_seconds: replyNoticeAfterSeconds,
+    });
   };
 
   const handleSaveAutomationSettings = async () => {
     await onUpdateSettings({
-      nudge_after_seconds: nudgeSeconds,
-      reply_required_nudge_after_seconds: replyRequiredNudgeSeconds,
-      attention_ack_nudge_after_seconds: attentionAckNudgeSeconds,
-      unread_nudge_after_seconds: unreadNudgeSeconds,
-      nudge_digest_min_interval_seconds: nudgeDigestMinIntervalSeconds,
-      nudge_max_repeats_per_obligation: nudgeMaxRepeatsPerObligation,
-      nudge_escalate_after_repeats: nudgeEscalateAfterRepeats,
       actor_idle_timeout_seconds: idleSeconds,
       keepalive_delay_seconds: keepaliveSeconds,
       keepalive_max_per_actor: keepaliveMax,
@@ -563,23 +550,12 @@ export function SettingsModal({
   };
 
   const handleResetAutomationSettingsDraft = () => {
-    setNudgeSeconds(300);
-    setReplyRequiredNudgeSeconds(300);
-    setAttentionAckNudgeSeconds(600);
-    setUnreadNudgeSeconds(900);
-    setNudgeDigestMinIntervalSeconds(120);
-    setNudgeMaxRepeatsPerObligation(3);
-    setNudgeEscalateAfterRepeats(2);
     setIdleSeconds(0);
     setKeepaliveSeconds(120);
     setKeepaliveMax(3);
     setSilenceSeconds(0);
     setHelpNudgeIntervalSeconds(600);
     setHelpNudgeMinMessages(10);
-  };
-
-  const handleAutoSave = async (field: string, value: number | boolean) => {
-    await onUpdateSettings({ [field]: value });
   };
 
   const handleSaveTranscriptSettings = async () => {
@@ -1252,20 +1228,6 @@ export function SettingsModal({
                     groupId={groupId}
                     devActors={devActors}
                     busy={busy}
-                    nudgeSeconds={nudgeSeconds}
-                    setNudgeSeconds={setNudgeSeconds}
-                    replyRequiredNudgeSeconds={replyRequiredNudgeSeconds}
-                    setReplyRequiredNudgeSeconds={setReplyRequiredNudgeSeconds}
-                    attentionAckNudgeSeconds={attentionAckNudgeSeconds}
-                    setAttentionAckNudgeSeconds={setAttentionAckNudgeSeconds}
-                    unreadNudgeSeconds={unreadNudgeSeconds}
-                    setUnreadNudgeSeconds={setUnreadNudgeSeconds}
-                    nudgeDigestMinIntervalSeconds={nudgeDigestMinIntervalSeconds}
-                    setNudgeDigestMinIntervalSeconds={setNudgeDigestMinIntervalSeconds}
-                    nudgeMaxRepeatsPerObligation={nudgeMaxRepeatsPerObligation}
-                    setNudgeMaxRepeatsPerObligation={setNudgeMaxRepeatsPerObligation}
-                    nudgeEscalateAfterRepeats={nudgeEscalateAfterRepeats}
-                    setNudgeEscalateAfterRepeats={setNudgeEscalateAfterRepeats}
                     idleSeconds={idleSeconds}
                     setIdleSeconds={setIdleSeconds}
                     keepaliveSeconds={keepaliveSeconds}
@@ -1287,10 +1249,13 @@ export function SettingsModal({
                   <DeliveryTab
                     isDark={isDark}
                     busy={busy}
-                    autoMarkOnDelivery={autoMarkOnDelivery}
-                    setAutoMarkOnDelivery={setAutoMarkOnDelivery}
+                    minIntervalSeconds={minIntervalSeconds}
+                    setMinIntervalSeconds={setMinIntervalSeconds}
+                    mailNoticeAfterSeconds={mailNoticeAfterSeconds}
+                    setMailNoticeAfterSeconds={setMailNoticeAfterSeconds}
+                    replyNoticeAfterSeconds={replyNoticeAfterSeconds}
+                    setReplyNoticeAfterSeconds={setReplyNoticeAfterSeconds}
                     onSave={handleSaveDeliverySettings}
-                    onAutoSave={handleAutoSave}
                   />
                 )}
 

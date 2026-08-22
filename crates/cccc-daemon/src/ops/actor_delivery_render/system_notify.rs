@@ -168,10 +168,8 @@ fn voice_action(event: &Event, context: Option<&serde_json::Map<String, Value>>)
             serde_json::to_string_pretty(request).unwrap_or_else(|_| request.to_string())
         ));
     }
-    blocks.push(
-        "Action: handle the request from your inbox; acknowledge or reply according to the requested work."
-            .into(),
-    );
+    blocks
+        .push("Action: handle the request from your inbox and report the requested result.".into());
     blocks.join("\n\n")
 }
 

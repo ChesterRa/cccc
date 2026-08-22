@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, Optional
 
-from ....contracts.v1.group_bridge import RemoteSendPayload
+from ....contracts.v1.group_bridge import RemoteReplyRequestCancelPayload, RemoteSendPayload
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,17 @@ class RemoteMessageEnvelope:
     reply_to_remote_event_id: str = ""
     group_bridge_thread: str = ""
     # Opaque credential resolved at dispatch time. Never log this field.
+    credential: str = ""
+
+
+@dataclass(frozen=True)
+class RemoteReplyRequestCancelEnvelope:
+    transport: str
+    src_group_id: str
+    source_peer_id: str
+    target: RemoteTarget
+    payload: RemoteReplyRequestCancelPayload
+    idempotency_key: str
     credential: str = ""
 
 
@@ -85,6 +96,15 @@ class RemoteSendTransport(ABC):
         """Deliver the envelope to the remote target. Must not raise for normal
         network failures — classify them into a RemoteSendResult instead."""
         raise NotImplementedError
+
+    def cancel_reply_request(self, envelope: RemoteReplyRequestCancelEnvelope) -> RemoteSendResult:
+        """Deliver a reply-request cancellation over transports that support it."""
+        _ = envelope
+        return permanent_result(
+            "unsupported_operation",
+            "reply-request cancellation is not supported by this transport",
+            transport=self.transport,
+        )
 
 
 _REGISTRY: Dict[str, RemoteSendTransport] = {}

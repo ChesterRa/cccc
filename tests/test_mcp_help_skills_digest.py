@@ -87,7 +87,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Collaboration State", markdown)
         self.assertIn("### State Layers", markdown)
         self.assertIn("### Durable Coordination", markdown)
-        self.assertIn("Coordination and task tools are directly available", markdown)
+        self.assertIn("Coordination and task tools are direct", markdown)
         self.assertNotIn("Coordination, task, project, and memory tools are on demand", markdown)
         self.assertIn("### Recovery and Recall", markdown)
         self.assertIn("## Capabilities", markdown)

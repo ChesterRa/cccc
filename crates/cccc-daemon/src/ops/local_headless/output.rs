@@ -1,6 +1,5 @@
 use super::{ActiveTurn, Session, Turn, TurnOutputState, events};
-use cccc_contracts::{ActorRuntime, Event};
-use cccc_core::{GroupStore, inbox};
+use cccc_contracts::ActorRuntime;
 use serde_json::{Map, Value, json};
 
 pub(super) fn handle_message(session: &Session, message: Value) {
@@ -438,31 +437,6 @@ fn emit_message(session: &Session, kind: &str, text: &str, stream_id: &str) {
             (key.into(), json!(text)),
         ]),
     );
-}
-
-pub(super) fn mark_read(session: &Session, turn: &Turn) {
-    let _ = inbox::mark_read(
-        &session.home,
-        &session.group_id,
-        &session.actor_id,
-        &turn.event_id,
-    );
-    let Ok(store) = GroupStore::new(session.home.clone()) else {
-        return;
-    };
-    let Ok(path) = store.ledger_path(&session.group_id) else {
-        return;
-    };
-    let mut event = Event::new("chat.read", &session.group_id);
-    event.by = session.actor_id.clone();
-    event
-        .data
-        .insert("actor_id".into(), json!(session.actor_id));
-    event.data.insert("event_id".into(), json!(turn.event_id));
-    event
-        .data
-        .insert("delivered_ts".into(), json!(turn.event_ts));
-    let _ = cccc_core::ledger::append(&path, &event);
 }
 
 pub(super) fn emit_turn(session: &Session, turn: &Turn, kind: &str, turn_id: &str) {

@@ -12,6 +12,7 @@ import type {
   GroupContext,
   GroupSettings,
   LedgerEvent,
+  MessageMode,
   MessageRef,
   Task,
 } from "../../types";
@@ -549,10 +550,10 @@ export async function fetchInbox(groupId: string, actorId: string, limit = 200) 
   );
 }
 
-export async function markInboxRead(groupId: string, actorId: string, eventId: string) {
+export async function readInbox(groupId: string, actorId: string, limit = 50) {
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/inbox/${encodeURIComponent(actorId)}/read`,
-    { method: "POST", body: JSON.stringify({ event_id: eventId, by: "user" }) },
+    { method: "POST", body: JSON.stringify({ limit, by: "user" }) },
   );
 }
 
@@ -561,8 +562,7 @@ export async function sendMessage(
   text: string,
   to: string[],
   files?: File[],
-  priority: "normal" | "attention" = "normal",
-  replyRequired = false,
+  messageMode: MessageMode = "send",
   clientId = "",
   refs?: MessageRef[],
 ) {
@@ -572,8 +572,7 @@ export async function sendMessage(
     form.append("text", text);
     form.append("to_json", JSON.stringify(to));
     form.append("path", "");
-    form.append("priority", priority);
-    form.append("reply_required", replyRequired ? "true" : "false");
+    form.append("message_mode", messageMode);
     if (clientId) form.append("client_id", clientId);
     if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const file of files) form.append("files", file);
@@ -586,8 +585,7 @@ export async function sendMessage(
       by: "user",
       to,
       path: "",
-      priority,
-      reply_required: replyRequired,
+      message_mode: messageMode,
       client_id: clientId,
       refs: refs || [],
     }),
@@ -601,8 +599,6 @@ export async function dispatchSlashSkill(
     command: string;
     capabilityId: string;
     to: string[];
-    priority?: "normal" | "attention";
-    replyRequired?: boolean;
     clientId?: string;
     replyTo?: string;
     quoteText?: string;
@@ -615,8 +611,6 @@ export async function dispatchSlashSkill(
       command: payload.command,
       capability_id: payload.capabilityId,
       to: payload.to || [],
-      priority: payload.priority || "normal",
-      reply_required: Boolean(payload.replyRequired),
       client_id: payload.clientId || "",
       reply_to: payload.replyTo || "",
       quote_text: payload.quoteText || "",
@@ -636,8 +630,7 @@ export async function trackedSendMessage(
     waiting_on?: "none" | "user" | "actor" | "external" | string;
     handoff_to?: string;
     notes?: string;
-    priority?: "normal" | "attention";
-    reply_required?: boolean;
+    task_priority?: string;
     idempotency_key?: string;
     refs?: MessageRef[];
   },
@@ -655,8 +648,7 @@ export async function trackedSendMessage(
       waiting_on: payload.waiting_on || "actor",
       handoff_to: payload.handoff_to || "",
       notes: payload.notes || "",
-      priority: payload.priority || "normal",
-      reply_required: payload.reply_required !== false,
+      task_priority: payload.task_priority || "normal",
       idempotency_key: payload.idempotency_key || "",
       refs: payload.refs || [],
     }),
@@ -669,11 +661,10 @@ export async function replyMessage(
   to: string[],
   replyTo: string,
   files?: File[],
-  priority: "normal" | "attention" = "normal",
-  replyRequired = false,
   clientId = "",
   refs?: MessageRef[],
   quoteText = "",
+  messageMode: "send" | "mail" = "send",
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -681,9 +672,8 @@ export async function replyMessage(
     form.append("text", text);
     form.append("to_json", JSON.stringify(to));
     form.append("reply_to", replyTo);
+    form.append("message_mode", messageMode);
     if (quoteText) form.append("quote_text", quoteText);
-    form.append("priority", priority);
-    form.append("reply_required", replyRequired ? "true" : "false");
     if (clientId) form.append("client_id", clientId);
     if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const file of files) form.append("files", file);
@@ -696,13 +686,34 @@ export async function replyMessage(
       by: "user",
       to,
       reply_to: replyTo,
+      message_mode: messageMode,
       quote_text: quoteText,
-      priority,
-      reply_required: replyRequired,
       client_id: clientId,
       refs: refs || [],
     }),
   });
+}
+
+export async function deliverMessage(
+  groupId: string,
+  sourceEventId: string,
+  actorIds: string[],
+  forceAmbiguous = false,
+) {
+  return apiJson(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(sourceEventId)}/deliver`,
+    {
+      method: "POST",
+      body: JSON.stringify({ actor_ids: actorIds, force_ambiguous: forceAmbiguous }),
+    },
+  );
+}
+
+export async function cancelReplyRequest(groupId: string, sourceEventId: string) {
+  return apiJson(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(sourceEventId)}/reply-request/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 }
 
 export async function relayMessage(
@@ -720,7 +731,7 @@ export async function relayMessage(
       to,
       quote_text: quoteText,
       path: "",
-      priority: "normal",
+      message_mode: "send",
       src_group_id: src.groupId,
       src_event_id: src.eventId,
     }),
@@ -732,8 +743,7 @@ export async function sendCrossGroupMessage(
   dstGroupId: string,
   text: string,
   to: string[],
-  priority: "normal" | "attention" = "normal",
-  replyRequired = false,
+  messageMode: MessageMode = "send",
   files?: File[],
   options?: {
     replyTo?: string;
@@ -756,8 +766,7 @@ export async function sendCrossGroupMessage(
     form.append("text", text);
     form.append("dst_group_id", dstGroupId);
     form.append("to_json", JSON.stringify(to));
-    form.append("priority", priority);
-    form.append("reply_required", replyRequired ? "true" : "false");
+    form.append("message_mode", messageMode);
     if (options?.replyTo) form.append("reply_to", options.replyTo);
     if (options?.quoteText) form.append("quote_text", options.quoteText);
     if (options?.clientId) form.append("client_id", options.clientId);
@@ -776,8 +785,7 @@ export async function sendCrossGroupMessage(
       by: "user",
       dst_group_id: dstGroupId,
       to,
-      priority,
-      reply_required: replyRequired,
+      message_mode: messageMode,
       ...replyMetadata,
     }),
   });

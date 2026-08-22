@@ -466,7 +466,7 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
                 src_group_id="g_joiner",
                 registration_id=registrations[0]["registration_id"],
                 idempotency_key="send-1",
-                payload={"text": "hello cross instance"},
+                payload={"message_mode": "send", "text": "hello cross instance"},
                 home=joiner_home,
             )
             captured = {}
@@ -720,7 +720,7 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
                         "group_id": joiner_group.group_id,
                         "registration_id": registration["registration_id"],
                         "idempotency_key": "send-credential",
-                        "payload": {"text": "hello", "to": ["@foreman"]},
+                        "payload": {"message_mode": "send", "text": "hello", "to": ["@foreman"]},
                     },
                     dispatch_send=lambda op, args: handle_request(DaemonRequest(op=op, args=args)),
                 )

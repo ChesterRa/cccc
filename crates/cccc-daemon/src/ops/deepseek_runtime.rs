@@ -9,7 +9,6 @@ mod turn_timeout;
 
 pub use delivery::deliver;
 pub use lifecycle::apply;
-pub use recovery::recover;
 
 use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, HomeLayout};
@@ -177,9 +176,6 @@ mod delivery_tests;
 #[cfg(test)]
 #[path = "deepseek_runtime/launch_command_tests.rs"]
 mod launch_command_tests;
-#[cfg(test)]
-#[path = "deepseek_runtime/recovery_tests.rs"]
-mod recovery_tests;
 #[cfg(test)]
 #[path = "deepseek_runtime/timeout_tests.rs"]
 mod timeout_tests;

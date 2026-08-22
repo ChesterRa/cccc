@@ -67,8 +67,9 @@ const resetComposerAndGroupSelection = () => {
     toText: "",
     replyTarget: null,
     quotedPresentationRef: null,
-    priority: "normal",
-    replyRequired: false,
+    quotedVoiceDocumentRef: null,
+    preferredMessageMode: "send",
+    messageMode: "send",
     destGroupId: "",
     drafts: {},
     normalToTextByGroup: {},
@@ -340,8 +341,8 @@ describe("restoreFailedSendComposerState", () => {
       toText: "@foreman",
       replyTarget: { eventId: "evt-1", by: "peer-1", text: "prior" },
       quotedPresentationRef: null,
-      priority: "attention",
-      replyRequired: true,
+      quotedVoiceDocumentRef: null,
+      messageMode: "mail",
     });
 
     const state = useComposerStore.getState();
@@ -349,8 +350,7 @@ describe("restoreFailedSendComposerState", () => {
     expect(state.activeGroupId).toBe("g-a");
     expect(state.toText).toBe("@foreman");
     expect(state.replyTarget).toMatchObject({ eventId: "evt-1" });
-    expect(state.priority).toBe("attention");
-    expect(state.replyRequired).toBe(true);
+    expect(state.messageMode).toBe("mail");
   });
 
   it("stores the failed send as the origin group draft when selection moved away", () => {
@@ -367,8 +367,8 @@ describe("restoreFailedSendComposerState", () => {
       toText: "@foreman",
       replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
       quotedPresentationRef: { kind: "presentation_ref", slot_id: "slot-1", title: "Deck" },
-      priority: "attention",
-      replyRequired: true,
+      quotedVoiceDocumentRef: null,
+      messageMode: "mail",
     });
 
     const state = useComposerStore.getState();
@@ -380,8 +380,8 @@ describe("restoreFailedSendComposerState", () => {
       toText: "@foreman",
       replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
       quotedPresentationRef: { kind: "presentation_ref", slot_id: "slot-1", title: "Deck" },
-      priority: "attention",
-      replyRequired: true,
+      quotedVoiceDocumentRef: null,
+      messageMode: "mail",
     });
   });
 });

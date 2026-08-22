@@ -11,6 +11,7 @@ _HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(\S+)(?:\s+(.*\S))?\s*$", r
 _HELP_PET_HEADER_RE = re.compile(r"^##\s*@pet\s*:?\s*$", re.IGNORECASE)
 _HELP_VOICE_SECRETARY_HEADER_RE = re.compile(r"^##\s*@voice_secretary\s*:?\s*$", re.IGNORECASE)
 _HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
+CANONICAL_MESSAGE_DELIVERY_HEADING = "Canonical Message Delivery"
 
 
 def _split_sections(markdown: str) -> list[str]:
@@ -32,6 +33,33 @@ def _split_sections(markdown: str) -> list[str]:
 
 def _trim_block(text: str) -> str:
     return str(text or "").strip()
+
+
+def _is_named_h2_section(section: str, heading: str) -> bool:
+    first = str(section or "").strip().split("\n", 1)[0].strip()
+    return first.casefold() == f"## {heading}".casefold()
+
+
+def canonical_message_delivery_section(markdown: str) -> str:
+    return next(
+        _trim_block(section)
+        for section in _split_sections(markdown)
+        if _is_named_h2_section(section, CANONICAL_MESSAGE_DELIVERY_HEADING)
+    )
+
+
+def compose_effective_help_markdown(*, builtin: str, overlay: str) -> str:
+    """Keep the built-in delivery contract authoritative over group guidance."""
+
+    canonical = canonical_message_delivery_section(builtin)
+    overlay_sections = [
+        _trim_block(section)
+        for section in _split_sections(overlay)
+        if _trim_block(section)
+        and not _is_named_h2_section(section, CANONICAL_MESSAGE_DELIVERY_HEADING)
+    ]
+    parts = [canonical, *overlay_sections]
+    return "\n\n".join(parts).strip() + "\n"
 
 
 def _parse_tagged_section(section: str) -> Optional[dict[str, str]]:

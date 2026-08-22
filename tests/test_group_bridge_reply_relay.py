@@ -30,8 +30,7 @@ class TestGroupBridgeReplyRelay(unittest.TestCase):
                 text="answer",
                 by="user",
                 to=["user"],
-                priority="normal",
-                reply_required=False,
+                message_mode="send",
                 refs=[],
             )
 
@@ -59,8 +58,7 @@ class TestGroupBridgeReplyRelay(unittest.TestCase):
             text="answer",
             by="user",
             to=["user"],
-            priority="normal",
-            reply_required=False,
+            message_mode="send",
             refs=[],
         )
 
@@ -188,6 +186,7 @@ class TestGroupBridgeReplyRelay(unittest.TestCase):
 
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": "g_cross",
                         "text": "hello",
                         "to": ["@foreman"],

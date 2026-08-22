@@ -22,6 +22,19 @@ def create_directory(payload: CreateDirectoryRequest, *, read_only: bool) -> Dic
                 "details": {"endpoint": "fs_create_directory"},
             },
         )
+    parent_input = payload.parent.strip()
+    if not parent_input or not (
+        Path(parent_input).is_absolute()
+        or parent_input == "~"
+        or parent_input.startswith(("~/", "~\\"))
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_PARENT",
+                "message": "Parent directory must be absolute or start with ~",
+            },
+        )
     name = payload.name.strip()
     if not name or name in {".", ".."} or any(char in name for char in "/\\\0"):
         raise HTTPException(
@@ -31,7 +44,7 @@ def create_directory(payload: CreateDirectoryRequest, *, read_only: bool) -> Dic
                 "message": "Directory name must be a single non-empty path segment",
             },
         )
-    parent = Path(payload.parent).expanduser().resolve()
+    parent = Path(parent_input).expanduser().resolve()
     if not parent.exists():
         raise HTTPException(
             status_code=404,

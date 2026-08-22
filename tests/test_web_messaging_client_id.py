@@ -10,6 +10,48 @@ from fastapi.testclient import TestClient
 
 
 class TestWebMessagingClientId(unittest.TestCase):
+    def test_message_control_routes_forward_existing_event_operations(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="message-control-routes", topic="")
+            captured: list[dict] = []
+
+            def fake_call_daemon(req: dict):
+                captured.append(req)
+                return {"ok": True, "result": {}}
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                client = self._client()
+                deliver = client.post(
+                    f"/api/v1/groups/{group.group_id}/messages/event-1/deliver",
+                    json={"actor_ids": ["peer-1"], "force_ambiguous": True},
+                )
+                cancel = client.post(
+                    f"/api/v1/groups/{group.group_id}/messages/event-2/reply-request/cancel",
+                    json={},
+                )
+
+            self.assertEqual(deliver.status_code, 200)
+            self.assertEqual(cancel.status_code, 200)
+            operations = [
+                request
+                for request in captured
+                if request.get("op") in {"message_deliver", "reply_request_cancel"}
+            ]
+            self.assertEqual(operations[0]["op"], "message_deliver")
+            self.assertEqual(operations[0]["args"]["source_event_id"], "event-1")
+            self.assertEqual(operations[0]["args"]["actor_ids"], ["peer-1"])
+            self.assertTrue(operations[0]["args"]["force_ambiguous"])
+            self.assertEqual(operations[0]["args"]["by"], "user")
+            self.assertEqual(operations[1]["op"], "reply_request_cancel")
+            self.assertEqual(operations[1]["args"]["source_event_id"], "event-2")
+            self.assertEqual(operations[1]["args"]["by"], "user")
+        finally:
+            cleanup()
+
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()
@@ -81,6 +123,7 @@ class TestWebMessagingClientId(unittest.TestCase):
                         "by": "user",
                         "to": ["user"],
                         "reply_to": reply_to,
+                        "message_mode": "send",
                         "client_id": "local-reply-1",
                         "refs": [
                             {
@@ -97,6 +140,7 @@ class TestWebMessagingClientId(unittest.TestCase):
                 self.assertTrue(bool(reply_body.get("ok")))
                 reply_event = ((reply_body.get("result") or {}).get("event")) or {}
                 self.assertEqual((((reply_event.get("data") or {}).get("client_id")) or ""), "local-reply-1")
+                self.assertEqual((((reply_event.get("data") or {}).get("message_mode")) or ""), "send")
                 self.assertEqual((((reply_event.get("data") or {}).get("refs")) or [])[0].get("slot_id"), "slot-2")
         finally:
             cleanup()
@@ -245,6 +289,7 @@ class TestWebMessagingClientId(unittest.TestCase):
                         "text": "upload reply",
                         "to_json": "[\"user\"]",
                         "reply_to": reply_to,
+                        "message_mode": "send",
                         "client_id": "upload-reply-1",
                         "refs_json": "[{\"kind\":\"presentation_ref\",\"slot_id\":\"slot-3\",\"label\":\"P3\",\"locator_label\":\"Web\"}]",
                     },
@@ -255,7 +300,109 @@ class TestWebMessagingClientId(unittest.TestCase):
                 self.assertTrue(bool(reply_upload_body.get("ok")))
                 reply_upload_event = ((reply_upload_body.get("result") or {}).get("event")) or {}
                 self.assertEqual((((reply_upload_event.get("data") or {}).get("client_id")) or ""), "upload-reply-1")
+                self.assertEqual((((reply_upload_event.get("data") or {}).get("message_mode")) or ""), "send")
                 self.assertEqual((((reply_upload_event.get("data") or {}).get("refs")) or [])[0].get("slot_id"), "slot-3")
+        finally:
+            cleanup()
+
+    def test_send_upload_preflights_invalid_requests_before_storing_blob(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="upload-preflight-invalid", topic="")
+            blob_dir = Path(home) / "groups" / group.group_id / "state" / "blobs"
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                for client_id, mode in (("invalid-mode", "urgent"), ("mail-to-user", "mail")):
+                    response = client.post(
+                        f"/api/v1/groups/{group.group_id}/send_upload",
+                        data={
+                            "by": "user",
+                            "text": "upload",
+                            "to_json": "[\"user\"]",
+                            "message_mode": mode,
+                            "client_id": client_id,
+                        },
+                        files={"files": (f"{client_id}.txt", BytesIO(client_id.encode()), "text/plain")},
+                    )
+                    self.assertEqual(response.status_code, 400, response.text)
+
+            self.assertFalse(blob_dir.exists() and any(blob_dir.iterdir()))
+        finally:
+            cleanup()
+
+    def test_send_upload_replays_client_id_before_storing_blob(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="upload-preflight-replay", topic="")
+            blob_dir = Path(home) / "groups" / group.group_id / "state" / "blobs"
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+                accepted = client.post(
+                    f"/api/v1/groups/{group.group_id}/send",
+                    json={
+                        "by": "user",
+                        "text": "accepted",
+                        "to": ["user"],
+                        "message_mode": "send",
+                        "client_id": "upload-replay",
+                    },
+                )
+                accepted_event = ((accepted.json().get("result") or {}).get("event")) or {}
+
+                replay = client.post(
+                    f"/api/v1/groups/{group.group_id}/send_upload",
+                    data={
+                        "by": "user",
+                        "text": "must not replace accepted message",
+                        "to_json": "[\"user\"]",
+                        "message_mode": "send",
+                        "client_id": "upload-replay",
+                    },
+                    files={"files": ("orphan.txt", BytesIO(b"must not persist"), "text/plain")},
+                )
+
+            self.assertEqual(replay.status_code, 200, replay.text)
+            replay_result = replay.json().get("result") or {}
+            self.assertEqual((replay_result.get("event") or {}).get("id"), accepted_event.get("id"))
+            self.assertTrue(bool(replay_result.get("replayed")))
+            self.assertFalse(blob_dir.exists() and any(blob_dir.iterdir()))
+        finally:
+            cleanup()
+
+    def test_send_upload_validates_every_file_before_storing_any_blob(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="upload-all-files-preflight", topic="")
+            blob_dir = Path(home) / "groups" / group.group_id / "state" / "blobs"
+            with (
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
+                patch("cccc.ports.web.routes.messaging.WEB_MAX_FILE_BYTES", 4),
+            ):
+                response = self._client().post(
+                    f"/api/v1/groups/{group.group_id}/send_upload",
+                    data={
+                        "by": "user",
+                        "text": "two files",
+                        "to_json": "[\"user\"]",
+                        "message_mode": "send",
+                    },
+                    files=[
+                        ("files", ("small.txt", BytesIO(b"ok"), "text/plain")),
+                        ("files", ("large.txt", BytesIO(b"too-large"), "text/plain")),
+                    ],
+                )
+
+            self.assertEqual(response.status_code, 413, response.text)
+            self.assertFalse(blob_dir.exists() and any(blob_dir.iterdir()))
         finally:
             cleanup()
 

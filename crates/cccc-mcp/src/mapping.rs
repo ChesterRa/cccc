@@ -9,11 +9,16 @@ pub fn daemon_call(
 ) -> Result<(String, Map<String, Value>), String> {
     normalize_recipients(&mut args);
     let op = match name {
-        "cccc_inbox_list" => "inbox_list",
-        "cccc_inbox_mark_read" => return crate::inbox_mapping::daemon_call(args),
+        "cccc_inbox_read" => "inbox_read",
+        "cccc_message_history" => "message_history",
         "cccc_message_send" => {
             alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
+            let mode = args
+                .remove("mode")
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "mail".into());
+            args.insert("message_mode".into(), Value::String(mode));
             if args
                 .get("dst_group_id")
                 .and_then(Value::as_str)
@@ -25,6 +30,7 @@ pub fn daemon_call(
                 .and_then(Value::as_str)
                 .is_some_and(|value| !value.trim().is_empty())
             {
+                args.remove("message_mode");
                 "reply"
             } else {
                 "send"
@@ -37,7 +43,20 @@ pub fn daemon_call(
         "cccc_message_reply" => {
             alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
+            let mode = args
+                .remove("mode")
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "send".into());
+            args.insert("message_mode".into(), Value::String(mode));
             "reply"
+        }
+        "cccc_message_deliver" => {
+            normalize_message_author(&mut args);
+            "message_deliver"
+        }
+        "cccc_reply_request_cancel" => {
+            normalize_message_author(&mut args);
+            "reply_request_cancel"
         }
         "cccc_context_get" => "context_get",
         "cccc_context_sync" => "context_sync",
@@ -338,6 +357,8 @@ mod tests {
             "cccc_message_send",
             "cccc_tracked_send",
             "cccc_message_reply",
+            "cccc_message_deliver",
+            "cccc_reply_request_cancel",
         ] {
             let mut value = json!({
                 "group_id":"g_test",
@@ -374,6 +395,42 @@ mod tests {
         let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
         assert_eq!(op, "send_cross_group");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn message_reply_maps_mail_mode_to_the_daemon_contract() {
+        let args = json!({
+            "group_id":"g_test","actor_id":"backend","text":"done",
+            "event_id":"event-1","mode":"mail"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        let (op, args) = daemon_call("cccc_message_reply", args).expect("mapping");
+        assert_eq!(op, "reply");
+        assert_eq!(args["reply_to"], "event-1");
+        assert_eq!(args["message_mode"], "mail");
+        assert!(!args.contains_key("mode"));
+    }
+
+    #[test]
+    fn message_control_tools_map_to_existing_event_operations() {
+        for (tool, expected) in [
+            ("cccc_message_deliver", "message_deliver"),
+            ("cccc_reply_request_cancel", "reply_request_cancel"),
+        ] {
+            let args = json!({
+                "group_id":"g_source","actor_id":"backend",
+                "source_event_id":"event-1","actor_ids":["peer1"]
+            })
+            .as_object()
+            .cloned()
+            .expect("args");
+            let (op, args) = daemon_call(tool, args).expect("mapping");
+            assert_eq!(op, expected);
+            assert_eq!(args["by"], "backend");
+            assert_eq!(args["source_event_id"], "event-1");
+        }
     }
 
     #[test]

@@ -6,7 +6,7 @@ from pathlib import Path
 import threading
 from typing import Any, Dict, Optional
 
-from ...contracts.v1.group_bridge import RemoteSendPayload
+from ...contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, RemoteSendPayload
 from ...contracts.v1.message import ChatMessageData
 from ...kernel.group_bridge.credentials import (
     lookup_pairing_remote_send_credential,
@@ -15,10 +15,10 @@ from ...kernel.group_bridge.pairing import (
     active_trust_for_remote_send_credential,
     list_trusts,
 )
-from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
 from ...kernel.inbox import iter_events_reverse
 from ...kernel.ledger import append_event
+from ...kernel.peer_insight import PeerRecipientError, preflight_local_peer_audience
 from ..messaging.chat_delivery_ops import deliver_appended_chat_message
 from ..messaging.post_commit import run_group_chat_post_commit
 from .peer_address_sync import sync_group_bridge_peer_multiaddrs
@@ -161,11 +161,16 @@ def receive_remote_send(
         return _error("unauthorized_peer", "remote peer is not trusted for this group")
 
     payload_doc = payload if isinstance(payload, dict) else {}
+    if payload_doc.get("message_contract_version") != GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION:
+        return _error(
+            "contract_version_mismatch",
+            "Group Bridge message contract version does not match",
+        )
     try:
         msg = RemoteSendPayload(
             **{
                 key: payload_doc.get(key)
-                for key in ("text", "format", "priority", "reply_required", "to", "refs", "attachments", "source_by")
+                for key in ("text", "format", "message_mode", "to", "refs", "attachments", "source_by")
                 if key in payload_doc
             }
         )
@@ -181,7 +186,24 @@ def receive_remote_send(
             "missing_remote_recipient",
             "remote group_bridge messages require explicit to; use '@foreman', '@all', or a target actor",
         )
-    msg = msg.model_copy(update={"to": recipients})
+    try:
+        audience = preflight_local_peer_audience(
+            group,
+            to_tokens=recipients,
+            by=f"group_bridge:{peer_id}",
+            apply_default_send=False,
+            message_mode=msg.message_mode,
+        )
+    except PeerRecipientError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    if msg.message_mode == "request_reply" and any(
+        recipient in {"@all", "@peers", "@foreman"} for recipient in recipients
+    ):
+        return _error(
+            "concrete_recipients_required",
+            "request_reply requires one or more explicit concrete recipients",
+        )
+    msg = msg.model_copy(update={"to": audience.recipients})
 
     existing = _find_existing_event(group.ledger_path, client_id=key)
     if existing is not None:
@@ -202,8 +224,7 @@ def receive_remote_send(
         data=ChatMessageData(
             text=msg.text,
             format=msg.format,
-            priority=msg.priority,
-            reply_required=msg.reply_required,
+            message_mode=msg.message_mode,
             to=msg.to,
             refs=[],
             attachments=attachments,
@@ -217,36 +238,28 @@ def receive_remote_send(
             client_id=key,
         ).model_dump(),
     )
-    effective_to = _resolve_remote_send_to(group, msg.to)
-    run_group_chat_post_commit(
-        group.group_id,
-        "group_bridge-receive-delivery",
-        lambda: deliver_appended_chat_message(
-            group=group,
-            event=event,
-            by=f"group_bridge:{peer_id}",
-            effective_to=effective_to,
-            text=msg.text,
-            insight=None,
-            priority=msg.priority,
-            reply_required=msg.reply_required,
-            refs=[],
-            attachments=attachments,
-            source_platform="group_bridge_session",
-            source_user_name=str(trust.get("remote_group_title") or src_gid),
-            source_user_id=peer_id,
-            src_group_id=src_gid,
-            src_event_id=str(payload_doc.get("src_event_id") or "").strip(),
-        ),
-    )
+    if msg.message_mode != "mail":
+        run_group_chat_post_commit(
+            group.group_id,
+            "group_bridge-receive-delivery",
+            lambda: deliver_appended_chat_message(
+                group=group,
+                event=event,
+                by=f"group_bridge:{peer_id}",
+                effective_to=msg.to,
+                text=msg.text,
+                insight=None,
+                message_mode=msg.message_mode,
+                refs=[],
+                attachments=attachments,
+                source_platform="group_bridge_session",
+                source_user_name=str(trust.get("remote_group_title") or src_gid),
+                source_user_id=peer_id,
+                src_group_id=src_gid,
+                src_event_id=str(payload_doc.get("src_event_id") or "").strip(),
+            ),
+        )
     return {"ok": True, "event_id": str(event.get("id") or ""), "duplicate": False}
-
-
-def _resolve_remote_send_to(group: Any, to: list[str]) -> list[str]:
-    try:
-        return resolve_recipient_tokens(group, to) if to else []
-    except Exception:
-        return [str(item).strip() for item in (to or []) if str(item).strip()]
 
 
 def _explicit_remote_recipients(to: Any) -> list[str]:
@@ -304,5 +317,8 @@ def _find_existing_event(ledger_path: Any, *, client_id: str) -> Optional[Dict[s
     return None
 
 
-def _error(code: str, message: str) -> Dict[str, Any]:
-    return {"ok": False, "error": {"code": code, "message": message}}
+def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    error: Dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    return {"ok": False, "error": error}

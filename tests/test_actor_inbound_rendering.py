@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 from cccc.daemon.messaging.chat_ops import _build_headless_delivery_text
 from cccc.daemon.messaging.actor_turn_rendering import (
     build_actor_delivery_text,
+    render_actor_event_batch_for_delivery,
     render_group_bridge_route_ref,
 )
 from cccc.daemon.messaging.delivery import PendingMessage, render_single_message
@@ -17,6 +20,47 @@ def test_inbound_renderer_plain_send_matches_pty_and_headless_wrappers() -> None
         PendingMessage(event_id="evt-1", by="user", to=["peer1"], text="hello")
     ) == expected
     assert _build_headless_delivery_text(by="user", to=["peer1"], body="hello") == expected
+
+
+def test_direct_delivery_adds_mail_count_without_consuming_mail() -> None:
+    direct = {
+        "id": "direct-1",
+        "kind": "chat.message",
+        "by": "user",
+        "data": {
+            "to": ["peer1"],
+            "text": "look now",
+            "message_mode": "send",
+        },
+    }
+    mail = {
+        "id": "mail-1",
+        "kind": "chat.message",
+        "by": "user",
+        "data": {
+            "to": ["peer1"],
+            "text": "read later",
+            "message_mode": "mail",
+        },
+    }
+    with patch(
+        "cccc.daemon.messaging.actor_turn_rendering.mail_pending_summary",
+        return_value={"count": 2},
+    ) as pending:
+        rendered = render_actor_event_batch_for_delivery(
+            [direct],
+            actor_id="peer1",
+            group=object(),
+        )
+        mail_rendered = render_actor_event_batch_for_delivery(
+            [mail],
+            actor_id="peer1",
+            group=object(),
+        )
+
+    assert "MAIL PENDING: 2 items" in rendered
+    assert "MAIL PENDING" not in mail_rendered
+    pending.assert_called_once()
 
 
 def test_inbound_renderer_preserves_reply_quote_semantics() -> None:
@@ -103,8 +147,7 @@ def test_inbound_renderer_preserves_multiline_body() -> None:
 def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:
     text = build_actor_delivery_text(
         text="inspect attachment",
-        priority="normal",
-        reply_required=False,
+        message_mode="send",
         event_id="evt-1",
         refs=[],
         attachments=[
@@ -125,8 +168,7 @@ def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:
 def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
     text = build_actor_delivery_text(
         text="please send to #Remote Product",
-        priority="normal",
-        reply_required=False,
+        message_mode="send",
         event_id="evt-1",
         refs=[
             {
@@ -153,8 +195,7 @@ def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
 def test_actor_delivery_text_renders_local_group_route_as_ai_owned_context() -> None:
     text = build_actor_delivery_text(
         text="请 #Self Agent 主动打个招呼",
-        priority="normal",
-        reply_required=False,
+        message_mode="send",
         event_id="evt-1",
         refs=[
             {
@@ -176,8 +217,7 @@ def test_actor_delivery_text_renders_local_group_route_as_ai_owned_context() -> 
 def test_actor_delivery_text_does_not_render_hidden_slash_control_refs() -> None:
     text = build_actor_delivery_text(
         text="[CCCC] INTERNAL CONTROL: CCCC capability skill dispatch",
-        priority="normal",
-        reply_required=False,
+        message_mode="send",
         event_id="evt-1",
         refs=[
             {

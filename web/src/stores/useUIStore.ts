@@ -17,7 +17,7 @@ interface UINotice {
   onAction?: () => void;
 }
 
-export type ChatFilter = "all" | "user" | "attention" | "task";
+export type ChatFilter = "all" | "user" | "mail" | "request_reply";
 export type ChatFollowMode = "follow" | "detached";
 export const CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION = 1;
 
@@ -190,8 +190,8 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       ...DEFAULT_CHAT_SESSION,
       chatFilter:
         session.chatFilter === "user" ||
-        session.chatFilter === "attention" ||
-        session.chatFilter === "task"
+        session.chatFilter === "mail" ||
+        session.chatFilter === "request_reply"
           ? session.chatFilter
           : "all",
       scrollSnapshot: null,

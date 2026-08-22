@@ -12,13 +12,14 @@ from ....daemon.group_bridge.route_lookup import resolve_remote_group_route
 from ....kernel.actors import find_actor
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
+from ....kernel.inbox import mail_pending_summary
 from ....kernel.peer_insight import (
-    POST_MESSAGE_NUDGE,
     PeerRecipientError,
     normalized_insight_or_error,
     peer_insight_required_details,
     preflight_local_peer_audience,
     remote_recipients_include_peer,
+    validate_message_audience,
 )
 from ....kernel.recipient_syntax import (
     CROSS_GROUP_HASH_RECIPIENT_MESSAGE,
@@ -27,7 +28,6 @@ from ....kernel.recipient_syntax import (
     has_hash_recipient_token,
     normalize_recipient_tokens,
 )
-from ....util.conv import coerce_bool
 from ..common import MCPError, _call_daemon_or_raise
 
 _MAX_BLOB_READ_BYTES = 1_000_000
@@ -110,14 +110,22 @@ def _message_operation_succeeded(result: Dict[str, Any]) -> bool:
     )
 
 
-def _with_post_message_nudge(result: Dict[str, Any]) -> Dict[str, Any]:
+def _with_post_message_context(
+    result: Dict[str, Any], *, group_id: str, actor_id: str
+) -> Dict[str, Any]:
     if not _message_operation_succeeded(result):
         return result
     out = dict(result or {})
-    out["post_message_nudge"] = {
-        "kind": "whole_situation_reconstruction",
-        "message": POST_MESSAGE_NUDGE,
-    }
+    try:
+        group = load_group(str(group_id or "").strip())
+        if group is not None:
+            pending = mail_pending_summary(group, actor_id=str(actor_id or "").strip())
+            if pending:
+                out["mail_pending"] = pending
+    except Exception:
+        # This context is advisory. A successful durable message operation must
+        # not be reported as failed because its post-result Inbox hint was unavailable.
+        pass
     return out
 
 
@@ -129,8 +137,7 @@ def message_send(
     text: str,
     insight: Any = None,
     to: Optional[List[str]] = None,
-    priority: str = "normal",
-    reply_required: bool = False,
+    mode: str = "mail",
     idempotency_key: str = "",
     refs: Optional[List[Dict[str, Any]]] = None,
     suggested_user_message: str = "",
@@ -147,10 +154,12 @@ def message_send(
         actor_id=actor_id,
         text=str(suggested_user_message or ""),
     ).strip()
-    prio = str(priority or "normal").strip() or "normal"
-    if prio not in ("normal", "attention"):
-        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
-    reply_required_flag = coerce_bool(reply_required, default=False)
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"send", "request_reply", "mail"}:
+        raise MCPError(
+            code="invalid_message_mode",
+            message="mode must be mail, send, or request_reply",
+        )
 
     dst_gid = str(dst_group_id or "").strip()
     if dst_gid and dst_gid != str(group_id or "").strip():
@@ -169,7 +178,7 @@ def message_send(
                     code="missing_remote_recipient",
                     message="remote messages require explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
                 )
-            return _with_post_message_nudge(
+            return _with_post_message_context(
                 _call_daemon_or_raise(
                     {
                         "op": "remote_send",
@@ -183,15 +192,16 @@ def message_send(
                             "payload": {
                                 "text": text,
                                 "to": remote_to,
-                                "priority": prio,
-                                "reply_required": reply_required_flag,
+                                "message_mode": normalized_mode,
                                 "refs": refs if refs is not None else [],
                             },
                         },
                     }
-                )
+                ),
+                group_id=group_id,
+                actor_id=actor_id,
             )
-        return _with_post_message_nudge(
+        return _with_post_message_context(
             _call_daemon_or_raise(
                 {
                     "op": "send_cross_group",
@@ -201,17 +211,18 @@ def message_send(
                         "text": text,
                         "by": actor_id,
                         "to": to if to is not None else [],
-                        "priority": prio,
-                        "reply_required": reply_required_flag,
+                        "message_mode": normalized_mode,
                         "insight": insight,
                         "require_peer_insight": True,
                         "refs": refs if refs is not None else [],
                     },
                 }
-            )
+            ),
+            group_id=group_id,
+            actor_id=actor_id,
         )
 
-    return _with_post_message_nudge(
+    return _with_post_message_context(
         _call_daemon_or_raise(
             {
                 "op": "send",
@@ -221,15 +232,16 @@ def message_send(
                     "by": actor_id,
                     "to": to if to is not None else [],
                     "path": "",
-                    "priority": prio,
-                    "reply_required": reply_required_flag,
+                    "message_mode": normalized_mode,
                     "insight": insight,
                     "require_peer_insight": True,
                     "refs": refs if refs is not None else [],
                     "suggested_user_message": suggestion,
                 },
             }
-        )
+        ),
+        group_id=group_id,
+        actor_id=actor_id,
     )
 
 
@@ -247,8 +259,7 @@ def tracked_send(
     waiting_on: str = "",
     handoff_to: str = "",
     notes: str = "",
-    priority: str = "normal",
-    reply_required: bool = True,
+    task_priority: str = "normal",
     idempotency_key: str = "",
     refs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
@@ -264,10 +275,8 @@ def tracked_send(
         raise MCPError(code="missing_title", message="cccc_tracked_send requires title")
     if not text.strip():
         raise MCPError(code="empty_message", message="cccc_tracked_send message text cannot be empty")
-    prio = str(priority or "normal").strip() or "normal"
-    if prio not in ("normal", "attention"):
-        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
-    return _with_post_message_nudge(
+    normalized_task_priority = str(task_priority or "normal").strip() or "normal"
+    return _with_post_message_context(
         _call_daemon_or_raise({
             "op": "tracked_send",
             "args": {
@@ -282,14 +291,15 @@ def tracked_send(
                 "waiting_on": str(waiting_on or "").strip(),
                 "handoff_to": str(handoff_to or "").strip(),
                 "notes": str(notes or "").strip(),
-                "priority": prio,
-                "reply_required": coerce_bool(reply_required, default=True),
+                "task_priority": normalized_task_priority,
                 "insight": insight,
                 "require_peer_insight": True,
                 "idempotency_key": str(idempotency_key or "").strip(),
                 "refs": refs if refs is not None else [],
             },
-        })
+        }),
+        group_id=group_id,
+        actor_id=actor_id,
     )
 
 
@@ -301,8 +311,7 @@ def message_reply(
     text: str,
     insight: Any = None,
     to: Optional[List[str]] = None,
-    priority: str = "normal",
-    reply_required: bool = False,
+    mode: str = "send",
     refs: Optional[List[Dict[str, Any]]] = None,
     suggested_user_message: str = "",
 ) -> Dict[str, Any]:
@@ -311,7 +320,13 @@ def message_reply(
         raise _mcp_error(
             code="missing_event_id",
             message="missing event_id (reply target)",
-            recommended_action="Use the event_id/reply_to from the message or delivered turn envelope; if unsure, inspect cccc_inbox_list or the current turn events.",
+            recommended_action="Use the event_id/reply_to from the message or delivered turn envelope; if unsure, call cccc_inbox_read or inspect the current turn events.",
+        )
+    normalized_mode = str(mode or "send").strip().lower()
+    if normalized_mode not in {"send", "mail"}:
+        raise MCPError(
+            code="invalid_message_mode",
+            message="reply mode must be send or mail",
         )
     text = _normalize_runtime_escaped_text(group_id=group_id, actor_id=actor_id, text=text)
     insight = _normalize_runtime_escaped_text(
@@ -324,11 +339,7 @@ def message_reply(
         actor_id=actor_id,
         text=str(suggested_user_message or ""),
     ).strip()
-    prio = str(priority or "normal").strip() or "normal"
-    if prio not in ("normal", "attention"):
-        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
-    reply_required_flag = coerce_bool(reply_required, default=False)
-    return _with_post_message_nudge(
+    return _with_post_message_context(
         _call_daemon_or_raise(
             {
                 "op": "reply",
@@ -338,15 +349,70 @@ def message_reply(
                     "by": actor_id,
                     "reply_to": reply_to,
                     "to": to if to is not None else [],
-                    "priority": prio,
-                    "reply_required": reply_required_flag,
+                    "message_mode": normalized_mode,
                     "insight": insight,
                     "require_peer_insight": True,
                     "refs": refs if refs is not None else [],
                     "suggested_user_message": suggestion,
                 },
             }
+        ),
+        group_id=group_id,
+        actor_id=actor_id,
+    )
+
+
+def message_deliver(
+    *,
+    group_id: str,
+    actor_id: str,
+    source_event_id: str,
+    actor_ids: Optional[List[str]] = None,
+    force_ambiguous: bool = False,
+) -> Dict[str, Any]:
+    """Promote or retry delivery of an existing message without duplicating it."""
+    source_id = str(source_event_id or "").strip()
+    recipients = list(dict.fromkeys(str(item or "").strip() for item in actor_ids or [] if str(item or "").strip()))
+    if not source_id:
+        raise MCPError(code="missing_source_event_id", message="missing source_event_id")
+    if not recipients:
+        raise MCPError(
+            code="concrete_recipients_required",
+            message="actor_ids must contain one or more explicit recipient actor IDs",
         )
+    return _call_daemon_or_raise(
+        {
+            "op": "message_deliver",
+            "args": {
+                "group_id": group_id,
+                "source_event_id": source_id,
+                "actor_ids": recipients,
+                "by": actor_id,
+                "force_ambiguous": bool(force_ambiguous),
+            },
+        }
+    )
+
+
+def reply_request_cancel(
+    *,
+    group_id: str,
+    actor_id: str,
+    source_event_id: str,
+) -> Dict[str, Any]:
+    """Cancel the still-open reply obligations for one existing request."""
+    source_id = str(source_event_id or "").strip()
+    if not source_id:
+        raise MCPError(code="missing_source_event_id", message="missing source_event_id")
+    return _call_daemon_or_raise(
+        {
+            "op": "reply_request_cancel",
+            "args": {
+                "group_id": group_id,
+                "source_event_id": source_id,
+                "by": actor_id,
+            },
+        }
     )
 
 
@@ -429,8 +495,7 @@ def file_send(
     insight: Any = None,
     dst_group_id: str = "",
     to: Optional[List[str]] = None,
-    priority: str = "normal",
-    reply_required: bool = False,
+    mode: str = "mail",
 ) -> Dict[str, Any]:
     """Send a local file as a chat.message attachment.
 
@@ -477,9 +542,12 @@ def file_send(
             recommended_action="Verify the active scope and file path with cccc_repo(action='list_dir') or cccc_shell('ls ...'), then retry cccc_file(action='send').",
         )
 
-    prio = str(priority or "normal").strip() or "normal"
-    if prio not in ("normal", "attention"):
-        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"send", "request_reply", "mail"}:
+        raise MCPError(
+            code="invalid_message_mode",
+            message="mode must be mail, send, or request_reply",
+        )
     try:
         normalized_insight = normalized_insight_or_error(insight)
     except ValueError as exc:
@@ -500,6 +568,17 @@ def file_send(
                 message="attachments are only supported for remote Group Bridge messages",
             )
         remote_to = cross_group_recipient_tokens_or_default(recipient_tokens)
+        try:
+            validate_message_audience(remote_to, message_mode=normalized_mode)
+        except PeerRecipientError as exc:
+            raise MCPError(code=exc.code, message=exc.message, details=exc.details) from exc
+        if normalized_mode == "request_reply" and any(
+            recipient in {"@all", "@peers", "@foreman"} for recipient in remote_to
+        ):
+            raise MCPError(
+                code="concrete_recipients_required",
+                message="request_reply requires one or more explicit concrete recipients",
+            )
         if remote_recipients_include_peer(remote_to) and normalized_insight is None:
             raise MCPError(
                 code="peer_insight_required",
@@ -513,6 +592,7 @@ def file_send(
                 to_tokens=recipient_tokens,
                 by=actor_id,
                 apply_default_send=True,
+                message_mode=normalized_mode,
             )
         except PeerRecipientError as exc:
             raise MCPError(code=exc.code, message=exc.message, details=exc.details) from exc
@@ -530,9 +610,8 @@ def file_send(
 
     att = store_blob_bytes(group, data=raw, filename=src.name, mime_type=_guess_mime_type(src.name))
     msg = str(text or "").strip() or f"[file] {att.get('title') or src.name}"
-    reply_required_flag = coerce_bool(reply_required, default=False)
     if dst_gid and dst_gid != gid:
-        return _with_post_message_nudge(_call_daemon_or_raise(
+        return _with_post_message_context(_call_daemon_or_raise(
             {
                 "op": "send_cross_group",
                 "args": {
@@ -542,14 +621,13 @@ def file_send(
                     "by": actor_id,
                     "to": to if to is not None else [],
                     "attachments": [att],
-                    "priority": prio,
-                    "reply_required": reply_required_flag,
+                    "message_mode": normalized_mode,
                     "insight": normalized_insight,
                     "require_peer_insight": True,
                 },
             }
-        ))
-    return _with_post_message_nudge(_call_daemon_or_raise(
+        ), group_id=gid, actor_id=actor_id)
+    return _with_post_message_context(_call_daemon_or_raise(
         {
             "op": "send",
             "args": {
@@ -559,10 +637,9 @@ def file_send(
                 "to": to if to is not None else [],
                 "path": "",
                 "attachments": [att],
-                "priority": prio,
-                "reply_required": reply_required_flag,
+                "message_mode": normalized_mode,
                 "insight": normalized_insight,
                 "require_peer_insight": True,
             },
         }
-    ))
+    ), group_id=gid, actor_id=actor_id)

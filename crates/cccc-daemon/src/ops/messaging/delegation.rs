@@ -43,8 +43,7 @@ pub(super) fn relay(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ("by".into(), json!(sender)),
             ("text".into(), json!(text)),
             ("to".into(), json!([target])),
-            ("priority".into(), json!("normal")),
-            ("reply_required".into(), Value::Bool(false)),
+            ("message_mode".into(), json!("send")),
         ]),
     };
     let sent = super::send_cross_group(home, &forwarded)?;

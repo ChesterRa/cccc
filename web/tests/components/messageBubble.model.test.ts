@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildToLabel,
   buildVisibleReadStatusEntries,
-  computeAckSummary,
   computeObligationSummary,
   getSenderDisplayName,
 } from "../../src/components/messageBubble/model";
@@ -85,42 +84,28 @@ describe("messageBubble model", () => {
     ]);
   });
 
-  it("computes ack summary only for attention or reply-required messages", () => {
-    expect(
-      computeAckSummary(
-        typedFixture<Parameters<typeof computeAckSummary>[0]>({
-          hideDirectUserObligationSummary: false,
-          isAttention: true,
-          replyRequired: false,
-          ackStatus: { user: false, peer: true },
-          isUserMessage: false,
-        }),
-      ),
-    ).toEqual({ done: 1, total: 2, needsUserAck: true });
-  });
-
-  it("computes reply obligation summary when any recipient requires a reply", () => {
+  it("computes reply obligation summary for requested recipients", () => {
     expect(
       computeObligationSummary(
         typedFixture<Parameters<typeof computeObligationSummary>[0]>({
           hideDirectUserObligationSummary: false,
           obligationStatus: {
-            alice: { reply_required: true, replied: true },
-            bob: { reply_required: false, replied: false },
+            alice: { reply_requested: true, replied: true, cancelled: false },
+            bob: { reply_requested: true, replied: false, cancelled: false },
           },
         }),
       ),
-    ).toEqual({ kind: "reply", done: 1, total: 2 });
+    ).toEqual({ done: 1, total: 2 });
   });
 
-  it("computes ack obligation summary when no recipient requires a reply", () => {
+  it("ignores status entries without a reply request", () => {
     expect(
       computeObligationSummary(
         typedFixture<Parameters<typeof computeObligationSummary>[0]>({
           hideDirectUserObligationSummary: false,
-          obligationStatus: { alice: { acked: true }, bob: { acked: false } },
+          obligationStatus: { alice: { reply_requested: false, replied: true, cancelled: false } },
         }),
       ),
-    ).toEqual({ kind: "ack", done: 1, total: 2 });
+    ).toBeNull();
   });
 });

@@ -32,21 +32,6 @@ interface AutomationTabProps {
   devActors: Actor[];
   busy: boolean;
 
-  nudgeSeconds: number;
-  setNudgeSeconds: (v: number) => void;
-  replyRequiredNudgeSeconds: number;
-  setReplyRequiredNudgeSeconds: (v: number) => void;
-  attentionAckNudgeSeconds: number;
-  setAttentionAckNudgeSeconds: (v: number) => void;
-  unreadNudgeSeconds: number;
-  setUnreadNudgeSeconds: (v: number) => void;
-  nudgeDigestMinIntervalSeconds: number;
-  setNudgeDigestMinIntervalSeconds: (v: number) => void;
-  nudgeMaxRepeatsPerObligation: number;
-  setNudgeMaxRepeatsPerObligation: (v: number) => void;
-  nudgeEscalateAfterRepeats: number;
-  setNudgeEscalateAfterRepeats: (v: number) => void;
-
   idleSeconds: number;
   setIdleSeconds: (v: number) => void;
   keepaliveSeconds: number;
@@ -621,20 +606,6 @@ export function AutomationTab(props: AutomationTabProps) {
       <AutomationPoliciesSection
         isDark={isDark}
         busy={props.busy}
-        nudgeSeconds={props.nudgeSeconds}
-        setNudgeSeconds={props.setNudgeSeconds}
-        replyRequiredNudgeSeconds={props.replyRequiredNudgeSeconds}
-        setReplyRequiredNudgeSeconds={props.setReplyRequiredNudgeSeconds}
-        attentionAckNudgeSeconds={props.attentionAckNudgeSeconds}
-        setAttentionAckNudgeSeconds={props.setAttentionAckNudgeSeconds}
-        unreadNudgeSeconds={props.unreadNudgeSeconds}
-        setUnreadNudgeSeconds={props.setUnreadNudgeSeconds}
-        nudgeDigestMinIntervalSeconds={props.nudgeDigestMinIntervalSeconds}
-        setNudgeDigestMinIntervalSeconds={props.setNudgeDigestMinIntervalSeconds}
-        nudgeMaxRepeatsPerObligation={props.nudgeMaxRepeatsPerObligation}
-        setNudgeMaxRepeatsPerObligation={props.setNudgeMaxRepeatsPerObligation}
-        nudgeEscalateAfterRepeats={props.nudgeEscalateAfterRepeats}
-        setNudgeEscalateAfterRepeats={props.setNudgeEscalateAfterRepeats}
         keepaliveSeconds={props.keepaliveSeconds}
         setKeepaliveSeconds={props.setKeepaliveSeconds}
         keepaliveMax={props.keepaliveMax}

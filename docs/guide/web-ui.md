@@ -156,7 +156,7 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### Automation
 
-- **Built-in Automation**: Configure system-managed follow-ups and collaboration health loops such as unread / reply-required / ACK follow-ups, actor idle alerts, keepalive, silence checks, and help nudges.
+- **Built-in Automation**: Configure bounded Mail/reply notices and collaboration health loops such as actor idle alerts, keepalive, silence checks, and help nudges.
 - **Rules**: Create scheduled reminders with interval / recurring schedule / one-time schedule.
 - **Actions**:
   - `Send Reminder` (normal reminder delivery)

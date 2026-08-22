@@ -21,7 +21,7 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
 
         return td, cleanup
 
-    def test_group_settings_get_defaults_auto_mark_on_delivery_to_true(self) -> None:
+    def test_group_settings_get_returns_delivery_notice_defaults(self) -> None:
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
         from cccc.ports.web.app import create_app
@@ -38,7 +38,9 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             body = resp.json()
             self.assertTrue(body.get("ok"))
             settings = ((body.get("result") or {}).get("settings") or {})
-            self.assertTrue(bool(settings.get("auto_mark_on_delivery")))
+            self.assertEqual(settings.get("mail_notice_after_seconds"), 1800)
+            self.assertEqual(settings.get("reply_notice_after_seconds"), 900)
+            self.assertNotIn("auto_mark_on_delivery", settings)
         finally:
             cleanup()
 
@@ -57,13 +59,6 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             self.assertIsNotNone(loaded)
             assert loaded is not None
             loaded.doc["automation"] = {
-                "nudge_after_seconds": "oops",
-                "reply_required_nudge_after_seconds": "-99",
-                "attention_ack_nudge_after_seconds": None,
-                "unread_nudge_after_seconds": "100",
-                "nudge_digest_min_interval_seconds": "",
-                "nudge_max_repeats_per_obligation": "bad",
-                "nudge_escalate_after_repeats": "-1",
                 "actor_idle_timeout_seconds": "abc",
                 "keepalive_delay_seconds": "120",
                 "keepalive_max_per_actor": "-5",
@@ -73,7 +68,8 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             }
             loaded.doc["delivery"] = {
                 "min_interval_seconds": "bad",
-                "auto_mark_on_delivery": "false",
+                "mail_notice_after_seconds": "-99",
+                "reply_notice_after_seconds": "bad",
             }
             loaded.doc["terminal_transcript"] = {
                 "visibility": "foreman",
@@ -90,13 +86,6 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             self.assertTrue(body.get("ok"))
             settings = ((body.get("result") or {}).get("settings") or {})
 
-            self.assertEqual(settings.get("nudge_after_seconds"), 300)
-            self.assertEqual(settings.get("reply_required_nudge_after_seconds"), 0)
-            self.assertEqual(settings.get("attention_ack_nudge_after_seconds"), 600)
-            self.assertEqual(settings.get("unread_nudge_after_seconds"), 100)
-            self.assertEqual(settings.get("nudge_digest_min_interval_seconds"), 120)
-            self.assertEqual(settings.get("nudge_max_repeats_per_obligation"), 3)
-            self.assertEqual(settings.get("nudge_escalate_after_repeats"), 0)
             self.assertEqual(settings.get("actor_idle_timeout_seconds"), 0)
             self.assertEqual(settings.get("keepalive_delay_seconds"), 120)
             self.assertEqual(settings.get("keepalive_max_per_actor"), 0)
@@ -104,7 +93,9 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             self.assertEqual(settings.get("help_nudge_interval_seconds"), 600)
             self.assertEqual(settings.get("help_nudge_min_messages"), 10)
             self.assertEqual(settings.get("min_interval_seconds"), 0)
-            self.assertFalse(bool(settings.get("auto_mark_on_delivery")))
+            self.assertEqual(settings.get("mail_notice_after_seconds"), 0)
+            self.assertEqual(settings.get("reply_notice_after_seconds"), 900)
+            self.assertNotIn("auto_mark_on_delivery", settings)
             self.assertEqual(settings.get("terminal_transcript_notify_lines"), 20)
         finally:
             cleanup()

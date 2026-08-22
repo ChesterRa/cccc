@@ -49,6 +49,14 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
             })
             .map_err(OpError::io)?;
     }
+    let settled = crate::ops::runtime_delivery::settle_stranded_claims(home, &group)?;
+    if settled > 0 {
+        tracing::warn!(
+            %group_id,
+            settled,
+            "settled stranded runtime delivery claims during daemon restore"
+        );
+    }
     if !group.running || group.state == cccc_contracts::GroupState::Stopped {
         return Ok(());
     }
@@ -59,18 +67,7 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
     {
         match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
             Ok(_) => {
-                if actor.runtime == cccc_contracts::ActorRuntime::Deepseek {
-                    let recovered = crate::ops::deepseek_runtime::recover(home, &group, actor, 256);
-                    if recovered > 0 {
-                        tracing::info!(
-                            group_id = %group.group_id,
-                            actor_id = %actor.id,
-                            recovered,
-                            "recovered durable DeepSeek terminal prefix"
-                        );
-                    }
-                }
-                actor_delivery::dispatch_unread_notice(home, &group, &actor.id);
+                actor_delivery::dispatch_unread(home, &group, &actor.id);
             }
             Err(error) => {
                 tracing::warn!(

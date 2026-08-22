@@ -107,7 +107,7 @@ class TestWebGroupBridgeRoutes(unittest.TestCase):
                 home=home,
             )
             rid = rec["registration_id"]
-            enqueue_remote_send(src_group_id="g_other", registration_id=rid, idempotency_key="k1", payload={"text": "hi"}, home=home)
+            enqueue_remote_send(src_group_id="g_other", registration_id=rid, idempotency_key="k1", payload={"message_mode": "send", "text": "hi"}, home=home)
 
             ok = client.get(f"/api/group-bridge/registrations/{rid}/deliveries/k1", headers=self._hdr(admin))
             self.assertEqual(ok.status_code, 200, ok.text)

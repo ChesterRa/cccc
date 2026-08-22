@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, Event};
+use cccc_contracts::{DaemonRequest, Event, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION};
 use cccc_core::{GroupStore, HomeLayout, group_bridge_legacy, ledger};
 use serde_json::json;
 use std::thread;
@@ -34,7 +34,7 @@ fn delivery_status_reads_python_compatible_receipt() {
         state.insert(
             "deliveries".into(),
             json!([
-                {"registration_id":"greg_1","idempotency_key":"once","status":"delivered"}
+                {"registration_id":"greg_1","idempotency_key":"once","status":"sent"}
             ]),
         );
         Ok(())
@@ -54,7 +54,29 @@ fn delivery_status_reads_python_compatible_receipt() {
         },
     )
     .expect("status");
-    assert_eq!(result["receipt"]["status"], "delivered");
+    assert_eq!(result["receipt"]["status"], "sent");
+}
+
+#[test]
+fn session_delivery_requires_a_supported_operation() {
+    let temp = tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path()).expect("home path");
+    home.initialize().expect("home");
+    let route = json!({
+        "group_id":"g_local","remote_group_id":"g_remote",
+        "remote_peer_id":"peer_remote","idempotency_key":"once",
+        "payload":{"text":"hello"}
+    });
+
+    let missing = session_runtime::deliver(&home, &request("deliver", route.clone()))
+        .expect_err("operation is required");
+    assert_eq!(missing.code, "invalid_args");
+
+    let mut unsupported = route;
+    unsupported["operation"] = json!("legacy_send");
+    let error = session_runtime::deliver(&home, &request("deliver", unsupported))
+        .expect_err("unsupported operation");
+    assert_eq!(error.code, "unsupported_op");
 }
 
 #[test]
@@ -64,7 +86,7 @@ fn outbound_peer_message_requires_insight_before_side_effects() {
         op: "remote_send".into(),
         args: json!({
             "by":"peer-a","require_peer_insight":true,
-            "payload":{"text":"review this","to":["@foreman"]}
+            "payload":{"message_mode":"send","text":"review this","to":["@foreman"]}
         })
         .as_object()
         .cloned()
@@ -82,13 +104,30 @@ fn outbound_peer_message_requires_insight_before_side_effects() {
 #[test]
 fn remote_payload_rejects_refs_and_normalizes_recipients() {
     let mut payload = json!({
-        "text":"hello","to":[" @foreman ",7],"refs":[{"event_id":"e1"}]
+        "message_mode":"send","text":"hello","to":[" @foreman ",7],"refs":[{"event_id":"e1"}]
     })
     .as_object()
     .cloned()
     .expect("payload");
     let error = validate_remote_payload(&mut payload).expect_err("unsupported refs");
     assert_eq!(error.code, "unsupported_refs");
+}
+
+#[test]
+fn remote_payload_enforces_one_audience_domain_and_agent_only_mail() {
+    for (recipients, mode, expected_code) in [
+        (json!(["user", "peer1"]), "send", "mixed_recipient_kinds"),
+        (json!(["user"]), "mail", "mail_requires_actor_recipient"),
+    ] {
+        let mut payload = json!({
+            "message_mode":mode,"text":"hello","to":recipients
+        })
+        .as_object()
+        .cloned()
+        .expect("payload");
+        let error = validate_remote_payload(&mut payload).expect_err("invalid audience");
+        assert_eq!(error.code, expected_code);
+    }
 }
 
 #[test]
@@ -202,7 +241,7 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     complete_args["result"] = json!({
         "ok":true,
         "receipt":{
-            "status":"delivered","event_id":"remote-answer",
+            "status":"sent","event_id":"remote-answer",
             "projected":true,"registration_id":"peer-controlled"
         }
     });
@@ -216,6 +255,8 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
         json!(["remote-agent"])
     );
     assert_eq!(response.result["event"]["data"]["dst_group_id"], "g_remote");
+    assert_eq!(response.result["event"]["data"]["message_mode"], "send");
+    assert_eq!(response.result["event"]["data"]["dst_message_mode"], "send");
     assert_eq!(
         response.result["group_bridge_reply"]["receipt"]["remote_event_id"],
         "remote-answer"
@@ -277,7 +318,9 @@ fn rust_retry_reuses_a_python_source_event_without_appending_a_duplicate() {
     source.by = "python-agent".into();
     source.data = json!({
         "text":"created by Python","to":["user"],
+        "message_mode":"send",
         "dst_group_id":"g_remote","dst_to":["@foreman"],
+        "dst_message_mode":"mail",
         "client_id":"python-source-client-id"
     })
     .as_object()
@@ -298,19 +341,19 @@ fn rust_retry_reuses_a_python_source_event_without_appending_a_duplicate() {
         state.insert(
             "deliveries".into(),
             json!([{
-                "ok":false,"status":"retrying",
+                "operation":"remote_send","ok":false,"status":"retrying",
                 "registration_id":"registration_retry",
                 "idempotency_key":"python-retry","src_group_id":group.group_id,
                 "dst_group_id":"g_remote","source_event_id":source.id,
                 "attempt":1,"max_attempts":5,
                 "payload":{
                     "text":"created by Python","to":["@foreman"],
-                    "priority":"normal","reply_required":false,
+                    "message_mode":"mail",
                     "refs":[],"attachments":[],"source_by":"python-agent"
                 },
                 "source_record_payload":{
                     "text":"created by Python","to":["@foreman"],
-                    "priority":"normal","reply_required":false,
+                    "message_mode":"mail",
                     "refs":[],"attachments":[],"source_by":"python-agent"
                 }
             }]),
@@ -328,7 +371,7 @@ fn rust_retry_reuses_a_python_source_event_without_appending_a_duplicate() {
                 "registration_id":"registration_retry",
                 "idempotency_key":"python-retry",
                 "by":"python-agent",
-                "payload":{"text":"changed retry body","to":["@foreman"]}
+                "payload":{"message_mode":"mail","text":"changed retry body","to":["@foreman"]}
             }),
         ),
     )
@@ -379,7 +422,7 @@ fn retrying_delivery_resumes_when_a_reverse_session_opens_and_later_work_continu
                 "registration_id":"registration_resume",
                 "idempotency_key":"resume-a",
                 "by":"user",
-                "payload":{"text":"first while offline","to":["user"]}
+                "payload":{"message_mode":"mail","text":"first while offline","to":["@foreman"]}
             }),
         ),
     )
@@ -401,7 +444,7 @@ fn retrying_delivery_resumes_when_a_reverse_session_opens_and_later_work_continu
     complete_args["generation"] = generation.clone();
     complete_args["response_to"] = resumed["request"]["request_id"].clone();
     complete_args["result"] = json!({
-        "ok":true,"receipt":{"status":"delivered","event_id":"remote-a"}
+        "ok":true,"receipt":{"status":"sent","event_id":"remote-a"}
     });
     session_runtime::complete(&home, &request("complete", complete_args)).expect("complete A");
     for _ in 0..100 {
@@ -431,7 +474,7 @@ fn retrying_delivery_resumes_when_a_reverse_session_opens_and_later_work_continu
                     "registration_id":"registration_resume",
                     "idempotency_key":"resume-b",
                     "by":"user",
-                    "payload":{"text":"second after recovery","to":["user"]}
+                    "payload":{"message_mode":"mail","text":"second after recovery","to":["@foreman"]}
                 }),
             ),
         )
@@ -445,11 +488,123 @@ fn retrying_delivery_resumes_when_a_reverse_session_opens_and_later_work_continu
     complete_args["generation"] = generation.clone();
     complete_args["response_to"] = continued["request"]["request_id"].clone();
     complete_args["result"] = json!({
-        "ok":true,"receipt":{"status":"delivered","event_id":"remote-b"}
+        "ok":true,"receipt":{"status":"sent","event_id":"remote-b"}
     });
     session_runtime::complete(&home, &request("complete", complete_args)).expect("complete B");
     let second = second.join().expect("join B").expect("send B");
     assert_eq!(second["receipt"]["status"], "sent");
+
+    let mut close_args = route;
+    close_args["generation"] = generation;
+    session_runtime::close(&home, &request("close", close_args)).expect("close");
+}
+
+#[test]
+fn remote_reply_request_cancellation_reuses_the_sent_remote_source() {
+    let temp = tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("sender", "").expect("group");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+    let mut source = Event::new("chat.message", &group.group_id);
+    source.by = "user".into();
+    source.data = json!({
+        "text":"answer this","to":["user"],"message_mode":"send",
+        "dst_group_id":"g_remote","dst_to":["@foreman"],
+        "dst_message_mode":"request_reply"
+    })
+    .as_object()
+    .cloned()
+    .expect("source data");
+    ledger::append(&ledger_path, &source).expect("append source");
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_cancel","registration_id":"registration_cancel",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
+        state.insert(
+            "deliveries".into(),
+            json!([{
+                "operation":"remote_send","ok":true,"status":"sent",
+                "registration_id":"registration_cancel","idempotency_key":"message-key",
+                "src_group_id":group.group_id,"dst_group_id":"g_remote",
+                "source_event_id":source.id,"remote_event_id":"remote-message-1",
+                "transport":"group_bridge_session","attempt":1,"max_attempts":5
+            }]),
+        );
+        Ok(())
+    })
+    .expect("bridge state");
+
+    let route = json!({
+        "group_id":group.group_id,"remote_group_id":"g_remote",
+        "remote_peer_id":"peer_remote"
+    });
+    let opened = session_runtime::open(&home, &request("open", route.clone())).expect("open");
+    let generation = opened["generation"].clone();
+    let cancel_home = home.clone();
+    let group_id = group.group_id.clone();
+    let source_event_id = source.id.clone();
+    let cancel_task = thread::spawn(move || {
+        crate::dispatch::dispatch(
+            &cancel_home,
+            &request(
+                "reply_request_cancel",
+                json!({
+                    "group_id":group_id,"source_event_id":source_event_id,"by":"user"
+                }),
+            ),
+        )
+    });
+
+    let mut poll_args = route.clone();
+    poll_args["generation"] = generation.clone();
+    poll_args["timeout_ms"] = json!(1_000);
+    let pending = session_runtime::poll(&home, &request("poll", poll_args)).expect("poll");
+    let frame = &pending["request"];
+    assert_eq!(frame["op"], "reply_request_cancel");
+    assert_eq!(
+        frame["message_contract_version"],
+        GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
+    );
+    assert_eq!(
+        frame["payload"]["remote_source_event_id"],
+        "remote-message-1"
+    );
+    assert_eq!(frame["payload"]["source_message_event_id"], source.id);
+    let mut complete_args = route.clone();
+    complete_args["generation"] = generation.clone();
+    complete_args["response_to"] = frame["request_id"].clone();
+    complete_args["result"] = json!({"ok":true,"event_id":"remote-cancel-1"});
+    session_runtime::complete(&home, &request("complete", complete_args)).expect("complete");
+
+    let response = cancel_task.join().expect("cancel join");
+    assert!(response.ok, "cancel failed: {:?}", response.error);
+    assert_eq!(response.result["propagation"]["state"], "sent");
+    let events = ledger::read_all(&ledger_path).expect("ledger");
+    let cancellation = events
+        .iter()
+        .find(|event| event.kind == "chat.reply_request.cancelled")
+        .expect("local cancellation");
+    let projected = events
+        .iter()
+        .find(|event| {
+            event.kind == "chat.cross_group_receipt"
+                && event
+                    .data
+                    .get("operation")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("reply_request_cancel")
+        })
+        .expect("cancellation receipt projection");
+    assert_eq!(projected.data["source_event_id"], cancellation.id);
+    assert_eq!(projected.data["remote_event_id"], "remote-cancel-1");
 
     let mut close_args = route;
     close_args["generation"] = generation;
@@ -552,7 +707,7 @@ fn remote_reply_allows_an_explicit_remote_audience_without_local_actors() {
     );
 
     assert!(response.ok, "remote reply failed: {:?}", response.error);
-    assert_eq!(response.result["event"]["data"]["to"], json!(["@foreman"]));
+    assert_eq!(response.result["event"]["data"]["to"], json!(["user"]));
     assert_eq!(
         response.result["event"]["data"]["dst_to"],
         json!(["@foreman"])

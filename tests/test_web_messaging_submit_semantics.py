@@ -81,6 +81,50 @@ class TestWebMessagingSubmitSemantics(unittest.TestCase):
             cleanup_mode()
             cleanup_home()
 
+    def test_reply_forwards_mail_mode_and_rejects_nested_reply_requests(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="web-reply-mode", topic="")
+            captured: list[dict] = []
+
+            def fake_call_daemon(req: dict) -> dict:
+                captured.append(req)
+                return {"ok": True, "result": {"message_mode": "mail"}}
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                client = self._client()
+                accepted = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply",
+                    json={
+                        "text": "answer later",
+                        "by": "user",
+                        "to": ["peer1"],
+                        "reply_to": "event-1",
+                        "message_mode": "mail",
+                    },
+                )
+                rejected = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply",
+                    json={
+                        "text": "nested request",
+                        "by": "user",
+                        "to": ["peer1"],
+                        "reply_to": "event-1",
+                        "message_mode": "request_reply",
+                    },
+                )
+
+            self.assertEqual(accepted.status_code, 200)
+            reply_requests = [request for request in captured if request.get("op") == "reply"]
+            self.assertEqual(reply_requests[0]["args"]["message_mode"], "mail")
+            self.assertEqual(rejected.status_code, 422)
+            self.assertEqual(len(reply_requests), 1)
+        finally:
+            cleanup()
+
     def test_send_upload_body_mentions_are_not_promoted_to_recipients(self) -> None:
         from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group
@@ -97,13 +141,14 @@ class TestWebMessagingSubmitSemantics(unittest.TestCase):
                 runtime="codex",
                 runner="headless",
             )
-            captured: dict[str, dict] = {}
+            def local_call_daemon(req: dict) -> dict:
+                from cccc.contracts.v1 import DaemonRequest
+                from cccc.daemon.server import handle_request
 
-            def fake_call_daemon(req: dict) -> dict:
-                captured["req"] = req
-                return {"ok": True, "result": {"event": {"id": "evt_upload_1", "data": (req.get("args") or {})}}}
+                response, _ = handle_request(DaemonRequest.model_validate(req))
+                return response.model_dump(exclude_none=True)
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+            with patch("cccc.ports.web.app.call_daemon", side_effect=local_call_daemon):
                 client = self._client()
                 resp = client.post(
                     f"/api/v1/groups/{group.group_id}/send_upload",
@@ -119,8 +164,8 @@ class TestWebMessagingSubmitSemantics(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
             self.assertTrue(bool(body.get("ok")))
-            args = (captured.get("req") or {}).get("args") or {}
-            self.assertEqual(args.get("to"), ["@foreman"])
+            event = (body.get("result") or {}).get("event") or {}
+            self.assertEqual((event.get("data") or {}).get("to"), ["@foreman"])
         finally:
             cleanup_home()
 

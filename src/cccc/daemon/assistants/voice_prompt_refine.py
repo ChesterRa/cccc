@@ -19,14 +19,8 @@ def voice_composer_context_lines(value: Any) -> list[str]:
     if recent_context:
         lines.append(f"Recent context:\n{recent_context[:800]}")
     message_mode = str(context.get("message_mode") or "").strip()
-    if message_mode and message_mode.lower() != "normal":
+    if message_mode and message_mode.lower() != "send":
         lines.append(f"Message mode: {message_mode[:240]}")
-    priority = str(context.get("priority") or "").strip()
-    if priority and priority.lower() != "normal":
-        lines.append(f"Priority: {priority[:240]}")
-    reply_required = context.get("reply_required")
-    if str(reply_required).strip().lower() in {"1", "true", "yes"}:
-        lines.append("Reply required: true")
     for label, key in (
         ("Reply target", "reply_target"),
         ("Quoted reference", "quoted_reference"),

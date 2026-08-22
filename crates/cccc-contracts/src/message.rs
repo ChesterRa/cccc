@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// Current explicitly negotiated Group Bridge message contract.
+pub const GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION: u64 = 2;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageMode {
+    Send,
+    RequestReply,
+    Mail,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Reference {
     #[serde(default = "url_kind")]
@@ -41,16 +52,22 @@ pub struct ChatMessageData {
     pub format: String,
     #[serde(default)]
     pub insight: Option<String>,
-    #[serde(default = "normal_priority")]
-    pub priority: String,
+    /// New writes always set this. `None` exists only for historical ledger
+    /// rows and carries no delivery or reply obligation.
     #[serde(default)]
-    pub reply_required: bool,
+    pub message_mode: Option<MessageMode>,
     #[serde(default)]
     pub to: Vec<String>,
     #[serde(default)]
     pub reply_to: Option<String>,
     #[serde(default)]
     pub quote_text: Option<String>,
+    #[serde(default)]
+    pub dst_group_id: Option<String>,
+    #[serde(default)]
+    pub dst_to: Option<Vec<String>>,
+    #[serde(default)]
+    pub dst_message_mode: Option<MessageMode>,
     #[serde(default)]
     pub refs: Vec<Map<String, Value>>,
     #[serde(default)]
@@ -93,28 +110,27 @@ fn file_kind() -> String {
 fn plain_format() -> String {
     "plain".into()
 }
-fn normal_priority() -> String {
-    "normal".into()
-}
 fn snapshot_mode() -> String {
     "snapshot".into()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatMessageData, ChatStreamData};
+    use super::{ChatMessageData, ChatStreamData, MessageMode};
 
     #[test]
     fn chat_message_contract_carries_peer_insight() {
         let message: ChatMessageData = serde_json::from_value(serde_json::json!({
             "text":"work",
-            "insight":"reconsider the dependency boundary"
+            "insight":"reconsider the dependency boundary",
+            "message_mode":"mail"
         }))
         .expect("message contract");
         assert_eq!(
             message.insight.as_deref(),
             Some("reconsider the dependency boundary")
         );
+        assert_eq!(message.message_mode, Some(MessageMode::Mail));
     }
 
     #[test]

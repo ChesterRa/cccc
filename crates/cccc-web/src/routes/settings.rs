@@ -48,7 +48,16 @@ fn projected_settings(group: &Value) -> Value {
         for (legacy_key, section, canonical_key) in [
             ("default_send_to", "messaging", "default_send_to"),
             ("min_interval_seconds", "delivery", "min_interval_seconds"),
-            ("auto_mark_on_delivery", "delivery", "auto_mark_on_delivery"),
+            (
+                "mail_notice_after_seconds",
+                "delivery",
+                "mail_notice_after_seconds",
+            ),
+            (
+                "reply_notice_after_seconds",
+                "delivery",
+                "reply_notice_after_seconds",
+            ),
             (
                 "terminal_transcript_visibility",
                 "terminal_transcript",
@@ -87,13 +96,6 @@ fn projected_settings(group: &Value) -> Value {
     }
     let mut settings = json!({
         "default_send_to":"foreman",
-        "nudge_after_seconds":300,
-        "reply_required_nudge_after_seconds":300,
-        "attention_ack_nudge_after_seconds":600,
-        "unread_nudge_after_seconds":0,
-        "nudge_digest_min_interval_seconds":120,
-        "nudge_max_repeats_per_obligation":3,
-        "nudge_escalate_after_repeats":2,
         "actor_idle_timeout_seconds":0,
         "keepalive_delay_seconds":120,
         "keepalive_max_per_actor":3,
@@ -101,7 +103,8 @@ fn projected_settings(group: &Value) -> Value {
         "help_nudge_interval_seconds":600,
         "help_nudge_min_messages":10,
         "min_interval_seconds":0,
-        "auto_mark_on_delivery":true,
+        "mail_notice_after_seconds":1800,
+        "reply_notice_after_seconds":900,
         "terminal_transcript_visibility":"foreman",
         "terminal_transcript_notify_tail":true,
         "terminal_transcript_notify_lines":20,
@@ -199,20 +202,18 @@ mod tests {
             "settings": {
                 "default_send_to":"broadcast",
                 "min_interval_seconds":1,
-                "nudge_after_seconds":2,
                 "native_extension":{"keep":true}
             },
             "messaging":{"default_send_to":"foreman"},
-            "delivery":{"min_interval_seconds":42,"auto_mark_on_delivery":false},
-            "automation":{"nudge_after_seconds":101},
+            "delivery":{"min_interval_seconds":42,"mail_notice_after_seconds":1801,"reply_notice_after_seconds":901},
             "terminal_transcript":{"visibility":"all","notify_tail":false,"notify_lines":37},
             "features":{"panorama_enabled":true}
         }));
 
         assert_eq!(settings["default_send_to"], json!("foreman"));
         assert_eq!(settings["min_interval_seconds"], json!(42));
-        assert_eq!(settings["auto_mark_on_delivery"], json!(false));
-        assert_eq!(settings["nudge_after_seconds"], json!(101));
+        assert_eq!(settings["mail_notice_after_seconds"], json!(1801));
+        assert_eq!(settings["reply_notice_after_seconds"], json!(901));
         assert_eq!(settings["terminal_transcript_visibility"], json!("all"));
         assert_eq!(settings["terminal_transcript_notify_tail"], json!(false));
         assert_eq!(settings["terminal_transcript_notify_lines"], json!(37));

@@ -19,8 +19,7 @@ class TestGroupBridgeRemotePayloads(unittest.TestCase):
             payload=RemoteSendPayload(
                 text="hello",
                 to=["@foreman"],
-                priority="attention",
-                reply_required=True,
+                message_mode="request_reply",
                 source_by="user",
             ),
             idempotency_key="delivery:abc",
@@ -35,8 +34,9 @@ class TestGroupBridgeRemotePayloads(unittest.TestCase):
         self.assertEqual(body["text"], "hello")
         self.assertEqual(body["to"], ["@foreman"])
         self.assertEqual(body["by"], "group_bridge:peer_source")
-        self.assertEqual(body["priority"], "attention")
-        self.assertEqual(body["reply_required"], True)
+        self.assertEqual(body["message_mode"], "request_reply")
+        self.assertNotIn("priority", body)
+        self.assertNotIn("reply_required", body)
         self.assertEqual(body["idempotency_key"], "delivery:abc")
         self.assertEqual(body["source_platform"], "group_bridge_session")
         self.assertEqual(body["source_user_id"], "peer_source")

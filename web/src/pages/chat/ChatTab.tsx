@@ -245,8 +245,7 @@ export function ChatTab({
     selectedRemoteGroupIds,
     toggleRemoteGroupRecipient,
     clearRecipients,
-    priority,
-    replyRequired,
+    messageMode,
     setMessageMode,
     destGroupId,
     setDestGroupId,
@@ -642,11 +641,11 @@ export function ChatTab({
     [effectivePresentationSplitWidth, showDesktopSplitPresentation],
   );
 
-  const filterOptions: Array<["all" | "user" | "attention" | "task", string]> = [
+  const filterOptions: Array<["all" | "user" | "mail" | "request_reply", string]> = [
     ["all", t("filterAll")],
     ["user", t("filterUser")],
-    ["attention", t("filterImportant")],
-    ["task", t("filterNeedReply")],
+    ["mail", t("filterMail")],
+    ["request_reply", t("filterNeedReply")],
   ];
   const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
   const hasPresentationCards = (groupPresentation?.slots || []).some((slot) => !!slot?.card);
@@ -1124,8 +1123,7 @@ export function ChatTab({
             setComposerGroupMentionTokens={setComposerGroupMentionTokens}
             composerAgentMentionTokens={composerAgentMentionTokens}
             setComposerAgentMentionTokens={setComposerAgentMentionTokens}
-            priority={priority}
-            replyRequired={replyRequired}
+            messageMode={messageMode}
             setMessageMode={setMessageMode}
             onSendMessage={sendMessage}
             showMentionMenu={showMentionMenu}

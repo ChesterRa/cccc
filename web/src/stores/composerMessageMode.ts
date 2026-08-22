@@ -1,29 +1,17 @@
-export type ComposerMessageMode = "normal" | "attention" | "reply";
+export type ComposerMessageMode = "send" | "request_reply" | "mail";
+export type ReplyMessageMode = "send" | "mail";
 
 export const COMPOSER_MESSAGE_MODE_STORAGE_KEY = "cccc-composer-message-mode";
-export const DEFAULT_COMPOSER_MESSAGE_MODE: ComposerMessageMode = "reply";
+export const DEFAULT_COMPOSER_MESSAGE_MODE: ComposerMessageMode = "send";
 
 export function normalizeComposerMessageMode(value: unknown): ComposerMessageMode {
-  return value === "normal" || value === "attention" || value === "reply"
+  return value === "send" || value === "request_reply" || value === "mail"
     ? value
     : DEFAULT_COMPOSER_MESSAGE_MODE;
 }
 
-export function getComposerMessageMode(
-  priority: "normal" | "attention",
-  replyRequired: boolean,
-): ComposerMessageMode {
-  if (replyRequired) return "reply";
-  return priority === "attention" ? "attention" : "normal";
-}
-
-export function deliveryStateForMessageMode(mode: ComposerMessageMode): {
-  priority: "normal" | "attention";
-  replyRequired: boolean;
-} {
-  if (mode === "attention") return { priority: "attention", replyRequired: false };
-  if (mode === "reply") return { priority: "normal", replyRequired: true };
-  return { priority: "normal", replyRequired: false };
+export function normalizeReplyMessageMode(value: unknown): ReplyMessageMode {
+  return value === "mail" ? "mail" : "send";
 }
 
 export function loadComposerMessageModePreference(): ComposerMessageMode {

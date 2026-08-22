@@ -25,7 +25,6 @@ export type CapsuleSkillSlashCommandResolution =
 export type SlashCommandGuardInput = {
   composerFilesCount: number;
   hasReplyTarget: boolean;
-  replyRequired?: boolean;
   sourceType?: SlashCommandItem["sourceType"];
   hasQuotedPresentationRef: boolean;
   hasQuotedVoiceDocumentRef?: boolean;

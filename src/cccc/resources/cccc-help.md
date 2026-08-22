@@ -5,50 +5,63 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 ## Core Routes
 
 - Resume with `cccc_bootstrap`.
-- Reply with `cccc_message_reply`; start threads with `cccc_message_send`. Terminal output is not delivered.
-- Use `cccc_inbox_list` for unread items and `cccc_inbox_mark_read` after handling them.
-- Read shared state with `cccc_context_get`; write `cccc_agent_state` only for cross-turn state.
-- Invoke hidden tools through `cccc_capability_use`; search only when the capability is unknown.
+- Reply with `cccc_message_reply`; start with `cccc_message_send`. Terminal output is not delivered.
+- Target either `user` alone or one/more agents; never mix domains. Mail is agent-only, so send separate messages to humans.
+- Promote/retry an event with `cccc_message_deliver`; confirm an `ambiguous` retry.
+- `cccc_inbox_read` consumes Mail; `cccc_message_history` inspects messages without changing Mail state.
+- Read shared truth with `cccc_context_get`; reserve `cccc_agent_state` for cross-turn recovery.
+- Invoke known hidden tools with `cccc_capability_use`; search only when unknown.
+
+## Canonical Message Delivery
+
+This section is authoritative; group guidance is additive.
+
+- Do not send information that cannot change work. Use `mail` when delay causes no concrete loss; it is non-interrupting and may cause one content-free notice.
+- Use `send` when delay would block, misdirect, or miss a window; delivery is best-effort.
+- Use `request_reply` only for a concrete reply from explicit agent(s) or `user`, never broadcast.
+- Use `cccc_tracked_send` for durable execution/evidence and `cccc_message_reply` for an existing event.
+
+The sender chooses the mode; insight does not change it. Broadcast Mail has no
+active notice. Promote rather than duplicate an event. Storage, Mail read,
+runtime acceptance, reply, and task completion are separate facts;
+per-recipient runtime truth is `runtime.delivery`.
 
 ## Collaboration State
 
 ### Chat
 
-- Targets are `@all`, `@foreman`, `@peers`, `user`, or one actor.
-- Verify `reply_to` and `to`; avoid `@all` for acknowledgements or narrow updates.
+- Targets are `@all`, `@foreman`, `@peers`, `user`, or actor IDs. Verify `reply_to` and `to`; avoid broad targets for narrow updates.
+- Use a tracked task, not a reply request, for durable execution and evidence.
 
 ### Shared Context
 
 - The daemon and append-only group ledger are the source of truth.
 - `cccc_context_get` reads the current brief, tasks, handoffs, and actor state.
-- Coordination and task tools are directly available; project and memory tools are on demand. Do not mirror every local todo.
+- Coordination and task tools are direct; project and memory tools are on demand. Do not mirror every local todo.
 
 ### State Layers
 
-- `coordination.brief` and shared task cards hold durable group truth. Use them when the user or another actor needs continuity; keep runtime-local todo private.
-- `cccc_agent_state` is per-actor recovery state, not chat status. Refresh hot fields at real transitions: `active_task_id`, `focus`, `next_action`, `what_changed`, and concrete `blockers`.
-- Use `open_loops` for specific unfinished work, risks, assumptions, or exit conditions; use `commitments` only for promises made to the user or another actor.
-- `PROJECT.md` and local memory are colder context. Keep only the current project digest in shared coordination; fetch full project or memory detail when the active evidence is insufficient.
+- `coordination.brief` and shared tasks hold durable truth; keep runtime-local todo private.
+- `cccc_agent_state` is per-actor recovery state, not chat status. Refresh it only at real transitions.
+- Keep unfinished work in `open_loops`, promises in `commitments`, and colder context out until needed.
 
 ### Durable Coordination
 
-- Use `cccc_coordination` for shared objectives, current focus, constraints, project digest, decisions, and handoffs.
-- Use `cccc_task` only for multi-actor, long-horizon, or explicitly user-tracked work; runtime-local todo stays private.
-- `cccc_tracked_send` is the foreman-first delegation path when owner, scope, done criteria, and evidence must survive chat. Use ordinary reply/send for discussion, quick handoffs, and solo work.
-- Task lifecycle transitions use `move`; use `update` when the same call must also change outcome, notes, checklist, or type.
-- A stand-up, help nudge, or other coordination interrupt is not automatically a task switch. Handle the signal, then resume the recorded task unless priority actually changed; do not replace active state with the interrupt itself.
+- `cccc_coordination` holds shared objectives, constraints, decisions, and handoffs.
+- Use `cccc_task` only for durable work; `cccc_tracked_send` adds owner, scope, done criteria, and evidence. Otherwise reply/send.
+- Task lifecycle uses `move`; use `update` only when changing other task fields too.
+- A coordination interrupt is not automatically a task switch; resume the recorded task unless priority actually changed; do not replace active state with the interrupt itself.
 
 ### Recovery and Recall
 
-- `cccc_bootstrap` returns the current session, self recovery state, task slice, recent decisions/handoffs, inbox preview, context hygiene, and memory recall gate.
-- Treat bootstrap as a recovery snapshot, not proof that repository, process, or external state is still current; verify those at the execution boundary.
-- If context hygiene is stale, refresh only fields whose truth you can establish. Do not fill recovery state with generic placeholders.
-- If `memory_recall_gate.required=true` and its hits are insufficient, search then read local memory through the on-demand route below.
+- `cccc_bootstrap` returns recovery state, tasks, recent decisions, a Mail preview, and the recall gate.
+- It is a snapshot, not proof of current external state; verify at the execution boundary and recall on demand.
 
 ### Inbox
 
-- Inbox is an unread queue, not a task board; bootstrap includes only a preview.
-- If `reply_required=true`, reply visibly before closing the item.
+- Inbox is the unread Mail queue, not chat history or a task board; bootstrap shows a preview.
+- Mail does not prompt immediately; one later notice may request an inbox read. Send and Send + Reply never enter this queue.
+- Answer `request_reply` with `cccc_message_reply` and its source event id unless cancelled. Send is the reply default; Mail is valid only for an agent when delay is harmless. Either fulfills the request.
 
 ### Files
 
@@ -58,11 +71,11 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 ## Capabilities
 
 - `cccc_capability_use(tool_name="...", tool_arguments={...})` invokes hidden tools without exposing the full pack.
-- Known hidden-tool examples: `tool_name="cccc_project_info"`, `"cccc_tracked_send"`, or `"cccc_memory"`; pass that tool's normal arguments in `tool_arguments`.
+- Examples include `tool_name="cccc_project_info"`, `"cccc_tracked_send"`, and `"cccc_memory"`; pass arguments in `tool_arguments`.
 - Memory recall example: `cccc_capability_use(tool_name="cccc_memory", tool_arguments={"action":"search","query":"..."})`, followed by `action="get"` for exact lines.
 - Use `cccc_capability_search` only when the capability or tool name is unknown.
-- If use returns `activation_pending` or `refresh_required=true`, relist or reconnect before retrying. On failure, inspect `diagnostics` and `resolution_plan`.
-- State, enablement, installation, cleanup, and governance are also on demand; do not expose or persist them without a current need.
+- For `activation_pending` or `refresh_required=true`, relist or reconnect. On failure, inspect `diagnostics` and `resolution_plan`.
+- State, enablement, installation, cleanup, and governance are on demand; expose them only when needed.
 
 ## Actor Notes
 
@@ -110,8 +123,8 @@ Role and actor sections below are additive overlays selected by `cccc_help`.
 | State | Meaning | Automation | Delivery to PTY |
 | --- | --- | --- | --- |
 | `active` | normal work | configured policy | chat + notifications |
-| `idle` | waiting or done for now | disabled | chat only; notifications suppressed |
-| `paused` | user paused group | disabled | inbox only |
+| `idle` | waiting or done for now | disabled | chat + notifications |
+| `paused` | user paused group | disabled | no runtime delivery; direct work stays pending |
 | `stopped` | runtimes stopped | n/a | no actor runtime delivery |
 
 ### Permissions

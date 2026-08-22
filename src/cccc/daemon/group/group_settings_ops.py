@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc, coerce_auto_mark_on_delivery
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.messaging import get_default_send_to
@@ -60,15 +59,12 @@ def handle_group_settings_update(
         return _error("group_not_found", f"group not found: {group_id}")
 
     messaging_keys = {"default_send_to"}
-    delivery_keys = {"min_interval_seconds", "auto_mark_on_delivery"}
+    delivery_keys = {
+        "min_interval_seconds",
+        "mail_notice_after_seconds",
+        "reply_notice_after_seconds",
+    }
     automation_keys = {
-        "nudge_after_seconds",
-        "reply_required_nudge_after_seconds",
-        "attention_ack_nudge_after_seconds",
-        "unread_nudge_after_seconds",
-        "nudge_digest_min_interval_seconds",
-        "nudge_max_repeats_per_obligation",
-        "nudge_escalate_after_repeats",
         "actor_idle_timeout_seconds",
         "keepalive_delay_seconds",
         "keepalive_max_per_actor",
@@ -110,10 +106,7 @@ def handle_group_settings_update(
         if delivery_patch:
             delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
             for key, value in delivery_patch.items():
-                if key == "auto_mark_on_delivery":
-                    delivery[key] = coerce_auto_mark_on_delivery(value)
-                else:
-                    delivery[key] = int(value)
+                delivery[key] = max(0, int(value))
             group.doc["delivery"] = delivery
 
         automation_patch = {k: v for k, v in patch.items() if k in automation_keys}
@@ -150,33 +143,6 @@ def handle_group_settings_update(
     tt = get_terminal_transcript_settings(group.doc)
     settings = {
         "default_send_to": get_default_send_to(group.doc),
-        "nudge_after_seconds": _safe_int(automation.get("nudge_after_seconds", 300), default=300, min_value=0),
-        "reply_required_nudge_after_seconds": _safe_int(
-            automation.get("reply_required_nudge_after_seconds", 300),
-            default=300,
-            min_value=0,
-        ),
-        "attention_ack_nudge_after_seconds": _safe_int(
-            automation.get("attention_ack_nudge_after_seconds", 600),
-            default=600,
-            min_value=0,
-        ),
-        "unread_nudge_after_seconds": _safe_int(automation.get("unread_nudge_after_seconds", 900), default=900, min_value=0),
-        "nudge_digest_min_interval_seconds": _safe_int(
-            automation.get("nudge_digest_min_interval_seconds", 120),
-            default=120,
-            min_value=0,
-        ),
-        "nudge_max_repeats_per_obligation": _safe_int(
-            automation.get("nudge_max_repeats_per_obligation", 3),
-            default=3,
-            min_value=0,
-        ),
-        "nudge_escalate_after_repeats": _safe_int(
-            automation.get("nudge_escalate_after_repeats", 2),
-            default=2,
-            min_value=0,
-        ),
         "actor_idle_timeout_seconds": _safe_int(
             automation.get("actor_idle_timeout_seconds", 0),
             default=0,
@@ -192,7 +158,12 @@ def handle_group_settings_update(
         ),
         "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
         "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
-        "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
+        "mail_notice_after_seconds": _safe_int(
+            delivery.get("mail_notice_after_seconds", 1800), default=1800, min_value=0
+        ),
+        "reply_notice_after_seconds": _safe_int(
+            delivery.get("reply_notice_after_seconds", 900), default=900, min_value=0
+        ),
         "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
         "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
         "terminal_transcript_notify_lines": _safe_int(

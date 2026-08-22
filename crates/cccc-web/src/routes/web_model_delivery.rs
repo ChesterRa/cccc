@@ -161,7 +161,6 @@ fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
                     delivery_id,
                     "failed",
                     message,
-                    false,
                     json!({"target_url":target["url"]}),
                 )
                 .await;
@@ -174,7 +173,7 @@ fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
                     actor_id,
                     exhausted_turn_id,
                     fresh_turn_id,
-                    "Rescheduling Web-model browser delivery for fresh unread work"
+                    "Rescheduling Web-model browser delivery for fresh direct work"
                 );
                 spawn_worker(state, group_id, actor_id);
             }
@@ -202,8 +201,8 @@ async fn fresh_turn_after_exhaustion(
     }
     let wait = daemon_call(
         state,
-        "web_model_runtime_wait_next_turn",
-        args(group_id, actor_id),
+        "runtime_wait_next_turn",
+        browser_wait_args(group_id, actor_id),
     )
     .await?;
     Ok(replacement_turn_id(exhausted_turn_id, &wait))
@@ -436,8 +435,8 @@ async fn deliver_once(
     }
     let wait = daemon_call(
         state,
-        "web_model_runtime_wait_next_turn",
-        args(group_id, actor_id),
+        "runtime_wait_next_turn",
+        browser_wait_args(group_id, actor_id),
     )
     .await?;
     if wait["status"] != "work_available" {
@@ -477,7 +476,6 @@ async fn deliver_once(
         &delivery_id,
         "submitting",
         "",
-        false,
         json!({"target_url":target_url,"auto_bind_new_chat":target["kind"] == "new_chat"}),
     )
     .await;
@@ -546,7 +544,6 @@ async fn deliver_once(
                 &delivery_id,
                 "failed",
                 &message,
-                false,
                 json!({"target_url":target_url}),
             )
             .await;
@@ -595,7 +592,7 @@ async fn deliver_once(
         turn["event_ids"].clone(),
         &delivery_id,
     );
-    if let Err(error) = daemon_call(state, "web_model_runtime_complete_turn", complete).await {
+    if let Err(error) = daemon_call(state, "runtime_complete_turn", complete).await {
         update_target(
             state,
             group_id,
@@ -618,7 +615,6 @@ async fn deliver_once(
             &delivery_id,
             "submitted",
             "browser submission verified; local completion is pending reconciliation",
-            false,
             json!({"target_url":target_url,"auto_bind_new_chat":target["kind"] == "new_chat"}),
         )
         .await;
@@ -698,7 +694,6 @@ async fn deliver_once(
         &delivery_id,
         "submitted",
         &submission_evidence,
-        true,
         json!({
             "target_url":target_url,
             "bound_conversation_url":bound_conversation_url,
@@ -717,7 +712,6 @@ async fn deliver_once(
             &delivery_id,
             "pending",
             final_error,
-            true,
             json!({
                 "target_url":target_url,
                 "pending_conversation_url":true,
@@ -758,7 +752,7 @@ async fn complete_ambiguous_attempt(
         attempt.event_ids.clone(),
         attempt.delivery_id,
     );
-    let completion = daemon_call(state, "web_model_runtime_complete_turn", complete).await;
+    let completion = daemon_call(state, "runtime_complete_turn", complete).await;
     record_delivery(
         state,
         group_id,
@@ -768,7 +762,6 @@ async fn complete_ambiguous_attempt(
         attempt.delivery_id,
         "ambiguous",
         message,
-        completion.is_ok(),
         json!({}),
     )
     .await;
@@ -805,7 +798,7 @@ async fn complete_ambiguous_attempt(
         group_id,
         actor_id,
         turn_id = attempt.turn_id,
-        cursor_committed = completion.is_ok(),
+        completion_recorded = completion.is_ok(),
         "Web-model browser submission could not be verified; the attempted message will not be redelivered automatically"
     );
     Ok(DeliveryOutcome::Ambiguous)
@@ -1090,6 +1083,12 @@ fn browser_delivery_id(actor_id: &str, turn_id: &str) -> String {
     format!("webdelivery:{actor_id}:{turn_key}")
 }
 
+fn browser_wait_args(group_id: &str, actor_id: &str) -> serde_json::Map<String, Value> {
+    let mut request = args(group_id, actor_id);
+    request.insert("transport".into(), json!("web_model_browser"));
+    request
+}
+
 fn build_browser_prompt(
     turn: &Value,
     target: &Value,
@@ -1203,7 +1202,7 @@ fn completion_pending_patch(
         "last_delivery_reconcile_attempts":0,
         "last_delivery_at":cccc_contracts::utc_now(),
         "last_submission_evidence":browser,
-        "last_error":"cursor_completion_pending"
+        "last_error":"delivery_completion_pending"
     });
     if let Some(seed) = bootstrap_seed {
         patch["bootstrap_seed_delivered_at"] = json!(cccc_contracts::utc_now());
@@ -1279,7 +1278,6 @@ async fn resolve_pending_new_chat(
             delivery_id,
             "bound",
             "conversation_url_bound",
-            true,
             json!({
                 "target_url":target_url,
                 "bound_conversation_url":conversation_url,

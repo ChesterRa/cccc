@@ -68,46 +68,21 @@ export function buildVisibleReadStatusEntries(
     .map((id) => [id, !!readStatus[id]] as [string, boolean]);
 }
 
-export function computeAckSummary({
-  hideDirectUserObligationSummary,
-  isAttention,
-  replyRequired,
-  ackStatus,
-  isUserMessage,
-}: {
-  hideDirectUserObligationSummary: boolean;
-  isAttention: boolean;
-  replyRequired: boolean;
-  ackStatus: LedgerEvent["_ack_status"];
-  isUserMessage: boolean;
-}): { done: number; total: number; needsUserAck: boolean } | null {
-  if (hideDirectUserObligationSummary) return null;
-  if ((!isAttention && !replyRequired) || !ackStatus || typeof ackStatus !== "object") return null;
-  const ids = Object.keys(ackStatus);
-  if (ids.length === 0) return null;
-  const done = ids.reduce((n, id) => n + (ackStatus[id] ? 1 : 0), 0);
-  const needsUserAck =
-    Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
-  return { done, total: ids.length, needsUserAck };
-}
-
 export function computeObligationSummary({
   hideDirectUserObligationSummary,
   obligationStatus,
 }: {
   hideDirectUserObligationSummary: boolean;
   obligationStatus: LedgerEvent["_obligation_status"];
-}): { kind: "reply" | "ack"; done: number; total: number } | null {
+}): { done: number; total: number } | null {
   if (hideDirectUserObligationSummary) return null;
   if (!obligationStatus || typeof obligationStatus !== "object") return null;
-  const ids = Object.keys(obligationStatus);
+  const ids = Object.keys(obligationStatus).filter((id) => obligationStatus[id]?.reply_requested);
   if (ids.length === 0) return null;
-
-  const requiresReply = ids.some((id) => !!obligationStatus[id]?.reply_required);
-  if (requiresReply) {
-    const done = ids.reduce((n, id) => n + (obligationStatus[id]?.replied ? 1 : 0), 0);
-    return { kind: "reply", done, total: ids.length };
-  }
-  const done = ids.reduce((n, id) => n + (obligationStatus[id]?.acked ? 1 : 0), 0);
-  return { kind: "ack", done, total: ids.length };
+  const done = ids.reduce(
+    (count, id) =>
+      count + (obligationStatus[id]?.replied || obligationStatus[id]?.cancelled ? 1 : 0),
+    0,
+  );
+  return { done, total: ids.length };
 }

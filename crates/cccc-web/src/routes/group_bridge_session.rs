@@ -5,7 +5,7 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use cccc_core::{GroupStore, ledger};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
@@ -22,6 +22,8 @@ use crate::api::{ApiError, ApiResult, call, success};
 struct SessionQuery {
     #[serde(default)]
     token: String,
+    #[serde(default)]
+    message_contract_version: Option<u64>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -39,10 +41,20 @@ async fn receive_http(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> ApiResult {
+    require_message_contract_version(&body)?;
     let registration = authorize(&state, bearer(&headers).unwrap_or(""))?;
-    Ok(success(
-        receive_delivery(&state, &registration, body).await?,
-    ))
+    let result = match body["op"].as_str().unwrap_or("") {
+        "reply_request_cancel" => receive_reply_request_cancel(&state, &registration, body).await?,
+        "remote_send" => receive_delivery(&state, &registration, body).await?,
+        _ => {
+            return Err(ApiError::bad_code(
+                "unsupported_op",
+                "unsupported Group Bridge session operation",
+                json!({}),
+            ));
+        }
+    };
+    Ok(success(result))
 }
 
 async fn mcp_info(
@@ -178,6 +190,9 @@ async fn upgrade(
     let registration = if token.is_empty() {
         None
     } else {
+        if query.message_contract_version != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
+            return Err(contract_version_mismatch());
+        }
         Some(authorize(&state, token)?)
     };
     Ok(ws.on_upgrade(move |socket| session_socket(state, registration, socket)))
@@ -190,7 +205,7 @@ async fn session_socket(
 ) {
     let legacy = legacy_registration.is_some();
     let registration = if let Some(registration) = legacy_registration {
-        if socket.send(Message::Text(json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"]}).to_string().into())).await.is_err() {
+        if socket.send(Message::Text(json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"],"message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}).to_string().into())).await.is_err() {
             return;
         }
         registration
@@ -199,6 +214,11 @@ async fn session_socket(
             return;
         };
         let hello = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
+        if require_message_contract_version(&hello).is_err() {
+            let _ = socket.send(Message::Text(json!({"ok":false,"error":{"code":"contract_version_mismatch","message":"Group Bridge message contract version does not match","details":{"expected":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}}}).to_string().into())).await;
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
         let Some(registration) = authorize_signed_hello(&state, &hello) else {
             let _ = socket.send(Message::Text(json!({"ok":false,"error":{"code":"unauthorized_peer","message":"remote peer signature is invalid or not trusted for this group"}}).to_string().into())).await;
             let _ = socket.send(Message::Close(None)).await;
@@ -219,7 +239,7 @@ async fn session_socket(
     if !legacy
         && socket
             .send(Message::Text(
-                json!({"ok":true,"type":"ready"}).to_string().into(),
+                json!({"ok":true,"type":"ready","message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}).to_string().into(),
             ))
             .await
             .is_err()
@@ -336,7 +356,15 @@ async fn handle_session_request(
             );
         }
     };
-    let result = if frame["op"] != "remote_send" {
+    let operation = frame["op"].as_str().unwrap_or("");
+    let result = if frame["message_contract_version"].as_u64()
+        != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION)
+    {
+        json!({
+            "ok":false,
+            "error":{"code":"contract_version_mismatch","message":"Group Bridge message contract version does not match"}
+        })
+    } else if !matches!(operation, "remote_send" | "reply_request_cancel") {
         json!({
             "ok":false,
             "error":{"code":"unsupported_op","message":"unsupported Group Bridge session operation"}
@@ -347,16 +375,27 @@ async fn handle_session_request(
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        for (field, value) in [
-            ("source_group_id", &frame["src_group_id"]),
-            ("src_group_id", &frame["src_group_id"]),
-            ("idempotency_key", &frame["idempotency_key"]),
-        ] {
-            if !payload.contains_key(field) && !value.is_null() {
-                payload.insert(field.into(), value.clone());
+        if operation == "remote_send" {
+            payload.insert(
+                "message_contract_version".into(),
+                json!(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION),
+            );
+            for (field, value) in [
+                ("source_group_id", &frame["src_group_id"]),
+                ("src_group_id", &frame["src_group_id"]),
+                ("idempotency_key", &frame["idempotency_key"]),
+            ] {
+                if !payload.contains_key(field) && !value.is_null() {
+                    payload.insert(field.into(), value.clone());
+                }
             }
         }
-        match receive_delivery(state, &active, Value::Object(payload)).await {
+        let delivery = if operation == "reply_request_cancel" {
+            receive_reply_request_cancel(state, &active, Value::Object(payload)).await
+        } else {
+            receive_delivery(state, &active, Value::Object(payload)).await
+        };
+        match delivery {
             Ok(result) => result,
             Err(error) => json!({
                 "ok":false,
@@ -453,6 +492,7 @@ fn verify_session_hello(hello: &Value, expected_peer_id: &str) -> bool {
     }
     let material = json!({
         "protocol":"/cccc/group_bridge/session-ws/1.0.0",
+        "message_contract_version":hello["message_contract_version"],
         "remote_peer_id":expected_peer_id,
         "src_group_id":hello["src_group_id"],
         "target_group_id":hello["target_group_id"]
@@ -465,6 +505,22 @@ fn verify_session_hello(hello: &Value, expected_peer_id: &str) -> bool {
         )
         .is_ok()
     })
+}
+
+fn require_message_contract_version(value: &Value) -> Result<(), ApiError> {
+    if value["message_contract_version"].as_u64() == Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
+        Ok(())
+    } else {
+        Err(contract_version_mismatch())
+    }
+}
+
+fn contract_version_mismatch() -> ApiError {
+    ApiError::conflict(
+        "contract_version_mismatch",
+        "Group Bridge message contract version does not match",
+        json!({"expected":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}),
+    )
 }
 
 fn peer_id(public: &[u8; 32]) -> String {
@@ -549,6 +605,48 @@ async fn receive_delivery(
     Ok(result)
 }
 
+async fn receive_reply_request_cancel(
+    state: &AppState,
+    registration: &Value,
+    body: Value,
+) -> Result<Value, ApiError> {
+    let group_id = required_session_field(registration, "group_id")?;
+    let remote_group_id = required_session_field(registration, "remote_group_id")?;
+    let remote_peer_id = required_session_field(registration, "remote_peer_id")?;
+    let source_group_id = body
+        .get("source_group_id")
+        .and_then(Value::as_str)
+        .or_else(|| body.get("src_group_id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::forbidden("source group is required"))?;
+    if source_group_id != remote_group_id {
+        return Err(ApiError::forbidden(
+            "source group does not match registration",
+        ));
+    }
+    let payload = body.get("payload").cloned().unwrap_or_else(|| body.clone());
+    let response = call(
+        state,
+        "group_bridge_receive_reply_request_cancel",
+        json!({
+            "target_group_id":group_id,
+            "src_group_id":remote_group_id,
+            "remote_peer_id":remote_peer_id,
+            "payload":payload
+        })
+        .as_object()
+        .cloned()
+        .expect("Group Bridge cancellation request is an object"),
+    )
+    .await?;
+    let mut result = response.0["result"].clone();
+    if let Some(fields) = result.as_object_mut() {
+        fields.remove("ok");
+    }
+    Ok(result)
+}
+
 pub(super) async fn send_remote(
     state: &AppState,
     source_group_id: &str,
@@ -595,8 +693,7 @@ pub(super) async fn send_remote(
     for field in [
         "text",
         "format",
-        "priority",
-        "reply_required",
+        "message_mode",
         "to",
         "refs",
         "attachments",

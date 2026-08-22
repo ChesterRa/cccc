@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, TYPE_CHECKING
 
 from .remote_attachments import build_remote_attachment_payloads
+from ...contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 from ...kernel.group import load_group
 
 if TYPE_CHECKING:
@@ -18,10 +19,10 @@ if TYPE_CHECKING:
 def build_remote_chat_payload(envelope: "RemoteMessageEnvelope") -> Dict[str, Any]:
     payload = envelope.payload
     body: Dict[str, Any] = {
+        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
         "text": payload.text,
         "to": list(payload.to),
-        "priority": payload.priority,
-        "reply_required": payload.reply_required,
+        "message_mode": payload.message_mode,
         "idempotency_key": envelope.idempotency_key,
         "source_platform": envelope.transport,
         "source_user_id": envelope.source_peer_id,

@@ -8,7 +8,6 @@ from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import add_actor, find_actor, generate_actor_id, get_effective_role, remove_actor
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
-from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
@@ -320,11 +319,6 @@ def handle_actor_add(
     try:
         ContextStorage(group).bump_version_state(actors_changed=True)
         _schedule_summary_snapshot_rebuild(group.group_id)
-    except Exception:
-        pass
-
-    try:
-        set_cursor(group, actor_id, event_id=str(event.get("id") or ""), ts=str(event.get("ts") or ""))
     except Exception:
         pass
 

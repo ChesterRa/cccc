@@ -3293,7 +3293,7 @@ class TestAssistantOps(unittest.TestCase):
                     "composer_snapshot_hash": "abc123",
                     "composer_context": {
                         "recipients": ["@foreman"],
-                        "message_mode": "normal",
+                        "message_mode": "send",
                         "recent_chat_excerpt": "user: 之前这个方案主要担心回滚成本。\nforeman: 需要补验收标准。",
                     },
                     "language": "zh-CN",
@@ -5319,7 +5319,6 @@ class TestAssistantOps(unittest.TestCase):
                     "summary": "Voice Secretary detected a spoken action request.",
                     "document_path": "docs/voice-secretary/weather-plan.md",
                     "source_request_id": "voice-ask-weather-plan",
-                    "requires_ack": True,
                 },
             )
 
@@ -5328,7 +5327,7 @@ class TestAssistantOps(unittest.TestCase):
             request_payload = result.get("request") if isinstance(result.get("request"), dict) else {}
             self.assertEqual(request_payload.get("target_actor_id"), "lead")
             self.assertEqual(request_payload.get("source_request_id"), "voice-ask-weather-plan")
-            self.assertTrue(bool(request_payload.get("requires_ack")))
+            self.assertNotIn("requires_ack", request_payload)
             ask_request = result.get("ask_request") if isinstance(result.get("ask_request"), dict) else {}
             self.assertEqual(ask_request.get("status"), "handed_off")
             self.assertEqual(ask_request.get("handoff_target"), "@foreman")
@@ -5348,7 +5347,7 @@ class TestAssistantOps(unittest.TestCase):
             self.assertTrue(notify_events)
             data = notify_events[-1].get("data") or {}
             self.assertEqual(data.get("target_actor_id"), "lead")
-            self.assertTrue(bool(data.get("requires_ack")))
+            self.assertNotIn("requires_ack", data)
             context = data.get("context") if isinstance(data.get("context"), dict) else {}
             self.assertEqual(context.get("document_path"), "docs/voice-secretary/weather-plan.md")
             self.assertEqual(context.get("source_request_id"), "voice-ask-weather-plan")

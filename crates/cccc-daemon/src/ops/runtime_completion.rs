@@ -60,10 +60,6 @@ pub(super) fn append(
         ("event_ids".into(), json!(completion.event_ids)),
         ("status".into(), json!(completion.status)),
         ("delivery_id".into(), json!(completion.delivery_id)),
-        (
-            "cursor_committed".into(),
-            json!(cursor_committed(completion)),
-        ),
     ]);
     let path = GroupStore::new(home.clone())
         .map_err(OpError::io)?
@@ -81,8 +77,6 @@ fn matches(event: &Event, actor_id: &str, completion: &Completion) -> bool {
         && event.data.get("event_ids") == Some(&json!(completion.event_ids))
         && string(&event.data, "status") == Some(completion.status.as_str())
         && string(&event.data, "delivery_id") == Some(completion.delivery_id.as_str())
-        && event.data.get("cursor_committed").and_then(Value::as_bool)
-            == Some(cursor_committed(completion))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -94,7 +88,6 @@ pub(super) fn append_browser_delivery(
     event_ids: &[String],
     delivery_id: &str,
     browser_delivery: &Value,
-    cursor_committed: bool,
 ) -> Result<Event, OpError> {
     let state = browser_delivery["state"]
         .as_str()
@@ -114,7 +107,6 @@ pub(super) fn append_browser_delivery(
             json!(event_ids.last().cloned().unwrap_or_default()),
         ),
         ("delivery_id".into(), json!(delivery_id)),
-        ("cursor_committed".into(), json!(cursor_committed)),
         ("delivery_transport".into(), json!("projected_session")),
     ]);
     for field in [
@@ -149,15 +141,8 @@ fn string<'a>(data: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 }
 
 fn kind(completion: &Completion) -> &'static str {
-    if cursor_committed(completion) {
-        "chat.read"
-    } else {
-        "runtime.turn.completed"
-    }
-}
-
-fn cursor_committed(completion: &Completion) -> bool {
-    matches!(completion.status.as_str(), "done" | "partial")
+    let _ = completion;
+    "runtime.turn.completed"
 }
 
 fn event_id(group_id: &str, actor_id: &str, turn_id: &str) -> String {
@@ -188,7 +173,6 @@ mod tests {
             ("event_ids".into(), json!(["event-a"])),
             ("status".into(), json!("done")),
             ("delivery_id".into(), json!("delivery-a")),
-            ("cursor_committed".into(), json!(true)),
         ]);
         assert!(matches(&event, "actor-a", &exact));
         let mut mismatch = exact.clone();

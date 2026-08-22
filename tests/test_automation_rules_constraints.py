@@ -265,7 +265,6 @@ class TestAutomationRulesConstraints(unittest.TestCase):
                                             "kind": "notify",
                                             "message": "fire once",
                                             "priority": "normal",
-                                            "requires_ack": False,
                                         },
                                     }
                                 ],

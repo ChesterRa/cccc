@@ -9,7 +9,6 @@ function buildLedgerStatusParams(includeStatuses: boolean): URLSearchParams {
   const params = new URLSearchParams();
   if (includeStatuses) {
     params.set("with_read_status", "true");
-    params.set("with_ack_status", "true");
     params.set("with_obligation_status", "true");
   }
   return params;
@@ -32,7 +31,6 @@ export async function fetchOlderMessages(groupId: string, beforeEventId: string,
     before: beforeEventId,
     limit: String(limit),
     with_read_status: "true",
-    with_ack_status: "true",
     with_obligation_status: "true",
   });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
@@ -51,7 +49,6 @@ export async function fetchMessageWindow(
     before: String(opts?.before ?? 30),
     after: String(opts?.after ?? 30),
     with_read_status: "true",
-    with_ack_status: "true",
     with_obligation_status: "true",
   });
   return apiJson<{

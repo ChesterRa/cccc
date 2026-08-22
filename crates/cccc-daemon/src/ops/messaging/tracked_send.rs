@@ -27,12 +27,13 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "tracked_send message text cannot be empty",
         ));
     }
-    let message_priority = first_non_blank_arg(request, &["message_priority", "priority"])
-        .unwrap_or_else(|| "normal".into());
-    if !matches!(message_priority.as_str(), "normal" | "attention") {
+    if ["priority", "message_priority", "reply_required"]
+        .iter()
+        .any(|field| request.args.contains_key(*field))
+    {
         return Err(OpError::new(
-            "invalid_priority",
-            "priority must be 'normal' or 'attention'",
+            "unsupported_message_fields",
+            "tracked_send uses fixed message_mode=send; use task_priority for the task and omit priority/message_priority/reply_required",
         ));
     }
 
@@ -42,9 +43,6 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .insert("group_id".into(), json!(group_id));
     normalized_request.args.insert("by".into(), json!(by));
     normalized_request.args.insert("text".into(), json!(text));
-    normalized_request
-        .args
-        .insert("message_priority".into(), json!(message_priority));
     normalized_request.args.insert(
         "to".into(),
         Value::Array(normalize_to(request.args.get("to"))),
@@ -143,7 +141,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "context_result":context_result,
                 "event_id":event.get("id").and_then(Value::as_str).unwrap_or_default(),
                 "event":event,
-                "delivery":sent.get("delivery"),
+                "message_mode":"send",
                 "task_created":task_created,
                 "message_sent":true,
                 "partial_failure":false,
@@ -186,8 +184,7 @@ fn task_operation(
         (
             "priority".into(),
             json!(
-                first_non_blank_arg(request, &["task_priority", "message_priority"])
-                    .unwrap_or_else(|| "normal".into())
+                first_non_blank_arg(request, &["task_priority"]).unwrap_or_else(|| "normal".into())
             ),
         ),
         (
@@ -273,23 +270,7 @@ fn message_request(request: &DaemonRequest, client_id: &str) -> DaemonRequest {
             args.insert(key.into(), value.clone());
         }
     }
-    args.insert(
-        "priority".into(),
-        request
-            .args
-            .get("message_priority")
-            .or_else(|| request.args.get("priority"))
-            .cloned()
-            .unwrap_or_else(|| json!("normal")),
-    );
-    args.insert(
-        "reply_required".into(),
-        request
-            .args
-            .get("reply_required")
-            .cloned()
-            .unwrap_or(Value::Bool(true)),
-    );
+    args.insert("message_mode".into(), json!("send"));
     if !client_id.is_empty() {
         args.insert("client_id".into(), json!(client_id));
     }

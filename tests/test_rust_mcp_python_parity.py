@@ -37,11 +37,25 @@ class TestRustMcpPythonParity(unittest.TestCase):
         rust_names = re.findall(r'"(cccc_[a-z0-9_]+)"', match.group(1) if match else "")
 
         self.assertEqual(rust_names, list(WEB_MODEL_CORE_TOOLS))
-        self.assertEqual(len(rust_names), 31)
+        self.assertEqual(len(rust_names), 33)
+
+    def test_python_and_rust_core_message_guidance_is_identical(self) -> None:
+        from cccc.kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
+
+        root = Path(__file__).resolve().parents[1]
+        rust = (root / "crates/cccc-core/src/system_prompt.rs").read_text(encoding="utf-8")
+        match = re.search(
+            r'pub const MESSAGE_DELIVERY_GUIDANCE: &str = "((?:\\.|[^"\\])*)";',
+            rust,
+        )
+        self.assertIsNotNone(match)
+        encoded_guidance = match.group(1) if match else ""
+        rust_guidance = json.loads(f'"{encoded_guidance}"')
+        self.assertEqual(rust_guidance, MESSAGE_DELIVERY_GUIDANCE)
 
     def test_full_contract_has_unique_complete_entries(self) -> None:
         names = [str(tool.get("name") or "") for tool in MCP_TOOLS]
-        self.assertEqual(len(names), 59)
+        self.assertEqual(len(names), 61)
         self.assertEqual(len(set(names)), len(names))
         for tool in MCP_TOOLS:
             self.assertEqual(set(tool) - {"annotations"}, {"name", "description", "inputSchema"})
@@ -53,22 +67,23 @@ class TestRustMcpPythonParity(unittest.TestCase):
             "cccc_help",
             "cccc_bootstrap",
             "cccc_project_info",
-            "cccc_inbox_list",
             "cccc_repo",
             "cccc_runtime_list",
-            "cccc_runtime_wait_next_turn",
             "cccc_capability_state",
             "cccc_context_get",
             "cccc_debug",
+            "cccc_message_history",
         }:
             self.assertTrue((by_name[name].get("annotations") or {}).get("readOnlyHint"), name)
 
         for name in {
             "cccc_capability_search",
             "cccc_file",
+            "cccc_inbox_read",
             "cccc_presentation",
             "cccc_memory",
             "cccc_terminal",
+            "cccc_runtime_wait_next_turn",
         }:
             self.assertIsNot((by_name[name].get("annotations") or {}).get("readOnlyHint"), True, name)
 

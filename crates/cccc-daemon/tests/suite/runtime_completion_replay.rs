@@ -12,7 +12,7 @@ fn replay_repairs_projection_only_while_the_same_turn_is_active() {
     let group_id = setup(&home);
     let turn = next_turn(&home, &group_id);
     let args = completion_args(&group_id, &turn, "delivery-a");
-    call(&home, "web_model_runtime_complete_turn", args.clone());
+    call(&home, "runtime_complete_turn", args.clone());
     set_runtime(
         &home,
         &group_id,
@@ -20,7 +20,7 @@ fn replay_repairs_projection_only_while_the_same_turn_is_active() {
         turn["turn_id"].as_str().expect("turn id must be a string"),
     );
 
-    let replay = call(&home, "web_model_runtime_complete_turn", args);
+    let replay = call(&home, "runtime_complete_turn", args);
 
     assert_eq!(replay.result["delivery_id"], "delivery-a");
     let state = runtime(&home, &group_id);
@@ -35,17 +35,17 @@ fn replay_of_a_does_not_modify_newer_active_turn_b_or_its_cursor() {
     let group_id = setup(&home);
     let turn_a = next_turn(&home, &group_id);
     let args_a = completion_args(&group_id, &turn_a, "delivery-a");
-    call(&home, "web_model_runtime_complete_turn", args_a.clone());
+    call(&home, "runtime_complete_turn", args_a.clone());
     call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"turn b"}),
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"turn b","message_mode":"send"}),
     );
     let turn_b = next_turn(&home, &group_id);
     let state_before = runtime(&home, &group_id);
     let cursor_before = cursor(&home, &group_id);
 
-    let replay = call(&home, "web_model_runtime_complete_turn", args_a);
+    let replay = call(&home, "runtime_complete_turn", args_a);
 
     assert_eq!(replay.result["delivery_id"], "delivery-a");
     assert_eq!(runtime(&home, &group_id), state_before);
@@ -64,12 +64,12 @@ fn replay_does_not_revive_a_stopped_or_failed_runtime() {
         let group_id = setup(&home);
         let turn = next_turn(&home, &group_id);
         let args = completion_args(&group_id, &turn, "delivery-a");
-        call(&home, "web_model_runtime_complete_turn", args.clone());
+        call(&home, "runtime_complete_turn", args.clone());
         set_runtime(&home, &group_id, status, "");
         let state_before = runtime(&home, &group_id);
         let cursor_before = cursor(&home, &group_id);
 
-        call(&home, "web_model_runtime_complete_turn", args);
+        call(&home, "runtime_complete_turn", args);
 
         assert_eq!(runtime(&home, &group_id), state_before, "{status}");
         assert_eq!(cursor(&home, &group_id), cursor_before, "{status}");

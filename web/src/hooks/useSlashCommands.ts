@@ -93,7 +93,6 @@ export function useSlashCommands(args: {
       composerFilesCount: number;
       hasReplyTarget: boolean;
       replyTarget?: ReplyTarget;
-      replyRequired: boolean;
       hasQuotedPresentationRef: boolean;
       hasQuotedVoiceDocumentRef: boolean;
       sendGroupId: string;

@@ -58,6 +58,76 @@ class TestChatOps(unittest.TestCase):
             )
         )
 
+    def test_cross_group_reply_request_cancel_propagates_to_local_destination(self) -> None:
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            source_create, _ = self._call(
+                "group_create", {"title": "source", "topic": "", "by": "user"}
+            )
+            destination_create, _ = self._call(
+                "group_create", {"title": "destination", "topic": "", "by": "user"}
+            )
+            source_group_id = str((source_create.result or {}).get("group_id") or "")
+            destination_group_id = str((destination_create.result or {}).get("group_id") or "")
+            sent, _ = self._call(
+                "send_cross_group",
+                {
+                    "group_id": source_group_id,
+                    "dst_group_id": destination_group_id,
+                    "text": "please answer",
+                    "by": "user",
+                    "to": ["user"],
+                    "message_mode": "request_reply",
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            source_event = (sent.result or {}).get("src_event") or {}
+            destination_event = (sent.result or {}).get("dst_event") or {}
+
+            cancelled, _ = self._call(
+                "reply_request_cancel",
+                {
+                    "group_id": source_group_id,
+                    "source_event_id": source_event.get("id"),
+                    "by": "user",
+                },
+            )
+            self.assertTrue(cancelled.ok, getattr(cancelled, "error", None))
+            self.assertEqual((cancelled.result or {}).get("propagation", {}).get("transport"), "local")
+            destination = load_group(destination_group_id)
+            self.assertIsNotNone(destination)
+            events = list(iter_events(destination.ledger_path))
+            propagated = [event for event in events if event.get("kind") == "chat.reply_request.cancelled"]
+            self.assertEqual(len(propagated), 1)
+            self.assertEqual((propagated[0].get("data") or {}).get("source_event_id"), destination_event.get("id"))
+            self.assertEqual((propagated[0].get("data") or {}).get("src_event_id"), (cancelled.result or {}).get("event", {}).get("id"))
+
+            replay, _ = self._call(
+                "reply_request_cancel",
+                {
+                    "group_id": source_group_id,
+                    "source_event_id": source_event.get("id"),
+                    "by": "user",
+                },
+            )
+            self.assertTrue(replay.ok, getattr(replay, "error", None))
+            self.assertTrue((replay.result or {}).get("already"))
+            self.assertEqual(
+                len(
+                    [
+                        event
+                        for event in iter_events(destination.ledger_path)
+                        if event.get("kind") == "chat.reply_request.cancelled"
+                    ]
+                ),
+                1,
+            )
+        finally:
+            cleanup()
+
     def test_send_files_uploads_active_scope_files_atomically(self) -> None:
         _, cleanup = self._with_home()
         scope_ctx = tempfile.TemporaryDirectory()
@@ -80,6 +150,7 @@ class TestChatOps(unittest.TestCase):
             sent, _ = self._call(
                 "send_files",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "paths": [str(image_path), "brief.txt"],
                     "text": "inspect both",
@@ -116,7 +187,7 @@ class TestChatOps(unittest.TestCase):
 
             sent, _ = self._call(
                 "send_files",
-                {"group_id": group_id, "paths": [str(outside)], "to": ["user"]},
+                {"message_mode": "send", "group_id": group_id, "paths": [str(outside)], "to": ["user"]},
             )
             self.assertFalse(sent.ok)
             self.assertEqual(getattr(sent.error, "code", ""), "invalid_path")
@@ -141,6 +212,18 @@ class TestChatOps(unittest.TestCase):
                 "attach", {"group_id": group_id, "path": str(scope), "by": "user"}
             )
             self.assertTrue(attach.ok, getattr(attach, "error", None))
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "enabled": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
             (scope / "payload.bin").write_bytes(b"accepted payload")
             (scope / "duplicate.bin").write_bytes(b"must not be stored")
 
@@ -149,23 +232,45 @@ class TestChatOps(unittest.TestCase):
             assert group is not None
             blob_dir = group.path / "state" / "blobs"
 
-            invalid_priority, _ = self._call(
+            invalid_mode, _ = self._call(
                 "send_files",
                 {
                     "group_id": group_id,
                     "paths": ["payload.bin"],
                     "by": "user",
                     "to": ["user"],
-                    "priority": "urgent",
+                    "message_mode": "urgent",
                 },
             )
-            self.assertFalse(invalid_priority.ok)
-            self.assertEqual(getattr(invalid_priority.error, "code", ""), "invalid_priority")
+            self.assertFalse(invalid_mode.ok)
+            self.assertEqual(getattr(invalid_mode.error, "code", ""), "invalid_message_mode")
             self.assertFalse(blob_dir.exists())
+
+            for recipients, mode, expected_code in (
+                (["user"], "mail", "mail_requires_actor_recipient"),
+                (["user", "peer1"], "send", "mixed_recipient_kinds"),
+            ):
+                with self.subTest(recipients=recipients, mode=mode):
+                    invalid_audience, _ = self._call(
+                        "send_files",
+                        {
+                            "group_id": group_id,
+                            "paths": ["payload.bin"],
+                            "by": "user",
+                            "to": recipients,
+                            "message_mode": mode,
+                        },
+                    )
+                    self.assertFalse(invalid_audience.ok)
+                    self.assertEqual(
+                        getattr(invalid_audience.error, "code", ""), expected_code
+                    )
+                    self.assertFalse(blob_dir.exists())
 
             rejected, _ = self._call(
                 "send_files",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "paths": ["payload.bin"],
                     "by": "user",
@@ -179,6 +284,7 @@ class TestChatOps(unittest.TestCase):
             sent, _ = self._call(
                 "send_files",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "paths": ["payload.bin"],
                     "by": "user",
@@ -194,6 +300,7 @@ class TestChatOps(unittest.TestCase):
             replayed, _ = self._call(
                 "send_files",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "paths": ["duplicate.bin"],
                     "by": "user",
@@ -256,7 +363,10 @@ class TestChatOps(unittest.TestCase):
         self.assertIs(out, fake_group)
         set_state.assert_called_once_with(fake_group, state="active")
 
-    def test_attention_reply_still_writes_chat_ack(self) -> None:
+    def test_request_reply_is_closed_by_a_concrete_reply_without_generic_ack(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import find_event, get_obligation_status_batch
+
         _, cleanup = self._with_home()
         try:
             create, _ = self._call("group_create", {"title": "chat-ops", "topic": "", "by": "user"})
@@ -298,8 +408,8 @@ class TestChatOps(unittest.TestCase):
                     "group_id": group_id,
                     "by": "peer1",
                     "to": ["peer2"],
-                    "text": "ack me",
-                    "priority": "attention",
+                    "text": "reply to me",
+                    "message_mode": "request_reply",
                 },
             )
             self.assertTrue(send.ok, getattr(send, "error", None))
@@ -319,10 +429,16 @@ class TestChatOps(unittest.TestCase):
                 },
             )
             self.assertTrue(reply.ok, getattr(reply, "error", None))
-            ack_event = (reply.result or {}).get("ack_event") if isinstance(reply.result, dict) else {}
-            self.assertIsInstance(ack_event, dict)
-            assert isinstance(ack_event, dict)
-            self.assertEqual(str(ack_event.get("kind") or ""), "chat.ack")
+            self.assertNotIn("ack_event", reply.result or {})
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            source = find_event(group, sent_event_id)
+            self.assertIsNotNone(source)
+            assert source is not None
+            peer_status = get_obligation_status_batch(group, [source])[sent_event_id]["peer2"]
+            self.assertTrue(bool(peer_status.get("reply_requested")))
+            self.assertTrue(bool(peer_status.get("replied")))
         finally:
             cleanup()
 
@@ -351,6 +467,7 @@ class TestChatOps(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["peer1"],
@@ -441,6 +558,7 @@ class TestChatOps(unittest.TestCase):
                 data=ChatMessageData(
                     text="hello from remote",
                     to=["@foreman"],
+                    message_mode="send",
                     source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
@@ -464,7 +582,6 @@ class TestChatOps(unittest.TestCase):
                         "reply_to": str(inbound_event.get("id") or ""),
                         "text": "reply over group_bridge",
                         "to": ["user"],
-                        "priority": "attention",
                     },
                 )
 
@@ -479,8 +596,7 @@ class TestChatOps(unittest.TestCase):
                 {
                     "text": "reply over group_bridge",
                     "to": ["user"],
-                    "priority": "attention",
-                    "reply_required": False,
+                    "message_mode": "send",
                     "refs": [],
                 },
             )
@@ -533,6 +649,7 @@ class TestChatOps(unittest.TestCase):
                 data=ChatMessageData(
                     text="hello from remote user",
                     to=["@foreman"],
+                    message_mode="send",
                     source_platform="group_bridge_session",
                     source_user_id="peer_remote",
                     src_group_id="g_remote",
@@ -762,7 +879,10 @@ class TestChatOps(unittest.TestCase):
                 if (event.get("data") or {}).get("text") == "reply via Group Bridge session"
             ]
             self.assertEqual(len(reply_events), 1)
-            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["@foreman"])
+            self.assertEqual((reply_events[0].get("data") or {}).get("to"), ["user"])
+            self.assertEqual((reply_events[0].get("data") or {}).get("message_mode"), "send")
+            self.assertEqual((reply_events[0].get("data") or {}).get("dst_to"), ["@foreman"])
+            self.assertEqual((reply_events[0].get("data") or {}).get("dst_message_mode"), "send")
             self.assertEqual((reply_events[0].get("data") or {}).get("dst_to"), ["@foreman"])
         finally:
             cleanup()
@@ -1030,6 +1150,7 @@ class TestChatOps(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -1073,6 +1194,7 @@ class TestChatOps(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["peer1"],
@@ -1155,6 +1277,7 @@ class TestChatOps(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "peer1",
                     "to": ["user"],
@@ -1204,6 +1327,7 @@ class TestChatOps(unittest.TestCase):
                 send, _ = self._call(
                     "send",
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "to": ["foreman1"],
@@ -1268,7 +1392,8 @@ class TestChatOps(unittest.TestCase):
             refs = event.get("data", {}).get("refs", [])
             self.assertEqual(refs[0].get("kind"), "task_ref")
             self.assertEqual(refs[0].get("task_id"), task_id)
-            self.assertEqual(event.get("data", {}).get("reply_required"), True)
+            self.assertEqual(event.get("data", {}).get("message_mode"), "send")
+            self.assertNotIn("reply_required", event.get("data", {}))
 
             task_resp, _ = self._call("task_list", {"group_id": group_id, "task_id": task_id})
             self.assertTrue(task_resp.ok, getattr(task_resp, "error", None))
@@ -1279,7 +1404,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_tracked_send_accepts_explicit_reply_required(self) -> None:
+    def test_tracked_send_rejects_explicit_reply_required(self) -> None:
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("tracked_send", {
@@ -1290,9 +1415,8 @@ class TestChatOps(unittest.TestCase):
                 "text": "Please reply with evidence.",
                 "reply_required": True,
             })
-            self.assertTrue(resp.ok, getattr(resp, "error", None))
-            event = (resp.result or {}).get("event") or {}
-            self.assertEqual(event.get("data", {}).get("reply_required"), True)
+            self.assertFalse(resp.ok)
+            self.assertEqual(getattr(resp.error, "code", ""), "unsupported_message_fields")
         finally:
             cleanup()
 
@@ -1436,19 +1560,21 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_tracked_send_invalid_message_priority_creates_no_task(self) -> None:
+    def test_tracked_send_rejects_legacy_priorities_before_creating_task(self) -> None:
         group_id, cleanup = self._setup_group_with_actors()
         try:
-            resp, _ = self._call("tracked_send", {
-                "group_id": group_id,
-                "by": "user",
-                "to": ["peer1"],
-                "title": "Bad priority",
-                "text": "This must fail before task creation.",
-                "priority": "urgent",
-            })
-            self.assertFalse(resp.ok)
-            self.assertEqual(resp.error.code, "invalid_priority")
+            for field in ("priority", "message_priority"):
+                with self.subTest(field=field):
+                    resp, _ = self._call("tracked_send", {
+                        "group_id": group_id,
+                        "by": "user",
+                        "to": ["peer1"],
+                        "title": "Bad priority",
+                        "text": "This must fail before task creation.",
+                        field: "urgent",
+                    })
+                    self.assertFalse(resp.ok)
+                    self.assertEqual(resp.error.code, "unsupported_message_fields")
 
             tasks_resp, _ = self._call("task_list", {"group_id": group_id})
             self.assertTrue(tasks_resp.ok, getattr(tasks_resp, "error", None))
@@ -1461,6 +1587,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["peer1"],
@@ -1477,6 +1604,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["peer1", "peer2"],
@@ -1490,11 +1618,95 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_send_and_reply_enforce_one_audience_domain_and_agent_only_mail(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import iter_events
+
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            mail, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["peer1"],
+                    "text": "read later",
+                    "message_mode": "mail",
+                },
+            )
+            self.assertTrue(mail.ok, getattr(mail, "error", None))
+
+            user_request, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "peer1",
+                    "to": ["user"],
+                    "text": "please decide",
+                    "message_mode": "request_reply",
+                },
+            )
+            self.assertTrue(user_request.ok, getattr(user_request, "error", None))
+            accepted_count = len(list(iter_events(group.ledger_path)))
+
+            for mode in ("send", "request_reply", "mail"):
+                with self.subTest(mode=mode):
+                    rejected, _ = self._call(
+                        "send",
+                        {
+                            "group_id": group_id,
+                            "by": "peer1",
+                            "to": ["user", "peer2"],
+                            "text": "split this audience",
+                            "message_mode": mode,
+                        },
+                    )
+                    self.assertFalse(rejected.ok)
+                    self.assertEqual(getattr(rejected.error, "code", ""), "mixed_recipient_kinds")
+
+            mail_to_user, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "peer1",
+                    "to": ["user"],
+                    "text": "invalid mail",
+                    "message_mode": "mail",
+                },
+            )
+            self.assertFalse(mail_to_user.ok)
+            self.assertEqual(getattr(mail_to_user.error, "code", ""), "mail_requires_actor_recipient")
+
+            reply_mail_to_user, _ = self._call(
+                "reply",
+                {
+                    "group_id": group_id,
+                    "by": "peer1",
+                    "reply_to": (user_request.result or {}).get("event", {}).get("id"),
+                    "to": ["user"],
+                    "text": "invalid reply mail",
+                    "message_mode": "mail",
+                },
+            )
+            self.assertFalse(reply_mail_to_user.ok)
+            self.assertEqual(
+                getattr(reply_mail_to_user.error, "code", ""),
+                "mail_requires_actor_recipient",
+            )
+            self.assertEqual(len(list(iter_events(group.ledger_path))), accepted_count)
+        finally:
+            cleanup()
+
     def test_send_to_string_direct_payload_is_routed_correctly(self) -> None:
         """T067 scenario: daemon send op tolerates string `to` payload."""
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": "peer1",
@@ -1506,19 +1718,27 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_empty_to_uses_default(self) -> None:
-        """T067 scenario 3: empty `to` falls back to group default."""
+    def test_send_empty_to_materializes_broadcast_default(self) -> None:
+        """T067 scenario 3: empty `to` stores the configured broadcast target."""
+        from cccc.kernel.group import load_group
+
         group_id, cleanup = self._setup_group_with_actors()
         try:
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc.setdefault("messaging", {})["default_send_to"] = "broadcast"
+            group.save()
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": [],
                 "text": "broadcast test",
             })
-            # Empty to with no mentions -> falls back to group default or broadcast
-            # Either way should succeed for user sender
             self.assertTrue(resp.ok, getattr(resp, "error", None))
+            event = (resp.result or {}).get("event", {})
+            self.assertEqual(event.get("data", {}).get("to", []), ["@all"])
         finally:
             cleanup()
 
@@ -1527,6 +1747,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": [],
@@ -1543,6 +1764,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": [None, ""],
@@ -1559,6 +1781,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["peer1", "peer2"],
@@ -1577,6 +1800,7 @@ class TestChatOps(unittest.TestCase):
         refs = [{"kind": "presentation_ref", "slot_id": "slot-2", "label": "P2", "locator_label": "PDF p.12"}]
         try:
             send_resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["peer1"],
@@ -1610,6 +1834,7 @@ class TestChatOps(unittest.TestCase):
         try:
             long_suggestion = "x" * (SUGGESTED_USER_MESSAGE_MAX_CHARS + 25)
             send_resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "peer1",
                 "to": ["user"],
@@ -1687,6 +1912,7 @@ class TestChatOps(unittest.TestCase):
                 send_resp, _ = self._call(
                     "send",
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "to": ["peer1"],
@@ -1740,6 +1966,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["nonexistent_actor"],
@@ -1761,6 +1988,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "to": ["peer1"],
@@ -1785,6 +2013,7 @@ class TestChatOps(unittest.TestCase):
             })
             # Foreman sends explicitly to peer1
             resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "fm1",
                 "to": ["peer1"],
@@ -1822,7 +2051,7 @@ class TestChatOps(unittest.TestCase):
             )
             self.assertTrue(add_foreman.ok, getattr(add_foreman, "error", None))
 
-            resp, _ = self._call("send", {"group_id": group_id, "by": "fm1", "text": "status"})
+            resp, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "by": "fm1", "text": "status"})
             self.assertFalse(resp.ok)
             err = resp.error
             self.assertIsNotNone(err)
@@ -1834,8 +2063,8 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_user_default_to_stopped_foreman_does_not_route_to_peer(self) -> None:
-        """Default @foreman routing must keep the stable foreman target even when stopped."""
+    def test_user_default_to_stopped_foreman_stays_pending_without_waking_or_rerouting(self) -> None:
+        """Default @foreman routing keeps the target but respects explicit actor stop."""
         from cccc.daemon.messaging.chat_ops import handle_send
         from cccc.kernel.group import load_group
         from cccc.util.conv import coerce_bool
@@ -1870,16 +2099,15 @@ class TestChatOps(unittest.TestCase):
 
             def wake(_group, to, _by):
                 wake_calls.append(list(to))
-                return ["fm1"]
+                return []
 
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
                 patch("cccc.daemon.messaging.chat_delivery_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
-                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=["fm1"]),
-                patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "text": "default to stopped foreman",
@@ -1900,14 +2128,7 @@ class TestChatOps(unittest.TestCase):
             assert isinstance(event, dict)
             self.assertEqual(event.get("data", {}).get("to"), ["@foreman"])
             submit.assert_not_called()
-            schedule_post_wake.assert_called_once()
-            schedule_kwargs = schedule_post_wake.call_args.kwargs
-            self.assertEqual(schedule_kwargs.get("group_id"), group_id)
-            self.assertEqual(schedule_kwargs.get("actor_id"), "fm1")
-            self.assertEqual(schedule_kwargs.get("runtime"), "codex")
-            self.assertEqual(schedule_kwargs.get("event_id"), event.get("id"))
-            self.assertIn("default to stopped foreman", str(schedule_kwargs.get("text") or ""))
-            emit_notify.assert_not_called()
+            schedule_post_wake.assert_not_called()
         finally:
             cleanup()
 
@@ -1936,7 +2157,7 @@ class TestChatOps(unittest.TestCase):
 
             resp, _ = self._call(
                 "send",
-                {"group_id": group_id, "by": "fm1", "to": ["@foreman"], "text": "status"},
+                {"message_mode": "send", "group_id": group_id, "by": "fm1", "to": ["@foreman"], "text": "status"},
             )
             self.assertFalse(resp.ok)
             err = resp.error
@@ -1948,7 +2169,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_stopped_headless_actor_schedules_post_wake_delivery(self) -> None:
+    def test_reply_to_stopped_headless_actor_stays_pending_without_wake(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_reply
         from cccc.kernel.group import load_group
         from cccc.util.conv import coerce_bool
@@ -1977,6 +2198,7 @@ class TestChatOps(unittest.TestCase):
             original, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -1997,8 +2219,6 @@ class TestChatOps(unittest.TestCase):
             with (
                 patch("cccc.daemon.messaging.chat_ops.codex_app_supervisor.submit_user_message") as submit,
                 patch("cccc.daemon.messaging.chat_delivery_ops.schedule_headless_post_wake_delivery", return_value=True) as schedule_post_wake,
-                patch("cccc.daemon.messaging.chat_delivery_ops.get_headless_targets_for_message", return_value=["peer1"]),
-                patch("cccc.daemon.messaging.chat_delivery_ops.emit_system_notify") as emit_notify,
             ):
                 resp = handle_reply(
                     {
@@ -2011,7 +2231,7 @@ class TestChatOps(unittest.TestCase):
                     coerce_bool=coerce_bool,
                     normalize_attachments=lambda _group, _raw: [],
                     effective_runner_kind=lambda runner: str(runner or "headless"),
-                    auto_wake_recipients=lambda _group, _to, _by: ["peer1"],
+                    auto_wake_recipients=lambda _group, _to, _by: [],
                     automation_on_resume=lambda _group: None,
                     automation_on_new_message=lambda _group: None,
                     clear_pending_system_notifies=lambda _group_id, _kinds: None,
@@ -2022,15 +2242,8 @@ class TestChatOps(unittest.TestCase):
             self.assertIsInstance(event, dict)
             assert isinstance(event, dict)
             submit.assert_not_called()
-            schedule_post_wake.assert_called_once()
-            schedule_kwargs = schedule_post_wake.call_args.kwargs
-            self.assertEqual(schedule_kwargs.get("group_id"), group_id)
-            self.assertEqual(schedule_kwargs.get("actor_id"), "peer1")
-            self.assertEqual(schedule_kwargs.get("runtime"), "codex")
-            self.assertEqual(schedule_kwargs.get("event_id"), event.get("id"))
-            self.assertEqual(schedule_kwargs.get("reply_to"), reply_to)
-            self.assertIn("reply after wake", str(schedule_kwargs.get("text") or ""))
-            emit_notify.assert_not_called()
+            self.assertEqual(event.get("data", {}).get("to"), ["peer1"])
+            schedule_post_wake.assert_not_called()
         finally:
             cleanup()
 
@@ -2046,7 +2259,6 @@ class TestChatOps(unittest.TestCase):
             group,
             ["peer1"],
             by="user",
-            disabled_recipient_actor_ids=lambda _group, _to: [],
             enabled_recipient_actor_ids=lambda _group, _to: ["peer1"],
             find_actor=lambda _group, _actor_id: {
                 "id": "peer1",
@@ -2054,10 +2266,8 @@ class TestChatOps(unittest.TestCase):
                 "runtime": "codex",
                 "runner": "headless",
             },
-            coerce_bool=lambda value, default=True: bool(value) if value is not None else default,
             is_actor_running=lambda _group, _actor_id: False,
             start_actor_process=lambda *_args, **_kwargs: start_calls.append("start") or {"success": True},
-            update_actor=lambda *_args, **_kwargs: None,
             runner_stop_actor=lambda *_args, **_kwargs: None,
             request_flush_pending_messages=lambda *_args, **_kwargs: True,
             logger=logging.getLogger("test"),
@@ -2077,6 +2287,7 @@ class TestChatOps(unittest.TestCase):
         try:
             # First send a message to get an event_id to reply to
             send_resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "peer1",
                 "to": ["peer2"],
@@ -2104,6 +2315,7 @@ class TestChatOps(unittest.TestCase):
         group_id, cleanup = self._setup_group_with_actors()
         try:
             send_resp, _ = self._call("send", {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "peer1",
                 "to": ["peer2"],

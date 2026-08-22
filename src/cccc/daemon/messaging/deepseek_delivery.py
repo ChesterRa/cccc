@@ -1,8 +1,4 @@
-"""Durable DeepSeek ACP delivery adapter.
-
-The adapter owns only ACP turn dispatch and headless event persistence. Cursor
-advancement remains in ``delivery.py`` after this function returns success.
-"""
+"""Durable DeepSeek ACP delivery adapter."""
 from __future__ import annotations
 
 import time
@@ -13,8 +9,11 @@ from ..actors import deepseek_runtime
 from ...contracts.v1.deepseek import DEEPSEEK_TURN_TIMEOUT_SECONDS
 from ...kernel.deepseek_acp import permission_request_id, terminal_stop_reason, validate_session_update
 from ...kernel.headless_events import append_headless_event, has_headless_event_dedupe
+from ...kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
+
 _CANCEL_CONFIRM_SECONDS = 5.0
 _CREDENTIAL_ERROR_TOKENS = ("no api key", "deepseek_api_key")
+DEEPSEEK_MESSAGE_GUIDANCE = f"[cccc] {MESSAGE_DELIVERY_GUIDANCE}"
 
 
 def _normalize_turn_error(error: Any) -> tuple[Any, bool]:
@@ -85,23 +84,35 @@ def _has_durable_completion(group: Any, event_id: str) -> bool:
 
 
 def recover_durable_terminals(group: Any, *, actor_id: str, limit: int = 256) -> int:
-    """Advance only the contiguous unread prefix covered by durable terminals."""
-    from ...kernel.inbox import set_cursor, unread_messages
+    """Settle a contiguous claimed prefix covered by durable provider terminals."""
+    from ...kernel.actors import find_actor
+    from .runtime_delivery import append_delivery_state, pending_runtime_delivery_events
 
+    aid = str(actor_id or "").strip()
+    actor = find_actor(group, aid)
+    if not aid or not isinstance(actor, dict):
+        return 0
     recovered = 0
-    for event in unread_messages(group, actor_id=str(actor_id), limit=max(1, int(limit or 256)), kind_filter="all"):
+    for event in pending_runtime_delivery_events(
+        group,
+        actor_id=aid,
+        actor_created_at=str(actor.get("created_at") or "").strip(),
+        transport="deepseek_headless",
+        limit=max(1, int(limit or 256)),
+        claim_unclaimed_chat=True,
+    ):
         event_id = str(event.get("id") or "")
         if not event_id or not _has_durable_completion(group, event_id):
             break
-        try:
-            set_cursor(
-                group,
-                str(actor_id),
-                event_id=event_id,
-                ts=str(event.get("ts") or ""),
-            )
-        except Exception:
-            break
+        append_delivery_state(
+            group,
+            actor_id=aid,
+            actor_created_at=str(actor.get("created_at") or "").strip(),
+            source_event_id=event_id,
+            state="accepted",
+            transport="deepseek_headless",
+            reason="recovered from durable provider completion",
+        )
         recovered += 1
     return recovered
 
@@ -116,7 +127,7 @@ def deliver_messages(
     supervisor = deepseek_runtime.get(group_id=str(group.group_id), actor_id=str(actor_id))
     if supervisor is None or not supervisor.session_id:
         return False
-    from .delivery import append_mcp_reply_reminder, render_single_message  # Avoid import cycle.
+    from .delivery import render_single_message  # Avoid import cycle.
     for message in messages:
         event_id = str(getattr(message, "event_id", "") or "").strip()
         if not event_id:
@@ -125,7 +136,7 @@ def deliver_messages(
             continue
         prompt = render_single_message(message)
         if str(getattr(message, "kind", "chat.message") or "chat.message") == "chat.message":
-            prompt = append_mcp_reply_reminder(prompt)
+            prompt = f"{prompt.rstrip()}\n\n{DEEPSEEK_MESSAGE_GUIDANCE}"
         request_id: int | None = None
         terminal_received = False
         try:

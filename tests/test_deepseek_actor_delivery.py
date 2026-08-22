@@ -105,12 +105,10 @@ def test_send_queues_deepseek_once_and_suppresses_generic_notify(
         patch(
             "cccc.daemon.messaging.chat_delivery_ops.request_flush_pending_messages"
         ) as request_flush,
-        patch(
-            "cccc.daemon.messaging.chat_delivery_ops.emit_system_notify"
-        ) as emit_notify,
     ):
         response = handle_send(
             {
+                "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
                 "text": text,
@@ -140,13 +138,18 @@ def test_send_queues_deepseek_once_and_suppresses_generic_notify(
     assert text in str(queue_chat_message.call_args.kwargs["text"])
     assert queue_chat_message.call_args.kwargs["deduplicate_by_event_id"] is True
     request_flush.assert_called_once_with(ANY, actor_id="deepseek-1")
-    emit_notify.assert_not_called()
+    from cccc.kernel.group import load_group
+    from cccc.kernel.inbox import iter_events
+
+    group = load_group(group_id)
+    assert group is not None
+    assert not any(str(item.get("kind") or "") == "system.notify" for item in iter_events(group.ledger_path))
 
 
-def test_deepseek_chat_prompt_includes_mcp_reply_reminder(tmp_path, monkeypatch) -> None:
+def test_deepseek_chat_prompt_includes_delivery_guidance_without_preamble(tmp_path, monkeypatch) -> None:
     from cccc.daemon.actors import deepseek_runtime
-    from cccc.daemon.messaging.deepseek_delivery import deliver_messages
-    from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE, PendingMessage
+    from cccc.daemon.messaging.deepseek_delivery import DEEPSEEK_MESSAGE_GUIDANCE, deliver_messages
+    from cccc.daemon.messaging.delivery import PendingMessage
 
     class FakeSupervisor:
         session_id = "fake-session"
@@ -180,4 +183,4 @@ def test_deepseek_chat_prompt_includes_mcp_reply_reminder(tmp_path, monkeypatch)
     assert deliver_messages(group, actor_id="deepseek-1", messages=[message]) is True
     assert len(supervisor.prompts) == 1
     assert "hello deepseek" in supervisor.prompts[0]
-    assert MCP_REMINDER_LINE in supervisor.prompts[0]
+    assert DEEPSEEK_MESSAGE_GUIDANCE in supervisor.prompts[0]

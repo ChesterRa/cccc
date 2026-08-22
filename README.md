@@ -35,12 +35,12 @@ One install command. No Rust toolchain or infrastructure required.
 
 ## Why CCCC
 
-Using multiple coding agents today usually means lost context in terminal scrollback, no proof an agent actually *read* your message, start/stop/recover operations scattered across tools, and no way to check on a long-running group from your phone. That's why most multi-agent setups stay fragile demos instead of reliable workflows.
+Using multiple coding agents today usually means lost context in terminal scrollback, no distinction between a stored message, runtime handoff, Inbox consumption, and a reply, start/stop/recover operations scattered across tools, and no way to check on a long-running group from your phone. That's why most multi-agent setups stay fragile demos instead of reliable workflows.
 
 CCCC runs your agents as one durable, coordinated system:
 
 - **Durable coordination** — working state lives in an append-only ledger, not in terminal scrollback.
-- **Visible delivery semantics** — messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
+- **Visible delivery semantics** — routing plus separate stored, runtime-delivery, read, and reply facts replace best-effort prompting.
 - **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
 - **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Grok Build, and the rest of the first-class runtimes can collaborate in one group.
 - **Group Bridge for remote teams** — trusted CCCC groups can exchange explicit messages and, when granted, inspect or work with each other's local resources.
@@ -53,7 +53,7 @@ CCCC installs with one command and needs no database, message broker, or Docker.
 | Capability | How |
 |---|---|
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
-| **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
+| **Reliable messaging** | Send / Send + Reply / Mail, separate delivery/read/reply facts, and a Mail-only Inbox consumed in ledger order — runtime handoff never pretends a message was read |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
 | **Multi-runtime orchestration** | Claude Code, Codex CLI, GitHub Copilot CLI, Cursor CLI, Devin CLI, Kiro CLI, Kilo Code CLI, Antigravity CLI, Grok Build, OpenCode, ChatGPT Web, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Group Bridge** | Connect trusted remote groups across machines or teams, starting with explicit messages and optionally granting read/full local access |
@@ -290,25 +290,26 @@ Start from **Settings > Group Bridge** in the Web UI: one side generates a one-t
 CCCC implements IM-grade messaging semantics, not just "paste text into a terminal":
 
 - **Recipient routing** — `@all`, `@peers`, `@foreman`, or specific actor IDs
-- **Read cursors** — each agent explicitly marks messages as read via MCP
+- **Three explicit modes** — Send for active delivery, Send + Reply for a concrete response, and Mail for non-interrupting Inbox delivery
+- **Separate facts** — `runtime.delivery`, Mail read cursors, replies, cancellations, and task completion never impersonate one another
+- **Consuming Inbox reads** — `cccc_inbox_read` returns the next ordered Mail batch and advances its Mail cursor atomically
 - **Reply & quote** — structured `reply_to` with quoted context
-- **Attention ACK** — priority messages require explicit acknowledgment
-- **Reply-required obligations** — tracked until the recipient responds
-- **Auto-wake** — disabled agents are automatically started when they receive a message
+- **Reply requests** — Send + Reply is tracked until the recipient responds or the sender cancels it
+- **Lifecycle boundaries** — paused, stopped, or disabled actors are not silently awakened by delivery
 - **Remote group recipients** — Group Bridge targets appear as explicit remote recipients instead of hidden broadcasts
 
-Use ordinary `send` for chat, questions, and quick requests. Use `tracked-send` when delegated work needs a durable owner, outcome, evidence, handoff, or acceptance trail. `@all` remains available for announcements or urgent shared coordination, but it should not be the default way to start concrete work.
+Use Mail for useful agent updates that can wait, Send when delayed awareness would cost more than interrupting the recipient, and Send + Reply only when a concrete answer is also required. Mail cannot target the human user. One message addresses either `user` alone or one/more agents—send separate messages instead of mixing those audiences. Use `tracked-send` when delegated work needs a durable owner, outcome, evidence, handoff, or acceptance trail. `@all` remains available for announcements or urgent shared coordination, but it should not be the default way to start concrete work.
 
-Messages are delivered to actor runtimes through the daemon-managed delivery pipeline, and the daemon tracks delivery state for every message.
+Push attempts travel through the daemon-managed delivery pipeline. Their `runtime.delivery` facts remain separate from Inbox read state and replies.
 
 ## Automation & Policies
 
-A built-in rules engine handles operational concerns so you don't have to babysit:
+A small set of delivery timers and automation rules handles operational concerns without turning every message into a prompt:
 
 | Policy | What it does |
 |--------|-------------|
-| **Nudge** | Reminds agents about unread messages after a configurable timeout |
-| **Reply-required follow-up** | Escalates when required replies are overdue |
+| **Mail notice** | Sends at most one content-free reminder after a configurable wait for concrete-recipient Mail |
+| **Reply notice** | Sends at most one reminder for an accepted Send + Reply whose reply is still open |
 | **Actor idle detection** | Notifies foreman when an agent goes silent |
 | **Keepalive** | Periodic check-in reminders for the foreman |
 | **Silence detection** | Alerts when an entire group goes quiet |
@@ -410,8 +411,7 @@ cccc reply <event_id> "response"
 cccc tail -n 50 -f             # follow the ledger
 
 # Inbox
-cccc inbox                     # show unread messages
-cccc inbox --mark-read         # mark all as read
+cccc inbox --actor-id <id>     # read and consume the next unread Mail batch
 
 # Operations
 cccc doctor                    # environment check
@@ -425,7 +425,7 @@ cccc im start|stop|status
 
 ## MCP Tools
 
-Ordinary actors always see a 13-tool collaboration core. Other built-in tools remain directly callable through `cccc_capability_use`, without exposing their full packs in every session. Web Model connectors and specialized assistants keep runtime-specific fixed surfaces where refresh or transport constraints require them.
+Ordinary actors always see a 14-tool collaboration core. Other built-in tools remain directly callable through `cccc_capability_use`, without exposing their full packs in every session. Web Model connectors and specialized assistants keep runtime-specific fixed surfaces where refresh or transport constraints require them.
 
 | Surface | Examples |
 |---------|----------|

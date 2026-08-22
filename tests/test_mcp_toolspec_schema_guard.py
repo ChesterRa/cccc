@@ -93,17 +93,25 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             ["index_sync", "context_check", "compact", "daily_flush"],
         )
 
-    def test_messaging_toolspec_priority_matches_runtime_surface(self) -> None:
-        for tool_name in ("cccc_message_send", "cccc_message_reply", "cccc_file"):
+    def test_messaging_toolspec_mode_matches_runtime_surface(self) -> None:
+        for tool_name in ("cccc_message_send", "cccc_file"):
             spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
             self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
             schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
             self.assertIsInstance(schema, dict)
             props = schema.get("properties") if isinstance(schema, dict) else {}
             self.assertIsInstance(props, dict)
-            priority = props.get("priority") if isinstance(props, dict) else {}
-            self.assertIsInstance(priority, dict)
-            self.assertEqual(priority.get("enum"), ["normal", "attention"])
+            mode = props.get("mode") if isinstance(props, dict) else {}
+            self.assertIsInstance(mode, dict)
+            self.assertEqual(mode.get("enum"), ["mail", "send", "request_reply"])
+            self.assertEqual(mode.get("default"), "mail")
+
+        reply_spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_message_reply"), None)
+        reply_props = ((reply_spec or {}).get("inputSchema") or {}).get("properties") or {}
+        reply_mode = reply_props.get("mode") or {}
+        self.assertEqual(reply_mode.get("enum"), ["send", "mail"])
+        self.assertEqual(reply_mode.get("default"), "send")
+        self.assertNotIn("priority", reply_props)
 
         file_spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_file"), None)
         file_schema = file_spec.get("inputSchema") if isinstance(file_spec, dict) else {}
@@ -148,6 +156,13 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertNotIn("insight is required", public_copy)
             self.assertNotIn("must include insight", public_copy)
 
+    def test_tracked_send_uses_task_domain_priority_only(self) -> None:
+        spec = next(item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_tracked_send")
+        props = ((spec.get("inputSchema") or {}).get("properties") or {})
+        self.assertIn("task_priority", props)
+        self.assertNotIn("priority", props)
+        self.assertNotIn("message_priority", props)
+
     def test_message_toolspec_exposes_suggested_user_message_as_optional_hint(self) -> None:
         for tool_name in ("cccc_message_send", "cccc_message_reply"):
             spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
@@ -171,6 +186,27 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("Start a new visible chat message", desc)
         self.assertIn("Do not use this to answer an existing delivered message/event", desc)
         self.assertIn("use cccc_message_reply with that event_id instead", desc)
+
+    def test_message_control_tools_are_event_bound_and_explicit(self) -> None:
+        deliver = next(
+            (item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_message_deliver"),
+            None,
+        )
+        cancel = next(
+            (item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_reply_request_cancel"),
+            None,
+        )
+        self.assertIsInstance(deliver, dict)
+        self.assertIsInstance(cancel, dict)
+        deliver_schema = (deliver or {}).get("inputSchema") or {}
+        deliver_props = deliver_schema.get("properties") or {}
+        self.assertEqual(set(deliver_schema.get("required") or []), {"source_event_id", "actor_ids"})
+        self.assertEqual((deliver_props.get("actor_ids") or {}).get("minItems"), 1)
+        self.assertEqual((deliver_props.get("force_ambiguous") or {}).get("default"), False)
+        self.assertEqual(
+            (cancel or {}).get("inputSchema", {}).get("required"),
+            ["source_event_id"],
+        )
 
     def test_task_toolspec_exposes_type_enum(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_task"), None)
@@ -283,8 +319,9 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         wait_desc = str(wait.get("description") or "") if isinstance(wait, dict) else ""
         complete_desc = str(complete.get("description") or "") if isinstance(complete, dict) else ""
         self.assertIn("when no turn was browser-delivered", wait_desc)
-        self.assertIn("does not mark messages read", wait_desc)
-        self.assertIn("whether it was browser-delivered or pulled", complete_desc)
+        self.assertIn("never changes the separate Mail cursor", wait_desc)
+        self.assertIn("exact active website-model runtime turn", complete_desc)
+        self.assertIn("never advances the separate Mail cursor", complete_desc)
 
     def test_code_exec_schema_advertises_discovery_helpers(self) -> None:
         code_exec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_code_exec"), None)

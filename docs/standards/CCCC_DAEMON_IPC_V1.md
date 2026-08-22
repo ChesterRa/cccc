@@ -5,7 +5,7 @@ Status: Draft (for CCCC v0.5.x ecosystem)
 This document defines the **daemon-facing client contract** for CCCC: how a client (CLI/Web/MCP bridge/SDK) discovers the daemon endpoint, frames requests, and calls daemon operations.
 
 It is intentionally narrow:
-- **CCCS v1** (`docs/standards/CCCS_V1.md`) defines the *semantic collaboration substrate* (event envelope + kinds + attention/ack).
+- **CCCS v1** (`docs/standards/CCCS_V1.md`) defines the *semantic collaboration substrate* (event envelope + kinds + delivery/read/reply facts).
 - This document defines the *transport + RPC layer* used by CCCC today (newline-delimited JSON over a local socket/TCP).
 
 ## 0. Conformance Language
@@ -166,7 +166,7 @@ type EventStreamItem =
 Rules:
 - Clients MUST ignore unknown `t` values.
 - `heartbeat` items MUST NOT be appended to the group ledger; they are transport-level keepalives.
-- Streams are best-effort: clients MUST tolerate disconnects, duplicates, and gaps (use `inbox_list` or a ledger read to reconcile).
+- Streams are best-effort: clients MUST tolerate disconnects, duplicates, and gaps (use `inbox_peek` or a ledger read to reconcile).
 
 ### 4.6 Streaming Upgrade: `presentation_browser_attach` / VNC attach (Optional)
 
@@ -1444,8 +1444,10 @@ Result: the `group_preamble_get` result plus `changed: boolean`.
 
 #### `group_help_get`
 
-Read the effective group collaboration reference from the canonical
-`CCCC_HELP.md` override or the built-in fallback. When `actor_id` is supplied,
+Read the effective group collaboration reference. The built-in
+`## Canonical Message Delivery` section is always authoritative and is composed
+with the group's `CCCC_HELP.md` as an additive overlay; an overlay section with
+the same heading is ignored. When `actor_id` is supplied,
 the daemon MUST apply the document's `## @role:`, `## @actor:`, and
 `## @voice_secretary` visibility rules before returning `markdown`. Runtime-only
 MCP addenda are outside this operation and MAY be appended by the MCP adapter.
@@ -1623,10 +1625,14 @@ Args:
 { group_id: string; by?: string; patch: Record<string, unknown> }
 ```
 
-Patch keys used by CCCC v0.4.x include:
+Patch keys used by CCCC include:
 - Messaging: `default_send_to`
-- Delivery: `min_interval_seconds`, `auto_mark_on_delivery`
-- Automation: `nudge_after_seconds`, `reply_required_nudge_after_seconds`, `attention_ack_nudge_after_seconds`, `unread_nudge_after_seconds`, `nudge_digest_min_interval_seconds`, `nudge_max_repeats_per_obligation`, `nudge_escalate_after_repeats`, `actor_idle_timeout_seconds`, `keepalive_delay_seconds`, `keepalive_max_per_actor`, `silence_timeout_seconds`, `help_nudge_interval_seconds`, `help_nudge_min_messages`
+- Delivery: `min_interval_seconds`, `mail_notice_after_seconds` (default 1800,
+  zero disables), `reply_notice_after_seconds` (default 900, zero disables)
+- Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
+  `keepalive_max_per_actor`,
+  `silence_timeout_seconds`, `help_nudge_interval_seconds`,
+  `help_nudge_min_messages`
 - Terminal transcript: `terminal_transcript_visibility`, `terminal_transcript_notify_tail`, `terminal_transcript_notify_lines`
 
 Result:
@@ -2514,7 +2520,6 @@ Args:
   artifact_paths?: string[]      // repo-relative produced docs/artifacts for user-visible links
   source_event_id?: string
   priority?: "low" | "normal" | "high" | "urgent"
-  requires_ack?: boolean
 }
 ```
 
@@ -2590,7 +2595,6 @@ Args:
             snippet_ref?: string | null
             message?: string
             priority?: "low" | "normal" | "high" | "urgent"
-            requires_ack?: boolean
           }
         | { kind: "group_state"; state?: "active" | "idle" | "paused" | "stopped" }
         | { kind: "actor_control"; operation?: "start" | "stop" | "restart"; targets?: string[] }
@@ -3176,7 +3180,8 @@ Result:
 
 #### `send`
 
-Append a `chat.message` event to the group ledger and trigger best-effort delivery to running actors.
+Append a `chat.message` event. `message_mode` is required and is the only
+chat-delivery selector.
 
 Args (core):
 ```ts
@@ -3185,7 +3190,7 @@ Args (core):
   text: string
   by?: string
   to?: string[]                 // recipient tokens (empty = broadcast)
-  priority?: "normal" | "attention"
+  message_mode: "send" | "request_reply" | "mail"
   path?: string                 // optional filesystem path to attribute scope_key
   attachments?: unknown[]       // attachment refs (implementation-defined)
   refs?: ReferenceV1[]          // structured message refs, e.g. presentation_ref/task_ref
@@ -3195,13 +3200,77 @@ Args (core):
   src_event_id?: string
   dst_group_id?: string         // optional "send record" metadata (source messages)
   dst_to?: string[]
+  dst_message_mode?: "send" | "request_reply" | "mail"
 }
 ```
 
 Result:
 ```ts
-{ event: CCCSEventV1 } // kind="chat.message"
+{
+  event: CCCSEventV1 // kind="chat.message"
+  message_mode: "send" | "request_reply" | "mail"
+}
 ```
+
+`send` and `request_reply` preflight the concrete runtime audience, append the
+message, and then attempt prompt delivery. `mail` appends only; it MUST NOT wake,
+steer, queue, open a browser, or write to a runtime input. `request_reply` MUST
+resolve to explicit concrete recipients and rejects broadcast selectors. New
+daemon callers MUST send `message_mode`; missing or old `priority`,
+`reply_required`, or `requires_ack` fields fail validation.
+After aliases and selectors are normalized, one message MUST address either the
+human user or one or more agents, never both. `mail` is valid only for agent
+recipients. Mixed audiences fail with `mixed_recipient_kinds`; Mail addressed to
+the user fails with `mail_requires_actor_recipient`. Validation occurs before
+the message, blobs, delivery claims, or other side effects are written.
+The immediate response confirms ledger acceptance and echoes the canonical mode;
+it is not transport evidence. Per-recipient delivery truth is reported only by
+daemon-authored `runtime.delivery` events and the corresponding status queries.
+
+#### `message_upload_preflight`
+
+Validate a Web-owned staged upload before its temporary files are committed to
+the group blob store. This operation is side-effect free and exists so both Web
+implementations use the selected daemon's canonical send/reply rules rather than
+reimplementing recipient and idempotency policy in the HTTP port.
+
+Args:
+```ts
+{
+  operation: "send" | "reply"
+  group_id: string
+  text?: string
+  by?: string
+  to?: string[]
+  message_mode: "send" | "request_reply" | "mail"
+  reply_to?: string             // required when operation="reply"
+  path?: string
+  client_id?: string
+  refs?: ReferenceV1[]
+  insight?: string
+  require_peer_insight?: boolean
+  has_attachments: boolean      // temporary upload parts exist; no blob refs yet
+}
+```
+
+Result:
+```ts
+{ ready: true }
+// or, when client_id already identifies an accepted message:
+{
+  ready: false
+  duplicate: true
+  result: { event: CCCSEventV1; message_mode: "send" | "request_reply" | "mail" }
+}
+```
+
+The operation MUST perform the deterministic validation used by the eventual
+`send` or `reply`, including mode, audience, target, scope, Insight, content,
+and successful-idempotency lookup, without waking actors, changing group state,
+writing the ledger, storing blobs, or starting delivery. A duplicate result MUST
+be returned before an upload is committed. The HTTP port MUST discard its staged
+files on either rejection or duplicate replay. The eventual `send` or `reply`
+MUST validate again at the commit boundary; preflight is not a reservation.
 
 #### `send_files`
 
@@ -3218,8 +3287,7 @@ Args:
   text?: string                 // defaults to a compact file notice
   by?: string
   to?: string[]
-  priority?: "normal" | "attention"
-  reply_required?: boolean
+  message_mode: "send" | "request_reply" | "mail"
   insight?: string
   client_id?: string
 }
@@ -3227,17 +3295,20 @@ Args:
 
 Every resolved path MUST be a regular file beneath the group's active scope.
 All paths are validated and read before any message is appended. The resulting
-event uses the normal `send` recipient, permission, wake, and delivery rules.
+event uses the selected `message_mode` recipient, permission, and delivery rules.
 If `client_id` already identifies an accepted message, the daemon MUST return
 that message before reading or storing new source content. After source paths
 have been validated and read, deterministic normal-send validation (including
-priority, recipients, and required peer insight) MUST succeed before any new
+message mode, recipients, and required peer insight) MUST succeed before any new
 blob is stored. A request rejected by that preflight MUST NOT add a blob or
 ledger event.
 
 Result:
 ```ts
-{ event: CCCSEventV1 } // kind="chat.message", data.attachments contains stored blobs
+{
+  event: CCCSEventV1 // kind="chat.message", data.attachments contains stored blobs
+  message_mode: "send" | "request_reply" | "mail"
+}
 ```
 
 #### `reply`
@@ -3256,7 +3327,7 @@ Args:
   text: string
   by?: string
   to?: string[]                 // local: original sender; Group Bridge: preserved remote return target
-  priority?: "normal" | "attention"
+  message_mode?: "send" | "mail" // default: "send"
   attachments?: unknown[]
   refs?: ReferenceV1[]
   insight?: string
@@ -3264,10 +3335,20 @@ Args:
 }
 ```
 
+Replies default to `message_mode="send"`. Callers MAY choose
+`message_mode="mail"` when fulfilling the original reply obligation does not
+justify immediately prompting the recipient. Both modes fulfill the original
+reply obligation; `message_mode="request_reply"` is invalid for a reply and a
+reply cannot create another generic reply obligation.
+Mail replies are valid only when every reply recipient is an agent. A reply to
+the human user MUST use Send. Replies also reject a recipient list that mixes
+the human user with agents.
+
 Result:
 ```ts
 {
   event: CCCSEventV1 // kind="chat.message"
+  message_mode: "send" | "mail"
   group_bridge_reply?: { receipt?: unknown, error?: unknown }
 }
 ```
@@ -3287,12 +3368,11 @@ Args:
   to?: string[]
   outcome?: string
   checklist?: { text: string; status?: "pending" | "in_progress" | "done" | string }[]
+  task_priority?: string        // task-domain priority; does not affect message delivery
   assignee?: string             // defaults from one concrete to actor when possible
   waiting_on?: "none" | "user" | "actor" | "external"
   handoff_to?: string
   notes?: string
-  priority?: "normal" | "attention"
-  reply_required?: boolean      // default true
   idempotency_key?: string
   refs?: ReferenceV1[]
   insight?: string
@@ -3307,6 +3387,7 @@ Result:
   task_ref: ReferenceV1          // kind="task_ref"
   event?: CCCSEventV1            // present when message_sent=true
   event_id?: string
+  message_mode?: "send"          // present when message_sent=true
   task_created: boolean
   message_sent: boolean
   partial_failure: boolean
@@ -3316,6 +3397,10 @@ Result:
 
 Notes:
 - `task_ref` in the emitted `chat.message.data.refs` is the canonical message-task link.
+- The linked visible message always uses `message_mode="send"`; task lifecycle
+  is the only completion authority for tracked work.
+- `priority`, `message_priority`, and `reply_required` are rejected; callers use
+  `task_priority` only for the task-domain field.
 - If task creation fails, no message is sent.
 - If message delivery fails after task creation, the response MUST report `partial_failure=true`.
 - Successful retries SHOULD use `idempotency_key` / `client_request_id` to avoid duplicate task/message pairs.
@@ -3323,12 +3408,14 @@ Notes:
 #### `send_cross_group`
 
 Cross-group send implemented as:
-1) Write a source `chat.message` in the origin group (with `dst_group_id` / `dst_to` metadata).
+1) Write a source `chat.message` in the origin group as a local Send to `user`,
+   with the actual remote `dst_group_id`, `dst_to`, and `dst_message_mode`
+   metadata.
 2) Write a forwarded `chat.message` in the destination group with `src_group_id` / `src_event_id` provenance.
 
 Args:
 ```ts
-{ group_id: string; dst_group_id: string; text: string; by?: string; to?: string[]; priority?: "normal" | "attention"; insight?: string; require_peer_insight?: boolean }
+{ group_id: string; dst_group_id: string; text: string; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean }
 ```
 
 Result:
@@ -3345,50 +3432,121 @@ Notes:
 
 The check MUST occur after routing and successful-idempotency lookup, but before this request creates a new message, task, actor wake, or remote outbox entry. The recommended error code is `peer_insight_required`, with `details.delivery_state="not_sent"` and `details.new_side_effects=false`. Invalid Insight type or length SHOULD use `invalid_insight` instead. Existing accepted idempotent operations MUST replay their original result without being reinterpreted by a newer profile requirement.
 
-For a legacy Group Bridge wire that does not advertise structured Insight, an implementation MAY flatten the perspective into remote text with an explicit sender-perspective label. It MUST NOT infer structured `insight` back from that text.
+Group Bridge peers MUST advertise the current message contract version before
+messages are exchanged. There is no legacy field mapping or silent downgrade.
 
-#### `chat_ack`
+#### `reply_request_cancel`
 
-Append a `chat.ack` event (attention acknowledgement).
+Cancel every still-open recipient obligation for an existing
+`message_mode="request_reply"` message.
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; event_id: string; by?: string }
+{ group_id: string; source_event_id: string; by?: string }
 ```
 
 Result:
 ```ts
-{ acked: boolean; already: boolean; event: CCCSEventV1 | null }
+{ event: CCCSEventV1 } // kind="chat.reply_request.cancelled"
 ```
 
-The target MUST be an `attention` `chat.message` addressed to `actor_id` during
-that actor id's current generation, and the sender cannot acknowledge its own
-message. Generation membership is determined by ledger append order from the
-latest `actor.add`, never by event timestamps. Invalid targets append no event.
-If that actor has already acknowledged the message, the operation is
-idempotent and returns `acked=true`, `already=true`, and `event=null`.
+Only the source sender or `user` may cancel. The operation is idempotent for an
+already-cancelled source event.
 
-### 8.7 Inbox (Read Cursor)
+#### `message_deliver`
 
-#### `inbox_list`
-
-Return unread `chat.message` and/or `system.notify` events for an actor based on its read cursor.
-The current actor generation begins at the latest `actor.add` for that actor id in
-ledger append order. Inbox membership, read/ACK/obligation status, and automatic
-delivery MUST exclude events before that boundary, including after an actor is
-removed and re-added with the same id. Histories with no recoverable `actor.add`
-boundary MAY fall back to the actor and event timestamps for compatibility.
-When a cursor contains a resolvable `event_id`, cursor advancement, unread membership,
-read status, and obligation status MUST use ledger append order. The cursor `ts` is
-informational and a compatibility fallback only; equal or regressed timestamps MUST
-NOT change event coverage.
-`kind_filter` MUST be validated before reading or mutating state. Filtering is applied
-before `limit`; an unsupported value fails with `invalid_kind_filter` rather than
-broadening to `all`.
+Explicitly attempt prompt delivery for one existing message without appending
+a second `chat.message`. This promotes Mail or retries a blocked/failed Send.
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; by?: string; limit?: number; kind_filter?: "all" | "chat" | "notify" }
+{
+  group_id: string
+  source_event_id: string
+  actor_ids: string[]
+  by?: string
+  force_ambiguous?: boolean // default false; explicit warning/confirmation required
+}
+```
+
+Only the source sender or `user` may request delivery. Recipients MUST be
+explicit concrete recipients of the source event. Existing `accepted` evidence
+is never retried. Existing `claimed` evidence reports `delivery_in_progress`.
+Existing `ambiguous` evidence is rejected unless `force_ambiguous=true`.
+Paused or stopped groups return `delivery_blocked` without creating a delivery
+claim. A successful request records all claims before returning:
+
+```ts
+{
+  event: CCCSEventV1
+  actor_ids: string[]
+  delivery_state: "claimed"
+}
+```
+
+Terminal per-recipient states remain authoritative in `runtime.delivery` and
+the normal message-status projection; they may settle before or after this
+operation returns.
+
+#### Delivery evidence, Mail notice, and reply notice
+
+For each concrete recipient handoff, the daemon appends `runtime.delivery`
+using the CCCS contract. `claimed` precedes external I/O; `accepted`, `failed`,
+or `ambiguous` records the outcome. A transport queue accepting a payload is an
+accepted handoff; it is not a claim that the model understood it. Automatic
+retry is forbidden after `accepted` or `ambiguous`. Concurrent claimants treat
+`claimed` as in-progress. Daemon startup settles claims stranded by the prior
+daemon process to `ambiguous` before attempting runtime recovery.
+
+Mail is eligible for an active notice for one recipient only while all of these
+hold: the source event belongs to the recipient's current actor generation, is
+unread, has `message_mode="mail"`, has no reply from that recipient, and has no
+accepted or ambiguous manual-delivery record. Reply and manual delivery suppress
+only the active notice; neither advances the Mail cursor nor removes the message
+from `inbox_peek` / `inbox_read`. Concrete-recipient Mail batches retain the
+earliest eligible deadline. New Mail does not reset it. Broadcast-like Mail
+remains visible in the Inbox but does not start an active runtime notice timer.
+
+After `mail_notice_after_seconds`, an active/idle enabled actor may receive one
+content-free `system.notify(kind="mail_notice")` for the concrete batch. The
+notice states only that Mail is waiting and directs the actor to `inbox_read`;
+it does not copy message bodies, repeat, escalate, or create another Inbox
+obligation. Bootstrap, the next explicit Push, and low-frequency coordination
+responses MAY carry a passive `mail_pending` count without writing a notice.
+
+A `request_reply` obligation starts its timer only after an accepted runtime
+delivery. If no matching `reply_to`
+message or cancellation has closed it by `reply_notice_after_seconds`, an
+active/idle enabled actor may receive one content-free
+`system.notify(kind="reply_notice")`. It never repeats or escalates. Failed,
+blocked, or ambiguous delivery does not nudge the recipient.
+
+Paused, stopped, or disabled actors are never woken for either notice. Pending
+Mail is surfaced at the next start/resume bootstrap and begins a fresh notice
+window. Explicit start/resume may recover only blocked Push work from the
+current actor generation that has no accepted/ambiguous delivery evidence;
+Mail is never automatically promoted. No implementation may depend on a
+universal runtime "idle" detector.
+
+### 8.7 Inbox (Mail Cursor)
+
+#### `inbox_peek`
+
+Return unread `chat.message` events whose `message_mode="mail"` without changing
+the Mail cursor. This is for UI polling, bootstrap previews, and diagnostics;
+agent tooling SHOULD use `inbox_read`. Send, Send + Reply, and `system.notify`
+events are never members of this projection.
+
+The current actor generation begins at the latest `actor.add` for that actor id
+in ledger append order. Inbox membership and Mail read status MUST exclude
+events before that boundary, including after an actor is removed and re-added
+with the same id. When a cursor contains a resolvable `event_id`, cursor
+advancement and unread membership MUST use ledger append order; timestamp is
+informational only.
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; limit?: number }
 ```
 
 Result:
@@ -3396,43 +3554,86 @@ Result:
 { messages: CCCSEventV1[]; cursor: { event_id: string; ts: string } }
 ```
 
-#### `inbox_mark_read`
+#### `inbox_read`
 
-Advance the actor read cursor to at least `event_id` and append a `chat.read` event.
+Atomically return and consume the next unread Mail prefix for an actor.
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; event_id: string; by?: string }
+{ group_id: string; actor_id: string; by?: string; limit?: number }
 ```
 
 Result:
 ```ts
 {
+  messages: CCCSEventV1[]
   cursor: { event_id: string; ts: string; updated_at: string }
-  event: CCCSEventV1
-  ack_event?: CCCSEventV1 | null
+  event: CCCSEventV1 | null
 }
 ```
 
-When the recipient performs an explicit self-action (`by == actor_id`) on an
-`attention` message, the daemon MAY also append a distinct `chat.ack` and
-return it as `ack_event`. A read cursor alone MUST NOT be reported as an ACK;
-the `chat.ack` event remains the only attention completion signal.
+Selection, `mail.read` append, Mail cursor persistence, and returned messages
+MUST be one consuming operation under the canonical ledger/cursor transaction
+boundary. Ordering is the append order of the Mail projection: non-Mail events
+between two Mail events are intentionally skipped and do not acquire read
+state. If the event or cursor write fails, the operation returns no message
+bodies. An empty Inbox returns `messages=[]` and `event=null` without moving the
+cursor.
 
-#### `inbox_mark_all_read`
+The ledger `mail.read` event is the authoritative commit record; the cursor file
+is a rebuildable projection. Implementations MUST persist
+`state/read_cursors.pending.json` before appending `mail.read`, append the event
+before advancing the cursor projection, and clear the marker after both writes
+commit. The shared recovery marker is:
 
-Advance the actor read cursor to the latest currently-unread event (for the chosen kind filter) and append a `chat.read` event.
-An invalid `kind_filter` fails with `invalid_kind_filter` and MUST NOT advance the cursor.
+```json
+{
+  "schema": 1,
+  "group_id": "...",
+  "actor_id": "peer1",
+  "expected": {"event_id": "...", "ts": "..."},
+  "target": {"event_id": "...", "ts": "...", "updated_at": "..."}
+}
+```
+
+After interruption, a matching `mail.read` fact completes the target cursor;
+without that fact the marker is discarded and the old cursor remains. Recovery
+MUST never move an already-later cursor backward. This makes a process exit
+between the two durable writes recoverable without replaying or silently
+skipping Mail.
+
+The canonical cursor file is `state/read_cursors.json` with
+`{"schema":1,"cursors":{...}}`. Documents without this Mail-specific schema
+are not delivery boundaries and MUST be ignored; in particular, a cursor from
+the former all-message read model cannot suppress Mail.
+
+#### `message_history`
+
+Return an actor-visible, non-consuming history of `chat.message` events. This is
+the explicit path for inspecting past Send or Send + Reply traffic; it does not
+change the Mail cursor.
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; by?: string; kind_filter?: "all" | "chat" | "notify" }
+{
+  group_id: string
+  actor_id: string
+  by?: string
+  mode?: "all" | "send" | "request_reply" | "mail"
+  query?: string
+  before_event_id?: string
+  limit?: number
+}
 ```
 
 Result:
 ```ts
-{ cursor: { event_id: string; ts: string; updated_at: string }; event: CCCSEventV1 | null }
+{ messages: CCCSEventV1[]; has_more: boolean }
 ```
+
+Results are newest-first, limited to the actor's current generation, and MUST
+contain only messages sent by or addressed to that actor. The operation is
+read-only and MUST NOT append `mail.read` or mutate any delivery state.
 
 ### 8.8 Context and Tasks
 
@@ -3824,18 +4025,6 @@ Result:
 { state: Record<string, unknown> | null }
 ```
 
-#### `headless_ack_message`
-
-Args:
-```ts
-{ group_id: string; actor_id: string; message_id: string }
-```
-
-Result:
-```ts
-{ message_id: string; acked_at: string }
-```
-
 ### 8.10 System Notifications (Not Chat)
 
 #### `system_notify`
@@ -3851,7 +4040,6 @@ Args:
   message?: string
   target_actor_id?: string | null
   im_visibility?: "internal" | "public" // default: "internal"
-  requires_ack?: boolean
   context?: Record<string, unknown>
 }
 ```
@@ -3866,22 +4054,9 @@ Result:
 { event: CCCSEventV1 } // kind="system.notify"
 ```
 
-#### `notify_ack`
-
-Args:
-```ts
-{ group_id: string; actor_id: string; notify_event_id: string; by?: string }
-```
-
-Result:
-```ts
-{ event: CCCSEventV1 } // kind="system.notify_ack"
-```
-
-`notify_ack` is self-only: `by`, when supplied, MUST equal `actor_id`; when it
-is omitted, the daemon attributes the event to `actor_id`. The target MUST be a
-`system.notify` addressed to that current actor, or a broadcast visible to that
-actor. Invalid principals, actors, event kinds, or recipients append no event.
+There is no generic notification acknowledgement operation. Domain workflows
+must expose domain lifecycle operations; chat reply obligations use
+`request_reply` and `reply_request_cancel`.
 
 ### 8.11 Terminal Diagnostics and PTY Attach
 
@@ -4375,11 +4550,12 @@ Handshake result:
 
 Streaming mode:
 - The daemon pushes NDJSON `EventStreamItem` lines (see §4.5).
-- A daemon may initially emit only a subset of event kinds. CCCC v0.4.x streams these kinds:
-  - `chat.message`, `chat.ack`, `system.notify`, `system.notify_ack`
+- A daemon may initially emit only a subset of event kinds. CCCC streams these kinds:
+  - `chat.message`, `mail.read`, `chat.reply_request.cancelled`,
+    `runtime.delivery`, `system.notify`
 - When `kinds` is provided, only matching event kinds SHOULD be emitted.
-- If `by` identifies an `actor_id`, a daemon MAY apply the same visibility rules as inbox delivery (e.g., only deliver `chat.message`/`system.notify` addressed to that actor and exclude the actor’s own `chat.message` events).
-- Resume (`since_event_id` / `since_ts`) is best-effort in v1; clients MUST be able to reconcile using `inbox_list`.
+- If `by` identifies an `actor_id`, a daemon MAY apply the same recipient-routing visibility rules used by messaging (e.g., only emit `chat.message`/`system.notify` addressed to that actor and exclude the actor’s own `chat.message` events). This stream filter is independent of the Mail-only Inbox projection.
+- Resume (`since_event_id` / `since_ts`) is best-effort in v1; clients MUST be able to reconcile using `inbox_peek`.
 - The stream ends when the client closes the connection or the daemon exits.
 - To protect daemon responsiveness, a daemon MAY drop slow subscribers (clients SHOULD reconnect and reconcile).
 
@@ -4728,8 +4904,7 @@ The daemon accepts the Python-compatible Group Bridge operations:
 Implementations MUST persist delivery receipts and MUST NOT create duplicate
 events when the same registration and idempotency key are retried.
 The canonical receipt lifecycle is `queued`, `sending`, `retrying`, `sent`, or
-`failed`; `sent` and `failed` are terminal. Readers MUST also treat the legacy
-Rust success value `delivered` as terminal, but new receipts MUST write `sent`.
+`failed`; `sent` and `failed` are terminal.
 
 For a new outbound message, the source-group `chat.message` MUST be appended
 idempotently before any remote transport side effect. Its event ID MUST be sent
@@ -4739,6 +4914,11 @@ remote receipt MUST be projected into the source ledger as one idempotent
 `chat.cross_group_receipt`; transport state belongs in that receipt, not in the
 immutable source message. A remote reply may reuse the local reply event that was
 already appended instead of creating a second source message.
+The source-group record is a human-visible audit record, not a local copy of the
+remote delivery contract: it MUST use local `to=["user"]` and
+`message_mode="send"`, while `dst_to` and `dst_message_mode` preserve the remote
+audience and mode. The remote payload and destination event independently apply
+the one-audience-domain and agent-only Mail rules.
 The receipt field `projected` is local bookkeeping only. Implementations MUST
 ignore a peer-supplied `projected` value and establish projection from trusted
 local receipt state or the source ledger.
@@ -5502,11 +5682,101 @@ Args:
 
 Result has the same shape as `web_model_delivery_preferences_get`. The operation is user-only and MUST reject other modes. A runtime turn snapshots the effective mode in `turn.delivery.web_model_mode`; a preference change therefore applies to the next accepted delivery, not a delivery already in flight.
 
-`image_compat` is an experimental ChatGPT transport workaround. The browser adapter MUST attach exactly one CCCC-owned blank PNG before invoking Send, MUST NOT use the OS clipboard, and MUST leave the cursor uncommitted if attachment fails before a submit action. The mode does not select or change the ChatGPT model.
+`image_compat` is an experimental ChatGPT transport workaround. The browser adapter MUST attach exactly one CCCC-owned blank PNG before invoking Send and MUST NOT use the OS clipboard. An attachment failure before a submit action MUST settle the delivery attempt as `failed`; it MUST NOT affect the Mail cursor. The mode does not select or change the ChatGPT model.
+
+#### `runtime_wait_next_turn`
+
+Accept one pending structured-runtime delivery turn. This operation is mutating:
+it claims work, records pull delivery as accepted, and sets the actor's active
+turn. It MUST NOT advance the Mail cursor.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id: string
+  by: string                 // MUST equal actor_id
+  limit?: number             // 1..20, default 20
+  transport?: "web_model_pull" | "web_model_browser" // internal browser owner only
+}
+```
+
+`kind_filter` is not supported. Runtime delivery selects only pending direct
+delivery work; ordinary `message_mode="mail"` messages remain in Inbox until an
+explicit promotion or a mailbox notice creates direct work.
+
+Result is one of:
+```ts
+{ status: "stopped"; turn: null }
+{ status: "turn_in_progress"; turn: null; active_turn_id: string; event_ids: string[] }
+{ status: "idle"; turn: null; suggested_retry_after_ms: number }
+{
+  status: "work_available"
+  turn: {
+    turn_id: string
+    group_id: string
+    actor_id: string
+    event_ids: string[]      // exact canonical delivery batch
+    latest_event_id: string
+    latest_ts: string
+    messages: Event[]
+    coalesced_text: string
+    system_prompt: string
+    delivery: {
+      mode: "runtime_delivery"
+      transport: "web_model_pull" | "web_model_browser"
+      max_events: number
+      web_model_mode: "standard" | "image_compat"
+    }
+  }
+}
+```
+
+For `web_model_pull`, every returned source event MUST already have a durable
+`runtime.delivery` state of `accepted`. For `web_model_browser`, this operation
+only establishes the browser claim; `web_model_browser_delivery_record` settles
+the claim after the submit boundary. A second wait while the actor owns an active
+turn MUST return `turn_in_progress` and MUST NOT replace that turn.
+
+#### `runtime_complete_turn`
+
+Close the actor's exact active structured-runtime turn after processing.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id: string
+  by: string                 // MUST equal actor_id
+  turn_id: string
+  event_ids: string[]        // MUST exactly equal the active turn event_ids
+  status?: "done" | "partial" | "failed" | "cancelled" // default done
+  summary?: string
+}
+```
+
+`latest_event_id` is not supported. Every supplied event MUST already have a
+terminal handoff fact (`runtime.delivery=accepted|ambiguous`) for this actor.
+Completion records runtime progress and releases the active turn; every status,
+including `done`, MUST leave the Mail cursor unchanged. An actor consumes
+Inbox contents only through `inbox_read` / `cccc_inbox_read`.
+
+Common result fields:
+```ts
+{
+  status: "done" | "partial" | "failed" | "cancelled"
+  turn_id: string
+  processed_event_ids: string[]
+  followup_delivery_scheduled: boolean
+  summary: string
+}
+```
 
 #### `web_model_runtime_recover_turn`
 
-Rebuild a previously committed Web Model turn without changing runtime state or the actor cursor. This is used only to inspect and safely migrate legacy browser-delivery state.
+Rebuild a previously handed-off Web Model turn without changing runtime state,
+delivery state, or the actor Mail cursor. This is used only to reconcile a
+persisted browser-delivery attempt after process interruption.
 
 Args:
 ```ts
@@ -5528,15 +5798,17 @@ Result:
     coalesced_text: string
     system_prompt: string
     delivery: {
-      mode: "recovery_no_cursor_mutation"
-      cursor_committed: true
+      mode: "recovery_no_delivery_mutation"
       web_model_mode: "standard" | "image_compat"
     }
   }
 }
 ```
 
-Every event MUST exist, be addressed to the actor, have a supported turn kind, and already be covered by that actor's cursor. The operation MUST NOT roll the cursor back, change active runtime state, or create a completion receipt.
+Every event MUST exist, be addressed to the actor, have a supported turn kind,
+and already have a terminal handoff fact (`runtime.delivery=accepted|ambiguous`).
+The operation MUST NOT change delivery state, read state, active runtime state,
+or completion state.
 
 #### `web_model_browser_delivery_record` (internal)
 
@@ -5554,7 +5826,6 @@ Args:
   turn_id: string
   event_ids: string[]        // 1..20 addressed chat.message/system.notify IDs
   delivery_id: string
-  cursor_committed?: boolean
   browser_delivery: {
     state: "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed"
     detail?: string
@@ -5577,7 +5848,7 @@ Each call appends an ordinary
 `web_model.browser_delivery.<state>` event. Status projection uses the latest
 such event in ledger order for every referenced message. Observation failures
 MUST remain independent from browser submission and
-`web_model_runtime_complete_turn`: they may reduce status visibility, but MUST
+`runtime_complete_turn`: they may reduce status visibility, but MUST
 NOT turn a verified ChatGPT submission into a failed or duplicate delivery.
 
 #### `web_model_browser_attach`

@@ -3,19 +3,18 @@
 This module handles:
 1. Lazy Preamble: System prompt is delivered with the first message, not at actor startup
 2. Message Throttling: Batches messages within a time window to prevent message bombing
-3. MCP Reminders: Periodically reminds actors to use MCP tools for messaging
-4. Delivery Formatting: Renders messages in IM-style format for PTY injection
-5. State-aware Delivery: Respects group state (active/idle/paused)
+3. Delivery Formatting: Renders messages in IM-style format for PTY injection
+4. State-aware Delivery: Respects group state (active/idle/paused)
 
 Key design decisions:
 - delivery_min_interval_seconds: Minimum interval between deliveries (default 0s)
 - Messages within the window are batched and delivered together
-- Reminders are injected every N chat messages (per actor) to reduce "stdout-only" replies
+- Stable messaging guidance lives in the canonical system prompt; payloads add only message-specific control lines
 
 Group State Behavior:
 - active: All messages delivered normally
 - idle: chat.message + system.notify delivered (no auto state transition)
-- paused: All runtime delivery blocked (messages accumulate in inbox only)
+- paused: All runtime delivery blocked (direct work remains pending in the ledger)
 """
 from __future__ import annotations
 
@@ -32,9 +31,8 @@ logger = logging.getLogger("cccc.delivery")
 
 from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
-from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
-from ...kernel.inbox import cursor_covers_event, get_cursor, is_message_for_actor, set_cursor, unread_messages
+from ...kernel.inbox import is_message_for_actor
 from ...kernel.ledger import append_event
 from ...kernel.runtime import (
     build_prompt_assisted_mcp_setup_prompt,
@@ -83,13 +81,7 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
     min_interval = max(0, min_interval)
     return {
         "min_interval_seconds": min_interval,
-        "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
     }
-
-
-def _get_auto_mark_on_delivery(group: Group) -> bool:
-    """Get auto_mark_on_delivery setting from group.yaml delivery config."""
-    return auto_mark_on_delivery_from_doc(group.doc.get("delivery"))
 
 
 def _pty_submit_sequence_for_actor(actor: Any) -> tuple[bytes, ...]:
@@ -108,11 +100,6 @@ def _pty_submit_sequence_for_actor(actor: Any) -> tuple[bytes, ...]:
     return (b"\r",)
 
 
-def should_auto_mark_on_delivery(group: Group) -> bool:
-    """Public helper for delivery-callers that need the current auto-mark policy."""
-    return _get_auto_mark_on_delivery(group)
-
-
 # ============================================================================
 # State-aware Delivery Helpers
 # ============================================================================
@@ -126,12 +113,12 @@ def should_deliver_message(group: Group, kind: str) -> bool:
         kind: Message kind ("chat.message" or "system.notify")
     
     Returns:
-        True if the message should be delivered to a runtime, False if it should only go to inbox
+        True if the event may be delivered to a runtime, False if delivery must remain pending
     
     State behavior:
         - active: All messages delivered
         - idle: chat.message + system.notify delivered (no auto state transition here)
-        - paused: All messages blocked (inbox only)
+        - paused: All messages blocked (direct work remains pending in the ledger)
         - stopped: All messages blocked (no actor runtime delivery)
     """
     state = get_group_state(group)
@@ -289,7 +276,6 @@ class PendingMessage:
     notify_kind: str = ""  # For system.notify: nudge, keepalive, etc.
     notify_title: str = ""
     notify_message: str = ""
-    advances_cursor: bool = True
 
 
 @dataclass
@@ -299,7 +285,6 @@ class ActorDeliveryState:
     last_attempt_at: Optional[datetime] = None
     pending_messages: List[PendingMessage] = field(default_factory=list)
     recent_event_ids: Dict[str, None] = field(default_factory=dict)
-    delivered_chat_count: int = 0  # Count of delivered chat.message (per actor, in-memory)
     delivery_inflight: bool = False  # True while a background/synchronous delivery chain owns this actor
 
 
@@ -309,7 +294,6 @@ class DeliveryThrottle:
     Key behavior:
     - Messages are queued and delivered in batches
     - Minimum interval between deliveries is configurable (default 0s)
-    - A periodic reminder can be injected by the delivery layer
     """
     
     def __init__(self) -> None:
@@ -434,7 +418,7 @@ class DeliveryThrottle:
             state.pending_messages = list(messages) + state.pending_messages
 
     def recover_front(self, group_id: str, actor_id: str, messages: List[PendingMessage]) -> int:
-        """Prepend canonical unread work without duplicating queued event IDs."""
+        """Prepend pending direct work without duplicating queued event IDs."""
         if not messages:
             return 0
         with self._lock:
@@ -486,21 +470,6 @@ class DeliveryThrottle:
                 wait_seconds = max(wait_seconds, float(DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS) - elapsed_attempt)
             return max(0.0, wait_seconds)
 
-    def get_delivered_chat_count(self, group_id: str, actor_id: str) -> int:
-        """Get delivered chat.message count for an actor (in-memory)."""
-        with self._lock:
-            state = self._get_state(group_id, actor_id)
-            return int(state.delivered_chat_count or 0)
-
-    def add_delivered_chat_count(self, group_id: str, actor_id: str, delta: int) -> None:
-        """Add delivered chat.message count for an actor (in-memory)."""
-        d = int(delta or 0)
-        if d <= 0:
-            return
-        with self._lock:
-            state = self._get_state(group_id, actor_id)
-            state.delivered_chat_count = int(state.delivered_chat_count or 0) + d
-    
     def has_pending(self, group_id: str, actor_id: str) -> bool:
         """Check if actor has pending messages."""
         with self._lock:
@@ -521,15 +490,14 @@ class DeliveryThrottle:
 
         This is important for correctness during daemon/group/actor restarts:
         messages can be queued while the actor is (re)starting. If we clear all
-        state we can accidentally drop those queued messages, leaving them only
-        in the inbox/ledger and never delivering to the PTY.
+        state we can accidentally drop those queued messages, leaving direct
+        delivery pending in the ledger and never reaching the PTY.
         """
         with self._lock:
             state = self._get_state(group_id, actor_id)
             pending = list(state.pending_messages) if keep_pending else []
             state.last_delivery_at = None
             state.last_attempt_at = None
-            state.delivered_chat_count = 0
             state.pending_messages = pending
 
     def try_begin_delivery(self, group_id: str, actor_id: str) -> bool:
@@ -605,7 +573,6 @@ class DeliveryThrottle:
                     "pending_kinds_preview": kinds,
                     "last_delivery_at": last_delivery,
                     "last_attempt_at": last_attempt,
-                    "delivered_chat_count": int(st.delivered_chat_count or 0),
                     "delivery_inflight": bool(st.delivery_inflight),
                 }
             return out
@@ -618,26 +585,6 @@ THROTTLE = DeliveryThrottle()
 # ============================================================================
 # Message Rendering
 # ============================================================================
-
-REMINDER_EVERY_N_MESSAGES = 1
-MCP_REMINDER_LINE = (
-    "[cccc] Use cccc_message_reply for replies; use cccc_message_send for new messages. "
-    "Terminal output is not delivered. Verify reply_to/to; avoid routine @all. "
-    "Use cccc_help if unsure."
-)
-
-
-def append_mcp_reply_reminder(text: str) -> str:
-    reminder = str(MCP_REMINDER_LINE or "").strip()
-    out = str(text or "").rstrip("\n")
-    if not reminder:
-        return out
-    if reminder in out:
-        return out
-    if not out:
-        return reminder
-    return f"{out}\n\n{reminder}"
-
 
 def render_single_message(msg: PendingMessage) -> str:
     """Render a single message for PTY delivery."""
@@ -680,7 +627,7 @@ def _render_system_notify_message_for_delivery(*, notify: SystemNotifyData, grou
             blocks.append(f"Context: {summary}")
         if request_text:
             blocks.append(f"Request:\n{request_text}")
-        blocks.append("Action: handle the request from your inbox; acknowledge or reply according to the requested work.")
+        blocks.append("Action: handle the request from your inbox and report the requested result.")
         return "\n\n".join(blocks).strip()
     if context_kind == "voice_secretary_input":
         reason = str(context.get("reason") or "").strip()
@@ -741,7 +688,7 @@ def render_system_notify_delivery_text(*, notify: SystemNotifyData, group: Optio
     )
 
 
-def render_batched_messages(messages: List[PendingMessage], *, reminder_after_index: Optional[int] = None) -> str:
+def render_batched_messages(messages: List[PendingMessage]) -> str:
     """Render multiple messages as a batch for PTY delivery."""
     if not messages:
         return ""
@@ -753,36 +700,7 @@ def render_batched_messages(messages: List[PendingMessage], *, reminder_after_in
     for i, msg in enumerate(messages, 1):
         blocks.append(render_single_message(msg))
 
-    out = "\n\n".join([b for b in blocks if b]).rstrip()
-    if reminder_after_index is not None:
-        out = append_mcp_reply_reminder(out)
-
-    return out
-
-
-# ============================================================================
-# Legacy render function (for backward compatibility)
-# ============================================================================
-
-
-def render_delivery_text(
-    *,
-    by: str,
-    to: list[str],
-    text: str,
-    reply_to: Optional[str] = None,
-    quote_text: Optional[str] = None,
-) -> str:
-    """Render a single message for PTY delivery (legacy interface)."""
-    msg = PendingMessage(
-        event_id="",
-        by=by,
-        to=to,
-        text=text,
-        reply_to=reply_to,
-        quote_text=quote_text,
-    )
-    return render_single_message(msg)
+    return "\n\n".join([b for b in blocks if b]).rstrip()
 
 
 # ============================================================================
@@ -923,14 +841,8 @@ def deliver_message_with_preamble(
             pass
     
     # Deliver user message
-    delivered_before = THROTTLE.get_delivered_chat_count(group.group_id, aid)
     out = (message_text or "").rstrip("\n")
-    if out and (delivered_before + 1) % REMINDER_EVERY_N_MESSAGES == 0:
-        out = append_mcp_reply_reminder(out)
-    result = pty_submit_text(group, actor_id=aid, text=out, wait_for_submit=True)
-    if result:
-        THROTTLE.add_delivered_chat_count(group.group_id, aid, 1)
-    return result
+    return pty_submit_text(group, actor_id=aid, text=out, wait_for_submit=True)
 
 
 def queue_chat_message(
@@ -995,127 +907,10 @@ def queue_system_notify(
     )
 
 
-def recover_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
-    """Deliver one restart notice while leaving canonical unread work untouched."""
-    aid = str(actor_id or "").strip()
-    actor = find_actor(group, aid)
-    if not aid or not isinstance(actor, dict):
-        return 0
-    runner = str(actor.get("runner") or "pty").strip()
-    runtime = str(actor.get("runtime") or "").strip().lower()
-    if not bool(actor.get("enabled", True)) or runner not in {"pty", "headless"}:
-        return 0
-    from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
-    if runner == "pty" and actor_uses_codex_app_server_state(actor):
-        return 0
-    if runner == "headless" and runtime not in {"codex", "claude"}:
-        return 0
-    effective_limit = max(1, int(limit or 256))
-    unread = unread_messages(group, actor_id=aid, limit=effective_limit, kind_filter="all")
-    if not unread:
-        return 0
-    latest = unread[-1]
-    latest_event_id = str(latest.get("id") or "").strip()
-    if not latest_event_id:
-        return 0
-    count = f"at least {len(unread)}" if len(unread) >= effective_limit else str(len(unread))
-    notice_id = f"unread-recovery:{latest_event_id}"
-    notice_message = (
-        f"You have {count} unread collaboration messages. Use cccc_inbox_list to review them, "
-        "then cccc_inbox_mark_read after handling them. This restart recovery notice does not "
-        "advance the unread cursor."
-    )
-    notify = SystemNotifyData(
-        kind="info",
-        priority="normal",
-        title="Unread collaboration messages",
-        message=notice_message,
-        target_actor_id=aid,
-        im_visibility="internal",
-        context={
-            "kind": "unread_recovery",
-            "unread_count": len(unread),
-            "count_is_lower_bound": len(unread) >= effective_limit,
-        },
-        requires_ack=False,
-        related_event_id=latest_event_id,
-    )
-    if runner == "headless":
-        event = {
-            "id": notice_id,
-            "ts": str(latest.get("ts") or "").strip(),
-            "kind": "system.notify",
-            "group_id": group.group_id,
-            "scope_key": "",
-            "by": "system",
-            "data": notify.model_dump(),
-        }
-        return int(
-            dispatch_system_notify_event_to_actor(
-                group,
-                event=event,
-                actor_id=aid,
-            )
-        )
-    notice = PendingMessage(
-        event_id=notice_id,
-        by="system",
-        to=[aid],
-        text="",
-        ts=str(latest.get("ts") or "").strip(),
-        kind="system.notify",
-        notify_kind=str(notify.kind),
-        notify_title=str(notify.title),
-        notify_message=str(notify.message),
-        advances_cursor=False,
-    )
-    return THROTTLE.recover_front(group.group_id, aid, [notice])
-
-
-def recover_group_unread_headless_messages(group: Group, *, limit: int = 256) -> int:
-    """Submit one unread recovery notice per supported headless actor after resume."""
-    if not should_deliver_message(group, "system.notify"):
-        return 0
-    recovered = 0
-    for actor in list_actors(group):
-        if not isinstance(actor, dict):
-            continue
-        if str(actor.get("runner") or "pty").strip() != "headless":
-            continue
-        runtime = str(actor.get("runtime") or "").strip().lower()
-        if runtime == "deepseek":
-            try:
-                from .deepseek_pending_recovery import recover_pending_messages
-
-                recovered += recover_pending_messages(
-                    group,
-                    actor_id=str(actor.get("id") or "").strip(),
-                    limit=limit,
-                )
-            except Exception as exc:
-                logger.warning("failed to recover DeepSeek terminals: group=%s error=%s", group.group_id, exc)
-            continue
-        if runtime not in {"codex", "claude"}:
-            continue
-        recovered += recover_unread_pty_messages(
-            group,
-            actor_id=str(actor.get("id") or "").strip(),
-            limit=limit,
-        )
-    return recovered
-
-
 def refill_unread_runtime_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
     from .runtime_pending_recovery import refill_unread_runtime_messages as refill
 
     return refill(group, actor_id=actor_id, limit=limit)
-
-
-def _refill_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
-    """Backward-compatible PTY recovery entrypoint."""
-    return refill_unread_runtime_messages(group, actor_id=actor_id, limit=limit)
-
-
 def dispatch_system_notify_event_to_actor(
     group: Group,
     *,
@@ -1155,6 +950,31 @@ def dispatch_system_notify_event_to_actor(
             return False
         group = current_group
         runtime = str(current_actor.get("runtime") or "").strip().lower()
+        if runtime == "web_model":
+            try:
+                from ..actors.web_model_browser_delivery import (
+                    schedule_web_model_browser_delivery,
+                    web_model_browser_delivery_enabled,
+                )
+
+                if not web_model_browser_delivery_enabled(group.group_id, current_actor):
+                    return False
+                return bool(
+                    schedule_web_model_browser_delivery(
+                        group_id=group.group_id,
+                        actor_id=aid,
+                        trigger_event_id=event_id,
+                        logger=logger,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "failed to schedule web-model system.notify group=%s actor=%s event=%s",
+                    group.group_id,
+                    aid,
+                    event_id,
+                )
+                return False
         headless_control_text = render_headless_control_text(
             control_kind="system_notify",
             body=render_system_notify_delivery_text(notify=notify, group=group),
@@ -1274,7 +1094,42 @@ def emit_system_notify(
         return event
 
     for aid in target_actor_ids:
-        dispatch_system_notify_event_to_actor(group, event=event, actor_id=aid, async_flush=async_flush)
+        actor = find_actor(group, aid)
+        if not isinstance(actor, dict):
+            continue
+        from .runtime_delivery import append_delivery_state, claim_delivery
+
+        transport = (
+            "web_model_browser"
+            if str(actor.get("runtime") or "").strip().lower() == "web_model"
+            else str(actor.get("runner") or "pty").strip()
+        )
+        claimed, _ = claim_delivery(
+            group,
+            actor_id=aid,
+            actor_created_at=str(actor.get("created_at") or "").strip(),
+            source_event_id=event_id,
+            transport=transport,
+        )
+        if not claimed:
+            continue
+        delivered = dispatch_system_notify_event_to_actor(
+            group,
+            event=event,
+            actor_id=aid,
+            async_flush=async_flush,
+        )
+        if transport == "web_model_browser" and delivered:
+            continue
+        append_delivery_state(
+            group,
+            actor_id=aid,
+            actor_created_at=str(actor.get("created_at") or "").strip(),
+            source_event_id=event_id,
+            state="accepted" if delivered else "failed",
+            transport=transport,
+            reason="" if delivered else "runtime did not accept the notification",
+        )
 
     return event
 
@@ -1283,128 +1138,45 @@ def _finalize_delivery_success(
     group: Group,
     *,
     actor_id: str,
-    chat_total: int,
     deliverable: List[PendingMessage],
     requeue: List[PendingMessage],
 ) -> bool:
     """Record a successful delivery attempt and preserve blocked messages."""
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
-    cursor_covered = False
-    if chat_total > 0:
-        THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
-    THROTTLE.mark_delivered(gid, aid)
-    markable = [message for message in deliverable if message.advances_cursor]
-    if _get_auto_mark_on_delivery(group) and markable:
-        last_msg = _last_contiguous_delivered_message(group, actor_id=aid, messages=markable)
-        if last_msg is not None:
-            cursor_covered = maybe_auto_mark_delivered_event(
+    actor = find_actor(group, aid)
+    if isinstance(actor, dict):
+        from .runtime_delivery import append_delivery_state, latest_delivery_state
+
+        actor_created_at = str(actor.get("created_at") or "").strip()
+        for message in deliverable:
+            event_id = str(message.event_id or "").strip()
+            if not event_id:
+                continue
+            latest = latest_delivery_state(
                 group,
                 actor_id=aid,
-                event_id=str(last_msg.event_id or ""),
-                ts=str(last_msg.ts or ""),
+                source_event_id=event_id,
             )
+            data = (
+                latest.get("data")
+                if isinstance(latest, dict) and isinstance(latest.get("data"), dict)
+                else {}
+            )
+            if str(data.get("state") or "").strip() != "claimed":
+                continue
+            append_delivery_state(
+                group,
+                actor_id=aid,
+                actor_created_at=actor_created_at,
+                source_event_id=event_id,
+                state="accepted",
+                transport=str(data.get("transport") or "").strip() or "runtime",
+            )
+    THROTTLE.mark_delivered(gid, aid)
     if requeue:
         THROTTLE.requeue_front(gid, aid, requeue)
-    return cursor_covered
-
-
-def _last_contiguous_delivered_message(
-    group: Group,
-    *,
-    actor_id: str,
-    messages: List[PendingMessage],
-) -> Optional[PendingMessage]:
-    """Return the delivered unread prefix tail without skipping an older gap."""
-    if not messages:
-        return None
-    delivered_by_id = {str(message.event_id or ""): message for message in messages}
-    unread = unread_messages(
-        group,
-        actor_id=actor_id,
-        limit=max(256, len(delivered_by_id)),
-        kind_filter="all",
-    )
-    last: Optional[PendingMessage] = None
-    for event in unread:
-        message = delivered_by_id.get(str(event.get("id") or ""))
-        if message is None:
-            break
-        last = message
-    return last
-
-
-def maybe_auto_mark_delivered_event(
-    group: Group,
-    *,
-    actor_id: str,
-    event_id: str,
-    ts: str,
-) -> bool:
-    """Advance the inbox cursor for a successfully delivered event when enabled.
-
-    Returns True when the resulting cursor covers the delivered event, which lets
-    callers suppress redundant follow-up notifications for the same delivery.
-    """
-    gid = str(group.group_id or "").strip()
-    aid = str(actor_id or "").strip()
-    delivered_event_id = str(event_id or "").strip()
-    delivered_ts = str(ts or "").strip()
-    if not aid or not delivered_event_id or not delivered_ts:
-        return False
-    if not _get_auto_mark_on_delivery(group):
-        return False
-    try:
-        prev_event_id, prev_ts = get_cursor(group, aid)
-        cursor = set_cursor(group, aid, event_id=delivered_event_id, ts=delivered_ts)
-        cursor_event_id = str(cursor.get("event_id") or "")
-        cursor_ts = str(cursor.get("ts") or "")
-        covers_event = cursor_covers_event(
-            group,
-            actor_id=aid,
-            event={"id": delivered_event_id, "ts": delivered_ts},
-        )
-        if (
-            cursor_event_id == delivered_event_id
-            and cursor_ts == delivered_ts
-            and (str(prev_event_id or "") != delivered_event_id or str(prev_ts or "") != delivered_ts)
-        ):
-            append_event(
-                group.ledger_path,
-                kind="chat.read",
-                group_id=group.group_id,
-                scope_key="",
-                by=aid,
-                data={"actor_id": aid, "event_id": delivered_event_id},
-            )
-        if covers_event:
-            logger.debug(f"[flush] {gid}/{aid} auto-marked delivered event as read event_id={delivered_event_id}")
-        return covers_event
-    except Exception as e:
-        logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")
-        return False
-
-
-def auto_mark_headless_delivery_started(
-    *,
-    group_id: str,
-    actor_id: str,
-    event_id: str,
-    ts: str,
-) -> bool:
-    """Advance read state once a headless runtime has actually accepted a turn."""
-    gid = str(group_id or "").strip()
-    if not gid:
-        return False
-    group = load_group(gid)
-    if group is None:
-        return False
-    return maybe_auto_mark_delivered_event(
-        group,
-        actor_id=actor_id,
-        event_id=event_id,
-        ts=ts,
-    )
+    return False
 
 
 def _finish_delivery_chain(group: Group, *, actor_id: str, reload_unread: bool = False) -> None:
@@ -1430,7 +1202,6 @@ def _start_async_first_delivery(
     deliverable: List[PendingMessage],
     requeue: List[PendingMessage],
     message_text: str,
-    chat_total: int,
     actor: Dict[str, Any],
 ) -> None:
     """Run the first PTY delivery chain in the background.
@@ -1459,7 +1230,6 @@ def _start_async_first_delivery(
                 reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
-                    chat_total=chat_total,
                     deliverable=deliverable,
                     requeue=requeue,
                 )
@@ -1477,7 +1247,6 @@ def _start_async_first_delivery(
                 reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
-                    chat_total=chat_total,
                     deliverable=deliverable,
                     requeue=requeue,
                 )
@@ -1575,24 +1344,15 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             THROTTLE.requeue_front(gid, aid, messages)
             return False
 
-        chat_total = sum(1 for m in deliverable if m.kind == "chat.message")
-        reminder_after_index: Optional[int] = None
-        if chat_total > 0:
-            delivered_before = THROTTLE.get_delivered_chat_count(gid, aid)
-            delivered_after = delivered_before + chat_total
-            # Remind every N delivered chat messages per actor (count is in-memory).
-            if (delivered_after // REMINDER_EVERY_N_MESSAGES) > (delivered_before // REMINDER_EVERY_N_MESSAGES):
-                reminder_after_index = len(deliverable)
-
-        message_text = render_batched_messages(deliverable, reminder_after_index=reminder_after_index)
+        message_text = render_batched_messages(deliverable)
 
         # DeepSeek has a strict ACP transport: only a durable terminal event
-        # may enter the normal cursor completion path. It has no PTY preamble.
+        # may settle an interrupted claimed handoff. It has no PTY preamble.
         if str(actor.get("runtime") or "").strip().lower() == "deepseek":
             from .deepseek_delivery import deliver_messages, recover_durable_terminals
 
-            # A previous daemon may have durably recorded the terminal after
-            # losing the cursor write. Recover it before issuing a new prompt.
+            # A previous daemon may have durably recorded the terminal before
+            # persisting the accepted handoff. Recover it before a new prompt.
             recover_durable_terminals(group, actor_id=aid, limit=256)
 
             delivered_prefix: List[PendingMessage] = []
@@ -1602,7 +1362,6 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
                         _finalize_delivery_success(
                             group,
                             actor_id=aid,
-                            chat_total=sum(1 for item in delivered_prefix if item.kind == "chat.message"),
                             deliverable=delivered_prefix,
                             requeue=[],
                         )
@@ -1616,7 +1375,6 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
                 reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
-                    chat_total=chat_total,
                     deliverable=deliverable,
                     requeue=requeue,
                 )
@@ -1633,7 +1391,6 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
                 deliverable=deliverable,
                 requeue=requeue,
                 message_text=message_text,
-                chat_total=chat_total,
                 actor=actor,
             )
             return True
@@ -1646,7 +1403,6 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
                 reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
-                    chat_total=chat_total,
                     deliverable=deliverable,
                     requeue=requeue,
                 )

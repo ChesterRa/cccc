@@ -16,6 +16,9 @@ from ....daemon.group_bridge.ops import try_handle_remote_send_op
 from ....daemon.group_bridge.receiver import (
     receive_authenticated_remote_send,
 )
+from ....daemon.group_bridge.cancellation import (
+    receive_authenticated_reply_request_cancel,
+)
 from ....daemon.group_bridge.ws_endpoint import handle_group_bridge_session_websocket
 from ....daemon.group_bridge.ws_session import send_via_session
 from ....kernel.group_bridge.receipts import safe_error_projection
@@ -504,7 +507,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if authorization.lower().startswith("bearer ")
             else ""
         )
-        result = receive_authenticated_remote_send(token, body)
+        operation = str(body.get("op") or "").strip()
+        if operation not in {"remote_send", "reply_request_cancel"}:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "unsupported_op",
+                    "message": "unsupported Group Bridge session operation",
+                    "details": {},
+                },
+            )
+        result = (
+            receive_authenticated_reply_request_cancel(token, body)
+            if operation == "reply_request_cancel"
+            else receive_authenticated_remote_send(token, body)
+        )
         if result is None:
             raise HTTPException(
                 status_code=403,

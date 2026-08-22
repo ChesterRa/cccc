@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .. import __version__
-from ..contracts.v1 import ChatMessageData
 from ..daemon.server import call_daemon
 from ..kernel.active import load_active, set_active_group_id
 from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor
@@ -27,12 +26,11 @@ from ..kernel.group import (
     set_active_scope,
     update_group,
 )
-from ..kernel.inbox import find_event, get_cursor, get_quote_text, set_cursor, unread_messages
 from ..kernel.ledger import append_event, follow, read_last_lines
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.messaging import default_reply_recipients
-from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
+from ..kernel.permissions import require_actor_permission, require_group_permission
 from ..kernel.registry import load_registry
 from ..kernel.settings import resolve_remote_access_web_binding
 from ..kernel.scope import detect_scope

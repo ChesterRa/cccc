@@ -3,6 +3,7 @@ import type { LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
 import { ActorAvatar } from "../ActorAvatar";
+import { InboxIcon } from "../Icons";
 
 export function MessageMetadataHeader({
   mobile,
@@ -111,14 +112,14 @@ export function MessageMetadataHeader({
 export function MessageFooter({
   readOnly,
   obligationSummary,
-  ackSummary,
   visibleReadStatusEntries,
   webModelDeliveryStatus,
   readPreviewEntries,
   readPreviewOverflow,
   displayNameMap,
   isDark,
-  replyRequired,
+  isMail,
+  replyRequested,
   copiedMessageText,
   copyableMessageText,
   onCopyMessageText,
@@ -131,15 +132,15 @@ export function MessageFooter({
   event,
 }: {
   readOnly?: boolean;
-  obligationSummary: { kind: "reply" | "ack"; done: number; total: number } | null;
-  ackSummary: { done: number; total: number; needsUserAck: boolean } | null;
+  obligationSummary: { done: number; total: number } | null;
   visibleReadStatusEntries: readonly (readonly [string, boolean])[];
   webModelDeliveryStatus?: WebModelDeliveryStatus;
   readPreviewEntries: readonly (readonly [string, boolean])[];
   readPreviewOverflow: number;
   displayNameMap: Map<string, string>;
   isDark: boolean;
-  replyRequired: boolean;
+  isMail: boolean;
+  replyRequested: boolean;
   copiedMessageText: boolean;
   copyableMessageText: string;
   onCopyMessageText: () => void;
@@ -202,10 +203,10 @@ export function MessageFooter({
       className={classNames(
         "mt-2 flex flex-wrap items-center gap-2 px-1 text-[10px] transition-opacity",
         webModelDeliveryStatus ||
+          isMail ||
           obligationSummary ||
-          ackSummary ||
           visibleReadStatusEntries.length > 0 ||
-          replyRequired
+          replyRequested
           ? "justify-between"
           : "justify-end",
         "opacity-80 group-hover:opacity-100",
@@ -213,6 +214,16 @@ export function MessageFooter({
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {isMail ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/8 px-2 py-1 text-[10px] font-semibold tracking-tight text-sky-700 dark:text-sky-300"
+            title={t("mailMessageHint")}
+            aria-label={t("mailMessageHint")}
+          >
+            <InboxIcon size={11} aria-hidden="true" />
+            <span>{t("modeMail")}</span>
+          </span>
+        ) : null}
         {webModelDeliveryStatus ? (
           <span
             className={classNames(
@@ -241,8 +252,7 @@ export function MessageFooter({
               )}
             >
               <span className="text-[10px] font-semibold tracking-tight">
-                {obligationSummary.kind === "reply" ? t("reply") : t("ack")}{" "}
-                {obligationSummary.done}/{obligationSummary.total}
+                {t("reply")} {obligationSummary.done}/{obligationSummary.total}
               </span>
             </div>
           ) : (
@@ -258,39 +268,7 @@ export function MessageFooter({
               aria-label={t("showObligationStatus")}
             >
               <span className="text-[10px] font-semibold tracking-tight">
-                {obligationSummary.kind === "reply" ? t("reply") : t("ack")}{" "}
-                {obligationSummary.done}/{obligationSummary.total}
-              </span>
-            </button>
-          )
-        ) : ackSummary ? (
-          readOnly ? (
-            <div
-              className={classNames(
-                "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
-                ackSummary.done >= ackSummary.total
-                  ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
-                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5",
-              )}
-            >
-              <span className="text-[10px] font-semibold tracking-tight">
-                {t("ack")} {ackSummary.done}/{ackSummary.total}
-              </span>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className={classNames(
-                "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
-                ackSummary.done >= ackSummary.total
-                  ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
-                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15",
-              )}
-              onClick={onShowRecipients}
-              aria-label={t("showAckStatus")}
-            >
-              <span className="text-[10px] font-semibold tracking-tight">
-                {t("ack")} {ackSummary.done}/{ackSummary.total}
+                {t("reply")} {obligationSummary.done}/{obligationSummary.total}
               </span>
             </button>
           )
@@ -323,7 +301,7 @@ export function MessageFooter({
           )
         ) : null}
 
-        {!obligationSummary && !ackSummary && replyRequired ? (
+        {!obligationSummary && replyRequested ? (
           <span
             className={classNames(
               "rounded-full border border-violet-500/20 bg-violet-500/8 px-2.5 py-1 text-[10px] font-semibold tracking-tight",

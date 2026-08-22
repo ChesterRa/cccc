@@ -70,7 +70,7 @@ pub(super) async fn reconcile(
         evidence.event_ids.clone(),
         &evidence.delivery_id,
     );
-    match raw_call(state, "web_model_runtime_complete_turn", request).await {
+    match raw_call(state, "runtime_complete_turn", request).await {
         Ok(_) => {
             let pending_new_chat_bind = target["kind"] == "new_chat";
             let delivery_state = if submission_ambiguous {
@@ -87,7 +87,6 @@ pub(super) async fn reconcile(
                 &evidence.delivery_id,
                 delivery_state,
                 final_error,
-                true,
                 json!({
                     "target_url":target["url"],
                     "auto_bind_new_chat":pending_new_chat_bind
@@ -104,7 +103,6 @@ pub(super) async fn reconcile(
                     &evidence.delivery_id,
                     "pending",
                     "conversation_url_pending",
-                    true,
                     json!({
                         "target_url":target["url"],
                         "pending_conversation_url":true,
@@ -197,7 +195,6 @@ pub(super) async fn record_delivery(
     delivery_id: &str,
     delivery_state: &str,
     detail: &str,
-    cursor_committed: bool,
     metadata: Value,
 ) {
     let mut browser_delivery = json!({
@@ -225,7 +222,6 @@ pub(super) async fn record_delivery(
         "event_ids":event_ids,
         "delivery_id":delivery_id,
         "browser_delivery":browser_delivery,
-        "cursor_committed":cursor_committed,
         "by":actor_id
     })
     .as_object()

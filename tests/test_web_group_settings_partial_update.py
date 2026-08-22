@@ -30,7 +30,7 @@ class TestWebGroupSettingsPartialUpdate(unittest.TestCase):
         resp, _ = handle_request(request)
         return resp.model_dump(exclude_none=True)
 
-    def test_delivery_partial_update_preserves_hidden_min_interval(self) -> None:
+    def test_delivery_partial_update_preserves_other_delivery_values(self) -> None:
         from cccc.kernel.group import create_group, load_group
         from cccc.kernel.registry import load_registry
         from cccc.ports.web.app import create_app
@@ -46,7 +46,8 @@ class TestWebGroupSettingsPartialUpdate(unittest.TestCase):
             assert loaded is not None
             loaded.doc["delivery"] = {
                 "min_interval_seconds": 37,
-                "auto_mark_on_delivery": False,
+                "mail_notice_after_seconds": 1800,
+                "reply_notice_after_seconds": 900,
             }
             loaded.save()
 
@@ -55,7 +56,7 @@ class TestWebGroupSettingsPartialUpdate(unittest.TestCase):
                 client = TestClient(app)
                 resp = client.put(
                     f"/api/v1/groups/{group_id}/settings",
-                    json={"auto_mark_on_delivery": True},
+                    json={"mail_notice_after_seconds": 1200},
                 )
                 self.assertEqual(resp.status_code, 200)
                 body = resp.json()
@@ -63,14 +64,16 @@ class TestWebGroupSettingsPartialUpdate(unittest.TestCase):
                 settings = ((body.get("result") or {}).get("settings") or {})
 
                 self.assertEqual(settings.get("min_interval_seconds"), 37)
-                self.assertTrue(bool(settings.get("auto_mark_on_delivery")))
+                self.assertEqual(settings.get("mail_notice_after_seconds"), 1200)
+                self.assertEqual(settings.get("reply_notice_after_seconds"), 900)
 
             reloaded = load_group(group_id)
             self.assertIsNotNone(reloaded)
             assert reloaded is not None
             delivery = reloaded.doc.get("delivery") if isinstance(reloaded.doc.get("delivery"), dict) else {}
             self.assertEqual(int(delivery.get("min_interval_seconds", -1)), 37)
-            self.assertTrue(bool(delivery.get("auto_mark_on_delivery")))
+            self.assertEqual(int(delivery.get("mail_notice_after_seconds", -1)), 1200)
+            self.assertEqual(int(delivery.get("reply_notice_after_seconds", -1)), 900)
         finally:
             cleanup()
 

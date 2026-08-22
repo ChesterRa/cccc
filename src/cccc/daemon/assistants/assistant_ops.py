@@ -2831,7 +2831,6 @@ def _emit_voice_input_notify(group: Group, *, reason: str) -> Dict[str, Any]:
         title="Voice Secretary input available",
         message="Secretary input is ready in this notification's input_envelope.",
         target_actor_id=VOICE_SECRETARY_ACTOR_ID,
-        requires_ack=False,
         context={
             "kind": "voice_secretary_input",
             "reason": reason,
@@ -6686,7 +6685,6 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
     source_event_id = str(args.get("source_event_id") or "").strip()
     source_request_id = str(args.get("source_request_id") or "").strip()
     priority = str(args.get("priority") or "normal").strip().lower()
-    requires_ack = coerce_bool(args.get("requires_ack"), default=True)
     if priority not in {"low", "normal", "high", "urgent"}:
         priority = "normal"
     if not group_id:
@@ -6718,7 +6716,6 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
         title="Voice Secretary action request",
         message=notify_message,
         target_actor_id=target_actor_id,
-        requires_ack=requires_ack,
         related_event_id=source_event_id or None,
         context={
             "kind": "voice_secretary_action_request",
@@ -6778,7 +6775,7 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
                 "notify_event_id": notify_event_id,
             },
     )
-    lifecycle = "waiting" if requires_ack else "idle"
+    lifecycle = "waiting"
     health = {
         "status": "request_sent",
         "last_request_id": request_id,
@@ -6805,7 +6802,6 @@ def handle_assistant_voice_request(args: Dict[str, Any]) -> DaemonResponse:
                     "target_requested": target_requested,
                     "document_path": document_path,
                     "request_preview": request_preview,
-                    "requires_ack": requires_ack,
                 },
                 "ask_request": _voice_ask_request_public(ask_request) if ask_request else {},
                 "notify_event": notify_event,

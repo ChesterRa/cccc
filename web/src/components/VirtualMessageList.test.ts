@@ -26,7 +26,7 @@ describe("buildGroupBridgeDisplayNameMap", () => {
 
   it("ignores non-chat events and group_bridge messages without a source name", () => {
     const messages: LedgerEvent[] = [
-      { kind: "chat.read", by: "group_bridge:peer_read", data: { source_user_name: "Read Group" } },
+      { kind: "mail.read", by: "group_bridge:peer_read", data: { source_user_name: "Read Group" } },
       { kind: "chat.message", by: "group_bridge:peer_without_name", data: { text: "hello" } },
     ];
 

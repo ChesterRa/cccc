@@ -23,6 +23,9 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "tracked_send" => tracked_send::handle(home, request),
         "slash_skill_dispatch" => slash_skill_dispatch(home, request),
         "reply" => reply(home, request),
+        "message_upload_preflight" => message_upload_preflight(home, request),
+        "reply_request_cancel" => reply_request_cancel(home, request),
+        "message_deliver" => message_deliver(home, request),
         "stream_emit" => stream::emit(home, request),
         "relay_user_delegation" => delegation::relay(home, request),
         "system_notify" => send(home, request, "system.notify"),
@@ -32,11 +35,9 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "ledger_window" => super::messaging_query::window(home, request),
         "ledger_statuses" => super::messaging_status::statuses(home, request),
         "message_read_status" => super::messaging_status::read_status(home, request),
-        "inbox_list" => messaging_inbox::list(home, request),
-        "inbox_mark_read" => messaging_inbox::mark_read(home, request),
-        "inbox_mark_all_read" => messaging_inbox::mark_all(home, request),
-        "chat_ack" => messaging_inbox::ack(home, request, "chat.ack"),
-        "notify_ack" => messaging_inbox::ack(home, request, "system.notify_ack"),
+        "inbox_peek" => messaging_inbox::peek(home, request),
+        "inbox_read" => messaging_inbox::read(home, request),
+        "message_history" => messaging_inbox::history(home, request),
         _ => return None,
     })
 }
@@ -208,8 +209,14 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
         .get("to")
         .cloned()
         .unwrap_or_else(|| json!([cccc_core::actors::CROSS_GROUP_FOREMAN_RECIPIENT]));
+    let destination_message_mode = data
+        .get("message_mode")
+        .cloned()
+        .unwrap_or_else(|| json!("send"));
     data.insert("to".into(), json!(["user"]));
+    data.insert("message_mode".into(), json!("send"));
     data.insert("dst_to".into(), destination_recipients);
+    data.insert("dst_message_mode".into(), destination_message_mode);
     data.insert("dst_group_id".into(), json!(destination_id));
     let event = append(home, &source.group_id, "chat.message", &by, data)?;
     object(json!({"source_event":event,"transport":"group_bridge_session"}))
@@ -282,6 +289,9 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         if let Some(destination_recipients) = delivery_data.remove("dst_to") {
             delivery_data.insert("to".into(), destination_recipients);
         }
+        if let Some(destination_message_mode) = delivery_data.remove("dst_message_mode") {
+            delivery_data.insert("message_mode".into(), destination_message_mode);
+        }
     }
     delivery_data.remove("transport");
     delivery_data.remove("dst_group_id");
@@ -299,8 +309,14 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         let mut source_data = delivery_data.clone();
         let destination_recipients = source_data.get("to").cloned().unwrap_or_else(|| json!([]));
+        let destination_message_mode = source_data
+            .get("message_mode")
+            .cloned()
+            .unwrap_or_else(|| json!("send"));
         source_data.insert("to".into(), json!(["user"]));
+        source_data.insert("message_mode".into(), json!("send"));
         source_data.insert("dst_to".into(), destination_recipients);
+        source_data.insert("dst_message_mode".into(), destination_message_mode);
         source_data.insert("dst_group_id".into(), json!(destination.group_id));
         append(home, &source.group_id, "chat.message", &by, source_data)?
     };
@@ -358,8 +374,16 @@ fn send_with_audience_policy(
             &mut data,
             allow_sender_only_audience,
         )?;
-        group = wake_idle_group(home, group, &by)?;
+        if data.get("message_mode").and_then(Value::as_str) != Some("mail") {
+            group = wake_idle_group(home, group, &by)?;
+        }
     } else if kind == "system.notify" {
+        if data.contains_key("requires_ack") {
+            return Err(OpError::new(
+                "unsupported_notify_field",
+                "system notifications do not support generic acknowledgement",
+            ));
+        }
         match data.get("im_visibility") {
             None | Some(Value::Null) => {
                 data.insert("im_visibility".into(), json!("internal"));
@@ -374,16 +398,157 @@ fn send_with_audience_policy(
         }
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
-    let delivery = actor_delivery::dispatch(home, &group, &event);
-    object(json!({"event": event, "delivery": delivery}))
+    if kind != "chat.message"
+        || event.data.get("message_mode").and_then(Value::as_str) != Some("mail")
+    {
+        let _ = actor_delivery::dispatch(home, &group, &event);
+    }
+    if kind == "chat.message" {
+        let message_mode = event
+            .data
+            .get("message_mode")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        object(json!({"event": event, "message_mode": message_mode}))
+    } else {
+        object(json!({"event": event}))
+    }
 }
 
 fn duplicate_send(event: Event) -> OpResult {
-    object(json!({
-        "event":event,
-        "delivery":{"accepted":true,"state":"duplicate","targeted":0,"online":0,"queued":0},
-        "duplicate":true
-    }))
+    let message_mode = event
+        .data
+        .get("message_mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    object(json!({"event":event,"message_mode":message_mode,"duplicate":true}))
+}
+
+fn message_upload_preflight(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    match required_arg(request, "operation")?.as_str() {
+        "send" => preflight_upload_send(home, request),
+        "reply" => preflight_upload_reply(home, request),
+        _ => Err(OpError::new(
+            "invalid_args",
+            "operation must be send or reply",
+        )),
+    }
+}
+
+fn preflight_upload_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
+    {
+        return preflight_duplicate(event);
+    }
+    let mut data = upload_preflight_data(request);
+    message_validation::normalize(home, &group, &mut data)?;
+    super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut data, false)?;
+    validate_upload_content(request, &data)?;
+    object(json!({"ready":true}))
+}
+
+fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if ["priority", "reply_required", "requires_ack"]
+        .iter()
+        .any(|key| request.args.contains_key(*key))
+    {
+        return Err(OpError::new(
+            "unsupported_message_fields",
+            "reply accepts message_mode=send or mail; legacy delivery fields are not supported",
+        ));
+    }
+    let message_mode = string_arg(request, "message_mode")
+        .map(|mode| mode.trim().to_ascii_lowercase())
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "send".into());
+    if !matches!(message_mode.as_str(), "send" | "mail") {
+        return Err(OpError::new(
+            "invalid_message_mode",
+            "reply message_mode must be send or mail",
+        ));
+    }
+    let reply_to = required_arg(request, "reply_to")?;
+    let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
+    {
+        return preflight_duplicate(event);
+    }
+    let target = find_event(home, &group.group_id, &reply_to)?;
+    let remote_reply =
+        super::group_bridge::prepare_reply(home, &group, &target, request, &message_mode)?;
+    let mut forwarded = request.clone();
+    forwarded
+        .args
+        .insert("message_mode".into(), Value::String(message_mode));
+    forwarded
+        .args
+        .insert("reply_to".into(), Value::String(reply_to));
+    super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
+    if let Some(prepared) = remote_reply.as_ref() {
+        prepared.apply_local_metadata(&target, &mut forwarded.args);
+    } else if recipient_tokens(&forwarded.args).is_empty() {
+        forwarded.args.insert(
+            "to".into(),
+            json!(default_reply_recipients(&group, &by, &target)),
+        );
+    }
+    let mut data = upload_preflight_data(&forwarded);
+    message_validation::normalize(home, &group, &mut data)?;
+    super::messaging_recipients::normalize_chat_preflight(
+        &group,
+        &by,
+        &mut data,
+        remote_reply.is_some(),
+    )?;
+    validate_upload_content(request, &data)?;
+    object(json!({"ready":true}))
+}
+
+fn upload_preflight_data(request: &DaemonRequest) -> Map<String, Value> {
+    request
+        .args
+        .iter()
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "group_id" | "by" | "operation" | "has_attachments"
+            )
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn validate_upload_content(
+    request: &DaemonRequest,
+    data: &Map<String, Value>,
+) -> Result<(), OpError> {
+    let has_text = data
+        .get("text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty());
+    let has_attachments = request
+        .args
+        .get("has_attachments")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if has_text || has_attachments {
+        Ok(())
+    } else {
+        Err(OpError::new(
+            "invalid_args",
+            "text or attachments is required",
+        ))
+    }
+}
+
+fn preflight_duplicate(event: Event) -> OpResult {
+    let result = duplicate_send(event)?;
+    object(json!({"ready":false,"duplicate":true,"result":result}))
 }
 
 fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -393,12 +558,35 @@ fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 }
 
 fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if ["priority", "reply_required", "requires_ack"]
+        .iter()
+        .any(|key| request.args.contains_key(*key))
+    {
+        return Err(OpError::new(
+            "unsupported_message_fields",
+            "reply accepts message_mode=send or mail; legacy delivery fields are not supported",
+        ));
+    }
+    let message_mode = string_arg(request, "message_mode")
+        .map(|mode| mode.trim().to_ascii_lowercase())
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "send".into());
+    if !matches!(message_mode.as_str(), "send" | "mail") {
+        return Err(OpError::new(
+            "invalid_message_mode",
+            "reply message_mode must be send or mail",
+        ));
+    }
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let target = find_event(home, &group.group_id, &reply_to)?;
-    let remote_reply = super::group_bridge::prepare_reply(home, &group, &target, request)?;
+    let remote_reply =
+        super::group_bridge::prepare_reply(home, &group, &target, request, &message_mode)?;
     let mut forwarded = request.clone();
+    forwarded
+        .args
+        .insert("message_mode".into(), Value::String(message_mode));
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
@@ -434,15 +622,6 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         };
         response.insert("group_bridge_reply".into(), remote_result);
     }
-    // A reply is already durable at this point; acknowledgement is a
-    // best-effort follow-up and must not turn a successful reply into failure.
-    let ack_event = reply_ack(home, &group, &target, &by).unwrap_or(None);
-    response.insert(
-        "ack_event".into(),
-        ack_event.map_or(Value::Null, |event| {
-            serde_json::to_value(event).unwrap_or(Value::Null)
-        }),
-    );
     Ok(response)
 }
 
@@ -465,44 +644,210 @@ fn wake_idle_group(home: &HomeLayout, group: GroupDoc, by: &str) -> Result<Group
         .map_err(OpError::io)
 }
 
-fn reply_ack(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    target: &Event,
-    by: &str,
-) -> Result<Option<Event>, OpError> {
-    let requires_ack = target.kind == "chat.message"
-        && by != target.by
-        && target.data.get("priority").and_then(Value::as_str) == Some("attention")
-        && cccc_core::inbox::is_for_actor(group, target, by);
-    if !requires_ack {
-        return Ok(None);
+fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    let source_event_id = required_arg(request, "source_event_id")?;
+    let source = find_event(home, &group.group_id, &source_event_id)?;
+    let source_message_mode = source
+        .data
+        .get("dst_message_mode")
+        .or_else(|| source.data.get("message_mode"))
+        .and_then(Value::as_str);
+    if source.kind != "chat.message" || source_message_mode != Some("request_reply") {
+        return Err(OpError::new(
+            "invalid_source_event",
+            "source_event_id must identify a request_reply message",
+        ));
     }
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if by != "user" && by != source.by {
+        return Err(OpError::new(
+            "permission_denied",
+            "only the source sender or user may cancel a reply request",
+        ));
+    }
+    let path = store(home)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)?;
+    if let Some(existing) = cccc_core::ledger::read_all(&path)
+        .map_err(OpError::io)?
+        .into_iter()
+        .find(|event| {
+            event.kind == "chat.reply_request.cancelled"
+                && event.data.get("source_event_id").and_then(Value::as_str)
+                    == Some(source_event_id.as_str())
+        })
+    {
+        let propagation =
+            super::group_bridge::cancellation::propagate(home, &group.group_id, &source, &existing);
+        return object(json!({
+            "event":existing,"duplicate":true,"propagation":propagation
+        }));
+    }
+    let event = append(
+        home,
+        &group.group_id,
+        "chat.reply_request.cancelled",
+        &by,
+        json!({"source_event_id":source_event_id})
+            .as_object()
+            .cloned()
+            .expect("reply cancellation data"),
+    )?;
+    let propagation =
+        super::group_bridge::cancellation::propagate(home, &group.group_id, &source, &event);
+    object(json!({"event":event,"propagation":propagation}))
+}
+
+fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return Err(OpError::new(
+            "delivery_blocked",
+            "message delivery is disabled while the group is paused or stopped",
+        ));
+    }
+    let source_event_id = required_arg(request, "source_event_id")?;
+    let source = find_event(home, &group.group_id, &source_event_id)?;
+    if source.kind != "chat.message" {
+        return Err(OpError::new(
+            "invalid_source_event",
+            "source_event_id must identify a chat.message",
+        ));
+    }
+    if !matches!(
+        source.data.get("message_mode").and_then(Value::as_str),
+        Some("send" | "request_reply" | "mail")
+    ) {
+        return Err(OpError::new(
+            "legacy_message",
+            "historical messages without message_mode cannot be delivered",
+        ));
+    }
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if by != "user" && by != source.by {
+        return Err(OpError::new(
+            "permission_denied",
+            "only the source sender or user may request delivery",
+        ));
+    }
+    let actor_ids = request
+        .args
+        .get("actor_ids")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| OpError::new("invalid_actor_ids", "actor_ids must be a non-empty array"))?;
+    let force_ambiguous = request
+        .args
+        .get("force_ambiguous")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let ledger_path = store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
-    let exists = cccc_core::ledger::read_all(&ledger_path)
-        .map_err(OpError::io)?
+    let events = cccc_core::ledger::read_all(&ledger_path).map_err(OpError::io)?;
+    let source_position = events
         .iter()
-        .any(|event| {
-            event.kind == "chat.ack"
-                && event.data.get("event_id").and_then(Value::as_str) == Some(target.id.as_str())
-                && event.data.get("actor_id").and_then(Value::as_str) == Some(by)
-        });
-    if exists {
-        return Ok(None);
+        .position(|event| event.id == source.id)
+        .ok_or_else(|| OpError::new("event_not_found", "source event is not in the ledger"))?;
+    let generations = cccc_core::inbox::actor_generation_positions(&events);
+    let mut requested = Vec::new();
+    for value in actor_ids {
+        let actor_id = value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| OpError::new("invalid_actor_ids", "actor_ids must contain strings"))?;
+        if requested
+            .iter()
+            .any(|existing: &cccc_contracts::Actor| existing.id == actor_id)
+        {
+            continue;
+        }
+        let actor = group
+            .actors
+            .iter()
+            .find(|actor| actor.id == actor_id)
+            .ok_or_else(|| OpError::new("unknown_actor", format!("unknown actor: {actor_id}")))?;
+        if !actor.enabled {
+            let mut error =
+                OpError::new("delivery_blocked", format!("actor is stopped: {actor_id}"));
+            error.details.insert("actor_id".into(), json!(actor_id));
+            error
+                .details
+                .insert("reason".into(), json!("actor_disabled"));
+            return Err(error);
+        }
+        if generations
+            .get(actor_id)
+            .is_some_and(|generation| *generation > source_position)
+            || !cccc_core::inbox::is_for_actor(&group, &source, actor_id)
+        {
+            return Err(OpError::new(
+                "event_not_for_actor",
+                format!("event is not addressed to actor: {actor_id}"),
+            ));
+        }
+        requested.push(actor.clone());
     }
-    append(
+    let actor_ids = requested
+        .iter()
+        .map(|actor| actor.id.clone())
+        .collect::<Vec<_>>();
+    let delivery_claims = requested
+        .iter()
+        .map(|actor| {
+            (
+                actor,
+                actor_delivery::delivery_transport(home, &group, actor),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (claimed, states) = crate::ops::runtime_delivery::claim_deliveries(
         home,
-        &group.group_id,
-        "chat.ack",
-        by,
-        json!({"actor_id":by,"event_id":target.id})
-            .as_object()
-            .cloned()
-            .unwrap_or_default(),
-    )
-    .map(Some)
+        &group,
+        &delivery_claims,
+        &source_event_id,
+        force_ambiguous,
+    )?;
+    if !claimed {
+        let (actor_id, state) = actor_ids
+            .iter()
+            .find_map(|actor_id| {
+                let state = states.get(actor_id)?;
+                (matches!(state.as_str(), "claimed" | "accepted")
+                    || (state == "ambiguous" && !force_ambiguous))
+                    .then_some((actor_id.as_str(), state.as_str()))
+            })
+            .unwrap_or((&actor_ids[0], "claimed"));
+        let mut error = match state {
+            "accepted" => OpError::new(
+                "already_delivered",
+                format!("message was already accepted for actor: {actor_id}"),
+            ),
+            "ambiguous" => OpError::new(
+                "delivery_ambiguous",
+                format!("delivery may already have occurred for actor: {actor_id}"),
+            ),
+            _ => OpError::new(
+                "delivery_in_progress",
+                format!("delivery is already in progress for actor: {actor_id}"),
+            ),
+        };
+        error.details.insert("actor_id".into(), json!(actor_id));
+        if state == "ambiguous" {
+            error
+                .details
+                .insert("force_ambiguous_required".into(), json!(true));
+        }
+        return Err(error);
+    }
+    actor_delivery::dispatch_preclaimed(home, &group, &source, &requested);
+    object(json!({
+        "event": source,
+        "actor_ids": actor_ids,
+        "delivery_state": "claimed",
+    }))
 }
 
 fn recipient_tokens(args: &Map<String, Value>) -> Vec<String> {

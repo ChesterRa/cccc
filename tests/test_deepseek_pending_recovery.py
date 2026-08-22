@@ -6,7 +6,6 @@ from cccc.daemon.messaging import delivery
 from cccc.daemon.messaging.deepseek_pending_recovery import recover_pending_messages
 from cccc.kernel.group import Group
 from cccc.kernel.headless_events import append_headless_event
-from cccc.kernel.inbox import set_cursor
 from cccc.kernel.ledger import append_event
 
 
@@ -22,7 +21,7 @@ def _group_with_unread(tmp_path):
         path=tmp_path,
         doc={"group_id": "deepseek-restart", "actors": [actor], "automation": {}},
     )
-    actor_added = append_event(
+    append_event(
         group.ledger_path,
         kind="actor.add",
         group_id=group.group_id,
@@ -30,7 +29,6 @@ def _group_with_unread(tmp_path):
         by="user",
         data={"actor": actor},
     )
-    set_cursor(group, "deepseek", event_id=actor_added["id"], ts=actor_added["ts"])
     events = [
         append_event(
             group.ledger_path,
@@ -38,14 +36,14 @@ def _group_with_unread(tmp_path):
             group_id=group.group_id,
             scope_key="",
             by="user",
-            data={"to": ["deepseek"], "text": text},
+            data={"to": ["deepseek"], "text": text, "message_mode": "send"},
         )
         for text in ("first", "second")
     ]
     return group, events
 
 
-def test_restart_rebuilds_pending_queue_from_canonical_unread(tmp_path) -> None:
+def test_restart_rebuilds_pending_direct_delivery_queue(tmp_path) -> None:
     group, events = _group_with_unread(tmp_path)
     throttle = delivery.DeliveryThrottle()
     with (

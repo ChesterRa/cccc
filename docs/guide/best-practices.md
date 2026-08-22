@@ -34,12 +34,12 @@ The help protocol reference is the group-specific CCCC collaboration contract. Y
 
 #### File Priority
 
-CCCC loads help content with the following priority:
+CCCC composes help from two layers:
 
-1. **Group override (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` (highest priority)
-2. **Built-in default**: `cccc.resources/cccc-help.md` (fallback)
+1. **Built-in contract**: the canonical message-delivery section always comes from `cccc.resources/cccc-help.md`.
+2. **Group overlay (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` adds common, role, and actor guidance without replacing that canonical section.
 
-To customize, edit the group prompt override (recommended: Web UI → Settings → Guidance).
+To customize local guidance, edit the group overlay (recommended: Web UI → Settings → Guidance).
 
 You can also locate the file path from the Web UI (it shows the exact override path per group).
 

@@ -55,7 +55,7 @@ class TestChatReplyTimeout(unittest.TestCase):
             group_id = str((created.result or {}).get("group_id") or "").strip()
             original, _ = self._call(
                 "send",
-                {"group_id": group_id, "by": "user", "to": ["user"], "text": "original"},
+                {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["user"], "text": "original"},
             )
             self.assertTrue(original.ok, getattr(original, "error", None))
             original_event = (original.result or {}).get("event") if isinstance(original.result, dict) else {}
@@ -115,6 +115,7 @@ class TestChatReplyTimeout(unittest.TestCase):
             started_at = time.monotonic()
             resp = handle_send(
                 {
+                    "message_mode": "send",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["user"],
@@ -173,6 +174,7 @@ class TestChatReplyTimeout(unittest.TestCase):
             ):
                 resp = handle_send(
                     {
+                        "message_mode": "send",
                         "group_id": group_id,
                         "by": "user",
                         "to": ["peer1"],
@@ -217,7 +219,7 @@ class TestChatReplyTimeout(unittest.TestCase):
             self.assertTrue(add.ok, getattr(add, "error", None))
             original, _ = self._call(
                 "send",
-                {"group_id": group_id, "by": "user", "to": ["user"], "text": "original"},
+                {"message_mode": "send", "group_id": group_id, "by": "user", "to": ["user"], "text": "original"},
             )
             self.assertTrue(original.ok, getattr(original, "error", None))
             original_event = (original.result or {}).get("event") if isinstance(original.result, dict) else {}

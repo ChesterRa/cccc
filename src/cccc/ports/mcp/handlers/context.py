@@ -475,7 +475,6 @@ def _notify_actor_notes_target(*, group_id: str, target_actor_id: str) -> List[s
                         "then update `cccc_agent_state` if your plan changes."
                     ),
                     "target_actor_id": str(target_view.get("id") or target),
-                    "requires_ack": False,
                 },
             }
         )

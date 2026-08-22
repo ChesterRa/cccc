@@ -62,7 +62,6 @@ from ....daemon.context.context_ops import _get_summary_context_fast, _rebuild_s
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
 from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
-from ....kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ....kernel.headless_events import headless_events_path, read_headless_replay_events, read_headless_replay_lines
 from ....kernel.group import get_group_state, load_group
 from ....kernel.context import ContextStorage
@@ -1006,7 +1005,6 @@ def _collect_ledger_event_statuses(
     events: list[dict[str, Any]],
     *,
     with_read_status: bool = True,
-    with_ack_status: bool = True,
     with_obligation_status: bool = True,
 ) -> dict[str, dict[str, Any]]:
     started_at = time.perf_counter()
@@ -1028,8 +1026,6 @@ def _collect_ledger_event_statuses(
             event_payload = status_by_event_id.setdefault(str(event_id), {})
             if with_read_status and "read_status" in payload:
                 event_payload["read_status"] = payload["read_status"]
-            if with_ack_status and "ack_status" in payload:
-                event_payload["ack_status"] = payload["ack_status"]
             if with_obligation_status and "obligation_status" in payload:
                 event_payload["obligation_status"] = payload["obligation_status"]
 
@@ -1041,8 +1037,7 @@ def _collect_ledger_event_statuses(
     cache_miss_count = len(missing_events)
     if missing_events:
         read_status_by_event: dict[str, dict[str, bool]] = {}
-        ack_status_by_event: dict[str, dict[str, bool]] = {}
-        obligation_status_by_event: dict[str, dict[str, dict[str, bool]]] = {}
+        obligation_status_by_event: dict[str, dict[str, dict[str, Any]]] = {}
 
         if with_read_status:
             from ....kernel.inbox import get_read_status_batch
@@ -1051,13 +1046,6 @@ def _collect_ledger_event_statuses(
             for event_id, read_status in read_status_by_event.items():
                 status_by_event_id.setdefault(str(event_id), {})["read_status"] = read_status
 
-        if with_ack_status:
-            from ....kernel.inbox import get_ack_status_batch
-
-            ack_status_by_event = get_ack_status_batch(group, missing_events)
-            for event_id, ack_status in ack_status_by_event.items():
-                status_by_event_id.setdefault(str(event_id), {})["ack_status"] = ack_status
-
         if with_obligation_status:
             from ....kernel.inbox import get_obligation_status_batch
 
@@ -1065,7 +1053,7 @@ def _collect_ledger_event_statuses(
             for event_id, obligation_status in obligation_status_by_event.items():
                 status_by_event_id.setdefault(str(event_id), {})["obligation_status"] = obligation_status
 
-        if with_read_status and with_ack_status and with_obligation_status:
+        if with_read_status and with_obligation_status:
             try:
                 from ....kernel.ledger_status_cache import store_message_status_batch
 
@@ -1073,7 +1061,6 @@ def _collect_ledger_event_statuses(
                     group,
                     missing_events,
                     read_status_by_event=read_status_by_event,
-                    ack_status_by_event=ack_status_by_event,
                     obligation_status_by_event=obligation_status_by_event,
                 )
             except Exception:
@@ -1207,8 +1194,6 @@ def _apply_ledger_event_statuses(events: list[dict[str, Any]], status_by_event_i
             continue
         if "read_status" in payload:
             ev["_read_status"] = payload["read_status"]
-        if "ack_status" in payload:
-            ev["_ack_status"] = payload["ack_status"]
         if "obligation_status" in payload:
             ev["_obligation_status"] = payload["obligation_status"]
         if "web_model_delivery_status" in payload:
@@ -2232,7 +2217,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         "title": title,
                         "message": message,
                         "target_actor_id": aid,
-                        "requires_ack": False,
                     },
                 })
                 if isinstance(resp, dict) and resp.get("ok"):
@@ -2390,13 +2374,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "result": {
                 "settings": {
                     "default_send_to": get_default_send_to(group.doc),
-                    "nudge_after_seconds": _safe_int(automation.get("nudge_after_seconds", 300), default=300, min_value=0),
-                    "reply_required_nudge_after_seconds": _safe_int(automation.get("reply_required_nudge_after_seconds", 300), default=300, min_value=0),
-                    "attention_ack_nudge_after_seconds": _safe_int(automation.get("attention_ack_nudge_after_seconds", 600), default=600, min_value=0),
-                    "unread_nudge_after_seconds": _safe_int(automation.get("unread_nudge_after_seconds", 900), default=900, min_value=0),
-                    "nudge_digest_min_interval_seconds": _safe_int(automation.get("nudge_digest_min_interval_seconds", 120), default=120, min_value=0),
-                    "nudge_max_repeats_per_obligation": _safe_int(automation.get("nudge_max_repeats_per_obligation", 3), default=3, min_value=0),
-                    "nudge_escalate_after_repeats": _safe_int(automation.get("nudge_escalate_after_repeats", 2), default=2, min_value=0),
                     "actor_idle_timeout_seconds": _safe_int(automation.get("actor_idle_timeout_seconds", 0), default=0, min_value=0),
                     "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),
                     "keepalive_max_per_actor": _safe_int(automation.get("keepalive_max_per_actor", 3), default=3, min_value=0),
@@ -2404,7 +2381,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "help_nudge_interval_seconds": _safe_int(automation.get("help_nudge_interval_seconds", 600), default=600, min_value=0),
                     "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
                     "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),
-                    "auto_mark_on_delivery": auto_mark_on_delivery_from_doc(delivery),
+                    "mail_notice_after_seconds": _safe_int(delivery.get("mail_notice_after_seconds", 1800), default=1800, min_value=0),
+                    "reply_notice_after_seconds": _safe_int(delivery.get("reply_notice_after_seconds", 900), default=900, min_value=0),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
@@ -3773,20 +3751,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         patch: Dict[str, Any] = {}
         if req.default_send_to is not None:
             patch["default_send_to"] = str(req.default_send_to)
-        if req.nudge_after_seconds is not None:
-            patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
-        if req.reply_required_nudge_after_seconds is not None:
-            patch["reply_required_nudge_after_seconds"] = max(0, req.reply_required_nudge_after_seconds)
-        if req.attention_ack_nudge_after_seconds is not None:
-            patch["attention_ack_nudge_after_seconds"] = max(0, req.attention_ack_nudge_after_seconds)
-        if req.unread_nudge_after_seconds is not None:
-            patch["unread_nudge_after_seconds"] = max(0, req.unread_nudge_after_seconds)
-        if req.nudge_digest_min_interval_seconds is not None:
-            patch["nudge_digest_min_interval_seconds"] = max(0, req.nudge_digest_min_interval_seconds)
-        if req.nudge_max_repeats_per_obligation is not None:
-            patch["nudge_max_repeats_per_obligation"] = max(0, req.nudge_max_repeats_per_obligation)
-        if req.nudge_escalate_after_repeats is not None:
-            patch["nudge_escalate_after_repeats"] = max(0, req.nudge_escalate_after_repeats)
         if req.actor_idle_timeout_seconds is not None:
             patch["actor_idle_timeout_seconds"] = max(0, req.actor_idle_timeout_seconds)
         if req.keepalive_delay_seconds is not None:
@@ -3801,8 +3765,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             patch["help_nudge_min_messages"] = max(0, req.help_nudge_min_messages)
         if req.min_interval_seconds is not None:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
-        if req.auto_mark_on_delivery is not None:
-            patch["auto_mark_on_delivery"] = bool(req.auto_mark_on_delivery)
+        if req.mail_notice_after_seconds is not None:
+            patch["mail_notice_after_seconds"] = max(0, req.mail_notice_after_seconds)
+        if req.reply_notice_after_seconds is not None:
+            patch["reply_notice_after_seconds"] = max(0, req.reply_notice_after_seconds)
 
         # Terminal transcript policy (group-scoped)
         if req.terminal_transcript_visibility is not None:
@@ -3887,7 +3853,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         limit: Optional[int] = None,
         kind: str = "all",
         with_read_status: bool = False,
-        with_ack_status: bool = False,
         with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         def _load() -> Dict[str, Any]:
@@ -3939,14 +3904,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         )
                         has_more = bool(older_has_more or older_events)
 
-            if with_read_status or with_ack_status or with_obligation_status:
+            if with_read_status or with_obligation_status:
                 _apply_ledger_event_statuses(
                     events,
                     _collect_ledger_event_statuses(
                         group,
                         events,
                         with_read_status=with_read_status,
-                        with_ack_status=with_ack_status,
                         with_obligation_status=with_obligation_status,
                     ),
                 )
@@ -3965,7 +3929,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         after: str = "",
         limit: int = 50,
         with_read_status: bool = False,
-        with_ack_status: bool = False,
         with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         """Search and paginate messages in the ledger."""
@@ -3974,7 +3937,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if group is None:
                 raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-            from ....kernel.inbox import search_messages, get_read_status_batch
+            from ....kernel.inbox import search_messages
 
             clamped_limit = max(1, min(200, limit))
             kind_filter = kind if kind in ("all", "chat", "notify") else "all"
@@ -3991,14 +3954,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if kind_filter == "chat":
                 events = _hydrate_cross_group_receipts_for_chat_events(group, events)
 
-            if with_read_status or with_ack_status or with_obligation_status:
+            if with_read_status or with_obligation_status:
                 _apply_ledger_event_statuses(
                     events,
                     _collect_ledger_event_statuses(
                         group,
                         events,
                         with_read_status=with_read_status,
-                        with_ack_status=with_ack_status,
                         with_obligation_status=with_obligation_status,
                     ),
                 )
@@ -4022,7 +3984,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         before: int = 30,
         after: int = 30,
         with_read_status: bool = False,
-        with_ack_status: bool = False,
         with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         """Return a bounded window of events around a center event_id."""
@@ -4031,7 +3992,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if group is None:
                 raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-            from ....kernel.inbox import find_event, search_messages, get_read_status_batch
+            from ....kernel.inbox import find_event, search_messages
 
             center_id = str(center or "").strip()
             if not center_id:
@@ -4067,14 +4028,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if kind_filter == "chat":
                 events = _hydrate_cross_group_receipts_for_chat_events(group, events)
 
-            if with_read_status or with_ack_status or with_obligation_status:
+            if with_read_status or with_obligation_status:
                 _apply_ledger_event_statuses(
                     events,
                     _collect_ledger_event_statuses(
                         group,
                         events,
                         with_read_status=with_read_status,
-                        with_ack_status=with_ack_status,
                         with_obligation_status=with_obligation_status,
                     ),
                 )
@@ -4110,7 +4070,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.post("/ledger/statuses")
     async def ledger_statuses(group_id: str, request: Request) -> Dict[str, Any]:
-        """Batch load read/ack/obligation status for specific event ids."""
+        """Batch load read and reply-obligation status for specific event ids."""
 
         def _load(event_ids: list[str]) -> Dict[str, Any]:
             group = load_group(group_id)

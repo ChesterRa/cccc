@@ -101,7 +101,10 @@ class TestGroupCopyOps(unittest.TestCase):
                 }
                 group.ledger_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
                 (group.path / "state" / "read_cursors.json").parent.mkdir(parents=True, exist_ok=True)
-                (group.path / "state" / "read_cursors.json").write_text('{"peer1":"evt1"}', encoding="utf-8")
+                (group.path / "state" / "read_cursors.json").write_text(
+                    '{"schema":1,"cursors":{"peer1":{"event_id":"evt1","ts":"","updated_at":""}}}',
+                    encoding="utf-8",
+                )
                 (group.path / "state" / "assistants.json").write_text(
                     json.dumps(
                         {
@@ -208,7 +211,10 @@ class TestGroupCopyOps(unittest.TestCase):
                 }
                 group.ledger_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
                 (group.path / "state").mkdir(parents=True, exist_ok=True)
-                (group.path / "state" / "read_cursors.json").write_text('{"peer1":"evt1"}', encoding="utf-8")
+                (group.path / "state" / "read_cursors.json").write_text(
+                    '{"schema":1,"cursors":{"peer1":{"event_id":"evt1","ts":"","updated_at":""}}}',
+                    encoding="utf-8",
+                )
                 (group.path / "state" / "assistants.json").write_text(
                     json.dumps(
                         {

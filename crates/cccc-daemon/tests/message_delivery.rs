@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 #[tokio::test]
-async fn serializes_delivery_notifies_and_advances_cursor() {
+async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
@@ -56,7 +56,10 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
     let first = daemon_call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"one"}),
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"one",
+            "message_mode":"send"
+        }),
     )
     .await;
     let second = daemon_call(
@@ -83,11 +86,11 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
         }),
     )
     .await;
-    assert_eq!(first.result["delivery"]["state"], "queued");
-    assert_eq!(second.result["delivery"]["queued"], 1);
-    assert_eq!(notify.result["delivery"]["state"], "queued");
+    assert_eq!(first.result["message_mode"], "send");
+    assert_eq!(second.result["message_mode"], "send");
+    assert!(notify.result.get("delivery").is_none());
     assert_eq!(notify.result["event"]["data"]["im_visibility"], "internal");
-    assert_eq!(reply.result["delivery"]["state"], "queued");
+    assert_eq!(reply.result["message_mode"], "send");
 
     wait_for(&client, &group_id, "FOURTH:[cccc] user → peer1 (reply:").await;
     let tail = daemon_call(
@@ -104,25 +107,21 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
     assert!(text.contains("FOURTH:[cccc] user → peer1 (reply:"));
     assert!(text.contains("> \"one\": fix it"));
 
-    wait_until_async(|| async {
-        let inbox = daemon_call(
-            &client,
-            "inbox_list",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .await;
-        inbox.result["messages"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
-    })
-    .await;
     let inbox = daemon_call(
         &client,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
     )
     .await;
-    assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(0));
+    assert_eq!(inbox.result["messages"], json!([]));
+    assert!(inbox.result["event"].is_null());
+    let empty = daemon_call(
+        &client,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+    )
+    .await;
+    assert_eq!(empty.result["messages"], json!([]));
 
     daemon_call(&client, "shutdown", json!({})).await;
     tokio::time::timeout(Duration::from_secs(5), daemon)
@@ -155,7 +154,10 @@ fn empty_recipients_follow_the_group_default_policy() {
     let default_send = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":[],"text":"foreman only"}),
+        json!({
+            "group_id":group_id,"by":"user","to":[],"text":"foreman only",
+            "message_mode":"send"
+        }),
     );
     assert_eq!(
         default_send.result["event"]["data"]["to"],
@@ -170,183 +172,317 @@ fn empty_recipients_follow_the_group_default_policy() {
     let broadcast = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":[],"text":"everyone"}),
+        json!({
+            "group_id":group_id,"by":"user","to":[],"text":"everyone",
+            "message_mode":"send"
+        }),
     );
     assert_eq!(broadcast.result["event"]["data"]["to"], json!(["@all"]));
 
     let actor_message = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"lead","to":[],"text":"status update"}),
+        json!({
+            "group_id":group_id,"by":"lead","to":[],"text":"status update",
+            "message_mode":"send"
+        }),
     );
-    assert_eq!(actor_message.result["event"]["data"]["to"], json!(["user"]));
+    assert_eq!(actor_message.result["event"]["data"]["to"], json!(["@all"]));
 }
 
 #[test]
-fn inbox_kind_filter_precedes_limit_and_bounds_mark_all() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-
-    let first_group = stopped_peer_group(&home, "filter before limit");
-    call(
-        &home,
-        "system_notify",
-        json!({
-            "group_id":first_group,"by":"system","title":"notify first",
-            "message":"notify first","target_actor_id":"peer1"
-        }),
-    );
-    let chatted = call(
-        &home,
-        "send",
-        json!({"group_id":first_group,"by":"user","to":["peer1"],"text":"chat second"}),
-    );
-    let chat_id = chatted.result["event"]["id"].as_str().expect("chat id");
-    let chat_page = call(
-        &home,
-        "inbox_list",
-        json!({
-            "group_id":first_group,"actor_id":"peer1","by":"peer1",
-            "kind_filter":"chat","limit":1
-        }),
-    );
-    assert_eq!(chat_page.result["messages"][0]["id"], chat_id);
-    assert_eq!(chat_page.result["messages"][0]["kind"], "chat.message");
-    let invalid_list = call_raw(
-        &home,
-        "inbox_list",
-        json!({
-            "group_id":first_group,"actor_id":"peer1","by":"peer1",
-            "kind_filter":"bogus"
-        }),
-    );
-    assert_eq!(
-        invalid_list.error.expect("invalid list filter").code,
-        "invalid_kind_filter"
-    );
-
-    let second_group = stopped_peer_group(&home, "filtered mark all");
-    let first_chat = call(
-        &home,
-        "send",
-        json!({"group_id":second_group,"by":"user","to":["peer1"],"text":"chat first"}),
-    );
-    let later_notify = call(
-        &home,
-        "system_notify",
-        json!({
-            "group_id":second_group,"by":"system","title":"notify second",
-            "message":"notify second","target_actor_id":"peer1"
-        }),
-    );
-    let invalid_mark = call_raw(
-        &home,
-        "inbox_mark_all_read",
-        json!({
-            "group_id":second_group,"actor_id":"peer1","by":"peer1",
-            "kind_filter":"bogus"
-        }),
-    );
-    assert_eq!(
-        invalid_mark.error.expect("invalid mark-all filter").code,
-        "invalid_kind_filter"
-    );
-    let marked = call(
-        &home,
-        "inbox_mark_all_read",
-        json!({
-            "group_id":second_group,"actor_id":"peer1","by":"peer1",
-            "kind_filter":"chat"
-        }),
-    );
-    assert_eq!(
-        marked.result["cursor"]["event_id"],
-        first_chat.result["event"]["id"]
-    );
-    let remaining = call(
-        &home,
-        "inbox_list",
-        json!({
-            "group_id":second_group,"actor_id":"peer1","by":"peer1",
-            "kind_filter":"all","limit":10
-        }),
-    );
-    assert_eq!(
-        remaining.result["messages"].as_array().map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(
-        remaining.result["messages"][0]["id"],
-        later_notify.result["event"]["id"]
-    );
-}
-
-#[test]
-fn inbox_mark_all_reaches_the_last_unread_event_beyond_the_public_page_cap() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let group_id = stopped_peer_group(&home, "mark all beyond page cap");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let ledger_path = store.ledger_path(&group_id).expect("ledger");
-    let mut last = Event::new("chat.message", &group_id);
-    for index in 0..=1000 {
-        let mut event = Event::new("chat.message", &group_id);
-        event.by = "user".into();
-        event.data = json!({"text":format!("message {index}"),"to":["peer1"]})
-            .as_object()
-            .cloned()
-            .expect("message data");
-        ledger::append(&ledger_path, &event).expect("append message");
-        last = event;
-    }
-
-    let marked = call(
-        &home,
-        "inbox_mark_all_read",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","kind_filter":"chat"}),
-    );
-    assert_eq!(marked.result["cursor"]["event_id"], last.id);
-    assert_eq!(marked.result["cursor"]["ts"], last.ts);
-    assert!(
-        marked.result["cursor"]["updated_at"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
-    let remaining = call(
-        &home,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","kind_filter":"chat"}),
-    );
-    assert!(
-        remaining.result["messages"]
-            .as_array()
-            .expect("messages")
-            .is_empty()
-    );
-}
-
-#[test]
-fn inbox_mark_read_rejects_a_non_object_cursor_document_without_overwriting_it() {
+fn send_reply_and_inbox_enforce_audience_domains() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(
         &home,
         "group_create",
-        json!({"title":"malformed cursor","by":"user"}),
+        json!({"title":"audience-domain-test","by":"user"}),
     );
     let group_id = created.result["group"]["group_id"]
         .as_str()
-        .expect("group id")
-        .to_owned();
-    call(
-        &home,
-        "actor_add",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    );
-    let sent = call(
+        .expect("group id");
+    for actor_id in ["peer1", "peer2"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+
+    let mail = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"read me"}),
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"read later",
+            "message_mode":"mail"
+        }),
+    );
+    assert_eq!(mail.result["event"]["data"]["message_mode"], "mail");
+    let user_request = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"peer1","to":["user"],"text":"please decide",
+            "message_mode":"request_reply"
+        }),
+    );
+
+    for mode in ["send", "request_reply", "mail"] {
+        let response = call_raw(
+            &home,
+            "send",
+            json!({
+                "group_id":group_id,"by":"peer1","to":["user","peer2"],
+                "text":"split this audience","message_mode":mode
+            }),
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("mixed_recipient_kinds")
+        );
+    }
+
+    let mail_to_user = call_raw(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"peer1","to":["user"],"text":"invalid mail",
+            "message_mode":"mail"
+        }),
+    );
+    assert_eq!(
+        mail_to_user.error.as_ref().map(|error| error.code.as_str()),
+        Some("mail_requires_actor_recipient")
+    );
+
+    let reply_mail_to_user = call_raw(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"peer1","to":["user"],
+            "reply_to":user_request.result["event"]["id"],"text":"invalid reply mail",
+            "message_mode":"mail"
+        }),
+    );
+    assert_eq!(
+        reply_mail_to_user
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("mail_requires_actor_recipient")
+    );
+
+    for op in ["inbox_peek", "inbox_read"] {
+        let response = call_raw(
+            &home,
+            op,
+            json!({"group_id":group_id,"actor_id":"user","by":"user"}),
+        );
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("invalid_inbox_recipient")
+        );
+    }
+    let history = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        history.result["messages"]
+            .as_array()
+            .is_some_and(|messages| !messages.is_empty())
+    );
+}
+
+#[test]
+fn inbox_read_consumes_only_mail_in_append_order() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group_id = stopped_peer_group(&home, "consume inbox");
+    let notify = call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":group_id,"by":"system","title":"notify first",
+            "message":"notify first","target_actor_id":"peer1"
+        }),
+    );
+    let mail = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"mail second",
+            "message_mode":"mail"
+        }),
+    );
+
+    let peek = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
+    );
+    assert_eq!(
+        peek.result["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|event| event["id"].as_str().expect("event id"))
+            .collect::<Vec<_>>(),
+        vec![mail.result["event"]["id"].as_str().expect("mail id")]
+    );
+
+    let first = call(
+        &home,
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":1}),
+    );
+    assert_eq!(
+        first.result["messages"][0]["id"],
+        mail.result["event"]["id"]
+    );
+    assert_eq!(first.result["event"]["kind"], "mail.read");
+
+    let second = call(
+        &home,
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
+    );
+    assert_eq!(second.result["messages"], json!([]));
+    assert!(second.result["event"].is_null());
+    assert_eq!(
+        first.result["cursor"]["event_id"],
+        mail.result["event"]["id"]
+    );
+    assert_ne!(notify.result["event"]["id"], mail.result["event"]["id"]);
+
+    let empty = call(
+        &home,
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+    );
+    assert_eq!(empty.result["messages"], json!([]));
+    assert!(empty.result["event"].is_null());
+}
+
+#[test]
+fn message_history_pages_and_filters_without_consuming_mail() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group_id = stopped_peer_group(&home, "message history");
+    let direct = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"direct update",
+            "message_mode":"send"
+        }),
+    );
+    let requested = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"please answer",
+            "message_mode":"request_reply"
+        }),
+    );
+    let mail = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"read later",
+            "message_mode":"mail"
+        }),
+    );
+
+    let first_page = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":2}),
+    );
+    assert_eq!(
+        first_page.result["messages"]
+            .as_array()
+            .expect("history")
+            .iter()
+            .map(|event| event["id"].as_str().expect("event id"))
+            .collect::<Vec<_>>(),
+        vec![
+            mail.result["event"]["id"].as_str().expect("mail id"),
+            requested.result["event"]["id"]
+                .as_str()
+                .expect("requested id")
+        ]
+    );
+    assert_eq!(first_page.result["has_more"], true);
+
+    let older = call(
+        &home,
+        "message_history",
+        json!({
+            "group_id":group_id,"actor_id":"peer1","by":"peer1",
+            "before_event_id":mail.result["event"]["id"],"limit":10
+        }),
+    );
+    assert_eq!(
+        older.result["messages"]
+            .as_array()
+            .expect("older history")
+            .iter()
+            .map(|event| event["id"].as_str().expect("event id"))
+            .collect::<Vec<_>>(),
+        vec![
+            requested.result["event"]["id"]
+                .as_str()
+                .expect("requested id"),
+            direct.result["event"]["id"].as_str().expect("direct id")
+        ]
+    );
+    assert_eq!(older.result["has_more"], false);
+
+    let searched = call(
+        &home,
+        "message_history",
+        json!({
+            "group_id":group_id,"actor_id":"peer1","by":"peer1",
+            "query":"PLEASE ANSWER","limit":10
+        }),
+    );
+    assert_eq!(
+        searched.result["messages"][0]["id"],
+        requested.result["event"]["id"]
+    );
+    assert_eq!(
+        searched.result["messages"].as_array().map(Vec::len),
+        Some(1)
+    );
+
+    let inbox = call(
+        &home,
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+    );
+    assert_eq!(
+        inbox.result["messages"][0]["id"],
+        mail.result["event"]["id"]
+    );
+    assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn inbox_read_rejects_a_non_object_cursor_document_without_overwriting_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group_id = stopped_peer_group(&home, "malformed cursor");
+    call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],"text":"read me",
+            "message_mode":"mail"
+        }),
     );
     let cursor_path = GroupStore::new(home.clone())
         .expect("store")
@@ -357,13 +493,8 @@ fn inbox_mark_read_rejects_a_non_object_cursor_document_without_overwriting_it()
 
     let response = call_raw(
         &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "event_id":sent.result["event"]["id"],
-            "by":"peer1"
-        }),
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     );
 
     assert!(!response.ok);
@@ -374,323 +505,7 @@ fn inbox_mark_read_rejects_a_non_object_cursor_document_without_overwriting_it()
 }
 
 #[test]
-fn inbox_mark_read_ledger_failure_keeps_the_message_unread() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let created = call(
-        &home,
-        "group_create",
-        json!({"title":"cursor rollback","by":"user"}),
-    );
-    let group_id = created.result["group"]["group_id"]
-        .as_str()
-        .expect("group id")
-        .to_owned();
-    call(
-        &home,
-        "actor_add",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    );
-    let sent = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"keep unread"}),
-    );
-    let store = GroupStore::new(home.clone()).expect("store");
-    let ledger_path = store.ledger_path(&group_id).expect("ledger path");
-    let original_permissions = std::fs::metadata(&ledger_path)
-        .expect("ledger metadata")
-        .permissions();
-    let mut read_only = original_permissions.clone();
-    read_only.set_mode(0o444);
-    std::fs::set_permissions(&ledger_path, read_only).expect("read-only ledger");
-
-    let response = call_raw(
-        &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "event_id":sent.result["event"]["id"],
-            "by":"peer1"
-        }),
-    );
-    std::fs::set_permissions(&ledger_path, original_permissions).expect("restore ledger");
-
-    assert!(!response.ok);
-    let inbox = call(
-        &home,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
-    );
-    assert_eq!(
-        inbox.result["messages"][0]["id"],
-        sent.result["event"]["id"]
-    );
-}
-
-#[test]
-fn chat_ack_validates_attention_recipient_and_replays_idempotently() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let group_id = stopped_peer_group(&home, "chat ack contract");
-    call(
-        &home,
-        "actor_add",
-        json!({
-            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
-            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
-        }),
-    );
-    let normal = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"normal"}),
-    );
-    let attention = call(
-        &home,
-        "send",
-        json!({
-            "group_id":group_id,"by":"user","to":["peer1"],
-            "text":"attention","priority":"attention"
-        }),
-    );
-    let notify = call(
-        &home,
-        "system_notify",
-        json!({
-            "group_id":group_id,"by":"system","title":"notify","message":"notify",
-            "target_actor_id":"peer1"
-        }),
-    );
-    let normal_id = normal.result["event"]["id"].as_str().expect("normal id");
-    let attention_id = attention.result["event"]["id"]
-        .as_str()
-        .expect("attention id");
-    let notify_id = notify.result["event"]["id"].as_str().expect("notify id");
-    let ack = |actor_id: &str, event_id: &str| {
-        call_raw(
-            &home,
-            "chat_ack",
-            json!({
-                "group_id":group_id,"actor_id":actor_id,"event_id":event_id,"by":actor_id
-            }),
-        )
-    };
-
-    assert_eq!(
-        ack("peer1", normal_id)
-            .error
-            .expect("normal rejection")
-            .code,
-        "not_an_attention_message"
-    );
-    assert_eq!(
-        ack("peer2", attention_id)
-            .error
-            .expect("recipient rejection")
-            .code,
-        "event_not_for_actor"
-    );
-    assert_eq!(
-        ack("peer1", notify_id).error.expect("kind rejection").code,
-        "invalid_event_kind"
-    );
-    assert_eq!(
-        call_raw(
-            &home,
-            "chat_ack",
-            json!({
-                "group_id":group_id,"actor_id":"peer1","event_id":attention_id,"by":"user"
-            }),
-        )
-        .error
-        .expect("self-only rejection")
-        .code,
-        "permission_denied"
-    );
-    let first = ack("peer1", attention_id);
-    assert!(first.ok, "first ack: {:?}", first.error);
-    assert_eq!(first.result["acked"], true);
-    assert_eq!(first.result["already"], false);
-    assert_eq!(first.result["event"]["kind"], "chat.ack");
-    let replay = ack("peer1", attention_id);
-    assert!(replay.ok, "replayed ack: {:?}", replay.error);
-    assert_eq!(replay.result["acked"], true);
-    assert_eq!(replay.result["already"], true);
-    assert!(replay.result["event"].is_null());
-
-    let store = GroupStore::new(home.clone()).expect("store");
-    let ack_events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
-        .expect("events")
-        .into_iter()
-        .filter(|event| event.kind == "chat.ack")
-        .collect::<Vec<_>>();
-    let count = ack_events
-        .iter()
-        .filter(|event| event.data["event_id"] == attention_id && event.data["actor_id"] == "peer1")
-        .count();
-    assert_eq!(count, 1);
-    assert_eq!(ack_events.len(), 1);
-}
-
-#[test]
-fn explicit_self_mark_read_emits_a_distinct_attention_ack() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let group_id = stopped_peer_group(&home, "mark read attention ack");
-    let sent = call(
-        &home,
-        "send",
-        json!({
-            "group_id":group_id,"by":"user","to":["peer1"],
-            "text":"attention","priority":"attention"
-        }),
-    );
-    let event_id = sent.result["event"]["id"]
-        .as_str()
-        .expect("attention id")
-        .to_owned();
-
-    let proxied = call(
-        &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,"actor_id":"peer1","event_id":event_id,"by":"user"
-        }),
-    );
-    assert!(proxied.result["ack_event"].is_null());
-    let after_proxy = call(
-        &home,
-        "ledger_statuses",
-        json!({"group_id":group_id,"event_ids":[event_id]}),
-    );
-    let proxy_status = &after_proxy.result["statuses"][&event_id];
-    assert_eq!(proxy_status["read_status"]["peer1"], true);
-    assert_eq!(proxy_status["ack_status"]["peer1"], false);
-    assert_eq!(proxy_status["obligation_status"]["peer1"]["acked"], false);
-
-    let self_marked = call(
-        &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,"actor_id":"peer1","event_id":event_id,"by":"peer1"
-        }),
-    );
-    assert_eq!(self_marked.result["ack_event"]["kind"], "chat.ack");
-    assert_eq!(
-        self_marked.result["ack_event"]["data"]["event_id"],
-        event_id
-    );
-    let after_self = call(
-        &home,
-        "ledger_statuses",
-        json!({"group_id":group_id,"event_ids":[event_id]}),
-    );
-    let self_status = &after_self.result["statuses"][&event_id];
-    assert_eq!(self_status["ack_status"]["peer1"], true);
-    assert_eq!(self_status["obligation_status"]["peer1"]["acked"], true);
-}
-
-#[test]
-fn notify_ack_enforces_self_only_and_recipient_boundary() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let group_id = stopped_peer_group(&home, "notify ack contract");
-    call(
-        &home,
-        "actor_add",
-        json!({
-            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
-            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
-        }),
-    );
-    let notify = |target: Value| {
-        call(
-            &home,
-            "system_notify",
-            json!({
-                "group_id":group_id,"by":"system","title":"notify","message":"notify",
-                "target_actor_id":target,"requires_ack":true
-            }),
-        )
-        .result["event"]["id"]
-            .as_str()
-            .expect("notify id")
-            .to_owned()
-    };
-    let targeted = notify(json!("peer1"));
-    let defaulted = notify(json!("peer1"));
-    let broadcast = notify(Value::Null);
-    let chat = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"chat"}),
-    );
-    let chat_id = chat.result["event"]["id"].as_str().expect("chat id");
-    let observe = |actor_id: &str, event_id: &str, by: Option<&str>| {
-        let mut args = json!({
-            "group_id":group_id,"actor_id":actor_id,"notify_event_id":event_id
-        });
-        if let Some(by) = by {
-            args["by"] = json!(by);
-        }
-        call_raw(&home, "notify_ack", args)
-    };
-
-    for (response, code) in [
-        (
-            observe("peer1", &targeted, Some("user")),
-            "permission_denied",
-        ),
-        (
-            observe("peer2", &targeted, Some("peer2")),
-            "event_not_for_actor",
-        ),
-        (observe("ghost", &targeted, Some("ghost")), "unknown_actor"),
-        (
-            observe("peer1", chat_id, Some("peer1")),
-            "invalid_event_kind",
-        ),
-        (
-            observe("peer1", "missing-event", Some("peer1")),
-            "event_not_found",
-        ),
-    ] {
-        assert_eq!(response.error.expect("rejection").code, code);
-    }
-
-    for response in [
-        observe("peer1", &targeted, Some("peer1")),
-        observe("peer1", &defaulted, None),
-        observe("peer2", &broadcast, Some("peer2")),
-    ] {
-        assert!(response.ok, "valid ack: {:?}", response.error);
-        assert_eq!(response.result["event"]["kind"], "system.notify_ack");
-        assert_eq!(
-            response.result["event"]["by"],
-            response.result["event"]["data"]["actor_id"]
-        );
-    }
-
-    let store = GroupStore::new(home.clone()).expect("store");
-    let ack_events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
-        .expect("events")
-        .into_iter()
-        .filter(|event| event.kind == "system.notify_ack")
-        .collect::<Vec<_>>();
-    assert_eq!(ack_events.len(), 3);
-    assert!(
-        ack_events
-            .iter()
-            .all(|event| event.by == event.data["actor_id"])
-    );
-}
-
-#[test]
-fn actor_generation_uses_append_order_for_inbox_status_and_ack() {
+fn actor_generation_bounds_inbox_read_and_reply_status() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(
@@ -709,57 +524,33 @@ fn actor_generation_uses_append_order_for_inbox_status_and_ack() {
     );
     let store = GroupStore::new(home.clone()).expect("store");
     let ledger_path = store.ledger_path(&group_id).expect("ledger");
-    let message = |timestamp: &str, text: &str| {
+    let message = |timestamp: &str, text: &str, mode: &str| {
         let mut event = Event::new("chat.message", &group_id);
         event.ts = timestamp.into();
         event.by = "user".into();
         event.data = json!({
-            "text":text,"to":["peer1"],"priority":"attention","reply_required":true
+            "text":text,"to":["peer1"],"message_mode":mode
         })
         .as_object()
         .cloned()
         .expect("message data");
         event
     };
-    let before_actor = message("2999-01-01T00:00:00Z", "before actor");
+    let before_actor = message("2999-01-01T00:00:00Z", "before actor", "mail");
     ledger::append(&ledger_path, &before_actor).expect("pre-actor append");
-    let added = call(
+    call(
         &home,
         "actor_add",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
-    assert_eq!(added.result["event"]["kind"], "actor.add");
-    let actor_add_id = added.result["event"]["id"]
-        .as_str()
-        .expect("actor.add id")
-        .to_owned();
-    let after_actor = message("2000-01-01T00:00:00Z", "after actor");
+    let after_actor = message("2000-01-01T00:00:00Z", "after actor", "mail");
     ledger::append(&ledger_path, &after_actor).expect("post-actor append");
-    let mut other_actor = message("1999-01-01T00:00:00Z", "for another actor");
-    other_actor.data.insert("to".into(), json!(["peer2"]));
-    ledger::append(&ledger_path, &other_actor).expect("other actor append");
-
-    for (event_id, expected_code) in [
-        (before_actor.id.as_str(), "event_not_for_actor"),
-        (actor_add_id.as_str(), "invalid_event_kind"),
-        (other_actor.id.as_str(), "event_not_for_actor"),
-    ] {
-        let rejected = call_raw(
-            &home,
-            "inbox_mark_read",
-            json!({
-                "group_id":group_id,"actor_id":"peer1","event_id":event_id,"by":"peer1"
-            }),
-        );
-        assert_eq!(
-            rejected.error.expect("mark-read rejection").code,
-            expected_code
-        );
-    }
+    let reply_request = message("1999-01-01T00:00:00Z", "reply after actor", "request_reply");
+    ledger::append(&ledger_path, &reply_request).expect("reply request append");
 
     let inbox = call(
         &home,
-        "inbox_list",
+        "inbox_peek",
         json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
     );
     assert_eq!(
@@ -775,50 +566,45 @@ fn actor_generation_uses_append_order_for_inbox_status_and_ack() {
     let statuses = call(
         &home,
         "ledger_statuses",
-        json!({"group_id":group_id,"event_ids":[before_actor.id,after_actor.id]}),
+        json!({"group_id":group_id,"event_ids":[before_actor.id,after_actor.id,reply_request.id]}),
     );
     let old = &statuses.result["statuses"][&before_actor.id];
     assert!(old["read_status"].get("peer1").is_none());
-    assert!(old["ack_status"].get("peer1").is_none());
     assert!(old["obligation_status"].get("peer1").is_none());
     let current = &statuses.result["statuses"][&after_actor.id];
     assert_eq!(current["read_status"]["peer1"], false);
-    assert_eq!(current["ack_status"]["peer1"], false);
-    assert_eq!(current["obligation_status"]["peer1"]["acked"], false);
-
-    let old_ack = call_raw(
+    assert_eq!(
+        current["obligation_status"]["peer1"]["reply_requested"],
+        false
+    );
+    assert!(current.get("ack_status").is_none());
+    let requested = &statuses.result["statuses"][&reply_request.id];
+    assert!(requested.get("read_status").is_none());
+    assert_eq!(
+        requested["obligation_status"]["peer1"]["reply_requested"],
+        true
+    );
+    let history = call(
         &home,
-        "chat_ack",
-        json!({
-            "group_id":group_id,"actor_id":"peer1","event_id":before_actor.id,"by":"peer1"
-        }),
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     );
     assert_eq!(
-        old_ack.error.expect("pre-actor rejection").code,
-        "event_not_for_actor"
+        history.result["messages"]
+            .as_array()
+            .expect("history")
+            .iter()
+            .map(|event| event["id"].as_str().expect("event id"))
+            .collect::<Vec<_>>(),
+        vec![reply_request.id.as_str(), after_actor.id.as_str()]
     );
-    let current_ack = call(
+
+    let consumed = call(
         &home,
-        "chat_ack",
-        json!({
-            "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
-        }),
+        "inbox_read",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     );
-    assert_eq!(current_ack.result["acked"], true);
-    let current_read = call(
-        &home,
-        "inbox_mark_read",
-        json!({
-            "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
-        }),
-    );
-    assert_eq!(current_read.result["cursor"]["event_id"], after_actor.id);
-    assert_eq!(current_read.result["cursor"]["ts"], after_actor.ts);
-    assert!(
-        current_read.result["cursor"]["updated_at"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
+    assert_eq!(consumed.result["cursor"]["event_id"], after_actor.id);
     call(
         &home,
         "actor_remove",
@@ -829,68 +615,25 @@ fn actor_generation_uses_append_order_for_inbox_status_and_ack() {
         "actor_add",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
-    let after_readd = call(
+    let cursor_path = store
+        .state_dir(&group_id)
+        .expect("state dir")
+        .join("read_cursors.json");
+    if cursor_path.exists() {
+        std::fs::remove_file(cursor_path).expect("remove cursor state");
+    }
+    let after_recreate = call(
         &home,
-        "ledger_statuses",
-        json!({"group_id":group_id,"event_ids":[after_actor.id]}),
-    );
-    assert!(
-        after_readd.result["statuses"][&after_actor.id]["read_status"]
-            .get("peer1")
-            .is_none()
-    );
-    assert_eq!(
-        call_raw(
-            &home,
-            "chat_ack",
-            json!({
-                "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
-            }),
-        )
-        .error
-        .expect("previous-generation rejection")
-        .code,
-        "event_not_for_actor"
-    );
-    assert_eq!(
-        call_raw(
-            &home,
-            "inbox_mark_read",
-            json!({
-                "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
-            }),
-        )
-        .error
-        .expect("previous-generation read rejection")
-        .code,
-        "event_not_for_actor"
-    );
-    // Cursor persistence is an optimization, not the actor-generation source
-    // of truth. Losing it must not reveal pre-recreation messages.
-    std::fs::remove_file(
-        store
-            .state_dir(&group_id)
-            .expect("state dir")
-            .join("read_cursors.json"),
-    )
-    .expect("remove cursor state");
-    let inbox_after_readd = call(
-        &home,
-        "inbox_list",
+        "inbox_peek",
         json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
     );
-    assert!(
-        inbox_after_readd.result["messages"]
-            .as_array()
-            .expect("messages")
-            .is_empty()
+    assert_eq!(after_recreate.result["messages"], json!([]));
+    let history_after_recreate = call(
+        &home,
+        "message_history",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
     );
-    let ack_count = ledger::read_all(&ledger_path)
-        .expect("events")
-        .into_iter()
-        .filter(|event| event.kind == "chat.ack")
-        .count();
-    assert_eq!(ack_count, 1);
+    assert_eq!(history_after_recreate.result["messages"], json!([]));
 }
 
 #[test]
@@ -939,6 +682,7 @@ fn send_files_uses_the_active_scope_and_normal_send_contract() {
             "group_id":group_id,
             "by":"user",
             "to":["worker"],
+            "message_mode":"send",
             "paths":[scope.join("frame.png"), "brief.txt"]
         }),
     );
@@ -983,7 +727,10 @@ fn send_files_uses_the_active_scope_and_normal_send_contract() {
     let rejected = call_raw(
         &home,
         "send_files",
-        json!({"group_id":group_id,"by":"user","to":["worker"],"paths":[outside]}),
+        json!({
+            "group_id":group_id,"by":"user","to":["worker"],
+            "message_mode":"send","paths":[outside]
+        }),
     );
     assert_eq!(
         rejected.error.as_ref().map(|error| error.code.as_str()),
@@ -1019,6 +766,11 @@ fn send_files_preflights_rejection_and_replay_before_blob_storage() {
         "attach",
         json!({"group_id":group_id,"path":scope,"by":"user"}),
     );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
     let store = GroupStore::new(home.clone()).expect("store");
     let blob_dir = store
         .state_dir(group_id)
@@ -1036,29 +788,48 @@ fn send_files_preflights_rejection_and_replay_before_blob_storage() {
         files
     };
 
-    let invalid_priority = call_raw(
+    let invalid_mode = call_raw(
         &home,
         "send_files",
         json!({
             "group_id":group_id,"paths":["payload.bin"],"by":"user",
-            "to":["user"],"priority":"urgent"
+            "to":["user"],"message_mode":"urgent"
         }),
     );
     assert_eq!(
-        invalid_priority
-            .error
-            .as_ref()
-            .map(|error| error.code.as_str()),
-        Some("invalid_priority")
+        invalid_mode.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_message_mode")
     );
     assert!(blob_files().is_empty());
+
+    for (recipients, mode, expected_code) in [
+        (json!(["user"]), "mail", "mail_requires_actor_recipient"),
+        (json!(["user", "peer1"]), "send", "mixed_recipient_kinds"),
+    ] {
+        let invalid_audience = call_raw(
+            &home,
+            "send_files",
+            json!({
+                "group_id":group_id,"paths":["payload.bin"],"by":"user",
+                "to":recipients,"message_mode":mode
+            }),
+        );
+        assert_eq!(
+            invalid_audience
+                .error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some(expected_code)
+        );
+        assert!(blob_files().is_empty());
+    }
 
     let rejected = call_raw(
         &home,
         "send_files",
         json!({
             "group_id":group_id,"paths":["payload.bin"],"by":"user",
-            "to":["missing-actor"]
+            "to":["missing-actor"],"message_mode":"send"
         }),
     );
     assert_eq!(
@@ -1072,7 +843,7 @@ fn send_files_preflights_rejection_and_replay_before_blob_storage() {
         "send_files",
         json!({
             "group_id":group_id,"paths":["payload.bin"],"by":"user",
-            "to":["user"],"client_id":"send-files-preflight-key"
+            "to":["user"],"message_mode":"send","client_id":"send-files-preflight-key"
         }),
     );
     let event_id = sent.result["event"]["id"]
@@ -1087,7 +858,7 @@ fn send_files_preflights_rejection_and_replay_before_blob_storage() {
         "send_files",
         json!({
             "group_id":group_id,"paths":["duplicate.bin"],"by":"user",
-            "to":["user"],"client_id":"send-files-preflight-key"
+            "to":["user"],"message_mode":"send","client_id":"send-files-preflight-key"
         }),
     );
     assert_eq!(replayed.result["event"]["id"], event_id);
@@ -1141,15 +912,14 @@ fn slash_skill_dispatch_persists_hidden_control_contract_and_replays_by_client_i
         "task_text":"开始执行",
         "command":"/using-superpowers",
         "capability_id":"skill:test:using-superpowers",
-        "priority":"attention",
-        "reply_required":true,
         "client_id":"slash-client-1",
         "reply_to":"event-original",
         "quote_text":"原始请求"
     });
     let first = call(&home, "slash_skill_dispatch", args.clone());
     assert_eq!(first.result["hidden"], true);
-    assert_eq!(first.result["delivered"], true);
+    assert_eq!(first.result["accepted"], true);
+    assert_eq!(first.result["message_mode"], "send");
     assert_eq!(first.result["command"], "/using-superpowers");
     assert_eq!(
         first.result["capability_id"],
@@ -1233,7 +1003,10 @@ fn replies_default_to_the_original_audience_and_reject_self_delivery() {
     let user_message = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["lead"],"text":"question"}),
+        json!({
+            "group_id":group_id,"by":"user","to":["lead"],"text":"question",
+            "message_mode":"send"
+        }),
     );
     let user_message_id = user_message.result["event"]["id"]
         .as_str()
@@ -1247,6 +1020,52 @@ fn replies_default_to_the_original_audience_and_reject_self_delivery() {
         }),
     );
     assert_eq!(default_reply.result["event"]["data"]["to"], json!(["user"]));
+
+    let mail_request = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"peer1","to":["lead"],"text":"reply later",
+            "message_mode":"request_reply"
+        }),
+    );
+    let mail_reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead","to":["peer1"],
+            "reply_to":mail_request.result["event"]["id"],"text":"mail answer",
+            "message_mode":"mail"
+        }),
+    );
+    assert_eq!(mail_reply.result["message_mode"], "mail");
+    assert_eq!(mail_reply.result["event"]["data"]["message_mode"], "mail");
+    let mail_status = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":group_id,"event_ids":[mail_request.result["event"]["id"]]}),
+    );
+    let mail_request_id = mail_request.result["event"]["id"]
+        .as_str()
+        .expect("mail request id");
+    assert_eq!(
+        mail_status.result["statuses"][mail_request_id]["obligation_status"]["lead"]["replied"],
+        true
+    );
+
+    let nested = call_raw(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead","to":["user"],
+            "reply_to":user_message_id,"text":"nested request",
+            "message_mode":"request_reply"
+        }),
+    );
+    assert_eq!(
+        nested.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_message_mode")
+    );
 
     let self_reply = call_raw(
         &home,
@@ -1265,7 +1084,10 @@ fn replies_default_to_the_original_audience_and_reject_self_delivery() {
     let lead_message = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"lead","to":["peer1"],"text":"update"}),
+        json!({
+            "group_id":group_id,"by":"lead","to":["peer1"],"text":"update",
+            "message_mode":"send"
+        }),
     );
     let own_message_reply = call(
         &home,
@@ -1322,7 +1144,7 @@ fn peer_insight_gate_validates_before_persisting_and_exempts_user_only_messages(
         "send",
         json!({
             "group_id":group_id,"by":"lead","to":["peer1"],"text":"work",
-            "require_peer_insight":true
+            "message_mode":"mail","require_peer_insight":true
         }),
     );
     assert!(!missing.ok);
@@ -1340,7 +1162,7 @@ fn peer_insight_gate_validates_before_persisting_and_exempts_user_only_messages(
         "send",
         json!({
             "group_id":group_id,"by":"lead","to":["user"],"text":"status",
-            "require_peer_insight":true
+            "message_mode":"send","require_peer_insight":true
         }),
     );
     assert!(user_only.ok);
@@ -1350,7 +1172,7 @@ fn peer_insight_gate_validates_before_persisting_and_exempts_user_only_messages(
         "send",
         json!({
             "group_id":group_id,"by":"lead","to":["peer1"],"text":"work",
-            "insight":"  reconsider the dependency boundary  ","require_peer_insight":true
+            "message_mode":"mail","insight":"  reconsider the dependency boundary  ","require_peer_insight":true
         }),
     );
     assert!(accepted.ok);
@@ -1374,7 +1196,7 @@ fn peer_insight_gate_validates_before_persisting_and_exempts_user_only_messages(
         "send",
         json!({
             "group_id":group_id,"by":"lead","to":["peer1"],"text":"wake and review",
-            "require_peer_insight":true
+            "message_mode":"mail","require_peer_insight":true
         }),
     );
     assert_eq!(
@@ -1416,12 +1238,43 @@ fn cross_group_peer_insight_gate_precedes_both_ledger_writes() {
         .expect("destination events")
         .len();
 
+    for (to, mode, expected_code) in [
+        (json!(["user", "reviewer"]), "send", "mixed_recipient_kinds"),
+        (json!(["user"]), "mail", "mail_requires_actor_recipient"),
+    ] {
+        let rejected = call_raw(
+            &home,
+            "send_cross_group",
+            json!({
+                "group_id":source_id,"dst_group_id":destination_id,"by":"user",
+                "to":to,"text":"invalid audience","message_mode":mode
+            }),
+        );
+        assert_eq!(
+            rejected.error.as_ref().map(|error| error.code.as_str()),
+            Some(expected_code)
+        );
+    }
+    assert_eq!(
+        ledger::read_all(&source_ledger)
+            .expect("source events after audience rejection")
+            .len(),
+        before_source
+    );
+    assert_eq!(
+        ledger::read_all(&destination_ledger)
+            .expect("destination events after audience rejection")
+            .len(),
+        before_destination
+    );
+
     let rejected = call_raw(
         &home,
         "send_cross_group",
         json!({
             "group_id":source_id,"dst_group_id":destination_id,"by":"user",
-            "to":["reviewer"],"text":"review this","require_peer_insight":true
+            "to":["reviewer"],"text":"review this","message_mode":"mail",
+            "require_peer_insight":true
         }),
     );
     assert_eq!(
@@ -1447,7 +1300,7 @@ fn cross_group_peer_insight_gate_precedes_both_ledger_writes() {
         json!({
             "group_id":source_id,"dst_group_id":destination_id,"by":"user",
             "to":["reviewer"],"text":"review this","insight":"check the outcome",
-            "require_peer_insight":true,"client_id":"cross-group-1"
+            "message_mode":"mail","require_peer_insight":true,"client_id":"cross-group-1"
         }),
     );
     assert!(
@@ -1472,7 +1325,7 @@ fn cross_group_peer_insight_gate_precedes_both_ledger_writes() {
         json!({
             "group_id":source_id,"dst_group_id":destination_id,"by":"user",
             "to":["reviewer"],"text":"changed retry body","require_peer_insight":true,
-            "client_id":"cross-group-1"
+            "message_mode":"mail","client_id":"cross-group-1"
         }),
     );
     assert_eq!(replay.result["duplicate"], true);
@@ -1487,6 +1340,75 @@ fn cross_group_peer_insight_gate_precedes_both_ledger_writes() {
             .expect("destination events")
             .len(),
         destination_after_accept
+    );
+}
+
+#[test]
+fn local_cross_group_reply_request_cancellation_reaches_the_relayed_event_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let source = call(&home, "group_create", json!({"title":"source","by":"user"}));
+    let destination = call(
+        &home,
+        "group_create",
+        json!({"title":"destination","by":"user"}),
+    );
+    let source_id = source.result["group"]["group_id"]
+        .as_str()
+        .expect("source id");
+    let destination_id = destination.result["group"]["group_id"]
+        .as_str()
+        .expect("destination id");
+    let sent = call(
+        &home,
+        "send_cross_group",
+        json!({
+            "group_id":source_id,"dst_group_id":destination_id,"by":"user",
+            "to":["user"],"text":"please answer","message_mode":"request_reply"
+        }),
+    );
+    let source_event_id = sent.result["src_event"]["id"]
+        .as_str()
+        .expect("source event id");
+    let destination_event_id = sent.result["dst_event"]["id"]
+        .as_str()
+        .expect("destination event id");
+
+    let cancelled = call(
+        &home,
+        "reply_request_cancel",
+        json!({"group_id":source_id,"source_event_id":source_event_id,"by":"user"}),
+    );
+    assert_eq!(cancelled.result["propagation"]["transport"], "local");
+    let cancel_event_id = cancelled.result["event"]["id"]
+        .as_str()
+        .expect("cancel event id");
+    let destination_ledger = GroupStore::new(home.clone())
+        .and_then(|store| store.ledger_path(destination_id))
+        .expect("destination ledger");
+    let propagated = ledger::read_all(&destination_ledger)
+        .expect("destination events")
+        .into_iter()
+        .filter(|event| event.kind == "chat.reply_request.cancelled")
+        .collect::<Vec<_>>();
+    assert_eq!(propagated.len(), 1);
+    assert_eq!(propagated[0].data["source_event_id"], destination_event_id);
+    assert_eq!(propagated[0].data["src_event_id"], cancel_event_id);
+    assert_eq!(propagated[0].data["src_message_event_id"], source_event_id);
+
+    let replay = call(
+        &home,
+        "reply_request_cancel",
+        json!({"group_id":source_id,"source_event_id":source_event_id,"by":"user"}),
+    );
+    assert_eq!(replay.result["duplicate"], true);
+    assert_eq!(
+        ledger::read_all(&destination_ledger)
+            .expect("destination events after replay")
+            .into_iter()
+            .filter(|event| event.kind == "chat.reply_request.cancelled")
+            .count(),
+        1
     );
 }
 
@@ -1513,7 +1435,8 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
         "send_cross_group_remote_record",
         json!({
             "group_id":source_id,"dst_group_id":"remote-group","by":"user",
-            "to":["reviewer"],"text":"review this","require_peer_insight":true
+            "to":["reviewer"],"text":"review this","message_mode":"mail",
+            "require_peer_insight":true
         }),
     );
     assert_eq!(
@@ -1533,7 +1456,7 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
         json!({
             "group_id":source_id,"dst_group_id":"remote-group","by":"user",
             "to":["reviewer"],"text":"review this","require_peer_insight":true,
-            "insight":"The remote reviewer owns the requested decision."
+            "message_mode":"mail","insight":"The remote reviewer owns the requested decision."
         }),
     );
     assert_eq!(
@@ -1543,6 +1466,14 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
     assert_eq!(
         accepted.result["source_event"]["data"]["dst_to"],
         json!(["reviewer"])
+    );
+    assert_eq!(
+        accepted.result["source_event"]["data"]["message_mode"],
+        "send"
+    );
+    assert_eq!(
+        accepted.result["source_event"]["data"]["dst_message_mode"],
+        "mail"
     );
 }
 
@@ -1587,20 +1518,35 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
             .len(),
         0
     );
-    let invalid_priority = call_raw(
+    let legacy_message_priority = call_raw(
         &home,
         "tracked_send",
         json!({
             "group_id":group_id,"by":"user","to":["worker"],"title":"Rejected",
-            "text":"invalid priority","message_priority":"urgent"
+            "text":"legacy message priority","message_priority":"urgent"
         }),
     );
     assert_eq!(
-        invalid_priority
+        legacy_message_priority
             .error
             .as_ref()
             .map(|error| error.code.as_str()),
-        Some("invalid_priority")
+        Some("unsupported_message_fields")
+    );
+    let legacy_priority = call_raw(
+        &home,
+        "tracked_send",
+        json!({
+            "group_id":group_id,"by":"user","to":["worker"],"title":"Rejected",
+            "text":"legacy priority","priority":"attention"
+        }),
+    );
+    assert_eq!(
+        legacy_priority
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("unsupported_message_fields")
     );
     call(
         &home,
@@ -1638,7 +1584,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
         "title":" Fix delivery ",
         "text":" Implement and verify ",
         "outcome":"Delivery is reliable",
-        "message_priority":" normal ",
+        "task_priority":" normal ",
         "checklist":[{"text":"add tests"}],
         "idempotency_key":" tracked-1 "
     });
@@ -1652,7 +1598,8 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
         first.result["event"]["data"]["text"],
         "Implement and verify"
     );
-    assert_eq!(first.result["event"]["data"]["priority"], "normal");
+    assert_eq!(first.result["event"]["data"]["message_mode"], "send");
+    assert!(first.result["event"]["data"].get("priority").is_none());
     let task_id = first.result["task_id"].as_str().expect("task id");
 
     let context = call(
@@ -1730,7 +1677,277 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
 }
 
 #[test]
-fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
+fn manual_delivery_is_blocked_without_a_claim_while_paused() {
+    use cccc_contracts::GroupState;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"manual-delivery-paused","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"worker","by":"user"}),
+    );
+    let source = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["worker"],"text":"later",
+            "message_mode":"mail"
+        }),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(group_id, |group| {
+            group.state = GroupState::Paused;
+            Ok(())
+        })
+        .expect("pause group");
+
+    let response = call_raw(
+        &home,
+        "message_deliver",
+        json!({
+            "group_id":group_id,"by":"user","actor_ids":["worker"],
+            "source_event_id":source.result["event"]["id"]
+        }),
+    );
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("delivery_blocked")
+    );
+    let ledger_path = store.ledger_path(group_id).expect("ledger path");
+    assert!(
+        ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .all(|event| event.kind != "runtime.delivery")
+    );
+}
+
+#[test]
+fn manual_delivery_is_blocked_without_a_claim_for_disabled_actor() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"manual-delivery-disabled","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"worker","by":"user"}),
+    );
+    let source = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["worker"],"text":"later",
+            "message_mode":"mail"
+        }),
+    );
+    call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,"actor_id":"worker","patch":{"enabled":false},"by":"user"
+        }),
+    );
+
+    let response = call_raw(
+        &home,
+        "message_deliver",
+        json!({
+            "group_id":group_id,"by":"user","actor_ids":["worker"],
+            "source_event_id":source.result["event"]["id"]
+        }),
+    );
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("delivery_blocked")
+    );
+    assert_eq!(
+        response
+            .error
+            .as_ref()
+            .map(|error| &error.details["reason"]),
+        Some(&json!("actor_disabled"))
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ledger_path = store.ledger_path(group_id).expect("ledger path");
+    assert!(
+        ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .all(|event| event.kind != "runtime.delivery")
+    );
+}
+
+#[test]
+fn manual_delivery_to_web_model_uses_the_consumer_transport() {
+    for (mode, transport) in [("pull", "web_model_pull"), ("browser", "web_model_browser")] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home =
+            HomeLayout::from_path(temp.path().join(format!("rust-home-{mode}"))).expect("home");
+        let created = call(
+            &home,
+            "group_create",
+            json!({"title":format!("manual web model {mode}"),"by":"user"}),
+        );
+        let group_id = created.result["group"]["group_id"]
+            .as_str()
+            .expect("group id");
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":"web1",
+                "runtime":"web_model",
+                "runner":"headless",
+                "env":{"CCCC_WEB_MODEL_DELIVERY_MODE":mode},
+                "by":"user"
+            }),
+        );
+        let store = GroupStore::new(home.clone()).expect("store");
+        store
+            .mutate(group_id, |group| {
+                group.running = true;
+                Ok(())
+            })
+            .expect("enable structured runtime fixture");
+        let source = call(
+            &home,
+            "send",
+            json!({
+                "group_id":group_id,"by":"user","to":["web1"],"text":"deliver later",
+                "message_mode":"mail"
+            }),
+        );
+        let source_event_id = source.result["event"]["id"]
+            .as_str()
+            .expect("source event id");
+
+        call(
+            &home,
+            "message_deliver",
+            json!({
+                "group_id":group_id,"by":"user","actor_ids":["web1"],
+                "source_event_id":source_event_id
+            }),
+        );
+        let ledger_path = store.ledger_path(group_id).expect("ledger path");
+        let delivery = ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .into_iter()
+            .rev()
+            .find(|event| event.kind == "runtime.delivery")
+            .expect("delivery claim");
+        assert_eq!(delivery.data["state"], "claimed");
+        assert_eq!(delivery.data["transport"], transport);
+
+        let turn = call(
+            &home,
+            "runtime_wait_next_turn",
+            json!({
+                "group_id":group_id,"actor_id":"web1","by":"web1","transport":transport
+            }),
+        );
+        assert_eq!(turn.result["status"], "work_available");
+        assert_eq!(turn.result["turn"]["event_ids"][0], source_event_id);
+    }
+}
+
+#[test]
+fn manual_delivery_reports_the_actual_conflicting_claim_without_partial_reservation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"manual-delivery-conflict","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["peer1", "peer2"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+    let source = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1","peer2"],"text":"later",
+            "message_mode":"mail"
+        }),
+    );
+    let source_event_id = source.result["event"]["id"]
+        .as_str()
+        .expect("source event id");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ledger_path = store.ledger_path(group_id).expect("ledger path");
+    for (actor_id, state) in [("peer1", "ambiguous"), ("peer2", "claimed")] {
+        let mut event = Event::new("runtime.delivery", group_id);
+        event.by = "system".into();
+        event.data = json!({
+            "actor_id":actor_id,
+            "source_event_id":source_event_id,
+            "state":state,
+            "transport":"manual_request"
+        })
+        .as_object()
+        .cloned()
+        .expect("delivery data");
+        ledger::append(&ledger_path, &event).expect("append delivery state");
+    }
+
+    let response = call_raw(
+        &home,
+        "message_deliver",
+        json!({
+            "group_id":group_id,"by":"user","actor_ids":["peer1","peer2"],
+            "source_event_id":source_event_id,"force_ambiguous":true
+        }),
+    );
+
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("delivery_in_progress")
+    );
+    assert_eq!(
+        response
+            .error
+            .as_ref()
+            .map(|error| &error.details["actor_id"]),
+        Some(&json!("peer2"))
+    );
+    assert_eq!(
+        ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn message_domain_contracts_cover_install_reply_idle_stream_and_validation() {
     use cccc_contracts::GroupState;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1761,7 +1978,10 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
     let install = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["worker"],"text":"/install owner/repo"}),
+        json!({
+            "group_id":group_id,"by":"user","to":["worker"],
+            "text":"/install owner/repo","message_mode":"send"
+        }),
     );
     assert_eq!(
         install.result["event"]["data"]["refs"][0]["capability_id"],
@@ -1772,44 +1992,44 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
         GroupState::Active
     );
 
-    let attention = call(
+    let reply_request = call(
         &home,
         "send",
         json!({
             "group_id":group_id,"by":"user","to":["worker"],"text":"respond",
-            "priority":"attention","reply_required":true
+            "message_mode":"request_reply"
         }),
     );
     let reply = call(
         &home,
         "reply",
         json!({
-            "group_id":group_id,"by":"worker","reply_to":attention.result["event"]["id"],
+            "group_id":group_id,"by":"worker","reply_to":reply_request.result["event"]["id"],
             "text":"done"
         }),
     );
-    assert_eq!(reply.result["ack_event"]["kind"], "chat.ack");
-    assert_eq!(
-        reply.result["ack_event"]["data"]["event_id"],
-        attention.result["event"]["id"]
-    );
-    let normal = call(
+    assert_eq!(reply.result["event"]["data"]["message_mode"], "send");
+    assert!(reply.result.get("ack_event").is_none());
+    let cancelled_request = call(
         &home,
         "send",
         json!({
-            "group_id":group_id,"by":"user","to":["worker"],"text":"normal reply",
-            "priority":"normal","reply_required":true
+            "group_id":group_id,"by":"user","to":["worker"],"text":"cancel reply",
+            "message_mode":"request_reply"
         }),
     );
-    let normal_reply = call(
+    let cancelled = call(
         &home,
-        "reply",
+        "reply_request_cancel",
         json!({
-            "group_id":group_id,"by":"worker","reply_to":normal.result["event"]["id"],
-            "text":"done"
+            "group_id":group_id,"by":"user",
+            "source_event_id":cancelled_request.result["event"]["id"]
         }),
     );
-    assert_eq!(normal_reply.result["ack_event"], Value::Null);
+    assert_eq!(
+        cancelled.result["event"]["kind"],
+        "chat.reply_request.cancelled"
+    );
 
     let start = call(
         &home,
@@ -1846,7 +2066,7 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
         "send",
         json!({
             "group_id":group_id,"by":"user","to":["worker"],"text":"",
-            "attachments":[{"path":"state/blobs/missing"}]
+            "message_mode":"send","attachments":[{"path":"state/blobs/missing"}]
         }),
     );
     assert_eq!(
@@ -1861,7 +2081,7 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
         "send",
         json!({
             "group_id":group_id,"by":"user","to":["worker"],"text":"path",
-            "path":temp.path().join("outside").to_string_lossy()
+            "message_mode":"send","path":temp.path().join("outside").to_string_lossy()
         }),
     );
     assert_eq!(
@@ -1903,7 +2123,7 @@ fn delegation_relays_to_target_foreman_with_legacy_cross_group_schema() {
         "send_cross_group",
         json!({
             "group_id":source_id,"dst_group_id":destination_id,"by":"source-lead",
-            "to":["target-lead"],"text":"schema"
+            "to":["target-lead"],"text":"schema","message_mode":"send"
         }),
     );
     assert_eq!(direct.result["src_event"], direct.result["source_event"]);
@@ -2002,21 +2222,6 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
             "condition timed out"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-async fn wait_until_async<F, Fut>(mut condition: F)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(7);
-    while !condition().await {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "condition timed out"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

@@ -10,7 +10,8 @@ from typing import Any, Callable, Dict, Optional
 
 from ...kernel.group_bridge.credentials import resolve_group_bridge_credential
 from .remote_dispatch import deliver_enqueued, iter_due_receipts
-from .transports.base import RemoteSendTransport, get_transport, permanent_result
+from .transports import RemoteSendTransport, get_transport
+from .transports.base import permanent_result
 
 logger = logging.getLogger("cccc.group_bridge.outbox")
 
@@ -164,3 +165,6 @@ class _CredentialUnresolvedTransport(RemoteSendTransport):
             "credential reference could not be resolved",
             transport=self.transport,
         )
+
+    def cancel_reply_request(self, envelope):  # type: ignore[no-untyped-def]
+        return self.deliver(envelope)

@@ -2,6 +2,7 @@
 use cccc_contracts::{Actor, Event, GroupState};
 use cccc_core::{GroupStore, HomeLayout, actors, automation, ledger};
 use serde_json::json;
+use std::collections::HashSet;
 
 #[test]
 fn canonical_interval_rule_starts_its_clock_and_emits_once_when_due() {
@@ -95,7 +96,7 @@ fn idle_group_suppresses_builtin_standup_but_runs_custom_rules() {
 }
 
 #[test]
-fn unread_nudge_defaults_off_and_can_be_enabled_explicitly() {
+fn mail_notice_waits_for_a_delivery_eligible_actor_and_is_one_shot() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -106,42 +107,166 @@ fn unread_nudge_defaults_off_and_can_be_enabled_explicitly() {
             actors::add(group, Actor::new("peer"))?;
             group
                 .extra
-                .insert("settings".into(), json!({"nudge_after_seconds":1}));
+                .insert("delivery".into(), json!({"mail_notice_after_seconds":1}));
             Ok(())
         })
-        .expect("legacy unread setting");
+        .expect("delivery settings");
     let mut message = Event::new("chat.message", &group.group_id);
     message.by = "user".into();
     message.ts = "2020-01-01T00:00:00Z".into();
-    message.data = json!({"text":"pending","to":["peer"]})
-        .as_object()
-        .cloned()
-        .expect("message");
+    message.data = json!({
+        "text":"private work detail that must not be copied into a notice",
+        "to":["peer"],
+        "message_mode":"mail"
+    })
+    .as_object()
+    .cloned()
+    .expect("message");
     ledger::append(
         &store.ledger_path(&group.group_id).expect("ledger"),
         &message,
     )
     .expect("append unread message");
 
-    let disabled = automation::tick(&home).expect("disabled automation tick");
-    assert!(disabled.notifications.is_empty());
+    let none =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &HashSet::new())
+            .expect("stopped actor tick");
+    assert!(none.notifications.is_empty());
 
-    store
-        .mutate(&group.group_id, |group| {
-            group.extra.insert(
-                "settings".into(),
-                json!({"nudge_after_seconds":1,"unread_nudge_after_seconds":1}),
-            );
-            Ok(())
-        })
-        .expect("enable unread nudge");
-    let enabled = automation::tick(&home).expect("enabled automation tick");
-    assert_eq!(enabled.notifications.len(), 1);
-    assert_eq!(enabled.notifications[0].data["kind"], "unread_nudge");
+    let eligible = HashSet::from(["peer".to_owned()]);
+    let due = automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+        .expect("running actor tick");
+    assert_eq!(due.notifications.len(), 1);
+    assert_eq!(due.notifications[0].data["kind"], "mail_notice");
+    assert_eq!(due.notifications[0].data["context"]["count"], 1);
+    assert!(
+        !due.notifications[0].data["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("private work detail")
+    );
+
+    let repeated =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("repeated tick");
+    assert!(repeated.notifications.is_empty());
 }
 
 #[test]
-fn canonical_automation_timing_precedes_legacy_flat_setting() {
+fn actor_start_begins_a_fresh_mail_notice_window() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("actor resume window", "").expect("group");
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("peer"))?;
+            group
+                .extra
+                .insert("delivery".into(), json!({"mail_notice_after_seconds":60}));
+            Ok(())
+        })
+        .expect("delivery settings");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let mut message = Event::new("chat.message", &group.group_id);
+    message.by = "user".into();
+    message.ts = "2020-01-01T00:00:00Z".into();
+    message.data = json!({
+        "text":"old Mail","to":["peer"],"message_mode":"mail"
+    })
+    .as_object()
+    .cloned()
+    .expect("message");
+    ledger::append(&ledger_path, &message).expect("append Mail");
+    let mut started = Event::new("actor.start", &group.group_id);
+    started.by = "user".into();
+    started.data = json!({"actor_id":"peer","runner":"headless"})
+        .as_object()
+        .cloned()
+        .expect("start data");
+    ledger::append(&ledger_path, &started).expect("append actor start");
+
+    let eligible = HashSet::from(["peer".to_owned()]);
+    let tick = automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+        .expect("post-start tick");
+    assert!(
+        tick.notifications.is_empty(),
+        "old Mail must wait for a fresh notice window after actor.start"
+    );
+}
+
+#[test]
+fn mail_arriving_before_batch_closure_shares_the_existing_notice() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("evolving mail batch", "").expect("group");
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Active;
+            actors::add(group, Actor::new("peer"))?;
+            group
+                .extra
+                .insert("delivery".into(), json!({"mail_notice_after_seconds":1}));
+            Ok(())
+        })
+        .expect("delivery settings");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let append_mail = |text: &str| {
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.ts = "2020-01-01T00:00:00Z".into();
+        event.data = json!({"text":text,"to":["peer"],"message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail data");
+        ledger::append(&ledger_path, &event).expect("append mail");
+        event
+    };
+    let append_reply = |source: &Event| {
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "peer".into();
+        event.data = json!({
+            "text":"handled","to":["user"],"message_mode":"send","reply_to":source.id
+        })
+        .as_object()
+        .cloned()
+        .expect("reply data");
+        ledger::append(&ledger_path, &event).expect("append reply");
+    };
+    let eligible = HashSet::from(["peer".to_owned()]);
+
+    let first = append_mail("first batch item");
+    let initial =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("initial notice");
+    assert_eq!(initial.notifications.len(), 1);
+
+    let joined = append_mail("joined before closure");
+    append_reply(&first);
+    let same_batch =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("same batch tick");
+    assert!(
+        same_batch.notifications.is_empty(),
+        "Mail that arrived before the original batch closed must not create another prompt"
+    );
+
+    append_reply(&joined);
+    let next = append_mail("next batch item");
+    let next_batch =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("next batch notice");
+    assert_eq!(next_batch.notifications.len(), 1);
+    assert_eq!(
+        next_batch.notifications[0].data["context"]["source_event_ids"],
+        json!([next.id])
+    );
+}
+
+#[test]
+fn reply_notice_starts_only_after_delivery_acceptance() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -151,30 +276,59 @@ fn canonical_automation_timing_precedes_legacy_flat_setting() {
             group.state = GroupState::Active;
             actors::add(group, Actor::new("peer"))?;
             group
-                .automation
-                .insert("unread_nudge_after_seconds".into(), json!(1));
-            group
                 .extra
-                .insert("settings".into(), json!({"unread_nudge_after_seconds":0}));
+                .insert("delivery".into(), json!({"reply_notice_after_seconds":1}));
             Ok(())
         })
         .expect("automation config");
     let mut message = Event::new("chat.message", &group.group_id);
     message.by = "user".into();
     message.ts = "2020-01-01T00:00:00Z".into();
-    message.data = json!({"text":"pending","to":["peer"]})
-        .as_object()
-        .cloned()
-        .expect("message");
+    message.data = json!({
+        "text":"please answer",
+        "to":["peer"],
+        "message_mode":"request_reply"
+    })
+    .as_object()
+    .cloned()
+    .expect("message");
     ledger::append(
         &store.ledger_path(&group.group_id).expect("ledger"),
         &message,
     )
     .expect("append unread message");
 
-    let result = automation::tick(&home).expect("automation tick");
-    assert_eq!(result.notifications.len(), 1);
-    assert_eq!(result.notifications[0].data["kind"], "unread_nudge");
+    let eligible = HashSet::from(["peer".to_owned()]);
+    let before_acceptance =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("pre-acceptance tick");
+    assert!(before_acceptance.notifications.is_empty());
+
+    let mut accepted = Event::new("runtime.delivery", &group.group_id);
+    accepted.by = "system".into();
+    accepted.ts = "2020-01-01T00:00:01Z".into();
+    accepted.data = json!({
+        "source_event_id":message.id,
+        "actor_id":"peer",
+        "state":"accepted"
+    })
+    .as_object()
+    .cloned()
+    .expect("delivery fact");
+    ledger::append(
+        &store.ledger_path(&group.group_id).expect("ledger"),
+        &accepted,
+    )
+    .expect("append accepted delivery");
+
+    let due = automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+        .expect("reply notice tick");
+    assert_eq!(due.notifications.len(), 1);
+    assert_eq!(due.notifications[0].data["kind"], "reply_notice");
+    let repeated =
+        automation::tick_group_for_delivery_actors(&home, &group.group_id, true, &eligible)
+            .expect("repeated tick");
+    assert!(repeated.notifications.is_empty());
 }
 
 #[test]

@@ -59,7 +59,7 @@ The replacement Rust daemon also uses the Python control-plane paths and schemas
 | Actor profiles | `state/actor_profiles/profiles.json` |
 | Profile private environment | `state/secrets/actor_profiles/*.json` |
 | Actor private environment | `state/secrets/actors/<group_id>/*.json` |
-| Inbox cursors | `groups/<group_id>/state/read_cursors.json` |
+| Mail Inbox cursors | `groups/<group_id>/state/read_cursors.json` |
 | Automation runtime state | `groups/<group_id>/state/automation.json` |
 | Capability catalog and bindings | `state/capabilities/catalog.json`, `state/capabilities/state.json` |
 | Capability allowlist overlay | `config/capability-allowlist.user.yaml` |
@@ -157,9 +157,11 @@ write directions, including group-copy packages.
 | `chat.message` | Chat message |
 | `chat.cross_group_receipt` | Source-group receipt that links a cross-group send to its destination event |
 | `chat.stream` | Progressive stream chunk/update |
-| `chat.read` / `chat.ack` | Read and acknowledgement events |
+| `mail.read` | Consuming Mail cursor boundary |
+| `chat.reply_request.cancelled` | Cancels remaining reply obligations |
+| `runtime.delivery` | Per-recipient runtime handoff evidence |
 | `chat.reaction` | Chat reaction |
-| `system.notify` / `system.notify_ack` | System notifications and acknowledgement |
+| `system.notify` | System notifications, including bounded Mail/reply notices |
 | `assistant.settings_update` | Update built-in assistant settings |
 | `assistant.status_update` | Update built-in assistant lifecycle/health |
 | `assistant.voice.document` | Voice Secretary working document save/update/archive marker |
@@ -234,7 +236,7 @@ The surface is best understood as capability groups instead of a fixed namespace
 ### Core Collaboration Capability Groups
 
 - Session and guidance: `cccc_bootstrap`, `cccc_help`, `cccc_project_info`
-- Messaging and files: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`
+- Messaging and files: `cccc_inbox_read`, `cccc_message_history`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`
 - Group and actor control: `cccc_group`, `cccc_actor`
 - Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`
 - Automation and memory: `cccc_automation`, `cccc_automation_manage`, `cccc_memory`, `cccc_memory_admin`

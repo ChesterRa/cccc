@@ -20,13 +20,12 @@ from ...contracts.v1 import (
 from ...kernel.actors import find_actor, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.chat_idempotency import find_existing_reply_result
-from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
+from ...kernel.inbox import actor_existed_at_event, find_event, is_message_for_actor, iter_events
 from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event, read_last_lines
 from ...kernel.blobs import store_blob_bytes
 from ...kernel.messaging import (
     default_reply_recipients,
-    enabled_recipient_actor_ids,
     recipient_actor_ids,
     targets_any_agent,
 )
@@ -36,6 +35,7 @@ from ...kernel.peer_insight import (
     peer_insight_required_details,
     preflight_local_peer_audience,
     remote_recipients_include_peer,
+    validate_message_audience,
 )
 from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
@@ -46,8 +46,10 @@ from ..group_bridge.reply_relay import (
     group_bridge_reply_return_recipients,
     relay_group_bridge_reply,
 )
+from ..group_bridge.cancellation import propagate_reply_request_cancel
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from ..actors.web_model_browser_delivery import web_model_browser_delivery_enabled
 from .delivery import flush_pending_messages
 from .chat_delivery_ops import deliver_appended_chat_message
 from .actor_turn_rendering import (
@@ -59,6 +61,7 @@ from .install_slash_command import INSTALL_CAPABILITY_ID, parse_install_slash_co
 from .chat_side_effects import schedule_chat_side_effects
 from .post_commit import run_chat_post_commit, run_group_chat_post_commit
 from .chat_diagnostics import make_chat_diagnostics
+from .runtime_delivery import append_delivery_state, claim_deliveries, latest_delivery_state
 
 logger = logging.getLogger("cccc.daemon.server")
 
@@ -168,6 +171,7 @@ def _tracked_send_existing_result(group: Any, *, client_id: str, by: str = "") -
         return {
             "event": event,
             "event_id": str(event.get("id") or "").strip(),
+            "message_mode": str(data.get("message_mode") or ""),
             "task_id": task_id,
             "task_ref": task_ref,
             "replayed": True,
@@ -283,17 +287,19 @@ def handle_send(
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
     diagnostics_enabled: Callable[[], bool] | None = None,
+    preflight_only: bool = False,
+    has_attachments: bool = False,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     text = str(args.get("text") or "")
     by = str(args.get("by") or "user").strip()
-    priority = str(args.get("priority") or "normal").strip() or "normal"
-    reply_required = coerce_bool(args.get("reply_required"))
+    message_mode = str(args.get("message_mode") or "").strip()
     reply_to = str(args.get("reply_to") or "").strip()
     quote_text = str(args.get("quote_text") or "").strip()
     src_group_id = str(args.get("src_group_id") or "").strip()
     src_event_id = str(args.get("src_event_id") or "").strip()
     dst_group_id = str(args.get("dst_group_id") or "").strip()
+    dst_message_mode = str(args.get("dst_message_mode") or "").strip()
     client_id = str(args.get("client_id") or "").strip()
     suggested_user_message = _normalize_suggested_user_message(args.get("suggested_user_message"))
     source_platform = str(args.get("source_platform") or "").strip()
@@ -335,8 +341,34 @@ def handle_send(
             to_tokens = [token]
     install_slash_command = parse_install_slash_command(text)
 
-    if priority not in ("normal", "attention"):
-        return diag.finish_response(_error("invalid_priority", "priority must be 'normal' or 'attention'"))
+    legacy_fields = [key for key in ("priority", "reply_required", "requires_ack") if key in args]
+    if legacy_fields:
+        return diag.finish_response(
+            _error(
+                "unsupported_message_fields",
+                "use message_mode; legacy priority/reply_required/requires_ack fields are not supported",
+                details={"fields": legacy_fields},
+            )
+        )
+    if message_mode not in ("send", "request_reply", "mail"):
+        return diag.finish_response(
+            _error(
+                "invalid_message_mode",
+                "message_mode is required and must be send, request_reply, or mail",
+            )
+        )
+    if dst_message_mode and dst_message_mode not in ("send", "request_reply", "mail"):
+        return diag.finish_response(
+            _error(
+                "invalid_message_mode",
+                "dst_message_mode must be send, request_reply, or mail",
+            )
+        )
+    if dst_group_id and dst_message_mode:
+        try:
+            validate_message_audience(dst_to, message_mode=dst_message_mode)
+        except PeerRecipientError as exc:
+            return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
     if not group_id:
         return diag.finish_response(_error("missing_group_id", "missing group_id"))
 
@@ -359,11 +391,20 @@ def handle_send(
             group,
             to_tokens=to_tokens,
             by=by,
-            apply_default_send=True,
+            apply_default_send=message_mode != "request_reply",
+            message_mode=message_mode,
         )
     except PeerRecipientError as exc:
         return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
     to = audience.recipients
+    if message_mode == "request_reply":
+        if not to_tokens or any(token in {"@all", "@peers", "@foreman"} for token in to_tokens):
+            return diag.finish_response(
+                _error(
+                    "concrete_recipients_required",
+                    "request_reply requires one or more explicit concrete recipients",
+                )
+            )
     if coerce_bool(args.get("require_peer_insight")) and audience.peer_actor_ids and insight is None:
         return diag.finish_response(
             _error(
@@ -372,57 +413,6 @@ def handle_send(
                 details=peer_insight_required_details(),
             )
         )
-
-    if source_multiaddrs and src_group_id and source_user_id:
-        try:
-            from ..group_bridge.peer_address_sync import sync_group_bridge_peer_multiaddrs
-
-            sync_group_bridge_peer_multiaddrs(
-                group_id=group.group_id,
-                remote_group_id=src_group_id,
-                remote_peer_id=source_user_id,
-                multiaddrs=source_multiaddrs,
-            )
-        except Exception:
-            logger.exception(
-                "[group_bridge] failed to sync source multiaddrs group=%s remote_group=%s peer=%s",
-                group.group_id,
-                src_group_id,
-                source_user_id,
-            )
-
-    group = _wake_group_on_human_message(
-        group,
-        by=by,
-        state_at_accept=str(args.get("__group_state_at_accept") or ""),
-        automation_on_resume=automation_on_resume,
-        clear_pending_system_notifies=clear_pending_system_notifies,
-    )
-    diag.mark("wake_group")
-
-    diag.mark("resolve_recipients")
-
-    woken: list[str] = []
-    if targets_any_agent(to):
-        matched_enabled = enabled_recipient_actor_ids(group, to)
-        if by and by in matched_enabled:
-            matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
-        woken = auto_wake_recipients(group, to, by)
-        diag.mark("auto_wake")
-        if not matched_enabled:
-            if not woken:
-                wanted = " ".join(to) if to else "@all"
-                return diag.finish_response(
-                    _error(
-                        "no_enabled_recipients",
-                        (
-                            "No enabled recipients after excluding sender. "
-                            "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
-                            f"Current resolved recipients: {wanted}"
-                        ),
-                        details={"to": list(to)},
-                    )
-                )
 
     path = str(args.get("path") or "").strip()
     if path:
@@ -450,6 +440,46 @@ def handle_send(
     except Exception as e:
         return diag.finish_response(_error("invalid_attachments", str(e)))
     refs = _normalize_refs(args.get("refs"))
+    if not text.strip() and not attachments and not has_attachments:
+        return diag.finish_response(_error("empty_message", "message text cannot be empty"))
+    if preflight_only:
+        return diag.finish_response(DaemonResponse(ok=True, result={"ready": True}))
+
+    if source_multiaddrs and src_group_id and source_user_id:
+        try:
+            from ..group_bridge.peer_address_sync import sync_group_bridge_peer_multiaddrs
+
+            sync_group_bridge_peer_multiaddrs(
+                group_id=group.group_id,
+                remote_group_id=src_group_id,
+                remote_peer_id=source_user_id,
+                multiaddrs=source_multiaddrs,
+            )
+        except Exception:
+            logger.exception(
+                "[group_bridge] failed to sync source multiaddrs group=%s remote_group=%s peer=%s",
+                group.group_id,
+                src_group_id,
+                source_user_id,
+            )
+
+    if message_mode != "mail":
+        group = _wake_group_on_human_message(
+            group,
+            by=by,
+            state_at_accept=str(args.get("__group_state_at_accept") or ""),
+            automation_on_resume=automation_on_resume,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+        )
+        diag.mark("wake_group")
+
+    diag.mark("resolve_recipients")
+
+    woken: list[str] = []
+    if message_mode != "mail" and targets_any_agent(to):
+        woken = auto_wake_recipients(group, to, by)
+        diag.mark("auto_wake")
+
     delivery_body_text = text
     if install_slash_command is not None:
         delivery_body_text = render_install_command_task(install_slash_command)
@@ -466,9 +496,6 @@ def handle_send(
             },
         ]
 
-    if not text.strip() and not attachments:
-        return diag.finish_response(_error("empty_message", "message text cannot be empty"))
-
     event = append_event(
         group.ledger_path,
         kind="chat.message",
@@ -479,8 +506,7 @@ def handle_send(
             text=text,
             format="plain",
             insight=insight,
-            priority=priority,
-            reply_required=reply_required,
+            message_mode=message_mode,
             reply_to=reply_to or None,
             quote_text=quote_text or None,
             to=to,
@@ -495,6 +521,7 @@ def handle_send(
             src_event_id=src_event_id or None,
             dst_group_id=dst_group_id or None,
             dst_to=dst_to if dst_group_id else None,
+            dst_message_mode=dst_message_mode if dst_group_id and dst_message_mode else None,
             client_id=client_id or None,
             suggested_user_message=suggested_user_message,
         ).model_dump(),
@@ -504,43 +531,45 @@ def handle_send(
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
     logger.debug("[SEND] group=%s text=%r effective_to=%s", group_id, text[:30], effective_to)
-    run_group_chat_post_commit(
-        group_id,
-        "send-delivery",
-        lambda: deliver_appended_chat_message(
-            group=group,
-            event=event,
-            by=by,
-            effective_to=effective_to,
-            text=delivery_body_text,
-            insight=insight,
-            priority=priority,
-            reply_required=reply_required,
-            refs=refs,
-            attachments=attachments,
-            quote_text=quote_text,
-            source_platform=source_platform,
-            source_user_name=source_user_name,
-            source_user_id=source_user_id,
-            src_group_id=src_group_id,
-            src_event_id=src_event_id,
-            effective_runner_kind=effective_runner_kind,
-            codex_actor_running=codex_app_supervisor.actor_running,
-            claude_actor_running=claude_app_supervisor.actor_running,
-            codex_submit_user_message=codex_app_supervisor.submit_user_message,
-            claude_submit_user_message=claude_app_supervisor.submit_user_message,
-            woken=set(woken),
-            logger=logger,
-        ),
-    )
-    diag.mark("schedule_delivery")
+    if message_mode != "mail":
+        run_group_chat_post_commit(
+            group_id,
+            "send-delivery",
+            lambda: deliver_appended_chat_message(
+                group=group,
+                event=event,
+                by=by,
+                effective_to=effective_to,
+                text=delivery_body_text,
+                insight=insight,
+                message_mode=message_mode,
+                refs=refs,
+                attachments=attachments,
+                quote_text=quote_text,
+                source_platform=source_platform,
+                source_user_name=source_user_name,
+                source_user_id=source_user_id,
+                src_group_id=src_group_id,
+                src_event_id=src_event_id,
+                effective_runner_kind=effective_runner_kind,
+                codex_actor_running=codex_app_supervisor.actor_running,
+                claude_actor_running=claude_app_supervisor.actor_running,
+                codex_submit_user_message=codex_app_supervisor.submit_user_message,
+                claude_submit_user_message=claude_app_supervisor.submit_user_message,
+                woken=set(woken),
+                logger=logger,
+            ),
+        )
+        diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
         automation_on_new_message=automation_on_new_message,
     )
     diag.mark("schedule_side_effects")
 
-    return diag.finish_response(DaemonResponse(ok=True, result={"event": event}))
+    return diag.finish_response(
+        DaemonResponse(ok=True, result={"event": event, "message_mode": message_mode})
+    )
 
 
 def handle_tracked_send(
@@ -567,9 +596,13 @@ def handle_tracked_send(
         return _error("missing_title", "tracked_send requires a title or non-empty text")
     if not text:
         return _error("empty_message", "tracked_send message text cannot be empty")
-    message_priority = str(args.get("message_priority") or args.get("priority") or "normal").strip() or "normal"
-    if message_priority not in ("normal", "attention"):
-        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+    legacy_fields = [key for key in ("priority", "message_priority", "reply_required") if key in args]
+    if legacy_fields:
+        return _error(
+            "unsupported_message_fields",
+            "tracked_send uses fixed message_mode=send; use task_priority for the task and omit priority/message_priority/reply_required",
+            details={"fields": legacy_fields},
+        )
 
     group = load_group(group_id)
     if group is None:
@@ -595,6 +628,7 @@ def handle_tracked_send(
             to_tokens=_normalize_to_tokens(args.get("to")),
             by=by,
             apply_default_send=True,
+            message_mode="send",
         )
     except PeerRecipientError as exc:
         return _error(exc.code, exc.message, details=exc.details)
@@ -610,22 +644,20 @@ def handle_tracked_send(
     outcome = str(args.get("outcome") or args.get("goal") or "").strip() or text
     status = str(args.get("status") or "planned").strip() or "planned"
     waiting_on = str(args.get("waiting_on") or ("actor" if assignee else "none")).strip() or "none"
-    priority = str(args.get("task_priority") or message_priority).strip() or "normal"
+    priority = str(args.get("task_priority") or "normal").strip() or "normal"
     task_type = str(args.get("task_type") or "standard").strip() or "standard"
     checklist = _normalize_tracked_checklist(args.get("checklist"))
     notes = str(args.get("notes") or "").strip()
     blocked_by = args.get("blocked_by")
     handoff_to = str(args.get("handoff_to") or "").strip()
     base_refs = _normalize_refs(args.get("refs"))
-    reply_required = coerce_bool(args.get("reply_required")) if "reply_required" in args else True
     message_args = {
         "group_id": group_id,
         "text": text,
         "by": by,
         "to": audience.recipients,
         "path": str(args.get("path") or ""),
-        "priority": message_priority,
-        "reply_required": reply_required,
+        "message_mode": "send",
         "refs": base_refs,
         "insight": insight,
         "require_peer_insight": coerce_bool(args.get("require_peer_insight")),
@@ -688,6 +720,7 @@ def handle_tracked_send(
                 "task_ref": resumed_ref,
                 "event": event,
                 "event_id": str(event.get("id") or "").strip(),
+                "message_mode": "send",
                 "task_created": False,
                 "message_sent": True,
                 "partial_failure": False,
@@ -775,6 +808,7 @@ def handle_tracked_send(
             "context_result": task_result,
             "event": event,
             "event_id": str(event.get("id") or "").strip(),
+            "message_mode": "send",
             "task_created": True,
             "message_sent": True,
             "partial_failure": False,
@@ -794,14 +828,15 @@ def handle_reply(
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
     diagnostics_enabled: Callable[[], bool] | None = None,
+    preflight_only: bool = False,
+    has_attachments: bool = False,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     text = str(args.get("text") or "")
     by = str(args.get("by") or "user").strip()
     reply_to = str(args.get("reply_to") or "").strip()
-    priority = str(args.get("priority") or "normal").strip() or "normal"
-    reply_required = coerce_bool(args.get("reply_required"))
     client_id = str(args.get("client_id") or "").strip()
+    message_mode = str(args.get("message_mode") or "send").strip().lower()
     suggested_user_message = _normalize_suggested_user_message(args.get("suggested_user_message"))
     diag = make_chat_diagnostics(
         op="reply",
@@ -817,8 +852,22 @@ def handle_reply(
         to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
     to_explicitly_set = bool(to_tokens)
 
-    if priority not in ("normal", "attention"):
-        return diag.finish_response(_error("invalid_priority", "priority must be 'normal' or 'attention'"))
+    legacy_fields = [key for key in ("priority", "reply_required", "requires_ack") if key in args]
+    if legacy_fields:
+        return diag.finish_response(
+            _error(
+                "unsupported_message_fields",
+                "reply accepts message_mode=send or mail; legacy delivery fields are not supported",
+                details={"fields": legacy_fields},
+            )
+        )
+    if message_mode not in {"send", "mail"}:
+        return diag.finish_response(
+            _error(
+                "invalid_message_mode",
+                "reply message_mode must be send or mail",
+            )
+        )
     if not group_id:
         return diag.finish_response(_error("missing_group_id", "missing group_id"))
     if not reply_to:
@@ -834,7 +883,7 @@ def handle_reply(
         if existing is not None:
             return diag.finish_response(DaemonResponse(ok=True, result=existing))
 
-    original, existing_ack = find_event_with_chat_ack(group, event_id=reply_to, actor_id=by)
+    original = find_event(group, reply_to)
     diag.mark("load_reply_target")
     if original is None:
         resp = _error("event_not_found", f"event not found: {reply_to}")
@@ -864,11 +913,7 @@ def handle_reply(
 
     if not to_tokens:
         if relayable_group_bridge_reply:
-            if group_bridge_reply_to:
-                # Keep the local reply visible to the human operator; the relay
-                # uses the preserved remote target stored on the original event.
-                to_tokens = ["user"]
-            else:
+            if not group_bridge_reply_to:
                 return diag.finish_response(
                     _error(
                         "missing_remote_recipient",
@@ -878,11 +923,11 @@ def handle_reply(
         else:
             to_tokens = default_reply_recipients(group, by=by, original_event=original)
     if relayable_group_bridge_reply:
-        try:
-            to = resolve_recipient_tokens(group, to_tokens)
-        except Exception as exc:
-            return diag.finish_response(_error("invalid_recipient", str(exc)))
-        local_peer_actor_ids = [actor_id for actor_id in recipient_actor_ids(group, to) if actor_id != by]
+        # `to` names the remote audience for a Group Bridge reply. The durable
+        # source row is only a local human-visible audit record and must never
+        # redeliver the outbound reply to similarly named local actors.
+        to = ["user"]
+        local_peer_actor_ids = []
     else:
         try:
             audience = preflight_local_peer_audience(
@@ -890,6 +935,7 @@ def handle_reply(
                 to_tokens=to_tokens,
                 by=by,
                 apply_default_send=False,
+                message_mode=message_mode,
             )
         except PeerRecipientError as exc:
             return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
@@ -900,12 +946,17 @@ def handle_reply(
     group_bridge_remote_to = (
         group_bridge_reply_return_recipients(
             original_data=original_data,
-            fallback=to,
+            fallback=to_tokens,
             fallback_was_explicit=to_explicitly_set,
         )
         if relayable_group_bridge_reply
         else []
     )
+    if relayable_group_bridge_reply:
+        try:
+            validate_message_audience(group_bridge_remote_to, message_mode=message_mode)
+        except PeerRecipientError as exc:
+            return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
     peer_facing = bool(local_peer_actor_ids) or remote_recipients_include_peer(group_bridge_remote_to)
     if coerce_bool(args.get("require_peer_insight")) and peer_facing and insight is None:
         return diag.finish_response(
@@ -916,45 +967,32 @@ def handle_reply(
             )
         )
 
-    group = _wake_group_on_human_message(
-        group,
-        by=by,
-        state_at_accept=str(args.get("__group_state_at_accept") or ""),
-        automation_on_resume=automation_on_resume,
-        clear_pending_system_notifies=clear_pending_system_notifies,
-    )
-    diag.mark("wake_group")
-
-    woken: list[str] = []
-    if targets_any_agent(to):
-        matched_enabled = enabled_recipient_actor_ids(group, to)
-        if by and by in matched_enabled:
-            matched_enabled = [actor_id for actor_id in matched_enabled if actor_id != by]
-        woken = auto_wake_recipients(group, to, by)
-        diag.mark("auto_wake")
-        if not matched_enabled:
-            if not woken and not relayable_group_bridge_reply:
-                wanted = " ".join(to) if to else "@all"
-                return diag.finish_response(
-                    _error(
-                        "no_enabled_recipients",
-                        (
-                            "No enabled recipients after excluding sender. "
-                            "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
-                            f"Current resolved recipients: {wanted}"
-                        ),
-                        details={"to": list(to)},
-                    )
-                )
-
     scope_key = str(group.doc.get("active_scope_key") or "").strip()
     try:
         attachments = normalize_attachments(group, args.get("attachments"))
     except Exception as e:
         return diag.finish_response(_error("invalid_attachments", str(e)))
     refs = _normalize_refs(args.get("refs"))
-    if not text.strip() and not attachments:
+    if not text.strip() and not attachments and not has_attachments:
         return diag.finish_response(_error("empty_message", "message text cannot be empty"))
+    if preflight_only:
+        return diag.finish_response(DaemonResponse(ok=True, result={"ready": True}))
+
+    if message_mode != "mail":
+        group = _wake_group_on_human_message(
+            group,
+            by=by,
+            state_at_accept=str(args.get("__group_state_at_accept") or ""),
+            automation_on_resume=automation_on_resume,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+        )
+    diag.mark("wake_group")
+
+    woken: list[str] = []
+    if message_mode != "mail" and targets_any_agent(to):
+        woken = auto_wake_recipients(group, to, by)
+        diag.mark("auto_wake")
+
     group_bridge_remote_group_id = (
         str(original_data.get("src_group_id") or "").strip()
         if relayable_group_bridge_reply
@@ -971,8 +1009,7 @@ def handle_reply(
             text=text,
             format="plain",
             insight=insight,
-            priority=priority,
-            reply_required=reply_required,
+            message_mode="send" if relayable_group_bridge_reply else message_mode,
             to=to,
             reply_to=target_event_id or reply_to,
             quote_text=quote_text,
@@ -984,6 +1021,7 @@ def handle_reply(
             mention_user_ids=original_mention_user_ids or None,
             dst_group_id=group_bridge_remote_group_id or None,
             dst_to=group_bridge_remote_to or None,
+            dst_message_mode=message_mode if relayable_group_bridge_reply else None,
             **build_sender_snapshot(group, by=by),
             client_id=client_id or None,
             suggested_user_message=suggested_user_message,
@@ -997,63 +1035,42 @@ def handle_reply(
         text=text,
         insight=insight,
         by=by,
-        to=to,
-        priority=priority,
-        reply_required=reply_required,
+        to=group_bridge_remote_to if relayable_group_bridge_reply else to,
+        message_mode=message_mode,
         refs=refs,
         to_was_explicit=to_explicitly_set,
         require_peer_insight=coerce_bool(args.get("require_peer_insight")),
     )
     diag.mark("group_bridge_reply")
 
-    ack_event: Optional[dict[str, Any]] = None
-    try:
-        if str(original.get("kind") or "") == "chat.message":
-            original_by = str(original.get("by") or "").strip()
-            original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
-            original_priority = str(original_data.get("priority") or "normal").strip()
-            if by and by != original_by and original_priority == "attention":
-                if is_message_for_actor(group, actor_id=by, event=original):
-                    if target_event_id and not existing_ack:
-                        ack_event = append_event(
-                            group.ledger_path,
-                            kind="chat.ack",
-                            group_id=group.group_id,
-                            scope_key="",
-                            by=by,
-                            data={"actor_id": by, "event_id": target_event_id},
-                        )
-    except Exception:
-        ack_event = None
-
     effective_to = to if to else ["@all"]
     event_id = str(event.get("id") or "").strip()
     event_ts = str(event.get("ts") or "").strip()
-    run_group_chat_post_commit(
-        group_id,
-        "reply-delivery",
-        lambda: deliver_appended_chat_message(
-            group=group,
-            event=event,
-            by=by,
-            effective_to=effective_to,
-            text=text,
-            insight=insight,
-            priority=priority,
-            reply_required=reply_required,
-            refs=refs,
-            attachments=attachments,
-            reply_to=target_event_id or reply_to,
-            quote_text=quote_text,
-            effective_runner_kind=effective_runner_kind,
-            codex_actor_running=codex_app_supervisor.actor_running,
-            claude_actor_running=claude_app_supervisor.actor_running,
-            codex_submit_user_message=codex_app_supervisor.submit_user_message,
-            claude_submit_user_message=claude_app_supervisor.submit_user_message,
-            woken=set(woken),
-            logger=logger,
-        ),
-    )
+    if message_mode != "mail":
+        run_group_chat_post_commit(
+            group_id,
+            "reply-delivery",
+            lambda: deliver_appended_chat_message(
+                group=group,
+                event=event,
+                by=by,
+                effective_to=effective_to,
+                text=text,
+                insight=insight,
+                message_mode=message_mode,
+                refs=refs,
+                attachments=attachments,
+                reply_to=target_event_id or reply_to,
+                quote_text=quote_text,
+                effective_runner_kind=effective_runner_kind,
+                codex_actor_running=codex_app_supervisor.actor_running,
+                claude_actor_running=claude_app_supervisor.actor_running,
+                codex_submit_user_message=codex_app_supervisor.submit_user_message,
+                claude_submit_user_message=claude_app_supervisor.submit_user_message,
+                woken=set(woken),
+                logger=logger,
+            ),
+        )
     diag.mark("schedule_delivery")
     schedule_chat_side_effects(
         group=group,
@@ -1061,12 +1078,57 @@ def handle_reply(
     )
     diag.mark("schedule_side_effects")
 
-    result: Dict[str, Any] = {"event": event, "ack_event": ack_event}
+    result: Dict[str, Any] = {"event": event, "message_mode": message_mode}
     if group_bridge_reply_result is not None:
         result["group_bridge_reply"] = group_bridge_reply_result.result if group_bridge_reply_result.ok else {
             "error": group_bridge_reply_result.error.model_dump() if group_bridge_reply_result.error is not None else None
         }
     return diag.finish_response(DaemonResponse(ok=True, result=result))
+
+
+def handle_message_upload_preflight(
+    args: Dict[str, Any],
+    *,
+    coerce_bool: Callable[[Any], bool],
+    normalize_attachments: Callable[[Any, Any], list[dict[str, Any]]],
+    effective_runner_kind: Callable[[str], str],
+    auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
+    automation_on_resume: Callable[[Any], None],
+    automation_on_new_message: Callable[[Any], None],
+    clear_pending_system_notifies: Callable[[str, set[str]], None],
+    diagnostics_enabled: Callable[[], bool] | None = None,
+) -> DaemonResponse:
+    """Validate a staged Web upload without creating durable state."""
+
+    operation = str(args.get("operation") or "").strip()
+    if operation not in {"send", "reply"}:
+        return _error("invalid_args", "operation must be send or reply")
+    forwarded = dict(args)
+    forwarded.pop("operation", None)
+    has_attachments = coerce_bool(forwarded.pop("has_attachments", False))
+    handler = handle_reply if operation == "reply" else handle_send
+    response = handler(
+        forwarded,
+        coerce_bool=coerce_bool,
+        normalize_attachments=normalize_attachments,
+        effective_runner_kind=effective_runner_kind,
+        auto_wake_recipients=auto_wake_recipients,
+        automation_on_resume=automation_on_resume,
+        automation_on_new_message=automation_on_new_message,
+        clear_pending_system_notifies=clear_pending_system_notifies,
+        diagnostics_enabled=diagnostics_enabled,
+        preflight_only=True,
+        has_attachments=has_attachments,
+    )
+    if not response.ok:
+        return response
+    result = response.result if isinstance(response.result, dict) else {}
+    if result.get("ready") is True:
+        return response
+    return DaemonResponse(
+        ok=True,
+        result={"ready": False, "duplicate": True, "result": result},
+    )
 
 
 def handle_send_files(
@@ -1141,9 +1203,19 @@ def handle_send_files(
         except OSError as exc:
             return _error("read_failed", str(exc), details={"path": str(source)})
 
-    priority = str(args.get("priority") or "normal").strip() or "normal"
-    if priority not in ("normal", "attention"):
-        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+    legacy_fields = [key for key in ("priority", "reply_required", "requires_ack") if key in args]
+    if legacy_fields:
+        return _error(
+            "unsupported_message_fields",
+            "use message_mode; legacy priority/reply_required/requires_ack fields are not supported",
+            details={"fields": legacy_fields},
+        )
+    message_mode = str(args.get("message_mode") or "").strip()
+    if message_mode not in ("send", "request_reply", "mail"):
+        return _error(
+            "invalid_message_mode",
+            "message_mode is required and must be send, request_reply, or mail",
+        )
     try:
         insight = normalized_insight_or_error(args.get("insight"))
     except ValueError as exc:
@@ -1153,10 +1225,19 @@ def handle_send_files(
             group,
             to_tokens=_normalize_to_tokens(args.get("to")),
             by=by,
-            apply_default_send=True,
+            apply_default_send=message_mode != "request_reply",
+            message_mode=message_mode,
         )
     except PeerRecipientError as exc:
         return _error(exc.code, exc.message, details=exc.details)
+    if message_mode == "request_reply" and (
+        not _normalize_to_tokens(args.get("to"))
+        or any(token in {"@all", "@peers", "@foreman"} for token in _normalize_to_tokens(args.get("to")))
+    ):
+        return _error(
+            "concrete_recipients_required",
+            "request_reply requires one or more explicit concrete recipients",
+        )
     if coerce_bool(args.get("require_peer_insight")) and audience.peer_actor_ids and insight is None:
         return _error(
             "peer_insight_required",
@@ -1190,6 +1271,246 @@ def handle_send_files(
         automation_on_new_message=automation_on_new_message,
         clear_pending_system_notifies=clear_pending_system_notifies,
         diagnostics_enabled=diagnostics_enabled,
+    )
+
+
+def handle_reply_request_cancel(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    source_event_id = str(args.get("source_event_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not source_event_id:
+        return _error("missing_source_event_id", "missing source_event_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    source = find_event(group, source_event_id)
+    if source is None or str(source.get("kind") or "") != "chat.message":
+        return _error("event_not_found", f"chat message not found: {source_event_id}")
+    source_event_id = str(source.get("id") or "").strip()
+    data = source.get("data") if isinstance(source.get("data"), dict) else {}
+    effective_message_mode = str(data.get("dst_message_mode") or data.get("message_mode") or "")
+    if effective_message_mode != "request_reply":
+        return _error("not_a_reply_request", "source message does not request a reply")
+    sender = str(source.get("by") or "").strip()
+    if by != "user" and by != sender:
+        return _error("permission_denied", "only the source sender or user may cancel a reply request")
+    for event in iter_events(group.ledger_path):
+        event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if (
+            str(event.get("kind") or "") == "chat.reply_request.cancelled"
+            and str(event_data.get("source_event_id") or "").strip() == source_event_id
+        ):
+            propagation = propagate_reply_request_cancel(
+                source_group=group,
+                source_message=source,
+                cancel_event=event,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={"event": event, "already": True, "propagation": propagation},
+            )
+    event = append_event(
+        group.ledger_path,
+        kind="chat.reply_request.cancelled",
+        group_id=group.group_id,
+        scope_key="",
+        by=by,
+        data={"source_event_id": source_event_id},
+    )
+    propagation = propagate_reply_request_cancel(
+        source_group=group,
+        source_message=source,
+        cancel_event=event,
+    )
+    return DaemonResponse(
+        ok=True,
+        result={"event": event, "already": False, "propagation": propagation},
+    )
+
+
+def handle_message_deliver(
+    args: Dict[str, Any],
+    *,
+    coerce_bool: Callable[[Any], bool],
+    effective_runner_kind: Callable[[str], str],
+    auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
+) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    source_event_id = str(args.get("source_event_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    raw_actor_ids = args.get("actor_ids")
+    actor_ids = (
+        list(dict.fromkeys(str(item or "").strip() for item in raw_actor_ids if str(item or "").strip()))
+        if isinstance(raw_actor_ids, list)
+        else []
+    )
+    force_ambiguous = coerce_bool(args.get("force_ambiguous"))
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not source_event_id:
+        return _error("missing_source_event_id", "missing source_event_id")
+    if not actor_ids:
+        return _error("concrete_recipients_required", "actor_ids must contain explicit recipients")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    if get_group_state(group) in {"paused", "stopped"}:
+        return _error(
+            "delivery_blocked",
+            "message delivery is disabled while the group is paused or stopped",
+        )
+    source = find_event(group, source_event_id)
+    if source is None or str(source.get("kind") or "") != "chat.message":
+        return _error("event_not_found", f"chat message not found: {source_event_id}")
+    source_event_id = str(source.get("id") or "").strip()
+    data = source.get("data") if isinstance(source.get("data"), dict) else {}
+    message_mode = str(data.get("message_mode") or "")
+    if message_mode not in {"send", "request_reply", "mail"}:
+        return _error("legacy_message", "historical messages without message_mode cannot be delivered")
+    sender = str(source.get("by") or "").strip()
+    if by != "user" and by != sender:
+        return _error("permission_denied", "only the source sender or user may request delivery")
+    delivery_claims: list[tuple[str, str, str]] = []
+    preclaimed_actors: dict[str, tuple[str, str]] = {}
+    for actor_id in actor_ids:
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            return _error("unknown_actor", f"unknown actor: {actor_id}")
+        enabled_value = actor.get("enabled")
+        if enabled_value is not None and not coerce_bool(enabled_value):
+            return _error(
+                "delivery_blocked",
+                f"actor is stopped: {actor_id}",
+                details={"actor_id": actor_id, "reason": "actor_disabled"},
+            )
+        if not actor_existed_at_event(group, actor=actor, event=source) or not is_message_for_actor(
+            group, actor_id=actor_id, event=source
+        ):
+            return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}")
+        actor_created_at = str(actor.get("created_at") or "").strip()
+        claim_transport = "manual_request"
+        if str(actor.get("runtime") or "").strip().lower() == "web_model":
+            claim_transport = (
+                "web_model_browser"
+                if web_model_browser_delivery_enabled(group.group_id, actor)
+                else "web_model_pull"
+            )
+        delivery_claims.append((actor_id, actor_created_at, claim_transport))
+        preclaimed_actors[actor_id] = (actor_created_at, claim_transport)
+
+    claimed, states = claim_deliveries(
+        group,
+        deliveries=delivery_claims,
+        source_event_id=source_event_id,
+        force_ambiguous=force_ambiguous,
+    )
+    if not claimed:
+        actor_id, state = next(
+            (
+                (candidate, states.get(candidate, ""))
+                for candidate in actor_ids
+                if states.get(candidate, "") in {"claimed", "accepted"}
+                or (states.get(candidate, "") == "ambiguous" and not force_ambiguous)
+            ),
+            (actor_ids[0], "claimed"),
+        )
+        if state == "accepted":
+            return _error("already_delivered", f"message was already accepted for actor: {actor_id}")
+        if state == "claimed":
+            return _error(
+                "delivery_in_progress",
+                f"delivery is already in progress for actor: {actor_id}",
+                details={"actor_id": actor_id},
+            )
+        if state == "ambiguous" and not force_ambiguous:
+            return _error(
+                "delivery_ambiguous",
+                f"delivery may already have occurred for actor: {actor_id}",
+                details={"actor_id": actor_id, "force_ambiguous_required": True},
+            )
+
+    try:
+        woken = auto_wake_recipients(group, actor_ids, by)
+    except Exception as exc:
+        for actor_id, (actor_created_at, transport) in preclaimed_actors.items():
+            append_delivery_state(
+                group,
+                actor_id=actor_id,
+                actor_created_at=actor_created_at,
+                source_event_id=source_event_id,
+                state="failed",
+                transport=transport,
+                reason=f"recipient wake failed: {exc}",
+            )
+        return _error("delivery_failed", f"recipient wake failed: {exc}")
+    delivery_event = dict(source)
+    delivery_event["data"] = dict(data)
+    delivery_event["data"]["to"] = actor_ids
+
+    def _deliver_preclaimed() -> None:
+        try:
+            deliver_appended_chat_message(
+                group=group,
+                event=delivery_event,
+                by=sender,
+                effective_to=actor_ids,
+                text=str(data.get("text") or ""),
+                insight=data.get("insight") if isinstance(data.get("insight"), str) else None,
+                message_mode=message_mode,
+                refs=[item for item in data.get("refs", []) if isinstance(item, dict)]
+                if isinstance(data.get("refs"), list)
+                else [],
+                attachments=[item for item in data.get("attachments", []) if isinstance(item, dict)]
+                if isinstance(data.get("attachments"), list)
+                else [],
+                reply_to=str(data.get("reply_to") or ""),
+                quote_text=str(data.get("quote_text") or ""),
+                source_platform=str(data.get("source_platform") or ""),
+                source_user_name=str(data.get("source_user_name") or ""),
+                source_user_id=str(data.get("source_user_id") or ""),
+                src_group_id=str(data.get("src_group_id") or ""),
+                src_event_id=str(data.get("src_event_id") or ""),
+                effective_runner_kind=effective_runner_kind,
+                woken=set(woken),
+                force_ambiguous=force_ambiguous,
+                preclaimed_actors=preclaimed_actors,
+                logger=logger,
+            )
+        except Exception as exc:
+            for actor_id, (actor_created_at, transport) in preclaimed_actors.items():
+                existing = latest_delivery_state(
+                    group,
+                    actor_id=actor_id,
+                    source_event_id=source_event_id,
+                )
+                existing_data = (
+                    existing.get("data")
+                    if isinstance(existing, dict) and isinstance(existing.get("data"), dict)
+                    else {}
+                )
+                if str(existing_data.get("state") or "").strip() != "claimed":
+                    continue
+                append_delivery_state(
+                    group,
+                    actor_id=actor_id,
+                    actor_created_at=actor_created_at,
+                    source_event_id=source_event_id,
+                    state="failed",
+                    transport=transport,
+                    reason=f"delivery worker failed: {exc}",
+                )
+            raise
+
+    run_group_chat_post_commit(
+        group_id,
+        "manual-message-delivery",
+        _deliver_preclaimed,
+    )
+    return DaemonResponse(
+        ok=True,
+        result={"event": source, "actor_ids": actor_ids, "delivery_state": "claimed"},
     )
 
 
@@ -1272,6 +1593,18 @@ def try_handle_chat_op(
 ) -> Optional[DaemonResponse]:
     if op == "stream_emit":
         return handle_stream_emit(args)
+    if op == "message_upload_preflight":
+        return handle_message_upload_preflight(
+            args,
+            coerce_bool=coerce_bool,
+            normalize_attachments=normalize_attachments,
+            effective_runner_kind=effective_runner_kind,
+            auto_wake_recipients=auto_wake_recipients,
+            automation_on_resume=automation_on_resume,
+            automation_on_new_message=automation_on_new_message,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+            diagnostics_enabled=diagnostics_enabled,
+        )
     if op == "send":
         return handle_send(
             args,
@@ -1306,6 +1639,15 @@ def try_handle_chat_op(
             automation_on_resume=automation_on_resume,
             automation_on_new_message=automation_on_new_message,
             clear_pending_system_notifies=clear_pending_system_notifies,
+        )
+    if op == "reply_request_cancel":
+        return handle_reply_request_cancel(args)
+    if op == "message_deliver":
+        return handle_message_deliver(
+            args,
+            coerce_bool=coerce_bool,
+            effective_runner_kind=effective_runner_kind,
+            auto_wake_recipients=auto_wake_recipients,
         )
     if op == "reply":
         return handle_reply(

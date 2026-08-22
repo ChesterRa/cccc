@@ -6,10 +6,13 @@ import json
 import os
 from typing import Any, Mapping
 import urllib.error
+import urllib.parse
 import urllib.request
 
+from ....contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 from .base import (
     RemoteMessageEnvelope,
+    RemoteReplyRequestCancelEnvelope,
     RemoteSendResult,
     RemoteSendTransport,
     permanent_result,
@@ -46,6 +49,7 @@ class GroupBridgeSessionTransport(RemoteSendTransport):
             remote_group_id=target.remote_group_id,
             remote_peer_id=target.remote_peer_id,
             request={
+                "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                 "op": "remote_send",
                 "src_group_id": envelope.src_group_id,
                 "target_group_id": target.remote_group_id,
@@ -54,8 +58,57 @@ class GroupBridgeSessionTransport(RemoteSendTransport):
                 "payload": payload,
             },
         )
+        if parsed is None or _session_unavailable(parsed):
+            parsed = _send_authenticated_http(
+                target.url,
+                envelope.credential,
+                {**payload, "op": "remote_send"},
+            )
         if parsed is None:
             return transient_result("peer_session_unavailable", "no active Group Bridge WebSocket session", transport=self.transport)
+        return _result_from_response(parsed, transport=self.transport)
+
+    def cancel_reply_request(self, envelope: RemoteReplyRequestCancelEnvelope) -> RemoteSendResult:
+        target = envelope.target
+        if not target.remote_peer_id or not target.remote_group_id:
+            return permanent_result(
+                "missing_remote_route",
+                "remote_group_id and remote_peer_id are required",
+                transport=self.transport,
+            )
+        parsed = _send_session_request(
+            local_group_id=envelope.src_group_id,
+            remote_group_id=target.remote_group_id,
+            remote_peer_id=target.remote_peer_id,
+            request={
+                "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                "op": "reply_request_cancel",
+                "src_group_id": envelope.src_group_id,
+                "target_group_id": target.remote_group_id,
+                "remote_peer_id": target.remote_peer_id,
+                "idempotency_key": envelope.idempotency_key,
+                "payload": envelope.payload.model_dump(),
+            },
+        )
+        if parsed is None or _session_unavailable(parsed):
+            parsed = _send_authenticated_http(
+                target.url,
+                envelope.credential,
+                {
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                    "op": "reply_request_cancel",
+                    "source_group_id": envelope.src_group_id,
+                    "src_group_id": envelope.src_group_id,
+                    "idempotency_key": envelope.idempotency_key,
+                    "payload": envelope.payload.model_dump(),
+                },
+            )
+        if parsed is None:
+            return transient_result(
+                "peer_session_unavailable",
+                "no active Group Bridge WebSocket session",
+                transport=self.transport,
+            )
         return _result_from_response(parsed, transport=self.transport)
 
 
@@ -134,6 +187,87 @@ def _send_session_request_via_web_owner(
     except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
         return None
     return parsed if isinstance(parsed, Mapping) else None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+def _send_authenticated_http(
+    endpoint: str,
+    credential: str,
+    body: Mapping[str, Any],
+    *,
+    timeout: float = 10.0,
+) -> Mapping[str, Any] | None:
+    raw_endpoint = str(endpoint or "").strip()
+    token = str(credential or "").strip()
+    parsed_endpoint = urllib.parse.urlsplit(raw_endpoint)
+    if (
+        not token
+        or parsed_endpoint.scheme not in {"http", "https"}
+        or not parsed_endpoint.hostname
+        or parsed_endpoint.username is not None
+        or parsed_endpoint.password is not None
+    ):
+        return None
+    url = urllib.parse.urlunsplit(
+        (
+            parsed_endpoint.scheme,
+            parsed_endpoint.netloc,
+            "/api/group-bridge/session/send",
+            "",
+            "",
+        )
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(dict(body or {})).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(
+            request,
+            timeout=max(0.1, float(timeout or 10.0)),
+        ) as response:
+            value = json.loads(response.read().decode("utf-8") or "{}")
+            return value if isinstance(value, Mapping) else None
+    except urllib.error.HTTPError as exc:
+        if 300 <= int(exc.code or 0) < 400:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "redirect_rejected",
+                    "message": "Group Bridge authenticated delivery does not follow redirects",
+                },
+            }
+        try:
+            value = json.loads(exc.read().decode("utf-8") or "{}")
+        except (OSError, json.JSONDecodeError):
+            value = None
+        if isinstance(value, Mapping):
+            return value
+        code = "peer_session_failed" if int(exc.code or 0) >= 500 else "remote_delivery_failed"
+        return {
+            "ok": False,
+            "error": {"code": code, "message": f"remote Group Bridge HTTP status {exc.code}"},
+        }
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+
+
+def _session_unavailable(parsed: Mapping[str, Any]) -> bool:
+    error = parsed.get("error") if isinstance(parsed.get("error"), Mapping) else {}
+    return str(error.get("code") or "") in {
+        "peer_session_unavailable",
+        "peer_session_timeout",
+        "peer_session_failed",
+    }
 
 
 def _result_from_response(parsed: Mapping[str, Any], *, transport: str) -> RemoteSendResult:

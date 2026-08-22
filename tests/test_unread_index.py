@@ -90,6 +90,7 @@ class TestUnreadIndex(unittest.TestCase):
             sent, _ = self._call(
                 "send",
                 {
+                    "message_mode": "mail",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["peer1"],
@@ -116,6 +117,7 @@ class TestUnreadIndex(unittest.TestCase):
             sent, _ = self._call(
                 "send",
                 {
+                    "message_mode": "mail",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["@foreman"],
@@ -151,6 +153,7 @@ class TestUnreadIndex(unittest.TestCase):
             sent, _ = self._call(
                 "send",
                 {
+                    "message_mode": "mail",
                     "group_id": group_id,
                     "by": "user",
                     "to": ["peer1"],
@@ -186,7 +189,7 @@ class TestUnreadIndex(unittest.TestCase):
             self._add_actor(group_id, "peer1", "Peer 1")
             sent, _ = self._call(
                 "send",
-                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "schema migration"},
+                {"message_mode": "mail", "group_id": group_id, "by": "user", "to": ["peer1"], "text": "schema migration"},
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
 
@@ -205,7 +208,7 @@ class TestUnreadIndex(unittest.TestCase):
 
             self.assertEqual(int(rebuilt[0].get("unread_count") or 0), 1)
             current = json.loads(unread_index_path.read_text(encoding="utf-8"))
-            self.assertEqual(current.get("schema"), 2)
+            self.assertEqual(current.get("schema"), 3)
         finally:
             cleanup()
 
@@ -218,7 +221,7 @@ class TestUnreadIndex(unittest.TestCase):
             self._add_actor(group_id, "peer1", "Peer 1")
             sent, _ = self._call(
                 "send",
-                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "snapshot migration"},
+                {"message_mode": "mail", "group_id": group_id, "by": "user", "to": ["peer1"], "text": "snapshot migration"},
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
             self.assertEqual(int(self._actor_list(group_id, include_unread=True)[0].get("unread_count") or 0), 1)
@@ -242,7 +245,7 @@ class TestUnreadIndex(unittest.TestCase):
 
             self.assertEqual(int(rebuilt[0].get("unread_count") or 0), 1)
             current = json.loads(unread_index_path.read_text(encoding="utf-8"))
-            self.assertEqual(current.get("schema"), 2)
+            self.assertEqual(current.get("schema"), 3)
         finally:
             cleanup()
 

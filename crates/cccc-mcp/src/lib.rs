@@ -2,7 +2,6 @@ mod actions;
 mod argument_normalization;
 mod bootstrap;
 mod code_mode;
-mod inbox_mapping;
 mod local_sessions;
 mod local_tools;
 mod mapping;
@@ -30,10 +29,12 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "cccc_bootstrap",
     "cccc_capability_search",
     "cccc_capability_use",
-    "cccc_inbox_list",
-    "cccc_inbox_mark_read",
+    "cccc_inbox_read",
+    "cccc_message_history",
     "cccc_message_send",
     "cccc_message_reply",
+    "cccc_message_deliver",
+    "cccc_reply_request_cancel",
     "cccc_file",
     "cccc_context_get",
     "cccc_coordination",

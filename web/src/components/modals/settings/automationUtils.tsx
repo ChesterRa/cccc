@@ -148,7 +148,7 @@ export function nowId(prefix: string) {
 }
 
 export function defaultNotifyAction(): Extract<AutomationRuleAction, { kind: "notify" }> {
-  return { kind: "notify", priority: "high", requires_ack: false, snippet_ref: null, message: "" };
+  return { kind: "notify", priority: "high", snippet_ref: null, message: "" };
 }
 
 export function defaultGroupStateAction(): Extract<AutomationRuleAction, { kind: "group_state" }> {

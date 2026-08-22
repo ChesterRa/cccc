@@ -7,20 +7,6 @@ import { primaryButtonClass, secondaryButtonClass } from "./types";
 interface AutomationPoliciesSectionProps {
   isDark: boolean;
   busy: boolean;
-  nudgeSeconds: number;
-  setNudgeSeconds: (v: number) => void;
-  replyRequiredNudgeSeconds: number;
-  setReplyRequiredNudgeSeconds: (v: number) => void;
-  attentionAckNudgeSeconds: number;
-  setAttentionAckNudgeSeconds: (v: number) => void;
-  unreadNudgeSeconds: number;
-  setUnreadNudgeSeconds: (v: number) => void;
-  nudgeDigestMinIntervalSeconds: number;
-  setNudgeDigestMinIntervalSeconds: (v: number) => void;
-  nudgeMaxRepeatsPerObligation: number;
-  setNudgeMaxRepeatsPerObligation: (v: number) => void;
-  nudgeEscalateAfterRepeats: number;
-  setNudgeEscalateAfterRepeats: (v: number) => void;
   keepaliveSeconds: number;
   setKeepaliveSeconds: (v: number) => void;
   keepaliveMax: number;
@@ -73,35 +59,6 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
       description={t("policies.description")}
     >
       <PolicyGroup
-        title={t("policies.messageFollowups")}
-        description={t("policies.messageFollowupsHelp")}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.needReplyFollowup")}
-            value={props.replyRequiredNudgeSeconds}
-            onChange={props.setReplyRequiredNudgeSeconds}
-            helperText={t("policies.needReplyFollowupHelp")}
-          />
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.importantFollowup")}
-            value={props.attentionAckNudgeSeconds}
-            onChange={props.setAttentionAckNudgeSeconds}
-            helperText={t("policies.importantFollowupHelp")}
-          />
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.backlogDigest")}
-            value={props.unreadNudgeSeconds}
-            onChange={props.setUnreadNudgeSeconds}
-            helperText={t("policies.backlogDigestHelp")}
-          />
-        </div>
-      </PolicyGroup>
-
-      <PolicyGroup
         title={t("policies.progressFollowups")}
         description={t("policies.progressFollowupsHelp")}
       >
@@ -152,48 +109,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
       </PolicyGroup>
 
       <PolicyGroup
-        title={t("policies.repeatEscalation")}
-        description={t("policies.repeatEscalationHelp")}
+        title={t("policies.foremanAlerts")}
+        description={t("policies.foremanAlertsHelp")}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.digestMinGap")}
-            value={props.nudgeDigestMinIntervalSeconds}
-            onChange={props.setNudgeDigestMinIntervalSeconds}
-            helperText={t("policies.digestMinGapHelp")}
-          />
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.maxRepeats")}
-            value={props.nudgeMaxRepeatsPerObligation}
-            onChange={props.setNudgeMaxRepeatsPerObligation}
-            formatValue={false}
-            helperText={t("policies.maxRepeatsHelp")}
-          />
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.escalateAfter")}
-            value={props.nudgeEscalateAfterRepeats}
-            onChange={props.setNudgeEscalateAfterRepeats}
-            formatValue={false}
-            helperText={t("policies.escalateAfterHelp")}
-          />
-        </div>
-      </PolicyGroup>
-
-      <PolicyGroup
-        title={t("policies.advancedForemanAlerts")}
-        description={t("policies.advancedForemanAlertsHelp")}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <NumberInputRow
-            isDark={props.isDark}
-            label={t("policies.fallbackFollowup")}
-            value={props.nudgeSeconds}
-            onChange={props.setNudgeSeconds}
-            helperText={t("policies.fallbackFollowupHelp")}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberInputRow
             isDark={props.isDark}
             label={t("policies.actorIdleAlert")}

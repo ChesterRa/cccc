@@ -67,8 +67,7 @@ describe("useChatTab request triggers", () => {
       localTo: ["local-only"],
       crossTo,
       files: [],
-      priority: "normal",
-      replyRequired: false,
+      messageMode: "send",
       localId: "local_1",
       refs: [],
       replyTarget: null,
@@ -83,9 +82,41 @@ describe("useChatTab request triggers", () => {
       "g_remote",
       "hello",
       ["remote-agent"],
-      "normal",
-      false,
+      "send",
       undefined,
+    );
+  });
+
+  it("can fulfill a reply through Mail without requesting an immediate prompt", async () => {
+    vi.mocked(api.replyMessage).mockResolvedValue({ ok: true, result: {} });
+
+    const result = await dispatchPreparedMessage({
+      selectedGroupId: "g_local",
+      text: "reply later",
+      localTo: ["user"],
+      crossTo: [],
+      files: [],
+      messageMode: "mail",
+      localId: "local_reply_1",
+      refs: [],
+      replyTarget: { eventId: "event-1", by: "user", text: "question" },
+      remoteReplyGroupId: "",
+      remoteReplyTo: [],
+      sendPlanTargets: [{ groupId: "g_local", isCrossGroup: false, source: "selected_group" }],
+      sendsCrossGroup: false,
+    });
+
+    expect(result.successfulSendCount).toBe(1);
+    expect(api.replyMessage).toHaveBeenCalledWith(
+      "g_local",
+      "reply later",
+      ["user"],
+      "event-1",
+      undefined,
+      "local_reply_1",
+      [],
+      "question",
+      "mail",
     );
   });
 
@@ -105,8 +136,7 @@ describe("useChatTab request triggers", () => {
       localTo: [],
       crossTo: ["@foreman"],
       files: [],
-      priority: "normal",
-      replyRequired: false,
+      messageMode: "send",
       localId: "local_1",
       refs: [],
       replyTarget: null,
@@ -148,8 +178,7 @@ describe("useChatTab request triggers", () => {
       localTo: [],
       crossTo: [],
       files: [file],
-      priority: "normal",
-      replyRequired: false,
+      messageMode: "send",
       localId: "local_1",
       refs: [],
       replyTarget: null,
@@ -172,8 +201,7 @@ describe("useChatTab request triggers", () => {
       "g_remote",
       "hello",
       ["@foreman"],
-      "normal",
-      false,
+      "send",
       [file],
     );
   });

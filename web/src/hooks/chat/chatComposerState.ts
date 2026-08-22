@@ -5,6 +5,7 @@ import {
   isComposerGroupSettled,
 } from "../../stores/useComposerStore";
 import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } from "../../types";
+import type { ComposerMessageMode } from "../../stores/useComposerStore";
 
 export type FailedSendComposerSnapshot = {
   originGroupId: string;
@@ -14,8 +15,7 @@ export type FailedSendComposerSnapshot = {
   replyTarget: ReplyTarget;
   quotedPresentationRef: PresentationMessageRef | null;
   quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
-  priority: "normal" | "attention";
-  replyRequired: boolean;
+  messageMode: ComposerMessageMode;
 };
 
 type FailedSendComposerRestoreActions = Pick<
@@ -26,8 +26,7 @@ type FailedSendComposerRestoreActions = Pick<
   | "setReplyTarget"
   | "setQuotedPresentationRef"
   | "setQuotedVoiceDocumentRef"
-  | "setPriority"
-  | "setReplyRequired"
+  | "setMessageMode"
   | "upsertDraft"
 >;
 
@@ -51,8 +50,7 @@ export function restoreFailedSendComposerState(
     restoreActions.setReplyTarget(snapshot.replyTarget);
     restoreActions.setQuotedPresentationRef(snapshot.quotedPresentationRef);
     restoreActions.setQuotedVoiceDocumentRef(snapshot.quotedVoiceDocumentRef);
-    restoreActions.setPriority(snapshot.priority);
-    restoreActions.setReplyRequired(snapshot.replyRequired);
+    restoreActions.setMessageMode(snapshot.messageMode);
     restoreActions.setToText(snapshot.toText);
     return;
   }
@@ -64,8 +62,7 @@ export function restoreFailedSendComposerState(
     replyTarget: snapshot.replyTarget,
     quotedPresentationRef: snapshot.quotedPresentationRef,
     quotedVoiceDocumentRef: snapshot.quotedVoiceDocumentRef,
-    priority: snapshot.priority,
-    replyRequired: snapshot.replyRequired,
+    messageMode: snapshot.messageMode,
   }));
 }
 

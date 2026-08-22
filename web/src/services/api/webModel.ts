@@ -172,7 +172,6 @@ export type WebModelHealthSnapshot = {
     last_submission_evidence?: string;
     last_send_selector?: string;
     last_error?: string;
-    cursor_committed?: boolean;
     mode?: WebModelDeliveryMode;
   };
   next_action?: { recommended?: string; label?: string; reason?: string };

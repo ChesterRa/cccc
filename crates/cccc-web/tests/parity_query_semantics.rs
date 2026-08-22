@@ -25,6 +25,7 @@ async fn query_flags_change_final_actor_ledger_and_context_responses() {
     message.by = "user".into();
     message.data.insert("to".into(), json!(["internal-helper"]));
     message.data.insert("text".into(), json!("hello"));
+    message.data.insert("message_mode".into(), json!("mail"));
     ledger::append(&store.ledger_path(&group_id).expect("ledger"), &message).expect("append");
 
     let plain_actors = get(&home, format!("/api/v1/groups/{group_id}/actors")).await;
@@ -41,7 +42,7 @@ async fn query_flags_change_final_actor_ledger_and_context_responses() {
     let status_tail = get(
         &home,
         format!(
-            "/api/v1/groups/{group_id}/ledger/tail?kind=chat&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+            "/api/v1/groups/{group_id}/ledger/tail?kind=chat&with_read_status=true&with_obligation_status=true"
         ),
     )
     .await;

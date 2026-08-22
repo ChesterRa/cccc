@@ -76,7 +76,7 @@ def build_state_payload(group: Group) -> Dict[str, Any]:
         unread_index["ledger_basis"] = current_ledger_basis(group)
     return {
         "version_state": context.load_version_state(),
-        "cursors": _read_state_file(group.path / "state" / "read_cursors.json"),
+        "mail_cursors": _read_state_file(group.path / "state" / "read_cursors.json"),
         "unread_index": unread_index,
     }
 

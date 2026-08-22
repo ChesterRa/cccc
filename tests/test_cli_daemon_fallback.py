@@ -90,8 +90,7 @@ class TestCliDaemonFallback(unittest.TestCase):
                 by="user",
                 path="",
                 to=[],
-                priority="normal",
-                reply_required=False,
+                mode="send",
             )
 
             with patch.object(cli, "_ensure_daemon_running", return_value=True), \
@@ -106,7 +105,7 @@ class TestCliDaemonFallback(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_send_keeps_local_fallback_for_daemon_unavailable(self) -> None:
+    def test_send_does_not_fallback_when_daemon_becomes_unavailable(self) -> None:
         from cccc import cli
 
         _, cleanup = self._with_home()
@@ -119,19 +118,18 @@ class TestCliDaemonFallback(unittest.TestCase):
                 by="user",
                 path="",
                 to=[],
-                priority="normal",
-                reply_required=False,
+                mode="send",
             )
 
             with patch.object(cli, "_ensure_daemon_running", return_value=True), \
                  patch.object(cli, "call_daemon", return_value=resp), \
+                 patch.object(cli, "append_event", side_effect=AssertionError("local append should not run")) as append_event, \
                  patch.object(cli, "_print_json") as print_json:
                 code = cli.cmd_send(args)
 
-            self.assertEqual(code, 0)
-            printed = print_json.call_args.args[0]
-            self.assertTrue(bool(printed.get("ok")))
-            self.assertEqual(str(((printed.get("result") or {}).get("event") or {}).get("kind") or ""), "chat.message")
+            self.assertEqual(code, 2)
+            append_event.assert_not_called()
+            print_json.assert_called_once_with(resp)
         finally:
             cleanup()
 
@@ -147,8 +145,7 @@ class TestCliDaemonFallback(unittest.TestCase):
                 by=None,
                 path="",
                 to=[],
-                priority="normal",
-                reply_required=False,
+                mode="send",
             )
 
             with patch.dict(os.environ, {"CCCC_ACTOR_ID": "小抠"}, clear=False), \
@@ -181,7 +178,7 @@ class TestCliDaemonFallback(unittest.TestCase):
                 group_id=group_id,
                 scope_key="",
                 by="管理员",
-                data=ChatMessageData(text="please report", to=["小抠"], reply_required=True).model_dump(),
+                data=ChatMessageData(text="please report", to=["小抠"], message_mode="request_reply").model_dump(),
             )
             args = Namespace(
                 group=group_id,
@@ -189,8 +186,6 @@ class TestCliDaemonFallback(unittest.TestCase):
                 text="done",
                 by=None,
                 to=[],
-                priority="normal",
-                reply_required=False,
             )
 
             with patch.dict(os.environ, {"CCCC_ACTOR_ID": "小抠"}, clear=False), \
@@ -224,8 +219,7 @@ class TestCliDaemonFallback(unittest.TestCase):
                 waiting_on="",
                 handoff_to="",
                 notes="",
-                priority="normal",
-                no_reply_required=False,
+                task_priority="high",
                 idempotency_key="",
             )
 
@@ -239,6 +233,8 @@ class TestCliDaemonFallback(unittest.TestCase):
             req = call_daemon.call_args.args[0]
             self.assertEqual(req.get("op"), "tracked_send")
             self.assertEqual((req.get("args") or {}).get("by"), "小抠")
+            self.assertEqual((req.get("args") or {}).get("task_priority"), "high")
+            self.assertNotIn("priority", req.get("args") or {})
         finally:
             cleanup()
 

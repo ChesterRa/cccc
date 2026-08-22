@@ -1,4 +1,5 @@
 import unittest
+import json
 import os
 import tempfile
 import asyncio
@@ -7,6 +8,7 @@ import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
+from cccc.contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 
 class _EnvPatch:
     def __init__(self, **values: str | None) -> None:
@@ -79,6 +81,161 @@ def _write_local_group_with_group_bridge_trust(home: Path) -> Path:
 
 
 class TestGroupBridgeTransport(unittest.TestCase):
+    def test_receive_remote_send_rejects_missing_message_contract_version(self) -> None:
+        from cccc.daemon.group_bridge.receiver import receive_remote_send
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            _write_local_group_with_group_bridge_trust(home)
+            result = receive_remote_send(
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                payload={"message_mode": "send", "text": "old peer", "to": ["peer1"]},
+                idempotency_key="old-peer-1",
+                home=home,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "contract_version_mismatch")
+
+    def test_receive_remote_send_rejects_nonconcrete_reply(self) -> None:
+        from cccc.daemon.group_bridge.receiver import receive_remote_send
+        from cccc.kernel.inbox import iter_events
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = _write_local_group_with_group_bridge_trust(home)
+            request_reply = receive_remote_send(
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                payload={
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                    "message_mode": "request_reply",
+                    "text": "answer this",
+                    "to": ["@foreman"],
+                },
+                idempotency_key="remote-request-reply",
+                home=home,
+            )
+            self.assertEqual(request_reply["error"]["code"], "concrete_recipients_required")
+            self.assertEqual(
+                [event for event in iter_events(group_dir / "ledger.jsonl") if event.get("kind") == "chat.message"],
+                [],
+            )
+
+    def test_receive_remote_send_enforces_one_audience_domain_and_agent_only_mail(self) -> None:
+        from cccc.daemon.group_bridge.receiver import receive_remote_send
+        from cccc.kernel.inbox import iter_events
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = _write_local_group_with_group_bridge_trust(home)
+            cases = (
+                ("mixed", "send", ["user", "peer1"], "mixed_recipient_kinds"),
+                ("user-mail", "mail", ["user"], "mail_requires_actor_recipient"),
+            )
+            for key, mode, recipients, expected_code in cases:
+                with self.subTest(key=key):
+                    result = receive_remote_send(
+                        target_group_id="g_local",
+                        src_group_id="g_remote",
+                        remote_peer_id="peer_remote",
+                        payload={
+                            "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                            "message_mode": mode,
+                            "text": "x",
+                            "to": recipients,
+                        },
+                        idempotency_key=key,
+                        home=home,
+                    )
+                    self.assertFalse(result["ok"])
+                    self.assertEqual(result["error"]["code"], expected_code)
+            self.assertEqual(
+                [event for event in iter_events(group_dir / "ledger.jsonl") if event.get("kind") == "chat.message"],
+                [],
+            )
+
+    def test_receive_remote_reply_request_cancel_is_idempotent(self) -> None:
+        from cccc.contracts.v1.message import ChatMessageData
+        from cccc.daemon.group_bridge.cancellation import receive_remote_reply_request_cancel
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.ledger import append_event
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_dir = _write_local_group_with_group_bridge_trust(home)
+            source = append_event(
+                group_dir / "ledger.jsonl",
+                kind="chat.message",
+                group_id="g_local",
+                scope_key="",
+                by="group_bridge:peer_remote",
+                data=ChatMessageData(
+                    text="please answer",
+                    message_mode="request_reply",
+                    to=["peer1"],
+                    src_group_id="g_remote",
+                    src_event_id="remote-message-1",
+                ).model_dump(),
+            )
+            payload = {
+                "source_group_id": "g_remote",
+                "source_message_event_id": "remote-message-1",
+                "source_cancel_event_id": "remote-cancel-1",
+                "remote_source_event_id": source["id"],
+            }
+            first = receive_remote_reply_request_cancel(
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                payload=payload,
+                home=home,
+            )
+            second = receive_remote_reply_request_cancel(
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                payload=payload,
+                home=home,
+            )
+
+            self.assertTrue(first["ok"], first)
+            self.assertTrue(second["ok"], second)
+            self.assertFalse(first["already"])
+            self.assertTrue(second["already"])
+            cancellations = [
+                event
+                for event in iter_events(group_dir / "ledger.jsonl")
+                if event.get("kind") == "chat.reply_request.cancelled"
+            ]
+            self.assertEqual(len(cancellations), 1)
+            self.assertEqual((cancellations[0].get("data") or {}).get("src_event_id"), "remote-cancel-1")
+
+    def test_reply_request_cancellation_propagation_failure_preserves_local_success_boundary(self) -> None:
+        from cccc.daemon.group_bridge.cancellation import propagate_reply_request_cancel
+        from cccc.daemon.group_bridge.receiver import _load_group
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            _write_local_group_with_group_bridge_trust(home)
+            group = _load_group("g_local", home=home)
+            self.assertIsNotNone(group)
+            with patch(
+                "cccc.daemon.group_bridge.cancellation._remote_source_receipt",
+                side_effect=OSError("receipt store unavailable"),
+            ):
+                result = propagate_reply_request_cancel(
+                    source_group=group,
+                    source_message={"id": "source-message", "data": {}},
+                    cancel_event={"id": "source-cancel", "data": {}},
+                    home=home,
+                )
+
+            self.assertEqual(result["state"], "failed")
+            self.assertEqual(result["error"]["code"], "propagation_failed")
     def test_unknown_transport_raises(self) -> None:
         from cccc.daemon.group_bridge.transports.base import (
             UnknownTransportError,
@@ -133,7 +290,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         remote_peer_id="peer_remote",
                         multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
                     ),
-                    payload=RemoteSendPayload(text="hi", to=["@foreman"]),
+                    payload=RemoteSendPayload(message_mode="send", text="hi", to=["@foreman"]),
                     idempotency_key="k-ws",
                 )
             )
@@ -183,7 +340,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         remote_peer_id="peer_a",
                         multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_a",),
                     ),
-                    payload=RemoteSendPayload(text="reply", to=["@foreman"]),
+                    payload=RemoteSendPayload(message_mode="send", text="reply", to=["@foreman"]),
                     idempotency_key="k-reverse",
                 )
             )
@@ -227,7 +384,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         remote_peer_id="peer_a",
                         multiaddrs=(),
                     ),
-                    payload=RemoteSendPayload(text="reply", to=["@foreman"]),
+                    payload=RemoteSendPayload(message_mode="send", text="reply", to=["@foreman"]),
                     idempotency_key="k-private",
                 )
             )
@@ -253,7 +410,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                     remote_peer_id="peer_remote",
                     multiaddrs=("/ip4/127.0.0.1/tcp/4001/p2p/peer_remote",),
                 ),
-                payload=RemoteSendPayload(text="hi", to=["@foreman"]),
+                payload=RemoteSendPayload(message_mode="send", text="hi", to=["@foreman"]),
                 idempotency_key="k-session-only",
             )
         )
@@ -328,8 +485,8 @@ class TestGroupBridgeTransport(unittest.TestCase):
             def __init__(self) -> None:
                 self.sent = []
                 self.frames = [
-                    {"ok": True, "type": "ready"},
-                    {"type": "request", "request_id": "req-1", "op": "remote_send", "payload": {"text": "hi"}},
+                    {"ok": True, "type": "ready", "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION},
+                    {"type": "request", "request_id": "req-1", "op": "remote_send", "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, "payload": {"message_mode": "send", "text": "hi"}},
                 ]
                 self.outbound_request_sent = threading.Event()
                 self.outbound_response_sent = False
@@ -384,7 +541,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         target_group_id="g_local",
                         src_group_id="g_remote",
                         remote_peer_id="peer_remote",
-                        request={"op": "remote_send", "payload": {"text": "outbound"}},
+                        request={"op": "remote_send", "payload": {"message_mode": "send", "text": "outbound"}},
                         timeout=2.0,
                     )
                 )
@@ -434,7 +591,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
         class FakeWs:
             def __init__(self) -> None:
                 self.sent = []
-                self.frames = [{"ok": True, "type": "ready"}]
+                self.frames = [{"ok": True, "type": "ready", "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}]
                 self.outbound_request_sent = threading.Event()
                 self.outbound_response_sent = False
                 self.closed = False
@@ -482,7 +639,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         target_group_id="g_local",
                         src_group_id="g_remote",
                         remote_peer_id="peer_remote",
-                        request={"op": "remote_send", "payload": {"text": "outbound"}},
+                        request={"op": "remote_send", "payload": {"message_mode": "send", "text": "outbound"}},
                         timeout=1.0,
                     )
                 )
@@ -519,7 +676,15 @@ class TestGroupBridgeTransport(unittest.TestCase):
 
         class FakeWs:
             def __init__(self) -> None:
-                self.frames = ['{"ok":true,"type":"ready"}']
+                self.frames = [
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "type": "ready",
+                            "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                        }
+                    )
+                ]
                 self.closed = False
 
             def send(self, _raw):
@@ -562,15 +727,16 @@ class TestGroupBridgeTransport(unittest.TestCase):
             def __init__(self) -> None:
                 self.sent = []
                 self.frames = [
-                    {"ok": True, "type": "ready"},
+                    {"ok": True, "type": "ready", "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION},
                     {
                         "type": "request",
                         "request_id": "req-1",
                         "op": "remote_send",
+                        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                         "target_group_id": "g_local",
                         "src_group_id": "g_remote",
                         "remote_peer_id": "peer_local",
-                        "payload": {"text": "hi"},
+                        "payload": {"message_mode": "send", "text": "hi"},
                     },
                 ]
 
@@ -628,9 +794,15 @@ class TestGroupBridgeTransport(unittest.TestCase):
             result = handle_group_bridge_session_request(
                 {
                     "op": "remote_send",
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {
+                        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                        "message_mode": "send",
+                        "text": "hi",
+                        "to": ["@foreman"],
+                    },
                     "idempotency_key": "remote-1",
                 },
                 target_group_id="g_local",
@@ -648,8 +820,57 @@ class TestGroupBridgeTransport(unittest.TestCase):
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "remote_peer_id": "peer_remote",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {
+                        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                        "message_mode": "send",
+                        "text": "hi",
+                        "to": ["@foreman"],
+                    },
                     "idempotency_key": "remote-1",
+                },
+            }
+        )
+
+    def test_group_bridge_session_endpoint_keeps_cancellation_payload_contract_exact(self) -> None:
+        from cccc.daemon.group_bridge.ws_endpoint import handle_group_bridge_session_request
+
+        payload = {
+            "source_group_id": "g_remote",
+            "source_message_event_id": "source-message",
+            "source_cancel_event_id": "source-cancel",
+            "remote_source_event_id": "remote-message",
+        }
+        with (
+            _EnvPatch(CCCC_WEB_SUPERVISED="1"),
+            patch(
+                "cccc.daemon.server.call_daemon",
+                return_value={"ok": True, "result": {"ok": True, "duplicate": False}},
+            ) as call_daemon,
+        ):
+            result = handle_group_bridge_session_request(
+                {
+                    "op": "reply_request_cancel",
+                    "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "payload": payload,
+                    "idempotency_key": "cancel-1",
+                },
+                target_group_id="g_local",
+                src_group_id="g_remote",
+                remote_peer_id="peer_remote",
+            )
+
+        self.assertTrue(result["ok"])
+        call_daemon.assert_called_once_with(
+            {
+                "op": "group_bridge_receive_reply_request_cancel",
+                "args": {
+                    "target_group_id": "g_local",
+                    "src_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "payload": payload,
+                    "idempotency_key": "cancel-1",
                 },
             }
         )
@@ -817,6 +1038,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                 multiaddrs=(),
             ),
             payload=RemoteSendPayload(
+                message_mode="send",
                 text="hi",
                 to=["@foreman"],
                 attachments=attachments or [],
@@ -834,6 +1056,93 @@ class TestGroupBridgeTransport(unittest.TestCase):
         self.assertFalse(res.ok)
         self.assertTrue(res.retriable)
         self.assertEqual(res.error_code, "peer_session_unavailable")
+
+    def test_group_bridge_session_transport_uses_current_http_without_legacy_mcp(self) -> None:
+        from dataclasses import replace
+
+        from cccc.daemon.group_bridge.transports.base import RemoteTarget
+        from cccc.daemon.group_bridge.transports.group_bridge_session import GroupBridgeSessionTransport
+
+        envelope = self._session_envelope()
+        envelope = replace(
+            envelope,
+            target=RemoteTarget(
+                url="https://remote.example:8848",
+                remote_group_id="g_remote",
+                remote_peer_id="peer-remote",
+            ),
+        )
+        with patch(
+            "cccc.daemon.group_bridge.transports.group_bridge_session._send_session_request",
+            return_value=None,
+        ), patch(
+            "cccc.daemon.group_bridge.transports.group_bridge_session._send_authenticated_http",
+            return_value={"ok": True, "event_id": "remote-http-1"},
+        ) as direct:
+            result = GroupBridgeSessionTransport().deliver(envelope)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.remote_event_id, "remote-http-1")
+        self.assertEqual(direct.call_args.args[0], "https://remote.example:8848")
+        self.assertEqual(direct.call_args.args[1], "secret-token")
+        self.assertEqual(direct.call_args.args[2]["op"], "remote_send")
+        self.assertEqual(
+            direct.call_args.args[2]["message_contract_version"],
+            GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+        )
+
+    def test_authenticated_http_rejects_redirect_without_forwarding_token(self) -> None:
+        import http.server
+        import threading
+
+        from cccc.daemon.group_bridge.transports.group_bridge_session import _send_authenticated_http
+
+        target_hits = []
+
+        class Target(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                target_hits.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true,"event_id":"leaked"}')
+
+            def log_message(self, _format, *_args):  # type: ignore[no-untyped-def]
+                return
+
+        target = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Target)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                self.send_response(302)
+                self.send_header(
+                    "Location",
+                    f"http://127.0.0.1:{target.server_address[1]}/capture",
+                )
+                self.end_headers()
+
+            def log_message(self, _format, *_args):  # type: ignore[no-untyped-def]
+                return
+
+        redirect = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+        redirect_thread.start()
+        try:
+            result = _send_authenticated_http(
+                f"http://127.0.0.1:{redirect.server_address[1]}",
+                "bridge-secret",
+                {"message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION},
+            )
+        finally:
+            redirect.shutdown()
+            target.shutdown()
+            redirect.server_close()
+            target.server_close()
+
+        self.assertEqual(result["error"]["code"], "redirect_rejected")
+        self.assertEqual(target_hits, [])
 
     def test_group_bridge_session_transport_routes_to_web_owner_when_daemon_has_no_session(self) -> None:
         from cccc.daemon.group_bridge.transports.group_bridge_session import GroupBridgeSessionTransport
@@ -927,7 +1236,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                     target_group_id="g_local",
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
-                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention", "source_by": "user"},
+                    payload={"message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, "text": "hello from remote", "to": ["peer1"], "message_mode": "send", "source_by": "user"},
                     idempotency_key="remote-client-1",
                     home=home,
                 )
@@ -938,13 +1247,15 @@ class TestGroupBridgeTransport(unittest.TestCase):
                         group_id="g_local",
                         scope_key="",
                         by="user",
-                        data=ChatMessageData(text=f"filler {idx}", client_id=f"filler-{idx}").model_dump(),
+                        data=ChatMessageData(
+                            text=f"filler {idx}", message_mode="mail", client_id=f"filler-{idx}"
+                        ).model_dump(),
                     )
                 duplicate = receive_remote_send(
                     target_group_id="g_local",
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
-                    payload={"text": "hello from remote", "to": ["peer1"], "priority": "attention", "source_by": "user"},
+                    payload={"message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, "text": "hello from remote", "to": ["peer1"], "message_mode": "send", "source_by": "user"},
                     idempotency_key="remote-client-1",
                     home=home,
                 )
@@ -959,8 +1270,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
         delivery = deliveries[0]
         self.assertEqual(delivery["by"], "group_bridge:peer_remote")
         self.assertEqual(delivery["effective_to"], ["peer1"])
-        self.assertEqual(delivery["priority"], "attention")
-        self.assertFalse(delivery["reply_required"])
+        self.assertEqual(delivery["message_mode"], "send")
         self.assertEqual(str(delivery["event"].get("id") or ""), first["event_id"])
         self.assertEqual(delivery["text"], "hello from remote")
         self.assertEqual(delivery["source_user_name"], "Remote Group")
@@ -993,6 +1303,8 @@ class TestGroupBridgeTransport(unittest.TestCase):
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
                     payload={
+                        "message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+                        "message_mode": "send",
                         "text": "see attachment",
                         "to": ["peer1"],
                         "attachments": [
@@ -1040,7 +1352,7 @@ class TestGroupBridgeTransport(unittest.TestCase):
                     target_group_id="g_local",
                     src_group_id="g_remote",
                     remote_peer_id="peer_remote",
-                    payload={"text": "hello from remote"},
+                    payload={"message_contract_version": GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, "message_mode": "send", "text": "hello from remote"},
                     idempotency_key="remote-client-1",
                     home=home,
                 )

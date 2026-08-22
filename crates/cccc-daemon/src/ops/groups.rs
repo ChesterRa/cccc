@@ -2,9 +2,9 @@ use cccc_contracts::{ActorRole, DaemonRequest, Event, GroupState};
 use cccc_core::active;
 use cccc_core::actors;
 use cccc_core::group_prompts::{
-    BUILTIN_HELP_MARKDOWN, DEFAULT_PREAMBLE_BODY, HELP_FILENAME, PREAMBLE_FILENAME, delete_help,
-    delete_preamble, parse_help_markdown, read_help, read_preamble, select_help_markdown,
-    update_actor_help_note, write_help, write_preamble,
+    BUILTIN_HELP_MARKDOWN, DEFAULT_PREAMBLE_BODY, HELP_FILENAME, PREAMBLE_FILENAME,
+    compose_effective_help_markdown, delete_help, delete_preamble, parse_help_markdown, read_help,
+    read_preamble, select_help_markdown, update_actor_help_note, write_help, write_preamble,
 };
 use cccc_core::ledger;
 use cccc_core::permissions;
@@ -256,6 +256,7 @@ fn preamble_result(home: &HomeLayout, group_id: &str, changed: Option<bool>) -> 
 
 struct HelpSource {
     content: String,
+    effective_content: String,
     source: &'static str,
     path: String,
     source_path: String,
@@ -267,12 +268,19 @@ fn help_source(home: &HomeLayout, group_id: &str) -> Result<HelpSource, OpError>
     let path = prompt.path.to_string_lossy().into_owned();
     let override_content = prompt.content.unwrap_or_default();
     let overridden = prompt.found && !override_content.trim().is_empty();
+    let content = if overridden {
+        override_content
+    } else {
+        BUILTIN_HELP_MARKDOWN.to_owned()
+    };
+    let effective_content = if overridden {
+        compose_effective_help_markdown(BUILTIN_HELP_MARKDOWN, &content)
+    } else {
+        content.clone()
+    };
     Ok(HelpSource {
-        content: if overridden {
-            override_content
-        } else {
-            BUILTIN_HELP_MARKDOWN.to_owned()
-        },
+        content,
+        effective_content,
         source: if overridden { "home" } else { "builtin" },
         source_path: if overridden {
             path.clone()
@@ -376,7 +384,7 @@ fn help_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "filename": HELP_FILENAME,
         "overridden": help.overridden,
         "markdown": select_help_markdown(
-            &help.content,
+            &help.effective_content,
             selected_role,
             (!canonical_actor_id.is_empty()).then_some(canonical_actor_id),
             voice_secretary,

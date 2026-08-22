@@ -98,7 +98,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "target_group_id": "g_local",
                     "src_group_id": "g_remote",
                     "remote_peer_id": "peer_remote",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "hi", "to": ["@foreman"]},
                     "idempotency_key": "remote-1",
                 },
             )
@@ -111,7 +111,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             target_group_id="g_local",
             src_group_id="g_remote",
             remote_peer_id="peer_remote",
-            payload={"text": "hi", "to": ["@foreman"]},
+            payload={"message_mode": "send", "text": "hi", "to": ["@foreman"]},
             idempotency_key="remote-1",
         )
 
@@ -142,7 +142,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -161,7 +161,12 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             ]
             self.assertEqual(len(source_messages), 1)
             self.assertEqual(source_messages[0].get("id"), source_event_id)
-            self.assertEqual((source_messages[0].get("data") or {}).get("dst_group_id"), "g_remote")
+            source_data = source_messages[0].get("data") or {}
+            self.assertEqual(source_data.get("to"), ["user"])
+            self.assertEqual(source_data.get("message_mode"), "send")
+            self.assertEqual(source_data.get("dst_group_id"), "g_remote")
+            self.assertEqual(source_data.get("dst_to"), ["@foreman"])
+            self.assertEqual(source_data.get("dst_message_mode"), "send")
 
             replay = handle_remote_send(
                 {
@@ -169,7 +174,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "changed", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "changed", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -211,7 +216,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": rid,
                     "idempotency_key": "strict-missing",
                     "require_peer_insight": True,
-                    "payload": {"text": "review this", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "review this", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -229,7 +234,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "idempotency_key": "strict-sent",
                     "require_peer_insight": True,
                     "insight": "The destination should challenge the entire plan.",
-                    "payload": {"text": "review this", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "review this", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -253,7 +258,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": rid,
                     "idempotency_key": "strict-sent",
                     "require_peer_insight": True,
-                    "payload": {"text": "changed retry", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "changed retry", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -281,7 +286,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "strict-user",
                     "require_peer_insight": True,
-                    "payload": {"text": "answer for user", "to": ["user"]},
+                    "payload": {"message_mode": "send", "text": "answer for user", "to": ["user"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -308,7 +313,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 dispatch_send=self._dispatch_send,
@@ -339,7 +344,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
                 credential_resolver=lambda _ref: "raw-token-from-store",
@@ -363,7 +368,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "group_id": "g_local",
                     "registration_id": "reg_missing",
                     "idempotency_key": "k1",
-                    "payload": {"text": "x", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "x", "to": ["@foreman"]},
                 },
             )
             self.assertIsNotNone(resp)
@@ -382,7 +387,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             resp = try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": group.group_id, "registration_id": reg["registration_id"], "payload": {"text": "x"}},
+                {"group_id": group.group_id, "registration_id": reg["registration_id"], "payload": {"message_mode": "send", "text": "x"}},
             )
             self.assertIsNotNone(resp)
             assert resp is not None
@@ -406,7 +411,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "group_id": group.group_id,
                     "registration_id": rid,
                     "idempotency_key": "k1",
-                    "payload": {"text": "x", "to": [" "]},
+                    "payload": {"message_mode": "send", "text": "x", "to": [" "]},
                 },
             )
             self.assertIsNotNone(resp)
@@ -414,6 +419,37 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             self.assertFalse(resp.ok)
             self.assertEqual(resp.error.code, "missing_remote_recipient")
             self.assertIsNone(get_receipt(rid, "k1"))
+        finally:
+            cleanup()
+
+    def test_remote_send_rejects_mixed_audience_and_mail_to_user_before_receipt(self) -> None:
+        from cccc.daemon.group_bridge.ops import try_handle_remote_send_op
+        from cccc.kernel.group_bridge.receipts import get_receipt
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._group()
+            reg = self._registration(group_id=group.group_id)
+            rid = reg["registration_id"]
+            cases = (
+                ("mixed", "send", ["user", "@foreman"], "mixed_recipient_kinds"),
+                ("user-mail", "mail", ["user"], "mail_requires_actor_recipient"),
+            )
+            for key, mode, recipients, expected_code in cases:
+                with self.subTest(key=key):
+                    resp = try_handle_remote_send_op(
+                        "remote_send",
+                        {
+                            "group_id": group.group_id,
+                            "registration_id": rid,
+                            "idempotency_key": key,
+                            "payload": {"message_mode": mode, "text": "x", "to": recipients},
+                        },
+                    )
+                    assert resp is not None
+                    self.assertFalse(resp.ok)
+                    self.assertEqual(resp.error.code, expected_code)
+                    self.assertIsNone(get_receipt(rid, key))
         finally:
             cleanup()
 
@@ -431,7 +467,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "group_id": "g_other",
                     "registration_id": rid,
                     "idempotency_key": "k1",
-                    "payload": {"text": "x", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "x", "to": ["@foreman"]},
                 },
             )
             assert resp is not None
@@ -478,7 +514,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                         "group_id": group.group_id,
                         "registration_id": rid,
                         "idempotency_key": "k1",
-                        "payload": {"text": "hi", "to": ["@foreman"]},
+                        "payload": {"message_mode": "send", "text": "hi", "to": ["@foreman"]},
                     },
                 )
             )
@@ -529,7 +565,14 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "remote ping", "dst_group_id": "g_remote"},
+                data={
+                    "text": "remote ping",
+                    "to": ["user"],
+                    "message_mode": "send",
+                    "dst_group_id": "g_remote",
+                    "dst_to": ["@foreman"],
+                    "dst_message_mode": "send",
+                },
             )
             source_event_id = str(source_event.get("id") or "")
             fake = _SequenceTransport([
@@ -544,7 +587,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k-retry",
                     "source_event_id": source_event_id,
-                    "payload": {"text": "remote ping", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "remote ping", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -579,7 +622,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k-retry",
                     "source_event_id": source_event_id,
-                    "payload": {"text": "remote ping changed", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "remote ping changed", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -612,7 +655,14 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "remote ping", "dst_group_id": "g_remote"},
+                data={
+                    "text": "remote ping",
+                    "to": ["user"],
+                    "message_mode": "send",
+                    "dst_group_id": "g_remote",
+                    "dst_to": ["@foreman"],
+                    "dst_message_mode": "send",
+                },
             )
             source_event_id = str(source_event.get("id") or "")
             fake = _SequenceTransport([sent_result("evt_remote_fast", transport="registry_hub")])
@@ -624,7 +674,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k-fast",
                     "source_event_id": source_event_id,
-                    "payload": {"text": "remote ping", "to": ["@foreman"]},
+                    "payload": {"message_mode": "send", "text": "remote ping", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
             )
@@ -683,6 +733,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             )
             source_event_id = str(source_event.get("id") or "")
             receipt = {
+                "operation": "remote_send",
                 "ok": True,
                 "status": "sent",
                 "registration_id": reg["registration_id"],
@@ -702,6 +753,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                 by="system",
                 data={
                     "source_event_id": source_event_id,
+                    "operation": "remote_send",
                     "dst_group_id": "g_remote",
                     "dst_event_id": "",
                     "remote_event_id": "evt_remote_legacy",

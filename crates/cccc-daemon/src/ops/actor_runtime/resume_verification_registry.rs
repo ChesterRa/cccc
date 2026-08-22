@@ -53,6 +53,7 @@ pub(super) fn cancel(group_id: &str, actor_id: &str) {
         .remove(&(group_id.to_owned(), actor_id.to_owned()));
 }
 
+#[cfg(test)]
 pub(super) fn cancel_if_current(group_id: &str, actor_id: &str, started_at: &str) {
     let mut active = active()
         .lock()

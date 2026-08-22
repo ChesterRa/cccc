@@ -67,8 +67,6 @@ class TestSlashSkillDispatch(unittest.TestCase):
                         "task_text": "开始执行",
                         "command": "/using-superpowers",
                         "capability_id": "skill:agent_self_proposed:using-superpowers",
-                        "priority": "attention",
-                        "reply_required": True,
                         "client_id": "client-1",
                         "reply_to": "evt-original",
                         "quote_text": "原始请求",
@@ -78,6 +76,8 @@ class TestSlashSkillDispatch(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             result = resp.result or {}
             self.assertTrue(bool(result.get("hidden")))
+            self.assertTrue(bool(result.get("accepted")))
+            self.assertEqual(str(result.get("message_mode") or ""), "send")
             self.assertEqual(str(result.get("capability_id") or ""), "skill:agent_self_proposed:using-superpowers")
             self.assertEqual(str(result.get("command") or ""), "/using-superpowers")
 
@@ -115,8 +115,8 @@ class TestSlashSkillDispatch(unittest.TestCase):
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
-            unread = unread_messages(group, actor_id="architect", limit=10, kind_filter="all")
-            self.assertEqual([str(item.get("id") or "") for item in unread if isinstance(item, dict)], [str(hidden_event.get("id") or "")])
+            unread = unread_messages(group, actor_id="architect", limit=10)
+            self.assertEqual(unread, [])
         finally:
             cleanup()
 
@@ -177,5 +177,47 @@ class TestSlashSkillDispatch(unittest.TestCase):
                 if str(json.loads(line).get("kind") or "") == "chat.message"
             ]
             self.assertEqual(len(chat_events), 1)
+        finally:
+            cleanup()
+
+    def test_rejects_mixed_user_and_actor_recipients_before_append(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            created, _ = self._call("group_create", {"title": "slash-audience", "topic": "", "by": "user"})
+            group_id = str((created.result or {}).get("group_id") or "").strip()
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "architect",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            response, _ = self._call(
+                "slash_skill_dispatch",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["user", "architect"],
+                    "task_text": "do not append",
+                    "command": "/using-superpowers",
+                    "capability_id": "skill:agent_self_proposed:using-superpowers",
+                },
+            )
+            self.assertFalse(response.ok)
+            self.assertEqual(getattr(response.error, "code", ""), "mixed_recipient_kinds")
+
+            ledger_path = Path(os.environ["CCCC_HOME"]) / "groups" / group_id / "ledger.jsonl"
+            chat_events = [
+                json.loads(line)
+                for line in ledger_path.read_text(encoding="utf-8").splitlines()
+                if str(json.loads(line).get("kind") or "") == "chat.message"
+            ]
+            self.assertEqual(chat_events, [])
         finally:
             cleanup()

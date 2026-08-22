@@ -16,7 +16,7 @@ class TestMcpBootstrapDefaults(unittest.TestCase):
         self.assertEqual(kwargs["group_id"], "g_test")
         self.assertEqual(kwargs["actor_id"], "peer1")
         self.assertEqual(kwargs["inbox_limit"], 50)
-        self.assertEqual(kwargs["inbox_kind_filter"], "all")
+        self.assertNotIn("inbox_kind_filter", kwargs)
         self.assertNotIn("ledger_tail_limit", kwargs)
         self.assertNotIn("ledger_tail_max_chars", kwargs)
 

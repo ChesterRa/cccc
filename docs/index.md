@@ -31,7 +31,7 @@ features:
     details: Web UI, CLI, MCP, and IM bridge all map to one daemon truth model.
   - icon: 💬
     title: IM-Grade Collaboration Semantics
-    details: Use @routing, reply context, read status, attention ACK, and reply-required obligations for reliable coordination.
+    details: Use @routing, explicit Mail or Send delivery, read status, and concrete reply obligations for reliable coordination.
   - icon: 🔧
     title: Automation + Operations
     details: Combine reminders, one-time operational actions, and policy guardrails to keep groups moving.

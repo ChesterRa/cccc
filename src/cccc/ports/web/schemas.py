@@ -42,8 +42,7 @@ class SendRequest(BaseModel):
     to: list[str] = Field(default_factory=list)
     path: str = Field(default="")
     quote_text: str = Field(default="")
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = False
+    message_mode: Literal["send", "request_reply", "mail"] = "send"
     source_platform: str = Field(default="")
     source_user_name: str = Field(default="")
     source_user_id: str = Field(default="")
@@ -60,8 +59,7 @@ class SendCrossGroupRequest(BaseModel):
     by: str = Field(default="user")
     dst_group_id: str
     to: list[str] = Field(default_factory=list)
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = False
+    message_mode: Literal["send", "request_reply", "mail"] = "send"
     reply_to: str = Field(default="")
     quote_text: str = Field(default="")
     client_id: str = Field(default="")
@@ -81,6 +79,8 @@ class DelegateContactRequest(BaseModel):
 
 
 class TrackedSendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str
     text: str
     by: str = Field(default="user")
@@ -91,8 +91,7 @@ class TrackedSendRequest(BaseModel):
     waiting_on: Literal["none", "user", "actor", "external"] | str = "actor"
     handoff_to: str = Field(default="")
     notes: str = Field(default="")
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = True
+    task_priority: str = "normal"
     idempotency_key: str = Field(default="")
     refs: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -102,11 +101,21 @@ class ReplyRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     reply_to: str
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = False
+    message_mode: Literal["send", "mail"] = "send"
     client_id: str = Field(default="")
     refs: list[dict[str, Any]] = Field(default_factory=list)
     suggested_user_message: str = Field(default="")
+
+
+class MessageDeliverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_ids: list[str] = Field(min_length=1)
+    force_ambiguous: bool = False
+
+
+class ReplyRequestCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class DebugClearLogsRequest(BaseModel):
@@ -172,11 +181,7 @@ class ActorProfileUpsertRequest(BaseModel):
 
 
 class InboxReadRequest(BaseModel):
-    event_id: str
-    by: str = Field(default="user")
-
-
-class UserAckRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=200)
     by: str = Field(default="user")
 
 
@@ -230,13 +235,6 @@ class GroupPresentationBrowserSessionRequest(BaseModel):
 
 class GroupSettingsRequest(BaseModel):
     default_send_to: Optional[Literal["foreman", "broadcast"]] = None
-    nudge_after_seconds: Optional[int] = None
-    reply_required_nudge_after_seconds: Optional[int] = None
-    attention_ack_nudge_after_seconds: Optional[int] = None
-    unread_nudge_after_seconds: Optional[int] = None
-    nudge_digest_min_interval_seconds: Optional[int] = None
-    nudge_max_repeats_per_obligation: Optional[int] = None
-    nudge_escalate_after_repeats: Optional[int] = None
     actor_idle_timeout_seconds: Optional[int] = None
     keepalive_delay_seconds: Optional[int] = None
     keepalive_max_per_actor: Optional[int] = None
@@ -244,9 +242,8 @@ class GroupSettingsRequest(BaseModel):
     help_nudge_interval_seconds: Optional[int] = None
     help_nudge_min_messages: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
-    auto_mark_on_delivery: Optional[bool] = (
-        None  # auto-mark messages as read after delivery
-    )
+    mail_notice_after_seconds: Optional[int] = None
+    reply_notice_after_seconds: Optional[int] = None
 
     # Terminal transcript (group-scoped policy)
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
@@ -392,23 +389,6 @@ class GroupAutomationManageRequest(BaseModel):
 class GroupAutomationResetBaselineRequest(BaseModel):
     expected_version: Optional[int] = None
     by: str = Field(default="user")
-
-
-def _normalize_reply_required(v: Any) -> bool:
-    """Normalize reply_required values from JSON/form payloads.
-
-    Accepts bool/int/string values; defaults to False for unknown values.
-    """
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    s = str(v or "").strip().lower()
-    if s in ("1", "true", "yes", "on"):
-        return True
-    if s in ("0", "false", "no", "off", ""):
-        return False
-    return False
 
 
 def _safe_int(

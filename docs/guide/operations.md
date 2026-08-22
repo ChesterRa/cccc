@@ -42,7 +42,7 @@ When a group appears stuck:
 1. Check daemon health.
 2. Check group state (`active/idle/paused/stopped`).
 3. Check actor runtime status.
-4. Check message obligations (reply-required/attention ack).
+4. Check runtime delivery, Inbox read state, pending replies, and tracked tasks.
 5. Check automation and delivery policy.
 
 Useful commands:
@@ -134,7 +134,10 @@ Backup `CCCC_HOME`:
 ## 8) Operational Guardrails
 
 - Keep one source of truth: decisions should be in CCCC messages.
-- Use `reply_required` for critical asks.
+- Use `message_mode=request_reply` only for a concrete recipient whose reply is
+  required; use Mail for useful but non-urgent context.
+- Mail is agent-only. Address either `user` alone or one/more agents in each
+  message; split messages instead of mixing those audiences.
 - Prefer explicit recipients over broad broadcast when scope is narrow.
 - Keep automation focused on objective reminders, not chat noise.
 

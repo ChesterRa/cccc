@@ -32,6 +32,7 @@ fn local_cross_group_relay_preserves_the_source_actor_display_name() {
         "by":"claude-1",
         "to":["user"],
         "text":"hello",
+        "message_mode":"send",
         "client_id":"cross-group-display-metadata"
     });
     let relayed = ok(&home, "send_cross_group", request.clone());

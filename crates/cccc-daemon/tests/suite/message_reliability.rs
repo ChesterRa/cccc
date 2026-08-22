@@ -24,6 +24,7 @@ fn duplicate_client_id_returns_the_original_event() {
         "by":"user",
         "to":["lead"],
         "text":"only once",
+        "message_mode":"send",
         "client_id":"client-1"
     });
 
@@ -41,7 +42,7 @@ fn duplicate_client_id_returns_the_original_event() {
 }
 
 #[test]
-fn directed_message_auto_wakes_an_offline_actor_exactly_once() {
+fn directed_message_waits_for_an_explicitly_stopped_actor_then_delivers_once() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let group = call(&home, "group_create", json!({"title":"offline replay"}));
@@ -72,10 +73,20 @@ fn directed_message_auto_wakes_an_offline_actor_exactly_once() {
     let sent = call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake delivery"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake delivery","message_mode":"send"}),
     );
-    assert_eq!(sent.result["delivery"]["state"], "queued");
-    assert_eq!(sent.result["delivery"]["online"], 0);
+    assert_eq!(sent.result["message_mode"], "send");
+    let actors = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    assert_eq!(actors.result["actors"][0]["enabled"], false);
+    call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
 
     let output = wait_for_terminal(
         &home,

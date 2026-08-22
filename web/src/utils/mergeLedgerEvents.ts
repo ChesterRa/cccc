@@ -7,7 +7,6 @@ function mergeEventWithExistingStatus(incoming: LedgerEvent, existing?: LedgerEv
   return {
     ...incoming,
     _read_status: incoming._read_status ?? existing._read_status,
-    _ack_status: incoming._ack_status ?? existing._ack_status,
     _obligation_status: incoming._obligation_status ?? existing._obligation_status,
   };
 }

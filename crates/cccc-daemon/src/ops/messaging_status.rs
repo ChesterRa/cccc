@@ -1,11 +1,15 @@
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{GroupDoc, HomeLayout, actors, inbox, ledger};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store};
 
 const MAX_STATUS_EVENT_IDS: usize = 1000;
+
+type DeliveryStatuses = HashMap<String, HashMap<String, String>>;
+type ReplyPositions = HashMap<String, HashMap<String, usize>>;
+type CancellationPositions = HashMap<String, usize>;
 
 pub fn statuses(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
@@ -45,9 +49,9 @@ struct StatusSnapshot<'a> {
     positions: &'a HashMap<String, usize>,
     cursor_positions: HashMap<String, usize>,
     actor_generations: HashMap<String, usize>,
-    acked_by: &'a HashMap<String, BTreeSet<String>>,
-    replied_by: &'a HashMap<String, BTreeSet<String>>,
-    web_model_delivery_statuses: HashMap<String, Value>,
+    reply_positions: ReplyPositions,
+    delivery_statuses: DeliveryStatuses,
+    cancellation_positions: CancellationPositions,
 }
 
 impl StatusSnapshot<'_> {
@@ -61,7 +65,7 @@ impl StatusSnapshot<'_> {
             .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))?;
         let path = store(home)?.ledger_path(group_id).map_err(OpError::io)?;
         let cursors = inbox::cursors(home, group_id).map_err(OpError::io)?;
-        ledger::inspect_status(&path, |events, positions, acked_by, replied_by| {
+        ledger::inspect_status(&path, |events, positions, _replied_by| {
             let cursor_positions = cursors
                 .into_iter()
                 .filter_map(|(actor_id, event_id)| {
@@ -72,16 +76,17 @@ impl StatusSnapshot<'_> {
                 })
                 .collect();
             let actor_generations = inbox::actor_generation_positions(events);
-            let web_model_delivery_statuses = collect_web_model_delivery_statuses(events);
+            let (delivery_statuses, reply_positions, cancellation_positions) =
+                collect_message_outcomes(events);
             use_snapshot(&StatusSnapshot {
                 group,
                 events,
                 positions,
                 cursor_positions,
                 actor_generations,
-                acked_by,
-                replied_by,
-                web_model_delivery_statuses,
+                reply_positions,
+                delivery_statuses,
+                cancellation_positions,
             })
         })
         .map_err(OpError::io)
@@ -98,54 +103,42 @@ impl StatusSnapshot<'_> {
 
     fn status(&self, event: &Event) -> Value {
         let recipients = self.actor_recipients(event);
-        let read_status = recipients
-            .iter()
-            .map(|actor_id| (actor_id.clone(), Value::Bool(self.is_read(event, actor_id))))
-            .collect::<Map<_, _>>();
         let mut status = Map::new();
-        status.insert("read_status".into(), Value::Object(read_status));
-        if let Some(delivery_status) = self.web_model_delivery_statuses.get(&event.id) {
-            status.insert("web_model_delivery_status".into(), delivery_status.clone());
+        if event.data.get("message_mode").and_then(Value::as_str) == Some("mail") {
+            let read_status = recipients
+                .iter()
+                .map(|actor_id| (actor_id.clone(), Value::Bool(self.is_read(event, actor_id))))
+                .collect::<Map<_, _>>();
+            status.insert("read_status".into(), Value::Object(read_status));
         }
-
         if is_cross_group_source(event) {
             return Value::Object(status);
         }
 
         let obligation_recipients = self.obligation_recipients(event, recipients);
-        let is_attention = event.data.get("priority").and_then(Value::as_str) == Some("attention");
-        let reply_required = event
-            .data
-            .get("reply_required")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let acked = self.acked_by.get(&event.id);
-        let replied = self.replied_by.get(&event.id);
-
-        if is_attention {
-            let ack_status = obligation_recipients
-                .iter()
-                .map(|actor_id| {
-                    let value = acked.is_some_and(|actors| actors.contains(actor_id));
-                    (actor_id.clone(), Value::Bool(value))
-                })
-                .collect::<Map<_, _>>();
-            status.insert("ack_status".into(), Value::Object(ack_status));
-        }
+        let reply_requested =
+            event.data.get("message_mode").and_then(Value::as_str) == Some("request_reply");
+        let replies = self.reply_positions.get(&event.id);
+        let cancellation = self.cancellation_positions.get(&event.id).copied();
+        let delivery = self.delivery_statuses.get(&event.id);
 
         let obligation_status = obligation_recipients
             .into_iter()
             .map(|actor_id| {
-                let read = self.is_read(event, &actor_id);
-                let replied = replied.is_some_and(|actors| actors.contains(&actor_id));
-                let acked = acked.is_some_and(|actors| actors.contains(&actor_id));
+                let (replied, cancelled) = terminal_outcome(
+                    replies.and_then(|actors| actors.get(&actor_id)).copied(),
+                    cancellation,
+                );
                 (
-                    actor_id,
+                    actor_id.clone(),
                     json!({
-                        "read": read,
-                        "acked": acked,
                         "replied": replied,
-                        "reply_required": reply_required,
+                        "reply_requested": reply_requested,
+                        "cancelled": reply_requested && cancelled,
+                        "delivery_state":delivery
+                            .and_then(|states| states.get(&actor_id))
+                            .map(String::as_str)
+                            .unwrap_or(""),
                     }),
                 )
             })
@@ -199,69 +192,65 @@ impl StatusSnapshot<'_> {
     }
 }
 
-fn collect_web_model_delivery_statuses(events: &[Event]) -> HashMap<String, Value> {
-    let mut statuses = HashMap::new();
-    for event in events {
-        let Some(state) = event
-            .kind
-            .strip_prefix("web_model.browser_delivery.")
-            .filter(|state| {
-                matches!(
-                    *state,
-                    "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed"
-                )
-            })
-        else {
-            continue;
-        };
-        let mut event_ids = event
-            .data
-            .get("event_ids")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        if event_ids.is_empty()
-            && let Some(trigger) = event
+fn collect_message_outcomes(
+    events: &[Event],
+) -> (DeliveryStatuses, ReplyPositions, CancellationPositions) {
+    let mut deliveries = HashMap::<String, HashMap<String, String>>::new();
+    let mut replies = HashMap::<String, HashMap<String, usize>>::new();
+    let mut cancellations = HashMap::<String, usize>::new();
+    for (position, event) in events.iter().enumerate() {
+        if event.kind == "chat.message" {
+            if let Some(source_event_id) = event
                 .data
-                .get("trigger_event_id")
+                .get("reply_to")
                 .and_then(Value::as_str)
-                .map(str::trim)
                 .filter(|value| !value.is_empty())
-        {
-            event_ids.push(trigger.to_owned());
+            {
+                replies
+                    .entry(source_event_id.to_owned())
+                    .or_default()
+                    .entry(event.by.clone())
+                    .or_insert(position);
+            }
+            continue;
         }
-        let detail = event
-            .data
-            .get("browser")
-            .and_then(Value::as_object)
-            .and_then(|browser| browser.get("submission_evidence"))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                event
-                    .data
-                    .get("submission_evidence")
-                    .and_then(Value::as_str)
-            })
-            .or_else(|| event.data.get("error").and_then(Value::as_str))
-            .or_else(|| event.data.get("commit_error").and_then(Value::as_str))
-            .unwrap_or("");
-        let payload = json!({
-            "state":state,
-            "actor_id":event.data.get("actor_id").and_then(Value::as_str).unwrap_or(""),
-            "delivery_id":event.data.get("delivery_id").and_then(Value::as_str).unwrap_or(""),
-            "updated_at":event.ts,
-            "detail":detail,
-        });
-        for event_id in event_ids {
-            statuses.insert(event_id, payload.clone());
+        if event.kind == "chat.reply_request.cancelled" {
+            if let Some(source_event_id) = event
+                .data
+                .get("source_event_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                cancellations
+                    .entry(source_event_id.to_owned())
+                    .or_insert(position);
+            }
+            continue;
+        }
+        if event.kind != "runtime.delivery" {
+            continue;
+        }
+        if let (Some(source_event_id), Some(actor_id), Some(state)) = (
+            event.data.get("source_event_id").and_then(Value::as_str),
+            event.data.get("actor_id").and_then(Value::as_str),
+            event.data.get("state").and_then(Value::as_str),
+        ) {
+            deliveries
+                .entry(source_event_id.to_owned())
+                .or_default()
+                .insert(actor_id.to_owned(), state.to_owned());
         }
     }
-    statuses
+    (deliveries, replies, cancellations)
+}
+
+fn terminal_outcome(
+    reply_position: Option<usize>,
+    cancellation_position: Option<usize>,
+) -> (bool, bool) {
+    let cancelled = cancellation_position
+        .is_some_and(|cancelled| reply_position.is_none_or(|replied| cancelled < replied));
+    (reply_position.is_some() && !cancelled, cancelled)
 }
 
 fn normalized_event_ids(request: &DaemonRequest) -> Vec<String> {
@@ -294,27 +283,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn latest_browser_delivery_event_projects_to_each_message() {
-        let mut submitting = Event::new("web_model.browser_delivery.submitting", "g_one");
-        submitting.ts = "2026-08-10T00:00:00Z".into();
-        submitting.data = json!({
-            "actor_id":"web","delivery_id":"delivery-1","event_ids":["event-1","event-2"]
-        })
-        .as_object()
-        .cloned()
-        .expect("data");
-        let mut submitted = Event::new("web_model.browser_delivery.submitted", "g_one");
-        submitted.ts = "2026-08-09T23:59:59Z".into();
-        submitted.data = json!({
-            "actor_id":"web","delivery_id":"delivery-1","event_ids":["event-1","event-2"],
-            "submission_evidence":"message_echo"
-        })
-        .as_object()
-        .cloned()
-        .expect("data");
+    fn latest_runtime_delivery_state_wins_per_recipient() {
+        let mut claimed = Event::new("runtime.delivery", "g_one");
+        claimed.data = json!({"source_event_id":"event-1","actor_id":"peer1","state":"claimed"})
+            .as_object()
+            .cloned()
+            .expect("data");
+        let mut accepted = Event::new("runtime.delivery", "g_one");
+        accepted.data = json!({"source_event_id":"event-1","actor_id":"peer1","state":"accepted"})
+            .as_object()
+            .cloned()
+            .expect("data");
 
-        let statuses = collect_web_model_delivery_statuses(&[submitting, submitted]);
-        assert_eq!(statuses["event-1"]["state"], "submitted");
-        assert_eq!(statuses["event-2"]["detail"], "message_echo");
+        let (statuses, _, _) = collect_message_outcomes(&[claimed, accepted]);
+        assert_eq!(statuses["event-1"]["peer1"], "accepted");
+    }
+
+    #[test]
+    fn first_reply_or_cancellation_is_terminal() {
+        assert_eq!(terminal_outcome(Some(1), Some(2)), (true, false));
+        assert_eq!(terminal_outcome(Some(2), Some(1)), (false, true));
+        assert_eq!(terminal_outcome(Some(1), None), (true, false));
+        assert_eq!(terminal_outcome(None, Some(1)), (false, true));
     }
 }

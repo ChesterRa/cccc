@@ -27,44 +27,60 @@ class TestInboxReadOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
+    def _create_group_with_actor(
+        self, *, actor_id: str = "peer1", runtime: str = "codex"
+    ) -> str:
+        created, _ = self._call(
+            "group_create",
+            {"title": "inbox-read", "topic": "", "by": "user"},
+        )
+        self.assertTrue(created.ok, getattr(created, "error", None))
+        group_id = str((created.result or {}).get("group_id") or "").strip()
+        added, _ = self._call(
+            "actor_add",
+            {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "runtime": runtime,
+                "runner": "headless",
+                "by": "user",
+            },
+        )
+        self.assertTrue(added.ok, getattr(added, "error", None))
+        return group_id
+
+    def _send_mail(self, group_id: str, text: str, *, actor_id: str = "peer1"):
+        sent, _ = self._call(
+            "send",
+            {
+                "group_id": group_id,
+                "by": "user",
+                "to": [actor_id],
+                "text": text,
+                "message_mode": "mail",
+            },
+        )
+        self.assertTrue(sent.ok, getattr(sent, "error", None))
+        return (sent.result or {})["event"]
+
     def test_malformed_cursor_store_fails_closed_without_overwrite(self) -> None:
         home, cleanup = self._with_home()
         try:
-            create, _ = self._call(
-                "group_create", {"title": "cursor-corruption", "topic": "", "by": "user"}
+            group_id = self._create_group_with_actor()
+            self._send_mail(group_id, "hello")
+            cursor_path = (
+                Path(home) / "groups" / group_id / "state" / "read_cursors.json"
             )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            add, _ = self._call(
-                "actor_add",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "title": "Peer 1",
-                    "runtime": "codex",
-                    "runner": "pty",
-                    "by": "user",
-                },
-            )
-            self.assertTrue(add.ok, getattr(add, "error", None))
-            sent, _ = self._call(
-                "send",
-                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"},
-            )
-            self.assertTrue(sent.ok, getattr(sent, "error", None))
-            event_id = str((((sent.result or {}).get("event") or {}).get("id")) or "")
-            self.assertTrue(event_id)
-            cursor_path = Path(home) / "groups" / group_id / "state" / "read_cursors.json"
             cursor_path.parent.mkdir(parents=True, exist_ok=True)
             malformed = b"{malformed"
             cursor_path.write_bytes(malformed)
 
             response, _ = self._call(
-                "inbox_mark_read",
+                "inbox_read",
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "event_id": event_id,
+                    "limit": 1,
                     "by": "peer1",
                 },
             )
@@ -74,466 +90,357 @@ class TestInboxReadOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_inbox_mark_read_ledger_failure_keeps_the_message_unread(self) -> None:
+    def test_user_has_message_history_but_no_mail_inbox(self) -> None:
         _, cleanup = self._with_home()
         try:
-            create, _ = self._call(
-                "group_create", {"title": "cursor-rollback", "topic": "", "by": "user"}
-            )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            add, _ = self._call(
-                "actor_add",
+            group_id = self._create_group_with_actor()
+            sent, _ = self._call(
+                "send",
                 {
                     "group_id": group_id,
-                    "actor_id": "peer1",
-                    "runtime": "codex",
-                    "runner": "pty",
+                    "by": "peer1",
+                    "to": ["user"],
+                    "text": "visible to the user",
+                    "message_mode": "send",
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+
+            for op in ("inbox_peek", "inbox_read"):
+                with self.subTest(op=op):
+                    response, _ = self._call(
+                        op,
+                        {
+                            "group_id": group_id,
+                            "actor_id": "user",
+                            "by": "user",
+                        },
+                    )
+                    self.assertFalse(response.ok)
+                    self.assertEqual(
+                        getattr(response.error, "code", ""),
+                        "invalid_inbox_recipient",
+                    )
+
+            history, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "user",
                     "by": "user",
                 },
             )
-            self.assertTrue(add.ok, getattr(add, "error", None))
-            sent, _ = self._call(
-                "send",
-                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "keep unread"},
+            self.assertTrue(history.ok, getattr(history, "error", None))
+            self.assertEqual(
+                [item.get("id") for item in (history.result or {}).get("messages", [])],
+                [(sent.result or {}).get("event", {}).get("id")],
             )
-            self.assertTrue(sent.ok, getattr(sent, "error", None))
-            event_id = str((((sent.result or {}).get("event") or {}).get("id")) or "")
+        finally:
+            cleanup()
+
+    def test_ledger_failure_keeps_the_batch_unread(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            event = self._send_mail(group_id, "keep unread")
 
             with patch(
                 "cccc.daemon.messaging.inbox_read_ops.append_event",
                 side_effect=OSError("injected ledger failure"),
             ):
                 response, _ = self._call(
-                    "inbox_mark_read",
+                    "inbox_read",
                     {
                         "group_id": group_id,
                         "actor_id": "peer1",
-                        "event_id": event_id,
+                        "limit": 1,
                         "by": "peer1",
                     },
                 )
 
             self.assertFalse(response.ok)
-            inbox, _ = self._call(
-                "inbox_list",
-                {"group_id": group_id, "actor_id": "peer1", "by": "peer1"},
+            peek, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
             )
-            self.assertTrue(inbox.ok, getattr(inbox, "error", None))
+            self.assertTrue(peek.ok, getattr(peek, "error", None))
             self.assertEqual(
-                [item.get("id") for item in (inbox.result or {}).get("messages", [])],
-                [event_id],
+                [item.get("id") for item in (peek.result or {}).get("messages", [])],
+                [event["id"]],
+            )
+            self.assertFalse(
+                (Path(home) / "groups" / group_id / "state" / "read_cursors.pending.json").exists()
             )
         finally:
             cleanup()
 
-    def test_inbox_mark_read_emits_chat_ack_for_attention(self) -> None:
-        _, cleanup = self._with_home()
+    def test_cursor_write_failure_recovers_from_mail_read_without_replaying_bodies(self) -> None:
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.group import load_group
+
+        home, cleanup = self._with_home()
         try:
-            create, _ = self._call(
-                "group_create", {"title": "inbox-read", "topic": "", "by": "user"}
-            )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            self.assertTrue(group_id)
-
-            attach, _ = self._call(
-                "attach", {"group_id": group_id, "path": ".", "by": "user"}
-            )
-            self.assertTrue(attach.ok, getattr(attach, "error", None))
-
-            add, _ = self._call(
-                "actor_add",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "title": "Peer 1",
-                    "runtime": "codex",
-                    "runner": "headless",
-                    "by": "user",
-                },
-            )
-            self.assertTrue(add.ok, getattr(add, "error", None))
-
-            sent, _ = self._call(
-                "send",
-                {
-                    "group_id": group_id,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "attention ping",
-                    "priority": "attention",
-                },
-            )
-            self.assertTrue(sent.ok, getattr(sent, "error", None))
-            sent_event = (
-                (sent.result or {}).get("event")
-                if isinstance(sent.result, dict)
-                else {}
-            )
-            self.assertIsInstance(sent_event, dict)
-            assert isinstance(sent_event, dict)
-            event_id = str(sent_event.get("id") or "").strip()
-            self.assertTrue(event_id)
-
-            inbox, _ = self._call(
-                "inbox_list",
-                {"group_id": group_id, "actor_id": "peer1", "by": "peer1", "limit": 10},
-            )
-            self.assertTrue(inbox.ok, getattr(inbox, "error", None))
-            messages = (
-                (inbox.result or {}).get("messages")
-                if isinstance(inbox.result, dict)
-                else []
-            )
-            self.assertIsInstance(messages, list)
-            assert isinstance(messages, list)
-            self.assertTrue(
-                any(
-                    str(item.get("id") or "") == event_id
-                    for item in messages
-                    if isinstance(item, dict)
-                )
-            )
-
-            marked, _ = self._call(
-                "inbox_mark_read",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": event_id,
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(marked.ok, getattr(marked, "error", None))
-            ack_event = (
-                (marked.result or {}).get("ack_event")
-                if isinstance(marked.result, dict)
-                else {}
-            )
-            self.assertIsInstance(ack_event, dict)
-            assert isinstance(ack_event, dict)
-            self.assertEqual(str(ack_event.get("kind") or ""), "chat.ack")
-        finally:
-            cleanup()
-
-    def test_chat_ack_idempotent_and_mark_all_read(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            create, _ = self._call(
-                "group_create", {"title": "inbox-ack", "topic": "", "by": "user"}
-            )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            self.assertTrue(group_id)
-
-            attach, _ = self._call(
-                "attach", {"group_id": group_id, "path": ".", "by": "user"}
-            )
-            self.assertTrue(attach.ok, getattr(attach, "error", None))
-
-            add, _ = self._call(
-                "actor_add",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "title": "Peer 1",
-                    "runtime": "codex",
-                    "runner": "headless",
-                    "by": "user",
-                },
-            )
-            self.assertTrue(add.ok, getattr(add, "error", None))
-
-            attention, _ = self._call(
-                "send",
-                {
-                    "group_id": group_id,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "attention task",
-                    "priority": "attention",
-                },
-            )
-            self.assertTrue(attention.ok, getattr(attention, "error", None))
-            attention_event = (
-                (attention.result or {}).get("event")
-                if isinstance(attention.result, dict)
-                else {}
-            )
-            self.assertIsInstance(attention_event, dict)
-            assert isinstance(attention_event, dict)
-            attention_event_id = str(attention_event.get("id") or "").strip()
-            self.assertTrue(attention_event_id)
-
-            impersonated, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": attention_event_id,
-                    "by": "user",
-                },
-            )
-            self.assertFalse(impersonated.ok)
-            self.assertEqual(
-                getattr(impersonated.error, "code", ""), "permission_denied"
-            )
-
-            ack1, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": attention_event_id,
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(ack1.ok, getattr(ack1, "error", None))
-            self.assertFalse(bool((ack1.result or {}).get("already")))
-
-            ack2, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": attention_event_id,
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(ack2.ok, getattr(ack2, "error", None))
-            self.assertTrue(bool((ack2.result or {}).get("already")))
-
-            normal, _ = self._call(
-                "send",
-                {
-                    "group_id": group_id,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "normal ping",
-                },
-            )
-            self.assertTrue(normal.ok, getattr(normal, "error", None))
-
-            mark_all, _ = self._call(
-                "inbox_mark_all_read",
-                {"group_id": group_id, "actor_id": "peer1", "by": "peer1"},
-            )
-            self.assertTrue(mark_all.ok, getattr(mark_all, "error", None))
-            mark_event = (
-                (mark_all.result or {}).get("event")
-                if isinstance(mark_all.result, dict)
-                else {}
-            )
-            self.assertIsInstance(mark_event, dict)
-            assert isinstance(mark_event, dict)
-            self.assertEqual(str(mark_event.get("kind") or ""), "chat.read")
-
-            inbox, _ = self._call(
-                "inbox_list",
-                {"group_id": group_id, "actor_id": "peer1", "by": "peer1", "limit": 10},
-            )
-            self.assertTrue(inbox.ok, getattr(inbox, "error", None))
-            messages = (
-                (inbox.result or {}).get("messages")
-                if isinstance(inbox.result, dict)
-                else []
-            )
-            self.assertIsInstance(messages, list)
-            assert isinstance(messages, list)
-            self.assertEqual(messages, [])
-        finally:
-            cleanup()
-
-    def test_kind_filter_is_validated_and_applied_before_limit_or_mark_all(
-        self,
-    ) -> None:
-        _, cleanup = self._with_home()
-        try:
-
-            def create_peer_group(title: str) -> str:
-                created, _ = self._call(
-                    "group_create", {"title": title, "topic": "", "by": "user"}
-                )
-                self.assertTrue(created.ok, getattr(created, "error", None))
-                group_id = str((created.result or {}).get("group_id") or "").strip()
-                stopped, _ = self._call(
-                    "group_stop", {"group_id": group_id, "by": "user"}
-                )
-                self.assertTrue(stopped.ok, getattr(stopped, "error", None))
-                added, _ = self._call(
-                    "actor_add",
+            group_id = self._create_group_with_actor()
+            event = self._send_mail(group_id, "commit once")
+            with patch(
+                "cccc.kernel.inbox._save_cursors",
+                side_effect=OSError("injected cursor failure"),
+            ):
+                failed, _ = self._call(
+                    "inbox_read",
                     {
                         "group_id": group_id,
                         "actor_id": "peer1",
-                        "runtime": "custom",
-                        "runner": "pty",
-                        "command": ["sh", "-c", "exit 0"],
-                        "by": "user",
+                        "limit": 1,
+                        "by": "peer1",
                     },
                 )
-                self.assertTrue(added.ok, getattr(added, "error", None))
-                return group_id
 
-            first_group = create_peer_group("filter before limit")
-            notified, _ = self._call(
-                "system_notify",
-                {
-                    "group_id": first_group,
-                    "by": "system",
-                    "title": "notify first",
-                    "message": "notify first",
-                    "target_actor_id": "peer1",
-                },
+            self.assertFalse(failed.ok)
+            pending_path = (
+                Path(home) / "groups" / group_id / "state" / "read_cursors.pending.json"
             )
-            chatted, _ = self._call(
-                "send",
+            self.assertTrue(pending_path.exists())
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            reads = [
+                item
+                for item in iter_events(group.ledger_path)
+                if item.get("kind") == "mail.read"
+            ]
+            self.assertEqual(len(reads), 1)
+            self.assertEqual(reads[0]["data"]["event_id"], event["id"])
+
+            recovered, _ = self._call(
+                "inbox_read",
                 {
-                    "group_id": first_group,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "chat second",
-                },
-            )
-            self.assertTrue(notified.ok, getattr(notified, "error", None))
-            self.assertTrue(chatted.ok, getattr(chatted, "error", None))
-            chat_id = str(((chatted.result or {}).get("event") or {}).get("id") or "")
-            chat_page, _ = self._call(
-                "inbox_list",
-                {
-                    "group_id": first_group,
+                    "group_id": group_id,
                     "actor_id": "peer1",
-                    "by": "peer1",
-                    "kind_filter": "chat",
                     "limit": 1,
-                },
-            )
-            self.assertTrue(chat_page.ok, getattr(chat_page, "error", None))
-            self.assertEqual(
-                [
-                    str(item.get("id") or "")
-                    for item in (chat_page.result or {}).get("messages", [])
-                ],
-                [chat_id],
-            )
-            invalid_list, _ = self._call(
-                "inbox_list",
-                {
-                    "group_id": first_group,
-                    "actor_id": "peer1",
                     "by": "peer1",
-                    "kind_filter": "bogus",
                 },
             )
-            self.assertFalse(invalid_list.ok)
+            self.assertTrue(recovered.ok, getattr(recovered, "error", None))
+            self.assertEqual((recovered.result or {})["messages"], [])
+            self.assertEqual((recovered.result or {})["cursor"]["event_id"], event["id"])
+            self.assertFalse(pending_path.exists())
+            reads = [
+                item
+                for item in iter_events(group.ledger_path)
+                if item.get("kind") == "mail.read"
+            ]
+            self.assertEqual(len(reads), 1)
+        finally:
+            cleanup()
+
+    def test_read_consumes_ordered_mail_batches_and_writes_mail_read(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            first = self._send_mail(group_id, "first")
+            second = self._send_mail(group_id, "second")
+
+            read_first, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 1,
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(read_first.ok, getattr(read_first, "error", None))
             self.assertEqual(
-                getattr(invalid_list.error, "code", ""), "invalid_kind_filter"
+                [item["id"] for item in (read_first.result or {})["messages"]],
+                [first["id"]],
+            )
+            self.assertEqual((read_first.result or {})["event"]["kind"], "mail.read")
+            self.assertTrue((read_first.result or {})["cursor"]["updated_at"])
+            self.assertEqual(
+                (read_first.result or {})["event"]["data"]["event_id"], first["id"]
             )
 
-            second_group = create_peer_group("filtered mark all")
-            first_chat, _ = self._call(
-                "send",
+            peek, _ = self._call(
+                "inbox_peek",
                 {
-                    "group_id": second_group,
-                    "by": "user",
-                    "to": ["peer1"],
-                    "text": "chat first",
-                },
-            )
-            later_notify, _ = self._call(
-                "system_notify",
-                {
-                    "group_id": second_group,
-                    "by": "system",
-                    "title": "notify second",
-                    "message": "notify second",
-                    "target_actor_id": "peer1",
-                },
-            )
-            chat_id = str(
-                ((first_chat.result or {}).get("event") or {}).get("id") or ""
-            )
-            notify_id = str(
-                ((later_notify.result or {}).get("event") or {}).get("id") or ""
-            )
-            invalid_mark, _ = self._call(
-                "inbox_mark_all_read",
-                {
-                    "group_id": second_group,
+                    "group_id": group_id,
                     "actor_id": "peer1",
-                    "by": "peer1",
-                    "kind_filter": "bogus",
-                },
-            )
-            self.assertFalse(invalid_mark.ok)
-            self.assertEqual(
-                getattr(invalid_mark.error, "code", ""), "invalid_kind_filter"
-            )
-            marked, _ = self._call(
-                "inbox_mark_all_read",
-                {
-                    "group_id": second_group,
-                    "actor_id": "peer1",
-                    "by": "peer1",
-                    "kind_filter": "chat",
-                },
-            )
-            self.assertTrue(marked.ok, getattr(marked, "error", None))
-            self.assertEqual(
-                ((marked.result or {}).get("cursor") or {}).get("event_id"), chat_id
-            )
-            remaining, _ = self._call(
-                "inbox_list",
-                {
-                    "group_id": second_group,
-                    "actor_id": "peer1",
-                    "by": "peer1",
-                    "kind_filter": "all",
                     "limit": 10,
+                    "by": "peer1",
                 },
             )
             self.assertEqual(
-                [
-                    str(item.get("id") or "")
-                    for item in (remaining.result or {}).get("messages", [])
-                ],
-                [notify_id],
+                [item["id"] for item in (peek.result or {})["messages"]],
+                [second["id"]],
+            )
+
+            read_second, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [item["id"] for item in (read_second.result or {})["messages"]],
+                [second["id"]],
+            )
+            empty, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual((empty.result or {})["messages"], [])
+            self.assertIsNone((empty.result or {})["event"])
+            self.assertEqual(
+                (empty.result or {})["cursor"],
+                (read_second.result or {})["cursor"],
             )
         finally:
             cleanup()
 
-    def test_internal_actor_does_not_match_peer_or_broadcast_chat_targets(self) -> None:
+    def test_natural_pending_summary_tracks_unread_mail_after_reply_and_push(self) -> None:
+        from cccc.contracts.v1 import ChatMessageData
+        from cccc.daemon.messaging.runtime_delivery import append_delivery_state
+        from cccc.kernel.actors import find_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import mail_pending_summary
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            mail = self._send_mail(group_id, "read this later")
+            group = load_group(group_id)
+            assert group is not None
+            actor = find_actor(group, "peer1")
+            assert actor is not None
+
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group_id,
+                scope_key="",
+                by="peer1",
+                data=ChatMessageData(
+                    text="I handled the urgent part",
+                    to=["user"],
+                    reply_to=str(mail["id"]),
+                    message_mode="send",
+                ).model_dump(),
+            )
+            append_delivery_state(
+                group,
+                actor_id="peer1",
+                actor_created_at=str(actor.get("created_at") or ""),
+                source_event_id=str(mail["id"]),
+                state="accepted",
+                transport="test",
+            )
+
+            self.assertEqual(
+                mail_pending_summary(group, actor_id="peer1")["count"], 1
+            )
+            consumed, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(consumed.ok, getattr(consumed, "error", None))
+            self.assertEqual(
+                [event["id"] for event in (consumed.result or {})["messages"]],
+                [mail["id"]],
+            )
+            self.assertEqual(mail_pending_summary(group, actor_id="peer1"), {})
+        finally:
+            cleanup()
+
+    def test_pre_mail_cursor_document_is_ignored(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            first = self._send_mail(group_id, "first")
+            second = self._send_mail(group_id, "second")
+            cursor_path = (
+                Path(home) / "groups" / group_id / "state" / "read_cursors.json"
+            )
+            cursor_path.parent.mkdir(parents=True, exist_ok=True)
+            cursor_path.write_text(
+                '{"peer1":{"event_id":"%s","ts":"%s"}}'
+                % (second["id"], second["ts"]),
+                encoding="utf-8",
+            )
+
+            peek, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(peek.ok, getattr(peek, "error", None))
+            self.assertEqual(
+                [event["id"] for event in (peek.result or {})["messages"]],
+                [first["id"], second["id"]],
+            )
+            self.assertEqual((peek.result or {})["cursor"], {"event_id": "", "ts": ""})
+        finally:
+            cleanup()
+
+    def test_read_requires_the_actor_or_user_authority(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            self._send_mail(group_id, "private")
+            rejected, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 1,
+                    "by": "peer2",
+                },
+            )
+            self.assertFalse(rejected.ok)
+            self.assertEqual(getattr(rejected.error, "code", ""), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_internal_actor_requires_an_explicit_recipient(self) -> None:
         from cccc.kernel.actors import add_actor
-        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.group import create_group
         from cccc.kernel.inbox import is_message_for_actor
         from cccc.kernel.registry import load_registry
 
         _, cleanup = self._with_home()
         try:
-            registry = load_registry()
-            group_id = create_group(
-                registry, title="internal-routing", topic=""
-            ).group_id
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-
-            add_actor(
-                group, actor_id="lead", title="Lead", runtime="codex", runner="headless"
-            )  # type: ignore[arg-type]
+            group = create_group(load_registry(), title="internal-routing", topic="")
             add_actor(
                 group,
                 actor_id="peer1",
                 title="Peer 1",
                 runtime="codex",
                 runner="headless",
-            )  # type: ignore[arg-type]
-            actors = (
-                group.doc.get("actors")
-                if isinstance(group.doc.get("actors"), list)
-                else []
             )
-            actors.append(
+            group.doc["actors"].append(
                 {
                     "id": "internal-helper",
                     "title": "Internal Helper",
@@ -545,67 +452,43 @@ class TestInboxReadOps(unittest.TestCase):
             )
             group.save()
 
-            peers_event = {
+            for recipients in (["@peers"], ["@all"], []):
+                event = {
+                    "kind": "chat.message",
+                    "by": "user",
+                    "data": {
+                        "to": recipients,
+                        "text": "broad",
+                        "message_mode": "mail",
+                    },
+                }
+                self.assertFalse(
+                    is_message_for_actor(
+                        group, actor_id="internal-helper", event=event
+                    )
+                )
+            direct = {
                 "kind": "chat.message",
-                "by": "lead",
-                "data": {"to": ["@peers"], "text": "peer ping"},
+                "by": "user",
+                "data": {
+                    "to": ["internal-helper"],
+                    "text": "direct",
+                    "message_mode": "mail",
+                },
             }
-            all_event = {
-                "kind": "chat.message",
-                "by": "lead",
-                "data": {"to": ["@all"], "text": "all ping"},
-            }
-            broadcast_event = {
-                "kind": "chat.message",
-                "by": "lead",
-                "data": {"text": "broadcast ping"},
-            }
-            direct_event = {
-                "kind": "chat.message",
-                "by": "lead",
-                "data": {"to": ["internal-helper"], "text": "direct ping"},
-            }
-
             self.assertTrue(
-                is_message_for_actor(group, actor_id="peer1", event=peers_event)
-            )
-            self.assertFalse(
-                is_message_for_actor(
-                    group, actor_id="internal-helper", event=peers_event
-                )
-            )
-            self.assertFalse(
-                is_message_for_actor(group, actor_id="internal-helper", event=all_event)
-            )
-            self.assertFalse(
-                is_message_for_actor(
-                    group, actor_id="internal-helper", event=broadcast_event
-                )
-            )
-            self.assertTrue(
-                is_message_for_actor(
-                    group, actor_id="internal-helper", event=direct_event
-                )
+                is_message_for_actor(group, actor_id="internal-helper", event=direct)
             )
         finally:
             cleanup()
 
-    def test_read_cursor_follows_ledger_order_when_timestamps_collide_or_regress(
-        self,
-    ) -> None:
+    def test_cursor_and_status_follow_append_order_when_timestamps_regress(self) -> None:
         from cccc.contracts.v1.event import Event as ContractEvent
-        from cccc.kernel.actors import add_actor, list_actors
+        from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group
         from cccc.kernel.inbox import (
-            batch_unread_counts,
-            get_cursor,
-            get_indexed_unread_counts,
             get_obligation_status_batch,
-            get_read_status,
             get_read_status_batch,
-            latest_unread_event,
-            set_cursor,
-            unread_count,
             unread_messages,
         )
         from cccc.kernel.ledger import append_event
@@ -613,14 +496,14 @@ class TestInboxReadOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            group = create_group(load_registry(), title="cursor-ledger-order", topic="")
+            group = create_group(load_registry(), title="ledger-order", topic="")
             add_actor(
                 group,
                 actor_id="peer1",
                 title="Peer 1",
                 runtime="codex",
                 runner="headless",
-            )  # type: ignore[arg-type]
+            )
             timestamps = iter(
                 [
                     "2099-01-01T00:00:01Z",
@@ -643,397 +526,108 @@ class TestInboxReadOps(unittest.TestCase):
                         data={
                             "text": text,
                             "to": ["peer1"],
-                            "priority": "attention"
-                            if text == "clock moved backwards"
-                            else "normal",
+                            "message_mode": "mail",
                         },
                     )
-                    for text in ("first", "same timestamp", "clock moved backwards")
+                    for text in ("first", "same timestamp", "clock regressed")
                 ]
 
-            set_cursor(group, "peer1", event_id=events[0]["id"], ts=events[0]["ts"])
+            consumed, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "limit": 1,
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(consumed.ok, getattr(consumed, "error", None))
+            self.assertEqual(
+                [event["id"] for event in (consumed.result or {})["messages"]],
+                [events[0]["id"]],
+            )
             self.assertEqual(
                 [event["id"] for event in unread_messages(group, actor_id="peer1")],
                 [events[1]["id"], events[2]["id"]],
             )
-            self.assertEqual(unread_count(group, actor_id="peer1"), 2)
-            self.assertEqual(
-                batch_unread_counts(group, actor_ids=["peer1"]), {"peer1": 2}
+            self.assertFalse(
+                get_read_status_batch(group, events[1:])[events[2]["id"]]["peer1"]
             )
-            self.assertEqual(
-                (latest_unread_event(group, actor_id="peer1") or {}).get("id"),
-                events[2]["id"],
-            )
-            self.assertEqual(
-                get_read_status(group, events[1]["id"]).get("peer1"), False
-            )
-            self.assertEqual(
-                get_read_status_batch(group, events[1:])[events[2]["id"]].get("peer1"),
-                False,
-            )
-            obligation = get_obligation_status_batch(group, [events[2]])[
-                events[2]["id"]
-            ]["peer1"]
-            self.assertEqual(obligation.get("read"), False)
-            self.assertEqual(obligation.get("acked"), False)
-
-            with patch(
-                "cccc.kernel.inbox.iter_events",
-                side_effect=AssertionError("cursor advance must use the ledger index"),
-            ):
-                set_cursor(group, "peer1", event_id=events[2]["id"], ts=events[2]["ts"])
-            self.assertEqual(get_cursor(group, "peer1")[0], events[2]["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
-            self.assertEqual(
-                get_indexed_unread_counts(group, actors=list_actors(group)).get(
+            self.assertNotIn(
+                "read",
+                get_obligation_status_batch(group, [events[2]])[events[2]["id"]][
                     "peer1"
-                ),
-                0,
-            )
-
-            with patch(
-                "cccc.kernel.ledger.Event",
-                side_effect=lambda **kwargs: ContractEvent(
-                    ts="2098-12-31T23:59:59Z", **kwargs
-                ),
-            ):
-                later_in_ledger = append_event(
-                    group.ledger_path,
-                    kind="chat.message",
-                    group_id=group.group_id,
-                    scope_key="",
-                    by="user",
-                    data={
-                        "text": "later append after another clock regression",
-                        "to": ["peer1"],
-                    },
-                )
-            self.assertEqual(
-                get_indexed_unread_counts(group, actors=list_actors(group)).get(
-                    "peer1"
-                ),
-                1,
-            )
-            self.assertEqual(
-                [event["id"] for event in unread_messages(group, actor_id="peer1")],
-                [later_in_ledger["id"]],
-            )
-            self.assertEqual(
-                get_read_status(group, later_in_ledger["id"]).get("peer1"), False
-            )
-            self.assertEqual(
-                get_read_status_batch(group, [later_in_ledger])[
-                    later_in_ledger["id"]
-                ].get("peer1"),
-                False,
+                ],
             )
         finally:
             cleanup()
 
-    def test_new_message_status_cache_is_lazy_but_existing_rows_stay_coherent(
-        self,
-    ) -> None:
+    def test_actor_generation_excludes_messages_before_latest_add(self) -> None:
         from cccc.kernel.group import load_group
         from cccc.kernel.ledger import append_event
-        from cccc.kernel.ledger_status_cache import (
-            get_cached_message_status_batch,
-            warm_message_status_cache_from_event,
-        )
 
         _, cleanup = self._with_home()
         try:
             created, _ = self._call(
                 "group_create",
-                {"title": "lazy-status-cache", "topic": "", "by": "user"},
+                {"title": "actor-generation", "topic": "", "by": "user"},
             )
-            self.assertTrue(created.ok, getattr(created, "error", None))
-            group_id = str((created.result or {}).get("group_id") or "").strip()
-            stopped, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
-            self.assertTrue(stopped.ok, getattr(stopped, "error", None))
-            added, _ = self._call(
-                "actor_add",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "runtime": "custom",
-                    "runner": "pty",
-                    "command": ["sh", "-c", "exit 0"],
-                    "by": "user",
-                },
-            )
-            self.assertTrue(added.ok, getattr(added, "error", None))
+            group_id = str((created.result or {})["group_id"])
             group = load_group(group_id)
-            self.assertIsNotNone(group)
             assert group is not None
-
-            message = append_event(
+            before = append_event(
                 group.ledger_path,
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
                 by="user",
                 data={
-                    "text": "cache me on first read",
+                    "text": "before actor",
                     "to": ["peer1"],
-                    "priority": "attention",
-                    "reply_required": True,
+                    "message_mode": "mail",
                 },
             )
-            message_id = str(message.get("id") or "")
-            self.assertEqual(get_cached_message_status_batch(group, [message_id]), {})
-
-            warm_message_status_cache_from_event(group, message_id)
-            warmed = get_cached_message_status_batch(group, [message_id])
-            self.assertEqual(warmed[message_id]["read_status"].get("peer1"), False)
-            self.assertEqual(warmed[message_id]["ack_status"].get("peer1"), False)
-            self.assertEqual(
-                warmed[message_id]["obligation_status"]["peer1"].get("replied"),
-                False,
-            )
-
-            append_event(
-                group.ledger_path,
-                kind="chat.read",
-                group_id=group_id,
-                scope_key="",
-                by="user",
-                data={"actor_id": "peer1", "event_id": message_id},
-            )
-            after_read = get_cached_message_status_batch(group, [message_id])
-            self.assertEqual(after_read[message_id]["read_status"].get("peer1"), True)
-            self.assertEqual(after_read[message_id]["ack_status"].get("peer1"), False)
-            self.assertEqual(
-                after_read[message_id]["obligation_status"]["peer1"].get("acked"),
-                False,
-            )
-
-            reply = append_event(
-                group.ledger_path,
-                kind="chat.message",
-                group_id=group_id,
-                scope_key="",
-                by="peer1",
-                data={
-                    "text": "reply",
-                    "to": ["user"],
-                    "reply_to": message_id,
-                },
-            )
-            reply_id = str(reply.get("id") or "")
-            after_reply = get_cached_message_status_batch(group, [message_id, reply_id])
-            self.assertEqual(
-                after_reply[message_id]["obligation_status"]["peer1"].get("replied"),
-                True,
-            )
-            self.assertEqual(after_reply[message_id]["ack_status"].get("peer1"), False)
-            self.assertEqual(
-                after_reply[message_id]["obligation_status"]["peer1"].get("acked"),
-                False,
-            )
-            self.assertNotIn(reply_id, after_reply)
-
-            append_event(
-                group.ledger_path,
-                kind="chat.ack",
-                group_id=group_id,
-                scope_key="",
-                by="peer1",
-                data={"actor_id": "peer1", "event_id": message_id},
-            )
-            after_ack = get_cached_message_status_batch(group, [message_id])
-            self.assertEqual(after_ack[message_id]["ack_status"].get("peer1"), True)
-            self.assertEqual(
-                after_ack[message_id]["obligation_status"]["peer1"].get("acked"),
-                True,
-            )
-
-            removed, _ = self._call(
-                "actor_remove",
-                {"group_id": group_id, "actor_id": "peer1", "by": "user"},
-            )
-            self.assertTrue(removed.ok, getattr(removed, "error", None))
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-            self.assertEqual(get_cached_message_status_batch(group, [message_id]), {})
-        finally:
-            cleanup()
-
-    def test_actor_generation_follows_ledger_order_not_timestamps(self) -> None:
-        from cccc.contracts.v1.event import Event as ContractEvent
-        from cccc.kernel.group import load_group
-        from cccc.kernel.inbox import (
-            get_ack_status_batch,
-            get_obligation_status_batch,
-            get_read_status_batch,
-        )
-        from cccc.kernel.ledger import append_event
-        from cccc.kernel.ledger_status_cache import (
-            get_cached_message_status_batch,
-            warm_message_status_cache_from_event,
-        )
-
-        _, cleanup = self._with_home()
-        try:
-            created, _ = self._call(
-                "group_create",
-                {"title": "actor-generation-order", "topic": "", "by": "user"},
-            )
-            self.assertTrue(created.ok, getattr(created, "error", None))
-            group_id = str((created.result or {}).get("group_id") or "").strip()
-            stopped, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
-            self.assertTrue(stopped.ok, getattr(stopped, "error", None))
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-
-            with patch(
-                "cccc.kernel.ledger.Event",
-                side_effect=lambda **kwargs: ContractEvent(
-                    ts="2999-01-01T00:00:00Z", **kwargs
-                ),
-            ):
-                before_actor = append_event(
-                    group.ledger_path,
-                    kind="chat.message",
-                    group_id=group_id,
-                    scope_key="",
-                    by="user",
-                    data={
-                        "text": "before actor",
-                        "to": ["peer1"],
-                        "priority": "attention",
-                        "reply_required": True,
-                    },
-                )
             added, _ = self._call(
                 "actor_add",
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "runtime": "custom",
-                    "runner": "pty",
-                    "command": ["sh", "-c", "exit 0"],
+                    "runtime": "codex",
+                    "runner": "headless",
                     "by": "user",
                 },
             )
             self.assertTrue(added.ok, getattr(added, "error", None))
-            actor_add_id = str(
-                ((added.result or {}).get("event") or {}).get("id") or ""
-            )
-            self.assertTrue(actor_add_id)
-            with patch(
-                "cccc.kernel.ledger.Event",
-                side_effect=lambda **kwargs: ContractEvent(
-                    ts="2000-01-01T00:00:00Z", **kwargs
-                ),
-            ):
-                after_actor = append_event(
-                    group.ledger_path,
-                    kind="chat.message",
-                    group_id=group_id,
-                    scope_key="",
-                    by="user",
-                    data={
-                        "text": "after actor",
-                        "to": ["peer1"],
-                        "priority": "attention",
-                        "reply_required": True,
-                    },
-                )
-            other_actor = append_event(
+            group = load_group(group_id)
+            assert group is not None
+            after = append_event(
                 group.ledger_path,
                 kind="chat.message",
                 group_id=group_id,
                 scope_key="",
                 by="user",
-                data={"text": "for another actor", "to": ["peer2"]},
+                data={
+                    "text": "after actor",
+                    "to": ["peer1"],
+                    "message_mode": "mail",
+                },
             )
 
-            for event_id, expected_code in (
-                (before_actor["id"], "event_not_for_actor"),
-                (actor_add_id, "invalid_event_kind"),
-                (other_actor["id"], "event_not_for_actor"),
-            ):
-                rejected_read, _ = self._call(
-                    "inbox_mark_read",
-                    {
-                        "group_id": group_id,
-                        "actor_id": "peer1",
-                        "event_id": event_id,
-                        "by": "peer1",
-                    },
-                )
-                self.assertFalse(rejected_read.ok)
-                self.assertEqual(
-                    getattr(rejected_read.error, "code", ""), expected_code
-                )
-
-            inbox, _ = self._call(
-                "inbox_list",
-                {"group_id": group_id, "actor_id": "peer1", "by": "peer1", "limit": 10},
+            peek, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
             )
-            self.assertTrue(inbox.ok, getattr(inbox, "error", None))
             self.assertEqual(
-                [item.get("id") for item in (inbox.result or {}).get("messages", [])],
-                [after_actor["id"]],
+                [event["id"] for event in (peek.result or {})["messages"]],
+                [after["id"]],
             )
+            self.assertNotEqual(before["id"], after["id"])
 
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-            events = [before_actor, after_actor]
-            read = get_read_status_batch(group, events)
-            ack = get_ack_status_batch(group, events)
-            obligation = get_obligation_status_batch(group, events)
-            self.assertNotIn("peer1", read[before_actor["id"]])
-            self.assertNotIn("peer1", ack[before_actor["id"]])
-            self.assertNotIn("peer1", obligation[before_actor["id"]])
-            self.assertEqual(read[after_actor["id"]].get("peer1"), False)
-            self.assertEqual(ack[after_actor["id"]].get("peer1"), False)
-            self.assertEqual(obligation[after_actor["id"]]["peer1"].get("acked"), False)
-
-            rejected, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": before_actor["id"],
-                    "by": "peer1",
-                },
-            )
-            self.assertFalse(rejected.ok)
-            self.assertEqual(getattr(rejected.error, "code", ""), "event_not_for_actor")
-            accepted, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": after_actor["id"],
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(accepted.ok, getattr(accepted, "error", None))
-            marked, _ = self._call(
-                "inbox_mark_read",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": after_actor["id"],
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(marked.ok, getattr(marked, "error", None))
-            cursor = (marked.result or {}).get("cursor") or {}
-            self.assertEqual(cursor.get("event_id"), after_actor["id"])
-            self.assertEqual(cursor.get("ts"), after_actor["ts"])
-            self.assertTrue(str(cursor.get("updated_at") or ""))
-
-            warm_message_status_cache_from_event(group, after_actor["id"])
-            self.assertIn(
-                after_actor["id"],
-                get_cached_message_status_batch(group, [after_actor["id"]]),
-            )
             removed, _ = self._call(
                 "actor_remove",
                 {"group_id": group_id, "actor_id": "peer1", "by": "user"},
@@ -1044,118 +638,296 @@ class TestInboxReadOps(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "actor_id": "peer1",
-                    "runtime": "custom",
-                    "runner": "pty",
-                    "command": ["sh", "-c", "exit 0"],
-                    "by": "user",
-                },
-            )
-            self.assertTrue(readded.ok, getattr(readded, "error", None))
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-            self.assertEqual(
-                get_cached_message_status_batch(group, [after_actor["id"]]), {}
-            )
-            self.assertNotIn(
-                "peer1", get_read_status_batch(group, [after_actor])[after_actor["id"]]
-            )
-            stale_ack, _ = self._call(
-                "chat_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": after_actor["id"],
-                    "by": "peer1",
-                },
-            )
-            self.assertFalse(stale_ack.ok)
-            self.assertEqual(
-                getattr(stale_ack.error, "code", ""), "event_not_for_actor"
-            )
-            stale_read, _ = self._call(
-                "inbox_mark_read",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "event_id": after_actor["id"],
-                    "by": "peer1",
-                },
-            )
-            self.assertFalse(stale_read.ok)
-            self.assertEqual(
-                getattr(stale_read.error, "code", ""), "event_not_for_actor"
-            )
-        finally:
-            cleanup()
-
-    def test_deepseek_cursor_gap_check_scans_only_the_reverse_tail(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            create, _ = self._call(
-                "group_create",
-                {"title": "deepseek-cursor-gap", "topic": "", "by": "user"},
-            )
-            self.assertTrue(create.ok, getattr(create, "error", None))
-            group_id = str((create.result or {}).get("group_id") or "").strip()
-            added, _ = self._call(
-                "actor_add",
-                {
-                    "group_id": group_id,
-                    "actor_id": "deepseek",
-                    "runtime": "deepseek",
+                    "runtime": "codex",
                     "runner": "headless",
                     "by": "user",
                 },
             )
-            self.assertTrue(added.ok, getattr(added, "error", None))
+            self.assertTrue(readded.ok, getattr(readded, "error", None))
+            peek_after_recreate, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual((peek_after_recreate.result or {})["messages"], [])
+        finally:
+            cleanup()
 
-            events = []
-            for text in ("first", "second", "third"):
+    def test_mail_cursor_can_consume_through_a_later_mail(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor(
+                actor_id="deepseek", runtime="deepseek"
+            )
+            events = [
+                self._send_mail(group_id, text, actor_id="deepseek")
+                for text in ("first", "second", "third")
+            ]
+            consumed, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "deepseek",
+                    "limit": 2,
+                    "by": "deepseek",
+                },
+            )
+            self.assertTrue(consumed.ok, getattr(consumed, "error", None))
+            cursor = (consumed.result or {})["cursor"]
+            self.assertEqual(cursor["event_id"], events[1]["id"])
+            unread, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "deepseek",
+                    "limit": 10,
+                    "by": "deepseek",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (unread.result or {})["messages"]],
+                [events[2]["id"]],
+            )
+        finally:
+            cleanup()
+
+    def test_inbox_is_mail_only_and_history_is_non_consuming(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            sent_events = []
+            for mode, text in (
+                ("send", "direct update"),
+                ("request_reply", "please answer"),
+                ("mail", "read later"),
+            ):
                 sent, _ = self._call(
                     "send",
                     {
                         "group_id": group_id,
                         "by": "user",
-                        "to": ["deepseek"],
+                        "to": ["peer1"],
                         "text": text,
+                        "message_mode": mode,
                     },
                 )
                 self.assertTrue(sent.ok, getattr(sent, "error", None))
-                events.append((sent.result or {})["event"])
+                sent_events.append((sent.result or {})["event"])
 
-            from cccc.kernel.group import load_group
-            from cccc.kernel.inbox import set_cursor
-
-            group = load_group(group_id)
-            self.assertIsNotNone(group)
-            assert group is not None
-
-            with self.assertRaisesRegex(ValueError, "cannot skip"):
-                set_cursor(
-                    group,
-                    "deepseek",
-                    event_id=events[1]["id"],
-                    ts=events[1]["ts"],
-                )
-
-            set_cursor(
-                group,
-                "deepseek",
-                event_id=events[0]["id"],
-                ts=events[0]["ts"],
+            peek, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
             )
-            with patch(
-                "cccc.kernel.inbox.iter_source_lines",
-                side_effect=AssertionError("must not reparse the ledger prefix"),
-            ):
-                cursor = set_cursor(
-                    group,
-                    "deepseek",
-                    event_id=events[1]["id"],
-                    ts=events[1]["ts"],
-                )
-            self.assertEqual(cursor["event_id"], events[1]["id"])
+            self.assertEqual(
+                [event["id"] for event in (peek.result or {})["messages"]],
+                [sent_events[2]["id"]],
+            )
+            self.assertEqual(set((peek.result or {})["cursor"]), {"event_id", "ts"})
+
+            history, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(history.ok, getattr(history, "error", None))
+            self.assertEqual(
+                [event["id"] for event in (history.result or {})["messages"]],
+                [event["id"] for event in reversed(sent_events)],
+            )
+
+            first_page, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 2,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (first_page.result or {})["messages"]],
+                [sent_events[2]["id"], sent_events[1]["id"]],
+            )
+            self.assertTrue((first_page.result or {})["has_more"])
+
+            older, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "before_event_id": sent_events[2]["id"],
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (older.result or {})["messages"]],
+                [sent_events[1]["id"], sent_events[0]["id"]],
+            )
+            self.assertFalse((older.result or {})["has_more"])
+
+            searched, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "query": "PLEASE ANSWER",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (searched.result or {})["messages"]],
+                [sent_events[1]["id"]],
+            )
+
+            history_after, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "mode": "send",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (history_after.result or {})["messages"]],
+                [sent_events[0]["id"]],
+            )
+            peek_again, _ = self._call(
+                "inbox_peek",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "limit": 10,
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (peek_again.result or {})["messages"]],
+                [sent_events[2]["id"]],
+            )
+        finally:
+            cleanup()
+
+    def test_message_history_is_bounded_to_the_current_actor_generation(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            old, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["peer1"],
+                    "text": "old generation",
+                    "message_mode": "send",
+                },
+            )
+            self.assertTrue(old.ok, getattr(old, "error", None))
+            removed, _ = self._call(
+                "actor_remove",
+                {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+            )
+            self.assertTrue(removed.ok, getattr(removed, "error", None))
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+            current, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["peer1"],
+                    "text": "current generation",
+                    "message_mode": "send",
+                },
+            )
+            history, _ = self._call(
+                "message_history",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                },
+            )
+            self.assertEqual(
+                [event["id"] for event in (history.result or {})["messages"]],
+                [(current.result or {})["event"]["id"]],
+            )
+        finally:
+            cleanup()
+
+    def test_inbox_and_history_reject_non_integer_limits(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor()
+            for op, maximum in (("inbox_peek", 200), ("inbox_read", 200), ("message_history", 100)):
+                for invalid in (True, "2", 1.5, 0, maximum + 1):
+                    response, _ = self._call(
+                        op,
+                        {
+                            "group_id": group_id,
+                            "actor_id": "peer1",
+                            "by": "peer1",
+                            "limit": invalid,
+                        },
+                    )
+                    self.assertFalse(response.ok, (op, invalid, response.result))
+                    self.assertEqual(response.error.code, "invalid_limit")
+        finally:
+            cleanup()
+
+    def test_deepseek_inbox_read_consumes_the_returned_prefix(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group_with_actor(
+                actor_id="deepseek", runtime="deepseek"
+            )
+            events = [
+                self._send_mail(group_id, text, actor_id="deepseek")
+                for text in ("first", "second", "third")
+            ]
+
+            response, _ = self._call(
+                "inbox_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "deepseek",
+                    "limit": 3,
+                    "by": "deepseek",
+                },
+            )
+            self.assertTrue(response.ok, getattr(response, "error", None))
+            self.assertEqual(
+                [event["id"] for event in (response.result or {})["messages"]],
+                [event["id"] for event in events],
+            )
+            self.assertEqual(
+                (response.result or {})["cursor"]["event_id"], events[-1]["id"]
+            )
         finally:
             cleanup()
 

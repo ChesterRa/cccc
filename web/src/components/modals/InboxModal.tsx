@@ -7,24 +7,9 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "./ModalFrame";
 import { getMessageInsight } from "../../utils/messagePerspective";
 
-function formatEventLine(ev: LedgerEvent, getDisplayName: (id: string) => string): string {
-  if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
-    const d = ev.data as Record<string, unknown>;
-    return typeof d.text === "string" ? d.text : "";
-  }
-  if (ev.kind === "system.notify" && ev.data && typeof ev.data === "object") {
-    const d = ev.data as Record<string, unknown>;
-    const kind = typeof d.kind === "string" ? d.kind : "info";
-    const title = typeof d.title === "string" ? d.title : "";
-    const message = typeof d.message === "string" ? d.message : "";
-    const targetId = typeof d.target_actor_id === "string" ? d.target_actor_id : "";
-    const target = targetId ? ` → ${getDisplayName(targetId)}` : "";
-    return `[${kind}]${target}: ${title}${message ? ` - ${message}` : ""}`;
-  }
-  const k = String(ev.kind || "event");
-  const byId = ev.by ? String(ev.by) : "";
-  const by = byId ? ` by ${getDisplayName(byId)}` : "";
-  return `${k}${by}`;
+function mailText(ev: LedgerEvent): string {
+  const data = ev.data && typeof ev.data === "object" ? (ev.data as Record<string, unknown>) : {};
+  return typeof data.text === "string" ? data.text : "";
 }
 
 export interface InboxModalProps {
@@ -104,7 +89,7 @@ export function InboxModal({
     >
       <div className="flex-1 min-h-0 overflow-auto p-4 space-y-2">
         {messages.map((ev, idx) => {
-          const insight = ev.kind === "chat.message" ? getMessageInsight(ev.data) : "";
+          const insight = getMessageInsight(ev.data);
           return (
             <div key={String(ev.id || idx)} className="rounded-xl px-4 py-3 glass-panel">
               <div className="flex items-center justify-between gap-3">
@@ -120,15 +105,11 @@ export function InboxModal({
               </div>
               <div className="mt-2 text-sm break-words">
                 <LazyMarkdownRenderer
-                  content={formatEventLine(ev, getDisplayName)}
+                  content={mailText(ev)}
                   isDark={isDark}
-                  enableMermaid={ev.kind === "chat.message"}
+                  enableMermaid
                   className="text-[var(--color-text-primary)]"
-                  fallback={
-                    <div className="whitespace-pre-wrap break-words">
-                      {formatEventLine(ev, getDisplayName)}
-                    </div>
-                  }
+                  fallback={<div className="whitespace-pre-wrap break-words">{mailText(ev)}</div>}
                 />
               </div>
               {insight ? (

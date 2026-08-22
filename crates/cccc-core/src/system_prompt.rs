@@ -7,9 +7,7 @@ use crate::{GroupDoc, GroupStore, HomeLayout};
 
 mod voice_secretary;
 
-pub const VISIBLE_REPLY_GUIDANCE: &str =
-    "Use cccc_message_reply for replies; use cccc_message_send for new messages.";
-pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_reply for replies; use cccc_message_send for new messages. Terminal output is not delivered. Verify reply_to/to; avoid routine @all. Use cccc_help if unsure.";
+pub const MESSAGE_DELIVERY_GUIDANCE: &str = "New messages: use mode=\"mail\" unless delayed awareness would cost more than interrupting the recipient; then use mode=\"send\". Use mode=\"request_reply\" only when a concrete reply is also required. Do not send routine noise; use cccc_message_reply for an existing event. Mail is agent-only. Never mix user and agent recipients in one message; send separate messages when both audiences need different actions.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -116,7 +114,7 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
         String::new(),
         "---".into(),
         "CCCC Protocol:".into(),
-        format!("- {VISIBLE_REPLY_GUIDANCE}"),
+        format!("- {MESSAGE_DELIVERY_GUIDANCE}"),
         "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs."
             .into(),
         "- Terminal output is not delivered.".into(),
@@ -187,7 +185,7 @@ fn enum_name(value: impl serde::Serialize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_session};
+    use super::{MESSAGE_DELIVERY_GUIDANCE, render, render_session};
     use crate::GroupStore;
     use crate::home::HomeLayout;
     use cccc_contracts::Actor;
@@ -204,9 +202,7 @@ mod tests {
         assert!(prompt.contains("You are peer1"));
         assert!(prompt.contains(&group.group_id));
         assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
-        assert!(prompt.contains(
-            "Use cccc_message_reply for replies; use cccc_message_send for new messages."
-        ));
+        assert_eq!(prompt.matches(MESSAGE_DELIVERY_GUIDANCE).count(), 1);
         assert!(prompt.contains("verify `reply_to` and `to`"));
         assert!(prompt.contains("Terminal output is not delivered."));
         assert!(!prompt.contains("Current Context Snapshot"));

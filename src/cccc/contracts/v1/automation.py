@@ -56,7 +56,6 @@ class AutomationActionNotify(BaseModel):
     snippet_ref: Optional[str] = None
     message: str = ""
     priority: NotifyPriority = "normal"
-    requires_ack: bool = False
 
     model_config = ConfigDict(extra="forbid")
 

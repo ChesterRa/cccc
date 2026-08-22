@@ -165,3 +165,18 @@ class TestWebFsRoutes(unittest.TestCase):
             self.assertIn("File name too long", error.get("message") or "")
         finally:
             cleanup()
+
+    def test_create_directory_rejects_implicit_process_cwd(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with self._client() as client:
+                for parent in ("", ".", "relative"):
+                    resp = client.post(
+                        "/api/v1/fs/directory",
+                        json={"parent": parent, "name": "must-not-be-created"},
+                    )
+                    self.assertEqual(resp.status_code, 400, resp.text)
+                    error = resp.json().get("error") or {}
+                    self.assertEqual(error.get("code"), "INVALID_PARENT")
+        finally:
+            cleanup()

@@ -12,6 +12,7 @@ import json
 import re
 from typing import Any, Dict, Iterable, List
 
+from ...kernel.inbox import mail_pending_summary
 from ...kernel.peer_insight import PEER_PERSPECTIVE_AGENT_LABEL, append_peer_perspective
 
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
@@ -219,8 +220,7 @@ def build_actor_delivery_text(
     *,
     text: str,
     insight: str | None = None,
-    priority: str,
-    reply_required: bool,
+    message_mode: str,
     event_id: str,
     refs: list[dict[str, Any]],
     attachments: list[dict[str, Any]],
@@ -230,9 +230,7 @@ def build_actor_delivery_text(
 ) -> str:
     delivery_text = text
     prefix_lines: list[str] = []
-    if priority == "attention" and event_id:
-        prefix_lines.append(f"[cccc] IMPORTANT (event_id={event_id}):")
-    if reply_required and event_id:
+    if message_mode == "request_reply" and event_id:
         prefix_lines.append(f"[cccc] REPLY REQUIRED (event_id={event_id}): reply via cccc_message_reply.")
     if src_group_id and src_event_id:
         prefix_lines.append(f"[cccc] RELAYED FROM (group_id={src_group_id}, event_id={src_event_id}):")
@@ -306,8 +304,7 @@ def render_actor_event_for_delivery(event: Dict[str, Any], *, actor_id: str = ""
         body = build_actor_delivery_text(
             text=str(data.get("text") or ""),
             insight=data.get("insight"),
-            priority=str(data.get("priority") or "normal"),
-            reply_required=bool(data.get("reply_required")),
+            message_mode=str(data.get("message_mode") or ""),
             event_id=event_id,
             refs=[item for item in data.get("refs", []) if isinstance(item, dict)]
             if isinstance(data.get("refs"), list)
@@ -352,14 +349,51 @@ def render_actor_event_for_delivery(event: Dict[str, Any], *, actor_id: str = ""
     return f"{header}:\n{text}".strip()
 
 
-def render_actor_event_batch_for_delivery(events: Iterable[Dict[str, Any]], *, actor_id: str = "") -> str:
+def _is_direct_chat_event(event: Dict[str, Any]) -> bool:
+    if str(event.get("kind") or "") != "chat.message":
+        return False
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    return str(data.get("message_mode") or "").strip() in {"send", "request_reply"}
+
+
+def render_mail_pending_hint(*, group: Any, actor_id: str) -> str:
+    """Return advisory Mail context without changing delivery or read state."""
+
+    try:
+        pending = mail_pending_summary(group, actor_id=str(actor_id or "").strip())
+    except Exception:
+        return ""
+    count = int(pending.get("count") or 0) if isinstance(pending, dict) else 0
+    if count <= 0:
+        return ""
+    noun = "item" if count == 1 else "items"
+    return f"[cccc] MAIL PENDING: {count} {noun}. Call cccc_inbox_read when appropriate."
+
+
+def append_mail_pending_hint(text: str, *, group: Any, actor_id: str) -> str:
+    hint = render_mail_pending_hint(group=group, actor_id=actor_id)
+    content = str(text or "").rstrip()
+    if not hint:
+        return content
+    return f"{content}\n\n{hint}" if content else hint
+
+
+def render_actor_event_batch_for_delivery(
+    events: Iterable[Dict[str, Any]],
+    *,
+    actor_id: str = "",
+    group: Any = None,
+) -> str:
+    event_list = [event for event in events if isinstance(event, dict)]
     chunks: List[str] = []
-    for event in events:
-        if isinstance(event, dict):
-            rendered = render_actor_event_for_delivery(event, actor_id=actor_id).strip()
-            if rendered:
-                chunks.append(rendered)
-    return "\n\n".join(chunks).strip()
+    for event in event_list:
+        rendered = render_actor_event_for_delivery(event, actor_id=actor_id).strip()
+        if rendered:
+            chunks.append(rendered)
+    output = "\n\n".join(chunks).strip()
+    if group is not None and any(_is_direct_chat_event(event) for event in event_list):
+        return append_mail_pending_hint(output, group=group, actor_id=actor_id)
+    return output
 
 
 def jsonish(value: Any) -> str:

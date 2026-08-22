@@ -35,12 +35,12 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 ## なぜ CCCC か
 
-複数のコーディングエージェントを使う現実はこうです：協調記録はターミナルのスクロールバッファに埋もれて再起動で消え、エージェントがメッセージを*読んだ*かどうか確認できず、起動/停止/復旧はツールごとに分散し、外出先から稼働中のグループを確認する手段もない。これが、マルチエージェント環境が「脆いデモ」で終わってしまう根本原因です。
+複数のコーディングエージェントを使う現実はこうです：協調記録はターミナルのスクロールバッファに埋もれて再起動で消え、保存済み、runtime への引き渡し、Inbox での消費、返信が混同され、起動/停止/復旧はツールごとに分散し、外出先から稼働中のグループを確認する手段もない。これが、マルチエージェント環境が「脆いデモ」で終わってしまう根本原因です。
 
 CCCC はエージェント群を、永続的で協調された 1 つのシステムとして運用します：
 
 - **永続協調** — 作業状態はターミナルスクロールではなく、append-only ledger に残ります。
-- **到達の可視化** — メッセージはルーティング、既読、ACK、reply-required 追跡を持ち、「送ったはず」で終わりません。
+- **配信事実の可視化** — ルーティング、保存、runtime 配信、既読、返信を個別に記録し、「送信済み」を「確認済み」と扱いません。
 - **1 つのコントロールプレーン** — Web UI、CLI、MCP、IM ブリッジがすべて同じ daemon 状態を共有します。
 - **マルチランタイム前提** — Claude Code、Codex CLI、ChatGPT Web、Grok Build などの主要ランタイムを 1 つのグループで混在運用できます。
 - **Group Bridge によるリモート連携** — 信頼済み CCCC group 同士が明示的なメッセージを交換し、許可された場合は相手のローカルリソースを調査・操作できます。
@@ -53,7 +53,7 @@ CCCC はコマンド一つで導入でき、データベース、メッセージ
 | 機能 | 実現方法 |
 |---|---|
 | **唯一の事実源** | append-only ledger（`ledger.jsonl`）が全メッセージ・イベントを記録 — 再生可能、監査可能、喪失なし |
-| **信頼性のあるメッセージング** | 既読カーソル、attention ACK、reply-required 義務追跡 — 誰が何を確認したか明確 |
+| **信頼性のあるメッセージング** | Send / Send + Reply / Mail、配信・既読・返信の事実を分離し、Mail 専用 Inbox を ledger 順で消費 — runtime への引き渡しを既読と偽りません |
 | **統一コントロールプレーン** | Web UI、CLI、MCP ツール、IM ブリッジがすべて 1 つの daemon に接続 — 状態の分断なし |
 | **マルチランタイム編成** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web など 17 種の主要ランタイムを混在利用でき、さらに `custom` も扱える |
 | **Group Bridge** | マシンやチームをまたぐ信頼済みリモートグループを接続し、明示的メッセージから始めて read/full のローカルアクセスを必要時だけ付与 |
@@ -285,25 +285,26 @@ Web UI の **Settings > Group Bridge** から開始します。一方が一回�
 CCCC は IM グレードのメッセージングセマンティクスを実装 — 「ターミナルにテキストを貼り付ける」だけではありません：
 
 - **宛先ルーティング** — `@all`、`@peers`、`@foreman`、または特定の actor ID
-- **既読カーソル** — 各エージェントが MCP 経由で明示的に既読をマーク
+- **明示的な 3 モード** — Send は能動配信、Send + Reply は具体的な返信要求、Mail は即時中断なしの Inbox 配信
+- **事実の分離** — `runtime.delivery`、Mail 既読カーソル、返信、取消、タスク完了は互いを代用しません
+- **消費型 Inbox 読取** — `cccc_inbox_read` が次の順序付き Mail バッチを返し、Mail カーソルを原子的に進めます
 - **返信と引用** — 構造化された `reply_to` + 引用コンテキスト
-- **Attention ACK** — 優先メッセージは明示的な確認が必要
-- **Reply-required 義務** — 受信者が返信するまで追跡
-- **自動ウェイク** — メッセージ受信時、無効化された agent を自動起動
+- **返信要求** — Send + Reply は受信者の返信または送信者の取消まで追跡
+- **ライフサイクル境界** — paused、stopped、disabled の actor を配信が暗黙に起動することはありません
 - **リモートグループ宛先** — Group Bridge の対象は、隠れたブロードキャストではなく明示的な remote recipient として扱われます
 
-通常の `send` はチャット、質問、軽い依頼に使います。明確な担当者、完了条件、証拠、引き継ぎ、受け入れ履歴が必要な委任作業には `tracked-send` を使ってください。`@all` は告知や緊急の共有制約には使えますが、具体タスクのデフォルト分配先にはしません。
+待てる有用な agent 向け情報には Mail、遅延の損失が中断コストを上回る場合は Send、さらに具体的な回答が必要な場合だけ Send + Reply を使います。Mail は人間の user には送れません。1 件のメッセージは `user` のみ、または 1 人以上の agent のどちらか一方を宛先とし、両者へ必要な場合は別々に送信します。明確な担当者、完了条件、証拠、引き継ぎ、受け入れ履歴が必要な委任作業には `tracked-send` を使ってください。`@all` は告知や緊急の共有制約には使えますが、具体タスクのデフォルト分配先にはしません。
 
-メッセージは daemon が管理する配信パイプラインを通じて各 actor ランタイムへ届けられ、daemon が全メッセージの到達状態を追跡します。
+能動配信は daemon 管理のパイプラインを通り、その `runtime.delivery` 事実は Inbox の既読状態や返信とは分離されます。
 
 ## オートメーションとポリシー
 
-内蔵ルールエンジンが運用面の懸念を処理し、手動監視を不要に：
+少数の配信タイマーと自動化ルールが運用面を処理し、すべてのメッセージを prompt に変えることを避けます：
 
 | ポリシー | 機能 |
 |----------|------|
-| **催促（Nudge）** | 設定可能なタイムアウト後に未読メッセージを agent にリマインド |
-| **Reply-required フォローアップ** | 必須返信が遅延した場合にエスカレート |
+| **Mail 通知** | 宛先が明確な Mail に対し、設定時間後に本文なしの通知を最大 1 回送信 |
+| **返信通知** | 配信済みの Send + Reply が未返信の場合に最大 1 回通知 |
 | **Actor アイドル検出** | agent が沈黙した際に foreman に通知 |
 | **Keepalive** | foreman への定期的なチェックインリマインダー |
 | **沈黙検出** | グループ全体が静かになった場合にアラート |
@@ -393,8 +394,7 @@ cccc reply <event_id> "返信"
 cccc tail -n 50 -f             # ledger をリアルタイム追跡
 
 # 受信箱
-cccc inbox                     # 未読メッセージを表示
-cccc inbox --mark-read         # 全件既読にする
+cccc inbox --actor-id <id>     # 次の未読 Mail バッチを読み取り、消費する
 
 # 運用
 cccc doctor                    # 環境チェック
@@ -413,7 +413,7 @@ cccc im start|stop|status
 | サーフェス | 例 |
 |------------|----|
 | **セッションとガイダンス** | `cccc_bootstrap`、`cccc_help`、`cccc_project_info` |
-| **メッセージングとファイル** | `cccc_inbox_list`、`cccc_inbox_mark_read`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
+| **メッセージングとファイル** | `cccc_inbox_read`、`cccc_message_history`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
 | **グループと actor 制御** | `cccc_group`、`cccc_actor` |
 | **協調と状態** | `cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_context_sync` |
 | **リモートグループアクセス** | `cccc_remote_access`、`cccc_remote_context`、`cccc_remote_repo`、`cccc_remote_git`、`cccc_remote_apply_patch`、`cccc_remote_exec_command` |

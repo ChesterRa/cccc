@@ -1517,6 +1517,9 @@ class TestGroupSpaceOps(unittest.TestCase):
         _, cleanup = self._with_home()
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
         try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import iter_events
+
             gid = self._create_group("space-generate-notify")
             lane_key = f"{gid}:notebooklm:work:nb_gen_notify"
             self._add_actor(gid, "peer1", by="user")
@@ -1556,33 +1559,21 @@ class TestGroupSpaceOps(unittest.TestCase):
                 self.assertTrue(generated.ok, getattr(generated, "error", None))
 
                 def _find_notify():
-                    inbox, _ = self._call(
-                        "inbox_list",
-                        {
-                            "group_id": gid,
-                            "actor_id": "peer1",
-                            "by": "peer1",
-                            "kind_filter": "notify",
-                            "limit": 30,
-                        },
-                    )
-                    self.assertTrue(inbox.ok, getattr(inbox, "error", None))
-                    messages = (inbox.result or {}).get("messages") if isinstance(inbox.result, dict) else []
-                    if isinstance(messages, list):
-                        for ev in messages:
-                            if not isinstance(ev, dict):
-                                continue
-                            if str(ev.get("kind") or "") != "system.notify":
-                                continue
-                            data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
-                            context = data.get("context") if isinstance(data.get("context"), dict) else {}
-                            if str(context.get("task_id") or "") == "task_notify_1":
-                                return ev
+                    group = load_group(gid)
+                    self.assertIsNotNone(group)
+                    assert group is not None
+                    for ev in iter_events(group.ledger_path):
+                        if not isinstance(ev, dict) or str(ev.get("kind") or "") != "system.notify":
+                            continue
+                        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+                        context = data.get("context") if isinstance(data.get("context"), dict) else {}
+                        if str(context.get("task_id") or "") == "task_notify_1":
+                            return ev
                     return None
 
                 matched_notify = self._wait_until(_find_notify, timeout=0.5)
                 self.assertTrue(self._wait_for_generate_lane_idle(lane_key))
-            self.assertIsNotNone(matched_notify, "expected async generate completion notify in inbox")
+            self.assertIsNotNone(matched_notify, "expected async generate completion notify in ledger")
             assert isinstance(matched_notify, dict)
             data = matched_notify.get("data") if isinstance(matched_notify.get("data"), dict) else {}
             context = data.get("context") if isinstance(data.get("context"), dict) else {}

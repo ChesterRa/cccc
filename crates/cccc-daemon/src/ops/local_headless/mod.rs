@@ -41,7 +41,6 @@ pub struct HeadlessStatus {
 struct Turn {
     text: String,
     event_id: String,
-    event_ts: String,
     control_kind: String,
 }
 

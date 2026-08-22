@@ -214,13 +214,12 @@
       "cccc_message_reply",
       "cccc_message_send",
       "cccc_tracked_send",
-      "cccc_inbox_list",
-      "cccc_inbox_mark_read"
+      "cccc_inbox_read"
     ],
     "reply": [
       "cccc_message_reply",
       "cccc_message_send",
-      "cccc_inbox_list"
+      "cccc_inbox_read"
     ],
     "state": [
       "cccc_agent_state",

@@ -12,6 +12,7 @@ All automation respects group state:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -33,7 +34,12 @@ from ...kernel.group import (
     load_group,
     set_group_state,
 )
-from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
+from ...kernel.inbox import (
+    get_obligation_status_batch,
+    get_read_status_batch,
+    is_message_for_actor,
+    iter_events,
+)
 from ...kernel.ledger import append_event
 from ...kernel.ledger_segments import iter_source_lines, list_ledger_sources
 from ...kernel.terminal_transcript import get_terminal_transcript_settings
@@ -41,11 +47,11 @@ from ...kernel.messaging import enabled_recipient_actor_ids
 from ...runners import pty as pty_runner
 from ...runners import headless as headless_runner
 from ..messaging.delivery import (
-    flush_pending_messages,
-    queue_system_notify,
-    render_headless_control_text,
-    render_system_notify_delivery_text,
+    dispatch_system_notify_event_to_actor,
 )
+from ..messaging.runtime_delivery import append_delivery_state, claim_delivery
+from ..actors.actor_runtime_ops import actor_runtime_running
+from ..actors.runner_ops import _effective_runner_kind
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
@@ -58,13 +64,8 @@ _AUTOMATION_STATE_LOCK = threading.RLock()
 class AutomationConfig:
     """Automation configuration for a group."""
     # Level 1: Message-level
-    nudge_after_seconds: int          # Global fallback nudge interval (legacy)
-    reply_required_nudge_after_seconds: int  # Nudge for required-reply obligations
-    attention_ack_nudge_after_seconds: int   # Nudge for attention ack obligations
-    unread_nudge_after_seconds: int          # Nudge for plain unread backlog
-    nudge_digest_min_interval_seconds: int   # Min interval between digest nudges per actor
-    nudge_max_repeats_per_obligation: int    # Max repeats per obligation item
-    nudge_escalate_after_repeats: int        # Escalate to foreman at/after this repeat count
+    mail_notice_after_seconds: int
+    reply_notice_after_seconds: int
 
     # Level 2: Session-level
     actor_idle_timeout_seconds: int   # Notify foreman if actor idle for this long
@@ -81,6 +82,8 @@ def _cfg(group: Group) -> AutomationConfig:
     """Load automation config from group.yaml."""
     doc = group.doc.get("automation")
     d = doc if isinstance(doc, dict) else {}
+    delivery_doc = group.doc.get("delivery")
+    delivery = delivery_doc if isinstance(delivery_doc, dict) else {}
 
     def _int(key: str, default: int) -> int:
         try:
@@ -89,15 +92,17 @@ def _cfg(group: Group) -> AutomationConfig:
             v = int(default)
         return max(0, v)
 
+    def _delivery_int(key: str, default: int) -> int:
+        try:
+            value = int(delivery.get(key) if key in delivery else default)
+        except Exception:
+            value = int(default)
+        return max(0, value)
+
     return AutomationConfig(
         # Level 1
-        nudge_after_seconds=_int("nudge_after_seconds", 300),
-        reply_required_nudge_after_seconds=_int("reply_required_nudge_after_seconds", _int("nudge_after_seconds", 300)),
-        attention_ack_nudge_after_seconds=_int("attention_ack_nudge_after_seconds", max(1, _int("nudge_after_seconds", 300) * 2)),
-        unread_nudge_after_seconds=_int("unread_nudge_after_seconds", max(1, _int("nudge_after_seconds", 300) * 3)),
-        nudge_digest_min_interval_seconds=_int("nudge_digest_min_interval_seconds", 120),
-        nudge_max_repeats_per_obligation=_int("nudge_max_repeats_per_obligation", 3),
-        nudge_escalate_after_repeats=_int("nudge_escalate_after_repeats", 2),
+        mail_notice_after_seconds=_delivery_int("mail_notice_after_seconds", 1800),
+        reply_notice_after_seconds=_delivery_int("reply_notice_after_seconds", 900),
         # Level 2
         actor_idle_timeout_seconds=_int("actor_idle_timeout_seconds", 0),
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),
@@ -472,7 +477,7 @@ def _get_last_group_activity(group: Group) -> Optional[datetime]:
     """Get timestamp of last real group activity.
 
     Silence detection should only consider business chat activity. Internal
-    automation notifications, and replies that only acknowledge those
+    automation notifications, and replies that only confirm those
     notifications, must not keep the group artificially "active".
     """
     automated_notify_meta: Dict[str, Tuple[str, str, str]] = {}
@@ -551,7 +556,7 @@ def _is_group_activity_event(
         notify_meta = automated_notify_meta.get(reply_to)
         if notify_meta is not None:
             notify_kind, target_actor_id, rule_id = notify_meta
-            # Suppress the pure "system ping -> target actor ack" chain.
+            # Suppress the pure "system ping -> target actor confirmation" chain.
             if by and by == target_actor_id:
                 if notify_kind in _NON_ACTIVITY_REPLY_NOTIFY_KINDS:
                     return False
@@ -619,48 +624,6 @@ def _terminal_tail_snippet(group: Group, *, actor_id: str, lines: int) -> str:
     return snippet.rstrip()
 
 
-def _nudge_item_repeat_count(state: Dict[str, Any], actor_id: str, item_key: str) -> int:
-    st = _actor_state(state, actor_id)
-    items = st.get("nudge_items") if isinstance(st.get("nudge_items"), dict) else {}
-    rec = items.get(item_key) if isinstance(items, dict) else None
-    if not isinstance(rec, dict):
-        return 0
-    try:
-        return max(0, int(rec.get("count") or 0))
-    except Exception:
-        return 0
-
-
-def _nudge_item_touch(state: Dict[str, Any], actor_id: str, item_key: str) -> int:
-    st = _actor_state(state, actor_id)
-    items = st.get("nudge_items")
-    if not isinstance(items, dict):
-        items = {}
-        st["nudge_items"] = items
-    rec = items.get(item_key)
-    if not isinstance(rec, dict):
-        rec = {"count": 0}
-        items[item_key] = rec
-    try:
-        count = int(rec.get("count") or 0)
-    except Exception:
-        count = 0
-    count = max(0, count) + 1
-    rec["count"] = count
-    rec["last_nudged_at"] = utc_now_iso()
-    return count
-
-
-def _nudge_items_gc(state: Dict[str, Any], actor_id: str, alive_keys: set[str]) -> None:
-    st = _actor_state(state, actor_id)
-    items = st.get("nudge_items")
-    if not isinstance(items, dict):
-        return
-    for k in list(items.keys()):
-        if k not in alive_keys:
-            items.pop(k, None)
-
-
 def _actor_declared_next(group: Group, actor_id: str) -> Optional[Tuple[str, datetime]]:
     """Check if actor's last message contains 'Next:' declaration.
     
@@ -696,68 +659,32 @@ def _queue_notify_to_pty(
     runner_kind: str,
     ev: Dict[str, Any],
     notify: SystemNotifyData,
-) -> None:
-    if runner_kind == "headless":
-        actor = find_actor(group, actor_id)
-        if not isinstance(actor, dict):
-            return
-        runtime = str(actor.get("runtime") or "").strip().lower()
-        event_id = str(ev.get("id") or "").strip()
-        if not event_id:
-            return
-        event_ts = str(ev.get("ts") or "").strip()
-        headless_control_text = render_headless_control_text(
-            control_kind="system_notify",
-            body=render_system_notify_delivery_text(notify=notify, group=group),
-        )
-        if not headless_control_text:
-            return
-        try:
-            if runtime == "codex":
-                from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-
-                if codex_app_supervisor.actor_running(group.group_id, actor_id):
-                    codex_app_supervisor.submit_control_message(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        text=headless_control_text,
-                        control_kind="system_notify",
-                        event_id=event_id,
-                        ts=event_ts,
-                    )
-            elif runtime == "claude":
-                from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
-
-                if claude_app_supervisor.actor_running(group.group_id, actor_id):
-                    claude_app_supervisor.submit_control_message(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        text=headless_control_text,
-                        control_kind="system_notify",
-                        event_id=event_id,
-                        ts=event_ts,
-                    )
-        except Exception:
-            pass
-        return
-    if runner_kind != "pty":
-        return
-    if not pty_runner.SUPERVISOR.actor_running(group.group_id, actor_id):
-        return
-    event_id = str(ev.get("id") or "").strip()
-    if not event_id:
-        return
-    event_ts = str(ev.get("ts") or "").strip()
-    queue_system_notify(
+) -> bool:
+    del runner_kind, notify
+    return dispatch_system_notify_event_to_actor(
         group,
+        event=ev,
         actor_id=actor_id,
-        event_id=event_id,
-        notify_kind=str(notify.kind),
-        title=str(notify.title),
-        message=str(notify.message),
-        ts=event_ts,
     )
-    flush_pending_messages(group, actor_id=actor_id)
+
+
+def _reminder_notice_id(
+    group_id: str,
+    actor_id: str,
+    actor_created_at: str,
+    kind: str,
+    source_event_ids: List[str],
+) -> str:
+    seed = "\0".join(
+        [group_id, actor_id, actor_created_at, kind, *source_event_ids]
+    )
+    return "notice:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+
+
+def _reminder_transport(actor: Dict[str, Any]) -> str:
+    runtime = str(actor.get("runtime") or "custom").strip().lower() or "custom"
+    runner = _effective_runner_kind(str(actor.get("runner") or "pty"))
+    return f"{runtime}:{runner}:system_notify"
 
 
 class AutomationManager:
@@ -777,9 +704,11 @@ class AutomationManager:
         self._lock = _AUTOMATION_STATE_LOCK
         self._memory_auto_in_flight: set[str] = set()
         self._group_tick_at: dict[str, float] = {}
-        self._nudge_scan_at: dict[str, float] = {}
-        self._nudge_source_cache: dict[tuple[str, str], tuple[tuple[str, int, int], List[Dict[str, Any]], List[Dict[str, Any]]]] = {}
-        self._nudge_group_sources: dict[str, set[str]] = {}
+        self._reminder_source_cache: dict[
+            tuple[str, str],
+            tuple[tuple[str, int, int], List[Dict[str, Any]], List[Dict[str, Any]]],
+        ] = {}
+        self._reminder_group_sources: dict[str, set[str]] = {}
 
     def _group_tick_due(self, group_id: str, *, now_monotonic: float, min_interval_seconds: float) -> bool:
         gid = str(group_id or "").strip()
@@ -793,40 +722,10 @@ class AutomationManager:
             self._group_tick_at[gid] = now_monotonic
             return True
 
-    def _nudge_scan_due(self, group_id: str, *, now: datetime, cfg: AutomationConfig) -> bool:
-        gid = str(group_id or "").strip()
-        if not gid:
-            return False
-        due_after_values = (
-            cfg.reply_required_nudge_after_seconds,
-            cfg.attention_ack_nudge_after_seconds,
-            cfg.unread_nudge_after_seconds,
-            cfg.nudge_after_seconds,
-        )
-        positive_due_after: List[int] = []
-        for value in due_after_values:
-            try:
-                n = int(value or 0)
-            except Exception:
-                n = 0
-            if n > 0:
-                positive_due_after.append(n)
-        if positive_due_after:
-            interval = min(30.0, max(1.0, float(min(positive_due_after)) / 10.0))
-        else:
-            interval = 1.0
-
-        now_dt = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
-        now_ts = float(now_dt.timestamp())
-        with self._lock:
-            last_at = float(self._nudge_scan_at.get(gid) or 0.0)
-            if last_at > 0.0 and now_ts >= last_at and (now_ts - last_at) < interval:
-                return False
-            self._nudge_scan_at[gid] = now_ts
-            return True
-
-    def _load_nudge_candidate_events(self, group: Group) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Load chat/system events for nudge checks without reparsing stable segments."""
+    def _load_reminder_candidate_events(
+        self, group: Group
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Load reminder facts without reparsing stable ledger segments."""
         gid = str(group.group_id or "").strip()
         all_events: List[Dict[str, Any]] = []
         chat_events: List[Dict[str, Any]] = []
@@ -845,7 +744,7 @@ class AutomationManager:
             cache_key = (gid, source_path)
             live_keys.add(source_path)
 
-            cached = self._nudge_source_cache.get(cache_key)
+            cached = self._reminder_source_cache.get(cache_key)
             if cached is not None and cached[0] == fingerprint:
                 source_all = cached[1]
                 source_chat = cached[2]
@@ -863,20 +762,33 @@ class AutomationManager:
                     if not isinstance(ev, dict):
                         continue
                     kind = str(ev.get("kind") or "")
-                    if kind not in ("chat.message", "system.notify"):
+                    if kind not in {
+                        "actor.start",
+                        "actor.restart",
+                        "actor.new_session",
+                        "chat.message",
+                        "mail.read",
+                        "chat.reply_request.cancelled",
+                        "runtime.delivery",
+                        "system.notify",
+                    }:
                         continue
                     source_all.append(ev)
                     if kind == "chat.message":
                         source_chat.append(ev)
-                self._nudge_source_cache[cache_key] = (fingerprint, source_all, source_chat)
+                self._reminder_source_cache[cache_key] = (
+                    fingerprint,
+                    source_all,
+                    source_chat,
+                )
 
             all_events.extend(source_all)
             chat_events.extend(source_chat)
 
-        previous = self._nudge_group_sources.get(gid, set())
+        previous = self._reminder_group_sources.get(gid, set())
         for stale_source_path in previous - live_keys:
-            self._nudge_source_cache.pop((gid, stale_source_path), None)
-        self._nudge_group_sources[gid] = live_keys
+            self._reminder_source_cache.pop((gid, stale_source_path), None)
+        self._reminder_group_sources[gid] = live_keys
         return all_events, chat_events
 
     def on_resume(self, group: Group) -> None:
@@ -923,9 +835,6 @@ class AutomationManager:
                 st["last_idle_notify_at"] = now
                 st["keepalive_count"] = 0
                 st["last_keepalive_at"] = now
-                st["last_nudge_event_id"] = ""
-                st["last_nudge_at"] = now
-                st["nudge_items"] = {}
                 st["help_last_nudge_at"] = now
                 st["help_msg_count_since"] = 0
                 runner_kind = str(actor.get("runner") or "pty").strip()
@@ -962,10 +871,9 @@ class AutomationManager:
             if state == "idle":
                 if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=30.0):
                     continue
-                # idle: only run user-defined rules (Level 4);
-                # internal automation (Level 1-3) stays silent
                 try:
                     now = datetime.now(timezone.utc)
+                    self._check_reminders(group, _cfg(group), now)
                     self._check_rules(group, now, group_state="idle")
                 except Exception:
                     pass
@@ -984,7 +892,7 @@ class AutomationManager:
         now = datetime.now(timezone.utc)
         
         # Level 1: Message-level checks
-        self._check_nudge(group, cfg, now)
+        self._check_reminders(group, cfg, now)
         
         # Level 2: Session-level checks
         self._check_actor_idle(group, cfg, now)
@@ -997,256 +905,339 @@ class AutomationManager:
         # Level 4: User-defined automation rules
         self._check_rules(group, now)
 
-    def _check_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
-        """Check pending obligations/unread and send one digest nudge per actor."""
-        if (
-            cfg.reply_required_nudge_after_seconds <= 0
-            and cfg.attention_ack_nudge_after_seconds <= 0
-            and cfg.unread_nudge_after_seconds <= 0
-            and cfg.nudge_after_seconds <= 0
-        ):
-            return
-        min_interval = max(0, int(cfg.nudge_digest_min_interval_seconds))
+    def _check_reminders(
+        self, group: Group, cfg: AutomationConfig, now: datetime
+    ) -> None:
+        """Emit the one allowed Mail or reply notice for each eligible batch."""
 
-        try:
-            roster = [
-                a
-                for a in list_visible_actors(group)
-                if isinstance(a, dict)
-                and str(a.get("id") or "").strip()
-                and coerce_bool(a.get("enabled"), default=True)
-            ]
-        except Exception:
-            roster = []
-        if not roster:
+        if cfg.mail_notice_after_seconds <= 0 and cfg.reply_notice_after_seconds <= 0:
+            return
+        events, chat_events = self._load_reminder_candidate_events(group)
+        if not chat_events:
             return
 
-        if not self._nudge_scan_due(group.group_id, now=now, cfg=cfg):
-            return
-
-        # Scan visible chat/system events once and compute obligation status in batch.
-        all_events, chat_events = self._load_nudge_candidate_events(group)
-
-        obligation_map = get_obligation_status_batch(group, chat_events)
-        event_positions = {
+        positions = {
             str(event.get("id") or "").strip(): index
-            for index, event in enumerate(all_events)
+            for index, event in enumerate(events)
+            if str(event.get("id") or "").strip()
+        }
+        obligations = get_obligation_status_batch(group, chat_events)
+        mail_read_status = get_read_status_batch(group, chat_events)
+        messages_by_id = {
+            str(event.get("id") or "").strip(): event
+            for event in chat_events
             if str(event.get("id") or "").strip()
         }
 
-        resume_dt: Optional[datetime] = None
-        to_nudge: List[Tuple[str, str, str, List[str], bool]] = []
-        # (actor_id, runner_kind, title, lines, escalate)
+        read_facts: Dict[str, List[Tuple[int, int, str]]] = {}
+        reply_facts: Dict[Tuple[str, str], Tuple[int, str]] = {}
+        delivery_facts: Dict[Tuple[str, str], List[Tuple[int, str, str]]] = {}
+        actor_resumes: Dict[str, datetime] = {}
+        mail_claims: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        reply_claimed: set[Tuple[str, str, str]] = set()
 
-        with self._lock:
-            state = _load_state(group)
-            resume_dt = parse_utc_iso(str(state.get("resume_at") or "")) if state.get("resume_at") else None
-            foreman = find_foreman(group)
-            foreman_id = str((foreman or {}).get("id") or "").strip() if isinstance(foreman, dict) else ""
-
-            for actor in roster:
-                aid = str(actor.get("id") or "").strip()
-                if not aid:
-                    continue
-
-                runner_kind = str(actor.get("runner") or "pty").strip()
-                if runner_kind == "headless":
-                    if not headless_runner.SUPERVISOR.actor_running(group.group_id, aid):
-                        continue
-                else:
-                    if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
-                        continue
-
-                cursor_event_id, cursor_ts = get_cursor(group, aid)
-                cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
-                cursor_position = event_positions.get(cursor_event_id)
-
-                pending_reply_required: List[Tuple[str, str]] = []
-                pending_attention_ack: List[Tuple[str, str]] = []
-                oldest_unread_ts = ""
-
-                alive_item_keys: set[str] = set()
-                due_item_keys: List[str] = []
-                reply_due_keys: set[str] = set()
-                item_lines: List[str] = []
-                escalate = False
-
-                for event_position, ev in enumerate(all_events):
-                    kind = str(ev.get("kind") or "")
-                    if kind == "chat.message" and str(ev.get("by") or "") == aid:
-                        continue
-                    if not is_message_for_actor(group, actor_id=aid, event=ev):
-                        continue
-
-                    ev_id = str(ev.get("id") or "").strip()
-                    ev_ts = str(ev.get("ts") or "").strip()
-                    if not ev_id or not ev_ts:
-                        continue
-                    ev_dt = parse_utc_iso(ev_ts)
-                    if ev_dt is None:
-                        continue
-                    base_dt = ev_dt
-                    if resume_dt is not None and base_dt < resume_dt:
-                        base_dt = resume_dt
-
-                    after_cursor = (
-                        event_position > cursor_position
-                        if cursor_position is not None
-                        else cursor_dt is None or ev_dt > cursor_dt
+        for position, event in enumerate(events):
+            kind = str(event.get("kind") or "")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            if kind in {"actor.start", "actor.restart", "actor.new_session"}:
+                actor_id = str(data.get("actor_id") or "").strip()
+                resumed_at = parse_utc_iso(str(event.get("ts") or ""))
+                if actor_id and resumed_at is not None:
+                    actor_resumes[actor_id] = resumed_at
+            elif kind == "mail.read":
+                actor_id = str(data.get("actor_id") or "").strip()
+                boundary_id = str(data.get("event_id") or "").strip()
+                boundary_position = positions.get(boundary_id)
+                if actor_id and boundary_position is not None:
+                    read_facts.setdefault(actor_id, []).append(
+                        (position, boundary_position, str(event.get("ts") or ""))
                     )
-                    if not oldest_unread_ts and after_cursor:
-                        oldest_unread_ts = ev_ts
+            elif kind == "chat.message":
+                source_event_id = str(data.get("reply_to") or "").strip()
+                actor_id = str(event.get("by") or "").strip()
+                if source_event_id and actor_id:
+                    reply_facts.setdefault(
+                        (source_event_id, actor_id),
+                        (position, str(event.get("ts") or "")),
+                    )
+            elif kind == "runtime.delivery":
+                source_event_id = str(data.get("source_event_id") or "").strip()
+                actor_id = str(data.get("actor_id") or "").strip()
+                state = str(data.get("state") or "").strip()
+                if source_event_id and actor_id and state:
+                    delivery_facts.setdefault((source_event_id, actor_id), []).append(
+                        (position, state, str(event.get("ts") or ""))
+                    )
+            elif kind == "system.notify":
+                notify_kind = str(data.get("kind") or "")
+                context = data.get("context") if isinstance(data.get("context"), dict) else {}
+                actor_id = str(context.get("actor_id") or data.get("target_actor_id") or "").strip()
+                actor_created_at = str(context.get("actor_created_at") or "").strip()
+                source_ids = [
+                    str(item or "").strip()
+                    for item in context.get("source_event_ids", [])
+                    if str(item or "").strip()
+                ] if isinstance(context.get("source_event_ids"), list) else []
+                if notify_kind == "mail_notice" and actor_id and actor_created_at:
+                    mail_claims.setdefault((actor_id, actor_created_at), []).append(
+                        {
+                            "position": position,
+                            "source_event_ids": source_ids,
+                        }
+                    )
+                elif notify_kind == "reply_notice" and actor_id and actor_created_at:
+                    reply_claimed.update(
+                        (actor_id, actor_created_at, source_id)
+                        for source_id in source_ids
+                    )
 
-                    if kind != "chat.message":
-                        continue
+        def first_read_fact(actor_id: str, source_event_id: str) -> Optional[Tuple[int, str]]:
+            source_position = positions.get(source_event_id)
+            if source_position is None:
+                return None
+            for fact_position, boundary_position, fact_ts in read_facts.get(actor_id, []):
+                if boundary_position >= source_position:
+                    return fact_position, fact_ts
+            return None
 
-                    status_by_recipient = obligation_map.get(ev_id) if isinstance(obligation_map.get(ev_id), dict) else {}
-                    st = status_by_recipient.get(aid) if isinstance(status_by_recipient, dict) else None
-                    if not isinstance(st, dict):
-                        continue
+        def resolution_position(actor_id: str, source_event_id: str) -> Optional[int]:
+            candidates: List[int] = []
+            read_fact = first_read_fact(actor_id, source_event_id)
+            if read_fact is not None:
+                candidates.append(read_fact[0])
+            reply_fact = reply_facts.get((source_event_id, actor_id))
+            if reply_fact is not None:
+                candidates.append(reply_fact[0])
+            for fact_position, state, _ in delivery_facts.get((source_event_id, actor_id), []):
+                if state in {"accepted", "ambiguous"}:
+                    candidates.append(fact_position)
+                    break
+            return min(candidates) if candidates else None
 
-                    is_reply_required = bool(st.get("reply_required") is True)
-                    is_replied = bool(st.get("replied") is True)
-                    is_acked = bool(st.get("acked") is True)
+        def claim_still_owns_batch(
+            actor_id: str,
+            claim: Dict[str, Any],
+            pending_ids: List[str],
+        ) -> bool:
+            initial_ids = [
+                source_id
+                for source_id in claim.get("source_event_ids", [])
+                if source_id in messages_by_id
+            ]
+            if not initial_ids:
+                return True
+            resolutions = [
+                resolution_position(actor_id, source_id) for source_id in initial_ids
+            ]
+            if any(position is None for position in resolutions):
+                return True
+            closure_position = max(int(position) for position in resolutions if position is not None)
+            return any(
+                int(positions.get(source_id, closure_position + 1)) <= closure_position
+                for source_id in pending_ids
+            )
 
-                    data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
-                    is_attention = str(data.get("priority") or "normal").strip() == "attention"
+        state_doc = _load_state(group)
+        resume_at = parse_utc_iso(str(state_doc.get("resume_at") or ""))
+        notices: List[Tuple[Dict[str, Any], SystemNotifyData]] = []
 
-                    if is_reply_required and not is_replied:
-                        pending_reply_required.append((ev_id, ev_ts))
-                        item_key = f"reply_required:{ev_id}"
-                        alive_item_keys.add(item_key)
-                        repeat = _nudge_item_repeat_count(state, aid, item_key)
-                        if cfg.nudge_max_repeats_per_obligation > 0 and repeat >= int(cfg.nudge_max_repeats_per_obligation):
-                            continue
-                        due_after = max(0, int(cfg.reply_required_nudge_after_seconds))
-                        if (now - base_dt).total_seconds() < float(due_after):
-                            continue
-                        due_item_keys.append(item_key)
-                        reply_due_keys.add(item_key)
-                        item_lines.append(
-                            f"REPLY REQUIRED: event_id={ev_id} (since {ev_ts}). Reply via cccc_message_reply(event_id={ev_id}, ...)."
-                        )
-                        continue
+        for actor in list_visible_actors(group):
+            if not isinstance(actor, dict) or not coerce_bool(actor.get("enabled"), default=True):
+                continue
+            actor_id = str(actor.get("id") or "").strip()
+            actor_created_at = str(actor.get("created_at") or "").strip()
+            if not actor_id or actor_id == "user" or not actor_created_at:
+                continue
+            if not actor_runtime_running(
+                group.group_id,
+                actor,
+                effective_runner_kind=_effective_runner_kind,
+            ):
+                continue
 
-                    if is_attention and not is_acked:
-                        pending_attention_ack.append((ev_id, ev_ts))
-                        item_key = f"attention_ack:{ev_id}"
-                        alive_item_keys.add(item_key)
-                        repeat = _nudge_item_repeat_count(state, aid, item_key)
-                        if cfg.nudge_max_repeats_per_obligation > 0 and repeat >= int(cfg.nudge_max_repeats_per_obligation):
-                            continue
-                        due_after = max(0, int(cfg.attention_ack_nudge_after_seconds))
-                        if (now - base_dt).total_seconds() < float(due_after):
-                            continue
-                        due_item_keys.append(item_key)
-                        item_lines.append(
-                            f"IMPORTANT awaiting ACK: event_id={ev_id} (since {ev_ts}). Use cccc_inbox_mark_read(event_id={ev_id})."
-                        )
-
-                # Track unread backlog as one virtual item.
-                if oldest_unread_ts:
-                    unread_dt = parse_utc_iso(oldest_unread_ts)
-                    if unread_dt is not None:
-                        base_dt = unread_dt
-                        if resume_dt is not None and base_dt < resume_dt:
-                            base_dt = resume_dt
-                        item_key = "unread_backlog"
-                        alive_item_keys.add(item_key)
-                        repeat = _nudge_item_repeat_count(state, aid, item_key)
-                        if cfg.nudge_max_repeats_per_obligation <= 0 or repeat < int(cfg.nudge_max_repeats_per_obligation):
-                            due_after = max(0, int(cfg.unread_nudge_after_seconds))
-                            if (now - base_dt).total_seconds() >= float(due_after):
-                                due_item_keys.append(item_key)
-                                item_lines.append(
-                                    f"Unread backlog: oldest from {oldest_unread_ts}. Use cccc_inbox_list() to review."
-                                )
-
-                _nudge_items_gc(state, aid, alive_item_keys)
-
-                if not item_lines:
+            mail_pending: List[str] = []
+            reply_due: List[str] = []
+            for source_event_id, event in messages_by_id.items():
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                mode = str(data.get("message_mode") or "")
+                status_by_recipient = obligations.get(source_event_id)
+                status = (
+                    status_by_recipient.get(actor_id)
+                    if isinstance(status_by_recipient, dict)
+                    else None
+                )
+                if not isinstance(status, dict):
                     continue
 
-                st_actor = _actor_state(state, aid)
-                last_nudge_dt = parse_utc_iso(str(st_actor.get("last_nudge_at") or "")) if st_actor.get("last_nudge_at") else None
-                if last_nudge_dt is not None and min_interval > 0:
-                    if (now - last_nudge_dt).total_seconds() < float(min_interval):
-                        continue
-
-                for item_key in dict.fromkeys(due_item_keys):
-                    ncnt = _nudge_item_touch(state, aid, item_key)
+                if mode == "mail":
+                    targets = [
+                        str(item or "").strip()
+                        for item in data.get("to", [])
+                        if str(item or "").strip()
+                    ] if isinstance(data.get("to"), list) else []
+                    broadcast_like = not targets or any(
+                        target in {"@all", "@peers", "@foreman"} for target in targets
+                    )
                     if (
-                        item_key in reply_due_keys
-                        and ncnt >= max(1, int(cfg.nudge_escalate_after_repeats))
-                        and foreman_id
-                        and foreman_id != aid
+                        not broadcast_like
+                        and not bool(mail_read_status.get(source_event_id, {}).get(actor_id))
+                        and not bool(status.get("replied"))
+                        and str(status.get("delivery_state") or "")
+                        not in {"accepted", "ambiguous"}
                     ):
-                        escalate = True
+                        mail_pending.append(source_event_id)
+                    continue
 
-                st_actor["last_nudge_at"] = utc_now_iso()
-                st_actor["last_nudge_event_id"] = "digest"
+                if mode != "request_reply" or bool(status.get("replied")) or bool(
+                    status.get("cancelled")
+                ):
+                    continue
+                if (actor_id, actor_created_at, source_event_id) in reply_claimed:
+                    continue
+                starting_times: List[datetime] = []
+                for _, delivery_state, delivery_ts in delivery_facts.get(
+                    (source_event_id, actor_id), []
+                ):
+                    if delivery_state == "accepted":
+                        parsed = parse_utc_iso(delivery_ts)
+                        if parsed is not None:
+                            starting_times.append(parsed)
+                        break
+                if not starting_times:
+                    continue
+                started_at = min(starting_times)
+                if resume_at is not None and started_at < resume_at:
+                    started_at = resume_at
+                if (now - started_at).total_seconds() >= cfg.reply_notice_after_seconds:
+                    reply_due.append(source_event_id)
 
-                title = "Action items pending"
-                prefix: List[str] = []
-                if pending_reply_required:
-                    prefix.append(f"reply_required={len(pending_reply_required)}")
-                if pending_attention_ack:
-                    prefix.append(f"attention_ack={len(pending_attention_ack)}")
-                if oldest_unread_ts:
-                    prefix.append("unread>0")
-                if prefix:
-                    title = "Action items pending (" + ", ".join(prefix) + ")"
+            mail_pending.sort(key=lambda event_id: positions.get(event_id, 2**63 - 1))
+            reply_due.sort(key=lambda event_id: positions.get(event_id, 2**63 - 1))
 
-                to_nudge.append((aid, runner_kind, title, item_lines, escalate and bool(foreman_id)))
+            if mail_pending and cfg.mail_notice_after_seconds > 0:
+                existing_claim = next(
+                    (
+                        claim
+                        for claim in reversed(mail_claims.get((actor_id, actor_created_at), []))
+                        if claim_still_owns_batch(actor_id, claim, mail_pending)
+                    ),
+                    None,
+                )
+                if existing_claim is None:
+                    first_event = messages_by_id[mail_pending[0]]
+                    started_at = parse_utc_iso(str(first_event.get("ts") or ""))
+                    if started_at is not None:
+                        if resume_at is not None and started_at < resume_at:
+                            started_at = resume_at
+                        actor_resume_at = actor_resumes.get(actor_id)
+                        if actor_resume_at is not None and started_at < actor_resume_at:
+                            started_at = actor_resume_at
+                        if (now - started_at).total_seconds() >= cfg.mail_notice_after_seconds:
+                            context = {
+                                "notice_id": _reminder_notice_id(
+                                    group.group_id,
+                                    actor_id,
+                                    actor_created_at,
+                                    "mail_notice",
+                                    mail_pending,
+                                ),
+                                "actor_id": actor_id,
+                                "actor_created_at": actor_created_at,
+                                "batch_start_event_id": mail_pending[0],
+                                "batch_end_event_id": mail_pending[-1],
+                                "source_event_ids": mail_pending,
+                                "count": len(mail_pending),
+                            }
+                            notices.append(
+                                (
+                                    actor,
+                                    SystemNotifyData(
+                                        kind="mail_notice",
+                                        priority="normal",
+                                        title="Mail waiting",
+                                        message=(
+                                            f"You have {len(mail_pending)} Mail item(s) waiting. "
+                                            "Call cccc_inbox_read when appropriate."
+                                        ),
+                                        target_actor_id=actor_id,
+                                        related_event_id=mail_pending[0],
+                                        context=context,
+                                    ),
+                                )
+                            )
 
-            if to_nudge:
-                _save_state(group, state)
+            if reply_due and cfg.reply_notice_after_seconds > 0:
+                context = {
+                    "notice_id": _reminder_notice_id(
+                        group.group_id,
+                        actor_id,
+                        actor_created_at,
+                        "reply_notice",
+                        reply_due,
+                    ),
+                    "actor_id": actor_id,
+                    "actor_created_at": actor_created_at,
+                    "source_event_ids": reply_due,
+                    "count": len(reply_due),
+                }
+                notices.append(
+                    (
+                        actor,
+                        SystemNotifyData(
+                            kind="reply_notice",
+                            priority="normal",
+                            title="Reply requested",
+                            message=(
+                                f"{len(reply_due)} message(s) still need a concrete reply. "
+                                "Use cccc_message_history if needed, then cccc_message_reply."
+                            ),
+                            target_actor_id=actor_id,
+                            related_event_id=reply_due[0],
+                            context=context,
+                        ),
+                    )
+                )
 
-        for aid, runner_kind, title, item_lines, escalate in to_nudge:
-            max_lines = 5
-            lines = item_lines[:max_lines]
-            if len(item_lines) > max_lines:
-                lines.append(f"... and {len(item_lines) - max_lines} more pending item(s).")
-
-            notify_data = SystemNotifyData(
-                kind="nudge",
-                priority="normal",
-                title=title,
-                message="\n".join(lines),
-                target_actor_id=aid,
-                requires_ack=False,
-            )
-            ev = append_event(
+        for actor, notify in notices:
+            actor_id = str(actor.get("id") or "").strip()
+            actor_created_at = str(actor.get("created_at") or "").strip()
+            event = append_event(
                 group.ledger_path,
                 kind="system.notify",
                 group_id=group.group_id,
                 scope_key="",
                 by="system",
-                data=notify_data.model_dump(),
+                data=notify.model_dump(),
             )
-            _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
-
-            if escalate:
-                foreman = find_foreman(group)
-                foreman_id = str((foreman or {}).get("id") or "").strip() if isinstance(foreman, dict) else ""
-                if foreman_id and foreman_id != aid:
-                    escalate_notify = SystemNotifyData(
-                        kind="nudge",
-                        priority="normal",
-                        title="Escalation: pending replies",
-                        message=f"{aid} has repeated pending obligations. Please intervene if needed.",
-                        target_actor_id=foreman_id,
-                        requires_ack=False,
-                    )
-                    ev2 = append_event(
-                        group.ledger_path,
-                        kind="system.notify",
-                        group_id=group.group_id,
-                        scope_key="",
-                        by="system",
-                        data=escalate_notify.model_dump(),
-                    )
-                    _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=str((foreman or {}).get("runner") or "pty"), ev=ev2, notify=escalate_notify)
+            event_id = str(event.get("id") or "").strip()
+            transport = _reminder_transport(actor)
+            claimed, _ = claim_delivery(
+                group,
+                actor_id=actor_id,
+                actor_created_at=actor_created_at,
+                source_event_id=event_id,
+                transport=transport,
+            )
+            if not claimed:
+                continue
+            delivered = _queue_notify_to_pty(
+                group,
+                actor_id=actor_id,
+                runner_kind=str(actor.get("runner") or "pty"),
+                ev=event,
+                notify=notify,
+            )
+            if str(actor.get("runtime") or "").strip().lower() == "web_model" and delivered:
+                continue
+            append_delivery_state(
+                group,
+                actor_id=actor_id,
+                actor_created_at=actor_created_at,
+                source_event_id=event_id,
+                state="accepted" if delivered else "failed",
+                transport=transport,
+                reason="" if delivered else "runtime did not accept the notice",
+            )
 
     def _check_actor_idle(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check for idle actors and notify foreman.
@@ -1350,7 +1341,6 @@ class AutomationManager:
                 title=f"Actor {aid} may need attention",
                 message=msg,
                 target_actor_id=foreman_id,
-                requires_ack=False,
             )
             ev = append_event(
                 group.ledger_path,
@@ -1437,7 +1427,6 @@ class AutomationManager:
                 title="Ready to continue?",
                 message=f"You mentioned: '{next_text}'. Continue when ready.",
                 target_actor_id=aid,
-                requires_ack=False,
             )
             ev = append_event(
                 group.ledger_path,
@@ -1507,7 +1496,6 @@ class AutomationManager:
                 title="Group set to idle",
                 message=f"No activity for {int(silence_seconds)}s (2 consecutive silence checks). Group automatically set to idle. Send a message to wake it up.",
                 target_actor_id=foreman_id,
-                requires_ack=False,
             )
             ev = append_event(
                 group.ledger_path,
@@ -1529,7 +1517,6 @@ class AutomationManager:
             title="Group is quiet",
             message=msg,
             target_actor_id=foreman_id,
-            requires_ack=False,
         )
         ev = append_event(
             group.ledger_path,
@@ -1856,7 +1843,6 @@ class AutomationManager:
                         message=rendered,
                         target_actor_id=str(aid),
                         context={"rule_id": rid},
-                        requires_ack=bool(getattr(rule.action, "requires_ack", False)),
                     )
                     try:
                         ev = append_event(
@@ -2160,7 +2146,6 @@ class AutomationManager:
                 title="Refresh collaboration context",
                 message=message,
                 target_actor_id=aid,
-                requires_ack=False,
             )
             ev = append_event(
                 group.ledger_path,

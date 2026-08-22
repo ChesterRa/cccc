@@ -45,21 +45,35 @@
     "deleteTitle": "このグループを完全に削除します"
   },
   "inbox": {
-    "title": "受信トレイ · {{actorId}}",
-    "unreadMessages": "{{count}} 件の未読メッセージ",
-    "markAllRead": "すべて既読にする",
-    "noUnread": "未読メッセージはありません"
+    "title": "Mail · {{actorId}}",
+    "unreadMessages": "未読 Mail {{count}} 件",
+    "markAllRead": "表示中の Mail を既読にする",
+    "noUnread": "未読 Mail はありません"
   },
   "recipients": {
     "replyStatus": "返信ステータス",
-    "acknowledgements": "受信確認",
+    "deliveryStatus": "配信ステータス",
     "recipients": "受信者",
     "toLabel": "{{label}} へ",
     "recipientStatusAria": "受信ステータス",
     "noTracking": "このメッセージの受信者追跡はありません。",
     "legendReply": "凡例： ○ 未返信 · ↩ 返信済み",
-    "legendAck": "凡例： ○ 未確認 · ✓ 確認済み",
-    "legendRead": "凡例： ✓ 未読 · ✓✓ 既読"
+    "legendRead": "凡例： ✓ 未読 · ✓✓ 既読",
+    "legendDelivery": "凡例： ○ 未配信 · ✓ Runtime に引き渡し済み",
+    "inInbox": "受信トレイ内",
+    "notDelivered": "未配信",
+    "deliveryClaimed": "送信中…",
+    "deliveryAccepted": "Runtime に配信済み",
+    "deliveryFailed": "配信失敗",
+    "deliveryAmbiguous": "配信状態が不明",
+    "sendNow": "今すぐ送信",
+    "retry": "再試行",
+    "retryAnyway": "それでも再試行",
+    "sending": "送信中…",
+    "retryAmbiguousConfirm": "受信者がすでにこのプロンプトを受け取っている可能性があります。それでも再試行しますか？",
+    "cancelReplyRequest": "返信リクエストを取り消す",
+    "cancelReplyConfirm": "このメッセージの未完了の返信義務をすべて取り消しますか？",
+    "cancelling": "取り消し中…"
   },
   "relay": {
     "title": "リレーメッセージ",

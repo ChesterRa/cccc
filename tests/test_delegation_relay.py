@@ -251,6 +251,7 @@ class TestDelegationRelay(unittest.TestCase):
             back, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": dst,
                     "dst_group_id": src,
                     "by": "dst-foreman",

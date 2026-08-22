@@ -47,7 +47,8 @@ cccc group start
 
 - Task scope too broad.
 - Reviewer lacks explicit acceptance criteria.
-- Team skips obligation semantics (`reply_required`) for critical asks.
+- Team uses ordinary Send where a concrete reply was actually required; use
+  `message_mode=request_reply` for that explicit obligation.
 
 ## Use Case 2: Foreman-Led Multi-Agent Delivery
 

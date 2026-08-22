@@ -177,6 +177,7 @@ pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionSta
     })
 }
 
+#[cfg(test)]
 pub(super) fn stop_if_started_at(
     group: &GroupDoc,
     status: &SessionStatus,

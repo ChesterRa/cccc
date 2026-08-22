@@ -29,20 +29,17 @@ def auto_wake_recipients(
     to: list[str],
     *,
     by: str,
-    disabled_recipient_actor_ids: Callable[[Any, list[str]], list[str]],
     enabled_recipient_actor_ids: Callable[[Any, list[str]], list[str]],
     find_actor: Callable[[Any, str], Any],
-    coerce_bool: Callable[..., bool],
     is_actor_running: Callable[[Any, str], bool],
     start_actor_process: Callable[..., Dict[str, Any]],
-    update_actor: Callable[[Any, str, Dict[str, Any]], Any],
     runner_stop_actor: Callable[[str, str, str], Any],
     request_flush_pending_messages: Callable[..., bool],
     logger: logging.Logger,
     auto_wake_lock: threading.Lock,
     auto_wake_in_progress: set[tuple[str, str]],
 ) -> list[str]:
-    """Best-effort background auto-start for recipients that are unavailable.
+    """Best-effort background recovery for enabled recipients whose runtime is down.
 
     Returns the actor IDs accepted for wake-up scheduling. If a wake for the
     same actor is already in progress, return that actor ID again so callers can
@@ -52,13 +49,6 @@ def auto_wake_recipients(
     scheduled: list[str] = []
     candidate_ids: list[str] = []
     seen_candidates: set[str] = set()
-
-    for actor_id in disabled_recipient_actor_ids(group, to):
-        aid = str(actor_id or "").strip()
-        if not aid or aid == str(by or "").strip() or aid in seen_candidates:
-            continue
-        seen_candidates.add(aid)
-        candidate_ids.append(aid)
 
     for actor_id in enabled_recipient_actor_ids(group, to):
         aid = str(actor_id or "").strip()
@@ -83,8 +73,7 @@ def auto_wake_recipients(
             with auto_wake_lock:
                 auto_wake_in_progress.discard(key)
             continue
-        was_enabled = coerce_bool(actor.get("enabled"), default=True)
-        if was_enabled and is_actor_running(group, actor_id):
+        if is_actor_running(group, actor_id):
             with auto_wake_lock:
                 auto_wake_in_progress.discard(key)
             continue
@@ -101,7 +90,6 @@ def auto_wake_recipients(
             wake_runtime: str,
             wake_cmd: list[str],
             wake_env: dict[str, Any],
-            wake_was_enabled: bool,
             wake_key: tuple[str, str],
         ) -> None:
             try:
@@ -116,8 +104,6 @@ def auto_wake_recipients(
                 )
                 if result["success"]:
                     try:
-                        if not wake_was_enabled:
-                            update_actor(group, wake_actor_id, {"enabled": True})
                         request_flush_pending_messages(group, actor_id=wake_actor_id)
                     except Exception as e:
                         try:
@@ -151,7 +137,6 @@ def auto_wake_recipients(
                 "wake_runtime": runtime,
                 "wake_cmd": list(cmd or []),
                 "wake_env": dict(env or {}),
-                "wake_was_enabled": bool(was_enabled),
                 "wake_key": key,
             },
             name=f"cccc-auto-wake-{key[0]}-{key[1]}",
@@ -176,6 +161,7 @@ def schedule_headless_post_wake_delivery(
     codex_submit_user_message: Callable[..., bool],
     claude_submit_user_message: Callable[..., bool],
     logger: logging.Logger,
+    on_result: Optional[Callable[[bool, str], None]] = None,
     timeout_seconds: float = 30.0,
     poll_seconds: float = 0.2,
 ) -> bool:
@@ -238,13 +224,30 @@ def schedule_headless_post_wake_delivery(
             )
         )
 
+    def _report(accepted: bool, reason: str) -> None:
+        if on_result is None:
+            return
+        try:
+            on_result(accepted, reason)
+        except Exception:
+            _safe_log(
+                logger,
+                "exception",
+                "[headless-post-wake] result recording failed group=%s actor=%s event=%s",
+                normalized_group_id,
+                normalized_actor_id,
+                normalized_event_id,
+            )
+
     def _worker() -> None:
         deadline = time.monotonic() + max(1.0, float(timeout_seconds))
         try:
             while time.monotonic() < deadline:
                 if _actor_running() and _submit():
+                    _report(True, "")
                     return
                 time.sleep(max(0.05, float(poll_seconds)))
+            _report(False, "post-wake runtime did not accept the payload before timeout")
             _safe_log(
                 logger,
                 "info",
@@ -255,6 +258,7 @@ def schedule_headless_post_wake_delivery(
                 normalized_runtime,
             )
         except Exception:
+            _report(False, "post-wake delivery raised an exception")
             _safe_log(
                 logger,
                 "exception",

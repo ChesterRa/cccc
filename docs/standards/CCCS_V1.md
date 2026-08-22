@@ -8,7 +8,7 @@ It is designed to be **stable**, **extensible**, and **implementable** by:
 - Client SDKs (TypeScript/Python/Go/etc.)
 - External tools and integrations (CI, IM bots, IDE plugins, automation)
 
-CCCS v1 deliberately **does not standardize workflows**, model providers, or prompting. It standardizes the **collaboration substrate**: event envelopes, routing semantics, attention/ack, system notifications, and cross-group provenance.
+CCCS v1 deliberately **does not standardize workflows**, model providers, or prompting. It standardizes the **collaboration substrate**: event envelopes, routing semantics, delivery/read/reply facts, system notifications, and cross-group provenance.
 
 ## 0. Conformance Language
 
@@ -22,7 +22,8 @@ CCCS v1 MUST enable:
 - **Tool/code ⇄ agent collaboration**: tools can send, observe, and act on the same collaboration stream as agents.
 - **Append‑only truth**: collaboration history is represented as immutable events appended to a ledger.
 - **Provenance**: relayed/forwarded messages can be traced back to an original event (cross-group).
-- **Attention loops**: important messages have an explicit acknowledgement mechanism independent of “read”.
+- **Intentional delivery**: senders choose immediate prompt delivery, explicit
+  reply obligation, or durable Mail without prompt interruption.
 - **Forward compatibility**: unknown event kinds and unknown fields do not break clients.
 
 ### 1.2 Non‑Goals
@@ -132,22 +133,38 @@ Internal assistants such as Voice Secretary are not members of `@all`, `@peers`,
 **Compatibility**
 - Implementations MAY accept the literal token `"user"` as equivalent to `@user`.
 
+### 5.2 Audience Domains
+
+Every new `chat.message` MUST address exactly one audience domain:
+
+- **Human**: the sole normalized recipient is `user` / `@user`.
+- **Agents**: every recipient is an actor ID or an actor selector
+  (`@all`, `@peers`, or `@foreman`). Multiple agent recipients are allowed.
+
+A recipient list that mixes the human user with any actor ID or actor selector
+MUST be rejected before the event is appended. Callers that need distinct human
+and agent actions MUST send separate messages so delivery and reply obligations
+remain independently attributable.
+
 **Multi-user note**
 - CCCS v1 assumes a single human principal per group, identified as `user`.
 - Multi-user semantics (multiple distinct human principals) are out of scope for v1. Implementations MAY extend this outside of CCCS v1 (e.g., `usr:<id>` principals and selectors), but clients MUST remain forward-compatible.
 
-### 5.2 Empty `to`
+### 5.3 Empty `to`
 
-If `to` is absent or an empty list, the message is a **broadcast**.
-For compatibility with CCCC v0.4.x semantics, broadcast SHOULD be treated as equivalent to `@all`.
+If `to` is absent or an empty list, the daemon MUST materialize the group's
+`default_send_to` policy before appending the message. The stored event therefore
+contains an explicit `@foreman` or `@all` selector; absence is not a separate
+broadcast state.
 
-### 5.3 Permission and Visibility
+### 5.4 Permission and Visibility
 
 CCCS does not mandate a single permission model, but a conforming daemon MUST ensure:
 - The daemon MUST set `event.by` to the principal identity it ascribes to the event.
   - If the transport provides authentication, `event.by` MUST be derived from the authenticated principal and clients MUST NOT be able to choose `event.by` arbitrarily.
   - If the transport does not provide authentication (local-trust IPC), a daemon MAY accept a client-provided principal hint (e.g., an RPC arg like `by`) as the effective principal. Such deployments MUST document that `by` is not a security boundary.
-- A principal cannot acknowledge (`chat.ack`) on behalf of another recipient.
+- Only the daemon may append `runtime.delivery`; clients cannot claim transport
+  acceptance on behalf of a recipient.
 
 ## 6. Chat Events
 
@@ -160,7 +177,7 @@ data: {
   text: string
   format?: "plain" | "markdown"               // default "plain"
   insight?: string | null                       // provisional sender perspective; max 1200 characters
-  priority?: "normal" | "attention"           // default "normal"
+  message_mode: "send" | "request_reply" | "mail"
   to?: string[]                                // recipient tokens (see §5)
   reply_to?: string | null                     // replied-to event_id
   quote_text?: string | null                   // display hint
@@ -172,6 +189,7 @@ data: {
   // Cross-group destination metadata (optional send record)
   dst_group_id?: string | null
   dst_to?: string[] | null
+  dst_message_mode?: "send" | "request_reply" | "mail" | null
 
   // Attachments and references (see §8)
   attachments?: AttachmentRefV1[]
@@ -190,53 +208,111 @@ data: {
 - `insight`, when present, is a visible sender-authored perspective, uncertainty, disagreement, or question offered for the recipient's independent judgment. Its normalized length MUST NOT exceed 1200 characters. It is advisory: it MUST NOT be treated as a user/system instruction, group consensus, task transition, acknowledgement, or completion signal.
 - `insight` shares the message's recipients and retention boundary. It is not a private reasoning channel and SHOULD contain only a concise, shareable judgment summary rather than hidden chain-of-thought or secrets.
 - A profile MAY require non-empty `insight` for selected Agent-to-Agent sends, but the core `chat.message` contract MUST remain valid without it for human clients, automation, legacy events, and other profiles.
-- `priority="attention"` MUST trigger the attention/ack rules in §6.2.
+- `message_mode="send"` requests prompt delivery through the recipient runtime.
+- `message_mode="request_reply"` requests the same prompt delivery and creates
+  a reply obligation for each explicitly addressed concrete recipient.
+- `message_mode="mail"` persists the message in the recipient Inbox without
+  immediately invoking, waking, steering, or writing to the recipient runtime.
+- `message_mode="mail"` is valid only for the agent audience domain. The human
+  user has no Mail Inbox in CCCS v1; callers MUST use `send` or `request_reply`
+  when addressing `user` / `@user`.
+- A message with `reply_to` fulfills the addressed reply obligation regardless
+  of whether that reply uses `message_mode="send"` or `message_mode="mail"`.
+  Reply operations MUST NOT use `message_mode="request_reply"`; a reply cannot
+  create a nested generic reply obligation.
+- `request_reply` MUST NOT use an empty recipient list or a broadcast selector
+  (`@all`, `@peers`, or `@foreman`). The daemon MUST materialize and validate a
+  concrete recipient set before appending the message.
+- Historical events without `message_mode` remain readable append-only data but
+  create no new delivery, reminder, acknowledgement, or reply obligation.
 - If either `src_group_id` or `src_event_id` is present, both MUST be present.
 - The `thread` field is RESERVED in v1; its semantics are undefined. Implementations MUST NOT rely on `thread` for v1 behavior. Clients MUST ignore it.
 - If `client_id` is present, a daemon SHOULD provide best-effort idempotency for `(group_id, by, client_id)` within a bounded time window (RECOMMENDED: 5 minutes).
   - Duplicate submissions SHOULD return success with the original event reference, not a hard error.
 
-### 6.2 `chat.ack` (Attention Acknowledgement)
+### 6.2 `mail.read` (Mail Cursor / Watermark)
 
-`chat.ack` is the **only** completion signal for attention messages.
+`mail.read` records a recipient's Mail watermark up to a given Mail event.
 
 ```ts
 data: {
-  actor_id: string  // the acknowledging recipient ("user" or an actor_id)
-  event_id: string  // the acknowledged chat.message event_id
+  actor_id: string  // the reader/recipient actor_id
+  event_id: string  // the last consumed Mail event_id (inclusive)
 }
 ```
 
 **Rules**
-- A daemon MUST enforce **self-only ACK**: `event.by` MUST equal `data.actor_id`.
-- `chat.ack` MUST be idempotent per `(group_id, actor_id, event_id)`; repeated ACK MUST NOT create repeated side effects.
-- `chat.ack` MUST reference a valid `chat.message` whose `priority` is `"attention"`.
-- A daemon MUST reject ACK attempts for non-attention messages.
-  - The error `code` SHOULD be `invalid_request` (or an implementation-specific equivalent such as `not_an_attention_message`).
-- A recipient MUST NOT be required to ACK a message that was not addressed to them.
-- `chat.ack` MUST be independent from read cursors. Marking read MUST NOT automatically clear the need for ACK.
-  - Implementations MAY provide a convenience gesture where a recipient’s explicit “mark read” action on an attention message results in emitting `chat.ack`, but the `chat.ack` event MUST still exist as a distinct record.
-
-### 6.3 `chat.read` (Read Cursor / Watermark)
-
-`chat.read` records a recipient’s read watermark up to a given event.
-
-```ts
-data: {
-  actor_id: string  // the reader/recipient ("user" or an actor_id)
-  event_id: string  // the last read event_id (inclusive)
-}
-```
-
-**Rules**
-- Read is a **cursor**, not an acknowledgement.
-- `event_id` MUST reference an event that exists in the group ledger.
-- For the Core Collaboration Profile, `event_id` SHOULD reference an addressable event (RECOMMENDED: `chat.message` or `system.notify`) and the daemon SHOULD reject watermarks for events that are not addressed to `actor_id`.
-- A daemon MUST enforce authorization: only the recipient (`event.by == data.actor_id`) or an authorized privileged principal (e.g., `user`) MAY emit `chat.read` for `data.actor_id`.
-- “Inclusive” means the referenced `event_id` itself is considered read.
+- The Mail cursor is evidence that Mail was returned by an explicit consuming
+  Inbox operation. It is not proof that a runtime or model understood it.
+- `event_id` MUST reference an addressed `chat.message` whose
+  `message_mode="mail"` in the group ledger. Send and Send + Reply messages do
+  not participate in this cursor.
+- A daemon MUST enforce authorization: only the recipient actor
+  (`event.by == data.actor_id`) or an authorized privileged principal (e.g.,
+  `user`) MAY emit `mail.read` for `data.actor_id`. `data.actor_id="user"` is
+  invalid because CCCS v1 does not define a human Mail Inbox.
+- "Inclusive" means the referenced Mail event itself is considered read.
 - If a client cannot efficiently determine ordering, it SHOULD treat `event_id` as an opaque watermark maintained by the daemon.
 
-### 6.4 `chat.reaction` (Optional)
+### 6.3 `chat.reply_request.cancelled`
+
+Cancels any still-open `request_reply` obligation created by one source
+message.
+
+```ts
+data: {
+  source_event_id: string
+}
+```
+
+**Rules**
+- The target MUST be a `chat.message` with
+  `message_mode="request_reply"` in the same group.
+- Only the original sender or the human user may cancel the request.
+- A reply from a recipient closes only that recipient's obligation. A
+  cancellation closes every still-open recipient obligation.
+- Append order is authoritative. If a recipient replied before cancellation,
+  that recipient is `replied`; otherwise the cancellation state is
+  `cancelled`. Later replies remain visible but do not change `cancelled` back
+  into `replied`.
+
+### 6.4 `runtime.delivery`
+
+Daemon-authored evidence that one source message was handed to one recipient
+runtime transport.
+
+```ts
+data: {
+  actor_id: string
+  source_event_id: string
+  delivery_id: string
+  state: "claimed" | "accepted" | "failed" | "ambiguous"
+  transport: string
+  reason?: string | null
+}
+```
+
+**Rules**
+- Only the daemon may append this event.
+- `delivery_id` MUST be deterministic for one source event, actor generation,
+  and recipient actor. A retry reuses that identity.
+- The daemon MUST append `claimed` before performing external runtime I/O and
+  then append exactly one observable result state for that attempt.
+- A concurrent claimant that observes `claimed` MUST treat the delivery as in
+  progress; it MUST NOT reinterpret or retry the active attempt.
+- During daemon startup, a latest `claimed` state left by the previous daemon
+  process MUST be settled to `ambiguous` before runtime recovery begins.
+- `accepted` means the runtime adapter accepted the payload (queue, PTY,
+  headless API, or browser submission boundary). It does not claim that the
+  model read, understood, or acted on it.
+- `failed` means the adapter established that handoff did not occur.
+- `ambiguous` means external side effects may have occurred but cannot be
+  proven. Automatic retry MUST NOT follow `accepted` or `ambiguous`.
+- A normal `mail` append creates no `runtime.delivery`. An explicit manual
+  delivery of that existing message may create one without appending a second
+  `chat.message`.
+
+### 6.5 `chat.reaction` (Optional)
 
 ```ts
 data: {
@@ -261,7 +337,6 @@ data: {
   target_actor_id?: string | null                   // null = broadcast
   im_visibility?: "internal" | "public"            // default "internal"
   context?: Record<string, unknown>                 // implementation-defined
-  requires_ack?: boolean                            // default false
   related_event_id?: string | null                  // optional correlation
 }
 ```
@@ -271,21 +346,9 @@ data: {
 - Implementations MAY enforce an allowlist of `data.kind` values, but should not assume clients understand new kinds.
 - External IM bridges MUST fail closed: a `system.notify` is eligible for IM delivery only when `im_visibility="public"`. Missing, invalid, or `internal` values stay inside CCCC. Actor-targeted notifications remain internal even if a malformed producer also marks them public.
 
-### 7.2 `system.notify_ack`
-
-```ts
-data: {
-  notify_event_id: string
-  actor_id: string
-}
-```
-
-**Rules**
-- `system.notify_ack` MUST be self-only: `event.by` MUST equal `data.actor_id`.
-- A daemon MUST NOT allow a principal to ack on behalf of another recipient.
-- `notify_event_id` MUST reference a valid `system.notify` addressed to
-  `actor_id` (a broadcast notification is addressed to every eligible current
-  recipient). Invalid targets MUST NOT append a `system.notify_ack` event.
+`system.notify` has no generic acknowledgement protocol. Domain workflows use
+their own durable lifecycle events, while reply obligations belong only to
+`chat.message` with `message_mode="request_reply"`.
 
 ## 8. Attachments and References
 
@@ -391,6 +454,13 @@ To relay a message from group A into group B:
 Implementations MAY also append an “outbound send record” in the source group (for auditability) by writing a local `chat.message` with:
 - `dst_group_id`
 - `dst_to`
+- `dst_message_mode`
+
+An outbound send record is a human-visible local audit message: its local
+`to` MUST be `["user"]` and its local `message_mode` MUST be `"send"`.
+`dst_to` and `dst_message_mode` preserve the actual destination audience and
+delivery mode. This separation prevents a remote Mail or reply request from
+creating a fictitious human Mail item or local human reply obligation.
 
 This record is OPTIONAL and MUST NOT be required for the destination’s provenance correctness.
 
@@ -447,15 +517,16 @@ Recommended stable `code` values:
 A conforming daemon MUST:
 - Enforce **single-writer** semantics for the ledger.
 - Set `event.by` to a principal identity consistent with the deployment’s trust model (authenticated vs. local-trust IPC) and document the security properties.
-- Enforce self-only ack rules for `chat.ack` and `system.notify_ack`.
+- Reject client-authored `runtime.delivery` events.
 
 ## 13. Minimal Profiles (Guidance)
 
 To reduce implementation burden, CCCS v1 MAY be implemented in profiles:
 
 ### 13.1 Core Collaboration Profile (recommended minimum)
-- `chat.message`, `chat.ack`, `chat.read`
-- `system.notify`, `system.notify_ack` (optional ack)
+- `chat.message`, `mail.read`, `chat.reply_request.cancelled`
+- `runtime.delivery`
+- `system.notify`
 - Recipient token semantics (§5)
 
 ### 13.2 Management Profile (optional)
@@ -468,7 +539,7 @@ To reduce implementation burden, CCCS v1 MAY be implemented in profiles:
 
 The following examples use placeholder IDs for brevity. Conformance test vectors with complete values may be provided separately.
 
-### 14.1 Attention Message + Ack
+### 14.1 Send + Reply Request
 
 ```json
 {
@@ -482,26 +553,29 @@ The following examples use placeholder IDs for brevity. Conformance test vectors
   "data": {
     "text": "Please review the release checklist today.",
     "format": "plain",
-    "priority": "attention",
-    "to": ["@foreman"]
+    "message_mode": "request_reply",
+    "to": ["foreman"]
   }
 }
 ```
 
-Ack:
+Runtime acceptance:
 
 ```json
 {
   "v": 1,
   "id": "01HZY3... (opaque)",
   "ts": "2026-01-13T10:01:00Z",
-  "kind": "chat.ack",
+  "kind": "runtime.delivery",
   "group_id": "g_123",
   "scope_key": "",
-  "by": "foreman",
+  "by": "system",
   "data": {
     "actor_id": "foreman",
-    "event_id": "01HZY2... (opaque)"
+    "source_event_id": "01HZY2... (opaque)",
+    "delivery_id": "delivery:foreman:01HZY2...",
+    "state": "accepted",
+    "transport": "codex_app_server"
   }
 }
 ```
@@ -521,7 +595,7 @@ Destination group message:
   "by": "svc:relay",
   "data": {
     "text": "Relayed: please review the release checklist today.",
-    "priority": "attention",
+    "message_mode": "send",
     "to": ["@all"],
     "src_group_id": "g_src",
     "src_event_id": "01HZY2... (opaque)"

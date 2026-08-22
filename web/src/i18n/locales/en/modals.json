@@ -45,21 +45,35 @@
     "deleteTitle": "Delete this group permanently"
   },
   "inbox": {
-    "title": "Inbox · {{actorId}}",
-    "unreadMessages": "{{count}} unread messages",
-    "markAllRead": "Mark all read",
-    "noUnread": "No unread messages"
+    "title": "Mail · {{actorId}}",
+    "unreadMessages": "{{count}} unread Mail",
+    "markAllRead": "Read shown Mail",
+    "noUnread": "No unread Mail"
   },
   "recipients": {
     "replyStatus": "Reply Status",
-    "acknowledgements": "Acknowledgements",
+    "deliveryStatus": "Delivery Status",
     "recipients": "Recipients",
     "toLabel": "to {{label}}",
     "recipientStatusAria": "Recipient status",
     "noTracking": "No recipient tracking for this message.",
     "legendReply": "Legend: ○ pending · ↩ replied",
-    "legendAck": "Legend: ○ pending · ✓ acknowledged",
-    "legendRead": "Legend: ✓ pending · ✓✓ read"
+    "legendRead": "Legend: ✓ pending · ✓✓ read",
+    "legendDelivery": "Legend: ○ pending · ✓ handed to runtime",
+    "inInbox": "In Inbox",
+    "notDelivered": "Not delivered",
+    "deliveryClaimed": "Sending…",
+    "deliveryAccepted": "Sent to runtime",
+    "deliveryFailed": "Delivery failed",
+    "deliveryAmbiguous": "Delivery uncertain",
+    "sendNow": "Send now",
+    "retry": "Retry",
+    "retryAnyway": "Retry anyway",
+    "sending": "Sending…",
+    "retryAmbiguousConfirm": "The recipient may already have received this prompt. Retry anyway?",
+    "cancelReplyRequest": "Cancel reply request",
+    "cancelReplyConfirm": "Cancel every outstanding reply obligation for this message?",
+    "cancelling": "Cancelling…"
   },
   "relay": {
     "title": "Relay Message",

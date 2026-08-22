@@ -80,7 +80,7 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
             },
         ), patch.object(
             cccc_core,
-            "inbox_list",
+            "inbox_peek",
             return_value={
                 "messages": [
                     {
@@ -91,7 +91,7 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                         "data": {
                             "text": "please verify memory lane",
                             "insight": "The current recovery frame may omit a higher-value task.",
-                            "reply_required": True,
+                            "message_mode": "mail",
                         },
                     }
                 ]
@@ -149,7 +149,8 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
 
         inbox_preview = out["inbox_preview"]
         self.assertEqual(inbox_preview["messages"][0]["id"], "ev1")
-        self.assertTrue(inbox_preview["messages"][0]["reply_required"] is True)
+        self.assertEqual(inbox_preview["messages"][0]["message_mode"], "mail")
+        self.assertNotIn("reply_requested", inbox_preview["messages"][0])
         self.assertEqual(inbox_preview["messages"][0]["text_preview"], "please verify memory lane")
         self.assertEqual(
             inbox_preview["messages"][0]["insight_preview"],
@@ -168,19 +169,15 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
             next_calls["project_info"],
             'cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})',
         )
-        self.assertEqual(next_calls["inbox_list"], 'cccc_inbox_list(kind_filter="all")')
+        self.assertEqual(next_calls["inbox_read"], "cccc_inbox_read()")
         self.assertIn('tool_name="cccc_memory"', next_calls["memory_search"])
         self.assertIn('"action":"search"', next_calls["memory_search"])
         self.assertNotEqual(next_calls["memory_search"], 'cccc_memory(action="search", query=...)')
-        self.assertIn('signal_family="interrupt"', next_calls["interrupt_triage"])
-        self.assertIn('resume the current task', next_calls["interrupt_triage"])
 
         from cccc.kernel.capabilities import CORE_BASIC_TOOLS
 
         core = set(CORE_BASIC_TOOLS)
         for key, route in next_calls.items():
-            if key == "interrupt_triage":
-                continue
             called_tool = str(route or "").split("(", 1)[0].strip()
             self.assertIn(called_tool, core, f"bootstrap next_call {key} points outside the visible core: {route}")
 
@@ -230,7 +227,7 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
             },
         ), patch.object(
             cccc_core,
-            "inbox_list",
+            "inbox_peek",
             return_value={"messages": []},
         ), patch.object(
             cccc_core,

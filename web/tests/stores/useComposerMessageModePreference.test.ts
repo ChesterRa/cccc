@@ -30,33 +30,30 @@ describe("composer message mode preference", () => {
     vi.restoreAllMocks();
   });
 
-  it("defaults a fresh browser to Need Reply", async () => {
+  it("defaults a fresh browser to Send", async () => {
     const mod = await import("../../src/stores/useComposerStore");
 
-    expect(mod.loadComposerMessageModePreference()).toBe("reply");
+    expect(mod.loadComposerMessageModePreference()).toBe("send");
     expect(mod.useComposerStore.getState()).toMatchObject({
-      preferredMessageMode: "reply",
-      priority: "normal",
-      replyRequired: true,
+      preferredMessageMode: "send",
+      messageMode: "send",
     });
   });
 
   it("restores the last valid browser preference and rejects malformed values", async () => {
-    storage.setItem("cccc-composer-message-mode", "attention");
+    storage.setItem("cccc-composer-message-mode", "mail");
     let mod = await import("../../src/stores/useComposerStore");
     expect(mod.useComposerStore.getState()).toMatchObject({
-      preferredMessageMode: "attention",
-      priority: "attention",
-      replyRequired: false,
+      preferredMessageMode: "mail",
+      messageMode: "mail",
     });
 
     storage.setItem(mod.COMPOSER_MESSAGE_MODE_STORAGE_KEY, "unknown");
     vi.resetModules();
     mod = await import("../../src/stores/useComposerStore");
     expect(mod.useComposerStore.getState()).toMatchObject({
-      preferredMessageMode: "reply",
-      priority: "normal",
-      replyRequired: true,
+      preferredMessageMode: "send",
+      messageMode: "send",
     });
   });
 
@@ -64,17 +61,35 @@ describe("composer message mode preference", () => {
     const mod = await import("../../src/stores/useComposerStore");
     const store = mod.useComposerStore;
 
-    store.getState().setMessageMode("normal");
+    store.getState().setMessageMode("mail");
     store.getState().setComposerText("status only");
     store.getState().clearComposer();
 
-    expect(storage.getItem(mod.COMPOSER_MESSAGE_MODE_STORAGE_KEY)).toBe("normal");
+    expect(storage.getItem(mod.COMPOSER_MESSAGE_MODE_STORAGE_KEY)).toBe("mail");
     expect(store.getState()).toMatchObject({
-      preferredMessageMode: "normal",
-      priority: "normal",
-      replyRequired: false,
+      preferredMessageMode: "mail",
+      messageMode: "mail",
       composerText: "",
     });
+  });
+
+  it("defaults each reply to Send without overwriting the new-message preference", async () => {
+    const mod = await import("../../src/stores/useComposerStore");
+    const store = mod.useComposerStore;
+
+    store.getState().setMessageMode("mail");
+    store.getState().setReplyTarget({ eventId: "event-1", by: "peer1", text: "question" });
+    expect(store.getState()).toMatchObject({ preferredMessageMode: "mail", messageMode: "send" });
+
+    store.getState().setMessageMode("mail");
+    expect(store.getState()).toMatchObject({ preferredMessageMode: "mail", messageMode: "mail" });
+    expect(storage.getItem(mod.COMPOSER_MESSAGE_MODE_STORAGE_KEY)).toBe("mail");
+
+    store.getState().setMessageMode("request_reply");
+    expect(store.getState()).toMatchObject({ preferredMessageMode: "mail", messageMode: "send" });
+
+    store.getState().setReplyTarget(null);
+    expect(store.getState()).toMatchObject({ preferredMessageMode: "mail", messageMode: "mail" });
   });
 
   it("restores a draft's own mode without replacing the newer browser preference", async () => {
@@ -82,24 +97,20 @@ describe("composer message mode preference", () => {
     const store = mod.useComposerStore;
 
     store.getState().switchGroup(null, "g-a");
+    store.getState().setMessageMode("request_reply");
     store.getState().setComposerText("reply-required draft");
     store.getState().switchGroup("g-a", "g-b");
-    store.getState().setMessageMode("normal");
+    store.getState().setMessageMode("mail");
 
     store.getState().switchGroup("g-b", "g-a");
     expect(store.getState()).toMatchObject({
       composerText: "reply-required draft",
-      preferredMessageMode: "normal",
-      priority: "normal",
-      replyRequired: true,
+      preferredMessageMode: "mail",
+      messageMode: "request_reply",
     });
 
     store.getState().clearComposer();
-    expect(store.getState()).toMatchObject({
-      preferredMessageMode: "normal",
-      priority: "normal",
-      replyRequired: false,
-    });
+    expect(store.getState()).toMatchObject({ preferredMessageMode: "mail", messageMode: "mail" });
   });
 
   it("falls back safely when browser storage is unavailable", async () => {
@@ -114,12 +125,11 @@ describe("composer message mode preference", () => {
     });
 
     const mod = await import("../../src/stores/useComposerStore");
-    expect(mod.useComposerStore.getState().preferredMessageMode).toBe("reply");
-    expect(() => mod.useComposerStore.getState().setMessageMode("attention")).not.toThrow();
+    expect(mod.useComposerStore.getState().preferredMessageMode).toBe("send");
+    expect(() => mod.useComposerStore.getState().setMessageMode("mail")).not.toThrow();
     expect(mod.useComposerStore.getState()).toMatchObject({
-      preferredMessageMode: "attention",
-      priority: "attention",
-      replyRequired: false,
+      preferredMessageMode: "mail",
+      messageMode: "mail",
     });
     expect(warning).toHaveBeenCalledTimes(2);
   });

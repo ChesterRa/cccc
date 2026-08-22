@@ -84,6 +84,40 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             "browser": browser,
         }
 
+    def _delivery_state(self, group, event_id: str, actor_id: str = "peer1") -> str:
+        from cccc.daemon.messaging.runtime_delivery import latest_delivery_state
+
+        event = latest_delivery_state(
+            group,
+            actor_id=actor_id,
+            source_event_id=event_id,
+        )
+        data = event.get("data") if isinstance(event, dict) else {}
+        return str(data.get("state") or "") if isinstance(data, dict) else ""
+
+    def _record_delivery_state(
+        self,
+        group,
+        event_id: str,
+        *,
+        state: str,
+        actor_id: str = "peer1",
+        transport: str = "web_model_browser",
+    ) -> None:
+        from cccc.daemon.messaging.runtime_delivery import append_delivery_state
+        from cccc.kernel.actors import find_actor
+
+        actor = find_actor(group, actor_id)
+        self.assertIsInstance(actor, dict)
+        append_delivery_state(
+            group,
+            actor_id=actor_id,
+            actor_created_at=str((actor or {}).get("created_at") or ""),
+            source_event_id=event_id,
+            state=state,
+            transport=transport,
+        )
+
     def _create_group_with_codex_actor(self):
         from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group
@@ -94,9 +128,9 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         add_actor(group, actor_id="peer1", title="Codex", runtime="codex", runner="headless")
         return group
 
-    def test_wait_next_turn_does_not_advance_cursor_until_complete(self) -> None:
+    def test_wait_and_complete_turn_do_not_advance_inbox_cursor(self) -> None:
         from cccc.daemon.runner_state_ops import read_headless_state
-        from cccc.kernel.inbox import get_cursor, has_chat_ack
+        from cccc.kernel.inbox import get_cursor, get_obligation_status_batch
         from cccc.kernel.ledger import append_event
 
         _, cleanup = self._with_home()
@@ -108,7 +142,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first task", "to": ["peer1"], "priority": "attention", "reply_required": True},
+                data={"text": "first task", "to": ["peer1"], "message_mode": "request_reply"},
             )
             second = append_event(
                 group.ledger_path,
@@ -116,11 +150,11 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "second task", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "second task", "to": ["peer1"]},
             )
 
             wait, should_stop = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1", "limit": 20},
             )
             self.assertFalse(should_stop)
@@ -132,14 +166,15 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(str(read_headless_state(group.group_id, "peer1").get("status") or ""), "working")
 
             repeat, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1", "limit": 20},
             )
             self.assertTrue(repeat.ok, getattr(repeat, "error", None))
-            self.assertEqual(((repeat.result or {}).get("turn") or {}).get("event_ids"), [first["id"], second["id"]])
+            self.assertEqual((repeat.result or {}).get("status"), "turn_in_progress")
+            self.assertIsNone((repeat.result or {}).get("turn"))
 
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
@@ -152,10 +187,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             )
             self.assertTrue(complete.ok, getattr(complete, "error", None))
             result = complete.result or {}
-            self.assertTrue(bool(result.get("cursor_committed")))
-            self.assertEqual((result.get("cursor") or {}).get("event_id"), second["id"])
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
-            self.assertTrue(has_chat_ack(group, event_id=first["id"], actor_id="peer1"))
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            obligation = get_obligation_status_batch(group, [first])[first["id"]]["peer1"]
+            self.assertNotIn("read", obligation)
+            self.assertTrue(obligation["reply_requested"])
+            self.assertFalse(obligation["replied"])
             self.assertEqual(str(read_headless_state(group.group_id, "peer1").get("status") or ""), "waiting")
         finally:
             cleanup()
@@ -173,7 +210,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "deliver me", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "deliver me", "to": ["peer1"]},
             )
             args = {
                 "group_id": group.group_id,
@@ -195,8 +232,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             first_event = (first.result or {}).get("event") or {}
             self.assertEqual(first_event.get("kind"), "web_model.browser_delivery.submitted")
             self.assertEqual((first_event.get("data") or {}).get("event_ids"), [message["id"]])
-            unread = unread_messages(group, actor_id="peer1", limit=10, kind_filter="all")
-            self.assertEqual([event.get("id") for event in unread], [message["id"]])
+            unread = unread_messages(group, actor_id="peer1", limit=10)
+            self.assertEqual(unread, [])
             delivery_events = [
                 json.loads(line)
                 for line in read_last_lines(group.ledger_path, 20)
@@ -237,10 +274,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "snapshot the selected mode", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "snapshot the selected mode", "to": ["peer1"]},
             )
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1"},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
@@ -370,15 +407,15 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "legacy pending task", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "legacy pending task", "to": ["peer1"]},
             )
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1"},
             )
             turn = (wait.result or {}).get("turn") or {}
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
@@ -408,9 +445,9 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_delivered_turn_commits_through_ledger_tail_when_timestamp_regresses(self) -> None:
+    def test_delivery_outcome_uses_event_ids_when_timestamp_regresses(self) -> None:
         from cccc.contracts.v1.event import Event as ContractEvent
-        from cccc.daemon.actors.web_model_runtime_ops import commit_web_model_delivered_turn
+        from cccc.daemon.actors.web_model_runtime_ops import record_web_model_delivery_outcome
         from cccc.kernel.inbox import get_cursor, unread_messages
         from cccc.kernel.ledger import append_event
 
@@ -429,7 +466,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     group_id=group.group_id,
                     scope_key="",
                     by="user",
-                    data={"text": "first", "to": ["peer1"]},
+                    data={"message_mode": "send", "text": "first", "to": ["peer1"]},
                 )
                 second = append_event(
                     group.ledger_path,
@@ -437,10 +474,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     group_id=group.group_id,
                     scope_key="",
                     by="user",
-                    data={"text": "later append with older timestamp", "to": ["peer1"]},
+                    data={"message_mode": "send", "text": "later append with older timestamp", "to": ["peer1"]},
                 )
 
-            result = commit_web_model_delivered_turn(
+            result = record_web_model_delivery_outcome(
                 group,
                 actor_id="peer1",
                 turn={"event_ids": [first["id"], second["id"]], "latest_event_id": second["id"]},
@@ -448,13 +485,18 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             )
 
             self.assertTrue(result.get("ok"), result)
-            self.assertEqual((result.get("cursor") or {}).get("event_id"), second["id"])
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
+            self.assertEqual(result.get("processed_event_ids"), [first["id"], second["id"]])
+            self.assertEqual(self._delivery_state(group, first["id"]), "accepted")
+            self.assertEqual(self._delivery_state(group, second["id"]), "accepted")
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1"),
+                [],
+            )
         finally:
             cleanup()
 
-    def test_complete_turn_commits_through_ledger_tail_when_timestamp_regresses(self) -> None:
+    def test_complete_turn_preserves_ledger_order_when_timestamp_regresses(self) -> None:
         from cccc.contracts.v1.event import Event as ContractEvent
         from cccc.kernel.inbox import get_cursor, unread_messages
         from cccc.kernel.ledger import append_event
@@ -474,7 +516,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     group_id=group.group_id,
                     scope_key="",
                     by="user",
-                    data={"text": "first", "to": ["peer1"]},
+                    data={"message_mode": "send", "text": "first", "to": ["peer1"]},
                 )
                 second = append_event(
                     group.ledger_path,
@@ -482,28 +524,39 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     group_id=group.group_id,
                     scope_key="",
                     by="user",
-                    data={"text": "later append with older timestamp", "to": ["peer1"]},
+                    data={"message_mode": "send", "text": "later append with older timestamp", "to": ["peer1"]},
                 )
 
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
+            self.assertEqual(turn.get("event_ids"), [first["id"], second["id"]])
+
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
                     "by": "peer1",
+                    "turn_id": turn.get("turn_id"),
                     "event_ids": [first["id"], second["id"]],
                     "status": "done",
                 },
             )
 
             self.assertTrue(complete.ok, getattr(complete, "error", None))
-            self.assertEqual(((complete.result or {}).get("cursor") or {}).get("event_id"), second["id"])
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
+            self.assertEqual((complete.result or {}).get("processed_event_ids"), [first["id"], second["id"]])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1"),
+                [],
+            )
         finally:
             cleanup()
 
-    def test_actor_list_reports_web_model_messages_queued_after_active_turn(self) -> None:
+    def test_actor_list_reports_direct_queue_separately_from_mail_unread(self) -> None:
         from cccc.kernel.ledger import append_event
 
         _, cleanup = self._with_home()
@@ -515,10 +568,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "active turn", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "active turn", "to": ["peer1"]},
             )
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1", "limit": 1},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
@@ -529,7 +582,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "queued one", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "queued one", "to": ["peer1"]},
             )
             queued_2 = append_event(
                 group.ledger_path,
@@ -537,14 +590,22 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "queued two", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "queued two", "to": ["peer1"]},
+            )
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"message_mode": "mail", "text": "read later", "to": ["peer1"]},
             )
 
             actors, _ = self._call("actor_list", {"group_id": group.group_id, "include_unread": True})
 
             self.assertTrue(actors.ok, getattr(actors, "error", None))
             actor = ((actors.result or {}).get("actors") or [])[0]
-            self.assertEqual(actor.get("unread_count"), 3)
+            self.assertEqual(actor.get("unread_count"), 1)
             self.assertEqual(actor.get("web_model_queued_count"), 2)
             self.assertEqual(actor.get("web_model_queued_after_event_id"), active["id"])
             self.assertEqual(actor.get("web_model_queued_latest_event_id"), queued_2["id"])
@@ -557,7 +618,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         try:
             group = self._create_group_with_codex_actor()
             resp, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1"},
             )
             self.assertFalse(resp.ok)
@@ -565,7 +626,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_failed_complete_leaves_turn_unread_for_retry(self) -> None:
+    def test_failed_complete_leaves_inbox_unread_without_redelivery(self) -> None:
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
 
@@ -579,29 +640,37 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry me", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry me", "to": ["peer1"]},
             )
 
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
                     "by": "peer1",
+                    "turn_id": turn.get("turn_id"),
                     "event_ids": [event["id"]],
                     "status": "failed",
                 },
             )
             self.assertTrue(complete.ok, getattr(complete, "error", None))
-            self.assertFalse(bool((complete.result or {}).get("cursor_committed")))
+            self.assertNotIn("cursor_committed", complete.result or {})
             self.assertEqual(get_cursor(group, "peer1"), ("", ""))
 
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1"},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
-            self.assertEqual(((wait.result or {}).get("turn") or {}).get("event_ids"), [event["id"]])
+            self.assertEqual((wait.result or {}).get("status"), "idle")
+            self.assertIsNone((wait.result or {}).get("turn"))
+            self.assertEqual(self._delivery_state(group, event["id"]), "accepted")
         finally:
             cleanup()
 
@@ -612,6 +681,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             send, _ = self._call(
                 "send",
                 {
+                    "message_mode": "send",
                     "group_id": group.group_id,
                     "by": "user",
                     "text": "single pull task",
@@ -621,7 +691,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertTrue(send.ok, getattr(send, "error", None))
 
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1", "limit": 20},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
@@ -653,7 +723,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "browser-delivered task", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "browser-delivered task", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             os.environ.pop("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD", None)
@@ -675,8 +745,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertTrue(bool(result.get("cursor_committed")))
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertNotIn("cursor_committed", result)
             self.assertEqual(str(read_headless_state(group.group_id, "peer1").get("status") or ""), "waiting")
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(browser_state.get("auto_reload_active"), False)
@@ -699,11 +769,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertIn("Web transport:", prompt)
             self.assertIn("do not call cccc_runtime_wait_next_turn", prompt)
             self.assertIn("Text typed only in this web chat is not delivered", prompt)
-            self.assertIn("Use cccc_message_reply for replies", prompt)
-            self.assertIn("use cccc_message_send for new messages", prompt)
+            self.assertIn("New messages: use mode=\"mail\"", prompt)
+            self.assertIn("use cccc_message_reply for an existing event", prompt)
             self.assertIn("Terminal output is not delivered", prompt)
-            self.assertIn("Verify reply_to/to", prompt)
-            self.assertIn("avoid routine @all", prompt)
+            self.assertNotIn("Use cccc_message_reply for replies; use cccc_message_send", prompt)
             self.assertNotIn("resume active work unless priority changed", prompt)
             self.assertNotIn("When done: cccc_runtime_complete_turn(", prompt)
             self.assertNotIn("webturn:peer1:", prompt)
@@ -756,7 +825,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "compatibility delivery", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "compatibility delivery", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -812,7 +881,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "review this if MCP is unavailable", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "review this if MCP is unavailable", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             os.environ["CCCC_WEB_PUBLIC_URL"] = "https://cccc.example.test/ui/"
@@ -836,7 +905,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(len(prompts), 1)
             prompt = prompts[0]
             self.assertIn("review this if MCP is unavailable", prompt)
-            self.assertIn("Use cccc_message_reply for replies", prompt)
+            self.assertIn("New messages: use mode=\"mail\"", prompt)
             self.assertNotIn("No-MCP", prompt)
             self.assertNotIn("/nomcp/", prompt)
             self.assertNotIn("delivery-direct-test", prompt)
@@ -868,7 +937,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "deliver through the daemon browser session", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "deliver through the daemon browser session", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[str] = []
@@ -906,7 +975,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(result.get("status"), "submitted")
             self.assertEqual(calls, [f"projected:{group.group_id}:peer1"])
             self.assertEqual(observed_submit_states, ["submitting"])
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             data = ((result.get("event") or {}).get("data") or {})
             self.assertEqual((data.get("browser_surface") or {}).get("state"), "ready")
             self.assertEqual(data.get("delivery_transport"), "projected_session")
@@ -940,7 +1009,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry transient page close", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry transient page close", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[str] = []
@@ -977,7 +1046,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(result.get("status"), "ambiguous")
             self.assertEqual(len(calls), 1)
             close_session.assert_not_called()
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1001,7 +1070,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry hidden input click", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry hidden input click", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[str] = []
@@ -1027,7 +1096,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(result.get("status"), "ambiguous")
             self.assertEqual(len(calls), 1)
             close_session.assert_not_called()
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1051,7 +1120,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry inserted but not submitted", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry inserted but not submitted", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[str] = []
@@ -1077,7 +1146,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(result.get("status"), "ambiguous")
             self.assertEqual(len(calls), 1)
             close_session.assert_not_called()
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1108,7 +1177,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "legacy marker should reseed", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "legacy marker should reseed", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -1167,7 +1236,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first message after restart should reseed", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "first message after restart should reseed", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -1213,7 +1282,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry after failed browser delivery", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry after failed browser delivery", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1225,9 +1294,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
+            )
             state = read_headless_state(group.group_id, "peer1")
             self.assertEqual(str(state.get("status") or ""), "waiting")
             self.assertEqual(str(state.get("active_turn_id") or ""), "")
@@ -1245,7 +1317,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             ]
             self.assertTrue(ambiguous_events)
             self.assertEqual((ambiguous_events[-1].get("data") or {}).get("event_ids"), [event["id"]])
-            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("cursor_committed"), True)
+            self.assertNotIn("cursor_committed", ambiguous_events[-1].get("data") or {})
 
             second = append_event(
                 group.ledger_path,
@@ -1253,7 +1325,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "manual retry after visible failure", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "manual retry after visible failure", "to": ["peer1"]},
             )
             prompts: list[str] = []
 
@@ -1269,7 +1341,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(result2.get("ok"), result2)
             self.assertEqual(result2.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             self.assertEqual(len(prompts), 1)
             self.assertIn("manual retry after visible failure", prompts[0])
             self.assertNotIn("retry after failed browser delivery", prompts[0])
@@ -1302,7 +1374,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "must stay unread on target mismatch", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "must stay unread on target mismatch", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1318,16 +1390,14 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "failed")
-            self.assertFalse(result.get("cursor_committed"))
+            self.assertNotIn("cursor_committed", result)
             self.assertNotEqual(get_cursor(group, "peer1")[0], event["id"])
             self.assertEqual(
                 [
                     item.get("id")
-                    for item in unread_messages(
-                        group, actor_id="peer1", limit=10, kind_filter="all"
-                    )
+                    for item in unread_messages(group, actor_id="peer1", limit=10)
                 ],
-                [event["id"]],
+                [],
             )
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(browser_state.get("last_delivery_status"), "failed")
@@ -1341,9 +1411,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 if "web_model.browser_delivery.failed" in line
             ]
             self.assertTrue(failed_events)
-            self.assertFalse(
-                bool((failed_events[-1].get("data") or {}).get("cursor_committed"))
-            )
+            self.assertNotIn("cursor_committed", failed_events[-1].get("data") or {})
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1368,7 +1436,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "interrupted browser delivery", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "interrupted browser delivery", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             turn = delivery._browser_delivery_batch(group, actor_id="peer1")
@@ -1389,7 +1457,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "later message still delivers", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "later message still delivers", "to": ["peer1"]},
             )
 
             with patch(
@@ -1402,8 +1470,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             self.assertTrue(result.get("reschedule"))
             submit.assert_not_called()
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
@@ -1426,7 +1494,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(second_result.get("ok"), second_result)
             self.assertEqual(second_result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             self.assertEqual(len(prompts), 1)
             self.assertIn("later message still delivers", prompts[0])
             self.assertNotIn("interrupted browser delivery", prompts[0])
@@ -1452,7 +1520,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry the Rust-deferred turn", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry the Rust-deferred turn", "to": ["peer1"]},
             )
             turn = delivery._browser_delivery_batch(group, actor_id="peer1")
             group.doc["web_model_browser_targets"] = {
@@ -1486,7 +1554,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             submit.assert_called_once()
         finally:
             if old_mode is None:
@@ -1511,7 +1579,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "do not duplicate the Rust-submitted turn", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "do not duplicate the Rust-submitted turn", "to": ["peer1"]},
             )
             turn = delivery._browser_delivery_batch(group, actor_id="peer1")
             group.doc["web_model_browser_targets"] = {
@@ -1528,7 +1596,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     "last_submission_evidence": {
                         "submission_evidence": "message_echo"
                     },
-                    "last_error": "cursor_completion_pending",
+                    "last_error": "delivery_completion_pending",
                 }
             }
             group.save()
@@ -1548,7 +1616,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             submit.assert_not_called()
             stored = load_group(group.group_id)
             self.assertIsNotNone(stored)
@@ -1563,7 +1631,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
     def test_python_keeps_rust_ambiguous_new_chat_fenced_until_binding(self) -> None:
         from cccc.daemon.actors import web_model_browser_delivery as delivery
-        from cccc.kernel.inbox import get_cursor, set_cursor
+        from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
 
         _, cleanup = self._with_home()
@@ -1576,13 +1644,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "Rust already attempted this new chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "Rust already attempted this new chat", "to": ["peer1"]},
             )
-            set_cursor(
+            self._record_delivery_state(
                 group,
-                "peer1",
-                event_id=str(attempted["id"]),
-                ts=str(attempted["ts"]),
+                str(attempted["id"]),
+                state="ambiguous",
             )
             waiting = append_event(
                 group.ledger_path,
@@ -1590,7 +1657,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "wait for the first chat URL", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "wait for the first chat URL", "to": ["peer1"]},
             )
             group.doc["web_model_browser_targets"] = {
                 "peer1": {
@@ -1640,7 +1707,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(recovered.get("status"), "ambiguous")
             self.assertTrue(pending.get("ok"), pending)
             self.assertEqual(pending.get("status"), "target_chat_binding_pending")
-            self.assertEqual(get_cursor(group, "peer1")[0], attempted["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(self._delivery_state(group, attempted["id"]), "ambiguous")
             resolve.assert_called_once_with(group.group_id, "peer1")
             submit.assert_not_called()
         finally:
@@ -1666,7 +1734,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "must remain unread without a durable fence", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "must remain unread without a durable fence", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1700,7 +1768,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
     def test_browser_delivery_reconciles_committed_submitting_state_without_new_work(self) -> None:
         from cccc.daemon.actors import web_model_browser_delivery as delivery
-        from cccc.kernel.inbox import get_cursor, set_cursor
+        from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
         from cccc.ports.web_model_browser_sidecar import (
             read_chatgpt_browser_state,
@@ -1718,13 +1786,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "committed immediately before the crash", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "committed immediately before the crash", "to": ["peer1"]},
             )
-            set_cursor(
+            self._record_delivery_state(
                 group,
-                "peer1",
-                event_id=str(event["id"]),
-                ts=str(event["ts"]),
+                str(event["id"]),
+                state="accepted",
             )
             record_chatgpt_browser_state(
                 group.group_id,
@@ -1749,8 +1816,9 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(self._delivery_state(group, event["id"]), "ambiguous")
             submit.assert_not_called()
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("last_delivery_status"), "ambiguous")
@@ -1783,7 +1851,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "adjust the active response", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "adjust the active response", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1798,13 +1866,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(result.get("status"), "deferred")
             self.assertTrue(repeated.get("ok"), repeated)
             self.assertEqual(repeated.get("status"), "deferred")
-            self.assertFalse(result.get("cursor_committed"))
+            self.assertNotIn("cursor_committed", result)
             self.assertTrue(result.get("reschedule"))
             self.assertGreater(float(result.get("reschedule_after_seconds") or 0.0), 0.0)
             self.assertNotEqual(get_cursor(group, "peer1")[0], event["id"])
             self.assertEqual(
-                [message.get("id") for message in unread_messages(group, actor_id="peer1", limit=10, kind_filter="all")],
-                [event["id"]],
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
             )
             state = read_headless_state(group.group_id, "peer1")
             self.assertEqual(str(state.get("status") or ""), "working")
@@ -1839,7 +1907,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first deferred correction", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "first deferred correction", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -1865,7 +1933,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                     group_id=group.group_id,
                     scope_key="",
                     by="user",
-                    data={"text": "new correction during defer", "to": ["peer1"]},
+                    data={"message_mode": "send", "text": "new correction during defer", "to": ["peer1"]},
                 )
                 submitted = submit_next_web_model_browser_turn(
                     group.group_id,
@@ -1874,11 +1942,14 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 )
 
             self.assertEqual(deferred.get("status"), "deferred")
-            self.assertFalse(deferred.get("cursor_committed"))
+            self.assertNotIn("cursor_committed", deferred)
             self.assertEqual(submitted.get("status"), "submitted")
-            self.assertTrue(submitted.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], second_event["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            self.assertNotIn("cursor_committed", submitted)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
+            )
             self.assertEqual(len(calls), 2)
             self.assertIn(f"events={first_event['id']}", str(calls[0].get("prompt") or ""))
             self.assertIn(
@@ -1889,13 +1960,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             read_events = [
                 event
                 for event in ledger_events
-                if event.get("kind") == "chat.read" and (event.get("data") or {}).get("actor_id") == "peer1"
+                if event.get("kind") == "mail.read" and (event.get("data") or {}).get("actor_id") == "peer1"
             ]
             submitted_events = [
                 event for event in ledger_events if event.get("kind") == "web_model.browser_delivery.submitted"
             ]
-            self.assertEqual(len(read_events), 1)
-            self.assertEqual((read_events[0].get("data") or {}).get("event_id"), second_event["id"])
+            self.assertEqual(read_events, [])
             self.assertEqual(len(submitted_events), 1)
             self.assertEqual(
                 (submitted_events[0].get("data") or {}).get("event_ids"),
@@ -1926,7 +1996,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "possibly submitted message", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "possibly submitted message", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1941,9 +2011,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
+            )
             state = read_headless_state(group.group_id, "peer1")
             self.assertEqual(str(state.get("status") or ""), "waiting")
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
@@ -1956,7 +2029,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             ]
             self.assertTrue(ambiguous_events)
             self.assertEqual((ambiguous_events[-1].get("data") or {}).get("event_ids"), [event["id"]])
-            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("cursor_committed"), True)
+            self.assertNotIn("cursor_committed", ambiguous_events[-1].get("data") or {})
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1981,7 +2054,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "maybe submitted message", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "maybe submitted message", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -1996,9 +2069,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
+            )
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(browser_state.get("last_delivery_status"), "ambiguous")
             self.assertEqual(browser_state.get("last_submission_evidence"), "click_dispatch_unknown")
@@ -2011,7 +2087,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             data = ambiguous_events[-1].get("data") or {}
             self.assertEqual(data.get("submission_evidence"), "click_dispatch_unknown")
             self.assertEqual((data.get("browser") or {}).get("submission_evidence"), "click_dispatch_unknown")
-            self.assertEqual(data.get("cursor_committed"), True)
+            self.assertNotIn("cursor_committed", data)
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -2035,7 +2111,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "needs explicit chat target", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "needs explicit chat target", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -2078,7 +2154,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "create a fresh ChatGPT chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "create a fresh ChatGPT chat", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -2099,7 +2175,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/")
             self.assertEqual(calls[0].get("auto_bind_new_chat"), True)
             self.assertIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
@@ -2139,7 +2215,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "new chat but no final URL", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "new chat but no final URL", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -2167,8 +2243,8 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "target_chat_binding_pending")
             ensure_watcher.assert_called_once_with(group.group_id, "peer1", logger=ANY)
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("pending_new_chat_bind"), True)
             self.assertEqual(state.get("pending_new_chat_submitted"), True)
@@ -2182,7 +2258,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             submitted = result.get("event") or {}
             data = submitted.get("data") if isinstance(submitted, dict) else {}
             self.assertEqual((data or {}).get("pending_conversation_url"), True)
-            self.assertEqual((data or {}).get("cursor_committed"), True)
+            self.assertNotIn("cursor_committed", data or {})
             self.assertTrue(
                 any("web_model.browser_delivery.pending" in line for line in read_last_lines(group.ledger_path, 20))
             )
@@ -2217,7 +2293,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "new chat weak evidence", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "new chat weak evidence", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -2239,9 +2315,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertFalse(result.get("ok"), result)
             self.assertEqual(result.get("status"), "ambiguous")
-            self.assertTrue(result.get("cursor_committed"))
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
+            self.assertNotIn("cursor_committed", result)
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(
+                unread_messages(group, actor_id="peer1", limit=10),
+                [],
+            )
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("pending_new_chat_bind"), True)
             self.assertNotEqual(state.get("pending_new_chat_submitted"), True)
@@ -2281,7 +2360,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "new chat creates URL slowly", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "new chat creates URL slowly", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -2301,7 +2380,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 first_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=first["id"])
             self.assertTrue(first_result.get("ok"), first_result)
             self.assertEqual(first_result.get("status"), "target_chat_binding_pending")
-            self.assertEqual(get_cursor(group, "peer1")[0], first["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             first_state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(first_state.get("bootstrap_seed_conversation_url"), "https://chatgpt.com/")
 
@@ -2316,7 +2395,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "follow-up after URL exists", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "follow-up after URL exists", "to": ["peer1"]},
             )
             calls: list[dict] = []
 
@@ -2335,7 +2414,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 second_result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=second["id"])
 
             self.assertTrue(second_result.get("ok"), second_result)
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/c/delayed-chat")
             self.assertNotIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
             state = read_chatgpt_browser_state(group.group_id, "peer1")
@@ -2374,7 +2453,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "do not create another new chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "do not create another new chat", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
 
@@ -2433,7 +2512,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "retry stale new chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "retry stale new chat", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             with (
@@ -2467,7 +2546,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
     def test_browser_delivery_resolves_pending_new_chat_then_delivers_to_bound_url(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
-        from cccc.kernel.inbox import get_cursor, set_cursor
+        from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event, read_last_lines
         from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
 
@@ -2481,9 +2560,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
             )
-            set_cursor(group, "peer1", event_id=str(pending_event["id"]), ts=str(pending_event["ts"]))
+            self._record_delivery_state(
+                group,
+                str(pending_event["id"]),
+                state="accepted",
+            )
             record_chatgpt_browser_state(
                 group.group_id,
                 "peer1",
@@ -2502,7 +2585,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "send after ChatGPT URL exists", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "send after ChatGPT URL exists", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -2548,7 +2631,9 @@ class TestWebModelRuntimeOps(unittest.TestCase):
 
             self.assertTrue(result.get("ok"), result)
             self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            self.assertEqual(self._delivery_state(group, pending_event["id"]), "accepted")
+            self.assertEqual(self._delivery_state(group, event["id"]), "accepted")
             self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/c/resolved")
             self.assertEqual(calls[0].get("auto_bind_new_chat"), False)
             state = read_chatgpt_browser_state(group.group_id, "peer1")
@@ -2580,7 +2665,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "first message creates a new ChatGPT chat", "to": ["peer1"]},
             )
             resolution = {
                 "ok": True,
@@ -2628,10 +2713,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "already injected", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "already injected", "to": ["peer1"]},
             )
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1", "limit": 1},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
@@ -2641,7 +2726,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "deliver this one", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "deliver this one", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
             calls: list[dict] = []
@@ -2657,9 +2742,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=new_event["id"])
 
             self.assertTrue(result.get("ok"), result)
-            self.assertEqual(get_cursor(group, "peer1")[0], new_event["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             prompt = str(calls[0].get("prompt") or "")
-            self.assertIn(f"events={old_event['id']},{new_event['id']}", prompt)
+            self.assertIn(f"events={new_event['id']}", prompt)
+            self.assertNotIn(old_event["id"], prompt)
+            self.assertEqual(self._delivery_state(group, old_event["id"]), "accepted")
+            self.assertEqual(self._delivery_state(group, new_event["id"]), "accepted")
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -2888,8 +2976,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "finish then continue", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "finish then continue", "to": ["peer1"]},
             )
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
 
             with (
                 patch(
@@ -2902,11 +2995,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 ) as schedule,
             ):
                 complete, _ = self._call(
-                    "web_model_runtime_complete_turn",
+                    "runtime_complete_turn",
                     {
                         "group_id": group.group_id,
                         "actor_id": "peer1",
                         "by": "peer1",
+                        "turn_id": turn.get("turn_id"),
                         "event_ids": [event["id"]],
                         "status": "done",
                     },
@@ -2932,8 +3026,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "complete closes reload", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "complete closes reload", "to": ["peer1"]},
             )
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
             record_chatgpt_browser_state(
                 group.group_id,
                 "peer1",
@@ -2946,12 +3045,12 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             )
 
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
                     "by": "peer1",
-                    "turn_id": "turn-1",
+                    "turn_id": turn.get("turn_id"),
                     "event_ids": [event["id"]],
                     "status": "done",
                 },
@@ -2961,7 +3060,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             state = read_chatgpt_browser_state(group.group_id, "peer1")
             self.assertEqual(state.get("auto_reload_active"), False)
             self.assertEqual(state.get("auto_reload_completed_reason"), "complete_turn:done")
-            self.assertEqual(state.get("auto_reload_last_progress_detail"), "turn-1")
+            self.assertEqual(state.get("auto_reload_last_progress_detail"), turn.get("turn_id"))
         finally:
             cleanup()
 
@@ -2981,11 +3080,11 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "do not deliver while stopped", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "do not deliver while stopped", "to": ["peer1"]},
             )
 
             wait, _ = self._call(
-                "web_model_runtime_wait_next_turn",
+                "runtime_wait_next_turn",
                 {"group_id": group.group_id, "actor_id": "peer1"},
             )
             self.assertTrue(wait.ok, getattr(wait, "error", None))
@@ -2994,7 +3093,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_complete_rejects_non_contiguous_unread_prefix(self) -> None:
+    def test_complete_rejects_event_ids_outside_the_active_turn(self) -> None:
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
 
@@ -3007,7 +3106,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "first", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "first", "to": ["peer1"]},
             )
             second = append_event(
                 group.ledger_path,
@@ -3015,34 +3114,42 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "second", "to": ["peer1"]},
+                data={"message_mode": "send", "text": "second", "to": ["peer1"]},
             )
 
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
+
             complete, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
                     "by": "peer1",
+                    "turn_id": turn.get("turn_id"),
                     "event_ids": [second["id"]],
                     "status": "done",
                 },
             )
             self.assertFalse(complete.ok)
-            self.assertEqual(str(getattr(complete.error, "code", "")), "non_contiguous_turn_events")
+            self.assertEqual(str(getattr(complete.error, "code", "")), "completion_conflict")
             self.assertEqual(get_cursor(group, "peer1"), ("", ""))
 
             valid, _ = self._call(
-                "web_model_runtime_complete_turn",
+                "runtime_complete_turn",
                 {
                     "group_id": group.group_id,
                     "actor_id": "peer1",
                     "by": "peer1",
+                    "turn_id": turn.get("turn_id"),
                     "event_ids": [first["id"], second["id"]],
                     "status": "done",
                 },
             )
             self.assertTrue(valid.ok, getattr(valid, "error", None))
-            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
         finally:
             cleanup()

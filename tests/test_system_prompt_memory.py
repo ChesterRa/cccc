@@ -50,7 +50,7 @@ class TestSystemPromptMemory(unittest.TestCase):
     def test_prompt_routes_to_bootstrap_and_help(self) -> None:
         from cccc.kernel.actors import find_actor
         from cccc.kernel.group import load_group
-        from cccc.kernel.system_prompt import render_system_prompt
+        from cccc.kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE, render_system_prompt
 
         _, cleanup = self._with_home()
         try:
@@ -63,9 +63,10 @@ class TestSystemPromptMemory(unittest.TestCase):
             prompt = render_system_prompt(group=group, actor=actor or {})
 
             self.assertIn("CCCC Protocol:", prompt)
+            self.assertEqual(prompt.count(MESSAGE_DELIVERY_GUIDANCE), 1)
             self.assertNotIn("Working Style:", prompt)
             self.assertNotIn("Platform Invariants:", prompt)
-            self.assertIn("Use cccc_message_reply for replies; use cccc_message_send for new messages.", prompt)
+            self.assertNotIn("Use cccc_message_reply for replies; use cccc_message_send for new messages.", prompt)
             self.assertNotIn("Visible replies must go through MCP: cccc_message_send / cccc_message_reply.", prompt)
             self.assertNotIn("your final answer streams to Chat automatically", prompt)
             self.assertIn("On cold start or resume, use MCP tool `cccc_bootstrap`.", prompt)

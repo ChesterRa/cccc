@@ -21,7 +21,9 @@ class TestAutomationTickCadence(unittest.TestCase):
             "cccc.daemon.automation.engine.pty_runner.SUPERVISOR.group_running", return_value=True
         ), patch.object(
             manager, "_check_rules"
-        ) as check_rules:
+        ) as check_rules, patch.object(
+            manager, "_check_reminders"
+        ):
             home = Path("/tmp/cccc-automation-cadence")
             with patch.object(Path, "exists", return_value=True), patch.object(
                 Path, "glob", return_value=[home / "groups" / "g-idle" / "group.yaml"]

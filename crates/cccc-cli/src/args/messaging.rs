@@ -8,11 +8,11 @@ pub struct SendArgs {
     #[arg(long)]
     pub by: Option<String>,
     #[arg(long = "to")]
+    /// Agent recipients/selectors or user. One message cannot mix both domains.
     pub recipients: Vec<String>,
-    #[arg(long, default_value = "normal")]
-    pub priority: String,
-    #[arg(long)]
-    pub reply_required: bool,
+    #[arg(long, default_value = "send", value_parser = ["send", "request-reply", "mail"])]
+    /// Delivery mode. Mail is available only for agent recipients.
+    pub mode: String,
     #[arg(long, default_value = "")]
     pub path: String,
 }
@@ -25,9 +25,10 @@ pub struct TrackedSendArgs {
     #[arg(long)]
     pub by: Option<String>,
     #[arg(long = "to")]
+    /// Recipients. One message cannot mix user and agents.
     pub recipients: Vec<String>,
     #[arg(long, default_value = "normal")]
-    pub priority: String,
+    pub task_priority: String,
     #[arg(long)]
     pub title: String,
     #[arg(long, default_value = "")]
@@ -42,8 +43,6 @@ pub struct TrackedSendArgs {
     pub handoff_to: String,
     #[arg(long, default_value = "")]
     pub notes: String,
-    #[arg(long)]
-    pub no_reply_required: bool,
     #[arg(long, default_value = "")]
     pub idempotency_key: String,
 }
@@ -58,10 +57,31 @@ pub struct ReplyArgs {
     pub by: Option<String>,
     #[arg(long = "to")]
     pub recipients: Vec<String>,
-    #[arg(long, default_value = "normal")]
-    pub priority: String,
+    #[arg(long, default_value = "send", value_parser = ["send", "mail"])]
+    /// Reply delivery mode. Mail is available only for agent recipients.
+    pub mode: String,
+}
+
+#[derive(Debug, Args)]
+pub struct DeliverArgs {
+    pub event_id: String,
+    #[arg(long = "group")]
+    pub group_id: Option<String>,
     #[arg(long)]
-    pub reply_required: bool,
+    pub by: Option<String>,
+    #[arg(long = "to", required = true)]
+    pub actor_ids: Vec<String>,
+    #[arg(long)]
+    pub force_ambiguous: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CancelReplyArgs {
+    pub event_id: String,
+    #[arg(long = "group")]
+    pub group_id: Option<String>,
+    #[arg(long)]
+    pub by: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -82,21 +102,6 @@ pub struct InboxArgs {
     pub actor_id: String,
     #[arg(long, default_value_t = 50)]
     pub limit: u64,
-    #[arg(long, default_value = "user")]
-    pub by: String,
-    #[arg(long, default_value = "all")]
-    pub kind_filter: String,
-    #[arg(long)]
-    pub mark_read: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ReadArgs {
-    pub event_id: String,
-    #[arg(long = "group")]
-    pub group_id: Option<String>,
-    #[arg(long)]
-    pub actor_id: String,
     #[arg(long, default_value = "user")]
     pub by: String,
 }

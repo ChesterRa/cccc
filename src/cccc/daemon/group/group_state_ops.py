@@ -6,10 +6,11 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.actors import list_actors
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
-from ..messaging.delivery import recover_group_unread_headless_messages
+from ..messaging.delivery import refill_unread_runtime_messages
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,9 @@ def handle_group_set_state(
     )
     if old_state == "paused" and new_state in {"active", "idle"}:
         try:
-            recover_group_unread_headless_messages(group)
+            for actor in list_actors(group):
+                if isinstance(actor, dict):
+                    refill_unread_runtime_messages(group, actor_id=str(actor.get("id") or ""))
         except Exception as exc:
             logger.warning(
                 "failed to recover unread headless delivery after group resume: group=%s error=%s",

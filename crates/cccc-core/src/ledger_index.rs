@@ -19,7 +19,6 @@ struct LedgerIndex {
     positions: HashMap<String, usize>,
     client_ids: HashMap<ClientKey, usize>,
     relays: HashMap<String, usize>,
-    acked_by: HashMap<String, BTreeSet<String>>,
     replied_by: HashMap<String, BTreeSet<String>>,
     estimated_bytes: u64,
 }
@@ -41,7 +40,6 @@ impl LedgerIndex {
         self.positions.clear();
         self.client_ids.clear();
         self.relays.clear();
-        self.acked_by.clear();
         self.replied_by.clear();
         for (position, event) in self.events.iter().enumerate() {
             self.positions.insert(event.id.clone(), position);
@@ -63,7 +61,7 @@ impl LedgerIndex {
             {
                 self.relays.insert(source_id.to_owned(), position);
             }
-            index_relation(event, &mut self.acked_by, &mut self.replied_by);
+            index_reply(event, &mut self.replied_by);
         }
     }
 
@@ -88,7 +86,7 @@ impl LedgerIndex {
         {
             self.relays.insert(source_id.to_owned(), position);
         }
-        index_relation(&event, &mut self.acked_by, &mut self.replied_by);
+        index_reply(&event, &mut self.replied_by);
         self.estimated_bytes = self
             .estimated_bytes
             .saturating_add(estimate_event_bytes(&event));
@@ -97,40 +95,20 @@ impl LedgerIndex {
     }
 }
 
-fn index_relation(
-    event: &Event,
-    acked_by: &mut HashMap<String, BTreeSet<String>>,
-    replied_by: &mut HashMap<String, BTreeSet<String>>,
-) {
-    let (target, actor, relation) = if event.kind == "chat.ack" {
-        (
-            event
-                .data
-                .get("event_id")
-                .and_then(serde_json::Value::as_str),
-            event
-                .data
-                .get("actor_id")
-                .and_then(serde_json::Value::as_str),
-            acked_by,
-        )
-    } else if event.kind == "chat.message" {
-        (
-            event
-                .data
-                .get("reply_to")
-                .and_then(serde_json::Value::as_str),
-            Some(event.by.as_str()),
-            replied_by,
-        )
-    } else {
+fn index_reply(event: &Event, replied_by: &mut HashMap<String, BTreeSet<String>>) {
+    if event.kind != "chat.message" {
         return;
-    };
+    }
+    let target = event
+        .data
+        .get("reply_to")
+        .and_then(serde_json::Value::as_str);
+    let actor = Some(event.by.as_str());
     if let (Some(target), Some(actor)) = (target, actor)
         && !target.is_empty()
         && !actor.is_empty()
     {
-        relation
+        replied_by
             .entry(target.to_owned())
             .or_default()
             .insert(actor.to_owned());

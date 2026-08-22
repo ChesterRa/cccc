@@ -693,6 +693,35 @@ mod tests {
     }
 
     #[test]
+    fn devin_accepts_an_equivalent_command_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir(&bin).expect("bin");
+        let executable = bin.join("cccc");
+        std::fs::write(&executable, []).expect("executable");
+        let equivalent = bin.join("..").join("bin").join("cccc");
+        let output = serde_json::json!({
+            "mcpServers": {
+                "cccc": {
+                    "transport": "stdio",
+                    "command": equivalent,
+                    "args": ["mcp"]
+                }
+            }
+        })
+        .to_string();
+        assert_eq!(
+            command_output_state(
+                ActorRuntime::Devin,
+                &output,
+                &[executable.to_string_lossy().into_owned(), "mcp".into()],
+            )
+            .state,
+            State::Ready
+        );
+    }
+
+    #[test]
     fn devin_list_does_not_accept_an_unrelated_server_command() {
         let output = "Configured MCP servers:\n\n  • other\n    Command: /opt/cccc mcp\n";
         assert_eq!(

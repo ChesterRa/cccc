@@ -844,8 +844,7 @@ def send_nomcp_advisory(sid: str, token: str, *, msg_id: str, text: str, title: 
         data = ChatMessageData(
             text=rendered,
             format="markdown",
-            priority="normal",
-            reply_required=False,
+            message_mode="send",
             to=to,
             reply_to=str(session.get("reply_to_event_id") or "").strip() or None,
             source_platform="nomcp",

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from ...contracts.v1.group_bridge import GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
 from .identity import canonical_payload_bytes, get_group_bridge_identity, peer_id_from_public_key_b64
 
 PROTOCOL_ID = "/cccc/group_bridge/session-ws/1.0.0"
@@ -17,6 +18,7 @@ def session_hello_material(hello: Dict[str, Any]) -> bytes:
     return canonical_payload_bytes(
         {
             "protocol": PROTOCOL_ID,
+            "message_contract_version": hello.get("message_contract_version"),
             "target_group_id": str(hello.get("target_group_id") or "").strip(),
             "src_group_id": str(hello.get("src_group_id") or "").strip(),
             "remote_peer_id": str(hello.get("remote_peer_id") or "").strip(),
@@ -27,6 +29,7 @@ def session_hello_material(hello: Dict[str, Any]) -> bytes:
 def sign_session_hello(hello: Dict[str, Any], *, home: Optional[Path] = None) -> Dict[str, Any]:
     identity = get_group_bridge_identity(home=home)
     signed = dict(hello or {})
+    signed["message_contract_version"] = GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
     signed["remote_peer_id"] = identity.peer_id
     signed["public_key"] = identity.public_key_b64
     signed["signature"] = identity.sign(session_hello_material(signed))

@@ -77,11 +77,17 @@ class TestEventsStreamResumeFiltering(unittest.TestCase):
                 )
                 append_event(
                     group.ledger_path,
-                    kind="chat.ack",
+                    kind="runtime.delivery",
                     group_id=group.group_id,
                     scope_key="",
-                    by="peer1",
-                    data={"actor_id": "peer1", "event_id": "01TEST"},
+                    by="system",
+                    data={
+                        "actor_id": "peer1",
+                        "source_event_id": "01TEST",
+                        "delivery_id": "delivery:peer1:01TEST",
+                        "state": "accepted",
+                        "transport": "test",
+                    },
                 )
 
                 client, server = socket.socketpair()

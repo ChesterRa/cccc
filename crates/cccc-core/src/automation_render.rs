@@ -79,7 +79,6 @@ pub fn notify_events(
                 "to": [actor.id.as_str()],
                 "im_visibility": "public",
                 "priority": action.and_then(|action| action.get("priority")).cloned().unwrap_or_else(|| json!("normal")),
-                "requires_ack": action.and_then(|action| action.get("requires_ack")).and_then(Value::as_bool).unwrap_or(false),
                 "context": {"rule_id": rule_id},
             })
             .as_object()

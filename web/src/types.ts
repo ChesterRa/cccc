@@ -169,12 +169,13 @@ export type HeadlessPreviewSession = {
 };
 
 // Chat message payload
+export type MessageMode = "send" | "request_reply" | "mail";
+
 export type ChatMessageData = {
   text?: string;
   insight?: string;
   to?: string[];
-  priority?: "normal" | "attention";
-  reply_required?: boolean;
+  message_mode?: MessageMode;
   sender_title?: string;
   sender_runtime?: string;
   sender_avatar_path?: string;
@@ -193,6 +194,7 @@ export type ChatMessageData = {
   src_event_id?: string;
   dst_group_id?: string;
   dst_to?: string[];
+  dst_message_mode?: MessageMode;
   dst_event_id?: string;
   remote_event_id?: string;
   activities?: StreamingActivity[];
@@ -201,17 +203,17 @@ export type ChatMessageData = {
 };
 
 export type ObligationStatus = {
-  read: boolean;
-  acked: boolean;
   replied: boolean;
-  reply_required: boolean;
+  reply_requested: boolean;
+  cancelled: boolean;
+  delivery_state: "" | "claimed" | "accepted" | "failed" | "ambiguous" | string;
 };
 
-// Chat read receipt payload
-export type ChatReadData = { actor_id?: string; event_id?: string };
+// Mail read receipt payload
+export type MailReadData = { actor_id?: string; event_id?: string };
 
 // Ledger event data union
-export type LedgerEventData = ChatMessageData | ChatReadData | Record<string, unknown>;
+export type LedgerEventData = ChatMessageData | MailReadData | Record<string, unknown>;
 
 export type LedgerEvent = {
   id?: string;
@@ -222,7 +224,6 @@ export type LedgerEvent = {
   data?: LedgerEventData;
   _streaming?: boolean;
   _read_status?: Record<string, boolean>;
-  _ack_status?: Record<string, boolean>;
   _obligation_status?: Record<string, ObligationStatus>;
   _web_model_delivery_status?: WebModelDeliveryStatusPayload;
 };
@@ -256,7 +257,6 @@ export type RuntimeActivityEvent = {
 
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
-  ack_status?: Record<string, boolean>;
   obligation_status?: Record<string, ObligationStatus>;
   web_model_delivery_status?: WebModelDeliveryStatusPayload;
 };
@@ -732,13 +732,6 @@ export type ProjectMdInfo = {
 
 export type GroupSettings = {
   default_send_to: "foreman" | "broadcast";
-  nudge_after_seconds: number;
-  reply_required_nudge_after_seconds: number;
-  attention_ack_nudge_after_seconds: number;
-  unread_nudge_after_seconds: number;
-  nudge_digest_min_interval_seconds: number;
-  nudge_max_repeats_per_obligation: number;
-  nudge_escalate_after_repeats: number;
   actor_idle_timeout_seconds: number;
   keepalive_delay_seconds: number;
   keepalive_max_per_actor: number;
@@ -746,7 +739,8 @@ export type GroupSettings = {
   help_nudge_interval_seconds: number;
   help_nudge_min_messages: number;
   min_interval_seconds: number;
-  auto_mark_on_delivery: boolean;
+  mail_notice_after_seconds: number;
+  reply_notice_after_seconds: number;
 
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
@@ -1349,7 +1343,6 @@ export type AutomationRuleAction =
       snippet_ref?: string | null;
       message?: string;
       priority?: "low" | "normal" | "high" | "urgent";
-      requires_ack?: boolean;
     }
   | { kind: "group_state"; state: "active" | "idle" | "paused" | "stopped" }
   | { kind: "actor_control"; operation: "start" | "stop" | "restart"; targets?: string[] };

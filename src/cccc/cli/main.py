@@ -213,21 +213,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_secrets.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_secrets.set_defaults(func=cmd_actor_secrets)
 
-    p_inbox = sub.add_parser("inbox", help="List unread messages for an actor (chat messages + system notifications)")
+    p_inbox = sub.add_parser("inbox", help="Read the next unread Mail batch for an actor")
     p_inbox.add_argument("--actor-id", required=True, help="Target actor id")
     p_inbox.add_argument("--by", default="user", help="Requester (default: user)")
     p_inbox.add_argument("--group", default="", help="Target group_id (default: active group)")
-    p_inbox.add_argument("--limit", type=int, default=50, help="Max messages to return (default: 50)")
-    p_inbox.add_argument("--kind-filter", choices=["all", "chat", "notify"], default="all", help="Filter by message type: all (default), chat (messages only), notify (system notifications only)")
-    p_inbox.add_argument("--mark-read", action="store_true", help="Mark returned messages as read up to the last one")
+    p_inbox.add_argument("--limit", type=int, default=50, help="Max Mail items to return (default: 50)")
     p_inbox.set_defaults(func=cmd_inbox)
-
-    p_read = sub.add_parser("read", help="Mark a message event as read for an actor")
-    p_read.add_argument("event_id", help="Target message event id")
-    p_read.add_argument("--actor-id", required=True, help="Target actor id")
-    p_read.add_argument("--by", default="user", help="Requester (default: user)")
-    p_read.add_argument("--group", default="", help="Target group_id (default: active group)")
-    p_read.set_defaults(func=cmd_read)
 
     p_prompt = sub.add_parser("prompt", help="Render a concise SYSTEM prompt for a group actor")
     p_prompt.add_argument("--actor-id", required=True, help="Target actor id")
@@ -242,10 +233,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--to",
         action="append",
         default=[],
-        help="Recipients/selectors (repeatable, supports comma-separated, e.g. --to peer-a --to @foreman,@peers)",
+        help="Agent recipients/selectors or user (repeatable, comma-separated); do not mix user and agents",
     )
-    p_send.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message mode")
-    p_send.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
+    p_send.add_argument(
+        "--mode",
+        choices=["send", "request-reply", "mail"],
+        default="send",
+        help="Delivery mode (default: send); mail is agent-only",
+    )
     p_send.add_argument("--path", default="", help="Send message under this scope (path inside repo/scope)")
     p_send.set_defaults(func=cmd_send)
 
@@ -266,8 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tracked_send.add_argument("--waiting-on", choices=["none", "user", "actor", "external"], default="", help="Task waiting_on value")
     p_tracked_send.add_argument("--handoff-to", default="", help="Optional next owner")
     p_tracked_send.add_argument("--notes", default="", help="Task notes")
-    p_tracked_send.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message/task priority")
-    p_tracked_send.add_argument("--no-reply-required", action="store_true", help="Do not require an assignee reply")
+    p_tracked_send.add_argument("--task-priority", default="normal", help="Task-domain priority (does not affect message delivery)")
     p_tracked_send.add_argument("--idempotency-key", default="", help="Stable retry key")
     p_tracked_send.set_defaults(func=cmd_tracked_send)
 
@@ -280,11 +274,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--to",
         action="append",
         default=[],
-        help="Recipients (default: original sender); repeatable, comma-separated",
+        help="Recipients (default: original sender); do not mix user and agents",
     )
-    p_reply.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message mode")
-    p_reply.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
+    p_reply.add_argument(
+        "--mode",
+        choices=["send", "mail"],
+        default="send",
+        help="Reply delivery: send prompts now; mail is agent-only and stores in Inbox",
+    )
     p_reply.set_defaults(func=cmd_reply)
+
+    p_deliver = sub.add_parser("deliver", help="Promote or retry an existing message without duplicating it")
+    p_deliver.add_argument("event_id", help="Existing chat.message event ID")
+    p_deliver.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_deliver.add_argument("--by", default=None, help="Requester (default: CCCC_ACTOR_ID, otherwise user)")
+    p_deliver.add_argument(
+        "--to",
+        action="append",
+        required=True,
+        help="Explicit recipient actor ID; repeatable, comma-separated",
+    )
+    p_deliver.add_argument(
+        "--force-ambiguous",
+        action="store_true",
+        help="Retry an ambiguous delivery even though it may duplicate a prompt",
+    )
+    p_deliver.set_defaults(func=cmd_deliver)
+
+    p_cancel_reply = sub.add_parser("cancel-reply", help="Cancel outstanding reply obligations for a message")
+    p_cancel_reply.add_argument("event_id", help="Existing request-reply chat.message event ID")
+    p_cancel_reply.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_cancel_reply.add_argument("--by", default=None, help="Requester (default: CCCC_ACTOR_ID, otherwise user)")
+    p_cancel_reply.set_defaults(func=cmd_cancel_reply)
 
     p_tail = sub.add_parser("tail", help="Tail the active group's ledger (or --group)")
     p_tail.add_argument("--group", default="", help="Target group_id (default: active group)")

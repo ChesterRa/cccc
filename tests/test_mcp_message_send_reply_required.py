@@ -15,8 +15,49 @@ def _isolated_runtime_context():
     return runtime_context_override(home="/tmp/cccc-mcp-test", group_id="", actor_id="")
 
 
-class TestMcpMessageSendReplyRequired(unittest.TestCase):
-    def test_message_send_coerces_reply_required_string(self) -> None:
+class TestMcpMessageModes(unittest.TestCase):
+    def test_message_control_tools_forward_existing_event_identity(self) -> None:
+        from cccc.ports.mcp import common as mcp_common
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = []
+
+        def _fake_call_daemon(req):
+            captured.append(req)
+            return {"ok": True, "result": {"event_id": "ev_test"}}
+
+        with (
+            _isolated_runtime_context(),
+            patch.dict(os.environ, _CLEAN_ENV, clear=False),
+            patch.object(mcp_common, "call_daemon", side_effect=_fake_call_daemon),
+        ):
+            mcp_server.handle_tool_call(
+                "cccc_message_deliver",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer1",
+                    "source_event_id": "source-1",
+                    "actor_ids": ["peer2"],
+                    "force_ambiguous": True,
+                },
+            )
+            mcp_server.handle_tool_call(
+                "cccc_reply_request_cancel",
+                {
+                    "group_id": "g_test",
+                    "actor_id": "peer1",
+                    "source_event_id": "source-2",
+                },
+            )
+
+        self.assertEqual(captured[0]["op"], "message_deliver")
+        self.assertEqual(captured[0]["args"]["source_event_id"], "source-1")
+        self.assertEqual(captured[0]["args"]["actor_ids"], ["peer2"])
+        self.assertTrue(captured[0]["args"]["force_ambiguous"])
+        self.assertEqual(captured[1]["op"], "reply_request_cancel")
+        self.assertEqual(captured[1]["args"]["source_event_id"], "source-2")
+
+    def test_message_send_maps_request_reply_mode(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
 
@@ -36,7 +77,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "actor_id": "peer1",
                     "text": "hello",
                     "to": ["user"],
-                    "reply_required": "true",
+                    "mode": "request_reply",
                 },
             )
 
@@ -44,7 +85,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         self.assertEqual(req.get("op"), "send")
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
-        self.assertTrue(args.get("reply_required") is True)
+        self.assertEqual(args.get("message_mode"), "request_reply")
+        self.assertNotIn("reply_required", args)
 
     def test_message_send_passes_refs(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -77,6 +119,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
+        self.assertEqual(args.get("message_mode"), "mail")
         self.assertEqual(args.get("insight"), "The referenced artifact may change the decision boundary.")
         self.assertTrue(args.get("require_peer_insight"))
 
@@ -108,6 +151,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("suggested_user_message"), "Please continue with the next check.")
+        self.assertEqual(args.get("message_mode"), "mail")
 
     def test_message_send_uses_cross_group_op_for_explicit_destination(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -140,6 +184,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("group_id"), "g_runtime")
         self.assertEqual(args.get("dst_group_id"), "g_selected")
         self.assertEqual(args.get("to"), ["@foreman"])
+        self.assertEqual(args.get("message_mode"), "mail")
 
     def test_message_send_routes_group_bridge_remote_destination_to_remote_send(self) -> None:
         from cccc.kernel.group_bridge import pairing as pairing_kernel
@@ -174,8 +219,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "actor_id": "peer1",
                     "text": "hello remote",
                     "to": ["@foreman"],
-                    "priority": "attention",
-                    "reply_required": "true",
+                    "mode": "request_reply",
                     "idempotency_key": "caller-key-1",
                     "refs": [{"kind": "note", "id": "ref-1"}],
                 },
@@ -191,8 +235,9 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
         self.assertEqual(payload.get("text"), "hello remote")
         self.assertEqual(payload.get("to"), ["@foreman"])
-        self.assertEqual(payload.get("priority"), "attention")
-        self.assertEqual(payload.get("reply_required"), True)
+        self.assertEqual(payload.get("message_mode"), "request_reply")
+        self.assertNotIn("priority", payload)
+        self.assertNotIn("reply_required", payload)
         self.assertEqual(payload.get("refs"), [{"kind": "note", "id": "ref-1"}])
 
     def test_message_send_requires_explicit_recipient_for_group_bridge_remote_destination(self) -> None:
@@ -327,6 +372,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "actor_id": "peer1",
                     "event_id": "ev_1",
                     "text": "reply",
+                    "mode": "mail",
                     "refs": refs,
                 },
             )
@@ -335,6 +381,30 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
+        self.assertEqual(args.get("message_mode"), "mail")
+
+    def test_message_reply_rejects_nested_reply_request_mode(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+        from cccc.ports.mcp import common as mcp_common
+
+        with _isolated_runtime_context(), patch.dict(os.environ, _CLEAN_ENV, clear=False), patch.object(
+            mcp_common,
+            "call_daemon",
+            side_effect=AssertionError("invalid reply mode must not reach the daemon"),
+        ):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call(
+                    "cccc_message_reply",
+                    {
+                        "group_id": "g_test",
+                        "actor_id": "peer1",
+                        "event_id": "ev_1",
+                        "text": "reply",
+                        "mode": "request_reply",
+                    },
+                )
+
+        self.assertEqual(cm.exception.code, "invalid_message_mode")
 
     def test_message_reply_passes_suggested_user_message(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -367,14 +437,9 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("suggested_user_message"), "Please run the next implementation pass.")
         self.assertEqual(args.get("insight"), "The reply may preserve an unexamined frame.")
         self.assertTrue(args.get("require_peer_insight"))
-        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
+        self.assertNotIn("post_message_nudge", out)
 
-        hint = out.get("post_message_nudge") if isinstance(out.get("post_message_nudge"), dict) else {}
-        self.assertEqual(hint.get("kind"), "whole_situation_reconstruction")
-        self.assertEqual(hint.get("message"), POST_MESSAGE_NUDGE)
-        self.assertNotIn("post_reply_hint", out)
-
-    def test_message_send_adds_lightweight_tool_boundary_hint(self) -> None:
+    def test_message_send_does_not_inject_a_post_send_prompt(self) -> None:
         from cccc.ports.mcp import server as mcp_server
         from cccc.ports.mcp import common as mcp_common
 
@@ -395,37 +460,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             )
 
         self.assertEqual(out.get("event_id"), "ev_send")
-        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
-
-        hint = out.get("post_message_nudge") if isinstance(out.get("post_message_nudge"), dict) else {}
-        self.assertEqual(hint.get("kind"), "whole_situation_reconstruction")
-        self.assertEqual(hint.get("message"), POST_MESSAGE_NUDGE)
-        self.assertNotIn("post_send_hint", out)
-
-    def test_post_message_nudge_only_marks_accepted_or_replayed_success(self) -> None:
-        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
-        from cccc.ports.mcp.handlers.cccc_messaging import _with_post_message_nudge
-
-        for result in (
-            {"event": {"id": "evt-1"}},
-            {"event_id": "evt-2", "replayed": True},
-            {"message_sent": True, "task_id": "T001"},
-            {"receipt": {"status": "queued"}},
-            {"remote_send": {"receipt": {"status": "sent"}}},
-        ):
-            nudged = _with_post_message_nudge(result)
-            self.assertEqual(
-                nudged.get("post_message_nudge"),
-                {"kind": "whole_situation_reconstruction", "message": POST_MESSAGE_NUDGE},
-            )
-
-        for result in (
-            {"message_sent": False, "partial_failure": True},
-            {"receipt": {"status": "failed"}},
-            {"remote_send": {"receipt": {"status": "failed"}}},
-            {"group_bridge_reply": {"error": {"code": "offline"}}},
-        ):
-            self.assertNotIn("post_message_nudge", _with_post_message_nudge(result))
+        self.assertNotIn("post_message_nudge", out)
 
     def test_tracked_send_passes_task_contract_args(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -452,6 +487,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "to": "reviewer",
                     "outcome": "Review findings reported.",
                     "checklist": checklist,
+                    "task_priority": "high",
                     "idempotency_key": "req-1",
                 },
             )
@@ -463,9 +499,35 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("to"), ["reviewer"])
         self.assertEqual(args.get("title"), "Review PR")
         self.assertEqual(args.get("checklist"), checklist)
-        self.assertTrue(args.get("reply_required"))
+        self.assertEqual(args.get("task_priority"), "high")
+        self.assertNotIn("priority", args)
+        self.assertNotIn("reply_required", args)
+        self.assertNotIn("message_mode", args)
         self.assertEqual(args.get("insight"), "The review should be free to reject the entire approach.")
         self.assertTrue(args.get("require_peer_insight"))
+
+    def test_tracked_send_rejects_legacy_priority_fields(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with _isolated_runtime_context(), patch.dict(
+            os.environ,
+            {"CCCC_GROUP_ID": "g_test", "CCCC_ACTOR_ID": "foreman"},
+            clear=False,
+        ):
+            for field in ("priority", "message_priority", "reply_required", "requires_ack"):
+                with self.subTest(field=field):
+                    with self.assertRaises(mcp_server.MCPError) as raised:
+                        mcp_server.handle_tool_call(
+                            "cccc_tracked_send",
+                            {
+                                "title": "Review PR",
+                                "text": "Review it.",
+                                "to": ["reviewer"],
+                                field: "attention" if "priority" in field else True,
+                            },
+                        )
+                    self.assertEqual(raised.exception.code, "unsupported_message_fields")
+                    self.assertIn("task_priority", raised.exception.message)
 
     def test_message_send_allows_codex_headless_actor(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
@@ -520,6 +582,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("group_id"), group_id)
         self.assertEqual(args.get("by"), "peer1")
+        self.assertEqual(args.get("message_mode"), "mail")
 
 
 if __name__ == "__main__":

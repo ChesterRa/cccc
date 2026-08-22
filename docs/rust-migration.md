@@ -207,10 +207,11 @@ the Rust hash-only form, with path and symlink escape checks applied to both.
 Plain `.jsonl` and Python `.jsonl.gz` ledger segments are read in the same event
 order. Rust compaction writes `ledger.<UTC>.<sequence>.jsonl` files and updates
 the Python manifest contract, so either implementation can read new segments.
-Ledger reads also normalize the pre-v1 `chat.ack` envelope (`type`, `event_id`,
-and `agent`) into the current versioned event contract. Other unrecognized or
-malformed historical lines are reported with their source location and skipped,
-so one legacy record cannot make an entire group unavailable.
+Unrecognized or malformed historical ledger lines are reported with their
+source location and skipped, so one invalid record cannot make an entire group
+unavailable. Current Python and Rust writers share the same `message_mode`,
+`mail.read`, reply/cancellation, and `runtime.delivery` contracts; neither
+engine writes or interprets the retired generic acknowledgement events.
 
 ChatGPT Web Model connector bindings use
 `CCCC_HOME/web_model_connectors.yaml` in both implementations. Current builds
@@ -358,7 +359,8 @@ Actor-bound chat messages and system notifications use one bounded FIFO worker
 per actor. A worker seeds the runtime with its CCCC system prompt once per
 session, preserves message order, uses bracketed paste when the terminal enables
 it, and applies the actor's configured submit mode. Successful delivery returns
-to the daemon's serialized state path before advancing the inbox cursor.
+to the daemon's serialized state path by appending `runtime.delivery`; it never
+advances the separate Mail cursor.
 The Rust preamble follows the Python contract: cold-start and resumed sessions
 are told to call `cccc_bootstrap`, which returns one bounded semantic packet:
 session orientation, recovery state, an actionable inbox preview, context
@@ -387,10 +389,10 @@ provider sessions: Codex app-server JSON-RPC and Claude bidirectional
 stream-json. Their messages are pushed through bounded actor delivery workers,
 and actor health comes from the real provider process. Web Model and the
 experimental Rust-only custom external-headless path retain the pull contract:
-the executor obtains an
-ordered batch with `cccc_runtime_wait_next_turn` and commits its exact contiguous
-event prefix with `cccc_runtime_complete_turn`. The legacy
-`web_model_runtime_*` daemon operation names remain accepted for compatibility.
+the executor obtains an ordered direct-delivery batch with
+`cccc_runtime_wait_next_turn` and closes that exact active turn with
+`cccc_runtime_complete_turn`. Runtime completion does not advance the Inbox read
+cursor; only `cccc_inbox_read` consumes Inbox contents.
 
 Rust ChatGPT Web Model delivery follows the same browser transaction boundary as
 Python. It selects a visible editable composer, confines Send discovery to that
@@ -444,10 +446,10 @@ document/input projections and model installation remain implementation-owned
 experimental details; model installation is Web-owned and advertised as
 unavailable through the Rust daemon.
 
-Delivery completion advances the inbox only across a fully delivered contiguous
-prefix. Resolution scans the ledger index from the actor cursor, so batches over
-the former 1000-event read window neither leave stale unread entries nor skip an
-undelivered event.
+Runtime delivery and Mail reading are separate facts. Send and Send + Reply use
+`runtime.delivery` and never advance the Mail cursor. `cccc_inbox_read` consumes
+only the next Mail batch in Mail append order; explicit message history remains
+non-consuming.
 
 Daemon connections are read concurrently with a size limit and timeout. State
 operations remain serialized behind the dispatch lock, so a slow or malformed

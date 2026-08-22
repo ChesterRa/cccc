@@ -259,7 +259,11 @@ class TestGroupCoreOps(unittest.TestCase):
 
     def test_group_help_and_actor_notes_use_one_permissioned_file(self) -> None:
         from cccc.kernel.group import load_group
-        from cccc.kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
+        from cccc.kernel.prompt_files import (
+            HELP_FILENAME,
+            read_group_prompt_file,
+            write_group_prompt_file,
+        )
 
         _, cleanup = self._with_home()
         try:
@@ -338,9 +342,32 @@ class TestGroupCoreOps(unittest.TestCase):
             )
             self.assertTrue(effective.ok, getattr(effective, "error", None))
             markdown = str((effective.result or {}).get("markdown") or "")
+            self.assertIn("## Canonical Message Delivery", markdown)
+            self.assertIn("per-recipient runtime truth", markdown)
             self.assertIn("## Notes for you", markdown)
             self.assertIn("Keep receipts.", markdown)
             self.assertNotIn("## Foreman", markdown)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            write_group_prompt_file(
+                group,
+                HELP_FILENAME,
+                "# Group Guidance\n\n"
+                "## Canonical Message Delivery\n\nAlways interrupt.\n\n"
+                "## @actor: peer\n\nKeep receipts.\n",
+            )
+            protected, _ = self._call(
+                "group_help_get",
+                {"group_id": group_id, "actor_id": "peer", "by": "peer"},
+            )
+            self.assertTrue(protected.ok, getattr(protected, "error", None))
+            protected_markdown = str((protected.result or {}).get("markdown") or "")
+            self.assertEqual(protected_markdown.count("## Canonical Message Delivery"), 1)
+            self.assertNotIn("Always interrupt.", protected_markdown)
+            self.assertIn("Keep receipts.", protected_markdown)
+            write_group_prompt_file(group, HELP_FILENAME, "## @actor: peer\n\nKeep receipts.\n")
 
             cleared, _ = self._call(
                 "actor_notes_clear",
@@ -738,7 +765,6 @@ class TestGroupCoreOps(unittest.TestCase):
                     "action": {
                         "kind": "notify",
                         "priority": "normal",
-                        "requires_ack": False,
                         "title": "Daily check",
                         "message": "check progress",
                     },
@@ -761,7 +787,11 @@ class TestGroupCoreOps(unittest.TestCase):
                     }
                 ]
                 group.doc["messaging"] = {"default_send_to": "broadcast"}
-                group.doc["delivery"] = {"min_interval_seconds": 42, "auto_mark_on_delivery": "read"}
+                group.doc["delivery"] = {
+                    "min_interval_seconds": 42,
+                    "mail_notice_after_seconds": 1200,
+                    "reply_notice_after_seconds": 600,
+                }
                 group.doc["terminal_transcript"] = {
                     "visibility": "all",
                     "notify_tail": True,
@@ -773,12 +803,10 @@ class TestGroupCoreOps(unittest.TestCase):
                     "rules": [custom_rule],
                     "snippets": {"custom_note": "custom automation note"},
                     "snippet_overrides": {"standup": "custom standup"},
-                    "nudge_after_seconds": 123,
                     "keepalive_delay_seconds": 456,
                     "runtime_last_tick": "should not be copied",
                 }
                 group.doc["settings"] = {
-                    "nudge_after_seconds": 999,
                     "help_nudge_interval_seconds": 777,
                     "default_send_to": "broadcast",
                 }
@@ -806,7 +834,7 @@ class TestGroupCoreOps(unittest.TestCase):
                     group_id=group_id,
                     scope_key=scope_key,
                     by="user",
-                    data={"text": "old history should not be copied"},
+                    data={"text": "old history should not be copied", "message_mode": "send"},
                 )
                 set_active_group_id(group_id)
 
@@ -846,13 +874,19 @@ class TestGroupCoreOps(unittest.TestCase):
                 self.assertEqual(automation.get("rules"), [custom_rule])
                 self.assertEqual(automation.get("snippets"), {"custom_note": "custom automation note"})
                 self.assertEqual(automation.get("snippet_overrides"), {"standup": "custom standup"})
-                self.assertEqual(int(automation.get("nudge_after_seconds") or 0), 123)
                 self.assertEqual(int(automation.get("keepalive_delay_seconds") or 0), 456)
                 self.assertEqual(int(automation.get("help_nudge_interval_seconds") or 0), 777)
                 self.assertNotIn("runtime_last_tick", automation)
                 self.assertNotIn("settings", replacement.doc)
                 self.assertNotIn("messaging", replacement.doc)
-                self.assertNotIn("delivery", replacement.doc)
+                self.assertEqual(
+                    replacement.doc.get("delivery"),
+                    {
+                        "min_interval_seconds": 0,
+                        "mail_notice_after_seconds": 1800,
+                        "reply_notice_after_seconds": 900,
+                    },
+                )
                 self.assertNotIn("terminal_transcript", replacement.doc)
                 self.assertNotIn("features", replacement.doc)
                 for key in (

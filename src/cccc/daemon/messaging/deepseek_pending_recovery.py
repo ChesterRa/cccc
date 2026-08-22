@@ -6,7 +6,7 @@ from typing import Any
 
 
 def recover_pending_messages(group: Any, *, actor_id: str, limit: int = 256) -> int:
-    """Recover durable completions, then enqueue the remaining unread prefix."""
+    """Recover durable handoffs, then enqueue the remaining claimed prefix."""
     from .deepseek_delivery import recover_durable_terminals
     from .delivery import (
         THROTTLE,

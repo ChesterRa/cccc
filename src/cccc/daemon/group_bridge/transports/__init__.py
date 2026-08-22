@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .base import (
     RemoteMessageEnvelope,
+    RemoteReplyRequestCancelEnvelope,
     RemoteSendResult,
     RemoteSendTransport,
     RemoteTarget,
@@ -23,6 +24,7 @@ register_transport(GroupBridgeSessionTransport())
 
 __all__ = [
     "RemoteMessageEnvelope",
+    "RemoteReplyRequestCancelEnvelope",
     "RemoteSendResult",
     "RemoteSendTransport",
     "RemoteTarget",

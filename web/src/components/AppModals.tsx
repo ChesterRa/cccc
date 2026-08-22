@@ -35,6 +35,7 @@ import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { getEffectiveActorRunner, normalizeActorRunner } from "../utils/headlessRuntimeSupport";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
+import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import {
   useGroupStore,
   useUIStore,
@@ -43,7 +44,7 @@ import {
   useInboxStore,
   useFormStore,
 } from "../stores";
-import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
+import { getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import { getChatSession } from "../stores/useUIStore";
 import * as api from "../services/api";
 import {
@@ -156,6 +157,7 @@ export function AppModals({
     refreshActors,
     loadGroup,
     openChatWindow,
+    mergeEventStatuses,
   } = useGroupStore();
 
   const {
@@ -194,6 +196,7 @@ export function AppModals({
   const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
+  const [messageActionBusy, setMessageActionBusy] = useState("");
 
   const preferredPresentationSurface = selectedGroupId
     ? !isSmallScreen &&
@@ -431,12 +434,19 @@ export function AppModals({
   const messageMeta = useMemo(() => {
     if (!messageMetaEvent) return null;
     // Type guard: ensure data.to is an array.
-    const metaData = messageMetaEvent.data as { to?: unknown[] } | undefined;
-    const toRaw = metaData && Array.isArray(metaData.to) ? metaData.to : [];
-    const toTokensList = toRaw.map((x) => String(x || "").trim()).filter((s) => s.length > 0);
+    const metaData = messageMetaEvent.data as ChatMessageData | undefined;
+    const toTokensList = String(metaData?.dst_group_id || "").trim()
+      ? projectCrossGroupRecipients(metaData)
+      : (Array.isArray(metaData?.to) ? metaData.to : [])
+          .map((x) => String(x || "").trim())
+          .filter((s) => s.length > 0);
     const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
+    const messageMode = projectMessageMode(metaData) || "send";
+    const rs =
+      messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object"
+        ? messageMetaEvent._read_status
+        : null;
 
-    const msgData = messageMetaEvent.data as ChatMessageData | undefined;
     const os =
       messageMetaEvent._obligation_status && typeof messageMetaEvent._obligation_status === "object"
         ? messageMetaEvent._obligation_status
@@ -448,47 +458,65 @@ export function AppModals({
         ...actors
           .map((a) => String(a.id || ""))
           .filter((id) => id && recipientIdSet.has(id))
-          .map((id) => [id, !!(os[id]?.reply_required ? os[id]?.replied : os[id]?.acked)] as const),
+          .map((id) => {
+            const deliveryState = String(os[id]?.delivery_state || "");
+            return {
+              id,
+              cleared:
+                messageMode === "mail"
+                  ? !!rs?.[id]
+                  : messageMode === "request_reply"
+                    ? !!os[id]?.replied || !!os[id]?.cancelled
+                    : ["accepted", "ambiguous"].includes(deliveryState),
+              deliveryState,
+              read: !!rs?.[id],
+              replied: !!os[id]?.replied,
+              replyRequested: !!os[id]?.reply_requested,
+              cancelled: !!os[id]?.cancelled,
+            };
+          }),
         recipientIdSet.has("user")
-          ? ([
-              "user",
-              !!(os["user"]?.reply_required ? os["user"]?.replied : os["user"]?.acked),
-            ] as const)
+          ? {
+              id: "user",
+              cleared:
+                messageMode === "mail"
+                  ? !!rs?.user
+                  : messageMode === "request_reply"
+                    ? !!os.user?.replied || !!os.user?.cancelled
+                    : ["accepted", "ambiguous"].includes(String(os.user?.delivery_state || "")),
+              deliveryState: String(os["user"]?.delivery_state || ""),
+              read: !!rs?.user,
+              replied: !!os["user"]?.replied,
+              replyRequested: !!os["user"]?.reply_requested,
+              cancelled: !!os["user"]?.cancelled,
+            }
           : null,
-      ].filter(Boolean) as Array<readonly [string, boolean]>;
-      const anyReplyRequired = recipientIds.some((id) => !!os[id]?.reply_required);
+      ].filter(Boolean) as Array<{
+        id: string;
+        cleared: boolean;
+        deliveryState: string;
+        read: boolean;
+        replied: boolean;
+        replyRequested: boolean;
+        cancelled: boolean;
+      }>;
       return {
+        sourceEventId: String(messageMetaEvent.id || ""),
         toLabel,
         entries,
-        statusKind: anyReplyRequired ? ("reply" as const) : ("ack" as const),
+        statusKind:
+          messageMode === "mail"
+            ? ("read" as const)
+            : messageMode === "request_reply"
+              ? ("reply" as const)
+              : ("delivery" as const),
+        messageMode,
+        canCancelReply: recipientIds.some(
+          (id) => !!os[id]?.reply_requested && !os[id]?.replied && !os[id]?.cancelled,
+        ),
       };
     }
 
-    const isAttention = String(msgData?.priority || "normal") === "attention";
-    if (isAttention) {
-      const as =
-        messageMetaEvent._ack_status && typeof messageMetaEvent._ack_status === "object"
-          ? messageMetaEvent._ack_status
-          : null;
-      const recipientIds = as
-        ? Object.keys(as)
-        : getAckRecipientIdsForEvent(messageMetaEvent, actors);
-      const recipientIdSet = new Set(recipientIds);
-      const entries = [
-        ...actors
-          .map((a) => String(a.id || ""))
-          .filter((id) => id && recipientIdSet.has(id))
-          .map((id) => [id, !!(as && as[id])] as const),
-        recipientIdSet.has("user") ? (["user", !!(as && as["user"])] as const) : null,
-      ].filter(Boolean) as Array<readonly [string, boolean]>;
-
-      return { toLabel, entries, statusKind: "ack" as const };
-    }
-
-    const rs =
-      messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object"
-        ? messageMetaEvent._read_status
-        : null;
     const recipientIds = rs
       ? Object.keys(rs)
       : getRecipientActorIdsForEvent(messageMetaEvent, actors);
@@ -496,10 +524,78 @@ export function AppModals({
     const entries = actors
       .map((a) => String(a.id || ""))
       .filter((id) => id && recipientIdSet.has(id))
-      .map((id) => [id, !!(rs && rs[id])] as const);
+      .map((id) => ({
+        id,
+        cleared: !!(rs && rs[id]),
+        deliveryState: "",
+        read: !!(rs && rs[id]),
+        replied: false,
+        replyRequested: false,
+        cancelled: false,
+      }));
 
-    return { toLabel, entries, statusKind: "read" as const };
+    return {
+      sourceEventId: String(messageMetaEvent.id || ""),
+      toLabel,
+      entries,
+      statusKind:
+        messageMode === "mail"
+          ? ("read" as const)
+          : messageMode === "request_reply"
+            ? ("reply" as const)
+            : ("delivery" as const),
+      messageMode,
+      canCancelReply: false,
+    };
   }, [actors, messageMetaEvent]);
+
+  const refreshMessageStatus = useCallback(
+    async (eventId: string) => {
+      if (!selectedGroupId || !eventId) return;
+      const statusResp = await api.fetchLedgerStatuses(selectedGroupId, [eventId], {
+        noCache: true,
+      });
+      if (statusResp.ok) {
+        mergeEventStatuses(statusResp.result.statuses || {}, selectedGroupId);
+      }
+    },
+    [mergeEventStatuses, selectedGroupId],
+  );
+
+  const handleDeliverMessage = useCallback(
+    async (actorId: string, forceAmbiguous: boolean) => {
+      const eventId = String(messageMeta?.sourceEventId || "").trim();
+      if (!selectedGroupId || !eventId || !actorId) return;
+      setMessageActionBusy(`deliver:${actorId}`);
+      try {
+        const resp = await api.deliverMessage(selectedGroupId, eventId, [actorId], forceAmbiguous);
+        if (!resp.ok) {
+          showError(`${resp.error.code}: ${resp.error.message}`);
+          return;
+        }
+        await refreshMessageStatus(eventId);
+      } finally {
+        setMessageActionBusy("");
+      }
+    },
+    [messageMeta?.sourceEventId, refreshMessageStatus, selectedGroupId, showError],
+  );
+
+  const handleCancelReplyRequest = useCallback(async () => {
+    const eventId = String(messageMeta?.sourceEventId || "").trim();
+    if (!selectedGroupId || !eventId) return;
+    setMessageActionBusy("cancel-reply");
+    try {
+      const resp = await api.cancelReplyRequest(selectedGroupId, eventId);
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      await refreshMessageStatus(eventId);
+    } finally {
+      setMessageActionBusy("");
+    }
+  }, [messageMeta?.sourceEventId, refreshMessageStatus, selectedGroupId, showError]);
 
   const loadActorProfiles = useCallback(async () => {
     setActorProfilesBusy(true);
@@ -544,17 +640,18 @@ export function AppModals({
 
   const handleMarkAllRead = async () => {
     if (!selectedGroupId || !inboxActorId) return;
-    const last = inboxMessages.length ? inboxMessages[inboxMessages.length - 1] : null;
-    const eventId = last?.id ? String(last.id) : "";
-    if (!eventId) return;
+    if (inboxMessages.length === 0) return;
     setBusy(`inbox-read:${inboxActorId}`);
     try {
-      const resp = await api.markInboxRead(selectedGroupId, inboxActorId, eventId);
+      const resp = await api.readInbox(selectedGroupId, inboxActorId, inboxMessages.length);
       if (!resp.ok) {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
-      const inboxResp = await api.fetchInbox(selectedGroupId, inboxActorId);
+      const [inboxResp] = await Promise.all([
+        api.fetchInbox(selectedGroupId, inboxActorId),
+        refreshActors(selectedGroupId, { includeUnread: true }),
+      ]);
       if (inboxResp.ok) {
         setInboxMessages(inboxResp.result.messages || []);
       }
@@ -1798,7 +1895,16 @@ export function AppModals({
         isDark={isDark}
         toLabel={messageMeta?.toLabel || ""}
         statusKind={messageMeta?.statusKind || "read"}
-        entries={(messageMeta?.entries || []) as [string, boolean][]}
+        entries={messageMeta?.entries || []}
+        messageMode={messageMeta?.messageMode || "send"}
+        busyAction={messageActionBusy}
+        canCancelReply={Boolean(messageMeta?.canCancelReply)}
+        onDeliver={(actorId, forceAmbiguous) => {
+          void handleDeliverMessage(actorId, forceAmbiguous);
+        }}
+        onCancelReply={() => {
+          void handleCancelReplyRequest();
+        }}
         onClose={() => setRecipientsModal(null)}
       />
 

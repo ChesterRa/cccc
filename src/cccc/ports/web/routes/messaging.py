@@ -11,15 +11,15 @@ from ....kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ....kernel.group import load_group
 from ..schemas import (
     DelegateContactRequest,
+    MessageDeliverRequest,
     ReplyRequest,
+    ReplyRequestCancelRequest,
     RouteContext,
     SendCrossGroupRequest,
     SendRequest,
     TrackedSendRequest,
-    UserAckRequest,
     WEB_MAX_FILE_BYTES,
     WEB_MAX_FILE_MB,
-    _normalize_reply_required,
     check_group,
     require_group,
 )
@@ -43,14 +43,46 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 refs.append(item)
         return refs
 
-    def _normalize_priority(raw: str) -> str:
-        prio = str(raw or "normal").strip() or "normal"
-        if prio not in ("normal", "attention"):
-            raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
-        return prio
+    def _normalize_message_mode(raw: str) -> str:
+        mode = str(raw or "send").strip().replace("-", "_") or "send"
+        if mode not in {"send", "request_reply", "mail"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_message_mode", "message": "message_mode must be send, request_reply, or mail"},
+            )
+        return mode
+
+    def _normalize_reply_message_mode(raw: str) -> str:
+        mode = str(raw or "send").strip().replace("-", "_") or "send"
+        if mode not in {"send", "mail"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_message_mode", "message": "reply message_mode must be send or mail"},
+            )
+        return mode
 
     def _normalize_client_id(raw: str) -> str:
         return str(raw or "").strip()
+
+    def _parse_recipients_json(raw: str) -> list[str]:
+        try:
+            parsed = json.loads(raw or "[]")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_recipient", "message": f"to_json must be a JSON array: {exc}"},
+            )
+        if not isinstance(parsed, list):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_recipient", "message": "to_json must be a JSON array"},
+            )
+        if any(not isinstance(item, str) for item in parsed):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_recipient", "message": "to_json entries must be strings"},
+            )
+        return [str(item).strip() for item in parsed if isinstance(item, str) and str(item).strip()]
 
     def _build_message_request(op: str, *, group_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return {"op": op, "args": {"group_id": group_id, **args}}
@@ -58,8 +90,40 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def _submit_message(req: Dict[str, Any]) -> Dict[str, Any]:
         return await ctx.daemon(req)
 
+    async def _preflight_upload(*, operation: str, group_id: str, args: Dict[str, Any]) -> Dict[str, Any] | None:
+        response = await ctx.daemon(
+            _build_message_request(
+                "message_upload_preflight",
+                group_id=group_id,
+                args={"operation": operation, **args},
+            )
+        )
+        if not bool(response.get("ok")):
+            error = response.get("error") if isinstance(response.get("error"), dict) else {}
+            code = str(error.get("code") or "invalid_request")
+            status_code = 400
+            if "not_found" in code:
+                status_code = 404
+            elif "permission" in code:
+                status_code = 403
+            elif code.endswith(("_busy", "_conflict", "_lease_lost")):
+                status_code = 409
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": code,
+                    "message": str(error.get("message") or "message upload preflight failed"),
+                    "details": error.get("details") if isinstance(error.get("details"), dict) else {},
+                },
+            )
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        if bool(result.get("duplicate")):
+            existing = result.get("result") if isinstance(result.get("result"), dict) else {}
+            return {"ok": True, "result": existing}
+        return None
+
     async def _store_upload_attachments(group: Any, files: list[UploadFile]) -> list[dict[str, Any]]:
-        attachments: list[dict[str, Any]] = []
+        staged: list[tuple[bytes, str, str]] = []
         for upload in files or []:
             raw = await upload.read()
             if len(raw) > WEB_MAX_FILE_BYTES:
@@ -67,15 +131,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     status_code=413,
                     detail={"code": "file_too_large", "message": f"file too large (> {WEB_MAX_FILE_MB}MB)"},
                 )
-            attachments.append(
-                store_blob_bytes(
-                    group,
-                    data=raw,
-                    filename=str(getattr(upload, "filename", "") or "file"),
-                    mime_type=str(getattr(upload, "content_type", "") or ""),
+            staged.append(
+                (
+                    raw,
+                    str(getattr(upload, "filename", "") or "file"),
+                    str(getattr(upload, "content_type", "") or ""),
                 )
             )
-        return attachments
+        return [
+            store_blob_bytes(
+                group,
+                data=raw,
+                filename=filename,
+                mime_type=mime_type,
+            )
+            for raw, filename, mime_type in staged
+        ]
 
     def _message_text_for_upload(*, text: str, attachments: list[dict[str, Any]]) -> str:
         msg_text = str(text or "").strip()
@@ -96,8 +167,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "to": list(req.to),
                 "path": req.path,
                 "quote_text": req.quote_text,
-                "priority": req.priority,
-                "reply_required": _normalize_reply_required(req.reply_required),
+                "message_mode": req.message_mode,
                 "source_platform": req.source_platform,
                 "source_user_name": req.source_user_name,
                 "source_user_id": req.source_user_id,
@@ -129,8 +199,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "text": req.text,
                     "by": req.by,
                     "to": list(req.to),
-                    "priority": req.priority,
-                    "reply_required": _normalize_reply_required(req.reply_required),
+                    "message_mode": req.message_mode,
                     "reply_to": req.reply_to,
                     "quote_text": req.quote_text,
                     "client_id": _normalize_client_id(req.client_id),
@@ -148,8 +217,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         by: str = Form("user"),
         text: str = Form(""),
         to_json: str = Form("[]"),
-        priority: str = Form("normal"),
-        reply_required: str = Form("false"),
+        message_mode: str = Form("send"),
         reply_to: str = Form(""),
         quote_text: str = Form(""),
         client_id: str = Form(""),
@@ -188,8 +256,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "text": msg_text,
                     "by": by,
                     "to": to_list,
-                    "priority": _normalize_priority(priority),
-                    "reply_required": _normalize_reply_required(reply_required),
+                    "message_mode": _normalize_message_mode(message_mode),
                     "reply_to": str(reply_to or "").strip(),
                     "quote_text": str(quote_text or "").strip(),
                     "client_id": _normalize_client_id(client_id),
@@ -240,8 +307,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "waiting_on": req.waiting_on,
                 "handoff_to": req.handoff_to,
                 "notes": req.notes,
-                "priority": req.priority,
-                "reply_required": _normalize_reply_required(req.reply_required),
+                "task_priority": req.task_priority,
                 "idempotency_key": _normalize_client_id(req.idempotency_key),
                 "refs": list(req.refs),
             },
@@ -258,8 +324,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "by": req.by,
                 "to": list(req.to),
                 "reply_to": req.reply_to,
-                "priority": req.priority,
-                "reply_required": _normalize_reply_required(req.reply_required),
+                "message_mode": req.message_mode,
                 "client_id": _normalize_client_id(req.client_id),
                 "refs": list(req.refs),
                 "suggested_user_message": req.suggested_user_message,
@@ -267,15 +332,39 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
         return await _submit_message(daemon_req)
 
-    @group_router.post("/events/{event_id}/ack")
-    async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
-        # Web UI can only ACK as user (no impersonation).
-        if str(req.by or "").strip() != "user":
-            raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "ack is only supported as user in the web UI"})
+    @group_router.post("/messages/{source_event_id}/deliver")
+    async def message_deliver(
+        group_id: str,
+        source_event_id: str,
+        req: MessageDeliverRequest,
+    ) -> Dict[str, Any]:
         return await ctx.daemon(
             {
-                "op": "chat_ack",
-                "args": {"group_id": group_id, "event_id": event_id, "actor_id": "user", "by": "user"},
+                "op": "message_deliver",
+                "args": {
+                    "group_id": group_id,
+                    "source_event_id": source_event_id,
+                    "actor_ids": list(req.actor_ids),
+                    "force_ambiguous": req.force_ambiguous,
+                    "by": "user",
+                },
+            }
+        )
+
+    @group_router.post("/messages/{source_event_id}/reply-request/cancel")
+    async def reply_request_cancel(
+        group_id: str,
+        source_event_id: str,
+        _req: ReplyRequestCancelRequest,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "reply_request_cancel",
+                "args": {
+                    "group_id": group_id,
+                    "source_event_id": source_event_id,
+                    "by": "user",
+                },
             }
         )
 
@@ -286,8 +375,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         text: str = Form(""),
         to_json: str = Form("[]"),
         path: str = Form(""),
-        priority: str = Form("normal"),
-        reply_required: str = Form("false"),
+        message_mode: str = Form("send"),
         client_id: str = Form(""),
         refs_json: str = Form("[]"),
         files: list[UploadFile] = File(default_factory=list),
@@ -296,43 +384,38 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        try:
-            parsed_to = json.loads(to_json or "[]")
-        except Exception:
-            parsed_to = []
-        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
-
-        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
-        from ....kernel.actors import resolve_recipient_tokens
-        from ....kernel.messaging import get_default_send_to
-        try:
-            canonical_to = resolve_recipient_tokens(group, to_list)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
-        if to_list and not canonical_to:
-            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
-
-        if not canonical_to and not to_list and get_default_send_to(group.doc) == "foreman":
-            canonical_to = ["@foreman"]
-
-        # Note: enabled-recipient validation + auto-wake is handled by the daemon.
-
-        attachments = await _store_upload_attachments(group, files)
-        msg_text = _message_text_for_upload(text=text, attachments=attachments)
-        prio = _normalize_priority(priority)
+        to_list = _parse_recipients_json(to_json)
+        mode = _normalize_message_mode(message_mode)
         refs = _parse_refs_json(refs_json)
         normalized_client_id = _normalize_client_id(client_id)
+        replay = await _preflight_upload(
+            operation="send",
+            group_id=group_id,
+            args={
+                "text": text,
+                "by": by,
+                "to": to_list,
+                "path": path,
+                "message_mode": mode,
+                "client_id": normalized_client_id,
+                "refs": refs,
+                "has_attachments": bool(files),
+            },
+        )
+        if replay is not None:
+            return replay
+        attachments = await _store_upload_attachments(group, files)
+        msg_text = _message_text_for_upload(text=text, attachments=attachments)
         daemon_req = _build_message_request(
             "send",
             group_id=group_id,
             args={
                 "text": msg_text,
                 "by": by,
-                "to": canonical_to,
+                "to": to_list,
                 "path": path,
                 "attachments": attachments,
-                "priority": prio,
-                "reply_required": _normalize_reply_required(reply_required),
+                "message_mode": mode,
                 "client_id": normalized_client_id,
                 "refs": refs,
             },
@@ -346,8 +429,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         text: str = Form(""),
         to_json: str = Form("[]"),
         reply_to: str = Form(""),
-        priority: str = Form("normal"),
-        reply_required: str = Form("false"),
+        message_mode: str = Form("send"),
         client_id: str = Form(""),
         refs_json: str = Form("[]"),
         files: list[UploadFile] = File(default_factory=list),
@@ -359,59 +441,29 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         reply_to_id = str(reply_to or "").strip()
         if not reply_to_id:
             raise HTTPException(status_code=400, detail={"code": "missing_reply_to", "message": "missing reply_to"})
+        mode = _normalize_reply_message_mode(message_mode)
 
-        try:
-            parsed_to = json.loads(to_json or "[]")
-        except Exception:
-            parsed_to = []
-        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
-
-        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
-        from ....kernel.actors import resolve_recipient_tokens
-        from ....kernel.inbox import find_event
-        from ....kernel.messaging import default_reply_recipients
-        from ....daemon.group_bridge.reply_relay import can_relay_group_bridge_reply, default_group_bridge_reply_recipients
-
-        original = find_event(group, reply_to_id)
-        if original is None:
-            raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {reply_to_id}"})
-        original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
-
-        try:
-            canonical_to = resolve_recipient_tokens(group, to_list)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
-        if to_list and not canonical_to:
-            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
-
-        if not canonical_to and not to_list:
-            try:
-                relayable_group_bridge_reply = can_relay_group_bridge_reply(group_id=group.group_id, original_data=original_data)
-                if relayable_group_bridge_reply:
-                    group_bridge_reply_to = default_group_bridge_reply_recipients(original_data)
-                    if not group_bridge_reply_to:
-                        raise HTTPException(
-                            status_code=400,
-                            detail={
-                                "code": "missing_remote_recipient",
-                                "message": "Group Bridge replies require an explicit recipient.",
-                            },
-                        )
-                    canonical_to = resolve_recipient_tokens(group, ["user"])
-                else:
-                    canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
-            except Exception as e:
-                if isinstance(e, HTTPException):
-                    raise
-                raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
-
-        # Note: enabled-recipient validation + auto-wake is handled by the daemon.
-
-        attachments = await _store_upload_attachments(group, files)
-        msg_text = _message_text_for_upload(text=text, attachments=attachments)
-        prio = _normalize_priority(priority)
+        to_list = _parse_recipients_json(to_json)
         refs = _parse_refs_json(refs_json)
         normalized_client_id = _normalize_client_id(client_id)
+        replay = await _preflight_upload(
+            operation="reply",
+            group_id=group_id,
+            args={
+                "text": text,
+                "by": by,
+                "to": to_list,
+                "reply_to": reply_to_id,
+                "message_mode": mode,
+                "client_id": normalized_client_id,
+                "refs": refs,
+                "has_attachments": bool(files),
+            },
+        )
+        if replay is not None:
+            return replay
+        attachments = await _store_upload_attachments(group, files)
+        msg_text = _message_text_for_upload(text=text, attachments=attachments)
         daemon_req = _build_message_request(
             "reply",
             group_id=group_id,
@@ -420,9 +472,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "by": by,
                 "to": to_list,
                 "reply_to": reply_to_id,
+                "message_mode": mode,
                 "attachments": attachments,
-                "priority": prio,
-                "reply_required": _normalize_reply_required(reply_required),
                 "client_id": normalized_client_id,
                 "refs": refs,
             },

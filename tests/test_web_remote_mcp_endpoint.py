@@ -133,7 +133,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "work through connector", "to": ["peer1"]},
+                data={"text": "work through connector", "to": ["peer1"], "message_mode": "send"},
             )
             admin = str(create_access_token("admin", is_admin=True).get("token") or "")
             client = self._client()

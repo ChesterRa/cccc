@@ -11,6 +11,7 @@ from ....kernel.agent_state_hygiene import build_mind_context_mini, evaluate_age
 from ....kernel.actors import find_actor, is_internal_actor
 from ....kernel.group import load_group
 from ....kernel.group_space import get_group_space_prompt_state
+from ....kernel.inbox import mail_pending_summary
 from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
 from ....kernel.peer_insight import PEER_INSIGHT_RUNTIME_HELP
 from ....util.fs import read_json
@@ -51,17 +52,6 @@ def _trim_text_list(value: Any, *, max_items: int, max_chars: int) -> List[str]:
     return out
 
 
-_BOOTSTRAP_INTERRUPT_NOTIFY_KINDS = {
-    "actor_idle",
-    "auto_idle",
-    "automation",
-    "help_nudge",
-    "keepalive",
-    "nudge",
-    "silence_check",
-    "standup",
-}
-
 _BOOTSTRAP_TAKEOVER_NUDGE = (
     "Do not resume the train of thought that produced this recovery state. Imagine its author has left and you "
     "have just inherited the real situation. Treat the material below as testimony, not authority. Take ownership "
@@ -69,18 +59,6 @@ _BOOTSTRAP_TAKEOVER_NUDGE = (
     "what is true now; preserve only what still earns preservation, and change course only when the renewed judgment "
     "materially warrants it."
 )
-
-
-def _bootstrap_signal_family(*, item: Dict[str, Any], data: Dict[str, Any]) -> str:
-    kind = str(item.get("kind") or "").strip()
-    if kind == "chat.message":
-        return "work_chat"
-    if kind == "system.notify":
-        notify_kind = str(data.get("kind") or "").strip().lower()
-        if data.get("requires_ack") is True or notify_kind in _BOOTSTRAP_INTERRUPT_NOTIFY_KINDS:
-            return "interrupt"
-        return "notify"
-    return "other"
 
 
 def _strip_reserved_runtime_help_sections(markdown: str) -> str:
@@ -528,10 +506,11 @@ def _select_bootstrap_scope(group: Dict[str, Any]) -> Dict[str, Any]:
                 break
     if not selected:
         return {}
-    return {
+    result = {
         "scope_key": str(selected.get("scope_key") or "").strip(),
         "path": str(selected.get("url") or "").strip(),
     }
+    return result
 
 
 def _build_bootstrap_session(*, group: Dict[str, Any], actors: List[Dict[str, Any]], actor_id: str, project: Dict[str, Any]) -> Dict[str, Any]:
@@ -551,8 +530,6 @@ def _build_bootstrap_session(*, group: Dict[str, Any], actors: List[Dict[str, An
             "path": project.get("path"),
         },
     }
-
-
 def _bootstrap_has_recoverable_work(*, pack: Dict[str, Any]) -> bool:
     agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
     hot = agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {}
@@ -611,28 +588,17 @@ def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict
         if not isinstance(item, dict):
             continue
         data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        text_source = (
-            data.get("text")
-            if isinstance(data.get("text"), str) and str(data.get("text") or "").strip()
-            else data.get("message")
-            if isinstance(data.get("message"), str) and str(data.get("message") or "").strip()
-            else data.get("title")
-        )
         entry = {
             "id": str(item.get("id") or ""),
             "ts": str(item.get("ts") or ""),
             "by": str(item.get("by") or ""),
-            "kind": str(item.get("kind") or ""),
-            "signal_family": _bootstrap_signal_family(item=item, data=data),
-            "reply_required": bool(data.get("reply_required") is True or data.get("requires_ack") is True),
-            "text_preview": _trim_text(text_source, max_chars=220),
+            "kind": "chat.message",
+            "message_mode": "mail",
+            "text_preview": _trim_text(data.get("text"), max_chars=220),
         }
         insight_preview = _trim_text(data.get("insight"), max_chars=220)
         if insight_preview:
             entry["insight_preview"] = insight_preview
-        notify_kind = str(data.get("kind") or "").strip()
-        if notify_kind:
-            entry["notify_kind"] = notify_kind
         preview.append(entry)
     return {
         "messages": preview,
@@ -823,28 +789,40 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
     return base.rstrip() + "\n\n" + "\n\n".join(sections).rstrip() + "\n"
 
 
-def inbox_list(*, group_id: str, actor_id: str, limit: int = 50, kind_filter: str = "all") -> Dict[str, Any]:
+def inbox_peek(*, group_id: str, actor_id: str, limit: Any = 50) -> Dict[str, Any]:
     return _call_daemon_or_raise(
-        {"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": actor_id, "limit": limit, "kind_filter": kind_filter}},
+        {"op": "inbox_peek", "args": {"group_id": group_id, "actor_id": actor_id, "by": actor_id, "limit": limit}},
     )
 
 
-def inbox_mark_read(*, group_id: str, actor_id: str, event_id: str) -> Dict[str, Any]:
-    eid = str(event_id or "").strip()
-    if not eid:
-        raise MCPError(
-            code="missing_event_id",
-            message="missing event_id",
-            details={"recommended_action": "Use cccc_inbox_list to get the unread event id, then mark that exact id read."},
-        )
+def inbox_read(*, group_id: str, actor_id: str, limit: Any = 50) -> Dict[str, Any]:
     return _call_daemon_or_raise(
-        {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": eid, "by": actor_id}},
+        {"op": "inbox_read", "args": {"group_id": group_id, "actor_id": actor_id, "limit": limit, "by": actor_id}},
     )
 
 
-def inbox_mark_all_read(*, group_id: str, actor_id: str, kind_filter: str = "all") -> Dict[str, Any]:
+def message_history(
+    *,
+    group_id: str,
+    actor_id: str,
+    limit: Any = 50,
+    mode: str = "all",
+    query: str = "",
+    before_event_id: str = "",
+) -> Dict[str, Any]:
     return _call_daemon_or_raise(
-        {"op": "inbox_mark_all_read", "args": {"group_id": group_id, "actor_id": actor_id, "kind_filter": kind_filter, "by": actor_id}},
+        {
+            "op": "message_history",
+            "args": {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "by": actor_id,
+                "limit": limit,
+                "mode": mode,
+                "query": query,
+                "before_event_id": before_event_id,
+            },
+        },
     )
 
 
@@ -853,7 +831,6 @@ def bootstrap(
     group_id: str,
     actor_id: str,
     inbox_limit: int = 50,
-    inbox_kind_filter: str = "all",
 ) -> Dict[str, Any]:
     """One-call cold-start bootstrap for agents.
 
@@ -882,7 +859,7 @@ def bootstrap(
         group_id=group_id,
     )
     preview_limit = max(1, int(inbox_limit or 50))
-    inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=preview_limit + 1, kind_filter=inbox_kind_filter)
+    inbox = inbox_peek(group_id=group_id, actor_id=actor_id, limit=min(preview_limit + 1, 200))
 
     memory_recall_gate = _build_memory_recall_gate(
         group_id=group_id,
@@ -890,7 +867,7 @@ def bootstrap(
         context=recovery_pack if isinstance(recovery_pack, dict) else {},
     )
 
-    return {
+    result = {
         "session": _build_bootstrap_session(
             group=group if isinstance(group, dict) else {},
             actors=[item for item in actors if isinstance(item, dict)],
@@ -910,17 +887,19 @@ def bootstrap(
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
             "project_info": 'cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})',
             "context_get": "cccc_context_get()",
-            "inbox_list": 'cccc_inbox_list(kind_filter="all")',
+            "inbox_read": "cccc_inbox_read()",
             "memory_search": (
                 'cccc_capability_use(tool_name="cccc_memory", '
                 'tool_arguments={"action":"search","query":"..."})'
             ),
-            "interrupt_triage": (
-                'If inbox_preview messages have signal_family="interrupt", treat them as coordination interrupts: '
-                'refresh or reply, then resume the current task unless priority changed.'
-            ),
         },
     }
+    group_obj = load_group(group_id)
+    if group_obj is not None:
+        pending = mail_pending_summary(group_obj, actor_id=actor_id)
+        if pending:
+            result["mail_pending"] = pending
+    return result
 
 
 def project_info(*, group_id: str) -> Dict[str, Any]:

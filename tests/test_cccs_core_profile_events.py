@@ -55,9 +55,9 @@ class TestCCCSCoreProfileEvents(unittest.TestCase):
                 {
                     "group_id": group_id,
                     "by": "user",
-                    "text": "attention ping",
+                    "text": "mail for peer",
                     "to": ["peer1"],
-                    "priority": "attention",
+                    "message_mode": "mail",
                 },
             )
             self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
@@ -65,15 +65,9 @@ class TestCCCSCoreProfileEvents(unittest.TestCase):
             chat_event_id = str((chat_event or {}).get("id") or "").strip()
             self.assertTrue(chat_event_id)
 
-            ack_resp, _ = self._call(
-                "chat_ack",
-                {"group_id": group_id, "actor_id": "peer1", "event_id": chat_event_id, "by": "peer1"},
-            )
-            self.assertTrue(ack_resp.ok, getattr(ack_resp, "error", None))
-
             read_resp, _ = self._call(
-                "inbox_mark_read",
-                {"group_id": group_id, "actor_id": "peer1", "event_id": chat_event_id, "by": "peer1"},
+                "inbox_read",
+                {"group_id": group_id, "actor_id": "peer1", "limit": 1, "by": "peer1"},
             )
             self.assertTrue(read_resp.ok, getattr(read_resp, "error", None))
 
@@ -86,24 +80,9 @@ class TestCCCSCoreProfileEvents(unittest.TestCase):
                     "title": "t",
                     "message": "m",
                     "target_actor_id": "peer1",
-                    "requires_ack": True,
                 },
             )
             self.assertTrue(notify_resp.ok, getattr(notify_resp, "error", None))
-            notify_event = (notify_resp.result or {}).get("event") if isinstance(notify_resp.result, dict) else {}
-            notify_event_id = str((notify_event or {}).get("id") or "").strip()
-            self.assertTrue(notify_event_id)
-
-            notify_ack_resp, _ = self._call(
-                "notify_ack",
-                {
-                    "group_id": group_id,
-                    "actor_id": "peer1",
-                    "notify_event_id": notify_event_id,
-                    "by": "peer1",
-                },
-            )
-            self.assertTrue(notify_ack_resp.ok, getattr(notify_ack_resp, "error", None))
 
             group = load_group(group_id)
             self.assertIsNotNone(group)
@@ -120,7 +99,8 @@ class TestCCCSCoreProfileEvents(unittest.TestCase):
                     obj = json.loads(raw)
                     kinds.add(str(obj.get("kind") or ""))
 
-            self.assertTrue({"chat.message", "chat.ack", "chat.read", "system.notify", "system.notify_ack"}.issubset(kinds))
+            self.assertTrue({"chat.message", "mail.read", "system.notify"}.issubset(kinds))
+            self.assertTrue({"chat.ack", "system.notify_ack"}.isdisjoint(kinds))
         finally:
             cleanup()
 

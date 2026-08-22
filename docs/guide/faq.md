@@ -10,15 +10,15 @@ Frequently asked questions about CCCC.
 Native teams give you the smoothest experience inside one vendor and one session — if you only run Claude Code and your work fits in a session, they are a great default. CCCC adds what a single vendor structurally cannot:
 
 - **Cross-vendor groups** — Claude Code, Codex CLI, Grok Build, Kimi CLI, ChatGPT Web, and more in one group, so you can route work to whichever model or subscription fits each role.
-- **Durable state** — groups, messages, read/ack receipts, and tasks live in an append-only ledger owned by a daemon. Restarting a terminal (or your machine) does not dissolve the team.
+- **Durable state** — groups, messages, delivery/read/reply facts, and tasks live in an append-only ledger owned by a daemon. Restarting a terminal (or your machine) does not dissolve the team.
 - **Remote operations** — check, pause, resume, and redirect a running group from Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or Weixin.
 - **An audit trail** — every message and its delivery state is replayable for review and debugging.
 
 **vs. parallel task runners (worktree/task-board tools).**
-These tools excel at fanning out isolated tasks in parallel. CCCC's focus is the coordination layer they intentionally skip: agents that talk to each other, hand off work, acknowledge attention messages, and get nudged when they stall — plus daemon-owned lifecycle and IM-side operations. The two approaches compose well: keep a task runner for fan-out and use CCCC as the durable coordination plane.
+These tools excel at fanning out isolated tasks in parallel. CCCC's focus is the coordination layer they intentionally skip: agents that talk to each other, choose whether a message should interrupt or wait in Mail, hand off tracked work, and expose delivery/read/reply state — plus daemon-owned lifecycle and IM-side operations. The two approaches compose well: keep a task runner for fan-out and use CCCC as the durable coordination plane.
 
 **vs. IM assistant gateways (personal-assistant products that live in your chat app).**
-Those products put a general assistant in your messenger. CCCC is built for delivery-grade collaboration on real work: tracked tasks with owners and outcomes, read/ack semantics, multi-agent groups bound to a repository scope, and a tiered token and capability-allowlist security model.
+Those products put a general assistant in your messenger. CCCC is built for delivery-grade collaboration on real work: tracked tasks with owners and outcomes, explicit delivery/read/reply semantics, multi-agent groups bound to a repository scope, and a tiered token and capability-allowlist security model.
 
 In short: CCCC does not replace your agents — it is the coordination layer that turns them into a durable, observable team. See also [Positioning](/reference/positioning) for what CCCC deliberately is and is not.
 
@@ -209,7 +209,9 @@ Or in the Web UI, type `@agent-name` in your message.
 
 ### How do read receipts work?
 
-Agents call `cccc_inbox_mark_read` to mark messages as read. This is cumulative - marking message X means all messages up to X are read.
+Agents call `cccc_inbox_read` to receive and consume the next ordered batch.
+The returned batch boundary is committed cumulatively; bootstrap previews and
+Web polling do not consume messages.
 
 ## Remote Access
 

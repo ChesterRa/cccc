@@ -15,7 +15,8 @@ fn cross_group_default_targets_the_unique_available_foreman() {
         &home,
         "send_cross_group",
         json!({
-            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello"
+            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello",
+            "message_mode":"send"
         }),
     );
 
@@ -39,7 +40,7 @@ fn explicit_cross_group_recipient_overrides_the_default() {
         "send_cross_group",
         json!({
             "group_id":source,"dst_group_id":destination,"by":"user",
-            "to":["@peer"],"text":"hello"
+            "to":["@peer"],"text":"hello","message_mode":"send"
         }),
     );
 
@@ -73,7 +74,8 @@ fn unavailable_or_non_unique_foreman_fails_before_either_ledger_write() {
         &home,
         "send_cross_group",
         json!({
-            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello"
+            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello",
+            "message_mode":"send"
         }),
     );
     assert_eq!(
@@ -89,7 +91,8 @@ fn unavailable_or_non_unique_foreman_fails_before_either_ledger_write() {
         &home,
         "send_cross_group",
         json!({
-            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello"
+            "group_id":source,"dst_group_id":destination,"by":"user","text":"hello",
+            "message_mode":"send"
         }),
     );
     assert_eq!(
@@ -111,20 +114,21 @@ fn unavailable_or_non_unique_foreman_fails_before_either_ledger_write() {
 }
 
 #[test]
-fn same_group_empty_recipient_keeps_the_existing_default() {
+fn same_group_empty_recipient_materializes_the_foreman_default() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let group = create_group(&home, "local");
     add_actor(&home, &group, "lead");
+    add_actor(&home, &group, "peer");
 
     let sent = call(
         &home,
         "send",
-        json!({"group_id":group,"by":"lead","to":[],"text":"hello"}),
+        json!({"group_id":group,"by":"peer","to":[],"text":"hello","message_mode":"send"}),
     );
 
     assert!(sent.ok, "{:?}", sent.error);
-    assert_eq!(sent.result["event"]["data"]["to"], json!(["user"]));
+    assert_eq!(sent.result["event"]["data"]["to"], json!(["@foreman"]));
 }
 
 fn create_group(home: &HomeLayout, title: &str) -> String {

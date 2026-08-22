@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 5
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 _SCHEMA_LOCK = threading.Lock()
@@ -20,8 +20,8 @@ _SCHEMA_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS message_status_meta (
         event_id TEXT PRIMARY KEY,
         ts TEXT NOT NULL,
-        is_attention INTEGER NOT NULL,
-        has_obligation INTEGER NOT NULL
+        has_obligation INTEGER NOT NULL,
+        has_read_status INTEGER NOT NULL
     )
     """,
     """
@@ -29,9 +29,10 @@ _SCHEMA_STATEMENTS = (
         event_id TEXT NOT NULL,
         actor_id TEXT NOT NULL,
         is_read INTEGER NOT NULL,
-        is_acked INTEGER NOT NULL,
         is_replied INTEGER NOT NULL,
-        reply_required INTEGER NOT NULL,
+        reply_requested INTEGER NOT NULL,
+        cancelled INTEGER NOT NULL,
+        delivery_state TEXT NOT NULL,
         PRIMARY KEY (event_id, actor_id)
     )
     """,
@@ -116,11 +117,12 @@ def ensure_status_schema(conn: sqlite3.Connection) -> None:
             # the version inside it prevents two processes from migrating the
             # same database after one waiter acquires the lock.
             conn.execute("BEGIN IMMEDIATE")
+            if _schema_version(conn) != SCHEMA_VERSION:
+                conn.execute("DROP TABLE IF EXISTS recipient_status")
+                conn.execute("DROP TABLE IF EXISTS message_status_meta")
             for statement in _SCHEMA_STATEMENTS:
                 conn.execute(statement)
             if _schema_version(conn) != SCHEMA_VERSION:
-                conn.execute("DELETE FROM recipient_status")
-                conn.execute("DELETE FROM message_status_meta")
                 conn.execute(
                     """
                     INSERT INTO meta(key, value) VALUES(?, ?)

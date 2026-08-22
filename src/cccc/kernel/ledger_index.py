@@ -11,7 +11,7 @@ from .ledger_segments import ACTIVE_SOURCE_SEQ, iter_source_lines, list_ledger_s
 
 
 LOGGER = logging.getLogger("cccc.ledger.index")
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 _REBUILDABLE_SQLITE_ERRORS = {11, 26}  # SQLITE_CORRUPT, SQLITE_NOTADB
 _REBUILDABLE_SQLITE_MESSAGES = {"database disk image is malformed", "file is not a database"}
@@ -26,12 +26,6 @@ _EVENTS_REQUIRED_COLUMNS = {
     "source_path",
     "line_no",
     "offset_bytes",
-}
-_CHAT_ACK_REQUIRED_COLUMNS = {
-    "event_id",
-    "actor_id",
-    "ack_event_id",
-    "source_path",
 }
 
 
@@ -100,18 +94,14 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
 
 def _reset_legacy_schema(conn: sqlite3.Connection) -> bool:
     columns = _table_columns(conn, "events")
-    ack_columns = _table_columns(conn, "chat_ack")
     events_current = not columns or _EVENTS_REQUIRED_COLUMNS.issubset(columns)
-    ack_current = not ack_columns or _CHAT_ACK_REQUIRED_COLUMNS.issubset(ack_columns)
-    if events_current and ack_current:
+    if events_current:
         return False
     conn.execute("DROP INDEX IF EXISTS idx_events_reply_to")
     conn.execute("DROP INDEX IF EXISTS idx_events_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_kind_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_by_ts")
     conn.execute("DROP INDEX IF EXISTS idx_events_source_line")
-    conn.execute("DROP INDEX IF EXISTS idx_chat_ack_target_actor")
-    conn.execute("DROP TABLE IF EXISTS chat_ack")
     conn.execute("DROP TABLE IF EXISTS event_search")
     conn.execute("DROP TABLE IF EXISTS source_state")
     conn.execute("DROP TABLE IF EXISTS events")
@@ -124,7 +114,6 @@ def _rebuild_events_indexes(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts, source_seq, line_no)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_by_ts ON events(by_actor, ts, source_seq, line_no)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source_line ON events(source_path, line_no)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_ack_target_actor ON chat_ack(event_id, actor_id)")
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -148,14 +137,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             offset_bytes INTEGER NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS chat_ack (
-            event_id TEXT NOT NULL,
-            actor_id TEXT NOT NULL,
-            ack_event_id TEXT NOT NULL,
-            source_path TEXT NOT NULL,
-            PRIMARY KEY (ack_event_id)
-        );
-
         CREATE TABLE IF NOT EXISTS source_state (
             source_path TEXT PRIMARY KEY,
             compressed INTEGER NOT NULL,
@@ -174,7 +155,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     _rebuild_events_indexes(conn)
     current = _meta_int(conn, "schema_version")
     if current != _SCHEMA_VERSION or rebuilt:
-        conn.execute("DELETE FROM chat_ack")
+        conn.execute("DROP INDEX IF EXISTS idx_chat_ack_target_actor")
+        conn.execute("DROP TABLE IF EXISTS chat_ack")
         conn.execute("DELETE FROM events")
         conn.execute("DELETE FROM source_state")
         conn.execute("DELETE FROM event_search")
@@ -205,7 +187,6 @@ def _plain_source_index_bounds(conn: sqlite3.Connection, source_path: str) -> tu
 
 def _delete_source_rows(conn: sqlite3.Connection, source_path: str) -> None:
     conn.execute("DELETE FROM event_search WHERE event_id IN (SELECT event_id FROM events WHERE source_path = ?)", (source_path,))
-    conn.execute("DELETE FROM chat_ack WHERE source_path = ?", (source_path,))
     conn.execute("DELETE FROM events WHERE source_path = ?", (source_path,))
     conn.execute("DELETE FROM source_state WHERE source_path = ?", (source_path,))
 
@@ -263,21 +244,6 @@ def _index_event(
         """,
         (event_id, _searchable_text(event)),
     )
-    if kind == "chat.ack" and isinstance(data, dict):
-        ack_event_id = str(data.get("event_id") or "").strip()
-        ack_actor_id = str(data.get("actor_id") or "").strip()
-        if ack_event_id and ack_actor_id:
-            conn.execute(
-                """
-                INSERT INTO chat_ack(event_id, actor_id, ack_event_id, source_path)
-                VALUES(?, ?, ?, ?)
-                ON CONFLICT(ack_event_id) DO UPDATE SET
-                    event_id=excluded.event_id,
-                    actor_id=excluded.actor_id,
-                    source_path=excluded.source_path
-                """,
-                (ack_event_id, ack_actor_id, event_id, source_path),
-            )
 
 
 def _reindex_source(conn: sqlite3.Connection, ledger_path: Path, source: Dict[str, Any]) -> None:
@@ -656,46 +622,6 @@ def lookup_event_by_id(ledger_path: Path, event_id: str) -> Optional[Dict[str, A
     return _read_event_from_source(ledger_path.parent, source_path=source_path, line_no=line_no, offset_bytes=offset_bytes)
 
 
-def lookup_event_with_chat_ack_indexed(
-    ledger_path: Path,
-    *,
-    event_id: str,
-    actor_id: str,
-) -> tuple[Optional[Dict[str, Any]], bool]:
-    wanted = str(event_id or "").strip()
-    actor = str(actor_id or "").strip()
-    if not wanted:
-        return None, False
-
-    def query(conn: sqlite3.Connection):
-        event_row = conn.execute(
-            "SELECT source_path, line_no, offset_bytes FROM events WHERE event_id = ?",
-            (wanted,),
-        ).fetchone()
-        if actor:
-            ack_row = conn.execute(
-                "SELECT 1 FROM chat_ack WHERE event_id = ? AND actor_id = ? LIMIT 1",
-                (wanted, actor),
-            ).fetchone()
-        else:
-            ack_row = conn.execute(
-                "SELECT 1 FROM chat_ack WHERE event_id = ? LIMIT 1",
-                (wanted,),
-            ).fetchone()
-        return event_row, ack_row
-
-    event_row, ack_row = _query_ledger_index(ledger_path, query)
-
-    found_ack = ack_row is not None
-    if event_row is None:
-        return None, found_ack
-    source_path = str(event_row[0] or "").strip()
-    line_no = int(event_row[1] or 0)
-    offset_bytes = int(event_row[2] or 0)
-    event = _read_event_from_source(ledger_path.parent, source_path=source_path, line_no=line_no, offset_bytes=offset_bytes)
-    return event, found_ack
-
-
 def lookup_events_by_ids(ledger_path: Path, event_ids: list[str]) -> list[Optional[Dict[str, Any]]]:
     wanted_ids = [str(event_id or "").strip() for event_id in event_ids]
     if not wanted_ids:
@@ -787,6 +713,19 @@ def lookup_latest_actor_add_positions(
     actor_ids: list[str],
 ) -> dict[str, tuple[int, int]]:
     """Return the latest actor.add append position for each requested actor."""
+    return {
+        actor_id: position
+        for actor_id, (_event_id, position) in lookup_latest_actor_add_boundaries(
+            ledger_path, actor_ids
+        ).items()
+    }
+
+
+def lookup_latest_actor_add_boundaries(
+    ledger_path: Path,
+    actor_ids: list[str],
+) -> dict[str, tuple[str, tuple[int, int]]]:
+    """Return the latest actor.add event id and append position per actor."""
     wanted = {
         str(actor_id or "").strip()
         for actor_id in actor_ids
@@ -798,19 +737,20 @@ def lookup_latest_actor_add_positions(
         ledger_path,
         lambda conn: conn.execute(
             """
-            SELECT source_path, line_no, offset_bytes, source_seq
+            SELECT event_id, source_path, line_no, offset_bytes, source_seq
             FROM events
             WHERE kind = 'actor.add'
             ORDER BY source_seq DESC, line_no DESC
             """
         ).fetchall(),
     )
-    found: dict[str, tuple[int, int]] = {}
+    found: dict[str, tuple[str, tuple[int, int]]] = {}
     for row in rows:
-        source_path = str(row[0] or "").strip()
-        line_no = int(row[1] or 0)
-        offset_bytes = int(row[2] or 0)
-        source_seq = int(row[3] or 0)
+        event_id = str(row[0] or "").strip()
+        source_path = str(row[1] or "").strip()
+        line_no = int(row[2] or 0)
+        offset_bytes = int(row[3] or 0)
+        source_seq = int(row[4] or 0)
         event = _read_event_from_source(
             ledger_path.parent,
             source_path=source_path,
@@ -821,7 +761,7 @@ def lookup_latest_actor_add_positions(
         actor = data.get("actor") if isinstance(data.get("actor"), dict) else {}
         actor_id = str(actor.get("id") or "").strip()
         if actor_id in wanted and actor_id not in found:
-            found[actor_id] = (source_seq, line_no)
+            found[actor_id] = (event_id, (source_seq, line_no))
             if len(found) == len(wanted):
                 break
     return found
@@ -830,29 +770,6 @@ def lookup_latest_actor_add_positions(
 def _chunks(items: list[str], size: int = 500) -> list[list[str]]:
     chunk_size = max(1, int(size or 500))
     return [items[idx : idx + chunk_size] for idx in range(0, len(items), chunk_size)]
-
-
-def lookup_chat_ack_actor_ids(ledger_path: Path, event_ids: set[str]) -> dict[str, set[str]]:
-    unique_ids = [str(event_id or "").strip() for event_id in dict.fromkeys(event_ids) if str(event_id or "").strip()]
-    if not unique_ids:
-        return {}
-
-    def query(conn: sqlite3.Connection) -> dict[str, set[str]]:
-        out: dict[str, set[str]] = {}
-        for chunk in _chunks(unique_ids):
-            placeholders = ", ".join("?" for _ in chunk)
-            rows = conn.execute(
-                f"SELECT event_id, actor_id FROM chat_ack WHERE event_id IN ({placeholders})",
-                tuple(chunk),
-            ).fetchall()
-            for row in rows:
-                event_id = str(row[0] or "").strip()
-                actor_id = str(row[1] or "").strip()
-                if event_id and actor_id:
-                    out.setdefault(event_id, set()).add(actor_id)
-        return out
-
-    return _query_ledger_index(ledger_path, query)
 
 
 def lookup_chat_reply_actor_ids(ledger_path: Path, event_ids: set[str]) -> dict[str, set[str]]:
@@ -879,28 +796,6 @@ def lookup_chat_reply_actor_ids(ledger_path: Path, event_ids: set[str]) -> dict[
                 if event_id and actor_id:
                     out.setdefault(event_id, set()).add(actor_id)
         return out
-
-    return _query_ledger_index(ledger_path, query)
-
-
-def has_chat_ack_indexed(ledger_path: Path, *, event_id: str, actor_id: str) -> bool:
-    wanted = str(event_id or "").strip()
-    actor = str(actor_id or "").strip()
-    if not wanted:
-        return False
-
-    def query(conn: sqlite3.Connection) -> bool:
-        if actor:
-            row = conn.execute(
-                "SELECT 1 FROM chat_ack WHERE event_id = ? AND actor_id = ? LIMIT 1",
-                (wanted, actor),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT 1 FROM chat_ack WHERE event_id = ? LIMIT 1",
-                (wanted,),
-            ).fetchone()
-        return row is not None
 
     return _query_ledger_index(ledger_path, query)
 

@@ -1,7 +1,6 @@
 use cccc_contracts::{Actor, ActorRuntime, Event, GroupState};
-use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
+use cccc_core::{GroupDoc, HomeLayout, inbox};
 use serde::Serialize;
-use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
@@ -11,7 +10,6 @@ use crate::ops::actor_delivery_worker;
 
 mod drain;
 mod lifecycle;
-mod recovery;
 pub(crate) use drain::{drain_group, pending_group_ids};
 pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
 
@@ -38,13 +36,14 @@ pub(super) struct DeliveryJob {
     pub group: GroupDoc,
     pub actor: Actor,
     pub event: Event,
-    pub advances_cursor: bool,
 }
 
 pub(super) struct DeliveryCompletion {
     pub group_id: String,
     pub actor_id: String,
+    pub actor_created_at: String,
     pub event_id: String,
+    pub transport: String,
 }
 
 struct DeliveryWorker {
@@ -106,6 +105,35 @@ pub(super) fn record_completion(completion: DeliveryCompletion) {
     }
 }
 
+pub(super) fn complete_job(job: &DeliveryJob) {
+    let transport = delivery_transport(&job.home, &job.group, &job.actor);
+    match crate::ops::runtime_delivery::append_state(
+        &job.home,
+        &job.group.group_id,
+        &job.actor.id,
+        &job.actor.created_at,
+        &job.event.id,
+        transport,
+        crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+    ) {
+        Ok(_) => release_in_flight(job),
+        Err(error) => {
+            tracing::warn!(
+                message = %error.message,
+                event_id = %job.event.id,
+                "runtime accepted delivery but its ledger result is pending"
+            );
+            record_completion(DeliveryCompletion {
+                group_id: job.group.group_id.clone(),
+                actor_id: job.actor.id.clone(),
+                actor_created_at: job.actor.created_at.clone(),
+                event_id: job.event.id.clone(),
+                transport: transport.into(),
+            });
+        }
+    }
+}
+
 fn clear_in_flight(mut remove: impl FnMut(&(String, String, String)) -> bool) {
     if let Ok(mut pending) = in_flight().lock() {
         pending.retain(|item| !remove(item));
@@ -122,11 +150,46 @@ pub(super) fn release_in_flight(job: &DeliveryJob) {
     }
 }
 
+fn fail_job(job: &DeliveryJob, reason: &str) {
+    if let Err(error) = crate::ops::runtime_delivery::append_state(
+        &job.home,
+        &job.group.group_id,
+        &job.actor.id,
+        &job.actor.created_at,
+        &job.event.id,
+        delivery_transport(&job.home, &job.group, &job.actor),
+        crate::ops::runtime_delivery::DeliveryOutcome::Failed(reason),
+    ) {
+        tracing::warn!(
+            message = %error.message,
+            event_id = %job.event.id,
+            "failed to record interrupted runtime delivery"
+        );
+    }
+    release_in_flight(job);
+}
+
+fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
+    for job in jobs {
+        fail_job(job, reason);
+    }
+}
+
 pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchReport {
     if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
         || matches!(group.state, GroupState::Paused | GroupState::Stopped)
     {
         return report(0, 0, 0);
+    }
+
+    if event.kind == "chat.message"
+        && event
+            .data
+            .get("message_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("mail")
+    {
+        return mail_report();
     }
 
     let targets: Vec<_> = group
@@ -136,13 +199,65 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
             (!crate::ops::actor_runtime::is_structured(actor)
                 || crate::ops::local_headless::supports(actor)
                 || actor.runtime == ActorRuntime::Deepseek)
-                && inbox::is_for_actor(group, event, &actor.id)
+                && event_targets_actor(group, event, &actor.id)
         })
         .cloned()
         .collect();
+    dispatch_to(home, group, event, &targets, false)
+}
+
+fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
+    if event.kind == "system.notify"
+        && matches!(
+            event.data.get("kind").and_then(serde_json::Value::as_str),
+            Some("mail_notice" | "reply_notice")
+        )
+    {
+        return event
+            .data
+            .get("target_actor_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(actor_id);
+    }
+    inbox::is_for_actor(group, event, actor_id)
+}
+
+pub fn dispatch_to(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    targets: &[Actor],
+    force_ambiguous: bool,
+) -> DispatchReport {
+    dispatch_to_inner(home, group, event, targets, force_ambiguous, false)
+}
+
+pub fn dispatch_preclaimed(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    targets: &[Actor],
+) -> DispatchReport {
+    dispatch_to_inner(home, group, event, targets, false, true)
+}
+
+fn dispatch_to_inner(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    targets: &[Actor],
+    force_ambiguous: bool,
+    preclaimed: bool,
+) -> DispatchReport {
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return report(targets.len(), 0, 0);
+    }
     let mut queued = 0;
     let mut online = 0;
-    for actor in &targets {
+    for actor in targets {
+        if !actor.enabled {
+            continue;
+        }
         let actor_online = if actor.runtime == ActorRuntime::Deepseek {
             crate::ops::deepseek_runtime::running(&group.group_id, &actor.id)
         } else if crate::ops::local_headless::supports(actor) {
@@ -153,97 +268,181 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         if actor_online {
             online += 1;
         }
+        let transport = delivery_transport(home, group, actor);
+        if preclaimed && actor.runtime == ActorRuntime::WebModel {
+            // Structured Web Model consumers take the durable claim through
+            // runtime_wait_next_turn. Do not enqueue the actor on the PTY lane.
+            queued += 1;
+            continue;
+        }
+        if !preclaimed {
+            match crate::ops::runtime_delivery::claim(
+                home,
+                group,
+                actor,
+                &event.id,
+                transport,
+                force_ambiguous,
+            ) {
+                Ok(crate::ops::runtime_delivery::ClaimResult::Claimed) => {}
+                Ok(crate::ops::runtime_delivery::ClaimResult::Terminal(_)) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        event_id = %event.id,
+                        message = %error.message,
+                        "failed to claim runtime delivery"
+                    );
+                    continue;
+                }
+            }
+        }
         if enqueue(DeliveryJob {
             home: home.clone(),
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
-            advances_cursor: true,
         }) {
             queued += 1;
+        } else if let Err(error) = crate::ops::runtime_delivery::append_state(
+            home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            transport,
+            crate::ops::runtime_delivery::DeliveryOutcome::Failed(
+                "daemon delivery queue did not accept the event",
+            ),
+        ) {
+            tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
         }
     }
     report(targets.len(), online, queued)
 }
 
 pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
-    let Some((actor, events)) = unread_delivery_input(home, group, actor_id) else {
-        return 0;
-    };
-    events
-        .into_iter()
-        .filter(|event| {
-            enqueue(DeliveryJob {
-                home: home.clone(),
-                group: group.clone(),
-                actor: actor.clone(),
-                event: event.clone(),
-                advances_cursor: true,
-            })
-        })
-        .count()
-}
-
-pub fn dispatch_unread_notice(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
-    let Some((actor, events)) = unread_delivery_input(home, group, actor_id) else {
-        return 0;
-    };
-    if events.is_empty() {
-        return 0;
-    }
-    let notice = recovery::notice_event(
-        &group.group_id,
-        actor_id,
-        events.len(),
-        events.len() == QUEUE_CAPACITY,
-        &events[events.len() - 1].id,
-    );
-    usize::from(enqueue(DeliveryJob {
-        home: home.clone(),
-        group: group.clone(),
-        actor: actor.clone(),
-        event: notice,
-        advances_cursor: false,
-    }))
-}
-
-fn unread_delivery_input<'a>(
-    home: &HomeLayout,
-    group: &'a GroupDoc,
-    actor_id: &str,
-) -> Option<(&'a Actor, Vec<Event>)> {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
-        return None;
+        return 0;
     }
-    let actor = group.actors.iter().find(|actor| actor.id == actor_id)?;
+    let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+        return 0;
+    };
     if !actor.enabled
         || (crate::ops::actor_runtime::is_structured(actor)
             && !crate::ops::local_headless::supports(actor)
             && actor.runtime != ActorRuntime::Deepseek)
     {
-        return None;
+        return 0;
     }
-    let events = match inbox::list_unread(home, group, actor_id, QUEUE_CAPACITY, "all") {
+    let events = match crate::ops::runtime_delivery::pending_sources(
+        home,
+        group,
+        actor,
+        QUEUE_CAPACITY,
+    ) {
         Ok(events) => events,
         Err(error) => {
-            tracing::warn!(
-                %error,
-                group_id = %group.group_id,
-                %actor_id,
-                "failed to reload unread runtime deliveries"
-            );
-            return None;
+            tracing::warn!(message = %error.message, %actor_id, "failed to load pending runtime deliveries");
+            return 0;
         }
     };
-    Some((actor, events))
+    events
+        .into_iter()
+        .map(|event| dispatch_to(home, group, &event, std::slice::from_ref(actor), false).queued)
+        .sum()
 }
 
 pub fn dispatch_group_unread(home: &HomeLayout, group: &GroupDoc) -> usize {
     group
         .actors
         .iter()
-        .map(|actor| dispatch_unread_notice(home, group, &actor.id))
+        .map(|actor| dispatch_unread(home, group, &actor.id))
         .sum()
+}
+
+pub fn mail_report() -> DispatchReport {
+    DispatchReport {
+        accepted: true,
+        state: "mail",
+        targeted: 0,
+        online: 0,
+        queued: 0,
+    }
+}
+
+pub(super) fn delivery_transport(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> &'static str {
+    if actor.runtime == ActorRuntime::Deepseek {
+        "deepseek"
+    } else if actor.runtime == ActorRuntime::WebModel {
+        web_model_delivery_transport(home, group, actor)
+    } else if crate::ops::local_headless::supports(actor) {
+        "local_headless"
+    } else {
+        "pty"
+    }
+}
+
+fn web_model_delivery_transport(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> &'static str {
+    let setting = |names: &[&str]| {
+        names
+            .iter()
+            .filter_map(|name| actor.env.get(*name))
+            .map(|value| value.trim().to_ascii_lowercase())
+            .find(|value| !value.is_empty())
+            .or_else(|| {
+                names
+                    .iter()
+                    .filter_map(|name| std::env::var(name).ok())
+                    .map(|value| value.trim().to_ascii_lowercase())
+                    .find(|value| !value.is_empty())
+            })
+            .unwrap_or_default()
+    };
+    let mode = setting(&["CCCC_WEB_MODEL_DELIVERY_MODE", "CCCC_WEB_MODEL_DELIVERY"]);
+    if matches!(
+        mode.as_str(),
+        "pull" | "native" | "remote_mcp" | "off" | "disabled" | "none"
+    ) {
+        return "web_model_pull";
+    }
+    if matches!(
+        mode.as_str(),
+        "browser" | "chatgpt" | "chatgpt_browser" | "browser_delivery"
+    ) {
+        return "web_model_browser";
+    }
+    let mut provider = setting(&["CCCC_WEB_MODEL_PROVIDER", "CCCC_WEB_MODEL_BROWSER_PROVIDER"]);
+    if provider.is_empty() {
+        provider = cccc_core::web_model_connectors::load(home)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|connector| {
+                !connector["revoked"].as_bool().unwrap_or(false)
+                    && connector["group_id"].as_str() == Some(group.group_id.as_str())
+                    && connector["actor_id"].as_str() == Some(actor.id.as_str())
+            })
+            .and_then(|connector| connector["provider"].as_str().map(str::to_owned))
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+    }
+    if matches!(
+        provider.as_str(),
+        "chatgpt" | "chatgpt_web" | "browser_web_model" | "chatgpt_browser"
+    ) {
+        "web_model_browser"
+    } else {
+        "web_model_pull"
+    }
 }
 
 fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
@@ -252,7 +451,7 @@ fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
     } else if online > 0 {
         "queue_full"
     } else if targeted > 0 {
-        "inbox"
+        "blocked"
     } else {
         "no_recipients"
     };
@@ -357,9 +556,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 &thread_cancelled,
             ) {
                 if thread_cancelled.load(Ordering::Acquire) {
-                    for job in &batch {
-                        release_in_flight(job);
-                    }
+                    fail_jobs(&batch, "delivery worker stopped before runtime acceptance");
                     break;
                 }
                 deferred = batch;
@@ -371,9 +568,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 && !crate::ops::local_headless::supports(&batch[0].actor)
             {
                 if !actor_delivery_worker::interruptible_sleep(BATCH_WINDOW, &thread_cancelled) {
-                    for job in &batch {
-                        release_in_flight(job);
-                    }
+                    fail_jobs(&batch, "delivery worker stopped before runtime acceptance");
                     break;
                 }
                 while batch.len() < BATCH_CAPACITY {
@@ -412,8 +607,12 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 deferred_failures = 0;
             }
         }
-        for job in &deferred {
-            release_in_flight(job);
+        fail_jobs(
+            &deferred,
+            "delivery worker stopped before runtime acceptance",
+        );
+        for job in receiver.try_iter() {
+            fail_job(&job, "delivery worker stopped before runtime acceptance");
         }
     });
     let thread = match thread {
@@ -439,7 +638,8 @@ fn deferred_retry_delay(failures: u32) -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cccc_core::Scope;
+    use cccc_core::{GroupStore, ledger};
+    use serde_json::json;
 
     #[test]
     fn delivery_settings_prefer_canonical_section_and_read_legacy_flat_value() {
@@ -464,120 +664,45 @@ mod tests {
     }
 
     #[test]
-    fn actor_activation_queues_one_transient_unread_notice() {
+    fn mail_is_stored_without_runtime_queueing() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("unread activation", "").expect("group");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Custom;
-        actor.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
+        let mut group = store.create("mail", "").expect("group");
+        let actor = Actor::new("peer1");
         group.actors.push(actor);
         store.save(&group).expect("save actor");
         let mut event = Event::new("chat.message", &group.group_id);
         event.by = "user".into();
-        event.data = json!({"to":["peer1"],"text":"recover me"})
+        event.data = json!({"to":["peer1"],"text":"read later","message_mode":"mail"})
             .as_object()
             .cloned()
             .expect("event data");
-        ledger::append(
-            &store.ledger_path(&group.group_id).expect("ledger path"),
-            &event,
-        )
-        .expect("append message");
-        let mut newer = Event::new("chat.message", &group.group_id);
-        newer.by = "user".into();
-        newer.data = json!({"to":["peer1"],"text":"recover me too"})
-            .as_object()
-            .cloned()
-            .expect("event data");
-        ledger::append(
-            &store.ledger_path(&group.group_id).expect("ledger path"),
-            &newer,
-        )
-        .expect("append newer message");
-
-        let notice_id = format!("unread-recovery:{}", newer.id);
-        assert_eq!(dispatch_unread_notice(&home, &group, "peer1"), 1);
-        let pending = in_flight().lock().expect("in flight");
-        assert!(pending.contains(&(group.group_id.clone(), "peer1".into(), notice_id)));
-        assert_eq!(
-            pending
-                .iter()
-                .filter(|item| item.0 == group.group_id && item.1 == "peer1")
-                .count(),
-            1
-        );
-        assert!(!pending.contains(&(group.group_id.clone(), "peer1".into(), event.id.clone(),)));
-        drop(pending);
-
-        shutdown_actor(&group.group_id, "peer1");
-        let _ = cccc_runtime::stop(&group.group_id, "peer1");
+        let report = dispatch(&home, &group, &event);
+        assert_eq!(report.state, "mail");
+        assert_eq!(report.queued, 0);
+        assert!(in_flight().lock().expect("in flight").is_empty());
     }
 
     #[test]
-    fn deferred_recovery_notice_retries_without_advancing_cursor() {
+    fn paused_direct_delivery_is_blocked_not_reported_as_mail() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let workspace = temp.path().join("workspace");
-        std::fs::create_dir(&workspace).expect("workspace");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("deferred retry", "").expect("group");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Custom;
-        actor.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
-        group.actors.push(actor);
-        group.scopes.push(Scope {
-            scope_key: "scope".into(),
-            url: workspace.to_string_lossy().into_owned(),
-            label: "workspace".into(),
-            git_remote: String::new(),
-        });
-        group.active_scope_key = "scope".into();
+        let mut group = store.create("paused direct", "").expect("group");
+        group.state = GroupState::Paused;
+        group.actors.push(Actor::new("peer1"));
         store.save(&group).expect("save actor");
         let mut event = Event::new("chat.message", &group.group_id);
         event.by = "user".into();
-        event.data = json!({"to":["peer1"],"text":"retry without a new event"})
+        event.data = json!({"to":["peer1"],"text":"wait","message_mode":"send"})
             .as_object()
             .cloned()
             .expect("event data");
-        ledger::append(
-            &store.ledger_path(&group.group_id).expect("ledger path"),
-            &event,
-        )
-        .expect("append message");
 
-        let group_path = store
-            .group_dir(&group.group_id)
-            .expect("group dir")
-            .join("group.yaml");
-        let hidden_path = group_path.with_extension("yaml.hidden");
-        std::fs::rename(&group_path, &hidden_path).expect("hide group state");
-        let notice_id = format!("unread-recovery:{}", event.id);
-        assert_eq!(dispatch_unread_notice(&home, &group, "peer1"), 1);
-        std::thread::sleep(std::time::Duration::from_millis(600));
-        std::fs::rename(&hidden_path, &group_path).expect("restore group state");
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            let still_pending =
-                in_flight().lock().expect("in flight").iter().any(|item| {
-                    item.0 == group.group_id && item.1 == "peer1" && item.2 == notice_id
-                });
-            if !still_pending || std::time::Instant::now() >= deadline {
-                assert!(!still_pending, "deferred recovery notice was not retried");
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        assert!(
-            inbox::cursor(&home, &group.group_id, "peer1")
-                .expect("cursor")
-                .is_none()
-        );
-
-        shutdown_actor(&group.group_id, "peer1");
-        let _ = cccc_runtime::stop(&group.group_id, "peer1");
+        let report = dispatch_to(&home, &group, &event, &group.actors, false);
+        assert_eq!(report.state, "blocked");
+        assert_eq!(report.queued, 0);
     }
 
     #[test]
@@ -587,5 +712,61 @@ mod tests {
             std::time::Duration::from_millis(250)
         );
         assert_eq!(deferred_retry_delay(u32::MAX), DEFERRED_RETRY_MAX);
+    }
+
+    #[test]
+    fn worker_shutdown_releases_claims_as_retryable_failures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("paused delivery", "").expect("group");
+        group.state = GroupState::Paused;
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1"],"text":"retry me","message_mode":"send"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &event,
+        )
+        .expect("append source");
+        crate::ops::runtime_delivery::append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            delivery_transport(&home, &group, &actor),
+            crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
+        )
+        .expect("claim");
+
+        assert!(enqueue(DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+        }));
+        shutdown_actor(&group.group_id, &actor.id);
+
+        assert_eq!(
+            crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &event.id,
+            )
+            .expect("latest state")
+            .expect("delivery state")
+            .0,
+            "failed"
+        );
+        assert!(in_flight().lock().expect("in flight").is_empty());
     }
 }

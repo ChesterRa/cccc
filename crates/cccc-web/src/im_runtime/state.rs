@@ -236,6 +236,7 @@ fn inbound_args(
     args.insert("by".into(), json!("user"));
     args.insert("text".into(), json!(text));
     args.insert("to".into(), json!(to));
+    args.insert("message_mode".into(), json!("send"));
     args.insert("transport".into(), json!("im"));
     args.insert("im_platform".into(), json!(platform));
     args.insert("im_chat_id".into(), json!(chat_id));
@@ -411,6 +412,7 @@ mod tests {
         .expect("args");
         assert_eq!(args["by"], "user");
         assert_eq!(args["to"], json!(["@foreman"]));
+        assert_eq!(args["message_mode"], "send");
         assert_eq!(args["transport"], "im");
         assert_eq!(args["source_platform"], "dingtalk");
         assert_eq!(args["source_user_id"], "staff-1");

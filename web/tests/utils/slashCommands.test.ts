@@ -352,19 +352,6 @@ describe("slashCommands", () => {
     });
   });
 
-  it("allows slash commands when the message only requires recipients to reply", () => {
-    expect(
-      resolveSlashCommandGuard({
-        composerFilesCount: 0,
-        hasReplyTarget: false,
-        replyRequired: true,
-        hasQuotedPresentationRef: false,
-        sendGroupId: "g1",
-        selectedGroupId: "g1",
-      }),
-    ).toEqual({ ok: true });
-  });
-
   it("shows every available slash command for an empty slash query", () => {
     const commands = buildSlashCommands({
       state: {

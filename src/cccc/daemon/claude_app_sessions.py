@@ -29,7 +29,7 @@ from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
 from .actors.actor_exit_ops import persist_actor_process_exit_stopped
 from .mcp_install import ensure_mcp_installed
-from .messaging.delivery import auto_mark_headless_delivery_started, render_headless_control_text
+from .messaging.delivery import render_headless_control_text
 from .runner_state_ops import headless_state_path, remove_headless_state
 from .runtime_session_ops import (
     mark_runtime_session_resume_failed,
@@ -1075,12 +1075,6 @@ class ClaudeAppSession:
                     },
                 )
             else:
-                auto_mark_headless_delivery_started(
-                    group_id=self.group_id,
-                    actor_id=self.actor_id,
-                    event_id=payload.event_id,
-                    ts=payload.ts,
-                )
                 self._emit(
                     "headless.turn.started",
                     {

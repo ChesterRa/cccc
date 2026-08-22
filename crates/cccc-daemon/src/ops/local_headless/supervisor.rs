@@ -224,7 +224,6 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     let _ = item.turns.try_send(Turn {
         text: bootstrap,
         event_id: String::new(),
-        event_ts: String::new(),
         control_kind: "bootstrap".into(),
     });
     super::output::emit(&item, "headless.session.started", Map::new());
@@ -288,7 +287,8 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
     if !item.running() {
         return false;
     }
-    let Some((delivery, control_kind)) = render_turn(event) else {
+    let Some((delivery, control_kind)) = render_turn_with_mail_context(home, group, actor, event)
+    else {
         return false;
     };
     let queued = item
@@ -296,7 +296,6 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
         .try_send(Turn {
             text: delivery,
             event_id: event.id.clone(),
-            event_ts: event.ts.clone(),
             control_kind,
         })
         .is_ok();
@@ -312,6 +311,31 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
     queued
 }
 
+fn render_turn_with_mail_context(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+) -> Option<(String, String)> {
+    super::super::actor_delivery_render::render_batch_with_mail_context(
+        home,
+        group,
+        &actor.id,
+        std::slice::from_ref(event),
+    )
+    .map(|text| {
+        (
+            text,
+            if event.kind == "system.notify" {
+                "system_notify".into()
+            } else {
+                String::new()
+            },
+        )
+    })
+}
+
+#[cfg(test)]
 fn render_turn(event: &Event) -> Option<(String, String)> {
     super::super::actor_delivery_render::render_batch(std::slice::from_ref(event)).map(|text| {
         (
@@ -925,8 +949,7 @@ fn headless_turn_uses_complete_envelope_and_control_semantics() {
     message.data = json!({
         "text":"review",
         "to":["architect"],
-        "priority":"attention",
-        "reply_required":true,
+        "message_mode":"request_reply",
         "reply_to":"source-event",
         "quote_text":"quoted",
         "insight":"challenge the boundary",
@@ -939,7 +962,6 @@ fn headless_turn_uses_complete_envelope_and_control_semantics() {
     let (rendered, control) = render_turn(&message).expect("turn");
     assert!(control.is_empty());
     for expected in [
-        "IMPORTANT",
         "REPLY REQUIRED",
         "(reply:source-e)",
         "quoted",

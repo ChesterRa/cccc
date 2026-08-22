@@ -14,6 +14,7 @@ from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..mcp_install import prepare_runtime_mcp_env
+from ..messaging.runtime_delivery import settle_stranded_claims
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ..runner_state_ops import web_model_group_running
 from ...util.conv import coerce_bool
@@ -67,6 +68,20 @@ def autostart_running_groups(
         group = load_group(group_id)
         if group is None:
             continue
+        try:
+            settled = settle_stranded_claims(group)
+            if settled:
+                logger.warning(
+                    "settled %s stranded runtime delivery claim(s) for group=%s",
+                    settled,
+                    group_id,
+                )
+        except Exception as error:
+            logger.warning(
+                "failed to settle stranded runtime delivery claims for group=%s: %s",
+                group_id,
+                error,
+            )
         if not coerce_bool(group.doc.get("running"), default=False):
             continue
         logger.info("autostart group=%s state=%s running=%s", group_id, str(group.doc.get("state") or "active"), True)

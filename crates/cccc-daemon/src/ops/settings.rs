@@ -11,7 +11,16 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg
 const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
     ("default_send_to", "messaging", "default_send_to"),
     ("min_interval_seconds", "delivery", "min_interval_seconds"),
-    ("auto_mark_on_delivery", "delivery", "auto_mark_on_delivery"),
+    (
+        "mail_notice_after_seconds",
+        "delivery",
+        "mail_notice_after_seconds",
+    ),
+    (
+        "reply_notice_after_seconds",
+        "delivery",
+        "reply_notice_after_seconds",
+    ),
     (
         "terminal_transcript_visibility",
         "terminal_transcript",
@@ -250,11 +259,11 @@ mod tests {
             .mutate(&group.group_id, |group| {
                 group
                     .automation
-                    .insert("nudge_after_seconds".into(), json!(123));
+                    .insert("actor_idle_timeout_seconds".into(), json!(123));
                 group.extra.insert(
                     "settings".into(),
                     json!({
-                        "nudge_after_seconds":999,
+                        "actor_idle_timeout_seconds":999,
                         "help_nudge_interval_seconds":777,
                         "default_send_to":"broadcast",
                         "native_extension":{"keep":true}
@@ -290,7 +299,7 @@ mod tests {
             .as_object()
             .expect("flat settings object");
 
-        assert_eq!(stored.automation["nudge_after_seconds"], json!(123));
+        assert_eq!(stored.automation["actor_idle_timeout_seconds"], json!(123));
         assert_eq!(stored.automation["help_nudge_interval_seconds"], json!(777));
         assert_eq!(stored.automation["keepalive_delay_seconds"], json!(456));
         assert_eq!(
@@ -310,7 +319,10 @@ mod tests {
             json!("all")
         );
         assert_eq!(stored.extra["features"]["panorama_enabled"], json!(true));
-        assert_eq!(response["settings"]["nudge_after_seconds"], json!(123));
+        assert_eq!(
+            response["settings"]["actor_idle_timeout_seconds"],
+            json!(123)
+        );
         assert_eq!(response["settings"]["keepalive_delay_seconds"], json!(456));
         assert_eq!(response["settings"]["default_send_to"], json!("foreman"));
         assert_eq!(response["settings"]["min_interval_seconds"], json!(42));

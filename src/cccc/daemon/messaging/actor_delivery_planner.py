@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 
 from ...kernel.inbox import is_message_for_actor
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ...util.conv import coerce_bool
 
 TRANSPORT_SKIP = "skip"
 TRANSPORT_PTY = "pty"
@@ -60,6 +61,12 @@ def plan_actor_chat_delivery(
         return ActorDeliveryDecision(actor_id=actor_id, transport=TRANSPORT_SKIP, reason="user_actor")
     if actor_id == str(by or "").strip():
         return ActorDeliveryDecision(actor_id=actor_id, transport=TRANSPORT_SKIP, reason="sender")
+    if not coerce_bool(actor.get("enabled"), default=True):
+        return ActorDeliveryDecision(
+            actor_id=actor_id,
+            transport=TRANSPORT_SKIP,
+            reason="actor_disabled",
+        )
 
     effective_event = event_with_effective_to(event, effective_to)
     if not is_message_for_actor(group, actor_id=actor_id, event=effective_event):

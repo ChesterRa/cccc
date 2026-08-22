@@ -1,4 +1,5 @@
 use cccc_contracts::DaemonRequest;
+use cccc_contracts::GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -188,8 +189,16 @@ pub(super) fn deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .get("idempotency_key")
         .cloned()
         .unwrap_or(Value::Null);
+    let operation: String = required_arg(request, "operation")?;
+    if !matches!(operation.as_str(), "remote_send" | "reply_request_cancel") {
+        return Err(OpError::new(
+            "unsupported_op",
+            "unsupported Group Bridge session operation",
+        ));
+    }
     let frame = json!({
-        "type":"request","request_id":request_id,"op":"remote_send",
+        "type":"request","request_id":request_id,"op":operation,
+        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
         "target_group_id":key.remote_group_id,"src_group_id":key.group_id,
         "idempotency_key":idempotency_key,"payload":payload
     });
@@ -365,6 +374,7 @@ mod tests {
     fn delivery_maps_unavailable_timeout_and_replacement_failure() {
         let (_temp, home) = home();
         let mut delivery = route();
+        delivery["operation"] = json!("remote_send");
         delivery["payload"] = json!({"text":"hello"});
         delivery["timeout_ms"] = json!(20);
         let unavailable =

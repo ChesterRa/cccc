@@ -105,25 +105,20 @@ Cline is currently integrated as a fresh-start PTY runtime. CCCC does not persis
 
 ### PTY delivery and recovery
 
-A successful `send` means that CCCC durably appended the event and scheduled
-best-effort runtime delivery; it does not prove that the provider application
-consumed the text. For PTY actors, CCCC submits messages in ledger order and
-advances the delivery cursor only after a live PTY accepts the write. An
-already-exited session is rejected before that cursor advances. A process can
-still die after the operating system accepts the bytes but before completion is
-recorded, so recovery is deliberately at-least-once rather than provider-level
-exactly-once.
+A successful Send means that CCCC durably appended the message and attempted a
+runtime handoff; it does not prove that the provider application understood or
+acted on the text. For each concrete recipient, `runtime.delivery` records
+`claimed` before external I/O and then `accepted`, `failed`, or `ambiguous`.
+Concurrent claimants treat `claimed` as in progress. On daemon restart, a claim
+without an outcome is settled to `ambiguous` and is not retried automatically.
 
-Failed work remains unread and stays ahead of later work. Actor/group activation
-and daemon restore inject one transient unread summary into supported PTY and
-Codex/Claude headless sessions instead of replaying every old message body. The
-summary reports a bounded count ("at least 256" when capped), points the actor
-to `cccc_inbox_list` and `cccc_inbox_mark_read`, and never advances the unread
-cursor. Normal live delivery still refills from the canonical ledger and inbox
-in ordered 256-event
-windows after completed prefixes. Switching engines does not transfer a live PTY
-process, its input mode, preamble memory, or hot terminal ring; both engines use
-the same durable unread state and restart-summary behavior.
+Current-generation Send work with no accepted/ambiguous evidence can be
+recovered in ledger order after actor/group activation. Mail is never promoted
+by recovery: it remains in the Inbox until `cccc_inbox_read`, apart from the
+single bounded content-free Mail notice. Runtime handoff never advances the
+Inbox cursor. Switching engines does not transfer a live PTY process, its input
+mode, preamble memory, or hot terminal ring; both engines share the same ledger,
+Mail cursor, reply obligation, and runtime-delivery evidence.
 
 ### Codex and Claude PTY Hook State
 

@@ -938,7 +938,7 @@ mod tests {
                 "registration_id":"reg_1","group_id":"g_local","credential":"secret","status":"active"
             }]));
             state.insert("deliveries".into(), json!([{
-                "registration_id":"reg_1","idempotency_key":"once","status":"delivered"
+                "registration_id":"reg_1","idempotency_key":"once","status":"sent"
             }]));
             Ok(())
         })
@@ -958,7 +958,7 @@ mod tests {
             credentials["credentials"].as_object().map(Map::len),
             Some(1)
         );
-        assert_eq!(receipts["receipts"]["reg_1::once"]["status"], "delivered");
+        assert_eq!(receipts["receipts"]["reg_1::once"]["status"], "sent");
         assert_eq!(
             load(&home).expect("reload")["registrations"][0]["credential"],
             "secret"

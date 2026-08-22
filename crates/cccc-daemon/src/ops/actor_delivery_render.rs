@@ -1,15 +1,9 @@
 use cccc_contracts::Event;
+use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Value;
 
 mod references;
 mod system_notify;
-
-fn mcp_reply_reminder() -> String {
-    format!(
-        "[cccc] {}",
-        cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE
-    )
-}
 
 fn render_message(event: &Event) -> Option<String> {
     if event.kind == "system.notify" {
@@ -45,7 +39,7 @@ pub fn render_batch(events: &[Event]) -> Option<String> {
         .iter()
         .map(render_message)
         .collect::<Option<Vec<_>>>()?;
-    let rendered = match messages.as_slice() {
+    match messages.as_slice() {
         [] => None,
         [message] => Some(message.clone()),
         _ => Some(format!(
@@ -53,38 +47,46 @@ pub fn render_batch(events: &[Event]) -> Option<String> {
             messages.len(),
             messages.join("\n\n")
         )),
-    }?;
-    Some(if events.iter().any(|event| event.kind == "chat.message") {
-        append_mcp_reply_reminder(&rendered)
-    } else {
-        rendered
-    })
+    }
 }
 
-fn append_mcp_reply_reminder(text: &str) -> String {
-    let out = text.trim_end_matches(['\r', '\n']);
-    let reminder = mcp_reply_reminder();
-    if out.contains(&reminder) {
-        return out.to_owned();
+pub fn render_batch_with_mail_context(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    events: &[Event],
+) -> Option<String> {
+    let mut output = render_batch(events)?;
+    let has_direct_message = events.iter().any(|event| {
+        event.kind == "chat.message"
+            && matches!(
+                event.data.get("message_mode").and_then(Value::as_str),
+                Some("send" | "request_reply")
+            )
+    });
+    if !has_direct_message {
+        return Some(output);
     }
-    if out.is_empty() {
-        reminder
-    } else {
-        format!("{out}\n\n{reminder}")
+    let pending = cccc_core::inbox::mail_pending_summary(home, group, actor_id)
+        .ok()
+        .flatten();
+    let count = pending
+        .as_ref()
+        .and_then(|value| value.get("count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if count > 0 {
+        let noun = if count == 1 { "item" } else { "items" };
+        output.push_str(&format!(
+            "\n\n[cccc] MAIL PENDING: {count} {noun}. Call cccc_inbox_read when appropriate."
+        ));
     }
+    Some(output)
 }
 
 fn protocol_lines(event: &Event) -> Vec<String> {
     let mut lines = Vec::new();
-    if text(event, "priority") == "attention" {
-        lines.push(format!("[cccc] IMPORTANT (event_id={}):", event.id));
-    }
-    if event
-        .data
-        .get("reply_required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+    if text(event, "message_mode") == "request_reply" {
         lines.push(format!(
             "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_reply.",
             event.id
@@ -237,7 +239,7 @@ mod tests {
         event.data = json!({
             "to":["peer1"], "text":"inspect",
             "insight":"The dependency boundary matters more than the local patch.",
-            "priority":"attention", "reply_required":true,
+            "message_mode":"request_reply",
             "refs":[{"kind":"task_ref","task_id":"task-1","title":"Fix send"}],
             "attachments":[{"path":"state/blobs/abc","title":"screen.png","bytes":42}]
         })
@@ -245,7 +247,6 @@ mod tests {
         .cloned()
         .expect("object");
         let rendered = render_batch(&[event]).expect("render");
-        assert!(rendered.contains("IMPORTANT (event_id=event-123)"));
         assert!(
             rendered.contains("REPLY REQUIRED (event_id=event-123): reply via cccc_message_reply.")
         );
@@ -254,6 +255,54 @@ mod tests {
         assert!(rendered.contains("screen.png (42 bytes) [state/blobs/abc]"));
         assert!(rendered.contains(cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL));
         assert!(rendered.contains("dependency boundary matters"));
+    }
+
+    #[test]
+    fn direct_delivery_adds_mail_count_without_consuming_mail() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("mail context", "").expect("group");
+        group.actors.push(cccc_contracts::Actor::new("peer1"));
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = json!({
+            "to":["peer1"],
+            "text":"read later",
+            "message_mode":"mail",
+        })
+        .as_object()
+        .cloned()
+        .expect("mail data");
+        cccc_core::ledger::append(&ledger_path, &mail).expect("append mail");
+
+        let mut direct = Event::new("chat.message", &group.group_id);
+        direct.by = "user".into();
+        direct.data = json!({
+            "to":["peer1"],
+            "text":"look now",
+            "message_mode":"send",
+        })
+        .as_object()
+        .cloned()
+        .expect("direct data");
+
+        let rendered = render_batch_with_mail_context(&home, &group, "peer1", &[direct])
+            .expect("render direct");
+        assert!(rendered.contains("MAIL PENDING: 1 item"));
+        assert_eq!(
+            cccc_core::inbox::list_unread(&home, &group, "peer1", 10)
+                .expect("unread")
+                .len(),
+            1
+        );
+
+        let rendered_mail =
+            render_batch_with_mail_context(&home, &group, "peer1", &[mail]).expect("render mail");
+        assert!(!rendered_mail.contains("MAIL PENDING"));
     }
 
     #[test]
@@ -295,11 +344,11 @@ mod tests {
         assert!(rendered.starts_with("[cccc] 2 new messages:"));
         assert!(rendered.contains("[cccc] reviewer → lead: first"));
         assert!(rendered.contains("[cccc] backend → lead: second"));
-        assert_eq!(rendered.matches(&mcp_reply_reminder()).count(), 1);
+        assert!(!rendered.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
     }
 
     #[test]
-    fn appends_python_compatible_mcp_reminder_to_each_chat_delivery() {
+    fn does_not_repeat_system_prompt_guidance_in_each_chat_delivery() {
         let mut event = Event::new("chat.message", "g_test");
         event.by = "user".into();
         event.data = json!({"to":["codex-1"], "text":"你好"})
@@ -308,10 +357,7 @@ mod tests {
             .expect("object");
 
         let rendered = render_batch(&[event]).expect("rendered");
-        assert_eq!(
-            rendered,
-            "[cccc] user → codex-1: 你好\n\n[cccc] Use cccc_message_reply for replies; use cccc_message_send for new messages. Terminal output is not delivered. Verify reply_to/to; avoid routine @all. Use cccc_help if unsure."
-        );
+        assert_eq!(rendered, "[cccc] user → codex-1: 你好");
     }
 
     #[test]
@@ -436,7 +482,7 @@ mod tests {
                     "request_id": "request-9",
                     "document_path": "voice/meeting.md",
                     "request_text": "生成行动项并发给项目组",
-                    "priority": "attention"
+                    "priority": "high"
                 }
             }
         })
@@ -449,7 +495,7 @@ mod tests {
         assert!(rendered.contains("request_id=request-9"));
         assert!(rendered.contains("document_path=voice/meeting.md"));
         assert!(rendered.contains("生成行动项并发给项目组"));
-        assert!(rendered.contains("\"priority\": \"attention\""));
+        assert!(rendered.contains("\"priority\": \"high\""));
     }
 
     #[test]

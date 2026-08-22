@@ -27,7 +27,7 @@ from ..kernel.settings import (
     update_web_branding_settings,
 )
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
-from ..kernel.messaging import disabled_recipient_actor_ids, enabled_recipient_actor_ids
+from ..kernel.messaging import enabled_recipient_actor_ids
 from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
@@ -94,11 +94,10 @@ from .socket_protocol_ops import (
 from .messaging.delivery import (
     inject_system_prompt as deliver_system_prompt,
     pty_submit_text,
-    render_delivery_text,
     deliver_message_with_preamble,
     flush_pending_messages,
     request_flush_pending_messages,
-    recover_unread_pty_messages,
+    refill_unread_runtime_messages,
     tick_delivery,
     clear_preamble_sent,
     THROTTLE,
@@ -647,7 +646,7 @@ def _reset_actor_delivery_state(group_id: str, actor_id: str, *, keep_pending: b
         return
     group = load_group(group_id)
     if group is not None:
-        recover_unread_pty_messages(group, actor_id=actor_id)
+        refill_unread_runtime_messages(group, actor_id=actor_id)
 
 
 def _maybe_autostart_running_groups() -> None:
@@ -883,13 +882,10 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             group,
             to,
             by=by,
-            disabled_recipient_actor_ids=disabled_recipient_actor_ids,
             enabled_recipient_actor_ids=enabled_recipient_actor_ids,
             find_actor=find_actor,
-            coerce_bool=coerce_bool,
             is_actor_running=_auto_wake_actor_running,
             start_actor_process=_start_actor_process,
-            update_actor=update_actor,
             runner_stop_actor=runner_stop_actor,
             request_flush_pending_messages=lambda wake_group, actor_id: request_flush_pending_messages(
                 wake_group,

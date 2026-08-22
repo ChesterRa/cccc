@@ -3,7 +3,7 @@
 System notifications are separated from chat messages to avoid polluting user conversations.
 
 Kinds:
-- nudge: remind an actor to handle unread messages
+- nudge: generic explicit actor nudge (not an Inbox acknowledgement mechanism)
 - keepalive: remind an actor to continue work (after detecting a "Next:" declaration)
 - help_nudge: remind an actor to refresh the collaboration protocol reference (cccc_help)
 - actor_idle: actor idle alert (to foreman)
@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 NotifyKind = Literal[
-    "nudge",  # Remind about unread messages
+    "nudge",  # Generic explicit actor nudge
     "keepalive",  # Remind to continue work
     "help_nudge",  # Ask actor to refresh cccc_help
     "actor_idle",  # Actor idle alert (to foreman)
@@ -32,6 +32,8 @@ NotifyKind = Literal[
     "status_change",  # Status change notification
     "error",  # Error notification
     "info",  # Informational notification
+    "mail_notice",  # One-shot notice that Mail is waiting in the Inbox
+    "reply_notice",  # One-shot notice that an accepted request still needs a reply
 ]
 
 NotifyPriority = Literal["low", "normal", "high", "urgent"]
@@ -58,19 +60,7 @@ class SystemNotifyData(BaseModel):
     # Context
     context: Dict[str, Any] = Field(default_factory=dict)
 
-    # Acknowledgement
-    requires_ack: bool = False
-
     # Related event
     related_event_id: Optional[str] = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class NotifyAckData(BaseModel):
-    """Notification acknowledgement payload."""
-
-    notify_event_id: str  # The acknowledged notify event_id
-    actor_id: str  # Actor who acknowledged
 
     model_config = ConfigDict(extra="forbid")

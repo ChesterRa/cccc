@@ -56,6 +56,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -98,6 +99,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -128,6 +130,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -157,6 +160,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -187,6 +191,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": "cccc",
                     "by": "user",
@@ -226,7 +231,7 @@ class TestMaintenanceOps(unittest.TestCase):
 
         def fake_remote_send(args: dict):
             captured["remote_send"] = args
-            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "sent"}})
 
         with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
              patch.object(
@@ -243,6 +248,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_remote",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "remote ping",
                     "attachments": [
                         {
@@ -317,6 +323,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_dst",
                     "by": "peer1",
+                    "message_mode": "send",
                     "text": "review plan",
                     "to": ["@foreman"],
                     "require_peer_insight": True,
@@ -332,6 +339,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_dst",
                     "by": "peer1",
+                    "message_mode": "send",
                     "text": "review plan",
                     "to": ["@foreman"],
                     "insight": "The destination should be free to reject the whole plan.",
@@ -394,6 +402,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_remote",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "remote ping",
                 },
                 dispatch_send=fake_dispatch,
@@ -432,7 +441,7 @@ class TestMaintenanceOps(unittest.TestCase):
 
         def fake_remote_send(args: dict):
             captured["remote_send"] = args
-            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "sent"}})
 
         with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
              patch.object(
@@ -449,6 +458,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_remote",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "你好",
                     "to": ["@foreman"],
                     "reply_to": "evt-original",
@@ -489,7 +499,7 @@ class TestMaintenanceOps(unittest.TestCase):
 
         def fake_remote_send(args: dict):
             captured["remote_send"] = args
-            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "delivered"}})
+            return DaemonResponse(ok=True, result={"receipt": {"ok": True, "status": "sent"}})
 
         with patch.object(maintenance_ops, "load_group", return_value=SimpleNamespace(group_id="g_src")), \
              patch.object(
@@ -506,6 +516,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_remote",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "你好",
                     "to": ["@foreman"],
                     "reply_to": "evt-local-source",
@@ -553,6 +564,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_dst",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "本地回复",
                     "to": ["@foreman"],
                     "reply_to": "evt-local-source",
@@ -599,6 +611,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_dst",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "本地回复",
                     "to": ["@foreman"],
                     "reply_to": "evt-local-source",
@@ -656,6 +669,7 @@ class TestMaintenanceOps(unittest.TestCase):
                     "group_id": "g_src",
                     "dst_group_id": "g_remote",
                     "by": "user",
+                    "message_mode": "send",
                     "text": "remote ping",
                 },
                 dispatch_send=fake_dispatch,
@@ -682,6 +696,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -716,6 +731,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -753,6 +769,7 @@ class TestMaintenanceOps(unittest.TestCase):
             relay, _ = self._call(
                 "send_cross_group",
                 {
+                    "message_mode": "send",
                     "group_id": src_group_id,
                     "dst_group_id": dst_group_id,
                     "by": "user",
@@ -807,6 +824,7 @@ class TestMaintenanceOps(unittest.TestCase):
                 "dst_group_id": dst_group_id,
                 "by": "user",
                 "text": "relay ping",
+                "message_mode": "send",
                 "to": ["@foreman"],
                 "client_id": "relay-once",
             }
@@ -857,7 +875,7 @@ class TestMaintenanceOps(unittest.TestCase):
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
 
-            sent, _ = self._call("send", {"group_id": group_id, "text": "hello", "by": "user", "to": ["user"]})
+            sent, _ = self._call("send", {"message_mode": "send", "group_id": group_id, "text": "hello", "by": "user", "to": ["user"]})
             self.assertTrue(sent.ok, getattr(sent, "error", None))
             event = (sent.result or {}).get("event") if isinstance(sent.result, dict) else {}
             event_id = str((event or {}).get("id") or "")
@@ -909,7 +927,7 @@ class TestMaintenanceOps(unittest.TestCase):
 
             first, _ = self._call(
                 "send",
-                {"group_id": group_id, "text": "before", "by": "user", "to": ["user"]},
+                {"message_mode": "send", "group_id": group_id, "text": "before", "by": "user", "to": ["user"]},
             )
             self.assertTrue(first.ok, getattr(first, "error", None))
             group = load_group(group_id)
@@ -919,7 +937,7 @@ class TestMaintenanceOps(unittest.TestCase):
                 handle.write(b'{"broken":\n')
             second, _ = self._call(
                 "send",
-                {"group_id": group_id, "text": "after", "by": "user", "to": ["user"]},
+                {"message_mode": "send", "group_id": group_id, "text": "after", "by": "user", "to": ["user"]},
             )
             self.assertTrue(second.ok, getattr(second, "error", None))
             original = Path(group.ledger_path).read_bytes()

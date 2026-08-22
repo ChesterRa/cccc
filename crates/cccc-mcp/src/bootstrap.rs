@@ -12,17 +12,6 @@ use crate::router::daemon;
 const RECOVERY_TOKEN_BUDGET: usize = 1_100;
 const STALE_AFTER_SECONDS: i64 = 20 * 60;
 const MIND_HOT_ONLY_UPDATE_THRESHOLD: u64 = 3;
-const INTERRUPT_NOTIFY_KINDS: &[&str] = &[
-    "actor_idle",
-    "auto_idle",
-    "automation",
-    "help_nudge",
-    "keepalive",
-    "nudge",
-    "silence_check",
-    "standup",
-];
-
 pub(crate) async fn build(
     home: &HomeLayout,
     client: &DaemonClient,
@@ -38,13 +27,7 @@ pub(crate) async fn build(
         .get("inbox_limit")
         .and_then(Value::as_u64)
         .unwrap_or(50)
-        .clamp(1, 1_000) as usize;
-    let inbox_kind_filter = args
-        .get("inbox_kind_filter")
-        .and_then(Value::as_str)
-        .filter(|value| matches!(*value, "all" | "chat" | "notify"))
-        .unwrap_or("all");
-
+        .clamp(1, 200) as usize;
     let group_result = daemon(client, "group_show", request_args(&group_id, &actor_id)).await?;
     let group = group_result
         .get("group")
@@ -61,12 +44,11 @@ pub(crate) async fn build(
     let context = daemon(client, "context_get", request_args(&group_id, &actor_id)).await?;
 
     let mut inbox_args = request_args(&group_id, &actor_id);
-    inbox_args.insert("limit".into(), json!(inbox_limit.saturating_add(1)));
     inbox_args.insert(
-        "kind_filter".into(),
-        Value::String(inbox_kind_filter.to_owned()),
+        "limit".into(),
+        json!(inbox_limit.saturating_add(1).min(200)),
     );
-    let inbox = daemon(client, "inbox_list", inbox_args).await?;
+    let inbox = daemon(client, "inbox_peek", inbox_args).await?;
 
     let runtime_meta = load_runtime_meta(home, &group_id, &actor_id);
     let recovery_pack = build_recovery_pack(&context, &actor_id, &runtime_meta, Utc::now());
@@ -77,13 +59,20 @@ pub(crate) async fn build(
     let memory_recall_gate =
         build_memory_recall_gate(client, &group_id, &actor_id, &recovery_pack).await;
 
-    Ok(assemble_payload(
+    let mut payload = assemble_payload(
         build_session(group, actors, &actor_id),
         build_recovery(&recovery_pack),
         build_inbox_preview(&inbox, inbox_limit),
         context_hygiene,
         memory_recall_gate,
-    ))
+    );
+    if let Ok(store) = cccc_core::GroupStore::new(home.clone())
+        && let Ok(group) = store.load(&group_id)
+        && let Ok(Some(pending)) = cccc_core::inbox::mail_pending_summary(home, &group, &actor_id)
+    {
+        payload["mail_pending"] = pending;
+    }
+    Ok(payload)
 }
 
 fn assemble_payload(
@@ -103,9 +92,8 @@ fn assemble_payload(
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
             "project_info": "cccc_capability_use(tool_name=\"cccc_project_info\", tool_arguments={})",
             "context_get": "cccc_context_get()",
-            "inbox_list": "cccc_inbox_list(kind_filter=\"all\")",
+            "inbox_read": "cccc_inbox_read()",
             "memory_search": "cccc_capability_use(tool_name=\"cccc_memory\", tool_arguments={\"action\":\"search\",\"query\":\"...\"})",
-            "interrupt_triage": "If inbox_preview messages have signal_family=\"interrupt\", treat them as coordination interrupts: refresh or reply, then resume the current task unless priority changed."
         }
     })
 }
@@ -531,36 +519,17 @@ fn build_inbox_preview(inbox: &Map<String, Value>, limit: usize) -> Value {
         .filter_map(Value::as_object)
         .map(|item| {
             let data = item.get("data").and_then(Value::as_object);
-            let text = ["text", "message", "title"].into_iter().find_map(|key| {
-                data.and_then(|value| value.get(key))
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-            });
+            let text = data
+                .and_then(|value| value.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let mut entry = clean_object(Map::from_iter([
                 ("id".into(), trimmed_value(item.get("id"), 80)),
                 ("ts".into(), trimmed_value(item.get("ts"), 48)),
                 ("by".into(), trimmed_value(item.get("by"), 64)),
-                ("kind".into(), trimmed_value(item.get("kind"), 48)),
-                (
-                    "signal_family".into(),
-                    Value::String(signal_family(item, data).into()),
-                ),
-                (
-                    "reply_required".into(),
-                    Value::Bool(
-                        data.and_then(|value| value.get("reply_required"))
-                            .and_then(Value::as_bool)
-                            == Some(true)
-                            || data
-                                .and_then(|value| value.get("requires_ack"))
-                                .and_then(Value::as_bool)
-                                == Some(true),
-                    ),
-                ),
-                (
-                    "text_preview".into(),
-                    Value::String(trim_text(text.unwrap_or_default(), 220)),
-                ),
+                ("kind".into(), Value::String("chat.message".into())),
+                ("message_mode".into(), Value::String("mail".into())),
+                ("text_preview".into(), Value::String(trim_text(text, 220))),
             ]));
             if let Some(insight) = data
                 .and_then(|value| value.get("insight"))
@@ -570,43 +539,10 @@ fn build_inbox_preview(inbox: &Map<String, Value>, limit: usize) -> Value {
             {
                 entry.insert("insight_preview".into(), Value::String(insight));
             }
-            if let Some(kind) = data
-                .and_then(|value| value.get("kind"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                entry.insert("notify_kind".into(), Value::String(kind.to_owned()));
-            }
             Value::Object(entry)
         })
         .collect::<Vec<_>>();
     json!({"messages": preview, "truncated": messages.len() > limit})
-}
-
-fn signal_family(item: &Map<String, Value>, data: Option<&Map<String, Value>>) -> &'static str {
-    match item.get("kind").and_then(Value::as_str).unwrap_or_default() {
-        "chat.message" => "work_chat",
-        "system.notify" => {
-            let notify_kind = data
-                .and_then(|value| value.get("kind"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase();
-            if data
-                .and_then(|value| value.get("requires_ack"))
-                .and_then(Value::as_bool)
-                == Some(true)
-                || INTERRUPT_NOTIFY_KINDS.contains(&notify_kind.as_str())
-            {
-                "interrupt"
-            } else {
-                "notify"
-            }
-        }
-        _ => "other",
-    }
 }
 
 async fn build_memory_recall_gate(
@@ -1113,10 +1049,10 @@ mod tests {
     }
 
     #[test]
-    fn inbox_preview_is_bounded_and_marks_interrupts() {
+    fn inbox_preview_is_bounded_and_mail_only() {
         let inbox = json!({"messages": [
-            {"id":"e1","ts":"now","by":"user","kind":"chat.message","data":{"text":"do work","reply_required":true}},
-            {"id":"e2","ts":"now","by":"system","kind":"system.notify","data":{"kind":"nudge","title":"wake"}}
+            {"id":"e1","ts":"now","by":"user","kind":"chat.message","data":{"text":"read later","message_mode":"mail"}},
+            {"id":"e2","ts":"now","by":"peer","kind":"chat.message","data":{"text":"another mail","message_mode":"mail"}}
         ]})
         .as_object()
         .cloned()
@@ -1124,12 +1060,10 @@ mod tests {
 
         let preview = build_inbox_preview(&inbox, 1);
         assert_eq!(preview["messages"].as_array().map(Vec::len), Some(1));
-        assert_eq!(preview["messages"][0]["text_preview"], "do work");
-        assert_eq!(preview["messages"][0]["reply_required"], true);
+        assert_eq!(preview["messages"][0]["text_preview"], "read later");
+        assert_eq!(preview["messages"][0]["message_mode"], "mail");
+        assert!(preview["messages"][0].get("reply_requested").is_none());
         assert_eq!(preview["truncated"], true);
-
-        let interrupt = build_inbox_preview(&inbox, 2);
-        assert_eq!(interrupt["messages"][1]["signal_family"], "interrupt");
     }
 
     #[test]

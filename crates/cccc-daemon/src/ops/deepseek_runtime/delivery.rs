@@ -50,10 +50,19 @@ pub(super) fn deliver_with_timeout(
     if super::recovery::has_completed_event(home, group, actor, &event.id) {
         return true;
     }
-    let payload = crate::ops::actor_delivery_render::render_batch(std::slice::from_ref(event));
-    let Some(payload) = payload else {
+    let payload = crate::ops::actor_delivery_render::render_batch_with_mail_context(
+        home,
+        group,
+        &actor.id,
+        std::slice::from_ref(event),
+    );
+    let Some(mut payload) = payload else {
         return false;
     };
+    if event.kind == "chat.message" {
+        payload.push_str("\n\n[cccc] ");
+        payload.push_str(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE);
+    }
     if !holder.running.load(Ordering::Acquire) {
         return false;
     }

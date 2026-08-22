@@ -16,12 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import (
-    cursor_covers_event,
-    find_event,
-    iter_events_reverse,
-    unread_messages,
-)
+from ...kernel.inbox import find_event, iter_events_reverse
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
@@ -36,11 +31,15 @@ from ...ports.web_model_browser_sidecar import (
     record_chatgpt_browser_state,
     resolve_pending_chatgpt_conversation,
 )
-from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
-from ..messaging.delivery import MCP_REMINDER_LINE
+from ..messaging.runtime_delivery import (
+    latest_delivery_state,
+    pending_runtime_delivery_events,
+    pending_runtime_delivery_sources,
+)
 from ..runner_state_ops import read_headless_state, update_headless_state
 from .web_model_runtime_ops import (
-    commit_web_model_delivered_turn,
+    record_web_model_delivery_outcome,
+    render_web_model_coalesced_text,
     web_model_delivery_preference,
 )
 
@@ -243,8 +242,14 @@ def _browser_delivery_id(
 
 
 def _browser_delivery_batch(group: Any, *, actor_id: str) -> Dict[str, Any]:
-    messages = unread_messages(
-        group, actor_id=actor_id, limit=_MAX_BROWSER_DELIVERY_EVENTS, kind_filter="all"
+    actor = find_actor(group, actor_id) or {}
+    messages = pending_runtime_delivery_events(
+        group,
+        actor_id=actor_id,
+        actor_created_at=str(actor.get("created_at") or "").strip(),
+        transport="web_model_browser",
+        limit=_MAX_BROWSER_DELIVERY_EVENTS,
+        claim_unclaimed_chat=True,
     )
     compact_messages = [_compact_delivery_event(event) for event in messages]
     latest = compact_messages[-1] if compact_messages else {}
@@ -269,14 +274,14 @@ def _browser_delivery_batch(group: Any, *, actor_id: str) -> Dict[str, Any]:
         "latest_event_id": str(latest.get("id") or ""),
         "latest_ts": str(latest.get("ts") or ""),
         "messages": compact_messages,
-        "coalesced_text": render_actor_event_batch_for_delivery(
-            compact_messages, actor_id=actor_id
+        "coalesced_text": render_web_model_coalesced_text(
+            compact_messages,
+            group=group,
+            actor_id=actor_id,
         ),
         "delivery": {
-            "mode": "browser_injection_cursor_on_submit",
-            "cursor_committed": False,
+            "mode": "browser_injection",
             "max_events": _MAX_BROWSER_DELIVERY_EVENTS,
-            "kind_filter": "all",
             "web_model_mode": web_model_delivery_preference(group, actor_id=actor_id)[
                 "mode"
             ],
@@ -307,8 +312,6 @@ def build_web_model_browser_turn_prompt(
     event_label = ",".join(event_ids) if event_ids else "-"
     setup_seed = str(bootstrap_seed_text or "").strip()
     setup_block = f"{setup_seed}\n\n" if setup_seed else ""
-    reminder = str(MCP_REMINDER_LINE or "").strip()
-    reminder_block = f"{reminder}\n\n" if reminder else ""
     delivery = turn.get("delivery") if isinstance(turn.get("delivery"), dict) else {}
     compatibility_note = (
         f"{_COMPATIBILITY_IMAGE_NOTE}\n"
@@ -319,7 +322,6 @@ def build_web_model_browser_turn_prompt(
         f"{setup_block}"
         f"[cccc] Browser batch {delivery_id} events={event_label} actor={actor_id}\n"
         f"{compatibility_note}"
-        f"{reminder_block}"
         f"{coalesced_text}"
     )
 
@@ -501,7 +503,12 @@ def append_pending_new_chat_bound_event(
 def _has_unread_work(group: Any, actor_id: str) -> bool:
     try:
         return bool(
-            unread_messages(group, actor_id=actor_id, limit=1, kind_filter="all")
+            pending_runtime_delivery_sources(
+                group,
+                actor_id=actor_id,
+                transport="web_model_browser",
+                limit=1,
+            )
         )
     except Exception:
         return False
@@ -684,17 +691,22 @@ def submit_next_web_model_browser_turn(
         or previous_browser_state.get("last_delivery_status")
         or ""
     ).strip()
-    previous_latest_event = (
-        find_event(group, previous_event_ids[-1]) if previous_event_ids else None
-    )
-    previous_delivery_committed = bool(
-        previous_latest_event
-        and cursor_covers_event(
+    previous_latest_event = find_event(group, previous_event_ids[-1]) if previous_event_ids else None
+    previous_delivery_committed = bool(previous_latest_event)
+    for previous_event_id in previous_event_ids:
+        delivery_event = latest_delivery_state(
             group,
             actor_id=aid,
-            event=previous_latest_event,
+            source_event_id=previous_event_id,
         )
-    )
+        delivery_data = (
+            delivery_event.get("data")
+            if isinstance(delivery_event, dict) and isinstance(delivery_event.get("data"), dict)
+            else {}
+        )
+        if str(delivery_data.get("state") or "").strip() not in {"accepted", "ambiguous"}:
+            previous_delivery_committed = False
+            break
     fenced_previous_delivery = (
         bool(previous_event_ids)
         and previous_delivery_status in _AT_MOST_ONCE_FENCED_STATUSES
@@ -740,8 +752,13 @@ def submit_next_web_model_browser_turn(
                 or "fenced_delivery_reconciled"
             ).strip()
         )
-        commit = commit_web_model_delivered_turn(
-            group, actor_id=aid, turn=interrupted_turn, by="system"
+        commit = record_web_model_delivery_outcome(
+            group,
+            actor_id=aid,
+            turn=interrupted_turn,
+            by="system",
+            state="ambiguous",
+            reason=error,
         )
         pending_state = (
             {
@@ -794,7 +811,6 @@ def submit_next_web_model_browser_turn(
                 "error": error,
                 "submission_evidence": submission_evidence,
                 "delivery_transport": "projected_session",
-                "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": ""
                 if bool(commit.get("ok"))
                 else str(commit.get("error") or ""),
@@ -807,11 +823,9 @@ def submit_next_web_model_browser_turn(
             "status": "ambiguous",
             "turn_id": str(interrupted_turn.get("turn_id") or ""),
             "error": error,
-            "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
             "reschedule": bool(commit.get("ok"))
-            and bool(commit.get("cursor_committed"))
             and not auto_bind_new_chat
             and _has_unread_work(group, aid),
         }
@@ -857,12 +871,20 @@ def submit_next_web_model_browser_turn(
         error = "browser delivery fence could not be persisted"
         if fence_error:
             error = f"{error}: {fence_error}"
+        commit = record_web_model_delivery_outcome(
+            group,
+            actor_id=aid,
+            turn=turn,
+            by="system",
+            state="failed",
+            reason=error,
+        )
         return {
             "ok": False,
             "status": "failed",
             "turn_id": str(turn.get("turn_id") or ""),
             "error": error,
-            "cursor_committed": False,
+            "commit": commit,
             "reschedule": False,
         }
     if not same_delivery:
@@ -996,7 +1018,7 @@ def submit_next_web_model_browser_turn(
         pending_delivery_id = str(
             delivery_result.get("delivery_id") or turn.get("delivery_id") or ""
         )
-        commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
+        commit = record_web_model_delivery_outcome(group, actor_id=aid, turn=turn, by=aid)
         pending_seed_state = (
             {
                 "bootstrap_seed_delivered_at": utc_now_iso(),
@@ -1077,7 +1099,6 @@ def submit_next_web_model_browser_turn(
                 ),
                 "trigger_event_id": str(trigger_event_id or "").strip(),
                 "delivery_transport": "projected_session",
-                "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": ""
                 if bool(commit.get("ok"))
                 else str(commit.get("error") or ""),
@@ -1099,7 +1120,6 @@ def submit_next_web_model_browser_turn(
             "ok": True,
             "status": "target_chat_binding_pending",
             "turn_id": str(turn.get("turn_id") or ""),
-            "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
             "delivery": delivery_result,
@@ -1127,7 +1147,7 @@ def submit_next_web_model_browser_turn(
             )
         except Exception:
             pass
-        commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
+        commit = record_web_model_delivery_outcome(group, actor_id=aid, turn=turn, by=aid)
         update_headless_state(
             group.group_id,
             aid,
@@ -1189,7 +1209,6 @@ def submit_next_web_model_browser_turn(
                 "delivery_id": delivery_id,
                 "trigger_event_id": str(trigger_event_id or "").strip(),
                 "delivery_transport": "projected_session",
-                "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": ""
                 if bool(commit.get("ok"))
                 else str(commit.get("error") or ""),
@@ -1211,18 +1230,24 @@ def submit_next_web_model_browser_turn(
             "ok": True,
             "status": "submitted",
             "turn_id": str(turn.get("turn_id") or ""),
-            "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
             "delivery": delivery_result,
             "reschedule": bool(commit.get("ok"))
-            and bool(commit.get("cursor_committed"))
             and _has_unread_work(group, aid),
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
     if _is_bound_target_error(error):
         delivery_id = str(turn.get("delivery_id") or "")
+        commit = record_web_model_delivery_outcome(
+            group,
+            actor_id=aid,
+            turn=turn,
+            by="system",
+            state="failed",
+            reason=error,
+        )
         record_chatgpt_browser_state(
             group.group_id,
             aid,
@@ -1256,7 +1281,6 @@ def submit_next_web_model_browser_turn(
                 "error": error,
                 "submission_evidence": "bound_conversation_unavailable",
                 "delivery_transport": "projected_session",
-                "cursor_committed": False,
                 "commit_error": "",
                 "target_url": target_url,
                 "auto_bind_new_chat": False,
@@ -1267,11 +1291,19 @@ def submit_next_web_model_browser_turn(
             "status": "failed",
             "turn_id": str(turn.get("turn_id") or ""),
             "error": error,
-            "cursor_committed": False,
+            "commit": commit,
             "event": event,
             "reschedule": False,
         }
     if _is_submission_deferred_error(error):
+        commit = record_web_model_delivery_outcome(
+            group,
+            actor_id=aid,
+            turn=turn,
+            by="system",
+            state="failed",
+            reason=error,
+        )
         record_chatgpt_browser_state(
             group.group_id,
             aid,
@@ -1291,7 +1323,7 @@ def submit_next_web_model_browser_turn(
             "status": "deferred",
             "turn_id": str(turn.get("turn_id") or ""),
             "reason": error,
-            "cursor_committed": False,
+            "commit": commit,
             "reschedule": True,
             "reschedule_after_seconds": _DEFERRED_RETRY_AFTER_SECONDS,
         }
@@ -1328,8 +1360,13 @@ def submit_next_web_model_browser_turn(
             )
         except Exception:
             pass
-        commit = commit_web_model_delivered_turn(
-            group, actor_id=aid, turn=turn, by="system"
+        commit = record_web_model_delivery_outcome(
+            group,
+            actor_id=aid,
+            turn=turn,
+            by="system",
+            state="ambiguous",
+            reason=error,
         )
         record_chatgpt_browser_state(
             group.group_id,
@@ -1364,7 +1401,6 @@ def submit_next_web_model_browser_turn(
                 "error": error,
                 "submission_evidence": ambiguous_evidence,
                 "delivery_transport": "projected_session",
-                "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": ""
                 if bool(commit.get("ok"))
                 else str(commit.get("error") or ""),
@@ -1378,13 +1414,17 @@ def submit_next_web_model_browser_turn(
             "status": "ambiguous",
             "turn_id": str(turn.get("turn_id") or ""),
             "error": error,
-            "cursor_committed": bool(commit.get("cursor_committed")),
             "commit": commit,
             "event": event,
         }
 
-    commit = commit_web_model_delivered_turn(
-        group, actor_id=aid, turn=turn, by="system"
+    commit = record_web_model_delivery_outcome(
+        group,
+        actor_id=aid,
+        turn=turn,
+        by="system",
+        state="failed",
+        reason=error,
     )
     record_chatgpt_browser_state(
         group.group_id,
@@ -1418,7 +1458,6 @@ def submit_next_web_model_browser_turn(
             "delivery_id": str(turn.get("delivery_id") or ""),
             "error": error,
             "delivery_transport": "projected_session",
-            "cursor_committed": bool(commit.get("cursor_committed")),
             "commit_error": ""
             if bool(commit.get("ok"))
             else str(commit.get("error") or ""),
@@ -1431,7 +1470,6 @@ def submit_next_web_model_browser_turn(
         "status": "failed",
         "turn_id": str(turn.get("turn_id") or ""),
         "error": error,
-        "cursor_committed": bool(commit.get("cursor_committed")),
         "commit": commit,
         "event": event,
     }

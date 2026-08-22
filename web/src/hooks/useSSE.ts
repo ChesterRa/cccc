@@ -7,10 +7,7 @@ import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
 import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
-import {
-  getRecipientActorIdsForEvent,
-  getAckRecipientIdsForEvent,
-} from "../utils/ledgerEventHandlers";
+import { getRecipientActorIdsForEvent } from "../utils/ledgerEventHandlers";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
 import { createSseConnectionRegistry } from "./sseConnectionRegistry";
@@ -40,16 +37,16 @@ export {
   shouldStartGroupStreams,
 } from "./sse/visibility";
 
-export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
+export { getRecipientActorIdsForEvent };
 
 export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptions) {
   const selectedGroupId = useGroupStore((s) => s.selectedGroupId);
   const appendEvent = useGroupStore((s) => s.appendEvent);
   const appendHeadlessEvent = useGroupStore((s) => s.appendHeadlessEvent);
   const updateReadStatus = useGroupStore((s) => s.updateReadStatus);
-  const updateAckStatus = useGroupStore((s) => s.updateAckStatus);
-  const updateReplyStatus = useGroupStore((s) => s.updateReplyStatus);
+  const updateObligationStatus = useGroupStore((s) => s.updateObligationStatus);
   const incrementActorUnread = useGroupStore((s) => s.incrementActorUnread);
+  const incrementWebModelQueued = useGroupStore((s) => s.incrementWebModelQueued);
   const updateActorActivity = useGroupStore((s) => s.updateActorActivity);
   const upsertStreamingActivity = useGroupStore((s) => s.upsertStreamingActivity);
   const promoteStreamingEventToStream = useGroupStore((s) => s.promoteStreamingEventToStream);
@@ -873,9 +870,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           },
           appendEvent,
           updateReadStatus,
-          updateAckStatus,
-          updateReplyStatus,
+          updateObligationStatus,
           incrementActorUnread,
+          incrementWebModelQueued,
           updateActorActivity,
           updateGroupRuntimeState,
           promoteStreamingEventsByPrefix,

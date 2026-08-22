@@ -23,8 +23,7 @@ class ActorInboundEnvelope:
     source_platform: str = ""
     source_user_name: str = ""
     source_user_id: str = ""
-    priority: str = "normal"
-    reply_required: bool = False
+    message_mode: str = "send"
     refs: list[dict[str, Any]] = field(default_factory=list)
     attachments: list[dict[str, Any]] = field(default_factory=list)
 

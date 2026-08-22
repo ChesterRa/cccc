@@ -2,11 +2,11 @@ use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::automation::{ScheduledAction, TickResult};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, actors, inbox};
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::dispatch::dispatch;
-use crate::ops::{actor_delivery, actor_runtime, group_runtime};
+use crate::ops::{actor_delivery, actor_runtime, actor_runtime_status, group_runtime};
 
 pub fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
     let exited = match actor_runtime::reap_exited() {
@@ -51,7 +51,26 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
     if cancelled.load(Ordering::Acquire) {
         return;
     }
-    match cccc_core::automation::tick_group(home, group_id, include_unread) {
+    let delivery_actor_ids = if include_unread {
+        GroupStore::new(home.clone())
+            .and_then(|store| store.load(group_id))
+            .map(|group| {
+                actors::visible(&group)
+                    .filter(|actor| actor.enabled)
+                    .filter(|actor| actor_runtime_status::resolve(&group, actor).running)
+                    .map(|actor| actor.id.clone())
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default()
+    } else {
+        HashSet::new()
+    };
+    match cccc_core::automation::tick_group_for_delivery_actors(
+        home,
+        group_id,
+        include_unread,
+        &delivery_actor_ids,
+    ) {
         Ok(result) => apply(home, result, cancelled),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => tracing::warn!(%error, %group_id, "automation group tick failed"),

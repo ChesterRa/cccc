@@ -824,7 +824,6 @@ def _emit_sync_notification(
                 title=title,
                 message=message,
                 target_actor_id=actor_id,
-                requires_ack=False,
                 context=context,
             )
             emit_system_notify(group, by=notify_by, notify=notify)

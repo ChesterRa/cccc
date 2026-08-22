@@ -9,6 +9,7 @@ pub const HELP_FILENAME: &str = "CCCC_HELP.md";
 pub const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
 pub const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../src/cccc/resources/cccc-help.md");
 pub const MAX_PROMPT_BYTES: usize = 512 * 1024;
+pub const CANONICAL_MESSAGE_DELIVERY_HEADING: &str = "Canonical Message Delivery";
 
 pub struct PromptFile {
     pub path: PathBuf,
@@ -165,6 +166,37 @@ fn sections(markdown: &str) -> Vec<String> {
     }
     out.push(current.join("\n"));
     out
+}
+
+fn is_named_h2_section(section: &str, heading: &str) -> bool {
+    section
+        .trim()
+        .lines()
+        .next()
+        .is_some_and(|line| line.trim().eq_ignore_ascii_case(&format!("## {heading}")))
+}
+
+pub fn canonical_message_delivery_section(markdown: &str) -> String {
+    sections(markdown)
+        .into_iter()
+        .find(|section| is_named_h2_section(section, CANONICAL_MESSAGE_DELIVERY_HEADING))
+        .map(|section| section.trim().to_owned())
+        .expect("built-in CCCC help must contain the canonical message delivery section")
+}
+
+pub fn compose_effective_help_markdown(builtin: &str, overlay: &str) -> String {
+    let canonical = canonical_message_delivery_section(builtin);
+    let mut parts = vec![canonical];
+    parts.extend(
+        sections(overlay)
+            .into_iter()
+            .filter(|section| {
+                !section.trim().is_empty()
+                    && !is_named_h2_section(section, CANONICAL_MESSAGE_DELIVERY_HEADING)
+            })
+            .map(|section| section.trim().to_owned()),
+    );
+    parts.join("\n\n").trim().to_owned() + "\n"
 }
 
 pub fn parse_help_markdown(markdown: &str) -> HelpDocument {
@@ -345,8 +377,8 @@ pub fn select_help_markdown(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PROMPT_BYTES, parse_help_markdown, read_preamble, select_help_markdown,
-        update_actor_help_note, write_preamble,
+        MAX_PROMPT_BYTES, compose_effective_help_markdown, parse_help_markdown, read_preamble,
+        select_help_markdown, update_actor_help_note, write_preamble,
     };
     use crate::{GroupStore, HomeLayout};
 
@@ -422,5 +454,23 @@ mod tests {
         let voice = select_help_markdown(markdown, Some("voice_secretary"), Some("voice"), true);
         assert!(voice.contains("Voice Secretary Operating Contract"));
         assert!(!voice.contains("Private A."));
+    }
+
+    #[test]
+    fn effective_help_keeps_builtin_delivery_contract_and_strips_overlay_copy() {
+        let builtin =
+            "# Help\n\n## Canonical Message Delivery\n\nUse Mail first.\n\n## Other\n\nBuilt-in.";
+        let overlay =
+            "# Group\n\n## Canonical Message Delivery\n\nAlways interrupt.\n\n## Notes\n\nLocal.";
+
+        let effective = compose_effective_help_markdown(builtin, overlay);
+
+        assert!(effective.contains("Use Mail first."));
+        assert!(!effective.contains("Always interrupt."));
+        assert!(effective.contains("Local."));
+        assert_eq!(
+            effective.matches("## Canonical Message Delivery").count(),
+            1
+        );
     }
 }

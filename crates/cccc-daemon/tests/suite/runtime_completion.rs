@@ -10,9 +10,9 @@ fn exact_completion_is_replayable_but_mismatched_receipts_are_rejected() {
     let turn = next_turn(&home, &group_id);
     let args = completion_args(&group_id, &turn, "delivery-a");
 
-    let first = call(&home, "web_model_runtime_complete_turn", args.clone());
+    let first = call(&home, "runtime_complete_turn", args.clone());
     let restarted = HomeLayout::from_path(home.root().to_owned()).expect("restart home");
-    let replay = call(&restarted, "web_model_runtime_complete_turn", args.clone());
+    let replay = call(&restarted, "runtime_complete_turn", args.clone());
     assert_eq!(replay.result, first.result);
     assert_eq!(replay.result["delivery_id"], "delivery-a");
 
@@ -23,7 +23,7 @@ fn exact_completion_is_replayable_but_mismatched_receipts_are_rejected() {
     ] {
         let mut changed = args.clone();
         changed.extend(mismatch.as_object().cloned().expect("object"));
-        let rejected = raw_call(&home, "web_model_runtime_complete_turn", changed);
+        let rejected = raw_call(&home, "runtime_complete_turn", changed);
         assert!(!rejected.ok);
         assert_eq!(
             rejected.error.as_ref().map(|error| error.code.as_str()),
@@ -33,7 +33,7 @@ fn exact_completion_is_replayable_but_mismatched_receipts_are_rejected() {
 }
 
 #[test]
-fn browser_delivery_receipts_project_latest_retry_state_without_completing_turn() {
+fn browser_observations_do_not_overwrite_runtime_delivery_or_create_mail_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let group_id = setup(&home);
@@ -68,15 +68,20 @@ fn browser_delivery_receipts_project_latest_retry_state_without_completing_turn(
         json!({"group_id":group_id,"event_ids":[event_id]}),
     );
     assert_eq!(
-        statuses.result["statuses"][&event_id]["web_model_delivery_status"]["state"],
-        "submitting"
+        statuses.result["statuses"][&event_id]["obligation_status"]["web1"]["delivery_state"],
+        "failed"
+    );
+    assert!(
+        statuses.result["statuses"][&event_id]
+            .get("read_status")
+            .is_none()
     );
     let unread = call(
         &home,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"web1","unread_only":true}),
+        "inbox_peek",
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
     );
-    assert_eq!(unread.result["messages"][0]["id"], event_id);
+    assert_eq!(unread.result["messages"], json!([]));
 }
 
 #[cfg(unix)]
@@ -94,12 +99,12 @@ fn precommit_ledger_failure_does_not_create_a_completion_receipt() {
         .ledger_path(&group_id)
         .expect("ledger");
     std::fs::set_permissions(&ledger, std::fs::Permissions::from_mode(0o444)).expect("lock ledger");
-    let failed = raw_call(&home, "web_model_runtime_complete_turn", args.clone());
+    let failed = raw_call(&home, "runtime_complete_turn", args.clone());
     std::fs::set_permissions(&ledger, std::fs::Permissions::from_mode(0o644))
         .expect("unlock ledger");
     assert!(!failed.ok);
 
-    let completed = call(&home, "web_model_runtime_complete_turn", args);
+    let completed = call(&home, "runtime_complete_turn", args);
     assert_eq!(completed.result["delivery_id"], "delivery-failure");
 }
 
@@ -122,7 +127,7 @@ pub(crate) fn setup(home: &HomeLayout) -> String {
     call(
         home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"work"}),
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"work","message_mode":"send"}),
     );
     group_id
 }
@@ -130,7 +135,7 @@ pub(crate) fn setup(home: &HomeLayout) -> String {
 pub(crate) fn next_turn(home: &HomeLayout, group_id: &str) -> Value {
     call(
         home,
-        "web_model_runtime_wait_next_turn",
+        "runtime_wait_next_turn",
         json!({"group_id":group_id,"actor_id":"web1"}),
     )
     .result["turn"]

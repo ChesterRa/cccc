@@ -26,7 +26,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
             "--{boundary}\r\nContent-Disposition: form-data; name=\"by\"\r\n\r\nuser\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nimage message\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"reply_required\"\r\n\r\ntrue\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nrequest_reply\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"refs_json\"\r\n\r\n[]\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"overview.png\"\r\n",
             "Content-Type: image/png\r\n\r\n"
@@ -67,7 +67,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
     assert_eq!(payload["ok"], true, "{payload}");
 
     let event = &payload["result"]["event"];
-    assert_eq!(event["data"]["reply_required"], true);
+    assert_eq!(event["data"]["message_mode"], "request_reply");
     assert_eq!(event["data"]["refs"], json!([]));
     assert!(event["data"].get("files").is_none());
     let attachment = &event["data"]["attachments"][0];
@@ -144,6 +144,7 @@ async fn upload_larger_than_axum_default_limit_is_streamed_successfully() {
         concat!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nlarge\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nsend\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"large.bin\"\r\n",
             "Content-Type: application/octet-stream\r\n\r\n"
         ),
@@ -230,6 +231,217 @@ async fn cross_group_upload_requires_destination_before_persisting_blob() {
             "{label}"
         );
     }
+}
+
+#[tokio::test]
+async fn reply_upload_rejects_nested_reply_mode_before_persisting_blob() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("invalid reply mode", "").expect("group");
+    let blobs_dir = groups
+        .group_dir(&group.group_id)
+        .expect("group directory")
+        .join("state/blobs");
+    let before = std::fs::read_dir(&blobs_dir)
+        .expect("blob directory")
+        .count();
+    let boundary = "cccc-invalid-reply-mode";
+    let mut multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nreply\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"reply_to\"\r\n\r\nevent-1\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nrequest_reply\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"reply.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ),
+        boundary = boundary,
+    )
+    .into_bytes();
+    multipart.extend_from_slice(b"reply payload");
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{}/reply_upload", group.group_id))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        std::fs::read_dir(&blobs_dir)
+            .expect("blob directory")
+            .count(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn send_upload_preflights_audience_before_persisting_blob() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("invalid upload audience", "").expect("group");
+    let blobs_dir = groups
+        .group_dir(&group.group_id)
+        .expect("group directory")
+        .join("state/blobs");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_address(&home).await;
+
+    let boundary = "cccc-invalid-upload-audience";
+    let multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nupload\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nmail\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"orphan.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\nmust not persist\r\n",
+            "--{boundary}--\r\n"
+        ),
+        boundary = boundary,
+    );
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        !blobs_dir.exists()
+            || std::fs::read_dir(&blobs_dir)
+                .expect("blob directory")
+                .next()
+                .is_none()
+    );
+
+    let _ = cccc_client::DaemonClient::new(home)
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await;
+    daemon.await.expect("daemon task").expect("daemon");
+}
+
+#[tokio::test]
+async fn send_upload_replays_client_id_before_persisting_blob() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("upload replay", "").expect("group");
+    let blobs_dir = groups
+        .group_dir(&group.group_id)
+        .expect("group directory")
+        .join("state/blobs");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_address(&home).await;
+    let accepted = cccc_client::DaemonClient::new(home.clone())
+        .call(&DaemonRequest {
+            v: 1,
+            op: "send".into(),
+            args: json!({
+                "group_id":group.group_id,
+                "by":"user",
+                "text":"accepted",
+                "to":["user"],
+                "message_mode":"send",
+                "client_id":"upload-replay"
+            })
+            .as_object()
+            .cloned()
+            .expect("args"),
+        })
+        .await
+        .expect("accepted send");
+    assert!(accepted.ok);
+    let accepted_id = accepted.result["event"]["id"]
+        .as_str()
+        .expect("accepted id")
+        .to_owned();
+
+    let boundary = "cccc-upload-replay";
+    let multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nreplacement\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nsend\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"client_id\"\r\n\r\nupload-replay\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"orphan.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\nmust not persist\r\n",
+            "--{boundary}--\r\n"
+        ),
+        boundary = boundary,
+    );
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("json");
+    assert_eq!(payload["result"]["event"]["id"], accepted_id);
+    assert_eq!(payload["result"]["duplicate"], true);
+    assert!(
+        !blobs_dir.exists()
+            || std::fs::read_dir(&blobs_dir)
+                .expect("blob directory")
+                .next()
+                .is_none()
+    );
+
+    let _ = cccc_client::DaemonClient::new(home)
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await;
+    daemon.await.expect("daemon task").expect("daemon");
 }
 
 fn invalid_cross_group_multipart(

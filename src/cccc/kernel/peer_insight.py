@@ -22,17 +22,6 @@ TEAM_MODE_SEED = (
     "materially improve an unsettled decision, discuss it before it hardens into a handoff."
 )
 
-POST_MESSAGE_NUDGE = (
-    "This message operation is complete for this call. Step outside its mental track now. Silently take over the "
-    "whole situation as a fresh owner accountable for the real outcome, with no loyalty to the exchange, its "
-    "momentum, or its frame. Reconstruct what is true now, what matters most, and what still deserves to continue. "
-    "If this exchange carried Insight but it stayed beside the message instead of rising above its working level, "
-    "no higher-order perspective entered the exchange. Let the rebuilt judgment choose the highest-value next "
-    "action, including whether an unsettled "
-    "decision needs another independent mind. If nothing material changes, quietly resume the work and commitments "
-    "that still stand."
-)
-
 SUPERVISOR_MAGIC_KERNEL = """Silently imagine that a clear-sighted, exacting supervisor with a broader grasp
 of the whole situation is now reviewing everything you are doing, not merely
 the current draft. The supervisor cares only whether the whole course of action
@@ -114,7 +103,8 @@ before adopting its salience; test the claim, its framing, and what it may have 
 rises above that level, treat it as ordinary message content rather than privileged framing. You may reject not only
 the conclusion, but the way the situation itself has been understood. Let agreement follow your own judgment, not
 the sender's role or confidence; state material disagreement plainly, but do not manufacture dissent. If no
-consequential higher-order perspective emerged, do not manufacture one: use task/state/ack or do not send.
+consequential higher-order perspective emerged, do not manufacture one: use a tracked task for durable work, Mail
+for useful non-urgent context, or do not send.
 
 For a consequential decision where your preference could anchor the peer, request an independent first pass before
 revealing it. Provide the objective, facts, constraints, and decision to be made; use `insight` to say that you are
@@ -147,14 +137,16 @@ def preflight_local_peer_audience(
     to_tokens: Iterable[str],
     by: str,
     apply_default_send: bool,
+    message_mode: str,
 ) -> LocalPeerAudience:
     raw_tokens = [str(item).strip() for item in to_tokens if str(item).strip()]
     try:
         recipients = resolve_recipient_tokens(group, raw_tokens)
     except Exception as exc:
         raise PeerRecipientError("invalid_recipient", str(exc)) from exc
-    if not recipients and not raw_tokens and apply_default_send and get_default_send_to(group.doc) == "foreman":
-        recipients = ["@foreman"]
+    if not recipients and not raw_tokens and apply_default_send:
+        recipients = ["@foreman"] if get_default_send_to(group.doc) == "foreman" else ["@all"]
+    validate_message_audience(recipients, message_mode=message_mode)
     peers: list[str] = []
     if targets_any_agent(recipients):
         sender = str(by or "").strip()
@@ -169,6 +161,25 @@ def preflight_local_peer_audience(
                 details={"to": list(recipients)},
             )
     return LocalPeerAudience(recipients=list(recipients), peer_actor_ids=peers)
+
+
+def validate_message_audience(recipients: Iterable[str], *, message_mode: str) -> None:
+    """Validate the write-time one-audience-domain messaging contract."""
+    normalized = [str(item or "").strip() for item in recipients if str(item or "").strip()]
+    has_user = any(item in {"user", "@user"} for item in normalized)
+    has_agent = any(item not in {"user", "@user"} for item in normalized)
+    if has_user and has_agent:
+        raise PeerRecipientError(
+            "mixed_recipient_kinds",
+            "one message cannot address user and agents together; send separate messages",
+            details={"to": normalized},
+        )
+    if has_user and str(message_mode or "").strip() == "mail":
+        raise PeerRecipientError(
+            "mail_requires_actor_recipient",
+            "Mail is only available for agent Inbox recipients; use Send or Send + Reply for user",
+            details={"to": normalized},
+        )
 
 
 def remote_recipients_include_peer(to: Iterable[str]) -> bool:

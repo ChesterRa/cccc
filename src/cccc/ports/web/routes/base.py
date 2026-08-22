@@ -1907,6 +1907,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             payload = {}
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object"})
+        legacy_fields = sorted(
+            key for key in ("priority", "reply_required", "requires_ack", "message_mode") if key in payload
+        )
+        if legacy_fields:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "unsupported_message_field",
+                    "message": "Slash skill dispatch uses fixed Send delivery.",
+                    "fields": legacy_fields,
+                },
+            )
         return await ctx.daemon(
             {
                 "op": "slash_skill_dispatch",
@@ -1917,8 +1929,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "command": str(payload.get("command") or "").strip(),
                     "capability_id": str(payload.get("capability_id") or "").strip(),
                     "to": payload.get("to") if isinstance(payload.get("to"), list) else [],
-                    "priority": str(payload.get("priority") or "normal").strip() or "normal",
-                    "reply_required": coerce_bool(payload.get("reply_required", False), default=False),
                     "client_id": str(payload.get("client_id") or "").strip(),
                     "reply_to": str(payload.get("reply_to") or "").strip(),
                     "quote_text": str(payload.get("quote_text") or "").strip(),

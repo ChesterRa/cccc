@@ -16,16 +16,34 @@ export function isContextSyncEvent(ev: unknown): ev is BaseLedgerEvent & { kind:
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "context.sync";
 }
 
-export function isChatReadEvent(
+export function isMailReadEvent(
   ev: unknown,
-): ev is BaseLedgerEvent & { kind: "chat.read"; data: { actor_id?: string; event_id?: string } } {
-  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.read";
+): ev is BaseLedgerEvent & { kind: "mail.read"; data: { actor_id?: string; event_id?: string } } {
+  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "mail.read";
 }
 
-export function isChatAckEvent(
+export function isRuntimeDeliveryEvent(
   ev: unknown,
-): ev is BaseLedgerEvent & { kind: "chat.ack"; data: { actor_id?: string; event_id?: string } } {
-  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.ack";
+): ev is BaseLedgerEvent & {
+  kind: "runtime.delivery";
+  data: { actor_id?: string; source_event_id?: string; state?: string };
+} {
+  return (
+    ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "runtime.delivery"
+  );
+}
+
+export function isReplyRequestCancelledEvent(
+  ev: unknown,
+): ev is BaseLedgerEvent & {
+  kind: "chat.reply_request.cancelled";
+  data: { source_event_id?: string };
+} {
+  return (
+    ev !== null &&
+    typeof ev === "object" &&
+    (ev as BaseLedgerEvent).kind === "chat.reply_request.cancelled"
+  );
 }
 
 export function isChatMessageEvent(
@@ -138,10 +156,10 @@ export function getRecipientActorIdsForEvent(ev: LedgerEvent, actors: Actor[]): 
 }
 
 /**
- * Compute recipient IDs for ACK tracking (attention messages only).
+ * Compute recipient IDs for message status tracking.
  * Includes "user" when explicitly targeted.
  */
-export function getAckRecipientIdsForEvent(ev: LedgerEvent, actors: Actor[]): string[] {
+export function getStatusRecipientIdsForEvent(ev: LedgerEvent, actors: Actor[]): string[] {
   if (!actors.length) return [];
   const actorIds = actors.map((a) => String(a.id || "")).filter((id) => id);
   const actorIdSet = new Set(actorIds);
@@ -183,7 +201,7 @@ export function getAckRecipientIdsForEvent(ev: LedgerEvent, actors: Actor[]): st
     }
   }
 
-  // "user" ACK is only required when explicitly targeted.
+  // User status exists only when the user is explicitly targeted.
   if (by !== "user" && (tokenSet.has("user") || tokenSet.has("@user"))) {
     out.add("user");
   }
@@ -194,31 +212,40 @@ export function getAckRecipientIdsForEvent(ev: LedgerEvent, actors: Actor[]): st
 
 // ============ Event Processors ============
 
-export interface ChatReadData {
+export interface MailReadData {
   actorId: string;
   eventId: string;
+}
+
+export interface RuntimeDeliveryData {
+  actorId: string;
+  eventId: string;
+  state: string;
 }
 
 /**
  * Extract read event data. Returns null if data is invalid.
  */
-export function extractChatReadData(ev: unknown): ChatReadData | null {
-  if (!isChatReadEvent(ev)) return null;
+export function extractMailReadData(ev: unknown): MailReadData | null {
+  if (!isMailReadEvent(ev)) return null;
   const actorId = String(ev.data?.actor_id || "");
   const eventId = String(ev.data?.event_id || "");
   if (!actorId || !eventId) return null;
   return { actorId, eventId };
 }
 
-/**
- * Extract ack event data. Returns null if data is invalid.
- */
-export function extractChatAckData(ev: unknown): ChatReadData | null {
-  if (!isChatAckEvent(ev)) return null;
-  const actorId = String(ev.data?.actor_id || "");
-  const eventId = String(ev.data?.event_id || "");
-  if (!actorId || !eventId) return null;
-  return { actorId, eventId };
+export function extractRuntimeDeliveryData(ev: unknown): RuntimeDeliveryData | null {
+  if (!isRuntimeDeliveryEvent(ev)) return null;
+  const actorId = String(ev.data?.actor_id || "").trim();
+  const eventId = String(ev.data?.source_event_id || "").trim();
+  const state = String(ev.data?.state || "").trim();
+  if (!actorId || !eventId || !state) return null;
+  return { actorId, eventId, state };
+}
+
+export function extractCancelledSourceEventId(ev: unknown): string {
+  if (!isReplyRequestCancelledEvent(ev)) return "";
+  return String(ev.data?.source_event_id || "").trim();
 }
 
 /**
@@ -227,6 +254,7 @@ export function extractChatAckData(ev: unknown): ChatReadData | null {
  */
 export function initializeReadStatus(ev: LedgerEvent, actors: Actor[]): void {
   if (!isChatMessageEvent(ev)) return;
+  if ((ev.data as ChatMessageData | undefined)?.message_mode !== "mail") return;
   if (ev._read_status) return; // Already initialized
 
   const recipients = getRecipientActorIdsForEvent(ev, actors);
@@ -234,25 +262,6 @@ export function initializeReadStatus(ev: LedgerEvent, actors: Actor[]): void {
     const rs: Record<string, boolean> = {};
     for (const id of recipients) rs[id] = false;
     ev._read_status = rs;
-  }
-}
-
-/**
- * Initialize ack status for attention messages.
- * Mutates the event object to add _ack_status.
- */
-export function initializeAckStatus(ev: LedgerEvent, actors: Actor[]): void {
-  if (!isChatMessageEvent(ev)) return;
-  if (ev._ack_status) return; // Already initialized
-
-  const msgData = ev.data as ChatMessageData | undefined;
-  if (String(msgData?.priority || "normal") !== "attention") return;
-
-  const recipients = getAckRecipientIdsForEvent(ev, actors);
-  if (recipients.length > 0) {
-    const as: Record<string, boolean> = {};
-    for (const id of recipients) as[id] = false;
-    ev._ack_status = as;
   }
 }
 
@@ -265,22 +274,18 @@ export function initializeObligationStatus(ev: LedgerEvent, actors: Actor[]): vo
   if (ev._obligation_status) return;
 
   const msgData = ev.data as ChatMessageData | undefined;
-  const recipients = getAckRecipientIdsForEvent(ev, actors);
+  const recipients = getStatusRecipientIdsForEvent(ev, actors);
   if (recipients.length <= 0) return;
 
-  const status: Record<
-    string,
-    { read: boolean; acked: boolean; replied: boolean; reply_required: boolean }
-  > = {};
-  const isAttention = String(msgData?.priority || "normal") === "attention";
-  const replyRequired = !!msgData?.reply_required;
+  const status: NonNullable<LedgerEvent["_obligation_status"]> = {};
+  const replyRequested = msgData?.message_mode === "request_reply";
 
   for (const rid of recipients) {
     status[rid] = {
-      read: false,
-      acked: !isAttention,
       replied: false,
-      reply_required: replyRequired,
+      reply_requested: replyRequested,
+      cancelled: false,
+      delivery_state: "",
     };
   }
 
@@ -304,14 +309,9 @@ export function shouldIncrementUnread(
 /**
  * Event kinds that should trigger actor refresh.
  */
-const ACTOR_READONLY_REFRESH_EVENTS = new Set([
-  "system.notify_ack",
-  "group.start",
-  "group.stop",
-  "group.set_state",
-]);
+const ACTOR_READONLY_REFRESH_EVENTS = new Set(["group.start", "group.stop", "group.set_state"]);
 
-const ACTOR_UNREAD_REFRESH_EVENTS = new Set(["chat.read", "system.notify"]);
+const ACTOR_UNREAD_REFRESH_EVENTS = new Set(["mail.read"]);
 
 export type ActorRefreshMode = "none" | "readonly" | "unread";
 

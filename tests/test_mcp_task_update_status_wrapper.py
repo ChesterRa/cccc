@@ -240,7 +240,13 @@ class TestMcpTaskUpdateStatusWrapper(unittest.TestCase):
 
         with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
             mcp_server, "_resolve_self_actor_id", return_value="peer1"
-        ), patch.object(mcp_context, "context_sync", side_effect=_fake_context_sync):
+        ), patch.object(mcp_context, "context_sync", side_effect=_fake_context_sync), patch.object(
+            mcp_server, "load_group", return_value=object()
+        ), patch.object(
+            mcp_server,
+            "mail_pending_summary",
+            return_value={"count": 3, "action": "cccc_inbox_read()"},
+        ):
             out = mcp_server.handle_tool_call(
                 "cccc_task",
                 {
@@ -252,6 +258,7 @@ class TestMcpTaskUpdateStatusWrapper(unittest.TestCase):
             )
 
         self.assertTrue(bool(out.get("ok")))
+        self.assertEqual(out.get("mail_pending", {}).get("count"), 3)
         self.assertEqual(captured.get("group_id"), "g_test")
         self.assertEqual(captured.get("by"), "peer1")
         self.assertEqual(

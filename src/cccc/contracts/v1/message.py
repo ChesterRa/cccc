@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SUGGESTED_USER_MESSAGE_MAX_CHARS = 4000
 INSIGHT_MAX_CHARS = 1200
+MessageMode = Literal["send", "request_reply", "mail"]
 
 
 def normalize_insight(value: Any) -> Optional[str]:
@@ -57,9 +58,10 @@ class ChatMessageData(BaseModel):
     format: Literal["plain", "markdown"] = "plain"
     insight: Optional[str] = Field(default=None, max_length=INSIGHT_MAX_CHARS)
 
-    # Priority / workflow semantics
-    priority: Literal["normal", "attention"] = "normal"
-    reply_required: bool = False
+    # Delivery semantics. New daemon writes always set this explicitly. ``None``
+    # is retained only so historical append-only ledger rows remain readable;
+    # legacy rows create no delivery or reply obligation.
+    message_mode: Optional[MessageMode] = None
 
     # IM semantics
     to: List[str] = Field(default_factory=list)  # @mentions (empty = broadcast)
@@ -82,6 +84,7 @@ class ChatMessageData(BaseModel):
     # Cross-group destination metadata (for "send to other group" source messages)
     dst_group_id: Optional[str] = None
     dst_to: Optional[List[str]] = None
+    dst_message_mode: Optional[MessageMode] = None
 
     # Attachments and references
     refs: List[Dict[str, Any]] = Field(default_factory=list)

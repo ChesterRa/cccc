@@ -86,8 +86,6 @@ class TestWebCapabilityUseApi(unittest.TestCase):
                         "command": "/using-superpowers",
                         "capability_id": "skill:agent_self_proposed:using-superpowers",
                         "to": ["architect"],
-                        "priority": "attention",
-                        "reply_required": True,
                         "client_id": "client-1",
                         "reply_to": "evt-original",
                         "quote_text": "原始请求",
@@ -110,15 +108,15 @@ class TestWebCapabilityUseApi(unittest.TestCase):
             self.assertEqual(str(args.get("command") or ""), "/using-superpowers")
             self.assertEqual(str(args.get("capability_id") or ""), "skill:agent_self_proposed:using-superpowers")
             self.assertEqual(args.get("to"), ["architect"])
-            self.assertEqual(str(args.get("priority") or ""), "attention")
-            self.assertIs(args.get("reply_required"), True)
+            self.assertNotIn("priority", args)
+            self.assertNotIn("reply_required", args)
             self.assertEqual(str(args.get("client_id") or ""), "client-1")
             self.assertEqual(str(args.get("reply_to") or ""), "evt-original")
             self.assertEqual(str(args.get("quote_text") or ""), "原始请求")
         finally:
             cleanup()
 
-    def test_slash_skill_dispatch_route_coerces_string_false_reply_required(self) -> None:
+    def test_slash_skill_dispatch_route_rejects_legacy_message_fields(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -137,10 +135,15 @@ class TestWebCapabilityUseApi(unittest.TestCase):
                     },
                 )
 
-            self.assertEqual(resp.status_code, 200)
-            req = daemon_mock.call_args.args[0] if daemon_mock.call_args else {}
-            args = req.get("args") if isinstance(req.get("args"), dict) else {}
-            self.assertIs(args.get("reply_required"), False)
+            self.assertEqual(resp.status_code, 400)
+            self.assertIn("unsupported_message_field", resp.text)
+            self.assertNotIn(
+                "slash_skill_dispatch",
+                [
+                    str((call.args[0] if call.args else {}).get("op") or "")
+                    for call in daemon_mock.call_args_list
+                ],
+            )
         finally:
             cleanup()
 

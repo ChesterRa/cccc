@@ -17,23 +17,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from ...contracts.v1.group_bridge import RemoteSendPayload
+from ...contracts.v1.group_bridge import RemoteReplyRequestCancelPayload, RemoteSendPayload
 from ...kernel.group_bridge.pairing import get_local_identity
 from ...kernel.group_bridge import receipts, registration
 from ...util.time import parse_utc_iso, utc_now_iso
 from .cross_group_receipt_projection import project_remote_send_receipt
 from .transports.base import (
     RemoteMessageEnvelope,
+    RemoteReplyRequestCancelEnvelope,
     RemoteSendTransport,
     RemoteTarget,
     UnknownTransportError,
     get_transport,
 )
 
-# Rust prerelease builds wrote ``delivered`` for successful receipts. Treat it
-# as a terminal read-compatibility alias so an engine switch never recalls the
-# transport. New writers use the canonical ``sent`` status.
-_TERMINAL = {"sent", "delivered", "failed"}
+_TERMINAL = {"sent", "failed"}
 _DEFAULT_MAX_ATTEMPTS = 5
 _BACKOFF_SECONDS = (2, 5, 15, 30, 60)
 _SENDING_STALE_SECONDS = 120
@@ -53,10 +51,11 @@ def enqueue_remote_send(
 ) -> Dict[str, Any]:
     """Record a queued receipt idempotently. Returns the stored receipt."""
     # Normalize + persist the payload so the delivery seam reconstructs the
-    # exact message (text/to/priority/reply_required/refs) the caller queued.
+    # exact message (text/to/message_mode/refs) the caller queued.
     normalized_payload = RemoteSendPayload(**(payload or {})).model_dump()
     now = utc_now_iso()
     receipt = {
+        "operation": "remote_send",
         "ok": False,
         "status": "queued",
         "registration_id": str(registration_id or "").strip(),
@@ -81,6 +80,53 @@ def enqueue_remote_send(
     return stored
 
 
+def enqueue_reply_request_cancel(
+    *,
+    src_group_id: str,
+    registration_id: str,
+    idempotency_key: str,
+    source_cancel_event_id: str,
+    source_message_event_id: str,
+    remote_source_event_id: str = "",
+    home: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Persist one cross-group reply-request cancellation for durable retry."""
+    payload = RemoteReplyRequestCancelPayload(
+        source_group_id=str(src_group_id or "").strip(),
+        source_message_event_id=str(source_message_event_id or "").strip(),
+        source_cancel_event_id=str(source_cancel_event_id or "").strip(),
+        remote_source_event_id=str(remote_source_event_id or "").strip(),
+    ).model_dump()
+    now = utc_now_iso()
+    receipt = {
+        "operation": "reply_request_cancel",
+        "ok": False,
+        "status": "queued",
+        "registration_id": str(registration_id or "").strip(),
+        "idempotency_key": str(idempotency_key or "").strip(),
+        "src_group_id": str(src_group_id or "").strip(),
+        "source_event_id": str(source_cancel_event_id or "").strip(),
+        "source_message_event_id": str(source_message_event_id or "").strip(),
+        "payload": payload,
+        "transport": "",
+        "remote_event_id": None,
+        "attempt": 0,
+        "max_attempts": _DEFAULT_MAX_ATTEMPTS,
+        "first_queued_at": now,
+        "last_attempt_at": "",
+        "next_attempt_at": now,
+        "accepted_at": now,
+        "error": None,
+    }
+    stored, _created = receipts.record_receipt(
+        registration_id,
+        idempotency_key,
+        receipt,
+        home=home,
+    )
+    return stored
+
+
 def deliver_enqueued(
     *,
     registration_id: str,
@@ -94,6 +140,32 @@ def deliver_enqueued(
     Replays (no adapter call) when the receipt is already terminal.
     """
     existing = receipts.get_receipt(registration_id, idempotency_key, home=home)
+    if existing is None:
+        return {
+            "ok": False,
+            "status": "failed",
+            "registration_id": str(registration_id or "").strip(),
+            "idempotency_key": str(idempotency_key or "").strip(),
+            "error": {
+                "code": "delivery_not_found",
+                "message": "queued Group Bridge delivery was not found",
+                "retriable": False,
+            },
+        }
+    operation = str(existing.get("operation") or "").strip()
+    if operation not in {"remote_send", "reply_request_cancel"}:
+        return _finalize(
+            registration_id,
+            idempotency_key,
+            home,
+            ok=False,
+            status="failed",
+            error={
+                "code": "contract_version_mismatch",
+                "message": "Group Bridge delivery does not use the current operation contract",
+                "retriable": False,
+            },
+        )
     if existing and str(existing.get("status") or "") in _TERMINAL:
         project_remote_send_receipt(existing, home=home)
         return existing
@@ -110,24 +182,79 @@ def deliver_enqueued(
         return _finalize(registration_id, idempotency_key, home, ok=False, status="failed",
                          error={"code": "unknown_transport", "message": str(e), "retriable": False})
 
-    envelope = RemoteMessageEnvelope(
-        transport=transport_name,
-        src_group_id=str(reg.get("group_id") or ""),
-        source_peer_id=_local_peer_id(home=home),
-        source_multiaddrs=_local_multiaddrs(home=home),
-        target=RemoteTarget(
-            url=str(reg.get("url") or ""),
-            remote_group_id=str(reg.get("remote_group_id") or ""),
-            remote_peer_id=str(reg.get("remote_peer_id") or ""),
-            multiaddrs=tuple(str(addr or "").strip() for addr in (reg.get("multiaddrs") or []) if str(addr or "").strip()),
-        ),
-        payload=RemoteSendPayload(**(payload_from_receipt(existing) or {"text": ""})),
-        idempotency_key=str(idempotency_key or "").strip(),
-        source_event_id=str((existing or {}).get("source_event_id") or ""),
-        reply_to_remote_event_id=str((existing or {}).get("reply_to_remote_event_id") or ""),
-        group_bridge_thread=str((existing or {}).get("group_bridge_thread") or ""),
-        credential=str(credential or ""),
+    target = RemoteTarget(
+        url=str(reg.get("url") or ""),
+        remote_group_id=str(reg.get("remote_group_id") or ""),
+        remote_peer_id=str(reg.get("remote_peer_id") or ""),
+        multiaddrs=tuple(str(addr or "").strip() for addr in (reg.get("multiaddrs") or []) if str(addr or "").strip()),
     )
+    if operation == "reply_request_cancel":
+        cancel_payload = dict((existing or {}).get("payload") or {})
+        remote_source_event_id = str(cancel_payload.get("remote_source_event_id") or "").strip()
+        if not remote_source_event_id:
+            source_message_event_id = str(
+                cancel_payload.get("source_message_event_id")
+                or (existing or {}).get("source_message_event_id")
+                or ""
+            ).strip()
+            source_delivery = _source_message_delivery(
+                registration_id=registration_id,
+                source_message_event_id=source_message_event_id,
+                home=home,
+            )
+            remote_source_event_id = str((source_delivery or {}).get("remote_event_id") or "").strip()
+            if not remote_source_event_id:
+                if str((source_delivery or {}).get("status") or "") == "failed":
+                    updated = _finalize(
+                        registration_id,
+                        idempotency_key,
+                        home,
+                        ok=True,
+                        status="sent",
+                        transport=transport_name,
+                    )
+                    return receipts.update_receipt(
+                        registration_id,
+                        idempotency_key,
+                        home,
+                        remote_not_created=True,
+                    ) or updated
+                return _defer_until_source_delivery(
+                    registration_id,
+                    idempotency_key,
+                    home=home,
+                    transport=transport_name,
+                )
+            cancel_payload["remote_source_event_id"] = remote_source_event_id
+            receipts.update_receipt(
+                registration_id,
+                idempotency_key,
+                home,
+                payload=cancel_payload,
+            )
+        envelope = RemoteReplyRequestCancelEnvelope(
+            transport=transport_name,
+            src_group_id=str(reg.get("group_id") or ""),
+            source_peer_id=_local_peer_id(home=home),
+            target=target,
+            payload=RemoteReplyRequestCancelPayload(**cancel_payload),
+            idempotency_key=str(idempotency_key or "").strip(),
+            credential=str(credential or ""),
+        )
+    else:
+        envelope = RemoteMessageEnvelope(
+            transport=transport_name,
+            src_group_id=str(reg.get("group_id") or ""),
+            source_peer_id=_local_peer_id(home=home),
+            source_multiaddrs=_local_multiaddrs(home=home),
+            target=target,
+            payload=RemoteSendPayload(**(payload_from_receipt(existing) or {"text": ""})),
+            idempotency_key=str(idempotency_key or "").strip(),
+            source_event_id=str((existing or {}).get("source_event_id") or ""),
+            reply_to_remote_event_id=str((existing or {}).get("reply_to_remote_event_id") or ""),
+            group_bridge_thread=str((existing or {}).get("group_bridge_thread") or ""),
+            credential=str(credential or ""),
+        )
 
     started_at = utc_now_iso()
     receipts.update_receipt(
@@ -139,7 +266,11 @@ def deliver_enqueued(
         accepted_at=started_at,
     )
 
-    result = transport.deliver(envelope)
+    result = (
+        transport.cancel_reply_request(envelope)
+        if operation == "reply_request_cancel"
+        else transport.deliver(envelope)
+    )
     error = None
     status = result.status
     if not result.ok:
@@ -266,6 +397,49 @@ def payload_from_receipt(receipt: Optional[Dict[str, Any]]) -> Optional[Dict[str
     # Rust receipts enrich their transport payload with routing metadata. Keep
     # only the shared message contract when Python resumes that delivery.
     return {key: value for key, value in payload.items() if key in RemoteSendPayload.model_fields}
+
+
+def _source_message_delivery(
+    *,
+    registration_id: str,
+    source_message_event_id: str,
+    home: Optional[Path],
+) -> Optional[Dict[str, Any]]:
+    for receipt in receipts.load_receipts(home=home).values():
+        if str(receipt.get("registration_id") or "").strip() != registration_id:
+            continue
+        if str(receipt.get("operation") or "").strip() != "remote_send":
+            continue
+        if str(receipt.get("source_event_id") or "").strip() == source_message_event_id:
+            return dict(receipt)
+    return None
+
+
+def _defer_until_source_delivery(
+    registration_id: str,
+    idempotency_key: str,
+    *,
+    home: Optional[Path],
+    transport: str,
+) -> Dict[str, Any]:
+    next_attempt_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=_BACKOFF_SECONDS[0])
+    ).isoformat().replace("+00:00", "Z")
+    return receipts.update_receipt(
+        registration_id,
+        idempotency_key,
+        home,
+        ok=False,
+        status="retrying",
+        transport=transport,
+        next_attempt_at=next_attempt_at,
+        error={
+            "code": "source_delivery_pending",
+            "message": "source message delivery has not produced a remote event yet",
+            "retriable": True,
+            "transport": transport,
+        },
+    ) or {}
 
 
 def _finalize(

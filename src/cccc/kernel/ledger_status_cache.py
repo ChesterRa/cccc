@@ -50,6 +50,11 @@ def _prune(conn: sqlite3.Connection) -> None:
     )
 
 
+def _invalidate_event(conn: sqlite3.Connection, event_id: str) -> None:
+    conn.execute("DELETE FROM recipient_status WHERE event_id = ?", (event_id,))
+    conn.execute("DELETE FROM message_status_meta WHERE event_id = ?", (event_id,))
+
+
 def _recipient_actor_ids(group: Group, event: Dict[str, Any]) -> List[str]:
     by = str(event.get("by") or "").strip()
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -102,25 +107,28 @@ def _write_event_status_rows(
     event: Dict[str, Any],
     *,
     read_status: Dict[str, bool],
-    ack_status: Dict[str, bool],
-    obligation_status: Dict[str, Dict[str, bool]],
+    obligation_status: Dict[str, Dict[str, Any]],
 ) -> None:
     event_id = str(event.get("id") or "").strip()
     if not event_id:
         return
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
-    is_attention = int(str(data.get("priority") or "normal").strip() == "attention")
     has_obligation = int(not str(data.get("dst_group_id") or "").strip())
     conn.execute(
         """
-        INSERT INTO message_status_meta(event_id, ts, is_attention, has_obligation)
+        INSERT INTO message_status_meta(event_id, ts, has_obligation, has_read_status)
         VALUES(?, ?, ?, ?)
         ON CONFLICT(event_id) DO UPDATE SET
             ts=excluded.ts,
-            is_attention=excluded.is_attention,
-            has_obligation=excluded.has_obligation
+            has_obligation=excluded.has_obligation,
+            has_read_status=excluded.has_read_status
         """,
-        (event_id, str(event.get("ts") or ""), is_attention, has_obligation),
+        (
+            event_id,
+            str(event.get("ts") or ""),
+            has_obligation,
+            int(str(data.get("message_mode") or "") == "mail"),
+        ),
     )
     recipients = _recipient_actor_ids(group, event)
     for actor_id in recipients:
@@ -131,21 +139,26 @@ def _write_event_status_rows(
         )
         conn.execute(
             """
-            INSERT INTO recipient_status(event_id, actor_id, is_read, is_acked, is_replied, reply_required)
-            VALUES(?, ?, ?, ?, ?, ?)
+            INSERT INTO recipient_status(
+                event_id, actor_id, is_read, is_replied,
+                reply_requested, cancelled, delivery_state
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(event_id, actor_id) DO UPDATE SET
                 is_read=excluded.is_read,
-                is_acked=excluded.is_acked,
                 is_replied=excluded.is_replied,
-                reply_required=excluded.reply_required
+                reply_requested=excluded.reply_requested,
+                cancelled=excluded.cancelled,
+                delivery_state=excluded.delivery_state
             """,
             (
                 event_id,
                 actor_id,
                 1 if bool(read_status.get(actor_id)) else 0,
-                1 if bool(ack_status.get(actor_id)) else 0,
                 1 if bool(obligation.get("replied")) else 0,
-                1 if bool(obligation.get("reply_required")) else 0,
+                1 if bool(obligation.get("reply_requested")) else 0,
+                1 if bool(obligation.get("cancelled")) else 0,
+                str(obligation.get("delivery_state") or ""),
             ),
         )
 
@@ -155,8 +168,7 @@ def store_message_status_batch(
     events: List[Dict[str, Any]],
     *,
     read_status_by_event: Dict[str, Dict[str, bool]],
-    ack_status_by_event: Dict[str, Dict[str, bool]],
-    obligation_status_by_event: Dict[str, Dict[str, Dict[str, bool]]],
+    obligation_status_by_event: Dict[str, Dict[str, Dict[str, Any]]],
 ) -> None:
     if not events:
         return
@@ -174,7 +186,6 @@ def store_message_status_batch(
                 group,
                 event,
                 read_status=read_status_by_event.get(event_id, {}),
-                ack_status=ack_status_by_event.get(event_id, {}),
                 obligation_status=obligation_status_by_event.get(event_id, {}),
             )
         _prune(conn)
@@ -199,20 +210,21 @@ def get_cached_message_status_batch(
         ensure_status_schema(conn)
         placeholders = ", ".join("?" for _ in normalized_ids)
         meta_rows = conn.execute(
-            f"SELECT event_id, is_attention, has_obligation FROM message_status_meta WHERE event_id IN ({placeholders})",
+            f"SELECT event_id, has_obligation, has_read_status FROM message_status_meta WHERE event_id IN ({placeholders})",
             tuple(normalized_ids),
         ).fetchall()
         meta_by_id = {
             str(row[0] or "").strip(): {
-                "is_attention": bool(int(row[1] or 0)),
-                "has_obligation": bool(int(row[2] or 0)),
+                "has_obligation": bool(int(row[1] or 0)),
+                "has_read_status": bool(int(row[2] or 0)),
             }
             for row in meta_rows
             if str(row[0] or "").strip()
         }
         status_rows = conn.execute(
             f"""
-            SELECT event_id, actor_id, is_read, is_acked, is_replied, reply_required
+            SELECT event_id, actor_id, is_read, is_replied,
+                   reply_requested, cancelled, delivery_state
             FROM recipient_status
             WHERE event_id IN ({placeholders})
             """,
@@ -233,9 +245,9 @@ def get_cached_message_status_batch(
 
     result: Dict[str, Dict[str, Any]] = {}
     for event_id, meta in meta_by_id.items():
-        payload: Dict[str, Any] = {"read_status": {}}
-        if meta.get("is_attention"):
-            payload["ack_status"] = {}
+        payload: Dict[str, Any] = {}
+        if meta.get("has_read_status"):
+            payload["read_status"] = {}
         if meta.get("has_obligation"):
             payload["obligation_status"] = {}
         result[event_id] = payload
@@ -246,15 +258,14 @@ def get_cached_message_status_batch(
         if not event_id or not actor_id or event_id not in result:
             continue
         payload = result[event_id]
-        payload["read_status"][actor_id] = bool(int(row[2] or 0))
-        if isinstance(payload.get("ack_status"), dict):
-            payload["ack_status"][actor_id] = bool(int(row[3] or 0))
+        if isinstance(payload.get("read_status"), dict):
+            payload["read_status"][actor_id] = bool(int(row[2] or 0))
         if isinstance(payload.get("obligation_status"), dict):
             payload["obligation_status"][actor_id] = {
-                "read": bool(int(row[2] or 0)),
-                "acked": bool(int(row[3] or 0)),
-                "replied": bool(int(row[4] or 0)),
-                "reply_required": bool(int(row[5] or 0)),
+                "replied": bool(int(row[3] or 0)),
+                "reply_requested": bool(int(row[4] or 0)),
+                "cancelled": bool(int(row[5] or 0)),
+                "delivery_state": str(row[6] or ""),
             }
     logger.debug(
         "ledger_status_cache_read group_id=%s requested=%d hit=%d miss=%d",
@@ -266,28 +277,15 @@ def get_cached_message_status_batch(
     return result
 
 
-def _apply_read_update(conn: sqlite3.Connection, event_id: str, actor_id: str) -> None:
+def _apply_delivery_update(
+    conn: sqlite3.Connection,
+    event_id: str,
+    actor_id: str,
+    state: str,
+) -> None:
     conn.execute(
-        "UPDATE recipient_status SET is_read = 1 WHERE event_id = ? AND actor_id = ?",
-        (event_id, actor_id),
-    )
-
-
-def _apply_ack_update(conn: sqlite3.Connection, event_id: str, actor_id: str) -> None:
-    conn.execute(
-        "UPDATE recipient_status SET is_acked = 1 WHERE event_id = ? AND actor_id = ?",
-        (event_id, actor_id),
-    )
-
-
-def _apply_reply_update(conn: sqlite3.Connection, event_id: str, actor_id: str) -> None:
-    conn.execute(
-        """
-        UPDATE recipient_status
-        SET is_replied = 1
-        WHERE event_id = ? AND actor_id = ?
-        """,
-        (event_id, actor_id),
+        "UPDATE recipient_status SET delivery_state = ? WHERE event_id = ? AND actor_id = ?",
+        (state, event_id, actor_id),
     )
 
 
@@ -300,7 +298,7 @@ def update_message_status_cache_on_append(
 
     New message rows are read-through data and are intentionally populated by
     the explicit warm/read path. Replies still update a cached target row, and
-    actor/read/ACK events still invalidate or update existing rows.
+    actor/read/delivery/cancellation events still invalidate or update existing rows.
     """
     group_id = str(event.get("group_id") or "").strip()
     kind = str(event.get("kind") or "").strip()
@@ -308,8 +306,9 @@ def update_message_status_cache_on_append(
         "actor.add",
         "actor.remove",
         "chat.message",
-        "chat.read",
-        "chat.ack",
+        "mail.read",
+        "chat.reply_request.cancelled",
+        "runtime.delivery",
     }:
         return
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -330,44 +329,49 @@ def update_message_status_cache_on_append(
         if kind == "chat.message":
             if cache_new_message:
                 read_status: Dict[str, bool] = {}
-                ack_status: Dict[str, bool] = {}
-                obligation_status: Dict[str, Dict[str, bool]] = {}
+                obligation_status: Dict[str, Dict[str, Any]] = {}
                 recipients = _recipient_actor_ids(group, event)
-                is_attention = (
-                    str(data.get("priority") or "normal").strip() == "attention"
-                )
-                reply_required = bool(data.get("reply_required") is True)
+                reply_requested = str(data.get("message_mode") or "") == "request_reply"
                 for actor_id in recipients:
-                    read_status[actor_id] = False
-                    if is_attention:
-                        ack_status[actor_id] = False
+                    if str(data.get("message_mode") or "") == "mail":
+                        read_status[actor_id] = False
                     obligation_status[actor_id] = {
-                        "read": False,
-                        "acked": False,
                         "replied": False,
-                        "reply_required": reply_required,
+                        "reply_requested": reply_requested,
+                        "cancelled": False,
+                        "delivery_state": "",
                     }
                 _write_event_status_rows(
                     conn,
                     group,
                     event,
                     read_status=read_status,
-                    ack_status=ack_status,
                     obligation_status=obligation_status,
                 )
             by = str(event.get("by") or "").strip()
             if reply_to and by:
-                _apply_reply_update(conn, reply_to, by)
-        elif kind == "chat.read":
+                # Reply/cancellation is a first-terminal-wins contract. Drop the
+                # materialized row so the next read recomputes ledger order.
+                _invalidate_event(conn, reply_to)
+        elif kind == "mail.read":
             actor_id = str(data.get("actor_id") or "").strip()
             event_id = str(data.get("event_id") or "").strip()
             if actor_id and event_id:
-                _apply_read_update(conn, event_id, actor_id)
-        elif kind == "chat.ack":
+                # A Mail cursor covers every earlier Mail event in ledger order.
+                # Invalidating the bounded cache is simpler and safer than trying
+                # to reproduce ledger ordering inside this projection database.
+                conn.execute("DELETE FROM recipient_status")
+                conn.execute("DELETE FROM message_status_meta")
+        elif kind == "chat.reply_request.cancelled":
+            event_id = str(data.get("source_event_id") or "").strip()
+            if event_id:
+                _invalidate_event(conn, event_id)
+        elif kind == "runtime.delivery":
             actor_id = str(data.get("actor_id") or "").strip()
-            event_id = str(data.get("event_id") or "").strip()
-            if actor_id and event_id:
-                _apply_ack_update(conn, event_id, actor_id)
+            event_id = str(data.get("source_event_id") or "").strip()
+            state = str(data.get("state") or "").strip()
+            if actor_id and event_id and state:
+                _apply_delivery_update(conn, event_id, actor_id, state)
         _prune(conn)
         conn.commit()
         logger.debug(

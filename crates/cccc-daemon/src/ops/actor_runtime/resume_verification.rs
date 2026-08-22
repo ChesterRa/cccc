@@ -18,6 +18,7 @@ pub(super) fn cancel(group_id: &str, actor_id: &str) {
     registry::cancel(group_id, actor_id);
 }
 
+#[cfg(test)]
 pub(super) fn cancel_if_current(group_id: &str, actor_id: &str, started_at: &str) {
     registry::cancel_if_current(group_id, actor_id, started_at);
 }

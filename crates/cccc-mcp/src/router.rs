@@ -35,6 +35,20 @@ pub(crate) async fn call_with_context(
         return capability_use(home, client, arguments, context).await;
     }
     let message_operation = is_message_operation(name, &arguments);
+    let message_context = message_operation.then(|| {
+        (
+            arguments
+                .get("group_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            arguments
+                .get("by")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        )
+    });
     if message_operation {
         arguments.insert("require_peer_insight".into(), Value::Bool(true));
     }
@@ -45,7 +59,10 @@ pub(crate) async fn call_with_context(
         && let Some(result) =
             crate::remote_messages::try_send(home, client, arguments.clone()).await
     {
-        return result.map(with_post_message_nudge);
+        return result.map(|result| {
+            let (group_id, actor_id) = message_context.as_ref().expect("message context");
+            with_post_message_context(home, result, group_id, actor_id)
+        });
     }
     let payload = match name {
         "cccc_help" => {
@@ -64,7 +81,8 @@ pub(crate) async fn call_with_context(
         name if is_repo_tool(name) => {
             let result = crate::local_tools::call(home, client, name, arguments).await?;
             return Ok(if message_operation {
-                with_post_message_nudge(result)
+                let (group_id, actor_id) = message_context.as_ref().expect("message context");
+                with_post_message_context(home, result, group_id, actor_id)
             } else {
                 result
             });
@@ -97,6 +115,17 @@ pub(crate) async fn call_with_context(
             let mut result = daemon(client, &op, args).await?;
             if name == "cccc_task" {
                 postprocess_task_result(&mut result, &arguments)?;
+                if is_task_mail_boundary(&arguments) {
+                    let group_id = arguments
+                        .get("group_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let actor_id = arguments
+                        .get("by")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    insert_mail_pending_context(home, &mut result, group_id, actor_id);
+                }
             }
             if name == "cccc_actor_notes" {
                 postprocess_actor_notes(client, &mut result, &arguments).await;
@@ -106,7 +135,8 @@ pub(crate) async fn call_with_context(
     };
     let result = tool_result(payload);
     Ok(if message_operation {
-        with_post_message_nudge(result)
+        let (group_id, actor_id) = message_context.as_ref().expect("message context");
+        with_post_message_context(home, result, group_id, actor_id)
     } else {
         result
     })
@@ -505,6 +535,26 @@ fn postprocess_task_result(
     Ok(())
 }
 
+fn is_task_mail_boundary(arguments: &Map<String, Value>) -> bool {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("list");
+    if !matches!(action, "create" | "update" | "move") {
+        return false;
+    }
+    if arguments.get("status").and_then(Value::as_str) == Some("done") {
+        return true;
+    }
+    matches!(
+        arguments.get("waiting_on").and_then(Value::as_str),
+        Some("actor" | "external")
+    ) || arguments
+        .get("blocked_by")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+}
+
 fn help_markdown() -> String {
     format!(
         "{}\n\n{}\n",
@@ -612,7 +662,6 @@ async fn postprocess_actor_notes(
         "title": "Help updated: your actor note",
         "message": "Updated: your actor note. Run `cccc_help` now to refresh your effective protocol reference; then update `cccc_agent_state` if your plan changes.",
         "target_actor_id": target,
-        "requires_ack": false,
     })
     .as_object()
     .cloned()
@@ -731,20 +780,42 @@ fn is_message_operation(name: &str, arguments: &Map<String, Value>) -> bool {
     ) || (name == "cccc_file" && arguments.get("action").and_then(Value::as_str) == Some("send"))
 }
 
-fn with_post_message_nudge(mut result: Value) -> Value {
-    let nudge = json!({
-        "kind":"whole_situation_reconstruction",
-        "message":cccc_core::peer_insight::POST_MESSAGE_NUDGE
-    });
+fn with_post_message_context(
+    home: &HomeLayout,
+    mut result: Value,
+    group_id: &str,
+    actor_id: &str,
+) -> Value {
     if let Some(payload) = result
         .get_mut("structuredContent")
         .and_then(Value::as_object_mut)
     {
-        payload.insert("post_message_nudge".into(), nudge);
+        insert_mail_pending_context(home, payload, group_id, actor_id);
         let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
         result["content"] = json!([{"type":"text","text":text}]);
     }
     result
+}
+
+fn insert_mail_pending_context(
+    home: &HomeLayout,
+    payload: &mut Map<String, Value>,
+    group_id: &str,
+    actor_id: &str,
+) {
+    if group_id.is_empty() || matches!(actor_id, "" | "user" | "system") {
+        return;
+    }
+    let Ok(store) = cccc_core::GroupStore::new(home.clone()) else {
+        return;
+    };
+    let Ok(group) = store.load(group_id) else {
+        return;
+    };
+    let Ok(Some(pending)) = cccc_core::inbox::mail_pending_summary(home, &group, actor_id) else {
+        return;
+    };
+    payload.insert("mail_pending".into(), pending);
 }
 
 fn is_repo_tool(name: &str) -> bool {
@@ -767,7 +838,7 @@ fn is_repo_tool(name: &str) -> bool {
 mod tests {
     use super::{
         apply_actor_context, apply_request_context, help_markdown, is_message_operation,
-        postprocess_task_result, prepare_task_arguments, with_post_message_nudge,
+        is_task_mail_boundary, postprocess_task_result, prepare_task_arguments,
     };
     use crate::RequestContext;
     use serde_json::json;
@@ -1010,7 +1081,7 @@ mod tests {
     }
 
     #[test]
-    fn identifies_message_operations_and_adds_reconstruction_nudge() {
+    fn identifies_message_operations_for_compact_mail_context() {
         assert!(is_message_operation(
             "cccc_message_send",
             &serde_json::Map::new()
@@ -1029,11 +1100,24 @@ mod tests {
                 .cloned()
                 .expect("read args")
         ));
-        let result = with_post_message_nudge(super::tool_result(json!({"event":{}})));
-        assert_eq!(
-            result["structuredContent"]["post_message_nudge"]["kind"],
-            "whole_situation_reconstruction"
-        );
+    }
+
+    #[test]
+    fn identifies_task_completion_and_block_boundaries_for_mail_context() {
+        for arguments in [
+            json!({"action":"move","status":"done"}),
+            json!({"action":"update","waiting_on":"external"}),
+            json!({"action":"update","blocked_by":["T001"]}),
+        ] {
+            assert!(is_task_mail_boundary(
+                arguments.as_object().expect("arguments")
+            ));
+        }
+        assert!(!is_task_mail_boundary(
+            json!({"action":"update","status":"active"})
+                .as_object()
+                .expect("active arguments")
+        ));
     }
 
     #[test]

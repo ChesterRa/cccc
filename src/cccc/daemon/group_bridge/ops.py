@@ -18,15 +18,18 @@ from ...kernel.group_bridge.receipts import get_receipt, update_receipt
 from ...kernel.group_bridge.credentials import resolve_group_bridge_credential
 from ...kernel.inbox import find_event
 from ...kernel.peer_insight import (
+    PeerRecipientError,
     append_peer_perspective,
     normalized_insight_or_error,
     peer_insight_required_details,
     remote_recipients_include_peer,
+    validate_message_audience,
 )
 from ...util.conv import coerce_bool
 from .receiver import receive_remote_send
+from .cancellation import receive_remote_reply_request_cancel
 from .remote_dispatch import deliver_enqueued, enqueue_remote_send
-from .transports.base import RemoteSendTransport, get_transport
+from .transports import RemoteSendTransport, get_transport
 
 CredentialResolver = Callable[[str], Optional[str]]
 DispatchSend = Callable[[str, Dict[str, Any]], Tuple[DaemonResponse, bool]]
@@ -56,6 +59,7 @@ def _source_event_or_error(
     src_group_id: str,
     remote_group_id: str,
     source_event_id: str,
+    source_record_payload: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], Optional[DaemonResponse]]:
     group = load_group(src_group_id)
     if group is None:
@@ -68,13 +72,19 @@ def _source_event_or_error(
             details={"group_id": src_group_id, "source_event_id": source_event_id},
         )
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    expected_to = _explicit_remote_recipients(source_record_payload.get("to"))
+    expected_mode = str(source_record_payload.get("message_mode") or "").strip()
     if (
         str(event.get("kind") or "").strip() != "chat.message"
         or str(data.get("dst_group_id") or "").strip() != remote_group_id
+        or data.get("to") != ["user"]
+        or str(data.get("message_mode") or "").strip() != "send"
+        or _explicit_remote_recipients(data.get("dst_to")) != expected_to
+        or str(data.get("dst_message_mode") or "").strip() != expected_mode
     ):
         return None, _error(
             "source_event_mismatch",
-            "Group Bridge source event does not match this remote destination",
+            "Group Bridge source event does not match the canonical remote destination record",
             details={
                 "group_id": src_group_id,
                 "source_event_id": source_event_id,
@@ -99,6 +109,7 @@ def _ensure_source_event(
             src_group_id=src_group_id,
             remote_group_id=remote_group_id,
             source_event_id=source_event_id,
+            source_record_payload=source_record_payload,
         )
     if dispatch_send is None:
         return None, _error(
@@ -117,11 +128,11 @@ def _ensure_source_event(
             "to": ["user"],
             "attachments": list(source_record_payload.get("attachments") or []),
             "refs": list(source_record_payload.get("refs") or []),
-            "priority": str(source_record_payload.get("priority") or "normal"),
-            "reply_required": bool(source_record_payload.get("reply_required")),
+            "message_mode": "send",
             "client_id": _source_client_id(registration_id, idempotency_key),
             "dst_group_id": remote_group_id,
             "dst_to": recipients,
+            "dst_message_mode": str(source_record_payload.get("message_mode") or ""),
             "insight": source_record_payload.get("insight"),
         },
     )
@@ -135,6 +146,7 @@ def _ensure_source_event(
         src_group_id=src_group_id,
         remote_group_id=remote_group_id,
         source_event_id=event_id,
+        source_record_payload=source_record_payload,
     )
 
 
@@ -217,6 +229,29 @@ def handle_remote_send(
         source_record_payload = dict(source_record_raw) if isinstance(source_record_raw, dict) else {}
         if not str(source_record_payload.get("source_by") or "").strip():
             source_record_payload["source_by"] = str(args.get("by") or "user").strip() or "user"
+        try:
+            source_payload_shape = dict(source_record_payload)
+            source_insight = source_payload_shape.pop("insight", None)
+            stored_payload = RemoteSendPayload.model_validate(source_payload_shape)
+            normalized_insight_or_error(source_insight)
+            validate_message_audience(
+                stored_payload.to,
+                message_mode=stored_payload.message_mode,
+            )
+            if stored_payload.message_mode == "request_reply" and any(
+                recipient in {"@all", "@peers", "@foreman"} for recipient in stored_payload.to
+            ):
+                return _error(
+                    "concrete_recipients_required",
+                    "request_reply requires one or more explicit concrete recipients",
+                )
+        except PeerRecipientError as exc:
+            return _error(exc.code, exc.message, details=exc.details)
+        except Exception as exc:
+            return _error(
+                "incompatible_receipt",
+                f"stored Group Bridge receipt does not satisfy the current message contract: {exc}",
+            )
         _source_event, source_error = _ensure_source_event(
             src_group_id=src_group_id,
             remote_group_id=remote_group_id,
@@ -260,6 +295,17 @@ def handle_remote_send(
             "remote_send requires explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
         )
     payload = payload.model_copy(update={"to": recipients})
+    try:
+        validate_message_audience(recipients, message_mode=payload.message_mode)
+    except PeerRecipientError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    if payload.message_mode == "request_reply" and any(
+        recipient in {"@all", "@peers", "@foreman"} for recipient in recipients
+    ):
+        return _error(
+            "concrete_recipients_required",
+            "request_reply requires one or more explicit concrete recipients",
+        )
     try:
         insight = normalized_insight_or_error(args.get("insight"))
     except ValueError as exc:
@@ -322,6 +368,9 @@ class _CredentialUnresolvedTransport(RemoteSendTransport):
             transport=self.transport,
         )
 
+    def cancel_reply_request(self, envelope):  # type: ignore[no-untyped-def]
+        return self.deliver(envelope)
+
 
 def handle_remote_delivery_status(args: Dict[str, Any]) -> DaemonResponse:
     src_group_id = str(args.get("group_id") or "").strip()
@@ -365,6 +414,22 @@ def handle_receive_remote_send(args: Dict[str, Any]) -> DaemonResponse:
     )
 
 
+def handle_receive_reply_request_cancel(args: Dict[str, Any]) -> DaemonResponse:
+    result = receive_remote_reply_request_cancel(
+        target_group_id=str(args.get("target_group_id") or ""),
+        src_group_id=str(args.get("src_group_id") or ""),
+        remote_peer_id=str(args.get("remote_peer_id") or ""),
+        payload=dict(args.get("payload") or {}) if isinstance(args.get("payload"), dict) else {},
+    )
+    if result.get("ok"):
+        return DaemonResponse(ok=True, result=result)
+    error = result.get("error") if isinstance(result.get("error"), dict) else {}
+    return _error(
+        str(error.get("code") or "remote_cancel_failed"),
+        str(error.get("message") or "remote reply-request cancellation failed"),
+    )
+
+
 def try_handle_remote_send_op(
     op: str,
     args: Dict[str, Any],
@@ -377,4 +442,6 @@ def try_handle_remote_send_op(
         return handle_remote_delivery_status(args)
     if op == "group_bridge_receive_remote_send":
         return handle_receive_remote_send(args)
+    if op == "group_bridge_receive_reply_request_cancel":
+        return handle_receive_reply_request_cancel(args)
     return None

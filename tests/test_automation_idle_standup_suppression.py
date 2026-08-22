@@ -80,7 +80,6 @@ class TestIdleStandupSuppression(unittest.TestCase):
                     "action": {
                         "kind": "notify",
                         "priority": "normal",
-                        "requires_ack": False,
                         "title": "Stand-up reminder",
                         "snippet_ref": "standup",
                         "message": "",
@@ -152,7 +151,6 @@ class TestIdleStandupSuppression(unittest.TestCase):
                         "action": {
                             "kind": "notify",
                             "priority": "normal",
-                            "requires_ack": False,
                             "title": "Custom check",
                             "message": "custom body here",
                         },

@@ -59,6 +59,7 @@ mod profile_access;
 mod profiles;
 mod remote_access;
 mod runtime_completion;
+pub(crate) mod runtime_delivery;
 pub(crate) mod runtime_hook_input;
 mod runtime_hook_session;
 mod runtime_mcp;

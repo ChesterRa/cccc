@@ -370,6 +370,51 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_inbox_read_is_followed_by_fresh_actor_unread_count(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.ledger import append_event
+
+            os.environ.pop("CCCC_WEB_MODE", None)
+            group_id = self._create_group()
+            self._add_actor(group_id)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group_id,
+                scope_key="",
+                by="user",
+                data={
+                    "text": "read me",
+                    "to": ["peer-1"],
+                    "message_mode": "mail",
+                },
+            )
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                with self._client() as client:
+                    actors_path = f"/api/v1/groups/{group_id}/actors?include_unread=true"
+                    before = client.get(actors_path)
+                    self.assertEqual(before.status_code, 200)
+                    self.assertEqual(before.json()["result"]["actors"][0]["unread_count"], 1)
+
+                    read = client.post(
+                        f"/api/v1/groups/{group_id}/inbox/peer-1/read",
+                        json={"limit": 50, "by": "user"},
+                    )
+                    self.assertEqual(read.status_code, 200)
+                    self.assertTrue(bool(read.json().get("ok")), read.json())
+
+                    after = client.get(actors_path)
+                    self.assertEqual(after.status_code, 200)
+                    self.assertEqual(after.json()["result"]["actors"][0]["unread_count"], 0)
+        finally:
+            cleanup()
+
     def test_actor_list_route_falls_back_to_local_effective_working_state_projection_when_daemon_unavailable(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -591,11 +636,11 @@ class TestWebActorRoutesCache(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "active turn", "to": ["web-1"]},
+                data={"text": "active turn", "to": ["web-1"], "message_mode": "send"},
             )
             wait = self._local_call_daemon(
                 {
-                    "op": "web_model_runtime_wait_next_turn",
+                    "op": "runtime_wait_next_turn",
                     "args": {"group_id": group_id, "actor_id": "web-1", "limit": 1},
                 }
             )
@@ -606,7 +651,15 @@ class TestWebActorRoutesCache(unittest.TestCase):
                 group_id=group.group_id,
                 scope_key="",
                 by="user",
-                data={"text": "queued one", "to": ["web-1"]},
+                data={"text": "queued one", "to": ["web-1"], "message_mode": "send"},
+            )
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "read later", "to": ["web-1"], "message_mode": "mail"},
             )
 
             with patch("cccc.ports.web.app.call_daemon", side_effect=self._daemon_unavailable_for_actor_list):
@@ -619,7 +672,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
             self.assertEqual(actor["effective_working_state"], "working")
             self.assertEqual(actor["web_model_queued_count"], 1)
             self.assertEqual(actor["web_model_queued_after_event_id"], active["id"])
-            self.assertEqual(actor["unread_count"], 2)
+            self.assertEqual(actor["unread_count"], 1)
         finally:
             cleanup()
 
@@ -864,7 +917,7 @@ class TestWebActorRoutesCache(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_normal_mode_actor_list_include_unread_uses_inflight_without_ttl(self) -> None:
+    def test_normal_mode_actor_list_include_unread_uses_inflight_without_handoff_cache(self) -> None:
         _, cleanup = self._with_home()
         try:
             os.environ.pop("CCCC_WEB_MODE", None)
@@ -911,6 +964,6 @@ class TestWebActorRoutesCache(unittest.TestCase):
 
                     second_follow_up = client.get(path)
                     self.assertEqual(second_follow_up.status_code, 200)
-                    self.assertEqual(actor_list_reads, 2)
+                    self.assertEqual(actor_list_reads, 3)
         finally:
             cleanup()
