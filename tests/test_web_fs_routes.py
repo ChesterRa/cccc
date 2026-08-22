@@ -1,3 +1,4 @@
+import errno
 import os
 import shutil
 import tempfile
@@ -107,5 +108,60 @@ class TestWebFsRoutes(unittest.TestCase):
                 self.assertTrue(workspace.is_dir())
             finally:
                 shutil.rmtree(workspace, ignore_errors=True)
+        finally:
+            cleanup()
+
+    def test_create_directory_creates_one_child_and_rejects_nested_names(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with tempfile.TemporaryDirectory() as parent, self._client() as client:
+                resp = client.post(
+                    "/api/v1/fs/directory",
+                    json={"parent": parent, "name": " demo "},
+                )
+                self.assertEqual(resp.status_code, 200, resp.text)
+                target = Path(parent) / "demo"
+                self.assertTrue(target.is_dir())
+                self.assertEqual((resp.json().get("result") or {}).get("path"), str(target.resolve()))
+
+                duplicate = client.post(
+                    "/api/v1/fs/directory",
+                    json={"parent": parent, "name": "demo"},
+                )
+                self.assertEqual(duplicate.status_code, 409, duplicate.text)
+
+                nested = client.post(
+                    "/api/v1/fs/directory",
+                    json={"parent": parent, "name": "nested/path"},
+                )
+                self.assertEqual(nested.status_code, 400, nested.text)
+                self.assertFalse((Path(parent) / "nested").exists())
+        finally:
+            cleanup()
+
+    def test_create_directory_maps_other_os_errors_to_a_client_error(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            original_mkdir = Path.mkdir
+
+            def rejected_target_mkdir(path: Path, *args, **kwargs):
+                if path.name == "rejected":
+                    raise OSError(errno.ENAMETOOLONG, "File name too long")
+                return original_mkdir(path, *args, **kwargs)
+
+            with tempfile.TemporaryDirectory() as parent, self._client() as client, patch.object(
+                Path,
+                "mkdir",
+                rejected_target_mkdir,
+            ):
+                resp = client.post(
+                    "/api/v1/fs/directory",
+                    json={"parent": parent, "name": "rejected"},
+                )
+
+            self.assertEqual(resp.status_code, 400, resp.text)
+            error = resp.json().get("error") or {}
+            self.assertEqual(error.get("code"), "filesystem_error")
+            self.assertIn("File name too long", error.get("message") or "")
         finally:
             cleanup()

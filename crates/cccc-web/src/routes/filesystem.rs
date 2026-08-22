@@ -1,10 +1,11 @@
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io;
 
+mod create_directory;
 mod path_display;
 
 use path_display::{display_path, drive_label, filesystem_roots};
@@ -24,6 +25,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/fs/list", get(list))
         .route("/api/v1/fs/recent", get(recent))
+        .route("/api/v1/fs/directory", post(create_directory::create))
 }
 
 async fn list(State(state): State<AppState>, Query(query): Query<ListQuery>) -> ApiResult {

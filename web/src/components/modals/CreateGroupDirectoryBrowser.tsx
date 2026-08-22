@@ -1,7 +1,9 @@
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { DirItem, DirSuggestion } from "../../types";
-import { FolderIcon } from "../Icons";
+import { FolderIcon, PlusIcon } from "../Icons";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { directoryNameFromPath } from "./createGroupDirectoryModel";
 
 interface CreateGroupDirectoryBrowserProps {
@@ -10,8 +12,10 @@ interface CreateGroupDirectoryBrowserProps {
   parentDir: string | null;
   driveLocations: DirSuggestion[];
   error?: string;
+  creatingDirectory: boolean;
   onSelect: (path: string, name: string) => void;
   onFetch: (path: string) => void;
+  onCreateDirectory: (parent: string, name: string) => Promise<boolean>;
 }
 
 export function CreateGroupDirectoryBrowser({
@@ -20,14 +24,36 @@ export function CreateGroupDirectoryBrowser({
   parentDir,
   driveLocations,
   error,
+  creatingDirectory,
   onSelect,
   onFetch,
+  onCreateDirectory,
 }: CreateGroupDirectoryBrowserProps) {
   const { t } = useTranslation("modals");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [directoryName, setDirectoryName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const directories = dirItems.filter((item) => item.is_dir);
   const open = (path: string, name = directoryNameFromPath(path)) => {
     onSelect(path, name);
     onFetch(path);
+  };
+  useEffect(() => {
+    if (showCreateForm) inputRef.current?.focus();
+  }, [showCreateForm]);
+  useEffect(() => {
+    if (!error) return;
+    setDirectoryName("");
+    setShowCreateForm(false);
+  }, [error]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!directoryName.trim() || creatingDirectory) return;
+    if (await onCreateDirectory(currentDir, directoryName)) {
+      setDirectoryName("");
+      setShowCreateForm(false);
+    }
   };
 
   return (
@@ -52,17 +78,73 @@ export function CreateGroupDirectoryBrowser({
           ))}
         </div>
       )}
-      {error ? (
-        <div className="px-3 py-3 text-sm text-rose-600 dark:text-rose-400">{error}</div>
-      ) : (
+      {error && (
+        <div
+          role="alert"
+          className="border-b px-3 py-3 text-sm text-rose-600 dark:text-rose-400 border-rose-500/30"
+        >
+          {error}
+        </div>
+      )}
+      {!error && (
         <>
           {currentDir && (
-            <div
-              className="px-3 py-1.5 border-b text-xs font-mono truncate border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]"
-              title={currentDir}
-            >
-              {currentDir}
+            <div className="flex min-w-0 items-center gap-2 border-b px-3 py-1.5 border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]">
+              <div
+                className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-text-muted)]"
+                title={currentDir}
+              >
+                {currentDir}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+                onClick={() => setShowCreateForm(true)}
+                disabled={creatingDirectory}
+              >
+                <PlusIcon size={15} />
+                {t("createGroup.newFolder")}
+              </Button>
             </div>
+          )}
+          {showCreateForm && (
+            <form
+              className="flex flex-col gap-2 border-b p-3 sm:flex-row border-[var(--glass-border-subtle)]"
+              onSubmit={submit}
+            >
+              <Input
+                ref={inputRef}
+                value={directoryName}
+                onChange={(event) => setDirectoryName(event.target.value)}
+                placeholder={t("createGroup.folderNamePlaceholder")}
+                aria-label={t("createGroup.folderName")}
+                disabled={creatingDirectory}
+              />
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="flex-1 sm:flex-none"
+                  onClick={() => {
+                    setDirectoryName("");
+                    setShowCreateForm(false);
+                  }}
+                  disabled={creatingDirectory}
+                >
+                  {t("common:cancel")}
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 sm:flex-none"
+                  disabled={!directoryName.trim() || creatingDirectory}
+                >
+                  {creatingDirectory
+                    ? t("createGroup.creatingFolder")
+                    : t("createGroup.createFolder")}
+                </Button>
+              </div>
+            </form>
           )}
           {parentDir && (
             <Button

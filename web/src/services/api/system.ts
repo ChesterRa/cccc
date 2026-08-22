@@ -60,6 +60,19 @@ export async function fetchDirContents(path: string) {
   };
 }
 
+export async function createDirectory(parent: string, name: string) {
+  const response = await apiJson<unknown>("/api/v1/fs/directory", {
+    method: "POST",
+    body: JSON.stringify({ parent, name }),
+  });
+  if (!response.ok) return response;
+  const result = asRecord(response.result);
+  if (!result || typeof result.path !== "string" || !result.path.trim()) {
+    return invalidResponse<{ path: string }>("Invalid filesystem create response");
+  }
+  return { ok: true as const, result: { path: result.path } };
+}
+
 export async function resolveScopeRoot(path: string) {
   return apiJson<{ path: string; scope_root: string; scope_key: string; git_remote: string }>(
     `/api/v1/fs/scope_root?path=${encodeURIComponent(path)}`,

@@ -65,6 +65,7 @@ from .browser_surface_proxy import (
     proxy_daemon_raw_stream_to_websocket,
     send_daemon_attach_request,
 )
+from .filesystem_directory import CreateDirectoryRequest, create_directory
 
 _WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _WEB_MODEL_CONNECTOR_GET_ACTIVITY_MIN_SECONDS = 30.0
@@ -1770,6 +1771,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "ok": True,
             "result": {"suggestions": recent_directory_suggestions(Path.home(), Path.cwd())},
         }
+
+    @global_router.post("/api/v1/fs/directory", dependencies=[Depends(require_admin)])
+    async def fs_create_directory(payload: CreateDirectoryRequest) -> Dict[str, Any]:
+        """Create one child directory for the project path picker."""
+        return create_directory(payload, read_only=ctx.read_only)
 
     @global_router.get("/api/v1/fs/scope_root", dependencies=[Depends(require_admin)])
     async def fs_scope_root(path: str = "") -> Dict[str, Any]:

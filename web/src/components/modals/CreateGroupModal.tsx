@@ -25,7 +25,9 @@ export interface CreateGroupModalProps {
   setCreateGroupName: (name: string) => void;
 
   dirBrowseError?: string;
+  creatingDirectory: boolean;
   onFetchDirContents: (path: string) => void;
+  onCreateDirectory: (parent: string, name: string) => Promise<boolean>;
   onCreateGroup: () => void;
   onClose: () => void;
   onCancelAndReset: () => void;
@@ -45,7 +47,9 @@ export function CreateGroupModal({
   createGroupName,
   setCreateGroupName,
   dirBrowseError,
+  creatingDirectory,
   onFetchDirContents,
+  onCreateDirectory,
   onCreateGroup,
   onClose,
   onCancelAndReset,
@@ -178,11 +182,13 @@ export function CreateGroupModal({
             parentDir={parentDir}
             driveLocations={driveSuggestions(dirSuggestions)}
             error={dirBrowseError}
+            creatingDirectory={creatingDirectory}
             onSelect={(path, name) => {
               setCreateGroupPath(path);
               setCreateGroupName(name);
             }}
             onFetch={onFetchDirContents}
+            onCreateDirectory={onCreateDirectory}
           />
         )}
         <div>

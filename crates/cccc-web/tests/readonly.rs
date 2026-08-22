@@ -94,6 +94,24 @@ async fn exhibit_mode_rejects_filesystem_reads_like_legacy_web() {
 }
 
 #[tokio::test]
+async fn exhibit_mode_rejects_directory_creation() {
+    let (temp, home) = home();
+    let response = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit)
+        .oneshot(
+            Request::post("/api/v1/fs/directory")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"parent": temp.path(), "name": "blocked"}).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!temp.path().join("blocked").exists());
+}
+
+#[tokio::test]
 async fn exhibit_ping_matches_python_contract() {
     let (_temp, home) = home();
     let daemon_home = home.clone();

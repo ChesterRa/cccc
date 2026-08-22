@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { SearchModal } from "./SearchModal";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
+import { useCreateGroupDirectoryBrowser } from "./modals/useCreateGroupDirectoryBrowser";
 import {
   ActorConfigModal,
   NO_CHANGES_SENTINEL,
@@ -252,14 +253,10 @@ export function AppModals({
     showDirBrowser,
     setCreateGroupPath,
     setCreateGroupName,
-    setDirItems,
-    setCurrentDir,
-    setParentDir,
-    setShowDirBrowser,
     resetCreateGroupForm,
   } = useFormStore();
 
-  const [dirBrowseError, setDirBrowseError] = useState("");
+  const directoryBrowser = useCreateGroupDirectoryBrowser();
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
   const [editActorNotesBusy, setEditActorNotesBusy] = useState(false);
@@ -1028,30 +1025,17 @@ export function AppModals({
     }
   };
 
-  const handleFetchDirContents = async (path: string) => {
-    setShowDirBrowser(true);
-    setDirBrowseError("");
-    const resp = await api.fetchDirContents(path);
-    if (resp.ok) {
-      setDirItems(resp.result.items || []);
-      setCurrentDir(resp.result.path || path);
-      setParentDir(resp.result.parent || null);
-    } else {
-      setDirBrowseError(resp.error?.message || t("failedToListDir"));
-    }
-  };
-
   const handleCreateGroup = async () => {
     const path = createGroupPath.trim();
     if (!path) return;
     const dirName = path.split("/").filter(Boolean).pop() || "working-group";
     const title = createGroupName.trim() || dirName;
     setBusy("create");
-    setDirBrowseError("");
+    directoryBrowser.setError("");
     try {
       const resp = await api.createGroupWithScope(title, path);
       if (!resp.ok) {
-        setDirBrowseError(`${resp.error.code}: ${resp.error.message}`);
+        directoryBrowser.setError(`${resp.error.code}: ${resp.error.message}`);
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
@@ -1905,14 +1889,16 @@ export function AppModals({
         setCreateGroupPath={setCreateGroupPath}
         createGroupName={createGroupName}
         setCreateGroupName={setCreateGroupName}
-        dirBrowseError={dirBrowseError}
-        onFetchDirContents={handleFetchDirContents}
+        dirBrowseError={directoryBrowser.error}
+        creatingDirectory={directoryBrowser.creating}
+        onFetchDirContents={directoryBrowser.fetchContents}
+        onCreateDirectory={directoryBrowser.createDirectory}
         onCreateGroup={handleCreateGroup}
         onClose={() => closeModal("createGroup")}
         onCancelAndReset={() => {
           closeModal("createGroup");
           resetCreateGroupForm();
-          setDirBrowseError("");
+          directoryBrowser.setError("");
         }}
       />
 
