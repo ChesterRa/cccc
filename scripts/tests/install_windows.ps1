@@ -544,9 +544,12 @@ fn main() {
   $slowSource = Join-Path $tempRoot "slow-version.rs"
   $slowBinary = Join-Path $tempRoot "slow-version.exe"
   Set-Content -LiteralPath $slowSource -Encoding utf8 -Value @'
-use std::{env, thread, time::Duration};
+use std::{env, fs, thread, time::Duration};
 fn main() {
     if env::args().any(|arg| arg == "--version") {
+        if let Ok(path) = env::var("CCCC_TEST_VERSION_SIGNAL") {
+            fs::write(path, b"ready").expect("write version signal");
+        }
         println!("cccc 9.9.8");
         thread::sleep(Duration::from_secs(5));
     }
@@ -559,28 +562,33 @@ fn main() {
   $oldHash = (Get-FileHash (Join-Path $installDir "cccc.exe")).Hash
   $childOut = Join-Path $tempRoot "locked-rollback.out"
   $childErr = Join-Path $tempRoot "locked-rollback.err"
+  $versionSignal = Join-Path $tempRoot "locked-rollback-version-probe"
   $hostExecutable = (Get-Process -Id $PID).Path
   $childArguments = @(
     "-NoProfile", "-File", (Join-Path $rootDir "scripts\install.ps1"),
     "-Version", $lockedVersion, "-InstallDir", $installDir, "-NoModifyPath"
   )
-  $child = Start-Process -FilePath $hostExecutable -PassThru -NoNewWindow -ArgumentList $childArguments -RedirectStandardOutput $childOut -RedirectStandardError $childErr
+  $env:CCCC_TEST_VERSION_SIGNAL = $versionSignal
+  try {
+    $child = Start-Process -FilePath $hostExecutable -PassThru -NoNewWindow -ArgumentList $childArguments -RedirectStandardOutput $childOut -RedirectStandardError $childErr
+  } finally {
+    Remove-Item Env:CCCC_TEST_VERSION_SIGNAL -ErrorAction SilentlyContinue
+  }
   $heldBinary = $null
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
+  # The replacement signals from inside its --version probe. Waiting on that
+  # side channel avoids opening the old executable and starving its rename.
   while (-not $child.HasExited -and [DateTime]::UtcNow -lt $deadline -and $null -eq $heldBinary) {
-    try {
-      $currentHash = (Get-FileHash (Join-Path $installDir "cccc.exe") -ErrorAction Stop).Hash
-      if ($currentHash -ne $oldHash) {
+    if (Test-Path -LiteralPath $versionSignal -PathType Leaf) {
+      try {
         $heldBinary = [IO.File]::Open(
           (Join-Path $installDir "cccc.exe"),
           [IO.FileMode]::Open,
           [IO.FileAccess]::Read,
           [IO.FileShare]::Read
         )
-      }
-    } catch {}
-    # Get-FileHash does not share the file for deletion on Windows. Leave a
-    # window for the installer to rename the old executable between probes.
+      } catch {}
+    }
     if ($null -eq $heldBinary) { Start-Sleep -Milliseconds 10 }
   }
   if ($null -eq $heldBinary) {
