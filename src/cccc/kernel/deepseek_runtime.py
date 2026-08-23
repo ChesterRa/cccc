@@ -16,6 +16,7 @@ from ..contracts.v1.deepseek import (
     DEEPSEEK_ACP_VERSION,
     DEEPSEEK_LLM_ADAPTER_PACKAGE,
     DEEPSEEK_LLM_ADAPTER_VERSION,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_MCP_CLIENT_PACKAGE,
     DEEPSEEK_MCP_CLIENT_VERSION,
     DEEPSEEK_NODE_RANGE,
@@ -84,6 +85,8 @@ def _is_canonical_deepseek_config(
     expected = [
         "- id: llm-deepseek",
         "  name: '@deepseek-ai/dsh-llm-deepseek'",
+        "  config:",
+        f"    maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}",
         "- id: acp-demo",
         "  name: '@deepseek-ai/dsh-acp-demo'",
         "  config:",
@@ -108,7 +111,8 @@ def _is_canonical_deepseek_config(
         return False
     if any(actual != wanted for actual, wanted in zip(lines, expected) if wanted is not None):
         return False
-    command = lines[14]
+    command_index = expected.index(None)
+    command = lines[command_index]
     if not command.startswith("    command: '") or not command.endswith("'"):
         return False
     command_path = command[len("    command: '") : -1].replace("''", "'")

@@ -13,11 +13,17 @@ from ...kernel.system_prompt import MESSAGE_DELIVERY_GUIDANCE
 
 _CANCEL_CONFIRM_SECONDS = 5.0
 _CREDENTIAL_ERROR_TOKENS = ("no api key", "deepseek_api_key")
+_CONTEXT_WINDOW_ERROR_TOKENS = (
+    "context_length_exceeded",
+    "context_window_exceeded",
+    "context length exceeded",
+    "maximum context length",
+)
 DEEPSEEK_MESSAGE_GUIDANCE = f"[cccc] {MESSAGE_DELIVERY_GUIDANCE}"
 
 
 def _normalize_turn_error(error: Any) -> tuple[Any, bool]:
-    """Return a stable, secret-free deployment error when credentials are absent."""
+    """Normalize permanent errors and tell delivery to require a manual restart."""
     try:
         searchable = json.dumps(error, ensure_ascii=False, default=str).lower()
     except (TypeError, ValueError):
@@ -28,6 +34,18 @@ def _normalize_turn_error(error: Any) -> tuple[Any, bool]:
                 "code": "credential_unavailable",
                 "category": "environment",
                 "message": "DeepSeek API credential is not configured",
+            },
+            True,
+        )
+    if any(token in searchable for token in _CONTEXT_WINDOW_ERROR_TOKENS):
+        return (
+            {
+                "code": "context_window_exceeded",
+                "category": "context",
+                "message": (
+                    "DeepSeek request exceeded the model context window; "
+                    "restart the actor to create a fresh session"
+                ),
             },
             True,
         )
@@ -254,13 +272,13 @@ def deliver_messages(
                         dedupe_key=f"deepseek.message.completed:{event_id}:{attempt_id}",
                     )
                 error = frame.get("error")
-                credential_failure = False
+                manual_restart_required = False
                 if timed_out:
                     error = {"message": "DeepSeek ACP turn timed out and was cancelled", "code": "timeout"}
                 elif cancelled and not error:
                     error = {"message": "DeepSeek ACP turn was cancelled", "code": "cancelled"}
                 else:
-                    error, credential_failure = _normalize_turn_error(error)
+                    error, manual_restart_required = _normalize_turn_error(error)
                 append_headless_event(
                     group.path,
                     group_id=str(group.group_id),
@@ -282,7 +300,7 @@ def deliver_messages(
                     ),
                 )
                 if failed:
-                    if credential_failure:
+                    if manual_restart_required:
                         deepseek_runtime.stop(group_id=str(group.group_id), actor_id=str(actor_id))
                     return False
                 break

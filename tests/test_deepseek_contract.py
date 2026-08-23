@@ -13,6 +13,7 @@ from cccc.contracts.v1.deepseek import (
     DEEPSEEK_ACP_APP_VERSION,
     DEEPSEEK_ACP_SDK_VERSION,
     DEEPSEEK_LLM_ADAPTER_VERSION,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_NODE_RANGE,
     DEEPSEEK_NPM_BEFORE,
     DEEPSEEK_PROTOCOL_VERSION,
@@ -53,6 +54,7 @@ def test_deepseek_release_contract_matches_rust_source() -> None:
         "DEEPSEEK_PROTOCOL_VERSION": str(DEEPSEEK_PROTOCOL_VERSION),
         "DEEPSEEK_ACP_SDK_VERSION": DEEPSEEK_ACP_SDK_VERSION,
         "DEEPSEEK_TURN_TIMEOUT_SECONDS": str(DEEPSEEK_TURN_TIMEOUT_SECONDS),
+        "DEEPSEEK_MAX_OUTPUT_TOKENS": str(DEEPSEEK_MAX_OUTPUT_TOKENS),
     }
     for name, value in expected.items():
         match = re.search(rf"pub const {name}: [^=]+ = ([^;]+);", source)

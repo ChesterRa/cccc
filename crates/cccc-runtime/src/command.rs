@@ -3,9 +3,9 @@ use cccc_contracts::ActorRuntime;
 pub use cccc_contracts::{
     DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE,
     DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_LLM_ADAPTER_PACKAGE,
-    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION,
-    DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE, DEEPSEEK_RELEASE_VERSION,
-    DEEPSEEK_TURN_TIMEOUT_SECONDS,
+    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MAX_OUTPUT_TOKENS, DEEPSEEK_MCP_CLIENT_PACKAGE,
+    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE,
+    DEEPSEEK_RELEASE_VERSION, DEEPSEEK_TURN_TIMEOUT_SECONDS,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -224,9 +224,12 @@ fn deepseek_dependency_map() -> serde_json::Map<String, Value> {
 /// must not contain the headless CLI runner.
 pub fn is_canonical_deepseek_config(config: &str) -> bool {
     let lines = config.lines().collect::<Vec<_>>();
+    let max_tokens = format!("    maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}");
     let expected = [
         Some("- id: llm-deepseek"),
         Some("  name: '@deepseek-ai/dsh-llm-deepseek'"),
+        Some("  config:"),
+        Some(max_tokens.as_str()),
         Some("- id: acp-demo"),
         Some("  name: '@deepseek-ai/dsh-acp-demo'"),
         Some("  config:"),
@@ -255,7 +258,10 @@ pub fn is_canonical_deepseek_config(config: &str) -> bool {
     {
         return false;
     }
-    let Some(path) = lines[14]
+    let Some(command_index) = expected.iter().position(Option::is_none) else {
+        return false;
+    };
+    let Some(path) = lines[command_index]
         .strip_prefix("    command: '")
         .and_then(|value| value.strip_suffix('\''))
     else {
@@ -689,7 +695,8 @@ mod tests {
         std::fs::write(
             profile.join("cordis.yml"),
             format!(
-                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
+                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n  config:\n    maxTokens: {}\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
+                super::DEEPSEEK_MAX_OUTPUT_TOKENS,
                 dsh.display()
             ),
         )

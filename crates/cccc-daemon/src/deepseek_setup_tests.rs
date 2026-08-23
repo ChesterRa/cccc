@@ -154,6 +154,10 @@ fn profile_paths_escape_yaml_apostrophes() {
     let escaped_path = executable.to_string_lossy().replace('\'', "''");
     let config = fs::read_to_string(profile.join("cordis.yml")).expect("config");
     assert!(config.contains(&format!("command: '{escaped_path}'")));
+    assert!(config.contains(&format!(
+        "maxTokens: {}",
+        cccc_contracts::DEEPSEEK_MAX_OUTPUT_TOKENS
+    )));
     assert!(cccc_runtime::is_canonical_deepseek_config(&config));
 }
 

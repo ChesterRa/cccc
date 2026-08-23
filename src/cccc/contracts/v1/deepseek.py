@@ -21,6 +21,9 @@ DEEPSEEK_NODE_RANGE = "^22.19.0 || >=24.0.0"
 DEEPSEEK_PROTOCOL_VERSION = 1
 DEEPSEEK_ACP_SDK_VERSION = "0.25.1"
 DEEPSEEK_TURN_TIMEOUT_SECONDS = 300
+# Leave headroom for prompt/tool context inside the provider's 1 Mi-token
+# window instead of reserving the upstream adapter's 256k-token default.
+DEEPSEEK_MAX_OUTPUT_TOKENS = 65_536
 
 DEEPSEEK_PACKAGE_VERSIONS = (
     (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),

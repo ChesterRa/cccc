@@ -19,6 +19,7 @@ from ...contracts.v1.deepseek import (
     DEEPSEEK_ACP_VERSION,
     DEEPSEEK_LLM_ADAPTER_PACKAGE,
     DEEPSEEK_LLM_ADAPTER_VERSION,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_MCP_CLIENT_PACKAGE,
     DEEPSEEK_MCP_CLIENT_VERSION,
     DEEPSEEK_NPM_BEFORE,
@@ -202,6 +203,8 @@ def _write_profile_files(profile: Path, executable: Path) -> None:
         profile / "cordis.yml",
         "- id: llm-deepseek\n"
         "  name: '@deepseek-ai/dsh-llm-deepseek'\n"
+        "  config:\n"
+        f"    maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}\n"
         "- id: acp-demo\n"
         "  name: '@deepseek-ai/dsh-acp-demo'\n"
         "  config:\n"

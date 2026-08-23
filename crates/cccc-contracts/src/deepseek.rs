@@ -19,3 +19,5 @@ pub const DEEPSEEK_PROTOCOL_VERSION: u64 = 1;
 /// ACP SDK baseline locked for this preview wire contract.
 pub const DEEPSEEK_ACP_SDK_VERSION: &str = "0.25.1";
 pub const DEEPSEEK_TURN_TIMEOUT_SECONDS: u64 = 300;
+/// Output budget that preserves room for prompt and MCP tool context.
+pub const DEEPSEEK_MAX_OUTPUT_TOKENS: u64 = 65536;

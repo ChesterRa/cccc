@@ -126,6 +126,9 @@ fn process_deepseek_batch(
     cancelled: &AtomicBool,
 ) -> bool {
     if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
+        if crate::ops::deepseek_runtime::manual_restart_required(&group.group_id, &actor.id) {
+            return false;
+        }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
             Ok(_) | Err(_) => return false,

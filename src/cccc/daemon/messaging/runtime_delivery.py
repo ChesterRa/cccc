@@ -8,6 +8,7 @@ from typing import Any, Optional
 from ...kernel.inbox import is_message_for_actor, iter_events, iter_events_reverse
 from ...kernel.ledger import append_event
 from ...util.file_lock import acquire_lockfile, release_lockfile
+from .legacy_read_watermark import LegacyReadWatermark
 
 
 TERMINAL_NO_RETRY_STATES = frozenset({"accepted", "ambiguous"})
@@ -160,7 +161,9 @@ def settle_stranded_claims(group: Any) -> int:
                 actor_id = str(actor.get("id") or "").strip()
                 if actor_id:
                     latest = {
-                        key: value for key, value in latest.items() if key[0] != actor_id
+                        key: value
+                        for key, value in latest.items()
+                        if key[0] != actor_id
                     }
                 continue
             if kind != "runtime.delivery":
@@ -231,12 +234,10 @@ def pending_runtime_delivery_events(
             str(event.get("kind") or "") == "chat.message"
             and str(data.get("message_mode") or "").strip() in _DIRECT_MESSAGE_MODES
         )
-        direct_source = direct_message or str(event.get("kind") or "") == "system.notify"
-        if (
-            state in {"", "failed"}
-            and claim_unclaimed_chat
-            and direct_source
-        ):
+        direct_source = (
+            direct_message or str(event.get("kind") or "") == "system.notify"
+        )
+        if state in {"", "failed"} and claim_unclaimed_chat and direct_source:
             claimed, state = claim_delivery(
                 group,
                 actor_id=aid,
@@ -296,6 +297,7 @@ def _current_generation_sources(
     aid = str(actor_id or "").strip()
     sources: list[dict[str, Any]] = []
     latest_states: dict[str, tuple[str, str]] = {}
+    generation_events: list[dict[str, Any]] = []
     for event in iter_events(group.ledger_path):
         kind = str(event.get("kind") or "")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -303,8 +305,13 @@ def _current_generation_sources(
         if kind == "actor.add" and str(added_actor.get("id") or "").strip() == aid:
             sources = []
             latest_states = {}
+            generation_events = []
             continue
-        if kind == "runtime.delivery" and str(data.get("actor_id") or "").strip() == aid:
+        generation_events.append(event)
+        if (
+            kind == "runtime.delivery"
+            and str(data.get("actor_id") or "").strip() == aid
+        ):
             source_event_id = str(data.get("source_event_id") or "").strip()
             if source_event_id:
                 latest_states[source_event_id] = (
@@ -316,7 +323,10 @@ def _current_generation_sources(
         if not event_id or str(event.get("by") or "").strip() == aid:
             continue
         if kind == "chat.message":
-            if str(data.get("message_mode") or "").strip() not in {*_DIRECT_MESSAGE_MODES, "mail"}:
+            if str(data.get("message_mode") or "").strip() not in {
+                *_DIRECT_MESSAGE_MODES,
+                "mail",
+            }:
                 continue
             if not is_message_for_actor(group, actor_id=aid, event=event):
                 continue
@@ -334,4 +344,12 @@ def _current_generation_sources(
             continue
         sources.append(event)
 
-    return sources, latest_states
+    legacy_read_watermark = LegacyReadWatermark.from_events(
+        generation_events,
+        actor_id=aid,
+    )
+    return [
+        event
+        for event in sources
+        if not legacy_read_watermark.covers_notification(event)
+    ], latest_states

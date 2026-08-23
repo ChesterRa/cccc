@@ -2,6 +2,7 @@ mod actions;
 mod argument_normalization;
 mod bootstrap;
 mod code_mode;
+mod context_projection;
 mod local_sessions;
 mod local_tools;
 mod mapping;

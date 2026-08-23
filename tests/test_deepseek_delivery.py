@@ -347,3 +347,55 @@ def test_missing_credential_is_structured_secret_free_and_stops_runtime(
     assert '"category":"environment"' in events
     assert "DeepSeek API credential is not configured" in events
     assert "should-not-leak" not in events
+
+
+def test_context_overflow_is_structured_and_stops_runtime(tmp_path, monkeypatch) -> None:
+    group = Group(
+        group_id="deepseek-context-overflow",
+        path=tmp_path,
+        doc={"group_id": "deepseek-context-overflow", "actors": [], "automation": {}},
+    )
+
+    class FakeSupervisor:
+        session_id = "oversized-session"
+
+        def submit(self, _prompt: str) -> int:
+            return 3
+
+        def next_frame(self, *, timeout: float):
+            del timeout
+            return {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "error": {
+                    "code": -32603,
+                    "message": "This model request failed",
+                    "data": (
+                        "maximum context length is 1048576 tokens; "
+                        "diagnostic=should-not-leak"
+                    ),
+                },
+            }
+
+    stopped: list[tuple[str, str]] = []
+    monkeypatch.setattr(deepseek_runtime, "get", lambda **_kwargs: FakeSupervisor())
+    monkeypatch.setattr(
+        deepseek_runtime,
+        "stop",
+        lambda *, group_id, actor_id: stopped.append((group_id, actor_id)),
+    )
+    message = PendingMessage(
+        event_id="event-context-overflow",
+        by="user",
+        to=["deepseek"],
+        text="hello",
+        ts="2026-01-01T00:00:00Z",
+    )
+
+    assert deliver_messages(group, actor_id="deepseek", messages=[message]) is False
+    assert stopped == [(group.group_id, "deepseek")]
+    events = (tmp_path / "state" / "headless" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"code":"context_window_exceeded"' in events
+    assert '"category":"context"' in events
+    assert "restart the actor to create a fresh session" in events
+    assert "should-not-leak" not in events

@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 
 use crate::dispatch::OpError;
 
+mod legacy_read_watermark;
+
+use legacy_read_watermark::LegacyReadWatermark;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimResult {
     Claimed,
@@ -293,9 +297,12 @@ pub fn pending_sources(
                     .and_then(Value::as_str)
                     == Some(actor.id.as_str())
         })
+        .map(|index| index + 1)
         .unwrap_or(0);
+    let generation_events = &events[generation..];
+    let legacy_read_watermark = LegacyReadWatermark::from_events(generation_events, &actor.id);
     let mut latest = Map::<String, Value>::new();
-    for event in &events[generation..] {
+    for event in generation_events {
         if event.kind != "runtime.delivery"
             || event.data.get("actor_id").and_then(Value::as_str) != Some(actor.id.as_str())
         {
@@ -309,7 +316,7 @@ pub fn pending_sources(
         }
     }
     let mut pending = Vec::new();
-    for event in &events[generation..] {
+    for event in generation_events {
         if event.by == actor.id {
             continue;
         }
@@ -326,6 +333,9 @@ pub fn pending_sources(
             (matches!(mode, "send" | "request_reply") || (mode == "mail" && state == "claimed"))
                 && inbox::is_for_actor(group, event, &actor.id)
         } else if event.kind == "system.notify" {
+            if legacy_read_watermark.covers_notification(event) {
+                continue;
+            }
             let notice_kind = event
                 .data
                 .get("kind")
@@ -431,6 +441,86 @@ mod tests {
         assert_eq!(
             claim(&home, &group, &actor, "source-1", "pty", true).expect("forced retry"),
             ClaimResult::Claimed
+        );
+    }
+
+    #[test]
+    fn pending_sources_apply_legacy_read_watermark_to_notification_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("legacy read recovery", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+
+        let mut old_message = Event::new("chat.message", &group.group_id);
+        old_message.by = "user".into();
+        old_message.data = json!({"to":["peer1"],"text":"already read"})
+            .as_object()
+            .cloned()
+            .expect("message data");
+        ledger::append(&ledger_path, &old_message).expect("old message");
+        let mut first_notice = Event::new("system.notify", &group.group_id);
+        first_notice.by = "system".into();
+        first_notice.data = json!({
+            "to":["peer1"],
+            "kind":"info",
+            "context":{"event_id":old_message.id}
+        })
+        .as_object()
+        .cloned()
+        .expect("notice data");
+        ledger::append(&ledger_path, &first_notice).expect("first notice");
+        let mut watermark_notice = Event::new("system.notify", &group.group_id);
+        watermark_notice.by = "system".into();
+        watermark_notice.data = json!({"to":["peer1"],"kind":"unread_nudge"})
+            .as_object()
+            .cloned()
+            .expect("notice data");
+        ledger::append(&ledger_path, &watermark_notice).expect("watermark notice");
+        let mut read = Event::new("chat.read", &group.group_id);
+        read.by = actor.id.clone();
+        read.data = json!({"actor_id":actor.id,"event_id":watermark_notice.id})
+            .as_object()
+            .cloned()
+            .expect("read data");
+        ledger::append(&ledger_path, &read).expect("legacy read watermark");
+        let mut late_linked_notice = Event::new("system.notify", &group.group_id);
+        late_linked_notice.by = "system".into();
+        late_linked_notice.data = json!({
+            "to":["peer1"],
+            "kind":"unread_nudge",
+            "context":{"event_id":old_message.id}
+        })
+        .as_object()
+        .cloned()
+        .expect("late linked notice data");
+        ledger::append(&ledger_path, &late_linked_notice).expect("late linked notice");
+        let mut current_notice = Event::new("system.notify", &group.group_id);
+        current_notice.by = "system".into();
+        current_notice.data = json!({"to":["peer1"],"kind":"info"})
+            .as_object()
+            .cloned()
+            .expect("current notice data");
+        ledger::append(&ledger_path, &current_notice).expect("current notice");
+        let mut current = Event::new("chat.message", &group.group_id);
+        current.by = "user".into();
+        current.data = json!({"to":["peer1"],"text":"current","message_mode":"send"})
+            .as_object()
+            .cloned()
+            .expect("current data");
+        ledger::append(&ledger_path, &current).expect("current message");
+
+        let pending = pending_sources(&home, &group, &actor, 10).expect("pending sources");
+
+        assert_eq!(
+            pending
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            [current_notice.id.as_str(), current.id.as_str()]
         );
     }
 

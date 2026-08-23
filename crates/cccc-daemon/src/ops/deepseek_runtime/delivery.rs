@@ -9,8 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Deliver one DeepSeek ACP prompt and persist provider output before the
-/// caller records a cursor completion.  A failed append deliberately returns
-/// false so the source event remains unread for recovery.
+/// caller records a cursor completion. A failure returns false so the source
+/// event remains unread; permanent deployment/context failures also block
+/// automatic restart until the actor is explicitly started again.
 pub fn deliver(
     home: &HomeLayout,
     group: &GroupDoc,

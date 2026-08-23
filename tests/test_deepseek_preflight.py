@@ -14,6 +14,7 @@ from cccc.kernel.runtime import (
 from cccc.contracts.v1.deepseek import (
     DEEPSEEK_ACP_SDK_VERSION,
     DEEPSEEK_LLM_ADAPTER_PACKAGE,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_NODE_RANGE,
     DEEPSEEK_PACKAGE_VERSIONS,
     DEEPSEEK_PROTOCOL_VERSION,
@@ -36,6 +37,7 @@ from cccc.kernel.deepseek_runtime import canonical_deepseek_runtime_manifest
 def _canonical_config(command) -> str:
     return (
         "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n"
+        f"  config:\n    maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}\n"
         "- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n"
         "  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n"
         "    workspaceContext: false\n"

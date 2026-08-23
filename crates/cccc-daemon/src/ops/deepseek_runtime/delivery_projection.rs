@@ -30,6 +30,24 @@ pub(super) fn normalize_turn_error(error: Value) -> (Value, bool) {
             true,
         );
     }
+    if [
+        "context_length_exceeded",
+        "context_window_exceeded",
+        "context length exceeded",
+        "maximum context length",
+    ]
+    .into_iter()
+    .any(|token| searchable.contains(token))
+    {
+        return (
+            json!({
+                "code": "context_window_exceeded",
+                "category": "context",
+                "message": "DeepSeek request exceeded the model context window; restart the actor to create a fresh session"
+            }),
+            true,
+        );
+    }
     (error, false)
 }
 
@@ -79,7 +97,7 @@ pub(super) fn persist_terminal(
     if persist_message_completed(projection).is_err() {
         return false;
     }
-    let (error, credential_failure) = if cancelled {
+    let (error, manual_restart_required) = if cancelled {
         (
             json!({"message":"DeepSeek ACP turn was cancelled","code":"cancelled"}),
             false,
@@ -122,7 +140,10 @@ pub(super) fn persist_terminal(
     {
         return false;
     }
-    if credential_failure {
+    if manual_restart_required {
+        holder
+            .manual_restart_required
+            .store(true, Ordering::Release);
         holder.running.store(false, Ordering::Release);
         let _ = supervisor.stop();
     }

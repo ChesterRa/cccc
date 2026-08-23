@@ -24,6 +24,7 @@ type Key = (String, String);
 pub(super) struct RuntimeEntry {
     pub(super) supervisor: std::sync::Mutex<DeepSeekSupervisor>,
     pub(super) running: AtomicBool,
+    pub(super) manual_restart_required: AtomicBool,
 }
 
 pub(super) fn sessions() -> &'static RwLock<HashMap<Key, Arc<RuntimeEntry>>> {
@@ -84,6 +85,7 @@ pub fn start(
             Arc::new(RuntimeEntry {
                 supervisor: std::sync::Mutex::new(supervisor),
                 running: AtomicBool::new(true),
+                manual_restart_required: AtomicBool::new(false),
             }),
         );
     cancel_flags()
@@ -165,6 +167,15 @@ pub fn running(group_id: &str, actor_id: &str) -> bool {
                 Err(std::sync::TryLockError::Poisoned(_)) => false,
             }
         })
+}
+
+pub(super) fn manual_restart_required(group_id: &str, actor_id: &str) -> bool {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    sessions()
+        .read()
+        .ok()
+        .and_then(|map| map.get(&key).cloned())
+        .is_some_and(|holder| holder.manual_restart_required.load(Ordering::Acquire))
 }
 
 #[cfg(test)]

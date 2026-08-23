@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 from cccc.contracts.v1.deepseek import (
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_PACKAGE_VERSIONS,
     is_canonical_profile_manifest,
 )
@@ -117,6 +118,7 @@ def test_profile_paths_escape_yaml_apostrophes(tmp_path) -> None:
     escaped_path = str(executable).replace("'", "''")
     config = (profile / "cordis.yml").read_text(encoding="utf-8")
     assert f"command: '{escaped_path}'" in config
+    assert f"maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}" in config
     assert _is_canonical_deepseek_config(config)
 
 

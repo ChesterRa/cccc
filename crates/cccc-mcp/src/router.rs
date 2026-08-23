@@ -113,6 +113,7 @@ pub(crate) async fn call_with_context(
                 Err(error) => return Err(error),
             };
             let mut result = daemon(client, &op, args).await?;
+            crate::context_projection::apply(name, &mut result, &arguments);
             if name == "cccc_task" {
                 postprocess_task_result(&mut result, &arguments)?;
                 if is_task_mail_boundary(&arguments) {

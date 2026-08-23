@@ -76,7 +76,7 @@ cccc setup --runtime kimi
 cccc setup --runtime opencode
 ```
 
-DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
+DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
 
 Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
 
@@ -115,10 +115,15 @@ without an outcome is settled to `ambiguous` and is not retried automatically.
 Current-generation Send work with no accepted/ambiguous evidence can be
 recovered in ledger order after actor/group activation. Mail is never promoted
 by recovery: it remains in the Inbox until `cccc_inbox_read`, apart from the
-single bounded content-free Mail notice. Runtime handoff never advances the
-Inbox cursor. Switching engines does not transfer a live PTY process, its input
-mode, preamble memory, or hot terminal ring; both engines share the same ledger,
-Mail cursor, reply obligation, and runtime-delivery evidence.
+single bounded content-free Mail notice. Within the current actor generation,
+legacy `chat.read.event_id` remains an inclusive ledger watermark rather than a
+per-event receipt. Recovery excludes `system.notify` records at or before the
+furthest valid watermark, plus later notices that reference an event in that
+read prefix, so an upgrade cannot replay old unread nudges into a new provider
+session. Runtime handoff never advances the Inbox cursor.
+Switching engines does not transfer a live PTY process, its input mode,
+preamble memory, or hot terminal ring; both engines share the same ledger, Mail
+cursor, reply obligation, and runtime-delivery evidence.
 
 ### Codex and Claude PTY Hook State
 
@@ -142,7 +147,7 @@ Verified PTY hook events also feed the Web runtime activity ticker. This is a se
 
 In the Rust backend, `runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport, Claude uses bidirectional stream-json, and DeepSeek uses ACP NDJSON through CCCC's fixed composition. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
 
-DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are projected to `headless.message.delta` and `headless.message.completed`; turn boundaries use `headless.turn.started` plus `headless.turn.completed` or `headless.turn.failed`. This is the same durable event contract used by Web SSE and reconnect snapshots. Both daemons inherit the daemon process environment, then overlay actor/profile values, but force the managed `DSH_HOME` into CCCC's versioned runtime directory. ACP session data is isolated per actor at `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the attached project. Installation and provider turns each have a 300-second bound. A timed-out turn is cancelled and recorded as failed only after its terminal response; if confirmation cannot be obtained, the supervisor is stopped before the source message remains eligible for retry. Existing large Codex/Claude headless logs receive a one-time streaming dedupe-index migration when DeepSeek first writes to them, without loading the full log into memory.
+DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are projected to `headless.message.delta` and `headless.message.completed`; turn boundaries use `headless.turn.started` plus `headless.turn.completed` or `headless.turn.failed`. This is the same durable event contract used by Web SSE and reconnect snapshots. Both daemons inherit the daemon process environment, then overlay actor/profile values, but force the managed `DSH_HOME` into CCCC's versioned runtime directory. ACP session data is isolated per actor at `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the attached project. Installation and provider turns each have a 300-second bound. A timed-out turn is cancelled and recorded as failed only after its terminal response; if confirmation cannot be obtained, the supervisor is stopped before the source message remains eligible for retry. Missing credentials and context-window overflow stop the current runtime and require an explicit actor start/restart, preventing a permanently invalid request from entering a provider retry loop. Existing large Codex/Claude headless logs receive a one-time streaming dedupe-index migration when DeepSeek first writes to them, without loading the full log into memory.
 
 For daemon-managed Codex headless turns, a provider status of `failed`, `error`,
 or `cancelled`, or an explicit provider error, is persisted as

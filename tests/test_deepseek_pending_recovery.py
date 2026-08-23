@@ -9,7 +9,7 @@ from cccc.kernel.headless_events import append_headless_event
 from cccc.kernel.ledger import append_event
 
 
-def _group_with_unread(tmp_path):
+def _deepseek_group(tmp_path):
     actor = {
         "id": "deepseek",
         "runtime": "deepseek",
@@ -29,6 +29,11 @@ def _group_with_unread(tmp_path):
         by="user",
         data={"actor": actor},
     )
+    return group
+
+
+def _group_with_unread(tmp_path):
+    group = _deepseek_group(tmp_path)
     events = [
         append_event(
             group.ledger_path,
@@ -78,6 +83,87 @@ def test_restart_skips_durably_completed_prefix_before_requeue(tmp_path) -> None
         pending = throttle.take_pending(group.group_id, "deepseek")
 
     assert [item.event_id for item in pending] == [events[1]["id"]]
+
+
+def test_restart_applies_legacy_read_watermark_to_notification_prefix(tmp_path) -> None:
+    group = _deepseek_group(tmp_path)
+    old_message = append_event(
+        group.ledger_path,
+        kind="chat.message",
+        group_id=group.group_id,
+        scope_key="",
+        by="user",
+        data={"to": ["deepseek"], "text": "legacy"},
+    )
+    linked_notice = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group.group_id,
+        scope_key="",
+        by="system",
+        data={
+            "kind": "info",
+            "target_actor_id": "deepseek",
+            "context": {"event_id": old_message["id"]},
+        },
+    )
+    watermark_notice = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group.group_id,
+        scope_key="",
+        by="system",
+        data={"target_actor_id": "deepseek", "kind": "info"},
+    )
+    append_event(
+        group.ledger_path,
+        kind="chat.read",
+        group_id=group.group_id,
+        scope_key="",
+        by="deepseek",
+        data={"actor_id": "deepseek", "event_id": watermark_notice["id"]},
+    )
+    late_linked_notice = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group.group_id,
+        scope_key="",
+        by="system",
+        data={
+            "kind": "info",
+            "target_actor_id": "deepseek",
+            "context": {"event_id": old_message["id"]},
+        },
+    )
+    current_notice = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group.group_id,
+        scope_key="",
+        by="system",
+        data={"target_actor_id": "deepseek", "kind": "info"},
+    )
+    current = append_event(
+        group.ledger_path,
+        kind="chat.message",
+        group_id=group.group_id,
+        scope_key="",
+        by="user",
+        data={"to": ["deepseek"], "text": "current", "message_mode": "send"},
+    )
+    throttle = delivery.DeliveryThrottle()
+
+    with (
+        patch.object(delivery, "THROTTLE", throttle),
+        patch.object(delivery, "request_flush_pending_messages", return_value=True),
+    ):
+        assert recover_pending_messages(group, actor_id="deepseek") == 2
+        pending = throttle.take_pending(group.group_id, "deepseek")
+
+    assert [item.event_id for item in pending] == [current_notice["id"], current["id"]]
+    assert linked_notice["id"] not in {item.event_id for item in pending}
+    assert watermark_notice["id"] not in {item.event_id for item in pending}
+    assert late_linked_notice["id"] not in {item.event_id for item in pending}
 
 
 def test_failed_batch_requeues_only_unfinished_suffix(tmp_path) -> None:

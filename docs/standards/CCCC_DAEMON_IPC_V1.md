@@ -2871,6 +2871,7 @@ Notes:
 - A `deepseek` actor MUST use the headless runner. Both daemon implementations MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
 - The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `src/cccc/contracts/v1/deepseek.py` / `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
 - Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold.
+- The managed `dsh-llm-deepseek` profile MUST set `maxTokens` to the shared `DEEPSEEK_MAX_OUTPUT_TOKENS` contract value (currently 65,536), preserving input/tool headroom instead of inheriting the upstream 256k output reservation. Credential absence and provider context-window overflow are permanent for the current runtime session: both MUST be normalized to stable, secret-free failed-turn errors and MUST stop automatic retries until the actor is explicitly started or restarted.
 
 #### `actor_new_session`
 
@@ -3516,6 +3517,16 @@ accepted handoff; it is not a claim that the model understood it. Automatic
 retry is forbidden after `accepted` or `ambiguous`. Concurrent claimants treat
 `claimed` as in-progress. Daemon startup settles claims stranded by the prior
 daemon process to `ambiguous` before attempting runtime recovery.
+Recovery MUST interpret a same-generation legacy `chat.read.event_id` as an
+inclusive ledger watermark for that actor, not as a per-event receipt. It MUST
+use the furthest valid referenced ledger position and exclude each legacy
+`system.notify` at or before that position. A later notification MUST also be
+excluded when `data.event_id`, `data.related_event_id`, or
+`data.context.event_id` references an event at or before the watermark. Targets
+outside the current actor generation or after their `chat.read` record are
+invalid compatibility boundaries and MUST be ignored. This rule prevents
+already-consumed pre-`runtime.delivery` nudges from being replayed after an
+upgrade.
 
 Mail is eligible for an active notice for one recipient only while all of these
 hold: the source event belongs to the recipient's current actor generation, is
@@ -3733,6 +3744,13 @@ Notes:
   `outcome`, `notes`, and `checklist`, so a summary refresh cannot erase a
   client's editable draft.
 - `detail="full"` returns the complete task objects and board projections.
+- MCP convenience tools MUST preserve their focused response contracts instead
+  of exposing this complete snapshot: `cccc_coordination(action="get")` returns
+  only `version`, `coordination`, `attention`, `board`, and `tasks_summary`, while
+  `cccc_agent_state(action="get")` returns only `version` plus the selected
+  `agent_state` (or `agent_states` when no actor is selected). `include_warm=false`
+  keeps only `id`, `hot`, and `updated_at`; archived tasks remain hidden from
+  coordination unless `include_archived=true`.
 
 #### `context_sync`
 
