@@ -710,6 +710,46 @@ class TestMaintenanceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_local_cross_group_upload_preflight_never_dispatches_without_files(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.inbox import iter_events
+
+        _, cleanup = self._with_home()
+        try:
+            src_create, _ = self._call("group_create", {"title": "src", "topic": "", "by": "user"})
+            dst_create, _ = self._call("group_create", {"title": "dst", "topic": "", "by": "user"})
+            src_group_id = str((src_create.result or {}).get("group_id") or "").strip()
+            dst_group_id = str((dst_create.result or {}).get("group_id") or "").strip()
+
+            preflight, _ = self._call(
+                "message_upload_preflight",
+                {
+                    "operation": "send_cross_group",
+                    "group_id": src_group_id,
+                    "dst_group_id": dst_group_id,
+                    "by": "user",
+                    "text": "must remain a preflight",
+                    "to": ["@foreman"],
+                    "message_mode": "send",
+                    "has_attachments": False,
+                },
+            )
+
+            self.assertFalse(preflight.ok)
+            self.assertEqual(
+                str(getattr(preflight.error, "code", "") or ""),
+                "attachments_not_supported",
+            )
+            for group_id in (src_group_id, dst_group_id):
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                self.assertFalse(
+                    any(event.get("kind") == "chat.message" for event in iter_events(group.ledger_path))
+                )
+        finally:
+            cleanup()
+
     def test_send_cross_group_allows_target_foreman_recipient(self) -> None:
         _, cleanup = self._with_home()
         try:

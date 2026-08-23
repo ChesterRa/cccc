@@ -212,7 +212,8 @@ def pending_runtime_delivery_events(
     Browser delivery and pull-based Web Model delivery share this projection.
     Unclaimed Mail is deliberately absent. A manually promoted Mail already
     carrying a matching claim is direct runtime work. A pull adapter may claim
-    otherwise-unclaimed Send messages because it is itself the transport boundary.
+    otherwise-unclaimed Send messages and direct system notices because it is
+    itself the transport boundary.
     """
 
     aid = str(actor_id or "").strip()
@@ -230,10 +231,11 @@ def pending_runtime_delivery_events(
             str(event.get("kind") or "") == "chat.message"
             and str(data.get("message_mode") or "").strip() in _DIRECT_MESSAGE_MODES
         )
+        direct_source = direct_message or str(event.get("kind") or "") == "system.notify"
         if (
             state in {"", "failed"}
             and claim_unclaimed_chat
-            and direct_message
+            and direct_source
         ):
             claimed, state = claim_delivery(
                 group,

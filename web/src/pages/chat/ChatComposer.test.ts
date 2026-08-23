@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getComposerCanSend } from "./chatComposerActions";
+import { getComposerCanSend, hasConcreteReplyRecipients } from "./chatComposerActions";
 import { RECIPIENT_POPOVER_GAP_PX } from "./useRecipientPopover";
 
 const composerSource = readFileSync(
@@ -59,6 +59,29 @@ describe("ChatComposer send availability", () => {
         composerText: "   ",
         composerFilesCount: 1,
         recipientResolutionBusy: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("requires concrete local actors for Send + Reply", () => {
+    expect(hasConcreteReplyRecipients(["peer1"])).toBe(true);
+    expect(hasConcreteReplyRecipients([])).toBe(false);
+    expect(hasConcreteReplyRecipients(["@foreman"])).toBe(false);
+    expect(hasConcreteReplyRecipients(["peer1"], true)).toBe(false);
+    expect(
+      getComposerCanSend({
+        composerText: "please answer",
+        composerFilesCount: 0,
+        messageMode: "request_reply",
+        toTokens: ["@all"],
+      }),
+    ).toBe(false);
+    expect(
+      getComposerCanSend({
+        composerText: "please answer",
+        composerFilesCount: 0,
+        messageMode: "request_reply",
+        toTokens: ["peer1"],
       }),
     ).toBe(true);
   });

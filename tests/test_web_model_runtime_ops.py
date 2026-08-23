@@ -188,6 +188,36 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertTrue(complete.ok, getattr(complete, "error", None))
             result = complete.result or {}
             self.assertNotIn("cursor_committed", result)
+            self.assertEqual((result.get("completion_event") or {}).get("kind"), "runtime.turn.completed")
+            replay, _ = self._call(
+                "runtime_complete_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                    "turn_id": str(turn.get("turn_id") or ""),
+                    "event_ids": [first["id"], second["id"]],
+                    "status": "done",
+                },
+            )
+            self.assertTrue(replay.ok, getattr(replay, "error", None))
+            self.assertEqual(
+                ((replay.result or {}).get("completion_event") or {}).get("id"),
+                (result.get("completion_event") or {}).get("id"),
+            )
+            conflict, _ = self._call(
+                "runtime_complete_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                    "turn_id": str(turn.get("turn_id") or ""),
+                    "event_ids": [first["id"], second["id"]],
+                    "status": "partial",
+                },
+            )
+            self.assertFalse(conflict.ok)
+            self.assertEqual(str(getattr(conflict.error, "code", "")), "completion_conflict")
             self.assertEqual(get_cursor(group, "peer1"), ("", ""))
             obligation = get_obligation_status_batch(group, [first])[first["id"]]["peer1"]
             self.assertNotIn("read", obligation)
@@ -240,6 +270,55 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 if "web_model.browser_delivery.submitted" in line
             ]
             self.assertEqual(len(delivery_events), 1)
+            self.assertEqual(self._delivery_state(group, message["id"]), "accepted")
+        finally:
+            cleanup()
+
+    def test_pull_transport_reclaims_a_direct_notice_after_browser_failure(self) -> None:
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            notice = append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data={
+                    "kind": "mail_notice",
+                    "title": "Mail is waiting",
+                    "message": "Check your Inbox.",
+                    "target_actor_id": "peer1",
+                },
+            )
+            self._record_delivery_state(
+                group,
+                notice["id"],
+                state="claimed",
+                transport="web_model_browser",
+            )
+            self._record_delivery_state(
+                group,
+                notice["id"],
+                state="failed",
+                transport="web_model_browser",
+            )
+
+            wait, _ = self._call(
+                "runtime_wait_next_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "transport": "web_model_pull",
+                },
+            )
+
+            self.assertTrue(wait.ok, getattr(wait, "error", None))
+            turn = (wait.result or {}).get("turn") or {}
+            self.assertEqual(turn.get("event_ids"), [notice["id"]])
+            self.assertEqual(self._delivery_state(group, notice["id"]), "accepted")
         finally:
             cleanup()
 

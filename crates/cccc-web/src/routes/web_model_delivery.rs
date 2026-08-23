@@ -585,6 +585,28 @@ async fn deliver_once(
             target_url,
         ),
     )?;
+    let submission_evidence = browser["submission_evidence"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    // A verified browser handoff is the terminal delivery fact. Persist it
+    // before completing the structured turn so the daemon can validate that
+    // every source event actually crossed the runtime boundary.
+    record_delivery(
+        state,
+        group_id,
+        actor_id,
+        turn_id,
+        turn["event_ids"].clone(),
+        &delivery_id,
+        "submitted",
+        &submission_evidence,
+        json!({
+            "target_url":target_url,
+            "auto_bind_new_chat":target["kind"] == "new_chat"
+        }),
+    )
+    .await;
     let complete = complete_args(
         group_id,
         actor_id,
@@ -606,18 +628,6 @@ async fn deliver_once(
             %error,
             "Web-model browser submission is ambiguous; automatic redelivery is paused"
         );
-        record_delivery(
-            state,
-            group_id,
-            actor_id,
-            turn_id,
-            turn["event_ids"].clone(),
-            &delivery_id,
-            "submitted",
-            "browser submission verified; local completion is pending reconciliation",
-            json!({"target_url":target_url,"auto_bind_new_chat":target["kind"] == "new_chat"}),
-        )
-        .await;
         return Ok(DeliveryOutcome::Ambiguous);
     }
     let mut pending_new_chat_bind = target["kind"] == "new_chat";
@@ -656,10 +666,6 @@ async fn deliver_once(
         ""
     };
     let now = cccc_contracts::utc_now();
-    let submission_evidence = browser["submission_evidence"]
-        .as_str()
-        .unwrap_or("")
-        .to_owned();
     let mut final_patch = json!({
         "last_delivery_status":final_status,
         "last_delivery_at":now.clone(),
@@ -685,23 +691,25 @@ async fn deliver_once(
     // Otherwise observers can see a submitted target while the connector
     // still exposes the preceding MCP probe status.
     record_connector(state, group_id, actor_id, "submitted", turn_id, "")?;
-    record_delivery(
-        state,
-        group_id,
-        actor_id,
-        turn_id,
-        turn["event_ids"].clone(),
-        &delivery_id,
-        "submitted",
-        &submission_evidence,
-        json!({
-            "target_url":target_url,
-            "bound_conversation_url":bound_conversation_url,
-            "pending_conversation_url":pending_new_chat_bind,
-            "auto_bind_new_chat":target["kind"] == "new_chat"
-        }),
-    )
-    .await;
+    if !bound_conversation_url.is_empty() {
+        record_delivery(
+            state,
+            group_id,
+            actor_id,
+            turn_id,
+            turn["event_ids"].clone(),
+            &delivery_id,
+            "bound",
+            &submission_evidence,
+            json!({
+                "target_url":target_url,
+                "bound_conversation_url":bound_conversation_url,
+                "pending_conversation_url":false,
+                "auto_bind_new_chat":true
+            }),
+        )
+        .await;
+    }
     if pending_new_chat_bind {
         record_delivery(
             state,
@@ -752,7 +760,6 @@ async fn complete_ambiguous_attempt(
         attempt.event_ids.clone(),
         attempt.delivery_id,
     );
-    let completion = daemon_call(state, "runtime_complete_turn", complete).await;
     record_delivery(
         state,
         group_id,
@@ -765,6 +772,7 @@ async fn complete_ambiguous_attempt(
         json!({}),
     )
     .await;
+    let completion = daemon_call(state, "runtime_complete_turn", complete).await;
     let completion_status = if completion.is_ok() {
         "submission_ambiguous"
     } else {

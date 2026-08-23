@@ -95,16 +95,15 @@ async fn send_new(
         .cloned()
         .unwrap_or(Value::Bool(true));
     let mut payload = Map::new();
-    for field in ["text", "format", "mode", "to", "refs", "attachments"] {
+    for field in ["text", "format", "to", "refs", "attachments"] {
         if let Some(value) = args.get(field).cloned() {
             payload.insert(field.into(), value);
         }
     }
-    let message_mode = payload
-        .remove("mode")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "mail".into());
-    payload.insert("message_mode".into(), Value::String(message_mode));
+    payload.insert(
+        "message_mode".into(),
+        Value::String(remote_message_mode(&args)?.to_owned()),
+    );
     let result = daemon(
         client,
         "remote_send",
@@ -214,10 +213,7 @@ fn validate_remote_payload(args: &Map<String, Value>) -> Result<(), String> {
             "use mode; legacy priority/reply_required/requires_ack fields are not supported".into(),
         );
     }
-    let mode = text(args, "mode").unwrap_or("mail");
-    if !matches!(mode, "send" | "request_reply" | "mail") {
-        return Err("mode must be mail, send, or request_reply".into());
-    }
+    let mode = remote_message_mode(args)?;
     if mode == "request_reply"
         && (recipients(args).is_empty()
             || recipients(args)
@@ -243,6 +239,19 @@ fn validate_remote_payload(args: &Map<String, Value>) -> Result<(), String> {
         return Err("refs are not supported by Group Bridge sessions".into());
     }
     Ok(())
+}
+
+fn remote_message_mode(args: &Map<String, Value>) -> Result<&str, String> {
+    let public_mode = text(args, "mode");
+    let canonical_mode = text(args, "message_mode");
+    if public_mode.is_some() && canonical_mode.is_some() && public_mode != canonical_mode {
+        return Err("mode and message_mode must not disagree".into());
+    }
+    let mode = canonical_mode.or(public_mode).unwrap_or("mail");
+    if !matches!(mode, "send" | "request_reply" | "mail") {
+        return Err("mode must be mail, send, or request_reply".into());
+    }
+    Ok(mode)
 }
 
 async fn daemon(
@@ -399,7 +408,7 @@ mod tests {
                 json!({
                     "group_id":group_id,"by":"helper","dst_group_id":"g_remote",
                     "to":["user"],"text":"through the live reverse session",
-                    "mode":"send",
+                    "message_mode":"send",
                     "insight":"The live route must preserve the same peer perspective as HTTP delivery."
                 })
                 .as_object()
@@ -424,6 +433,7 @@ mod tests {
                 )
         }));
         assert!(frame["payload"].get("insight").is_none());
+        assert_eq!(frame["payload"]["message_mode"], "send");
         let mut complete_args = route.as_object().cloned().expect("complete route");
         complete_args.insert("generation".into(), opened["generation"].clone());
         complete_args.insert("response_to".into(), frame["request_id"].clone());

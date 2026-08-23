@@ -3231,14 +3231,15 @@ daemon-authored `runtime.delivery` events and the corresponding status queries.
 
 Validate a Web-owned staged upload before its temporary files are committed to
 the group blob store. This operation is side-effect free and exists so both Web
-implementations use the selected daemon's canonical send/reply rules rather than
-reimplementing recipient and idempotency policy in the HTTP port.
+implementations use the selected daemon's canonical send, reply, and Group Bridge
+rules rather than reimplementing message policy in the HTTP port.
 
 Args:
 ```ts
 {
-  operation: "send" | "reply"
+  operation: "send" | "reply" | "send_cross_group"
   group_id: string
+  dst_group_id?: string         // required when operation="send_cross_group"
   text?: string
   by?: string
   to?: string[]
@@ -3256,7 +3257,7 @@ Args:
 Result:
 ```ts
 { ready: true }
-// or, when client_id already identifies an accepted message:
+// or, for send/reply when client_id already identifies an accepted message:
 {
   ready: false
   duplicate: true
@@ -3265,12 +3266,14 @@ Result:
 ```
 
 The operation MUST perform the deterministic validation used by the eventual
-`send` or `reply`, including mode, audience, target, scope, Insight, content,
-and successful-idempotency lookup, without waking actors, changing group state,
-writing the ledger, storing blobs, or starting delivery. A duplicate result MUST
-be returned before an upload is committed. The HTTP port MUST discard its staged
-files on either rejection or duplicate replay. The eventual `send` or `reply`
-MUST validate again at the commit boundary; preflight is not a reservation.
+`send`, `reply`, or `send_cross_group`, including mode, audience, target, scope,
+Insight, and content, without waking actors, changing group state, writing the
+ledger, storing blobs, or starting delivery. `send` and `reply` additionally
+perform successful-idempotency lookup and MUST return a duplicate result before
+an upload is committed. Group Bridge retry and receipt idempotency remain owned
+by `send_cross_group`. The HTTP port MUST discard its staged files on rejection
+or duplicate replay. The eventual operation MUST validate again at the commit
+boundary; preflight is not a reservation.
 
 #### `send_files`
 
@@ -3424,7 +3427,8 @@ Result:
 ```
 
 Notes:
-- Attachments are not supported in cross-group send in v1.
+- Attachments are supported only when the destination is an active remote Group
+  Bridge route. Local cross-group forwarding rejects attachments.
 
 #### Agent Insight Profile marker
 
@@ -5750,6 +5754,7 @@ Args:
   by: string                 // MUST equal actor_id
   turn_id: string
   event_ids: string[]        // MUST exactly equal the active turn event_ids
+  delivery_id?: string       // default `runtime:<turn_id>`; part of the replay fingerprint
   status?: "done" | "partial" | "failed" | "cancelled" // default done
   summary?: string
 }
@@ -5760,12 +5765,19 @@ terminal handoff fact (`runtime.delivery=accepted|ambiguous`) for this actor.
 Completion records runtime progress and releases the active turn; every status,
 including `done`, MUST leave the Mail cursor unchanged. An actor consumes
 Inbox contents only through `inbox_read` / `cccc_inbox_read`.
+The daemon MUST persist a deterministic `runtime.turn.completed` receipt before
+acknowledging completion. An exact retry with the same actor, turn, event IDs,
+status, and delivery ID MUST replay that receipt even after active-turn state was
+cleared. Reusing the turn identity with a different fingerprint MUST fail with
+`completion_conflict`.
 
 Common result fields:
 ```ts
 {
   status: "done" | "partial" | "failed" | "cancelled"
   turn_id: string
+  delivery_id: string
+  completion_event: CCCSEventV1 // kind="runtime.turn.completed"
   processed_event_ids: string[]
   followup_delivery_scheduled: boolean
   summary: string
@@ -5812,10 +5824,10 @@ or completion state.
 
 #### `web_model_browser_delivery_record` (internal)
 
-Append one best-effort browser-delivery observation for an accepted Web Model
-turn. The browser owner uses this operation to expose the same message status in
-Python and Rust Web surfaces; it does not complete the turn or advance the actor
-cursor.
+Append a browser-delivery observation for a claimed Web Model turn. The browser
+owner uses this operation to expose the same message status in Python and Rust
+Web surfaces and to settle the runtime handoff; it does not complete the turn or
+advance the actor cursor.
 
 Args:
 ```ts
@@ -5844,12 +5856,14 @@ Result:
 { event: CCCSEventV1 }
 ```
 
-Each call appends an ordinary
-`web_model.browser_delivery.<state>` event. Status projection uses the latest
-such event in ledger order for every referenced message. Observation failures
-MUST remain independent from browser submission and
-`runtime_complete_turn`: they may reduce status visibility, but MUST
-NOT turn a verified ChatGPT submission into a failed or duplicate delivery.
+Each call appends an ordinary `web_model.browser_delivery.<state>` event.
+`submitted` and `bound` MUST settle every referenced runtime claim as
+`runtime.delivery=accepted`; `ambiguous` and `failed` settle it with the matching
+terminal outcome. `submitting` and `pending` remain observations only. The
+browser owner MUST record the terminal handoff before `runtime_complete_turn` so
+completion cannot outrun delivery evidence. If the record call itself fails, a
+verified submission remains completion-pending and reconciliation retries this
+operation; it MUST NOT resubmit the browser prompt.
 
 #### `web_model_browser_attach`
 

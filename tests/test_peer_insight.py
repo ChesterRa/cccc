@@ -387,6 +387,33 @@ def test_file_send_gate_runs_before_blob_storage(peer_group, tmp_path: Path) -> 
     call_daemon.assert_not_called()
 
 
+def test_file_reply_request_requires_concrete_recipient_before_blob_storage(
+    peer_group, tmp_path: Path
+) -> None:
+    from cccc.ports.mcp.common import MCPError
+    from cccc.ports.mcp.handlers import cccc_messaging
+
+    path = _configure_file_scope(peer_group, tmp_path)
+
+    with (
+        patch.object(cccc_messaging, "store_blob_bytes") as store_blob,
+        patch.object(cccc_messaging, "_call_daemon_or_raise") as call_daemon,
+        pytest.raises(MCPError) as exc_info,
+    ):
+        cccc_messaging.file_send(
+            group_id=peer_group.group_id,
+            actor_id="peer1",
+            path=path,
+            text="please review",
+            mode="request_reply",
+            insight="This needs a concrete owner.",
+        )
+
+    assert exc_info.value.code == "concrete_recipients_required"
+    store_blob.assert_not_called()
+    call_daemon.assert_not_called()
+
+
 def test_cross_group_file_send_resolves_missing_destination_before_insight_gate(
     peer_group, tmp_path: Path
 ) -> None:

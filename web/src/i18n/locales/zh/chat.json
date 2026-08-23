@@ -123,6 +123,7 @@
   "modeSendDesc": "立即投递",
   "modeSendReply": "发送 + 回复",
   "modeSendReplyDesc": "立即投递并要求具体回复",
+  "modeSendReplyRequiresConcrete": "请先选择一个或多个具体 Agent",
   "modeMail": "邮件",
   "mailMessageHint": "仅存入收件箱，不请求立即触发对方。",
   "modeMailDesc": "仅进入收件箱，暂不打断对方",

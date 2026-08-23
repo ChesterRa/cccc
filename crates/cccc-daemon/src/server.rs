@@ -225,6 +225,11 @@ fn publish_address_and_restore(
     dispatch_locks: DispatchLocks,
     restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
+    // Claims from the previous process must be settled before publishing an
+    // address that lets this process accept new claims. Runtime recreation can
+    // remain asynchronous once that ownership boundary is established.
+    crate::ops::runtime_restore::settle_stranded(&paths.home)
+        .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
     write_address(paths, transport, path, host, port)?;
     restore(paths.home.clone(), dispatch_locks);
     Ok(())
@@ -273,6 +278,8 @@ fn begin_runtime_shutdown(home: &HomeLayout) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cccc_contracts::Actor;
+    use cccc_core::{GroupStore, ledger};
 
     fn assert_address_is_published(home: HomeLayout, _locks: DispatchLocks) {
         let paths = DaemonPaths::new(home);
@@ -312,5 +319,39 @@ mod tests {
         .expect("publish daemon address");
 
         assert!(paths.daemon_dir.join("restore.started").exists());
+    }
+
+    #[test]
+    fn settles_prior_process_claims_before_publishing_ipc() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("stranded claim", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+        crate::ops::runtime_delivery::claim(&home, &group, &actor, "source-1", "pty", false)
+            .expect("claim");
+        let paths = DaemonPaths::new(home);
+
+        publish_address_and_restore(
+            &paths,
+            Transport::Tcp,
+            "",
+            "127.0.0.1".into(),
+            4242,
+            DispatchLocks::default(),
+            assert_address_is_published,
+        )
+        .expect("publish daemon address");
+
+        let states = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+            .expect("read ledger")
+            .into_iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .filter_map(|event| event.data["state"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(states, ["claimed", "ambiguous"]);
     }
 }

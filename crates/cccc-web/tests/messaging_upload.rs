@@ -3,7 +3,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::DaemonRequest;
-use cccc_core::{GroupStore, HomeLayout};
+use cccc_core::{GroupStore, HomeLayout, integration_state};
 use http_body_util::BodyExt;
 use serde_json::{Map, Value, json};
 use tower::ServiceExt;
@@ -231,6 +231,77 @@ async fn cross_group_upload_requires_destination_before_persisting_blob() {
             "{label}"
         );
     }
+}
+
+#[tokio::test]
+async fn cross_group_upload_preflights_mode_before_persisting_blob() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("remote upload preflight", "").expect("group");
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({"trusts":[{
+            "trust_id":"trust-upload","registration_id":"registration-upload",
+            "group_id":group.group_id,"remote_group_id":"g_remote",
+            "remote_peer_id":"peer-remote","status":"active",
+            "remote_access_level":"messages"
+        }]});
+        Ok(())
+    })
+    .expect("bridge state");
+    let blobs_dir = groups
+        .group_dir(&group.group_id)
+        .expect("group directory")
+        .join("state/blobs");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_address(&home).await;
+
+    let boundary = "cccc-invalid-cross-mode";
+    let multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"dst_group_id\"\r\n\r\ng_remote\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nremote\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"peer1\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"message_mode\"\r\n\r\nlater\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"orphan.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\nmust not persist\r\n",
+            "--{boundary}--\r\n"
+        ),
+        boundary = boundary,
+    );
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/groups/{}/send_cross_group_upload",
+                group.group_id
+            ))
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(multipart))
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        !blobs_dir.exists()
+            || std::fs::read_dir(&blobs_dir)
+                .expect("blob directory")
+                .next()
+                .is_none()
+    );
+    let _ = cccc_client::DaemonClient::new(home)
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await;
+    daemon.await.expect("daemon task").expect("daemon");
 }
 
 #[tokio::test]

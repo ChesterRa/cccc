@@ -123,6 +123,7 @@
   "modeSendDesc": "Deliver now",
   "modeSendReply": "Send + Reply",
   "modeSendReplyDesc": "Deliver now and request a concrete reply",
+  "modeSendReplyRequiresConcrete": "Choose one or more specific agents first",
   "modeMail": "Mail",
   "mailMessageHint": "Stored in Inbox without requesting an immediate prompt.",
   "modeMailDesc": "Add to the inbox without interrupting now",

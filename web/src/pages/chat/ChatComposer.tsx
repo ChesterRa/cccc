@@ -33,7 +33,7 @@ import {
   getVisibleSlashCommandPage,
   type SlashCommandItem,
 } from "../../utils/slashCommands";
-import { getComposerCanSend } from "./chatComposerActions";
+import { getComposerCanSend, hasConcreteReplyRecipients } from "./chatComposerActions";
 import { ComposerFilePreview } from "./ComposerFilePreview";
 import { getMentionMenuLeft, getMentionTriggerX } from "./mentionMenuPosition";
 import { ChatMentionMenu } from "./ChatMentionMenu";
@@ -861,11 +861,6 @@ export function ChatComposer({
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
-  const canSend = getComposerCanSend({
-    composerText,
-    composerFilesCount: composerFiles.length,
-    recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
-  });
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const allModeOptions: Array<{ key: ComposerMessageMode; label: string; description: string }> = [
     { key: "send", label: t("modeSend"), description: t("modeSendDesc") },
@@ -880,6 +875,18 @@ export function ChatComposer({
     ? normalizeReplyMessageMode(messageMode)
     : messageMode;
   const activeMode = modeOptions.find((opt) => opt.key === effectiveMessageMode) || modeOptions[0];
+  const requestReplyRecipientsReady = hasConcreteReplyRecipients(
+    toTokens,
+    selectedRemoteGroupIds.length > 0,
+  );
+  const canSend = getComposerCanSend({
+    composerText,
+    composerFilesCount: composerFiles.length,
+    recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
+    messageMode: effectiveMessageMode,
+    toTokens,
+    hasRemoteGroupSelection: selectedRemoteGroupIds.length > 0,
+  });
 
   const recentChatExcerpt = useMemo(
     () => buildRecentChatExcerptForVoicePrompt(recentMessages),
@@ -945,10 +952,13 @@ export function ChatComposer({
     }
     return "Ctrl+Enter";
   }, []);
-  const sendButtonTitle = t("sendMessageWithShortcut", {
-    shortcut: sendShortcutLabel,
-    defaultValue: "Send message ({{shortcut}})",
-  });
+  const sendButtonTitle =
+    effectiveMessageMode === "request_reply" && !requestReplyRecipientsReady
+      ? t("modeSendReplyRequiresConcrete")
+      : t("sendMessageWithShortcut", {
+          shortcut: sendShortcutLabel,
+          defaultValue: "Send message ({{shortcut}})",
+        });
   const composerPlaceholder = showSuggestedUserMessage
     ? ""
     : isSmallScreen
@@ -1335,12 +1345,14 @@ export function ChatComposer({
                   >
                     {modeOptions.map((opt) => {
                       const active = effectiveMessageMode === opt.key;
+                      const unavailable =
+                        opt.key === "request_reply" && !requestReplyRecipientsReady;
                       return (
                         <button
                           key={opt.key}
                           type="button"
                           className={classNames(
-                            "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                            "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                             active
                               ? isDark
                                 ? "bg-white/10"
@@ -1351,7 +1363,11 @@ export function ChatComposer({
                           )}
                           role="menuitemradio"
                           aria-checked={active}
+                          disabled={unavailable}
+                          aria-disabled={unavailable}
+                          title={unavailable ? t("modeSendReplyRequiresConcrete") : opt.description}
                           onClick={() => {
+                            if (unavailable) return;
                             setMessageMode(opt.key);
                             setShowModeMenu(false);
                           }}

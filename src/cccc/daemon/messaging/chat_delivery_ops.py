@@ -257,7 +257,7 @@ def deliver_chat_message(
                 codex_submit_user_message=codex_submit_user_message,
                 claude_submit_user_message=claude_submit_user_message,
                 logger=logger,
-                on_result=lambda accepted, reason: finish(
+                on_result=lambda accepted, reason, finish=finish: finish(
                     "accepted" if accepted else "failed",
                     reason,
                 ),

@@ -240,11 +240,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        try:
-            parsed_to = json.loads(to_json or "[]")
-        except Exception:
-            parsed_to = []
-        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+        to_list = _parse_recipients_json(to_json)
+        mode = _normalize_message_mode(message_mode)
+        normalized_client_id = _normalize_client_id(client_id)
+        replay = await _preflight_upload(
+            operation="send_cross_group",
+            group_id=group_id,
+            args={
+                "dst_group_id": dst_gid,
+                "text": text,
+                "by": by,
+                "to": to_list,
+                "message_mode": mode,
+                "reply_to": str(reply_to or "").strip(),
+                "quote_text": str(quote_text or "").strip(),
+                "client_id": normalized_client_id,
+                "remote_reply_to_event_id": str(remote_reply_to_event_id or "").strip(),
+                "has_attachments": bool(files),
+            },
+        )
+        if replay is not None:
+            return replay
         attachments = await _store_upload_attachments(group, files)
         msg_text = _message_text_for_upload(text=text, attachments=attachments)
         return await ctx.daemon(
@@ -256,10 +272,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "text": msg_text,
                     "by": by,
                     "to": to_list,
-                    "message_mode": _normalize_message_mode(message_mode),
+                    "message_mode": mode,
                     "reply_to": str(reply_to or "").strip(),
                     "quote_text": str(quote_text or "").strip(),
-                    "client_id": _normalize_client_id(client_id),
+                    "client_id": normalized_client_id,
                     "remote_reply_to_event_id": str(remote_reply_to_event_id or "").strip(),
                     "attachments": attachments,
                 },

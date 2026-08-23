@@ -70,29 +70,32 @@ pub(super) async fn reconcile(
         evidence.event_ids.clone(),
         &evidence.delivery_id,
     );
+    let pending_new_chat_bind = target["kind"] == "new_chat";
+    let delivery_state = if submission_ambiguous {
+        "ambiguous"
+    } else {
+        "submitted"
+    };
+    // Reconciliation may be the first code to run after a process restart.
+    // Reassert the terminal browser handoff before asking the daemon to commit
+    // the turn; completion is deliberately conditional on that ledger fact.
+    record_delivery(
+        state,
+        group_id,
+        actor_id,
+        &evidence.turn_id,
+        evidence.event_ids.clone(),
+        &evidence.delivery_id,
+        delivery_state,
+        final_error,
+        json!({
+            "target_url":target["url"],
+            "auto_bind_new_chat":pending_new_chat_bind
+        }),
+    )
+    .await;
     match raw_call(state, "runtime_complete_turn", request).await {
         Ok(_) => {
-            let pending_new_chat_bind = target["kind"] == "new_chat";
-            let delivery_state = if submission_ambiguous {
-                "ambiguous"
-            } else {
-                "submitted"
-            };
-            record_delivery(
-                state,
-                group_id,
-                actor_id,
-                &evidence.turn_id,
-                evidence.event_ids.clone(),
-                &evidence.delivery_id,
-                delivery_state,
-                final_error,
-                json!({
-                    "target_url":target["url"],
-                    "auto_bind_new_chat":pending_new_chat_bind
-                }),
-            )
-            .await;
             if pending_new_chat_bind && !submission_ambiguous {
                 record_delivery(
                     state,

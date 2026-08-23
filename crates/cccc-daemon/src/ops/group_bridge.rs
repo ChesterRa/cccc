@@ -29,6 +29,88 @@ pub(super) fn route_ready(home: &HomeLayout, trust: &Value) -> bool {
     session_runtime::route_ready(home, trust)
 }
 
+pub(super) fn preflight_upload(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = required_arg(request, "group_id")?;
+    let destination_id = required_arg(request, "dst_group_id")?;
+    if group_id == destination_id {
+        return Err(OpError::new(
+            "invalid_dst_group_id",
+            "dst_group_id must be different from group_id",
+        ));
+    }
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let source = store.load(&group_id).map_err(OpError::not_found)?;
+    let by = request
+        .args
+        .get("by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("user");
+    cccc_core::permissions::require_group(&source, by)
+        .map_err(|error| OpError::new("permission_denied", error.to_string()))?;
+    let state = bridge_state(home)?;
+    let trust = items(&state, "trusts").iter().find(|trust| {
+        trust["status"] == "active"
+            && trust["group_id"] == group_id
+            && trust["remote_group_id"] == destination_id
+    });
+    let Some(trust) = trust else {
+        if store.load(&destination_id).is_ok() {
+            return Err(OpError::new(
+                "attachments_not_supported",
+                "attachments are only supported for remote Group Bridge messages",
+            ));
+        }
+        return Err(OpError::new(
+            "group_bridge_route_not_found",
+            "no active Group Bridge route exists for the destination group",
+        ));
+    };
+    if !matches!(
+        trust["remote_access_level"].as_str().unwrap_or("messages"),
+        "messages" | "read" | "full"
+    ) {
+        return Err(OpError::new(
+            "permission_denied",
+            "remote trust does not allow messages",
+        ));
+    }
+    let mut payload = Map::new();
+    for field in [
+        "text",
+        "format",
+        "message_mode",
+        "to",
+        "refs",
+        "priority",
+        "reply_required",
+        "requires_ack",
+    ] {
+        if let Some(value) = request.args.get(field).cloned() {
+            payload.insert(field.into(), value);
+        }
+    }
+    if payload.get("to").is_none()
+        || payload
+            .get("to")
+            .and_then(Value::as_array)
+            .is_some_and(|recipients| recipients.is_empty())
+    {
+        payload.insert("to".into(), json!(["@foreman"]));
+    }
+    if request
+        .args
+        .get("has_attachments")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        payload.insert("attachments".into(), json!([{"kind":"file"}]));
+    }
+    normalize_outbound_payload(request, &mut payload)?;
+    object(json!({"ready":true}))
+}
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "remote_send" => remote_send(home, request),

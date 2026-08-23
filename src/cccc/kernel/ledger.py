@@ -77,12 +77,15 @@ def append_event(
     scope_key: str,
     by: str,
     data: Optional[Dict[str, Any]] = None,
+    event_id: str = "",
     notify: bool = True,
 ) -> Dict[str, Any]:
     payload = normalize_event_data(kind, data or {})
     event = Event(
         kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=payload
     )
+    if event_id:
+        event.id = event_id
     # Hard rules: keep the ledger small and stable. Large payloads belong in files referenced from the ledger.
     if kind == "chat.message":
         text = event.data.get("text")

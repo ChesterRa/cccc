@@ -201,6 +201,8 @@ def handle_send_cross_group(
     args: Dict[str, Any],
     *,
     dispatch_send: Callable[[str, Dict[str, Any]], Tuple[DaemonResponse, bool]],
+    preflight_only: bool = False,
+    has_attachments: bool = False,
 ) -> DaemonResponse:
     src_group_id = str(args.get("group_id") or "").strip()
     dst_group_id = str(args.get("dst_group_id") or "").strip()
@@ -230,6 +232,8 @@ def handle_send_cross_group(
     if attachments_raw is not None and not isinstance(attachments_raw, list):
         return _error("invalid_attachments", "attachments must be a list")
     attachments = attachments_raw if isinstance(attachments_raw, list) else []
+    if has_attachments and not attachments:
+        attachments = [{}]
     refs_raw = args.get("refs")
     if isinstance(refs_raw, list) and any(isinstance(item, dict) for item in refs_raw):
         return _error("refs_not_supported", "quoted refs are not supported for cross-group messages yet")
@@ -239,6 +243,8 @@ def handle_send_cross_group(
         return _error("missing_dst_group_id", "missing dst_group_id")
     if src_group_id == dst_group_id:
         return _error("invalid_dst_group_id", "dst_group_id must be different from group_id")
+    if not text.strip() and not attachments:
+        return _error("invalid_args", "text or attachments is required")
 
     src_group = load_group(src_group_id)
     if src_group is None:
@@ -274,6 +280,8 @@ def handle_send_cross_group(
                 "Not sent: this peer-facing message is missing `insight`.",
                 details=peer_insight_required_details(),
             )
+        if preflight_only:
+            return DaemonResponse(ok=True, result={"ready": True})
         src_resp, _ = dispatch_send(
             "send",
             {
@@ -353,7 +361,7 @@ def handle_send_cross_group(
     dst_group = load_group(dst_group_id)
     if dst_group is None:
         return _error("group_not_found", group_not_found_with_resolution_hint(dst_group_id))
-    if attachments:
+    if attachments or preflight_only:
         return _error("attachments_not_supported", "attachments are only supported for remote Group Bridge messages")
 
     dst_to_tokens = cross_group_recipient_tokens_or_default(dst_to_tokens)

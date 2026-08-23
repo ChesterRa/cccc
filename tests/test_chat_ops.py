@@ -2279,6 +2279,69 @@ class TestChatOps(unittest.TestCase):
         self.assertEqual(start_calls, [])
         self.assertEqual(in_progress, {("g1", "peer1")})
 
+    def test_post_wake_callbacks_settle_the_actor_that_scheduled_them(self) -> None:
+        from types import SimpleNamespace
+
+        from cccc.daemon.messaging import chat_delivery_ops
+
+        group = SimpleNamespace(group_id="g1")
+        actors = [
+            {"id": "peer1", "created_at": "generation-1"},
+            {"id": "peer2", "created_at": "generation-2"},
+        ]
+        callbacks: list[object] = []
+
+        def plan(*, actor, **_kwargs):
+            return SimpleNamespace(
+                actor_id=actor["id"],
+                runtime="codex",
+                transport=chat_delivery_ops.TRANSPORT_SKIP,
+                reason="codex_headless_not_running",
+            )
+
+        def schedule(**kwargs):
+            callbacks.append(kwargs["on_result"])
+            return True
+
+        with (
+            patch.object(chat_delivery_ops, "list_actors", return_value=actors),
+            patch.object(chat_delivery_ops, "load_group", return_value=group),
+            patch.object(chat_delivery_ops, "should_deliver_message", return_value=True),
+            patch.object(chat_delivery_ops, "plan_actor_chat_delivery", side_effect=plan),
+            patch.object(chat_delivery_ops, "render_mail_pending_hint", return_value=""),
+            patch.object(chat_delivery_ops, "claim_delivery", return_value=(True, "claimed")),
+            patch.object(chat_delivery_ops, "schedule_headless_post_wake_delivery", side_effect=schedule),
+            patch.object(chat_delivery_ops, "append_delivery_state") as append_state,
+        ):
+            chat_delivery_ops.deliver_chat_message(
+                group=group,
+                event={"id": "event-1", "kind": "chat.message", "data": {}},
+                by="user",
+                effective_to=["peer1", "peer2"],
+                delivery_text="hello",
+                headless_delivery_text="hello",
+                event_id="event-1",
+                event_ts="2026-08-23T00:00:00Z",
+                message_mode="send",
+                effective_runner_kind=lambda value: value,
+                codex_actor_running=lambda *_args: False,
+                claude_actor_running=lambda *_args: False,
+                codex_submit_user_message=lambda **_kwargs: True,
+                claude_submit_user_message=lambda **_kwargs: True,
+                woken={"peer1", "peer2"},
+                logger=logging.getLogger("post-wake-callback-test"),
+            )
+            self.assertEqual(len(callbacks), 2)
+            for callback in callbacks:
+                callback(True, "accepted after wake")
+
+        terminal_actor_ids = [
+            call.kwargs["actor_id"]
+            for call in append_state.call_args_list
+            if call.kwargs.get("state") == "accepted"
+        ]
+        self.assertEqual(terminal_actor_ids, ["peer1", "peer2"])
+
     # -- T070: cccc_message_reply & cccc_file_send `to` string coercion tests --
 
     def test_reply_to_string_is_routed_correctly(self) -> None:

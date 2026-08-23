@@ -428,9 +428,10 @@ fn message_upload_preflight(home: &HomeLayout, request: &DaemonRequest) -> OpRes
     match required_arg(request, "operation")?.as_str() {
         "send" => preflight_upload_send(home, request),
         "reply" => preflight_upload_reply(home, request),
+        "send_cross_group" => super::group_bridge::preflight_upload(home, request),
         _ => Err(OpError::new(
             "invalid_args",
-            "operation must be send or reply",
+            "operation must be send, reply, or send_cross_group",
         )),
     }
 }

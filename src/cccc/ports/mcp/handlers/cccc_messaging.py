@@ -554,6 +554,14 @@ def file_send(
         raise MCPError(code="invalid_insight", message=str(exc)) from exc
     dst_gid = str(dst_group_id or "").strip()
     recipient_tokens = normalize_recipient_tokens(to)
+    if normalized_mode == "request_reply" and (
+        not recipient_tokens
+        or any(recipient in {"@all", "@peers", "@foreman"} for recipient in recipient_tokens)
+    ):
+        raise MCPError(
+            code="concrete_recipients_required",
+            message="request_reply requires one or more explicit concrete recipients",
+        )
     if dst_gid and dst_gid != gid:
         if has_hash_recipient_token(recipient_tokens):
             raise MCPError(code="invalid_recipient_syntax", message=CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
@@ -572,13 +580,6 @@ def file_send(
             validate_message_audience(remote_to, message_mode=normalized_mode)
         except PeerRecipientError as exc:
             raise MCPError(code=exc.code, message=exc.message, details=exc.details) from exc
-        if normalized_mode == "request_reply" and any(
-            recipient in {"@all", "@peers", "@foreman"} for recipient in remote_to
-        ):
-            raise MCPError(
-                code="concrete_recipients_required",
-                message="request_reply requires one or more explicit concrete recipients",
-            )
         if remote_recipients_include_peer(remote_to) and normalized_insight is None:
             raise MCPError(
                 code="peer_insight_required",

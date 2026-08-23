@@ -20,9 +20,28 @@ pub fn spawn(home: HomeLayout, locks: DispatchLocks) {
 
 #[cfg(test)]
 pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
+    settle_stranded(home)?;
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     for meta in store.list().map_err(OpError::io)? {
         restore_group(home, &store, &meta.group_id)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn settle_stranded(home: &HomeLayout) -> Result<(), OpError> {
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    for meta in store.list().map_err(OpError::io)? {
+        let Ok(group) = store.load(&meta.group_id) else {
+            continue;
+        };
+        let settled = crate::ops::runtime_delivery::settle_stranded_claims(home, &group)?;
+        if settled > 0 {
+            tracing::warn!(
+                group_id = %meta.group_id,
+                settled,
+                "settled stranded runtime delivery claims before daemon IPC startup"
+            );
+        }
     }
     Ok(())
 }
@@ -48,14 +67,6 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
                 Ok(current.clone())
             })
             .map_err(OpError::io)?;
-    }
-    let settled = crate::ops::runtime_delivery::settle_stranded_claims(home, &group)?;
-    if settled > 0 {
-        tracing::warn!(
-            %group_id,
-            settled,
-            "settled stranded runtime delivery claims during daemon restore"
-        );
     }
     if !group.running || group.state == cccc_contracts::GroupState::Stopped {
         return Ok(());

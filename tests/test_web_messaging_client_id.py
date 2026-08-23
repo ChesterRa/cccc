@@ -441,6 +441,12 @@ class TestWebMessagingClientId(unittest.TestCase):
 
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(resp.json().get("ok"))
+            preflights = [item for item in captured if item.get("op") == "message_upload_preflight"]
+            self.assertEqual(len(preflights), 1)
+            self.assertEqual(
+                (preflights[0].get("args") or {}).get("operation"),
+                "send_cross_group",
+            )
             sends = [item for item in captured if item.get("op") == "send_cross_group"]
             self.assertEqual(len(sends), 1)
             req = sends[0]
@@ -453,6 +459,44 @@ class TestWebMessagingClientId(unittest.TestCase):
             self.assertEqual(attachments[0].get("title"), "shot.png")
             self.assertEqual(attachments[0].get("mime_type"), "image/png")
             self.assertTrue(str(attachments[0].get("path") or "").startswith("state/blobs/"))
+        finally:
+            cleanup()
+
+    def test_cross_group_upload_preflights_reply_audience_before_storing_blob(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        home, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="remote-upload-preflight", topic="")
+            blob_dir = Path(home) / "groups" / group.group_id / "state" / "blobs"
+            route = SimpleNamespace(remote_group_id="g_remote", registration_id="reg_remote")
+            with (
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
+                patch(
+                    "cccc.ports.web.routes.messaging.resolve_remote_group_route",
+                    return_value=route,
+                ),
+                patch(
+                    "cccc.daemon.ops.maintenance_ops.resolve_remote_group_route",
+                    return_value=route,
+                ),
+            ):
+                response = self._client().post(
+                    f"/api/v1/groups/{group.group_id}/send_cross_group_upload",
+                    data={
+                        "by": "user",
+                        "text": "please answer",
+                        "dst_group_id": "g_remote",
+                        "to_json": "[\"@foreman\"]",
+                        "message_mode": "request_reply",
+                    },
+                    files={"files": ("orphan.bin", BytesIO(b"must not persist"), "application/octet-stream")},
+                )
+
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual((response.json().get("error") or {}).get("code"), "concrete_recipients_required")
+            self.assertFalse(blob_dir.exists() and any(blob_dir.iterdir()))
         finally:
             cleanup()
 

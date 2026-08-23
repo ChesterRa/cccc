@@ -1101,8 +1101,20 @@ def handle_message_upload_preflight(
     """Validate a staged Web upload without creating durable state."""
 
     operation = str(args.get("operation") or "").strip()
+    if operation == "send_cross_group":
+        from ..ops.maintenance_ops import handle_send_cross_group
+
+        return handle_send_cross_group(
+            args,
+            dispatch_send=lambda _op, _args: (
+                _error("internal_error", "cross-group preflight attempted a send"),
+                False,
+            ),
+            preflight_only=True,
+            has_attachments=coerce_bool(args.get("has_attachments")),
+        )
     if operation not in {"send", "reply"}:
-        return _error("invalid_args", "operation must be send or reply")
+        return _error("invalid_args", "operation must be send, reply, or send_cross_group")
     forwarded = dict(args)
     forwarded.pop("operation", None)
     has_attachments = coerce_bool(forwarded.pop("has_attachments", False))

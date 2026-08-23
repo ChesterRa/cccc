@@ -86,6 +86,11 @@ async fn send_upload(
         .to_owned();
     super::group_bridge::ensure_access(&principal, &destination)?;
     args.insert("dst_group_id".into(), Value::String(destination.clone()));
+    args.insert("group_id".into(), Value::String(group_id.clone()));
+    let mut preflight_args = args.clone();
+    preflight_args.insert("operation".into(), Value::String("send_cross_group".into()));
+    preflight_args.insert("has_attachments".into(), Value::Bool(!files.is_empty()));
+    let _ = call(&state, "message_upload_preflight", preflight_args).await?;
     let mut attachments = Vec::with_capacity(files.len());
     for (data, filename, content_type) in files {
         let blob = cccc_core::blobs::store(&state.home, &group_id, &data)
@@ -96,7 +101,6 @@ async fn send_upload(
             "content_base64":base64::engine::general_purpose::STANDARD.encode(&data)
         }));
     }
-    args.insert("group_id".into(), Value::String(group_id));
     args.insert("attachments".into(), Value::Array(attachments));
     let remote_body = Value::Object(args.clone());
     if let Some(result) = super::group_bridge_session::send_remote(

@@ -110,6 +110,68 @@ def _append_browser_delivery_event(
     )
 
 
+def _completion_event_id(group_id: str, actor_id: str, turn_id: str) -> str:
+    raw = f"runtime-completion\0{group_id}\0{actor_id}\0{turn_id}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:32]
+
+
+def _completion_receipt(
+    group: Any,
+    *,
+    actor_id: str,
+    turn_id: str,
+    event_ids: List[str],
+    status: str,
+    delivery_id: str,
+) -> tuple[Optional[Dict[str, Any]], Optional[DaemonResponse]]:
+    event = find_event(group, _completion_event_id(group.group_id, actor_id, turn_id))
+    if event is None:
+        return None, None
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    matches = (
+        _clean_text(event.get("kind")) == "runtime.turn.completed"
+        and _clean_text(event.get("by")) == actor_id
+        and _clean_text(data.get("actor_id")) == actor_id
+        and _clean_text(data.get("turn_id")) == turn_id
+        and data.get("event_ids") == event_ids
+        and _clean_text(data.get("status")) == status
+        and _clean_text(data.get("delivery_id")) == delivery_id
+    )
+    if not matches:
+        return None, _error(
+            "completion_conflict",
+            "turn completion receipt does not match this request",
+        )
+    return event, None
+
+
+def _append_completion_receipt(
+    group: Any,
+    *,
+    actor_id: str,
+    turn_id: str,
+    event_ids: List[str],
+    status: str,
+    delivery_id: str,
+) -> Dict[str, Any]:
+    return append_event(
+        group.ledger_path,
+        kind="runtime.turn.completed",
+        group_id=group.group_id,
+        scope_key="",
+        by=actor_id,
+        data={
+            "actor_id": actor_id,
+            "event_id": event_ids[-1],
+            "turn_id": turn_id,
+            "event_ids": event_ids,
+            "status": status,
+            "delivery_id": delivery_id,
+        },
+        event_id=_completion_event_id(group.group_id, actor_id, turn_id),
+    )
+
+
 def _coerce_limit(value: Any) -> int:
     try:
         limit = int(value or _MAX_TURN_EVENTS)
@@ -645,6 +707,53 @@ def handle_runtime_complete_turn(args: Dict[str, Any]) -> DaemonResponse:
     active_state = read_headless_state(group_id, actor_id)
     active_turn_id = _clean_text(active_state.get("active_turn_id"))
     turn_id = _clean_text(args.get("turn_id")) or active_turn_id
+    delivery_id = _clean_text(args.get("delivery_id")) or f"runtime:{turn_id}"
+    receipt, receipt_error = _completion_receipt(
+        group,
+        actor_id=actor_id,
+        turn_id=turn_id,
+        event_ids=event_ids,
+        status=status,
+        delivery_id=delivery_id,
+    )
+    if receipt_error is not None:
+        return receipt_error
+    if receipt is not None:
+        owns_active_projection = (
+            _clean_text(active_state.get("status")) == "working"
+            and active_turn_id == turn_id
+            and [
+                _clean_text(item)
+                for item in (
+                    active_state.get("active_event_ids")
+                    if isinstance(active_state.get("active_event_ids"), list)
+                    else []
+                )
+                if _clean_text(item)
+            ]
+            == event_ids
+        )
+        if owns_active_projection:
+            update_headless_state(
+                group_id,
+                actor_id,
+                status="waiting",
+                active_turn_id="",
+                latest_event_id="",
+                active_event_ids=[],
+            )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "status": status,
+                "turn_id": turn_id,
+                "delivery_id": delivery_id,
+                "completion_event": receipt,
+                "processed_event_ids": event_ids,
+                "followup_delivery_scheduled": False,
+                "summary": _clean_text(args.get("summary")),
+            },
+        )
     if not active_turn_id or turn_id != active_turn_id:
         return _error(
             "stale_turn",
@@ -681,6 +790,14 @@ def handle_runtime_complete_turn(args: Dict[str, Any]) -> DaemonResponse:
                 "complete_turn only accepts events already handed to this runtime",
                 details={"event_id": event_id},
             )
+    receipt = _append_completion_receipt(
+        group,
+        actor_id=actor_id,
+        turn_id=turn_id,
+        event_ids=event_ids,
+        status=status,
+        delivery_id=delivery_id,
+    )
     followup_delivery_scheduled = False
     latest = _latest_event_by_ledger_order(group, events)
     latest_event_id = _clean_text(latest.get("id")) if isinstance(latest, dict) else ""
@@ -734,6 +851,8 @@ def handle_runtime_complete_turn(args: Dict[str, Any]) -> DaemonResponse:
         result={
             "status": status,
             "turn_id": turn_id,
+            "delivery_id": delivery_id,
+            "completion_event": receipt,
             "processed_event_ids": [str(event.get("id") or "") for event in events],
             "followup_delivery_scheduled": followup_delivery_scheduled,
             "summary": _clean_text(args.get("summary")),
@@ -789,6 +908,37 @@ def handle_web_model_browser_delivery_record(args: Dict[str, Any]) -> DaemonResp
     )
     if event_err is not None:
         return event_err
+    runtime_state = {
+        "submitted": "accepted",
+        "bound": "accepted",
+        "ambiguous": "ambiguous",
+        "failed": "failed",
+    }.get(_clean_text(browser_delivery.get("state")))
+    if runtime_state:
+        reason = _clean_text(browser_delivery.get("detail"))
+        for source in _events:
+            source_event_id = _clean_text(source.get("id"))
+            latest = latest_delivery_state(
+                group,
+                actor_id=actor_id,
+                source_event_id=source_event_id,
+            )
+            latest_data = (
+                latest.get("data")
+                if isinstance(latest, dict) and isinstance(latest.get("data"), dict)
+                else {}
+            )
+            if _clean_text(latest_data.get("state")) == runtime_state:
+                continue
+            append_delivery_state(
+                group,
+                actor_id=actor_id,
+                actor_created_at=_clean_text(actor.get("created_at")),
+                source_event_id=source_event_id,
+                state=runtime_state,
+                transport="web_model_browser",
+                reason=reason,
+            )
     return DaemonResponse(ok=True, result={"event": event})
 
 
