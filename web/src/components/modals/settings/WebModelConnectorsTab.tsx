@@ -124,32 +124,6 @@ function setupPillClass(tone: SetupTone): string {
   return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
 }
 
-function SetupStatusLine({
-  label,
-  detail,
-  tone,
-}: {
-  label: string;
-  detail: string;
-  tone: SetupTone;
-}) {
-  return (
-    <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-2 first:border-t-0 first:pt-0 sm:border-t-0 sm:pt-0">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-        {label}
-      </div>
-      <div
-        className={[
-          "mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-xs font-medium",
-          setupPillClass(tone),
-        ].join(" ")}
-      >
-        <span className="truncate">{detail}</span>
-      </div>
-    </div>
-  );
-}
-
 function SetupSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="border-t border-[var(--glass-border-subtle)] pt-3 first:border-t-0 first:pt-0">
@@ -236,16 +210,7 @@ export default function WebModelConnectorsTab({
       ) || null
     );
   }, [currentGroupActiveConnectors, selectedActor]);
-  const chatGptActor = webModelActors[0] || null;
   const extraChatGptActors = webModelActors.slice(1);
-  const ownerGroup = useMemo(
-    () => groups.find((group) => String(group.group_id || "").trim() === groupId) || null,
-    [groupId, groups],
-  );
-  const ownerGroupLabel = String(ownerGroup?.title || ownerGroup?.group_id || "").trim();
-  const ownerActorLabel = chatGptActor
-    ? String(chatGptActor.title || chatGptActor.id || "").trim()
-    : "";
   const configuredPublicUrl = String(
     remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "",
   ).trim();
@@ -375,21 +340,6 @@ export default function WebModelConnectorsTab({
         ? "needs"
         : "needs";
   const webAccessReady = publicEndpointReady && uiAccessTokenPresent;
-  const actorPrerequisiteLabel = selectedActor
-    ? selectedActorRunning
-      ? wm("prerequisites.actorReady", { actor: selectedActorLabel || actorId })
-      : wm("prerequisites.actorStopped", { actor: selectedActorLabel || actorId })
-    : wm("prerequisites.actorMissing");
-  const actorPrerequisiteTone: SetupTone = selectedActor
-    ? selectedActorRunning
-      ? "ready"
-      : "needs"
-    : "needs";
-  const browserSummaryTone: SetupTone = browserReady
-    ? "ready"
-    : browserActive
-      ? "needs"
-      : "neutral";
   const webAccessPrerequisiteLabel = webAccessReady
     ? wm("prerequisites.webAccessReady")
     : publicEndpointReady
@@ -983,116 +933,32 @@ export default function WebModelConnectorsTab({
               </div>
             </div>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <SetupStatusLine
-              label={wm("summary.webAccess")}
-              detail={webAccessPrerequisiteLabel}
-              tone={webAccessReady ? "ready" : "needs"}
-            />
-            <SetupStatusLine
-              label={wm("summary.actor")}
-              detail={actorPrerequisiteLabel}
-              tone={actorPrerequisiteTone}
-            />
-            <SetupStatusLine
-              label={wm("summary.chatgpt")}
-              detail={browserStatusLabel}
-              tone={browserSummaryTone}
-            />
-            <SetupStatusLine
-              label={wm("summary.mcpApp")}
-              detail={mcpStatusLabel}
-              tone={mcpStatusTone}
-            />
-            <SetupStatusLine
-              label={wm("summary.deliveryTarget")}
-              detail={savedTargetLabel}
-              tone={savedTargetTone}
-            />
-          </div>
-        </section>
-
-        <section className={settingsWorkspacePanelClass(isDark)}>
-          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-            {wm("prerequisites.title")}
-          </div>
-          <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
-            {wm("prerequisites.description")}
-          </p>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 first:border-t-0 first:pt-0 lg:border-t-0 lg:pt-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {wm("prerequisites.webAccessStepTitle")}
+          {!webAccessReady ? (
+            <div className="mt-4 flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-[var(--color-text-primary)]">
+                  {wm("summary.webAccess")}
                 </div>
-                <span
-                  className={[
-                    "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
-                    setupPillClass(webAccessReady ? "ready" : "needs"),
-                  ].join(" ")}
-                >
+                <div className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   {webAccessPrerequisiteLabel}
-                </span>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {wm("prerequisites.webAccessStepDescription")}
-              </p>
-              <div className="mt-2 break-all font-mono text-xs text-[var(--color-text-primary)]">
-                {configuredPublicUrl || wm("prerequisites.noPublicUrl")}
+                </div>
               </div>
               {onOpenWebAccess ? (
                 <button
                   type="button"
                   onClick={onOpenWebAccess}
-                  className={[secondaryButtonClass("sm"), "mt-3"].join(" ")}
+                  className={`${secondaryButtonClass("sm")} shrink-0`}
                 >
                   {wm("buttons.openWebAccess")}
                 </button>
               ) : null}
             </div>
-            <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 lg:border-t-0 lg:pt-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {wm("prerequisites.actorStepTitle")}
-                </div>
-                <span
-                  className={[
-                    "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
-                    setupPillClass(actorPrerequisiteTone),
-                  ].join(" ")}
-                >
-                  {actorPrerequisiteLabel}
-                </span>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {selectedActor
-                  ? wm("prerequisites.actorStepReadyDescription")
-                  : wm("prerequisites.actorStepDescription")}
-              </p>
-              <div className="mt-2 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                {chatGptActor ? (
-                  <>
-                    <span className="font-medium text-[var(--color-text-primary)]">
-                      {ownerGroupLabel || groupId}
-                    </span>
-                    <span className="mx-1 text-[var(--color-text-muted)]">/</span>
-                    <span className="font-mono text-[var(--color-text-primary)]">
-                      {ownerActorLabel || actorId}
-                    </span>
-                  </>
-                ) : groups.length ? (
-                  <span>{wm("prerequisites.actorCreateHint")}</span>
-                ) : (
-                  <span>{wm("prerequisites.noGroupAvailable")}</span>
-                )}
-              </div>
-              {extraChatGptActors.length ? (
-                <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                  {wm("actorSection.multipleWarning")}
-                </div>
-              ) : null}
+          ) : null}
+          {extraChatGptActors.length ? (
+            <div className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              {wm("actorSection.multipleWarning")}
             </div>
-          </div>
+          ) : null}
         </section>
 
         {!selectedActor ? (
@@ -1228,22 +1094,26 @@ export default function WebModelConnectorsTab({
                     <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
                       {mcpInstructionDetail}
                     </p>
-                    <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--color-text-tertiary)]">
-                      <li>{wm("mcp.instructionOpenSettings")}</li>
-                      <li>{wm("mcp.instructionCreateApp")}</li>
-                      <li>{wm("mcp.instructionEnableConnector")}</li>
-                    </ol>
-                    <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                      <span>{wm("mcp.permissionHint")}</span>
-                      <a
-                        href="https://help.openai.com/en/articles/11487775-apps-in-chatgpt"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="ml-2 font-semibold underline-offset-2 hover:underline"
-                      >
-                        {wm("mcp.permissionDocsLink")}
-                      </a>
-                    </div>
+                    {!chatGptSeen ? (
+                      <>
+                        <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                          <li>{wm("mcp.instructionOpenSettings")}</li>
+                          <li>{wm("mcp.instructionCreateApp")}</li>
+                          <li>{wm("mcp.instructionEnableConnector")}</li>
+                        </ol>
+                        <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                          <span>{wm("mcp.permissionHint")}</span>
+                          <a
+                            href="https://help.openai.com/en/articles/11487775-apps-in-chatgpt"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-2 font-semibold underline-offset-2 hover:underline"
+                          >
+                            {wm("mcp.permissionDocsLink")}
+                          </a>
+                        </div>
+                      </>
+                    ) : null}
                     {selectedConnector && !selectedMcpUrl ? (
                       <div className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
                         {wm("warnings.rotateOldConnector")}

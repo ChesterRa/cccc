@@ -2,22 +2,6 @@ import type { MembershipState } from "../../../types";
 
 export type { MembershipState };
 
-export type MembershipCopyRowId = "hostname" | "web";
-
-export type MembershipCopyRow = { id: MembershipCopyRowId; value: string; available: boolean };
-
-export function membershipCopyRows(
-  membership: MembershipState | null | undefined,
-): MembershipCopyRow[] {
-  if (!membership?.logged_in) return [];
-  const hostname = String(membership.hostname || "").trim();
-  const web = String(membership.web_url || "").trim();
-  return [
-    { id: "hostname", value: hostname, available: Boolean(hostname) },
-    { id: "web", value: web, available: Boolean(web) },
-  ];
-}
-
 export function hostnameLooksTokenless(hostname: string): boolean {
   const value = String(hostname || "").trim();
   if (!value) return true;
@@ -26,6 +10,23 @@ export function hostnameLooksTokenless(hostname: string): boolean {
     return !url.search && !url.hash && !/\/token\//i.test(url.pathname);
   } catch {
     return !/[?&]token=|\/token\//i.test(value);
+  }
+}
+
+export function membershipPublicAddress(membership: MembershipState | null | undefined): string {
+  if (!membership?.logged_in || !membership.online) return "";
+  const hostname = String(membership.hostname || "").trim();
+  return hostname && hostnameLooksTokenless(hostname) ? hostname : "";
+}
+
+export function membershipAdminWebUrl(membership: MembershipState | null | undefined): string {
+  if (!membership?.logged_in) return "";
+  const value = String(membership.web_url || "").trim();
+  try {
+    const url = new URL(value);
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password ? value : "";
+  } catch {
+    return "";
   }
 }
 

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
-import { InfoIcon } from "../../Icons";
+import { ChevronDownIcon, InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
 import { ReachMembershipSection } from "./ReachMembershipSection";
+import { membershipAdminWebUrl } from "./reachMembershipModel";
 import { useMembershipController } from "./useMembershipController";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
@@ -42,8 +43,6 @@ interface WebAccessTabProps {
   focusReach?: boolean;
   onOpenAccount: () => void;
 }
-
-type WebModeState = { mode?: string; read_only?: boolean };
 
 type RestartDialogState = {
   localUrl: string;
@@ -112,9 +111,12 @@ export function WebAccessTab({
     membership,
     membershipBusy,
     membershipError,
+    membershipPollReady,
     reachBusy,
     reachAction,
     refresh: refreshMembership,
+    connect: connectMembership,
+    poll: pollMembership,
     startReach,
     stopReach,
   } = membershipController;
@@ -135,7 +137,6 @@ export function WebAccessTab({
   }, [focusReach, isActive]);
 
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
-  const [webMode, setWebMode] = useState<WebModeState | null>(null);
   const [accessTokens, setAccessTokens] = useState<api.AccessTokenEntry[]>([]);
   const [session, setSession] = useState<WebAccessSession | null>(null);
   const [groups, setGroups] = useState<GroupMeta[]>([]);
@@ -223,15 +224,11 @@ export function WebAccessTab({
     setBusy(true);
     setError("");
     try {
-      const [pingResp, remoteResp, groupsResp, sessionResp] = await Promise.all([
-        api.fetchPing(),
+      const [remoteResp, groupsResp, sessionResp] = await Promise.all([
         api.fetchRemoteAccessState(),
         api.fetchGroups(),
         api.fetchWebAccessSession(),
       ]);
-      if (pingResp.ok) {
-        setWebMode(pingResp.result?.web || null);
-      }
       if (remoteResp.ok && remoteResp.result?.remote_access) {
         const state = remoteResp.result.remote_access;
         setRemoteState(state);
@@ -526,22 +523,6 @@ export function WebAccessTab({
       tone: "good" as const,
     };
   }, [knownAccessTokenCount, t]);
-
-  const modeSummary = useMemo(() => {
-    const exhibit =
-      Boolean(webMode?.read_only) || String(webMode?.mode || "").toLowerCase() === "exhibit";
-    return exhibit
-      ? {
-          label: t("webAccess.summary.exhibit"),
-          detail: t("webAccess.summary.exhibitHint"),
-          tone: "warn" as const,
-        }
-      : {
-          label: t("webAccess.summary.normal"),
-          detail: t("webAccess.summary.normalHint"),
-          tone: "good" as const,
-        };
-  }, [t, webMode]);
 
   const currentBrowserSummary = useMemo(() => {
     if (!loginActive) {
@@ -945,27 +926,6 @@ export function WebAccessTab({
       setError(t("common:copyFailed"));
     }
   };
-
-  const remoteStatusTone: "neutral" | "good" | "warn" =
-    statusReason === "local_only"
-      ? "neutral"
-      : restartRequired
-        ? "warn"
-        : remoteState?.status === "running"
-          ? "good"
-          : remoteState?.status && remoteState.status !== "stopped"
-            ? "warn"
-            : "neutral";
-  const remoteStatusLabel =
-    statusReason === "local_only"
-      ? t("webAccess.status.local_only")
-      : statusReason === "missing_access_token"
-        ? t("webAccess.status.missing_access_token")
-        : statusReason === "binding_unreachable"
-          ? t("webAccess.status.binding_unreachable")
-          : restartRequired
-            ? t("webAccess.status.restart_required")
-            : t(`webAccess.status.${remoteState?.status || "stopped"}`);
 
   const createDialog =
     (canAccessGlobalSettings || Boolean(newToken)) && createDialogOpen ? (
@@ -1440,19 +1400,35 @@ export function WebAccessTab({
         </div>
       </div>
 
-      <section className={settingsWorkspaceShellClass(isDark)}>
-        <div className={settingsWorkspaceHeaderClass(isDark)}>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("webAccess.accessControlTitle")}
-              </h4>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                {t("webAccess.accessControlDescription")}
-              </p>
-            </div>
+      <details className={`group ${settingsWorkspaceShellClass(isDark)}`}>
+        <summary
+          className={`${settingsWorkspaceHeaderClass(isDark)} cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden`}
+        >
+          <div className="min-w-0">
+            <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("webAccess.accessControlTitle")}
+            </h4>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              {t("webAccess.accessControlDescription")}
+            </p>
+          </div>
+          <span className="flex shrink-0 items-center gap-2">
+            <span
+              className={`rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}
+            >
+              {accessSummary.label}
+            </span>
+            <ChevronDownIcon
+              size={16}
+              className="text-[var(--color-text-muted)] transition-transform group-open:rotate-180"
+            />
+          </span>
+        </summary>
+
+        <div className={settingsWorkspaceBodyClass}>
+          <div className="space-y-3">
             {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => openCreateDialog()}
@@ -1462,11 +1438,6 @@ export function WebAccessTab({
                 </button>
               </div>
             ) : null}
-          </div>
-        </div>
-
-        <div className={settingsWorkspaceBodyClass}>
-          <div className="space-y-3">
             {!canAccessGlobalSettings ? (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/15 p-6 text-sm text-amber-600 dark:text-amber-400">
                 <div className="font-medium">{t("webAccess.managementLockedTitle")}</div>
@@ -1654,26 +1625,17 @@ export function WebAccessTab({
             )}
           </div>
         </div>
-      </section>
+      </details>
 
       <section ref={reachSectionRef} className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("webAccess.reachabilityTitle")}
-              </h4>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                {t("webAccess.reachabilityDescription")}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div
-                className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, remoteStatusTone)}`}
-              >
-                {remoteStatusLabel}
-              </div>
-            </div>
+          <div>
+            <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("webAccess.reachabilityTitle")}
+            </h4>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              {t("webAccess.reachabilityDescription")}
+            </p>
           </div>
         </div>
 
@@ -1682,9 +1644,18 @@ export function WebAccessTab({
             membership={membership}
             membershipBusy={membershipBusy}
             membershipError={membershipError}
+            membershipPollReady={membershipPollReady}
+            hasAdminToken={hasAdminToken || Boolean(membershipAdminWebUrl(membership))}
             reachBusy={reachBusy}
             reachAction={reachAction}
+            onConnectAccount={() => void connectMembership()}
+            onPollAccount={() => void pollMembership()}
             onOpenAccount={onOpenAccount}
+            onCreateAdminToken={openCreateDialog}
+            onOpenWeb={() => {
+              const url = membershipAdminWebUrl(membership);
+              if (url) window.open(url, "_blank", "noopener,noreferrer");
+            }}
             onReachOn={() => {
               void startReach().then((changed) => {
                 if (changed) void load();
@@ -1699,7 +1670,7 @@ export function WebAccessTab({
             onCopyFailed={() => setError(t("common:copyFailed"))}
           />
 
-          <div className={settingsWorkspacePanelClass(isDark)}>
+          <div className={membership?.online ? "hidden" : settingsWorkspacePanelClass(isDark)}>
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
               {t("webAccess.accessGoalTitle")}
             </div>
@@ -1740,7 +1711,7 @@ export function WebAccessTab({
             </div>
           </div>
 
-          <div className={settingsWorkspacePanelClass(isDark)}>
+          <div className={membership?.online ? "hidden" : settingsWorkspacePanelClass(isDark)}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -1896,28 +1867,30 @@ export function WebAccessTab({
             ) : null}
           </div>
 
-          <WebAccessReachabilityActions
-            action={primaryReachabilityAction}
-            actionHint={
-              primaryReachabilityAction === "save"
-                ? t("webAccess.primaryActionSaveHint")
-                : t(actionHintKey)
-            }
-            draftGoal={accessGoal}
-            savedGoal={savedAccessGoal}
-            hasAdminToken={hasAdminToken}
-            saveBusy={saveBusy}
-            applyBusy={applyBusy}
-            endpoint={membership?.online ? null : remoteState?.endpoint || null}
-            onSave={() => void handleSaveReachability()}
-            onApply={() => void handleApplyReachability()}
-            onCopyEndpoint={async () => {
-              const ok = await copyTextToClipboard(remoteState?.endpoint || "");
-              if (ok) pushHint(t("webAccess.copied"));
-            }}
-          />
+          {!membership?.online ? (
+            <WebAccessReachabilityActions
+              action={primaryReachabilityAction}
+              actionHint={
+                primaryReachabilityAction === "save"
+                  ? t("webAccess.primaryActionSaveHint")
+                  : t(actionHintKey)
+              }
+              draftGoal={accessGoal}
+              savedGoal={savedAccessGoal}
+              hasAdminToken={hasAdminToken}
+              saveBusy={saveBusy}
+              applyBusy={applyBusy}
+              endpoint={membership?.online ? null : remoteState?.endpoint || null}
+              onSave={() => void handleSaveReachability()}
+              onApply={() => void handleApplyReachability()}
+              onCopyEndpoint={async () => {
+                const ok = await copyTextToClipboard(remoteState?.endpoint || "");
+                if (ok) pushHint(t("webAccess.copied"));
+              }}
+            />
+          ) : null}
 
-          <div ref={advancedDisclosureRef} className="mt-4">
+          <div ref={advancedDisclosureRef} className={membership?.online ? "hidden" : "mt-4"}>
             <button
               type="button"
               onClick={toggleAdvanced}
@@ -1940,7 +1913,7 @@ export function WebAccessTab({
             </button>
           </div>
 
-          {showAdvanced ? (
+          {showAdvanced && !membership?.online ? (
             <div className={settingsWorkspacePanelClass(isDark)}>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -2157,44 +2130,6 @@ export function WebAccessTab({
 
       {createDialog ? <BodyPortal>{createDialog}</BodyPortal> : null}
       {restartRequiredDialog ? <BodyPortal>{restartRequiredDialog}</BodyPortal> : null}
-
-      <section className={settingsWorkspaceShellClass(isDark)}>
-        <div className={settingsWorkspaceHeaderClass(isDark)}>
-          <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-            {t("webAccess.interactionModeTitle")}
-          </h4>
-          <p className={`mt-1 text-xs text-[var(--color-text-muted)]`}>
-            {t("webAccess.interactionModeDescription")}
-          </p>
-        </div>
-        <div className={settingsWorkspaceBodyClass}>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-              <div className={`text-xs font-medium text-[var(--color-text-secondary)]`}>
-                {t("webAccess.currentModeTitle")}
-              </div>
-              <div
-                className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, modeSummary.tone)}`}
-              >
-                {modeSummary.label}
-              </div>
-              <div className={`mt-3 text-sm text-[var(--color-text-secondary)]`}>
-                {modeSummary.detail}
-              </div>
-            </div>
-            <div className={settingsWorkspaceSoftPanelClass(isDark)}>
-              <div className={`text-xs font-medium text-[var(--color-text-secondary)]`}>
-                {t("webAccess.modeGuideTitle")}
-              </div>
-              <ul className={`mt-2 space-y-2 text-xs text-[var(--color-text-secondary)]`}>
-                <li>• {t("webAccess.modeGuideNormal")}</li>
-                <li>• {t("webAccess.modeGuideExhibit")}</li>
-                <li>• {t("webAccess.modeGuideSwitch")}</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

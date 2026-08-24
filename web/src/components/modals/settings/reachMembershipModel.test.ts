@@ -2,10 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   hostnameLooksTokenless,
+  membershipAdminWebUrl,
   membershipApprovalUrl,
-  membershipCopyRows,
   membershipManagementUrl,
   membershipPanelKind,
+  membershipPublicAddress,
   type MembershipState,
 } from "./reachMembershipModel";
 
@@ -13,35 +14,40 @@ function membership(partial: Partial<MembershipState>): MembershipState {
   return { logged_in: false, ...partial };
 }
 
-describe("reach membership copy rows", () => {
-  it("hides copyable URLs until the machine is linked", () => {
-    expect(
-      membershipCopyRows(membership({ logged_in: false, hostname: "https://d-1.cccc.foo" })),
-    ).toEqual([]);
-  });
-
-  it("keeps the public hostname separate from the token-bearing Web URL", () => {
-    const rows = membershipCopyRows(
-      membership({
-        logged_in: true,
-        hostname: "https://d-1.cccc.foo",
-        web_url: "https://d-1.cccc.foo/ui/?token=acc_secret",
-      }),
-    );
-    expect(rows.map((row) => row.id)).toEqual(["hostname", "web"]);
-    expect(rows[0]?.value).toBe("https://d-1.cccc.foo");
-    expect(rows[1]?.value).toContain("token=acc_secret");
-  });
-
-  it("marks a missing Web credential as unavailable instead of inventing a URL", () => {
-    const rows = membershipCopyRows(
-      membership({ logged_in: true, hostname: "https://d-1.cccc.foo" }),
-    );
-    expect(rows.find((row) => row.id === "web")).toEqual({
-      id: "web",
-      value: "",
-      available: false,
+describe("reach membership addresses", () => {
+  it("offers only the tokenless public address while Reach is online", () => {
+    const state = membership({
+      logged_in: true,
+      online: true,
+      hostname: "https://d-1.cccc.foo",
+      web_url: "https://d-1.cccc.foo/ui/?token=acc_secret",
     });
+
+    expect(membershipPublicAddress(state)).toBe("https://d-1.cccc.foo");
+    expect(membershipAdminWebUrl(state)).toContain("token=acc_secret");
+  });
+
+  it("does not advertise an offline or credential-bearing hostname", () => {
+    expect(
+      membershipPublicAddress(
+        membership({ logged_in: true, online: false, hostname: "https://d-1.cccc.foo" }),
+      ),
+    ).toBe("");
+    expect(
+      membershipPublicAddress(
+        membership({
+          logged_in: true,
+          online: true,
+          hostname: "https://d-1.cccc.foo/ui/?token=acc_secret",
+        }),
+      ),
+    ).toBe("");
+  });
+
+  it("rejects non-HTTP administrator URLs", () => {
+    expect(
+      membershipAdminWebUrl(membership({ logged_in: true, web_url: "javascript:alert(1)" })),
+    ).toBe("");
   });
 });
 
