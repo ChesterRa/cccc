@@ -1,5 +1,5 @@
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use cccc_core::access_tokens::{AccessToken, AccessTokenStore};
@@ -7,6 +7,7 @@ use percent_encoding::percent_decode_str;
 use serde_json::json;
 
 use crate::AppState;
+use crate::routes::access_token_support::cookie;
 
 #[derive(Debug, Clone)]
 pub struct Principal {
@@ -57,17 +58,29 @@ pub async fn authorize(
         request.extensions_mut().insert(Principal::local_admin());
         return next.run(request).await;
     }
+    let query_token = query_token(&request);
+    let secure_cookie = request
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("https"));
     let raw = request_token(&request);
     let principal = match store.lookup(&raw) {
         Ok(Some(token)) => Some(Principal::from_token(token)),
         Ok(None) => None,
         Err(error) => return auth_store_failure(error),
     };
+    let bootstrap_cookie = principal.as_ref().and_then(|principal| {
+        query_token
+            .as_deref()
+            .filter(|token| *token == principal.raw_token)
+            .map(|token| cookie(token, secure_cookie))
+    });
     if is_public(request.method(), request.uri().path()) {
         if let Some(principal) = principal {
             request.extensions_mut().insert(principal);
         }
-        return next.run(request).await;
+        return with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref());
     }
     let Some(principal) = principal else {
         return failure_text(
@@ -109,7 +122,16 @@ pub async fn authorize(
         }
     }
     request.extensions_mut().insert(principal);
-    next.run(request).await
+    with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
+}
+
+fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {
+    if let Some(cookie) = cookie
+        && let Ok(value) = HeaderValue::from_str(cookie)
+    {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    response
 }
 
 fn request_token(request: &Request) -> String {
@@ -139,7 +161,7 @@ fn request_token(request: &Request) -> String {
                     .map(decode_token)
             })
         });
-    cookie.or_else(|| query_token(request)).unwrap_or_default()
+    query_token(request).or(cookie).unwrap_or_default()
 }
 
 fn query_token(request: &Request) -> Option<String> {
@@ -255,6 +277,9 @@ mod tests {
             (Method::GET, "/api/v1/remote_access"),
             (Method::POST, "/api/v1/remote_access/start"),
             (Method::GET, "/api/v1/membership"),
+            (Method::POST, "/api/v1/membership/login"),
+            (Method::POST, "/api/v1/membership/login/poll"),
+            (Method::POST, "/api/v1/membership/logout"),
             (Method::POST, "/api/v1/membership/reach/on"),
             (Method::GET, "/api/v1/debug/tail_logs"),
             (Method::POST, "/api/v1/debug/clear_logs"),

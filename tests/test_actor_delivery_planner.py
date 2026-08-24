@@ -279,7 +279,10 @@ def test_handle_send_uses_same_planner_for_claude_headless_actor(monkeypatch, tm
     assert resp.ok
     submit.assert_called_once()
     submitted_text = str(submit.call_args.kwargs.get("text") or "")
-    assert "[cccc] user → peer1:" in submitted_text
+    event_id = str(((resp.result or {}).get("event") or {}).get("id") or "")
+    assert event_id
+    assert f"[event_id={event_id} message_mode=send]" in submitted_text
+    assert "[cccc] user → peer1 [event_id=" in submitted_text
     assert "hello claude" in submitted_text
     queue_chat_message.assert_not_called()
     request_flush.assert_not_called()

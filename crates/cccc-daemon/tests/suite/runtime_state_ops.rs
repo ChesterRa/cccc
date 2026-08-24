@@ -54,8 +54,9 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let coalesced = turn.result["turn"]["coalesced_text"]
         .as_str()
         .expect("coalesced text");
-    assert!(coalesced.contains("[cccc] user → headless1: first"));
-    assert!(coalesced.contains("[cccc] user → headless1: second"));
+    assert!(coalesced.contains("[cccc] user → headless1 [event_id="));
+    assert!(coalesced.contains("message_mode=send]: first"));
+    assert!(coalesced.contains("message_mode=send]: second"));
     assert!(!coalesced.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
     assert!(
         turn.result["turn"]["system_prompt"]
@@ -69,6 +70,10 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         .as_array()
         .cloned()
         .expect("event ids");
+    for event_id in &event_ids {
+        let event_id = event_id.as_str().expect("event id");
+        assert!(coalesced.contains(&format!("[event_id={event_id} message_mode=send]")));
+    }
     let turn_id = turn.result["turn"]["turn_id"]
         .as_str()
         .expect("turn id")

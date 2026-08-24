@@ -76,6 +76,7 @@ fn directed_message_waits_for_an_explicitly_stopped_actor_then_delivers_once() {
         json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake delivery","message_mode":"send"}),
     );
     assert_eq!(sent.result["message_mode"], "send");
+    let sent_event_id = sent.result["event"]["id"].as_str().expect("sent event id");
     let actors = call(
         &home,
         "actor_list",
@@ -88,17 +89,11 @@ fn directed_message_waits_for_an_explicitly_stopped_actor_then_delivers_once() {
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
 
-    let output = wait_for_terminal(
-        &home,
-        group_id,
-        "RECEIVED:[cccc] user → peer1: wake delivery",
+    let marker = format!(
+        "RECEIVED:[cccc] user → peer1 [event_id={sent_event_id} message_mode=send]: wake delivery"
     );
-    assert_eq!(
-        output
-            .matches("RECEIVED:[cccc] user → peer1: wake delivery")
-            .count(),
-        1
-    );
+    let output = wait_for_terminal(&home, group_id, &marker);
+    assert_eq!(output.matches(&marker).count(), 1);
     let actors = call(
         &home,
         "actor_list",

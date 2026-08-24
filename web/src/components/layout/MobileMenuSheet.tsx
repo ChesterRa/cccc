@@ -15,6 +15,7 @@ import {
   SearchIcon,
   ClipboardIcon,
   SettingsIcon,
+  AccountIcon,
   MonitorIcon,
   SunIcon,
   MoonIcon,
@@ -42,6 +43,8 @@ export interface MobileMenuSheetProps {
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onOpenSettings: () => void;
+  canAccessAccount: boolean;
+  onOpenAccount: () => void;
   onOpenGroupEdit?: () => void;
   onStartGroup: () => void;
   onStopGroup: () => void;
@@ -64,6 +67,8 @@ export function MobileMenuSheet({
   onOpenSearch,
   onOpenContext,
   onOpenSettings,
+  canAccessAccount,
+  onOpenAccount,
   onOpenGroupEdit,
   onStartGroup,
   onStopGroup,
@@ -272,6 +277,20 @@ export function MobileMenuSheet({
 
           <section className={sectionCardClass}>
             <div className={sectionTitleClass}>{t("workspaceSection")}</div>
+            {canAccessAccount ? (
+              <button
+                className={rowButtonClass}
+                onClick={() => {
+                  onClose();
+                  onOpenAccount();
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <AccountIcon size={18} />
+                  <span>{t("account")}</span>
+                </div>
+              </button>
+            ) : null}
             <button
               className={rowButtonClass}
               onClick={() => {
@@ -291,7 +310,7 @@ export function MobileMenuSheet({
                 onClose();
                 onOpenSettings();
               }}
-              disabled={!selectedGroupId}
+              disabled={!selectedGroupId && !canAccessAccount}
             >
               <div className="flex items-center gap-3">
                 <SettingsIcon size={18} />

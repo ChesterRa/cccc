@@ -4,6 +4,7 @@ from cccc.daemon.messaging.chat_ops import _build_headless_delivery_text
 from cccc.daemon.messaging.actor_turn_rendering import (
     build_actor_delivery_text,
     render_actor_event_batch_for_delivery,
+    render_actor_event_for_delivery,
     render_group_bridge_route_ref,
 )
 from cccc.daemon.messaging.delivery import PendingMessage, render_single_message
@@ -11,15 +12,17 @@ from cccc.daemon.messaging.inbound_rendering import ActorInboundEnvelope, render
 
 
 def test_inbound_renderer_plain_send_matches_pty_and_headless_wrappers() -> None:
-    expected = "[cccc] user → peer1: hello"
+    expected = "[cccc] user → peer1 [event_id=evt-1 message_mode=send]: hello"
 
     assert render_actor_inbound_message(
-        ActorInboundEnvelope(by="user", to=["peer1"], text="hello")
+        ActorInboundEnvelope(event_id="evt-1", by="user", to=["peer1"], text="hello")
     ) == expected
     assert render_single_message(
         PendingMessage(event_id="evt-1", by="user", to=["peer1"], text="hello")
     ) == expected
-    assert _build_headless_delivery_text(by="user", to=["peer1"], body="hello") == expected
+    assert _build_headless_delivery_text(
+        event_id="evt-1", message_mode="send", by="user", to=["peer1"], body="hello"
+    ) == expected
 
 
 def test_direct_delivery_adds_mail_count_without_consuming_mail() -> None:
@@ -64,10 +67,14 @@ def test_direct_delivery_adds_mail_count_without_consuming_mail() -> None:
 
 
 def test_inbound_renderer_preserves_reply_quote_semantics() -> None:
-    expected = '[cccc] peer2 → peer1 (reply:abcdef12)\n> "外部用户原话": 收到，我来处理。'
+    expected = (
+        "[cccc] peer2 → peer1 (reply:abcdef12) "
+        '[event_id=evt-2 message_mode=send reply_to=abcdef123456]\n> "外部用户原话": 收到，我来处理。'
+    )
 
     assert render_actor_inbound_message(
         ActorInboundEnvelope(
+            event_id="evt-2",
             by="peer2",
             to=["peer1"],
             text="收到，我来处理。",
@@ -86,6 +93,8 @@ def test_inbound_renderer_preserves_reply_quote_semantics() -> None:
         )
     ) == expected
     assert _build_headless_delivery_text(
+        event_id="evt-2",
+        message_mode="send",
         by="peer2",
         to=["peer1"],
         body="收到，我来处理。",
@@ -95,10 +104,14 @@ def test_inbound_renderer_preserves_reply_quote_semantics() -> None:
 
 
 def test_inbound_renderer_preserves_external_source_semantics() -> None:
-    expected = "[cccc] user[dingtalk / Alice / 1729] → peer1: 外部消息"
+    expected = (
+        "[cccc] user[dingtalk / Alice / 1729] → peer1 "
+        "[event_id=evt-3 message_mode=send]: 外部消息"
+    )
 
     assert render_actor_inbound_message(
         ActorInboundEnvelope(
+            event_id="evt-3",
             by="user",
             to=["peer1"],
             text="外部消息",
@@ -119,6 +132,8 @@ def test_inbound_renderer_preserves_external_source_semantics() -> None:
         )
     ) == expected
     assert _build_headless_delivery_text(
+        event_id="evt-3",
+        message_mode="send",
         by="user",
         to=["peer1"],
         body="外部消息",
@@ -129,19 +144,45 @@ def test_inbound_renderer_preserves_external_source_semantics() -> None:
 
 
 def test_inbound_renderer_preserves_multiline_body() -> None:
-    expected = "[cccc] user → peer1:\nline one\nline two"
+    expected = (
+        "[cccc] user → peer1 [event_id=evt-4 message_mode=send]:\nline one\nline two"
+    )
 
     assert render_actor_inbound_message(
-        ActorInboundEnvelope(by="user", to=["peer1"], text="line one\nline two")
+        ActorInboundEnvelope(event_id="evt-4", by="user", to=["peer1"], text="line one\nline two")
     ) == expected
     assert render_single_message(
         PendingMessage(event_id="evt-4", by="user", to=["peer1"], text="line one\nline two")
     ) == expected
     assert _build_headless_delivery_text(
+        event_id="evt-4",
+        message_mode="send",
         by="user",
         to=["peer1"],
         body="line one\nline two",
     ) == expected
+
+
+def test_request_reply_delivery_exposes_current_event_identity_and_requirement() -> None:
+    rendered = render_actor_event_for_delivery(
+        {
+            "id": "evt-reply-required",
+            "kind": "chat.message",
+            "by": "user",
+            "data": {
+                "to": ["peer1"],
+                "text": "please answer",
+                "message_mode": "request_reply",
+            },
+        },
+        actor_id="peer1",
+    )
+
+    assert rendered.startswith(
+        "[cccc] user → peer1 "
+        "[event_id=evt-reply-required message_mode=request_reply]:\n"
+    )
+    assert "REPLY REQUIRED (event_id=evt-reply-required): reply via cccc_message_reply." in rendered
 
 
 def test_actor_delivery_text_points_attachments_to_file_read_tools() -> None:

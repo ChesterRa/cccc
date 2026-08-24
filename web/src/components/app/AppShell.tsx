@@ -81,6 +81,8 @@ type AppShellProps = {
   onStopGroup: () => void;
   onSetGroupState: (state: "active" | "idle" | "paused") => void;
   onOpenSettings: () => void;
+  canAccessAccount: boolean;
+  onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   onTabChange: (tab: string) => void;
   appendComposerFiles: (files: File[]) => void;
@@ -208,6 +210,8 @@ export function AppShell({
   onStopGroup,
   onSetGroupState,
   onOpenSettings,
+  canAccessAccount,
+  onOpenAccount,
   onOpenMobileMenu,
   onTabChange,
   appendComposerFiles,
@@ -300,6 +304,8 @@ export function AppShell({
           onStopGroup={onStopGroup}
           onSetGroupState={onSetGroupState}
           onOpenSettings={onOpenSettings}
+          canAccessAccount={canAccessAccount}
+          onOpenAccount={onOpenAccount}
           onOpenMobileMenu={onOpenMobileMenu}
         />
 

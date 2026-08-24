@@ -16,6 +16,7 @@ const groupTabIds = new Set<GroupTabId>([
 ]);
 
 const globalTabIds = new Set<GlobalTabId>([
+  "account",
   "capabilities",
   "actorProfiles",
   "myProfiles",
@@ -34,7 +35,7 @@ export interface SettingsLastLocation {
 export const defaultSettingsLastLocation: SettingsLastLocation = {
   scope: "group",
   groupTab: "guidance",
-  globalTab: "capabilities",
+  globalTab: "account",
 };
 
 function normalizeScope(value: unknown): SettingsScope {

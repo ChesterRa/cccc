@@ -1,4 +1,4 @@
-mod access_token_support;
+pub(crate) mod access_token_support;
 mod access_tokens;
 mod actor_assets;
 mod actor_profiles;

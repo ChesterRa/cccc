@@ -266,6 +266,7 @@ class PendingMessage:
     by: str
     to: List[str]
     text: str
+    message_mode: str = "send"
     reply_to: Optional[str] = None
     quote_text: Optional[str] = None
     source_platform: Optional[str] = None
@@ -326,6 +327,7 @@ class DeliveryThrottle:
         by: str,
         to: List[str],
         text: str,
+        message_mode: str = "send",
         reply_to: Optional[str] = None,
         quote_text: Optional[str] = None,
         source_platform: Optional[str] = None,
@@ -359,6 +361,7 @@ class DeliveryThrottle:
                 by=by,
                 to=to,
                 text=text,
+                message_mode=message_mode,
                 reply_to=reply_to,
                 quote_text=quote_text,
                 source_platform=source_platform,
@@ -598,6 +601,7 @@ def render_single_message(msg: PendingMessage) -> str:
             by=str(msg.by or "user"),
             to=[str(x or "") for x in (msg.to or [])],
             text=str(msg.text or ""),
+            message_mode=str(msg.message_mode or "send"),
             reply_to=str(msg.reply_to or ""),
             quote_text=str(msg.quote_text or ""),
             source_platform=str(msg.source_platform or ""),
@@ -853,6 +857,7 @@ def queue_chat_message(
     by: str,
     to: List[str],
     text: str,
+    message_mode: str = "send",
     reply_to: Optional[str] = None,
     quote_text: Optional[str] = None,
     source_platform: Optional[str] = None,
@@ -869,6 +874,7 @@ def queue_chat_message(
         by=by,
         to=to,
         text=text,
+        message_mode=message_mode,
         reply_to=reply_to,
         quote_text=quote_text,
         source_platform=source_platform,

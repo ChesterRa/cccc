@@ -159,6 +159,10 @@ fn format_envelope(event: &Event, body: &str) -> String {
         targets.join(", ")
     };
     let reply_to = text(event, "reply_to");
+    let message_mode = match text(event, "message_mode") {
+        value if !value.is_empty() => value,
+        _ => "send".to_owned(),
+    };
     let reply = if reply_to.is_empty() {
         String::new()
     } else {
@@ -170,10 +174,23 @@ fn format_envelope(event: &Event, body: &str) -> String {
     } else {
         format!("\n> \"{quote}\"")
     };
-    if body.contains(['\r', '\n']) {
-        format!("[cccc] {sender} → {targets}{reply}{quote}:\n{body}")
+    let metadata = if event.id.trim().is_empty() {
+        String::new()
     } else {
-        format!("[cccc] {sender} → {targets}{reply}{quote}: {body}")
+        let parent = if reply_to.is_empty() {
+            String::new()
+        } else {
+            format!(" reply_to={reply_to}")
+        };
+        format!(
+            " [event_id={} message_mode={message_mode}{parent}]",
+            event.id
+        )
+    };
+    if body.contains(['\r', '\n']) {
+        format!("[cccc] {sender} → {targets}{reply}{metadata}{quote}:\n{body}")
+    } else {
+        format!("[cccc] {sender} → {targets}{reply}{metadata}{quote}: {body}")
     }
 }
 
@@ -247,6 +264,11 @@ mod tests {
         .cloned()
         .expect("object");
         let rendered = render_batch(&[event]).expect("render");
+        assert!(
+            rendered.starts_with(
+                "[cccc] user → peer1 [event_id=event-123 message_mode=request_reply]:\n"
+            )
+        );
         assert!(
             rendered.contains("REPLY REQUIRED (event_id=event-123): reply via cccc_message_reply.")
         );
@@ -328,12 +350,14 @@ mod tests {
     #[test]
     fn renders_multiple_events_as_one_delivery_batch() {
         let mut first = Event::new("chat.message", "g_test");
+        first.id = "event-first".into();
         first.by = "reviewer".into();
         first.data = json!({"to":["lead"],"text":"first"})
             .as_object()
             .cloned()
             .expect("event data");
         let mut second = Event::new("chat.message", "g_test");
+        second.id = "event-second".into();
         second.by = "backend".into();
         second.data = json!({"to":["lead"],"text":"second"})
             .as_object()
@@ -342,14 +366,22 @@ mod tests {
 
         let rendered = render_batch(&[first, second]).expect("batch");
         assert!(rendered.starts_with("[cccc] 2 new messages:"));
-        assert!(rendered.contains("[cccc] reviewer → lead: first"));
-        assert!(rendered.contains("[cccc] backend → lead: second"));
+        assert!(
+            rendered
+                .contains("[cccc] reviewer → lead [event_id=event-first message_mode=send]: first")
+        );
+        assert!(
+            rendered.contains(
+                "[cccc] backend → lead [event_id=event-second message_mode=send]: second"
+            )
+        );
         assert!(!rendered.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
     }
 
     #[test]
     fn does_not_repeat_system_prompt_guidance_in_each_chat_delivery() {
         let mut event = Event::new("chat.message", "g_test");
+        event.id = "event-plain".into();
         event.by = "user".into();
         event.data = json!({"to":["codex-1"], "text":"你好"})
             .as_object()
@@ -357,7 +389,31 @@ mod tests {
             .expect("object");
 
         let rendered = render_batch(&[event]).expect("rendered");
-        assert_eq!(rendered, "[cccc] user → codex-1: 你好");
+        assert_eq!(
+            rendered,
+            "[cccc] user → codex-1 [event_id=event-plain message_mode=send]: 你好"
+        );
+    }
+
+    #[test]
+    fn keeps_current_event_and_parent_reply_id_distinct() {
+        let mut event = Event::new("chat.message", "g_test");
+        event.id = "event-current".into();
+        event.by = "peer2".into();
+        event.data = json!({
+            "to":["peer1"],
+            "text":"follow-up",
+            "message_mode":"send",
+            "reply_to":"event-parent"
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.starts_with(
+            "[cccc] peer2 → peer1 (reply:event-pa) [event_id=event-current message_mode=send reply_to=event-parent]: follow-up"
+        ));
     }
 
     #[test]
@@ -415,7 +471,7 @@ mod tests {
         assert!(rendered.contains("skill:cccc:install"));
         assert!(rendered.contains("cccc_capability_install"));
         assert!(rendered.contains("owner/repo"));
-        assert!(!rendered.contains("[cccc] user → architect: /install owner/repo"));
+        assert!(!rendered.contains("]: /install owner/repo"));
     }
 
     #[test]

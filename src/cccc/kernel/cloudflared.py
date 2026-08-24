@@ -174,6 +174,7 @@ def inspect(home: Optional[Path] = None) -> Dict[str, Any]:
         and digest == expected
     )
     return {
+        "supported": expected is not None,
         "installed": installed,
         "path": str(path) if installed else None,
         "version": version,

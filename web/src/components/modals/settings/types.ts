@@ -13,6 +13,7 @@ export type GroupTabId =
   | "transcript"
   | "copyGroups";
 export type GlobalTabId =
+  | "account"
   | "capabilities"
   | "actorProfiles"
   | "myProfiles"

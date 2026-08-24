@@ -191,6 +191,7 @@ export function AppModals({
     setEditingActor,
     clearContextTask,
   } = useModalStore();
+  const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
 
   const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
@@ -1714,6 +1715,8 @@ export function AppModals({
           openModal("context");
         }}
         onOpenSettings={() => openModal("settings")}
+        canAccessAccount={canManageGroups}
+        onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
         onOpenGroupEdit={
           canManageGroups
             ? () => {

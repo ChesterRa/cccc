@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::fs;
 use crate::home::HomeLayout;
 
-pub const LOGOUT_WARNING: &str = "Logging out deletes this machine's membership identity. The next login is a new device with a new hostname.";
+pub const LOGOUT_WARNING: &str = "This device and its public hostname were retired. The next login creates a new device and hostname.";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MembershipState {

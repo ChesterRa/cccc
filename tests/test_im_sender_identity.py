@@ -645,7 +645,7 @@ class TestImSenderIdentity(unittest.TestCase):
         )
         self.assertIn("[cccc] user[dingtalk / Alice / staff_001] → @foreman", rendered)
 
-    def test_render_single_message_without_source_identity_keeps_legacy_header(self) -> None:
+    def test_render_single_message_without_source_identity_includes_delivery_identity(self) -> None:
         rendered = render_single_message(
             PendingMessage(
                 event_id="evt2",
@@ -654,7 +654,10 @@ class TestImSenderIdentity(unittest.TestCase):
                 text="普通消息",
             )
         )
-        self.assertEqual(rendered, "[cccc] user → @foreman: 普通消息")
+        self.assertEqual(
+            rendered,
+            "[cccc] user → @foreman [event_id=evt2 message_mode=send]: 普通消息",
+        )
 
     def test_plain_send_without_im_source_keeps_legacy_event_shape(self) -> None:
         _, cleanup = self._with_home()

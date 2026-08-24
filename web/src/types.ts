@@ -1045,13 +1045,21 @@ export type MembershipState = {
   device_id?: string | null;
   hostname?: string | null;
   web_url?: string | null;
-  connector_url?: string | null;
   online?: boolean;
   cut?: boolean;
   disabled?: boolean;
   in_reach?: boolean;
+  reach_supported?: boolean;
+  account_reachable?: boolean | null;
   account_origin?: string | null;
   last_error?: string | null;
+  pending?: {
+    user_code?: string | null;
+    verification_uri?: string | null;
+    verification_uri_complete?: string | null;
+    interval?: number | null;
+    expires_at?: string | null;
+  } | null;
 };
 
 export type RemoteAccessState = {

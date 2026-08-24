@@ -198,7 +198,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if current_request_token.lower().startswith("bearer "):
             current_request_token = str(current_request_token[7:] or "").strip()
         else:
-            current_request_token = str(request.cookies.get("cccc_access_token") or request.query_params.get("token") or "").strip()
+            current_request_token = str(request.query_params.get("token") or request.cookies.get("cccc_access_token") or "").strip()
         deleted_current_session = bool(current_request_token) and current_request_token == raw_token
         try:
             deleted = delete_access_token(raw_token)

@@ -42,6 +42,121 @@ async fn first_admin_token_bootstraps_login_cookie() {
 }
 
 #[tokio::test]
+async fn query_token_bootstraps_cookie_for_clean_requests() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("admin", Vec::new(), true, None)
+        .expect("token");
+
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::get(format!("/api/v1/web_access/session?token={}", token.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let session_cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .expect("session cookie")
+        .to_owned();
+
+    let clean_response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::get("/api/v1/web_access/session")
+                .header(header::COOKIE, session_cookie)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let body = clean_response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload["result"]["web_access_session"]["current_browser_signed_in"],
+        true
+    );
+
+    let invalid = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/web_access/session?token=invalid")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert!(invalid.headers().get(header::SET_COOKIE).is_none());
+}
+
+#[tokio::test]
+async fn query_token_replaces_a_stale_authentication_cookie() {
+    let (_temp, home) = home();
+    let store = AccessTokenStore::new(home.clone()).expect("store");
+    let stale = store
+        .create("stale-admin", Vec::new(), true, None)
+        .expect("stale token");
+    let current = store
+        .create("current-admin", Vec::new(), true, None)
+        .expect("current token");
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/web_access/session?token={}",
+                current.token
+            ))
+            .header(header::COOKIE, format!("cccc_access_token={}", stale.token))
+            .body(Body::empty())
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with(&format!(
+                "cccc_access_token={}",
+                current.token
+            )))
+    );
+}
+
+#[tokio::test]
+async fn invalid_query_token_does_not_fall_back_to_a_valid_cookie() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("admin", Vec::new(), true, None)
+        .expect("token");
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/groups?token=invalid")
+                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn configured_tokens_reject_anonymous_api_requests() {
     let (_temp, home) = home();
     AccessTokenStore::new(home.clone())
@@ -133,6 +248,9 @@ async fn scoped_token_cannot_access_global_management_routes() {
         ("GET", "/api/v1/remote_access"),
         ("POST", "/api/v1/remote_access/start"),
         ("GET", "/api/v1/membership"),
+        ("POST", "/api/v1/membership/login"),
+        ("POST", "/api/v1/membership/login/poll"),
+        ("POST", "/api/v1/membership/logout"),
         ("POST", "/api/v1/membership/reach/on"),
         ("GET", "/api/v1/debug/tail_logs"),
         ("POST", "/api/v1/debug/clear_logs"),

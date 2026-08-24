@@ -53,12 +53,14 @@ class AccountError(Exception):
         *,
         retryable: bool = False,
         retry_after_delta: int = 0,
+        terminal_authorization: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.retry_after_delta = max(0, int(retry_after_delta))
+        self.terminal_authorization = terminal_authorization
 
 
 def _normalize_origin(origin: str) -> str:
@@ -68,10 +70,19 @@ def _normalize_origin(origin: str) -> str:
             "membership_unavailable", "membership account service is not configured"
         )
     parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
         raise AccountError(
             "membership_unavailable",
-            "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) URL",
+            "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) origin",
         )
     hostname = parsed.hostname or ""
     loopback = hostname.lower() == "localhost"
@@ -86,6 +97,39 @@ def _normalize_origin(origin: str) -> str:
             "CCCC_ACCOUNT_ORIGIN must use HTTPS except for a loopback development server",
         )
     return value
+
+
+def _authorization_url(origin: str, value: str) -> str:
+    base = urlparse(_normalize_origin(origin))
+    candidate = urlparse(str(value or "").strip())
+    try:
+        base_port = base.port or (443 if base.scheme.lower() == "https" else 80)
+        candidate_port = candidate.port or (
+            443 if candidate.scheme.lower() == "https" else 80
+        )
+    except ValueError as exc:
+        raise AccountError(
+            "membership_network",
+            "account service returned an invalid device authorization URL",
+        ) from exc
+    if (
+        candidate.scheme not in {"http", "https"}
+        or not candidate.netloc
+        or candidate.username
+        or candidate.password
+        or candidate.fragment
+        or (
+            candidate.scheme.lower(),
+            (candidate.hostname or "").lower(),
+            candidate_port,
+        )
+        != (base.scheme.lower(), (base.hostname or "").lower(), base_port)
+    ):
+        raise AccountError(
+            "membership_network",
+            "account service returned an off-origin device authorization URL",
+        )
+    return candidate.geturl()
 
 
 def _decode_body(raw: bytes) -> Dict[str, Any]:
@@ -131,9 +175,17 @@ def _error_from_payload(status: int, payload: Dict[str, Any]) -> AccountError:
             retry_after_delta=5,
         )
     if code in {"expired_token", "expired"}:
-        return AccountError("membership_network", message or "device code expired")
+        return AccountError(
+            "membership_network",
+            message or "device code expired",
+            terminal_authorization=True,
+        )
     if code in {"access_denied", "denied"}:
-        return AccountError("membership_gate", message or "login was denied")
+        return AccountError(
+            "membership_gate",
+            message or "login was denied",
+            terminal_authorization=True,
+        )
     if code in {"unsupported_version", "version_unsupported"} or status == 426:
         return AccountError(
             "membership_unsupported_version", message or "please upgrade CCCC"
@@ -212,13 +264,22 @@ def start_device_login(
     data = request(origin, "POST", "/v1/device/code", payload={}, transport=transport)
     device_code = str(data.get("device_code") or "").strip()
     user_code = str(data.get("user_code") or "").strip()
-    verification_uri = str(
+    raw_verification_uri = str(
         data.get("verification_uri") or data.get("verification_uri_complete") or ""
     ).strip()
-    if not device_code or not user_code or not verification_uri:
+    raw_verification_uri_complete = str(
+        data.get("verification_uri_complete") or ""
+    ).strip()
+    if not device_code or not user_code or not raw_verification_uri:
         raise AccountError(
             "membership_network", "account service returned an incomplete device code"
         )
+    verification_uri = _authorization_url(origin, raw_verification_uri)
+    verification_uri_complete = (
+        _authorization_url(origin, raw_verification_uri_complete)
+        if raw_verification_uri_complete
+        else ""
+    )
     try:
         expires_in = int(data.get("expires_in") or 900)
     except (TypeError, ValueError):
@@ -231,6 +292,7 @@ def start_device_login(
         "device_code": device_code,
         "user_code": user_code,
         "verification_uri": verification_uri,
+        "verification_uri_complete": verification_uri_complete or None,
         "expires_in": max(30, expires_in),
         "interval": max(1, interval),
     }
@@ -309,8 +371,16 @@ def fetch_device(
     device_token: str,
     *,
     transport: Optional[Transport] = None,
+    timeout_s: Optional[float] = None,
 ) -> Dict[str, Any]:
-    data = request(origin, "GET", "/v1/device", token=device_token, transport=transport)
+    data = request(
+        origin,
+        "GET",
+        "/v1/device",
+        token=device_token,
+        transport=transport,
+        timeout_s=timeout_s,
+    )
     online = data.get("online")
     return {
         "device_id": str(data.get("device_id") or "").strip() or None,
@@ -318,3 +388,19 @@ def fetch_device(
         "disabled": bool(data.get("disabled")),
         "online": online if isinstance(online, bool) else None,
     }
+
+
+def disable_device(
+    origin: str,
+    device_token: str,
+    *,
+    transport: Optional[Transport] = None,
+) -> None:
+    request(
+        origin,
+        "POST",
+        "/v1/device/disable",
+        payload={},
+        token=device_token,
+        transport=transport,
+    )

@@ -24,7 +24,15 @@ pub async fn login(client: &DaemonClient) -> Result<()> {
     if !origin.is_empty() {
         eprintln!("Account: {origin}");
     }
-    eprintln!("Open: {}", text(pending, "verification_uri"));
+    let verification_uri_complete = text(pending, "verification_uri_complete");
+    eprintln!(
+        "Open: {}",
+        if verification_uri_complete.is_empty() {
+            text(pending, "verification_uri")
+        } else {
+            verification_uri_complete
+        }
+    );
     eprintln!("Code: {}", text(pending, "user_code"));
     let mut interval = integer(pending, "interval", 5).max(1);
     loop {
@@ -128,8 +136,7 @@ fn print_membership_copy(response: &DaemonResponse) {
     }
     let hostname = text(body, "hostname");
     let web = text(body, "web_url");
-    let connector = text(body, "connector_url");
-    if hostname.is_empty() && web.is_empty() && connector.is_empty() {
+    if hostname.is_empty() && web.is_empty() {
         return;
     }
     eprintln!(
@@ -140,14 +147,8 @@ fn print_membership_copy(response: &DaemonResponse) {
         "Web (this machine, includes admin token): {}",
         display_or_none(&web)
     );
-    eprintln!(
-        "ChatGPT connector (secret in the path): {}",
-        display_or_none(&connector)
-    );
-    eprintln!("These are three different strings. Screenshotting the connector URL leaks a key.");
-    eprintln!(
-        "Rotating a token changes that URL. Paste it again in ChatGPT after a rotate, cut, or logout."
-    );
+    eprintln!("The Web URL is a bearer credential; keep it private.");
+    eprintln!("Web Model connectors are managed per actor in CCCC settings.");
 }
 
 fn display_or_none(value: &str) -> &str {

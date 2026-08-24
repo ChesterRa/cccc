@@ -352,7 +352,7 @@ For accessing the Web UI from outside localhost:
 - `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
 - Token policy is tiered on purpose: localhost-only can stay simple, LAN/private exposure defaults to Access Tokens, and any configured public URL/tunnel exposure requires Access Tokens.
 
-Optional membership **Reach** is a managed public-HTTPS path for Linux and macOS preview users. Local CCCC remains fully usable without an account. First create an Admin Access Token in **Settings > Web Access**, then run:
+Optional membership **Reach** is a managed public-HTTPS path for Linux and macOS preview users. Local CCCC remains fully usable without an account. First create an Admin Access Token in **Settings > Web Access**, then open the global **Account** page, link this installation, and approve its device code on the account site. Return to **Web Access** to turn Reach on. The equivalent CLI flow remains available:
 
 ```bash
 cccc login
@@ -537,7 +537,8 @@ any remaining duplicates. Open a new terminal and run `cccc doctor`; its
 `Installation` section reports the invoked executable, the command selected by
 PATH, and every conflicting command.
 
-The hosted native installer currently pins the stable `v0.4.34` release.
+The hosted native installer currently selects the experimental `v0.4.35-rc1`
+standalone release. Stable users should use the pip distribution above.
 
 ### pip (RC from TestPyPI)
 

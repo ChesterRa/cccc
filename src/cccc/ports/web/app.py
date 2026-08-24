@@ -172,13 +172,13 @@ def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "
     if auth.lower().startswith("bearer "):
         return str(auth[7:] or "").strip(), "header"
 
-    cookie = str(request.cookies.get("cccc_access_token") or "").strip()
-    if cookie:
-        return cookie, "cookie"
-
     q = str(request.query_params.get("token") or "").strip()
     if q:
         return q, "query"
+
+    cookie = str(request.cookies.get("cccc_access_token") or "").strip()
+    if cookie:
+        return cookie, "cookie"
     return "", ""
 
 

@@ -162,6 +162,8 @@ def handle_slash_skill_dispatch(
         by=by,
         to=effective_to,
         body=delivery_text,
+        event_id=event_id,
+        message_mode="send",
         reply_to=reply_to,
         quote_text=quote_text,
     )

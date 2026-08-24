@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import urlencode, urlparse
 
 from ..paths import ensure_home
 from ..util.file_lock import acquire_lockfile, release_lockfile
@@ -17,8 +17,8 @@ from ..util.time import utc_now_iso
 
 
 LOGOUT_WARNING = (
-    "Logging out deletes this machine's membership identity. "
-    "The next login is a new device with a new hostname."
+    "This device and its public hostname were retired. "
+    "The next login creates a new device and hostname."
 )
 DEFAULT_ACCOUNT_ORIGIN = "https://account.cccc.sh"
 RETIRED_ACCOUNT_ORIGINS = {
@@ -261,6 +261,9 @@ def store_pending_login(
             "device_code": pending["device_code"],
             "user_code": pending["user_code"],
             "verification_uri": pending["verification_uri"],
+            "verification_uri_complete": _as_optional_text(
+                pending.get("verification_uri_complete")
+            ),
             "interval": int(pending.get("interval") or 5),
             "expires_at": expires_at.replace(microsecond=0)
             .isoformat()
@@ -318,37 +321,16 @@ def _first_admin_token(home: Optional[Path] = None) -> Optional[str]:
     return None
 
 
-def _first_connector_secret(home: Optional[Path] = None) -> Optional[tuple[str, str]]:
-    from .web_model_connectors import load_web_model_connectors
-
-    connectors = load_web_model_connectors(home)
-    for connector_id, item in connectors.items():
-        if item.get("revoked"):
-            continue
-        secret = str(item.get("secret") or "").strip()
-        if secret:
-            return str(connector_id), secret
-    return None
-
-
 def public_urls(
     hostname: Optional[str], home: Optional[Path] = None
 ) -> Dict[str, Optional[str]]:
     origin = normalize_reach_hostname(hostname)
     web_url = None
-    connector_url = None
     if origin:
         admin = _first_admin_token(home)
         if admin:
             web_url = f"{origin}/ui/?{urlencode({'token': admin})}"
-        found = _first_connector_secret(home)
-        if found:
-            connector_id, secret = found
-            connector_url = (
-                f"{origin}/mcp/web-model/{connector_id}/token/{quote(secret, safe='')}"
-            )
     return {
         "hostname": origin,
         "web_url": web_url,
-        "connector_url": connector_url,
     }

@@ -12,15 +12,14 @@ from cccc.cli.membership_cmds import (
 
 
 class TestMembershipCliCopyLines(unittest.TestCase):
-    def test_status_prints_three_separate_strings(self) -> None:
+    def test_status_prints_account_and_web_urls_without_actor_connector(self) -> None:
         lines = _membership_copy_lines(
             {
                 "hostname": "https://d-1.cccc.foo",
                 "web_url": "https://d-1.cccc.foo/ui/?token=acc_secret",
-                "connector_url": "https://d-1.cccc.foo/mcp/web-model/wmc_1/token/secret",
             }
         )
-        self.assertEqual(len(lines), 5)
+        self.assertEqual(len(lines), 4)
         self.assertTrue(lines[0].startswith("Hostname (people / account page):"))
         self.assertIn("https://d-1.cccc.foo", lines[0])
         self.assertNotIn("token=acc_secret", lines[0])
@@ -28,16 +27,13 @@ class TestMembershipCliCopyLines(unittest.TestCase):
             lines[1].startswith("Web (this machine, includes admin token):")
         )
         self.assertIn("token=acc_secret", lines[1])
-        self.assertTrue(lines[2].startswith("ChatGPT connector (secret in the path):"))
-        self.assertIn("/token/secret", lines[2])
-        self.assertIn("three different strings", lines[3])
-        self.assertIn("Paste it again", lines[4])
+        self.assertIn("bearer credential", lines[2])
+        self.assertIn("per actor", lines[3])
 
     def test_missing_urls_are_not_invented(self) -> None:
         self.assertEqual(_membership_copy_lines({}), [])
         lines = _membership_copy_lines({"hostname": "https://d-1.cccc.foo"})
         self.assertIn("(none)", lines[1])
-        self.assertIn("(none)", lines[2])
 
     def test_reach_install_and_on_use_a_long_operation_timeout(self) -> None:
         for action in ("install", "on"):

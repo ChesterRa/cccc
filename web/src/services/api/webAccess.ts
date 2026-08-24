@@ -75,6 +75,24 @@ export async function fetchMembership() {
   return apiJson<{ membership: MembershipState }>("/api/v1/membership");
 }
 
+export async function startMembershipLogin() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership/login?by=user", {
+    method: "POST",
+  });
+}
+
+export async function pollMembershipLogin() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership/login/poll?by=user", {
+    method: "POST",
+  });
+}
+
+export async function logoutMembership() {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership/logout?by=user", {
+    method: "POST",
+  });
+}
+
 export async function startMembershipReach() {
   return apiJson<{ membership: MembershipState }>("/api/v1/membership/reach/on?by=user", {
     method: "POST",

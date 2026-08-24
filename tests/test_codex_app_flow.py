@@ -632,7 +632,13 @@ class TestCodexAppFlow(unittest.TestCase):
             self.assertTrue(resp.ok, getattr(resp, "error", None))
             submit_user_message.assert_called_once()
             submitted_text = str(submit_user_message.call_args.kwargs.get("text") or "")
-            self.assertIn("[cccc] user → peer1:", submitted_text)
+            event_id = str(((resp.result or {}).get("event") or {}).get("id") or "")
+            self.assertTrue(event_id)
+            self.assertIn(
+                f"[event_id={event_id} message_mode=send]",
+                submitted_text,
+            )
+            self.assertIn("[cccc] user → peer1 [event_id=", submitted_text)
             self.assertIn("hello codex", submitted_text)
             queue_chat_message.assert_not_called()
             request_flush_pending_messages.assert_not_called()

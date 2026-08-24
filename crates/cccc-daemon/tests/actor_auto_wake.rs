@@ -30,6 +30,10 @@ async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
     .await;
     assert_eq!(sent.result["message_mode"], "send");
     assert!(sent.result.get("delivery").is_none());
+    let sent_event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("sent event id")
+        .to_owned();
 
     let actors = call(
         &client,
@@ -61,7 +65,11 @@ async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
     )
     .await;
 
-    wait_for_terminal(&client, &group_id, "MESSAGE:[cccc] user → peer1: wake up").await;
+    let metadata = format!("[event_id={sent_event_id} message_mode=send]");
+    let output = wait_for_terminal(&client, &group_id, &metadata).await;
+    assert!(output.contains(&format!(
+        "[cccc] user → peer1 [event_id={sent_event_id} message_mode=send]: wake up"
+    )));
     let actors = call(
         &client,
         "actor_list",

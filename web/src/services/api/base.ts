@@ -108,6 +108,22 @@ export function shouldForceTokenLogin(): boolean {
   }
 }
 
+export function removeAuthTokenFromUrl(): void {
+  try {
+    const current = new URL(window.location.href);
+    if (!current.searchParams.has("token")) return;
+    current.searchParams.delete("token");
+    const search = current.searchParams.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${current.pathname}${search ? `?${search}` : ""}${current.hash}`,
+    );
+  } catch {
+    void 0;
+  }
+}
+
 function getAuthToken(): string | null {
   if (cachedToken !== null) return cachedToken || null;
 
@@ -120,6 +136,7 @@ function getAuthToken(): string | null {
     } catch {
       void 0;
     }
+    removeAuthTokenFromUrl();
     return urlToken;
   }
 

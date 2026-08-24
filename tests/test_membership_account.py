@@ -10,6 +10,7 @@ from cccc.kernel.membership_account import (
     VERSION_HEADER,
     AccountError,
     default_transport,
+    disable_device,
     fetch_device,
     issue_reach,
     poll_device_login,
@@ -25,6 +26,7 @@ class FakeAccount:
         self.force_unsupported = False
         self.calls: list[tuple[str, str]] = []
         self.payloads: list[Dict[str, Any]] = []
+        self.timeouts: list[float] = []
 
     def __call__(
         self,
@@ -36,6 +38,7 @@ class FakeAccount:
     ) -> tuple[int, Dict[str, Any]]:
         self.calls.append((method, url))
         self.payloads.append(json.loads(body.decode("utf-8")) if body else {})
+        self.timeouts.append(timeout_s)
         if self.force_unsupported or headers.get(VERSION_HEADER) != "1":
             return 426, {
                 "error": {
@@ -44,10 +47,12 @@ class FakeAccount:
                 }
             }
         if url.endswith("/v1/device/code"):
+            issuer = url[: -len("/v1/device/code")]
             return 200, {
                 "device_code": "dc-1",
                 "user_code": "WDJB-MJHT",
-                "verification_uri": "https://account.test/device",
+                "verification_uri": f"{issuer}/device",
+                "verification_uri_complete": f"{issuer}/device?user_code=WDJB-MJHT",
                 "expires_in": 600,
                 "interval": 1,
             }
@@ -68,6 +73,9 @@ class FakeAccount:
                 "hostname": "https://d-abc.example.test",
                 "tunnel_token": "tun-1",
             }
+        if url.endswith("/v1/device/disable"):
+            self.disabled = True
+            return 200, {"device_id": "d_abc", "disabled": True}
         if url.endswith("/v1/device"):
             return 200, {
                 "device_id": "d_abc",
@@ -113,6 +121,10 @@ class TestMembershipAccountClient(unittest.TestCase):
         started = start_device_login("https://account.test", transport=FakeAccount())
         self.assertEqual(started["user_code"], "WDJB-MJHT")
         self.assertEqual(started["verification_uri"], "https://account.test/device")
+        self.assertEqual(
+            started["verification_uri_complete"],
+            "https://account.test/device?user_code=WDJB-MJHT",
+        )
 
     def test_start_device_login_honors_long_server_polling_interval(self) -> None:
         def transport(method, url, headers, body, timeout_s):
@@ -129,6 +141,22 @@ class TestMembershipAccountClient(unittest.TestCase):
             start_device_login("https://account.test", transport=transport)["interval"],
             120,
         )
+
+    def test_start_device_login_rejects_an_off_origin_approval_url(self) -> None:
+        def transport(method, url, headers, body, timeout_s):
+            _ = method, url, headers, body, timeout_s
+            return 200, {
+                "device_code": "dc-1",
+                "user_code": "WDJB-MJHT",
+                "verification_uri": "https://attacker.example.test/device",
+                "expires_in": 600,
+                "interval": 5,
+            }
+
+        with self.assertRaises(AccountError) as rejected:
+            start_device_login("https://account.test", transport=transport)
+        self.assertEqual(rejected.exception.code, "membership_network")
+        self.assertIn("off-origin", rejected.exception.message)
 
     def test_poll_pending_then_granted(self) -> None:
         account = FakeAccount()
@@ -173,6 +201,12 @@ class TestMembershipAccountClient(unittest.TestCase):
         self.assertIn({"origin_port": 9000}, account.payloads)
         device = fetch_device("https://account.test", "devtok", transport=account)
         self.assertFalse(device["disabled"])
+
+    def test_device_can_retire_its_remote_credential(self) -> None:
+        account = FakeAccount()
+        disable_device("https://account.test", "devtok", transport=account)
+        self.assertTrue(account.disabled)
+        self.assertEqual(account.calls[-1][0], "POST")
 
     def test_rejects_non_https_or_non_origin_reach_hostnames(self) -> None:
         for hostname in (
@@ -221,6 +255,17 @@ class TestMembershipAccountClient(unittest.TestCase):
         with self.assertRaises(AccountError) as ctx:
             start_device_login("not-a-url")
         self.assertEqual(ctx.exception.code, "membership_unavailable")
+
+    def test_rejects_non_origin_account_urls(self) -> None:
+        for origin in (
+            "https://account.example.test/device",
+            "https://account.example.test/?tenant=one",
+            "https://user@account.example.test",
+            "https://account.example.test/#fragment",
+        ):
+            with self.subTest(origin=origin), self.assertRaises(AccountError) as ctx:
+                start_device_login(origin)
+            self.assertEqual(ctx.exception.code, "membership_unavailable")
 
     def test_rejects_plain_http_except_for_loopback_development(self) -> None:
         with self.assertRaises(AccountError) as ctx:

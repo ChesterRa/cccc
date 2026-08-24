@@ -20,6 +20,7 @@ pub struct Artifact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Inspection {
+    pub supported: bool,
     pub installed: bool,
     pub path: Option<PathBuf>,
     pub version: Option<String>,
@@ -144,6 +145,7 @@ pub fn inspect(home: &HomeLayout) -> io::Result<Inspection> {
         && metadata.version == PINNED_VERSION
         && expected.is_some_and(|artifact| sha256.as_deref() == Some(artifact.binary_sha256));
     Ok(Inspection {
+        supported: expected.is_some(),
         installed,
         path: installed.then_some(path),
         version: (!metadata.version.is_empty()).then_some(metadata.version),

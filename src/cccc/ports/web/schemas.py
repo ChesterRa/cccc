@@ -743,13 +743,13 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
     token = _extract_token_from_headers(getattr(websocket, "headers", {}) or {})
     if not token:
         try:
-            cookies = getattr(websocket, "cookies", None) or {}
-            token = str(cookies.get("cccc_access_token") or "").strip()
+            token = str(websocket.query_params.get("token") or "").strip()
         except Exception:
             token = ""
     if not token:
         try:
-            token = str(websocket.query_params.get("token") or "").strip()
+            cookies = getattr(websocket, "cookies", None) or {}
+            token = str(cookies.get("cccc_access_token") or "").strip()
         except Exception:
             token = ""
     if not token:

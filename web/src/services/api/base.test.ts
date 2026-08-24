@@ -5,6 +5,7 @@ import {
   isAuthRequiredErrorCode,
   normalizePresentationBrowserSurfaceState,
   onAuthRequired,
+  removeAuthTokenFromUrl,
   refreshAuthTokenInUrl,
   setAuthToken,
   withAuthToken,
@@ -127,6 +128,18 @@ describe("authenticated URLs", () => {
     expect(refreshAuthTokenInUrl("http://127.0.0.1:8848/ui/?token=expired")).toBe(
       "http://127.0.0.1:8848/ui/?token=current-token",
     );
+  });
+
+  it("removes the consumed token from browser history without dropping other URL state", () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      location: { href: "https://d-1.cccc.foo/ui/?token=acc_secret&view=group#actor" },
+      history: { state: { preserved: true }, replaceState },
+    });
+
+    removeAuthTokenFromUrl();
+
+    expect(replaceState).toHaveBeenCalledWith({ preserved: true }, "", "/ui/?view=group#actor");
   });
 });
 

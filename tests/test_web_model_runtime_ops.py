@@ -777,9 +777,13 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             turn = (wait.result or {}).get("turn") or {}
             messages = turn.get("messages") or []
             self.assertEqual([str(item.get("kind") or "") for item in messages], ["chat.message"])
-            self.assertIn("single pull task", str(turn.get("coalesced_text") or ""))
-            self.assertIn("[cccc] user → peer1", str(turn.get("coalesced_text") or ""))
-            self.assertNotIn("[#1", str(turn.get("coalesced_text") or ""))
+            event_id = str(((send.result or {}).get("event") or {}).get("id") or "")
+            coalesced = str(turn.get("coalesced_text") or "")
+            self.assertTrue(event_id)
+            self.assertIn(f"[event_id={event_id} message_mode=send]", coalesced)
+            self.assertIn("single pull task", coalesced)
+            self.assertIn("[cccc] user → peer1", coalesced)
+            self.assertNotIn("[#1", coalesced)
         finally:
             cleanup()
 
@@ -862,6 +866,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertNotIn("Browser-delivered message batch", prompt)
             self.assertNotIn("Work from the messages below", prompt)
             self.assertNotIn("This ChatGPT chat is the browser surface", prompt)
+            self.assertIn(
+                f"[event_id={event['id']} message_mode=send]",
+                prompt,
+            )
             self.assertIn("[cccc] user → peer1", prompt)
             self.assertNotIn("[#1", prompt)
             self.assertNotIn("Browser Web Model actor", prompt)

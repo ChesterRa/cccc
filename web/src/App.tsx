@@ -98,6 +98,7 @@ export default function App() {
   const sseStatus = useUIStore((s) => s.sseStatus);
 
   const openModal = useModalStore((s) => s.openModal);
+  const openSettingsTarget = useModalStore((s) => s.openSettingsTarget);
   const groupEditOpen = useModalStore((s) => s.modals.groupEdit);
   const addActorOpen = useModalStore((s) => s.modals.addActor);
   const editingActor = useModalStore((s) => s.editingActor);
@@ -446,6 +447,8 @@ export default function App() {
         onStopGroup={handleStopGroup}
         onSetGroupState={handleSetGroupState}
         onOpenSettings={() => openModal("settings")}
+        canAccessAccount={canManageGroups}
+        onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
         onOpenMobileMenu={() => openModal("mobileMenu")}
         onTabChange={handleTabChange}
         appendComposerFiles={handleAppendComposerFiles}

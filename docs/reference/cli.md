@@ -65,17 +65,17 @@ Access** before publishing the local Web surface.
 
 ```bash
 cccc login             # Bind this machine through device authorization
-cccc logout            # Remove the local membership identity
+cccc logout            # Retire this account device and clear its local identity
 cccc reach install     # Install or upgrade the pinned cloudflared helper
 cccc reach on          # Publish the authenticated Web surface
-cccc reach status      # Show account, hostname, Web, and connector state
+cccc reach status      # Show account, hostname, Web, and publication state
 cccc reach off         # Stop publication without removing local identity
 ```
 
-The Web URL and ChatGPT connector URL are distinct secrets. Rotating a token,
-cutting access, or logging out changes the connector URL. Windows helper
-installation is not included in this release candidate, so Reach is unavailable
-there.
+The token-bearing Web URL is shown here; keep it private. ChatGPT/Web Model
+connector credentials are actor-specific and are managed from that actor's Web
+Model settings. Windows helper installation is not included in this release
+candidate, so Reach is unavailable there.
 
 ## Group Commands
 

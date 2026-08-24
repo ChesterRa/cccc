@@ -3227,6 +3227,21 @@ The immediate response confirms ledger acceptance and echoes the canonical mode;
 it is not transport evidence. Per-recipient delivery truth is reported only by
 daemon-authored `runtime.delivery` events and the corresponding status queries.
 
+Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
+current ledger identity and canonical mode before the message body:
+
+```text
+[cccc] <sender> → <recipients> [event_id=<current_event_id> message_mode=<send|request_reply|mail> reply_to=<parent_event_id_if_present>]: <body>
+```
+
+`event_id` is the target an actor passes to `cccc_message_reply` when answering
+the delivered message. Optional `reply_to` is different: it identifies the
+parent that the current message already answers. Implementations MUST preserve
+that distinction and use the same metadata in PTY, headless, and Web Model
+delivery. The metadata MUST remain in the existing first header line so adding
+it does not turn a one-line message into multiple runtime input lines. It does
+not add or mutate ledger fields, and it is not required for `system.notify`.
+
 #### `message_upload_preflight`
 
 Validate a Web-owned staged upload before its temporary files are committed to
@@ -4824,7 +4839,7 @@ Optional extension for third-party deployments. The bundled Python and Rust impl
 
 Stable error classes:
 
-- `membership_not_logged_in`
+- `membership_not_logged_in` – no local device binding exists for an operation that requires one
 - `membership_gate` – missing Admin Token, unauthenticated-listener override, or another remote provider is already on
 - `membership_disabled`
 - `membership_network`
@@ -4846,21 +4861,45 @@ Stable error classes:
     device_id?: string | null
     hostname?: string | null
     web_url?: string | null
-    connector_url?: string | null
     online: boolean
     cut: boolean
     disabled: boolean
     in_reach: boolean
+    reach_supported: boolean
+    account_reachable?: boolean | null
     account_origin?: string | null
     last_error?: string | null
     warning?: string
+    pending?: {
+      user_code: string
+      verification_uri: string
+      verification_uri_complete?: string | null
+      interval: number
+      expires_at: string
+    } | null
   }
 }
 ```
 
-`membership_status` is user-only because `web_url` and `connector_url` may contain local bearer credentials. Implementations MUST reject non-user callers before assembling those fields. Both URLs are assembled locally and MUST NOT be stored on the account plane. They are null while logged out; `connector_url` is also null until reach has both a hostname and a local connector secret to embed.
+`membership_status` is user-only because `web_url` contains a local bearer credential. Implementations MUST reject non-user callers before assembling it. The URL is assembled locally and MUST NOT be stored on the account plane. It is null while logged out. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
 
-Status refresh may observe an account-side Cut and must then stop the helper and persist the disabled state. Daemons therefore MUST serialize `membership_status` with membership mutations rather than treating it as a side-effect-free read.
+`account_reachable` is ephemeral evidence from the current status refresh; it is
+omitted when no linked-device probe applies, `true` after a valid account-plane
+response, and `false` after a transient account-plane failure. It MUST NOT be
+persisted as a second freshness state machine.
+
+`reach_supported` reports whether this CCCC build provides a pinned managed
+Reach helper for the current platform. It is independent of account linkage and
+helper installation: an unsupported platform can still link and manage its CCCC
+Account, but MUST NOT present Reach as startable.
+
+Status refresh may observe an account-side Cut or learn that the bearer for an
+already-linked device is definitively absent. Both are terminal revocations: the
+daemon MUST stop the tracked helper, persist the disabled state, and clear
+Reach-owned `enabled` / `web_public_url` state before returning. A timeout, DNS
+failure, 5xx response, or malformed response is transient and MUST preserve the
+binding and helper state. Daemons therefore MUST serialize `membership_status`
+with membership mutations rather than treating it as a side-effect-free read.
 
 #### `membership_login` / `membership_login_poll` / `membership_logout`
 
@@ -4868,9 +4907,20 @@ Status refresh may observe an account-side Cut and must then stop the helper and
 { by?: string }
 ```
 
-`membership_login` starts RFC 8628 device-code login against `CCCC_ACCOUNT_ORIGIN` and returns `membership.pending` (`verification_uri`, `user_code`, `interval`). The selected account origin is persisted with the pending login and resulting device grant. Polling and every later authenticated device or Reach request MUST use that issuer-bound origin; a changed daemon environment or per-request override MUST NOT retarget an existing bearer token. The CLI prints the pending values and polls `membership_login_poll` until `logged_in` or a terminal error. The advertised interval is a minimum and MUST NOT be capped downward. On `slow_down`, subsequent polling waits MUST increase by at least five seconds. Logout deletes local membership secrets, stops any tracked reach helper, and clears retired public URLs. The result includes a warning that the next login is a new device and hostname.
+`membership_login` starts RFC 8628 device-code login against `CCCC_ACCOUNT_ORIGIN` and returns `membership.pending` (`verification_uri`, optional `verification_uri_complete`, `user_code`, `interval`). While an unexpired, still-pollable grant exists, another `membership_login` MUST replay it rather than issue a second device code or retarget it to a different origin. Both verification URLs MUST be absolute HTTP(S) URLs on the configured account origin; clients reject an off-origin authorization URL before storing or opening it. The selected account origin is persisted with the pending login and resulting device grant. Polling and every later authenticated device or Reach request MUST use that issuer-bound origin; a changed daemon environment or per-request override MUST NOT retarget an existing bearer token. The CLI or Web client opens `verification_uri_complete` when present and otherwise presents `verification_uri` plus `user_code`. The advertised interval is a minimum and MUST NOT be capped downward. On `slow_down`, subsequent polling waits MUST increase by at least five seconds. `authorization_pending`, `slow_down`, transport failures, and 5xx responses preserve the pending grant. `access_denied` and `expired_token` are terminal for that grant: the daemon MUST clear the matching pending state before returning the error so the next `membership_login` can issue a fresh code. Once a grant has been committed, an exact or late `membership_login_poll` MUST replay the logged-in status instead of failing because the pending code was consumed.
 
-Requests send `CCCC-Membership-Version: 1`. An account plane that no longer supports the client returns `membership_unsupported_version`. `CCCC_ACCOUNT_ORIGIN` MUST use HTTPS, except that loopback HTTP is allowed for local development. Clients MUST NOT follow account-plane redirects because authenticated requests carry a device bearer token.
+`membership_logout` first stops any tracked Reach helper, then retires the issuer-bound account device through the account plane, and only then clears local membership secrets and retired Reach URLs. Network or account errors preserve the local credential so the user can retry; an already absent or disabled remote device is treated as retired. The result includes a warning that the next login is a new device and hostname.
+
+Requests send `CCCC-Membership-Version: 1`. An account plane that no longer supports the client returns `membership_unsupported_version`. `CCCC_ACCOUNT_ORIGIN` MUST be an HTTP(S) origin without user information, a non-root path, query, or fragment. It MUST use HTTPS, except that loopback HTTP is allowed for local development. Clients MUST NOT follow account-plane redirects because authenticated requests carry a device bearer token.
+
+For authenticated device endpoints, absence of an Authorization bearer remains
+`401 unauthorized`. When a bearer is present but no active device exists for it
+(including after device or account deletion), the account plane MUST return
+`403 device_disabled`. Clients talking to an older or third-party issuer MAY
+also receive `401` or `404`; if the request used a locally stored device bearer,
+those responses are the same terminal revocation, not evidence of a transient
+network failure. Relinking first retires the invalid local binding and then
+starts a fresh device-code authorization.
 
 #### `membership_reach_install`
 
@@ -4888,7 +4938,7 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 
 `reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set, or if `manual`/`tailscale` is already enabled. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
-The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 
 Python and Rust share `CCCC_HOME/secrets/membership.json` and serialize every read-modify-write mutation with `CCCC_HOME/secrets/membership.json.lock`. Every writer MUST preserve the full v1 shape, including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and `pending_login`, so an engine switch cannot silently discard credentials, their issuer, or an in-progress login.
 

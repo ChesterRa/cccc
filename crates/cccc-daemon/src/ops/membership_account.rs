@@ -17,6 +17,7 @@ pub(super) struct AccountError {
     pub message: String,
     pub retryable: bool,
     pub retry_after_delta: u64,
+    pub terminal_authorization: bool,
 }
 
 impl AccountError {
@@ -26,6 +27,17 @@ impl AccountError {
             message: message.into(),
             retryable: false,
             retry_after_delta: 0,
+            terminal_authorization: false,
+        }
+    }
+
+    fn terminal(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            retryable: false,
+            retry_after_delta: 0,
+            terminal_authorization: true,
         }
     }
 
@@ -35,6 +47,7 @@ impl AccountError {
             message: message.into(),
             retryable: true,
             retry_after_delta,
+            terminal_authorization: false,
         }
     }
 }
@@ -44,6 +57,7 @@ pub(super) struct DeviceLogin {
     pub device_code: String,
     pub user_code: String,
     pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
     pub expires_in: u64,
     pub interval: u64,
 }
@@ -122,23 +136,39 @@ pub(super) fn canonical_reach_hostname(value: &str) -> Option<String> {
 
 impl AccountClient {
     pub fn new(origin: &str) -> Result<Self, AccountError> {
+        Self::with_timeout(origin, None)
+    }
+
+    pub fn with_timeout(origin: &str, timeout_seconds: Option<f64>) -> Result<Self, AccountError> {
         let origin = origin.trim().trim_end_matches('/');
-        let parsed = Url::parse(&format!("{origin}/")).map_err(|_| {
+        let mut parsed = Url::parse(origin).map_err(|_| {
             AccountError::new(
                 "membership_unavailable",
-                "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) URL",
+                "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) origin",
             )
         })?;
-        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || !matches!(parsed.path(), "" | "/")
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
             return Err(AccountError::new(
                 "membership_unavailable",
-                "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) URL",
+                "CCCC_ACCOUNT_ORIGIN must be an absolute http(s) origin",
             ));
         }
-        let timeout = std::env::var("CCCC_ACCOUNT_TIMEOUT_S")
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
+        parsed.set_path("/");
+        let timeout = timeout_seconds
             .filter(|value| value.is_finite())
+            .or_else(|| {
+                std::env::var("CCCC_ACCOUNT_TIMEOUT_S")
+                    .ok()
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| value.is_finite())
+            })
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
             .max(0.2);
         let loopback = parsed.host_str().is_some_and(|host| {
@@ -173,19 +203,49 @@ impl AccountClient {
         let verification_uri = non_blank(&data, "verification_uri")
             .or_else(|| non_blank(&data, "verification_uri_complete"))
             .unwrap_or_default();
+        let verification_uri_complete = non_blank(&data, "verification_uri_complete");
         if device_code.is_empty() || user_code.is_empty() || verification_uri.is_empty() {
             return Err(AccountError::new(
                 "membership_network",
                 "account service returned an incomplete device code",
             ));
         }
+        let verification_uri = self.authorization_url(&verification_uri)?;
+        let verification_uri_complete = verification_uri_complete
+            .as_deref()
+            .map(|value| self.authorization_url(value))
+            .transpose()?;
         Ok(DeviceLogin {
             device_code,
             user_code,
             verification_uri,
+            verification_uri_complete,
             expires_in: integer(&data, "expires_in", 900).max(30),
             interval: integer(&data, "interval", 5).max(1),
         })
+    }
+
+    fn authorization_url(&self, value: &str) -> Result<String, AccountError> {
+        let parsed = Url::parse(value).map_err(|_| {
+            AccountError::new(
+                "membership_network",
+                "account service returned an invalid device authorization URL",
+            )
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.fragment().is_some()
+            || parsed.scheme() != self.origin.scheme()
+            || parsed.host_str() != self.origin.host_str()
+            || parsed.port_or_known_default() != self.origin.port_or_known_default()
+        {
+            return Err(AccountError::new(
+                "membership_network",
+                "account service returned an off-origin device authorization URL",
+            ));
+        }
+        Ok(parsed.to_string())
     }
 
     pub fn poll_device_login(&self, device_code: &str) -> Result<DeviceGrant, AccountError> {
@@ -265,6 +325,16 @@ impl AccountClient {
         })
     }
 
+    pub fn disable_device(&self, device_token: &str) -> Result<(), AccountError> {
+        self.request(
+            Method::POST,
+            "/v1/device/disable",
+            Some(json!({})),
+            Some(device_token),
+        )?;
+        Ok(())
+    }
+
     fn request(
         &self,
         method: Method,
@@ -340,11 +410,11 @@ fn error_from_payload(status: u16, payload: &Map<String, Value>) -> AccountError
             AccountError::retry(nonempty_message(message, "authorization_pending"), 0)
         }
         "slow_down" => AccountError::retry(nonempty_message(message, "slow_down"), 5),
-        "expired_token" | "expired" => AccountError::new(
+        "expired_token" | "expired" => AccountError::terminal(
             "membership_network",
             nonempty_message(message, "device code expired"),
         ),
-        "access_denied" | "denied" => AccountError::new(
+        "access_denied" | "denied" => AccountError::terminal(
             "membership_gate",
             nonempty_message(message, "login was denied"),
         ),
@@ -427,12 +497,15 @@ mod tests {
     fn server(responses: Vec<(u16, &'static str)>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let address = listener.local_addr().expect("address");
+        let origin = format!("http://{address}");
+        let response_origin = origin.clone();
         thread::spawn(move || {
             for (status, body) in responses {
                 let (mut stream, _) = listener.accept().expect("accept");
                 let mut request = [0_u8; 4096];
                 let _ = stream.read(&mut request);
                 let reason = if status == 200 { "OK" } else { "Bad Request" };
+                let body = body.replace("$ORIGIN", &response_origin);
                 write!(
                     stream,
                     "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -441,7 +514,7 @@ mod tests {
                 .expect("response");
             }
         });
-        format!("http://{address}/")
+        origin
     }
 
     #[test]
@@ -449,7 +522,7 @@ mod tests {
         let origin = server(vec![
             (
                 200,
-                r#"{"device_code":"dc-1","user_code":"ABCD-EFGH","verification_uri":"https://account.test/device","expires_in":600,"interval":120}"#,
+                r#"{"device_code":"dc-1","user_code":"ABCD-EFGH","verification_uri":"$ORIGIN/device","verification_uri_complete":"$ORIGIN/device?user_code=ABCD-EFGH","expires_in":600,"interval":120}"#,
             ),
             (400, r#"{"error":"authorization_pending"}"#),
             (
@@ -460,6 +533,11 @@ mod tests {
         let client = AccountClient::new(&origin).expect("client");
         let login = client.start_device_login().expect("login");
         assert_eq!(login.interval, 120);
+        let expected_approval = format!("{origin}/device?user_code=ABCD-EFGH");
+        assert_eq!(
+            login.verification_uri_complete.as_deref(),
+            Some(expected_approval.as_str())
+        );
         assert!(
             client
                 .poll_device_login(&login.device_code)
@@ -493,12 +571,39 @@ mod tests {
     }
 
     #[test]
+    fn off_origin_device_authorization_urls_are_rejected() {
+        let origin = server(vec![(
+            200,
+            r#"{"device_code":"dc-1","user_code":"ABCD-EFGH","verification_uri":"https://attacker.example.test/device","expires_in":600,"interval":5}"#,
+        )]);
+        let error = AccountClient::new(&origin)
+            .expect("client")
+            .start_device_login()
+            .expect_err("off-origin approval URL");
+        assert_eq!(error.code, "membership_network");
+        assert!(error.message.contains("off-origin"));
+    }
+
+    #[test]
     fn plain_http_is_limited_to_loopback_development_servers() {
         let error = AccountClient::new("http://account.example.test")
             .err()
             .expect("plain HTTP");
         assert_eq!(error.code, "membership_unavailable");
         assert!(AccountClient::new("http://127.0.0.1:8787").is_ok());
+    }
+
+    #[test]
+    fn account_origin_rejects_paths_queries_fragments_and_userinfo() {
+        for origin in [
+            "https://account.example.test/device",
+            "https://account.example.test/?tenant=one",
+            "https://user@account.example.test",
+            "https://account.example.test/#fragment",
+        ] {
+            let error = AccountClient::new(origin).err().expect("non-origin URL");
+            assert_eq!(error.code, "membership_unavailable", "{origin}");
+        }
     }
 
     #[test]
@@ -524,6 +629,15 @@ mod tests {
         let device = client.fetch_device("token").expect("device");
         assert_eq!(device.device_id.as_deref(), Some("d-1"));
         assert!(!device.disabled);
+    }
+
+    #[test]
+    fn device_can_retire_its_remote_credential() {
+        let origin = server(vec![(200, r#"{"device_id":"d-1","disabled":true}"#)]);
+        AccountClient::new(&origin)
+            .expect("client")
+            .disable_device("token")
+            .expect("disable device");
     }
 
     #[test]

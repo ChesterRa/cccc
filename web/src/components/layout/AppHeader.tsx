@@ -18,6 +18,7 @@ import {
   PauseIcon,
   StopIcon,
   SettingsIcon,
+  AccountIcon,
   EditIcon,
   MoreIcon,
   MenuIcon,
@@ -47,6 +48,8 @@ export interface AppHeaderProps {
   onStopGroup: () => void;
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
   onOpenSettings: () => void;
+  canAccessAccount: boolean;
+  onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
 }
 
@@ -71,6 +74,8 @@ export function AppHeader({
   onStopGroup,
   onSetGroupState,
   onOpenSettings,
+  canAccessAccount,
+  onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
 }: AppHeaderProps) {
@@ -328,12 +333,26 @@ export function AppHeader({
                   className="mx-0.5 h-4 w-px bg-[var(--glass-border-subtle)]"
                   aria-hidden="true"
                 />
+                {canAccessAccount ? (
+                  <button
+                    type="button"
+                    onClick={onOpenAccount}
+                    className={classNames(
+                      headerUtilityButtonClass,
+                      "w-auto gap-1.5 px-2.5 text-xs font-medium",
+                    )}
+                    aria-label={t("account")}
+                  >
+                    <AccountIcon size={17} />
+                    <span className="hidden lg:inline">{t("account")}</span>
+                  </button>
+                ) : null}
                 <IconButton
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={onOpenSettings}
-                  disabled={!selectedGroupId}
+                  disabled={!selectedGroupId && !canAccessAccount}
                   className={classNames(
                     headerUtilityButtonClass,
                     "disabled:opacity-45 disabled:text-[var(--color-text-tertiary)]",

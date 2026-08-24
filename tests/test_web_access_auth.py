@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from dataclasses import asdict
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -179,6 +180,52 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertEqual(body.get("allowed_groups"), ["g-1"])
             self.assertFalse(bool(body.get("is_admin")))
             self.assertIn("cccc_access_token=", str(resp.headers.get("set-cookie") or ""))
+        finally:
+            cleanup()
+
+    def test_query_token_replaces_a_stale_cookie_for_http_and_websocket_auth(
+        self,
+    ) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web.schemas import resolve_websocket_principal
+
+        _, cleanup = self._with_home()
+        try:
+            stale = create_access_token("stale-user", is_admin=True)
+            current = create_access_token("current-user", is_admin=True)
+            stale_token = str(stale.get("token") or "")
+            current_token = str(current.get("token") or "")
+            client = self._create_probe_client()
+            client.cookies.set("cccc_access_token", stale_token)
+
+            response = client.get(f"/__test__/principal?token={current_token}")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json().get("user_id"), "current-user")
+            self.assertIn(current_token, str(response.headers.get("set-cookie") or ""))
+
+            websocket = SimpleNamespace(
+                headers={},
+                cookies={"cccc_access_token": stale_token},
+                query_params={"token": current_token},
+            )
+            self.assertEqual(
+                resolve_websocket_principal(websocket).user_id, "current-user"
+            )
+        finally:
+            cleanup()
+
+    def test_invalid_query_token_does_not_fall_back_to_a_valid_cookie(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            token = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._create_probe_client()
+            client.cookies.set("cccc_access_token", token)
+
+            response = client.get("/__test__/principal?token=invalid")
+
+            self.assertEqual(response.status_code, 401)
         finally:
             cleanup()
 

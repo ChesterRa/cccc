@@ -1527,6 +1527,29 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         """Get local membership / reach status and copyable URLs."""
         return await ctx.daemon({"op": "membership_status", "args": {"by": "user"}})
 
+    @global_router.post("/api/v1/membership/login", dependencies=[Depends(require_admin)])
+    async def membership_login(by: str = "user") -> Dict[str, Any]:
+        """Start account device authorization for this machine."""
+        return await ctx.daemon(
+            {"op": "membership_login", "args": {"by": str(by or "user")}}
+        )
+
+    @global_router.post(
+        "/api/v1/membership/login/poll", dependencies=[Depends(require_admin)]
+    )
+    async def membership_login_poll(by: str = "user") -> Dict[str, Any]:
+        """Poll the pending account device authorization."""
+        return await ctx.daemon(
+            {"op": "membership_login_poll", "args": {"by": str(by or "user")}}
+        )
+
+    @global_router.post("/api/v1/membership/logout", dependencies=[Depends(require_admin)])
+    async def membership_logout(by: str = "user") -> Dict[str, Any]:
+        """Retire this account device and clear its local membership state."""
+        return await ctx.daemon(
+            {"op": "membership_logout", "args": {"by": str(by or "user")}}
+        )
+
     @global_router.post("/api/v1/membership/reach/on", dependencies=[Depends(require_admin)])
     async def membership_reach_on(by: str = "user") -> Dict[str, Any]:
         """Publish this machine through membership reach."""

@@ -26,6 +26,7 @@ from ...kernel.membership import (
 from ...kernel.membership_account import (
     AccountError,
     Transport,
+    disable_device,
     fetch_device,
     issue_reach,
     poll_device_login,
@@ -125,22 +126,22 @@ def _apply_cut(remote: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _refresh_cut_from_account() -> Tuple[Optional[str], Optional[bool]]:
+def _refresh_cut_from_account() -> Tuple[Optional[str], Optional[bool], Optional[bool]]:
     state = load_membership()
     origin = _bound_origin(state)
     token = state.get("device_token")
     if not origin or not token or not state.get("logged_in"):
-        return None, None
+        return None, None, None
     try:
-        remote = fetch_device(origin, str(token), transport=_transport)
+        remote = fetch_device(origin, str(token), transport=_transport, timeout_s=2.0)
     except AccountError as exc:
-        if exc.code != "membership_disabled":
-            return None, None
+        if exc.code not in {"membership_disabled", "membership_not_logged_in"}:
+            return None, None, False
         remote = {"disabled": True}
     if remote.get("disabled"):
-        return _apply_cut(remote), False
+        return _apply_cut(remote), False, True
     online = remote.get("online")
-    return None, online if isinstance(online, bool) else None
+    return None, online if isinstance(online, bool) else None, True
 
 
 def _live_web_port() -> int:
@@ -193,11 +194,11 @@ def _status_payload() -> Dict[str, Any]:
         "device_id": state.get("device_id"),
         "hostname": urls["hostname"],
         "web_url": urls["web_url"],
-        "connector_url": urls["connector_url"],
         "online": online,
         "cut": cut,
         "disabled": cut,
         "in_reach": provider == "reach",
+        "reach_supported": bool(helper.get("supported")),
         "account_origin": _bound_origin(state)
         or (account_origin() if not state.get("logged_in") else None),
         "last_error": state.get("last_error"),
@@ -213,6 +214,7 @@ def _status_payload() -> Dict[str, Any]:
         result["pending"] = {
             "user_code": pending.get("user_code"),
             "verification_uri": pending.get("verification_uri"),
+            "verification_uri_complete": pending.get("verification_uri_complete"),
             "interval": pending.get("interval"),
             "expires_at": pending.get("expires_at"),
         }
@@ -223,10 +225,12 @@ def handle_membership_status(args: Dict[str, Any]) -> DaemonResponse:
     denied = _require_user(args)
     if denied is not None:
         return denied
-    cleanup_error, account_online = _refresh_cut_from_account()
+    cleanup_error, account_online, account_reachable = _refresh_cut_from_account()
     if cleanup_error:
         return _error("membership_subprocess", cleanup_error)
     result = _status_payload()
+    if account_reachable is not None:
+        result["membership"]["account_reachable"] = account_reachable
     if account_online is False:
         result["membership"]["online"] = False
     return DaemonResponse(ok=True, result=result)
@@ -238,6 +242,13 @@ def handle_membership_login(args: Dict[str, Any]) -> DaemonResponse:
         return denied
     existing = load_membership()
     if existing.get("logged_in") and existing.get("device_token"):
+        return DaemonResponse(ok=True, result=_status_payload())
+    pending = (
+        existing.get("pending_login")
+        if isinstance(existing.get("pending_login"), dict)
+        else None
+    )
+    if pending is not None and not pending_login_expired(pending):
         return DaemonResponse(ok=True, result=_status_payload())
     origin = _requested_origin(args)
     if origin is None:
@@ -258,6 +269,8 @@ def handle_membership_login_poll(args: Dict[str, Any]) -> DaemonResponse:
     if denied is not None:
         return denied
     state = load_membership()
+    if state.get("logged_in") and state.get("device_token"):
+        return DaemonResponse(ok=True, result=_status_payload())
     pending = (
         state.get("pending_login")
         if isinstance(state.get("pending_login"), dict)
@@ -294,6 +307,16 @@ def handle_membership_login_poll(args: Dict[str, Any]) -> DaemonResponse:
 
                 update_membership(update_pending)
             return DaemonResponse(ok=True, result=_status_payload())
+        if exc.terminal_authorization:
+
+            def clear_terminal_pending(current: Dict[str, Any]) -> None:
+                current_pending = current.get("pending_login")
+                if isinstance(current_pending, dict) and str(
+                    current_pending.get("device_code") or ""
+                ) == str(pending.get("device_code") or ""):
+                    current["pending_login"] = None
+
+            update_membership(clear_terminal_pending)
         return _account_fail(exc)
     store_device_grant(grant, issuer=origin)
     return DaemonResponse(ok=True, result=_status_payload())
@@ -317,6 +340,14 @@ def handle_membership_logout(args: Dict[str, Any]) -> DaemonResponse:
     ).strip().lower() == "reach" or bool(
         hostname and remote_url and hostname == remote_url
     )
+    origin = _bound_origin(state)
+    token = str(state.get("device_token") or "").strip()
+    if origin and token:
+        try:
+            disable_device(origin, token, transport=_transport)
+        except AccountError as exc:
+            if exc.code not in {"membership_not_logged_in", "membership_disabled"}:
+                return _account_fail(exc)
     if retires_reach:
         update_remote_access_settings(
             {
@@ -375,7 +406,7 @@ def handle_membership_reach_on(args: Dict[str, Any]) -> DaemonResponse:
     if not state.get("logged_in") or not state.get("device_token"):
         remember_membership_error("not logged in")
         return _error("membership_not_logged_in", "not logged in; run `cccc login`")
-    cleanup_error, _account_online = _refresh_cut_from_account()
+    cleanup_error, _account_online, _account_reachable = _refresh_cut_from_account()
     if cleanup_error:
         return _error("membership_subprocess", cleanup_error)
     state = load_membership()
@@ -407,9 +438,15 @@ def handle_membership_reach_on(args: Dict[str, Any]) -> DaemonResponse:
             transport=_transport,
         )
     except AccountError as exc:
-        if exc.code == "membership_disabled":
+        if exc.code in {"membership_disabled", "membership_not_logged_in"}:
             if cleanup_error := _apply_cut({"disabled": True}):
                 return _error("membership_subprocess", cleanup_error)
+            if exc.code == "membership_not_logged_in":
+                message = (
+                    "this linked device no longer exists; relink this installation"
+                )
+                remember_membership_error(message)
+                return _error("membership_disabled", message)
         return _account_fail(exc)
 
     def store_reach(current: Dict[str, Any]) -> None:

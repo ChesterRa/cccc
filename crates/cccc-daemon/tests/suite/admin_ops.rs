@@ -12,8 +12,11 @@ use std::thread;
 fn membership_account_server(responses: Vec<(u16, &'static str)>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind account fixture");
     let address = listener.local_addr().expect("account address");
+    let origin = format!("http://{address}");
+    let response_origin = origin.clone();
     thread::spawn(move || {
         for (status, body) in responses {
+            let body = body.replace("$ORIGIN", &response_origin);
             let (mut stream, _) = listener.accept().expect("account request");
             let mut request = [0_u8; 4096];
             let _ = stream.read(&mut request);
@@ -26,7 +29,7 @@ fn membership_account_server(responses: Vec<(u16, &'static str)>) -> String {
             .expect("account response");
         }
     });
-    format!("http://{address}")
+    origin
 }
 
 #[test]
@@ -198,11 +201,9 @@ fn membership_verbs_fail_closed_when_the_account_plane_rejects_login() {
     );
 
     let logout = ok(&home, "membership_logout", json!({"by":"user"}));
-    assert!(
-        logout.result["membership"]["warning"]
-            .as_str()
-            .expect("warning")
-            .contains("new hostname")
+    assert_eq!(
+        logout.result["membership"]["warning"],
+        membership::LOGOUT_WARNING
     );
 }
 
@@ -254,7 +255,7 @@ fn rust_membership_login_and_poll_complete_the_device_flow() {
     let origin = membership_account_server(vec![
         (
             200,
-            r#"{"device_code":"dc-rust","user_code":"RUST-CODE","verification_uri":"https://account.test/device","expires_in":600,"interval":120}"#,
+            r#"{"device_code":"dc-rust","user_code":"RUST-CODE","verification_uri":"$ORIGIN/device","expires_in":600,"interval":120}"#,
         ),
         (
             200,

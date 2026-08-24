@@ -172,7 +172,7 @@ For a browser-delivered batch, the injected prompt already contains the messages
 
 ### Prompt and Help Layering
 
-The browser-injected prompt should stay small. It identifies the actor and delivered event ids, embeds messages rendered in the same actor-facing format used by normal peers, and includes the same compact MCP reply reminder used by ordinary actors. The first injected batch in a bound or newly auto-bound ChatGPT conversation also carries the normal actor system prompt plus a short Web transport note; later batches do not repeat that seed. Durable collaboration rules belong in the shared `cccc_help` path, including the Web Model Transport runtime note appended for `runtime=web_model` actors.
+The browser-injected prompt should stay small. Each embedded message uses the same actor-facing format as normal peers, including its current `event_id`, canonical `message_mode`, and a distinct parent `reply_to` when present. `event_id` is the value to pass to `cccc_message_reply` when answering that message. The first injected batch in a bound or newly auto-bound ChatGPT conversation also carries the normal actor system prompt plus a short Web transport note; later batches do not repeat that seed. Durable collaboration rules belong in the shared `cccc_help` path, including the Web Model Transport runtime note appended for `runtime=web_model` actors.
 
 Use this split to avoid duplicate or drifting instructions:
 

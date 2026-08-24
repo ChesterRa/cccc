@@ -193,6 +193,7 @@ def refill_unread_runtime_messages(
                     by=str(event.get("by") or "user").strip() or "user",
                     to=recipients or [aid],
                     text=delivery_text,
+                    message_mode=str(data.get("message_mode") or "send"),
                     reply_to=str(data.get("reply_to") or "") or None,
                     quote_text=str(data.get("quote_text") or "") or None,
                     source_platform=str(data.get("source_platform") or "") or None,

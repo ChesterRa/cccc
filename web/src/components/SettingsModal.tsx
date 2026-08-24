@@ -75,6 +75,9 @@ const ActorProfilesTab = lazy(() =>
 const BrandingTab = lazy(() =>
   import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })),
 );
+const AccountTab = lazy(() =>
+  import("./modals/settings/AccountTab").then((module) => ({ default: module.AccountTab })),
+);
 const WebAccessTab = lazy(() =>
   import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })),
 );
@@ -127,6 +130,8 @@ export function SettingsModal({
   const [scope, setScope] = useState<SettingsScope>(() => initialLocation.scope);
   const [groupTab, setGroupTab] = useState<GroupTabId>(() => initialLocation.groupTab);
   const [globalTab, setGlobalTab] = useState<GlobalTabId>(() => initialLocation.globalTab);
+  const [accountReturnToWebAccess, setAccountReturnToWebAccess] = useState(false);
+  const [focusReachOnOpen, setFocusReachOnOpen] = useState(false);
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
   const settingsTarget = useModalStore((state) => state.settingsTarget);
@@ -248,6 +253,12 @@ export function SettingsModal({
     if (!isOpen) return;
     setScope(groupId ? "group" : "global");
   }, [isOpen, groupId]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    setAccountReturnToWebAccess(false);
+    setFocusReachOnOpen(false);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1046,6 +1057,7 @@ export function SettingsModal({
     () => [
       ...(globalSettingsEnabled
         ? [
+            { id: "account" as const, label: t("tabs.account") },
             { id: "capabilities" as const, label: t("tabs.capabilities") },
             { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
           ]
@@ -1088,9 +1100,13 @@ export function SettingsModal({
     const nextTab = String(settingsTarget.tab || "").trim();
     if (nextScope === "global") {
       setScope("global");
+      setAccountReturnToWebAccess(false);
+      setFocusReachOnOpen(false);
       if (nextTab) setGlobalTab(nextTab as GlobalTabId);
     } else if (nextScope === "group") {
       setScope("group");
+      setAccountReturnToWebAccess(false);
+      setFocusReachOnOpen(false);
       if (nextTab) setGroupTab(nextTab as GroupTabId);
     }
     clearSettingsTarget();
@@ -1111,8 +1127,22 @@ export function SettingsModal({
   const tabs = scope === "group" ? groupTabs : globalScopeEnabled ? globalTabs : [];
   const activeTab = scope === "group" ? groupTab : globalTab;
   const setActiveTab = (tab: GroupTabId | GlobalTabId) => {
+    setAccountReturnToWebAccess(false);
+    setFocusReachOnOpen(false);
     if (scope === "group") setGroupTab(tab as GroupTabId);
     else setGlobalTab(tab as GlobalTabId);
+  };
+
+  const openAccountFromWebAccess = () => {
+    setAccountReturnToWebAccess(true);
+    setFocusReachOnOpen(false);
+    setGlobalTab("account");
+  };
+
+  const openWebAccessFromAccount = () => {
+    setAccountReturnToWebAccess(false);
+    setFocusReachOnOpen(true);
+    setGlobalTab("webAccess");
   };
 
   useEffect(() => {
@@ -1190,7 +1220,11 @@ export function SettingsModal({
           globalEnabled={globalScopeEnabled}
           tabs={tabs}
           activeTab={activeTab}
-          onScopeChange={setScope}
+          onScopeChange={(nextScope) => {
+            setAccountReturnToWebAccess(false);
+            setFocusReachOnOpen(false);
+            setScope(nextScope);
+          }}
           onTabChange={(tab) => setActiveTab(tab as GroupTabId | GlobalTabId)}
         />
 
@@ -1409,10 +1443,21 @@ export function SettingsModal({
                   />
                 )}
 
+                {activeTab === "account" && (
+                  <AccountTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "account"}
+                    returnToWebAccess={accountReturnToWebAccess}
+                    onOpenWebAccess={openWebAccessFromAccount}
+                  />
+                )}
+
                 {activeTab === "webAccess" && (
                   <WebAccessTab
                     isDark={isDark}
                     isActive={scope === "global" && activeTab === "webAccess"}
+                    focusReach={focusReachOnOpen}
+                    onOpenAccount={openAccountFromWebAccess}
                   />
                 )}
 

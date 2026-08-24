@@ -56,7 +56,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 ```
 
 The preview has no Python fallback or implementation switching and is not the
-recommended replacement for the pip product.
+recommended replacement for the pip product. The hosted installer currently
+selects the experimental `v0.4.35-rc1` standalone release.
 
 ### Why does `cccc` still start an older installation after an upgrade?
 

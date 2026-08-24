@@ -12,6 +12,7 @@ def build_chat_queue_payload(
     by: str,
     effective_to: list[str],
     delivery_text: str,
+    message_mode: str,
     event_ts: str,
     reply_to: str,
     quote_text: str,
@@ -27,6 +28,7 @@ def build_chat_queue_payload(
         "by": by,
         "to": effective_to,
         "text": delivery_text,
+        "message_mode": message_mode,
         "ts": event_ts,
     }
     if reply_to:

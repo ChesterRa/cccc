@@ -30,7 +30,7 @@ class TestWebMembershipRoutes(unittest.TestCase):
         resp, _ = handle_request(request)
         return resp.model_dump(exclude_none=True)
 
-    def test_membership_status_returns_three_url_slots(self) -> None:
+    def test_membership_status_returns_global_account_fields(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
         from cccc.ports.web.app import create_app
 
@@ -54,8 +54,52 @@ class TestWebMembershipRoutes(unittest.TestCase):
             self.assertIn("logged_in", membership)
             self.assertIn("hostname", membership)
             self.assertIn("web_url", membership)
-            self.assertIn("connector_url", membership)
+            self.assertNotIn("connector_url", membership)
             self.assertIn("account_origin", membership)
             self.assertFalse(bool(membership.get("logged_in")))
+        finally:
+            cleanup()
+
+    def test_account_connection_routes_stay_thin_and_user_scoped(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            created = create_access_token("admin-user", is_admin=True)
+            token = str(created.get("token") or "")
+            seen: list[dict] = []
+
+            def call(req: dict):
+                seen.append(req)
+                return {
+                    "ok": True,
+                    "result": {"membership": {"logged_in": False}},
+                }
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=call):
+                app = create_app()
+                with TestClient(app) as client:
+                    for path in (
+                        "/api/v1/membership/login",
+                        "/api/v1/membership/login/poll",
+                        "/api/v1/membership/logout",
+                    ):
+                        response = client.post(
+                            path,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        self.assertEqual(response.status_code, 200)
+
+            membership_ops = [
+                request for request in seen if request["op"].startswith("membership_")
+            ]
+            self.assertEqual(
+                [request["op"] for request in membership_ops],
+                ["membership_login", "membership_login_poll", "membership_logout"],
+            )
+            self.assertTrue(
+                all(request["args"] == {"by": "user"} for request in membership_ops)
+            )
         finally:
             cleanup()

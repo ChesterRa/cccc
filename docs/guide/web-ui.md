@@ -250,6 +250,10 @@ Then authenticate once to bootstrap the session cookie:
 
 After that, you can use the Web UI normally without `?token=...`.
 
+An explicit query token represents the link being opened and replaces any
+older `cccc_access_token` cookie after successful validation. An invalid query
+token fails authentication rather than silently falling back to a stale cookie.
+
 The query token is only a session-bootstrap transport; it does not widen the
 token's permissions. A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message

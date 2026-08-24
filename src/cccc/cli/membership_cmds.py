@@ -30,15 +30,13 @@ def _daemon_error(message: str = "daemon unavailable; run `cccc daemon start`") 
 def _membership_copy_lines(membership: dict) -> list[str]:
     hostname = str(membership.get("hostname") or "").strip()
     web = str(membership.get("web_url") or "").strip()
-    connector = str(membership.get("connector_url") or "").strip()
-    if not (hostname or web or connector):
+    if not (hostname or web):
         return []
     return [
         f"Hostname (people / account page): {hostname or '(none)'}",
         f"Web (this machine, includes admin token): {web or '(none)'}",
-        f"ChatGPT connector (secret in the path): {connector or '(none)'}",
-        "These are three different strings. Screenshotting the connector URL leaks a key.",
-        "Rotating a token changes that URL. Paste it again in ChatGPT after a rotate, cut, or logout.",
+        "The Web URL is a bearer credential; keep it private.",
+        "Web Model connectors are managed per actor in CCCC settings.",
     ]
 
 
@@ -95,7 +93,11 @@ def cmd_login(_args: argparse.Namespace) -> int:
         origin = account_origin()
         if origin:
             print(f"Account: {origin}", file=sys.stderr)
-        print(f"Open: {pending.get('verification_uri')}", file=sys.stderr)
+        verification_uri = (
+            pending.get("verification_uri_complete")
+            or pending.get("verification_uri")
+        )
+        print(f"Open: {verification_uri}", file=sys.stderr)
         print(f"Code: {pending.get('user_code')}", file=sys.stderr)
         interval = 5
         try:

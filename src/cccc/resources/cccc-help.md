@@ -31,6 +31,7 @@ per-recipient runtime truth is `runtime.delivery`.
 ### Chat
 
 - Targets are `@all`, `@foreman`, `@peers`, `user`, or actor IDs. Verify `reply_to` and `to`; avoid broad targets for narrow updates.
+- Reply to the current message with its `event_id`; `reply_to` is its optional parent.
 - Use a tracked task, not a reply request, for durable execution and evidence.
 
 ### Shared Context

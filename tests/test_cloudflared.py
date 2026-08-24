@@ -127,6 +127,7 @@ class TestCloudflaredPin(unittest.TestCase):
 
     def test_inspect_missing_binary(self) -> None:
         state = inspect(self.home)
+        self.assertTrue(state["supported"])
         self.assertFalse(state["installed"])
         self.assertFalse(state["matches_pin"])
 

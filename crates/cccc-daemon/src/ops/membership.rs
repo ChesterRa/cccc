@@ -1,8 +1,7 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::access_tokens::AccessTokenStore;
-use cccc_core::{HomeLayout, cloudflared, fs, membership, settings, web_model_connectors};
+use cccc_core::{HomeLayout, cloudflared, fs, membership, settings};
 use chrono::{DateTime, SecondsFormat, Utc};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
 use super::membership_account::{AccountClient, AccountError, canonical_reach_hostname};
@@ -12,14 +11,7 @@ use crate::dispatch::{OpError, OpResult, bool_arg, object, string_arg};
 struct PublicUrls {
     hostname: Option<String>,
     web: Option<String>,
-    connector: Option<String>,
 }
-
-const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -36,10 +28,13 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
-    let account_online = refresh_cut_from_account(home)?;
+    let (account_online, account_reachable) = refresh_cut_from_account(home)?;
     let mut payload = status_payload(home)?;
     if account_online == Some(false) {
         payload["membership"]["online"] = Value::Bool(false);
+    }
+    if let Some(account_reachable) = account_reachable {
+        payload["membership"]["account_reachable"] = Value::Bool(account_reachable);
     }
     object(payload)
 }
@@ -48,6 +43,14 @@ fn login(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
     let existing = membership::load(home).map_err(OpError::io)?;
     if existing.logged_in && existing.device_token.is_some() {
+        return object(status_payload(home)?);
+    }
+    if existing
+        .pending_login
+        .as_ref()
+        .and_then(Value::as_object)
+        .is_some_and(|pending| !pending_expired(pending))
+    {
         return object(status_payload(home)?);
     }
     let origin = requested_account_origin(request).map_err(|error| account_fail(home, error))?;
@@ -62,6 +65,7 @@ fn login(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "device_code":started.device_code,
             "user_code":started.user_code,
             "verification_uri":started.verification_uri,
+            "verification_uri_complete":started.verification_uri_complete,
             "interval":started.interval,
             "expires_at":expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
             "account_origin":origin,
@@ -76,6 +80,9 @@ fn login(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn login_poll(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_user(request)?;
     let state = membership::load(home).map_err(OpError::io)?;
+    if state.logged_in && state.device_token.is_some() {
+        return object(status_payload(home)?);
+    }
     let pending = state.pending_login.as_ref().and_then(Value::as_object);
     if pending.is_none_or(pending_expired) {
         return fail(
@@ -123,7 +130,23 @@ fn login_poll(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map_err(OpError::io)?;
             }
         }
-        Err(error) => return Err(account_fail(home, error)),
+        Err(error) => {
+            if error.terminal_authorization {
+                membership::update(home, |state| {
+                    let matches_attempt = state
+                        .pending_login
+                        .as_ref()
+                        .and_then(Value::as_object)
+                        .is_some_and(|current| text(current, "device_code", "") == device_code);
+                    if matches_attempt {
+                        state.pending_login = None;
+                    }
+                    Ok(())
+                })
+                .map_err(OpError::io)?;
+            }
+            return Err(account_fail(home, error));
+        }
     }
     object(status_payload(home)?)
 }
@@ -139,6 +162,23 @@ fn logout(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             !remote_url.is_empty()
                 && hostname.trim_end_matches('/') == remote_url.trim_end_matches('/')
         });
+    if let (Some(origin), Some(token)) = (
+        bound_account_origin(&state).ok(),
+        state
+            .device_token
+            .as_deref()
+            .filter(|token| !token.is_empty()),
+    ) {
+        let client = AccountClient::new(&origin).map_err(|error| account_fail(home, error))?;
+        if let Err(error) = client.disable_device(token)
+            && !matches!(
+                error.code,
+                "membership_not_logged_in" | "membership_disabled"
+            )
+        {
+            return Err(account_fail(home, error));
+        }
+    }
     if retires_reach {
         settings::update(home, |global| {
             global
@@ -227,7 +267,7 @@ fn reach_on_with(
             "not logged in; run `cccc login`",
         );
     }
-    let _account_online = refresh_cut_from_account(home)?;
+    let (_account_online, _account_reachable) = refresh_cut_from_account(home)?;
     let state = membership::load(home).map_err(OpError::io)?;
     if state.disabled {
         return fail(home, "membership_disabled", "this device has been disabled");
@@ -238,8 +278,20 @@ fn reach_on_with(
     let origin_port = resolve_origin_port(home)?;
     let credentials = match client.issue_reach(&device_token, origin_port) {
         Ok(credentials) => credentials,
-        Err(error) if error.code == "membership_disabled" => {
+        Err(error)
+            if matches!(
+                error.code,
+                "membership_disabled" | "membership_not_logged_in"
+            ) =>
+        {
             mark_cut(home, None, None)?;
+            if error.code == "membership_not_logged_in" {
+                return fail(
+                    home,
+                    "membership_disabled",
+                    "this linked device no longer exists; relink this installation",
+                );
+            }
             return Err(account_fail(home, error));
         }
         Err(error) => return Err(account_fail(home, error)),
@@ -339,11 +391,11 @@ fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
         "device_id":state.device_id,
         "hostname":urls.hostname,
         "web_url":urls.web,
-        "connector_url":urls.connector,
         "online":provider == "reach" && boolean(&remote, "enabled", false) && helper.running && !cut,
         "cut":cut,
         "disabled":cut,
         "in_reach":provider == "reach",
+        "reach_supported":installed.supported,
         "account_origin":bound_account_origin(&state).ok().or_else(|| {
             (!state.logged_in).then(membership::account_origin).flatten()
         }),
@@ -362,6 +414,7 @@ fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
         body["pending"] = json!({
             "user_code":pending.get("user_code").cloned().unwrap_or(Value::Null),
             "verification_uri":pending.get("verification_uri").cloned().unwrap_or(Value::Null),
+            "verification_uri_complete":pending.get("verification_uri_complete").cloned().unwrap_or(Value::Null),
             "interval":pending.get("interval").cloned().unwrap_or(Value::Null),
             "expires_at":pending.get("expires_at").cloned().unwrap_or(Value::Null),
         });
@@ -369,34 +422,39 @@ fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
     Ok(json!({"membership":body}))
 }
 
-fn refresh_cut_from_account(home: &HomeLayout) -> Result<Option<bool>, OpError> {
+fn refresh_cut_from_account(home: &HomeLayout) -> Result<(Option<bool>, Option<bool>), OpError> {
     let Ok(state) = membership::load(home) else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let Some(token) = state.device_token.as_deref().filter(|_| state.logged_in) else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let origin = match bound_account_origin(&state) {
         Ok(origin) => origin,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok((None, None)),
     };
-    let client = match AccountClient::new(&origin) {
+    let client = match AccountClient::with_timeout(&origin, Some(2.0)) {
         Ok(client) => client,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok((None, None)),
     };
     let remote = match client.fetch_device(token) {
         Ok(remote) => remote,
-        Err(error) if error.code == "membership_disabled" => {
+        Err(error)
+            if matches!(
+                error.code,
+                "membership_disabled" | "membership_not_logged_in"
+            ) =>
+        {
             mark_cut(home, None, None)?;
-            return Ok(Some(false));
+            return Ok((Some(false), Some(true)));
         }
-        Err(_) => return Ok(None),
+        Err(_) => return Ok((None, Some(false))),
     };
     if remote.disabled {
         mark_cut(home, remote.device_id, remote.hostname)?;
-        return Ok(Some(false));
+        return Ok((Some(false), Some(true)));
     }
-    Ok(remote.online)
+    Ok((remote.online, Some(true)))
 }
 
 fn mark_cut(
@@ -449,7 +507,6 @@ fn public_urls(home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, 
         return Ok(PublicUrls {
             hostname: None,
             web: None,
-            connector: None,
         });
     };
     let admin = AccessTokenStore::new(home.clone())
@@ -464,24 +521,9 @@ fn public_urls(home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, 
             .finish();
         format!("{origin}/ui/?{query}")
     });
-    let connector = web_model_connectors::load(home)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|item| !item["revoked"].as_bool().unwrap_or(false));
-    let connector_url = connector.and_then(|item| {
-        let id = item["connector_id"].as_str()?.trim();
-        let secret = item["secret"].as_str()?.trim();
-        (!id.is_empty() && !secret.is_empty()).then(|| {
-            format!(
-                "{origin}/mcp/web-model/{id}/token/{}",
-                utf8_percent_encode(secret, PATH_SEGMENT_ENCODE_SET)
-            )
-        })
-    });
     Ok(PublicUrls {
         hostname: Some(origin),
         web: web_url,
-        connector: connector_url,
     })
 }
 
@@ -498,6 +540,7 @@ fn requested_account_origin(request: &DaemonRequest) -> Result<String, AccountEr
         message: "membership account service is not configured".into(),
         retryable: false,
         retry_after_delta: 0,
+        terminal_authorization: false,
     })
 }
 
@@ -521,6 +564,7 @@ fn bound_account_origin(state: &membership::MembershipState) -> Result<String, A
                 .into(),
             retryable: false,
             retry_after_delta: 0,
+            terminal_authorization: false,
         })
 }
 
@@ -691,6 +735,8 @@ mod tests {
     fn account_server(responses: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let address = listener.local_addr().expect("address");
+        let origin = format!("http://{address}");
+        let response_origin = origin.clone();
         let (sent, received) = mpsc::channel();
         thread::spawn(move || {
             for (status, body) in responses {
@@ -699,6 +745,7 @@ mod tests {
                 let count = stream.read(&mut request).expect("request");
                 sent.send(String::from_utf8_lossy(&request[..count]).into_owned())
                     .expect("capture");
+                let body = body.replace("$ORIGIN", &response_origin);
                 write!(
                     stream,
                     "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -707,7 +754,7 @@ mod tests {
                 .expect("response");
             }
         });
-        (format!("http://{address}"), received)
+        (origin, received)
     }
 
     #[test]
@@ -715,7 +762,7 @@ mod tests {
         let (origin, requests) = account_server(vec![
             (
                 200,
-                r#"{"device_code":"code-rust","user_code":"USER-RUST","verification_uri":"https://verify.example.test","expires_in":900,"interval":1}"#,
+                r#"{"device_code":"code-rust","user_code":"USER-RUST","verification_uri":"$ORIGIN/device","expires_in":900,"interval":1}"#,
             ),
             (
                 200,
@@ -751,6 +798,163 @@ mod tests {
         let state = membership::load(&home).expect("membership");
         assert_eq!(state.account_origin.as_deref(), Some(origin.as_str()));
         assert_eq!(state.device_token.as_deref(), Some("device-token-rust"));
+        let replayed = login_poll(&home, &poll_request).expect("replay committed login");
+        assert_eq!(replayed["membership"]["logged_in"], true);
+    }
+
+    #[test]
+    fn login_replays_an_unexpired_pending_grant() {
+        let (origin, requests) = account_server(vec![(
+            200,
+            r#"{"device_code":"code-rust","user_code":"USER-RUST","verification_uri":"$ORIGIN/device","expires_in":900,"interval":1}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_login".into(),
+            args: json!({"by":"user","account_origin":origin})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let started = login(&home, &request).expect("start login");
+        let replayed = login(&home, &request).expect("replay login");
+
+        assert_eq!(
+            replayed["membership"]["pending"],
+            started["membership"]["pending"]
+        );
+        assert!(
+            requests
+                .recv()
+                .expect("device-code request")
+                .starts_with("POST /v1/device/code ")
+        );
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn terminal_login_results_allow_a_fresh_grant() {
+        for (response, expected_code) in [
+            (r#"{"error":"access_denied"}"#, "membership_gate"),
+            (r#"{"error":"expired_token"}"#, "membership_network"),
+        ] {
+            let (origin, requests) = account_server(vec![
+                (
+                    200,
+                    r#"{"device_code":"code-rust","user_code":"USER-RUST","verification_uri":"$ORIGIN/device","expires_in":900,"interval":1}"#,
+                ),
+                (400, response),
+                (
+                    200,
+                    r#"{"device_code":"fresh-rust","user_code":"FRESH-RUST","verification_uri":"$ORIGIN/device","expires_in":900,"interval":1}"#,
+                ),
+            ]);
+            let temp = tempfile::tempdir().expect("tempdir");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            home.initialize().expect("home");
+            let request = DaemonRequest {
+                v: 1,
+                op: "membership_login".into(),
+                args: json!({"by":"user","account_origin":origin})
+                    .as_object()
+                    .cloned()
+                    .expect("args"),
+            };
+
+            login(&home, &request).expect("start login");
+            let error = login_poll(&home, &request).expect_err("terminal login result");
+            assert_eq!(error.code, expected_code);
+            assert!(
+                membership::load(&home)
+                    .expect("membership")
+                    .pending_login
+                    .is_none()
+            );
+
+            let restarted = login(&home, &request).expect("restart login");
+            assert_eq!(
+                restarted["membership"]["pending"]["user_code"],
+                "FRESH-RUST"
+            );
+            for _ in 0..3 {
+                requests.recv().expect("account request");
+            }
+            assert!(requests.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn logout_retires_the_remote_device_before_clearing_local_identity() {
+        let (origin, requests) = account_server(vec![(
+            200,
+            r#"{"device_id":"device-rust","disabled":true}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("device-rust".into()),
+                device_token: Some("device-token-rust".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_logout".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let result = logout(&home, &request).expect("logout");
+
+        assert_eq!(result["membership"]["logged_in"], false);
+        assert!(
+            requests
+                .recv()
+                .expect("disable request")
+                .starts_with("POST /v1/device/disable ")
+        );
+        assert!(!membership::load(&home).expect("membership").logged_in);
+    }
+
+    #[test]
+    fn logout_preserves_local_identity_when_remote_retirement_fails() {
+        let (origin, _requests) = account_server(vec![(
+            500,
+            r#"{"error":{"code":"network","message":"offline"}}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("device-rust".into()),
+                device_token: Some("device-token-rust".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_logout".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let error = logout(&home, &request).expect_err("remote retirement should fail");
+
+        assert_eq!(error.code, "membership_network");
+        assert!(membership::load(&home).expect("membership").logged_in);
     }
 
     #[test]
@@ -830,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn public_urls_include_local_admin_and_connector_credentials() {
+    fn public_urls_include_only_the_local_admin_credential() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
@@ -838,18 +1042,6 @@ mod tests {
             .expect("tokens")
             .create("admin", Vec::new(), true, Some("acc secret"))
             .expect("admin token");
-        web_model_connectors::replace_active(
-            &home,
-            &json!({
-                "connector_id":"wmc_fixture",
-                "group_id":"g_fixture",
-                "actor_id":"peer1",
-                "secret":"connector_/secret-~.",
-                "created_at":"2026-08-19T00:00:00Z"
-            }),
-        )
-        .expect("connector");
-
         let urls = public_urls(&home, Some("d-fixture.example.test/")).expect("urls");
         assert_eq!(
             urls.hostname.as_deref(),
@@ -858,12 +1050,6 @@ mod tests {
         assert_eq!(
             urls.web.as_deref(),
             Some("https://d-fixture.example.test/ui/?token=acc+secret")
-        );
-        assert_eq!(
-            urls.connector.as_deref(),
-            Some(
-                "https://d-fixture.example.test/mcp/web-model/wmc_fixture/token/connector_%2Fsecret-~."
-            )
         );
     }
 
@@ -881,7 +1067,6 @@ mod tests {
 
         assert!(urls.hostname.is_none());
         assert!(urls.web.is_none());
-        assert!(urls.connector.is_none());
     }
 
     #[test]
@@ -1057,6 +1242,95 @@ mod tests {
         let remote = settings::load(&home).expect("settings").remote_access;
         assert_eq!(remote["enabled"], true);
         assert_eq!(remote["web_public_url"], "https://old.example.test");
+    }
+
+    #[test]
+    fn status_treats_a_missing_linked_device_as_terminal() {
+        let (origin, _requests) = account_server(vec![(
+            401,
+            r#"{"error":{"code":"unauthorized","message":"not logged in"}}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("deleted-device".into()),
+                device_token: Some("deleted-token".into()),
+                hostname: Some("https://deleted.example.test".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        settings::update(&home, |global| {
+            global
+                .remote_access
+                .insert("provider".into(), Value::String("reach".into()));
+            global
+                .remote_access
+                .insert("enabled".into(), Value::Bool(true));
+            global.remote_access.insert(
+                "web_public_url".into(),
+                Value::String("https://deleted.example.test".into()),
+            );
+            Ok(())
+        })
+        .expect("settings");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_status".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let result = status(&home, &request).expect("status");
+
+        assert_eq!(result["membership"]["cut"], true);
+        let remote = settings::load(&home).expect("settings").remote_access;
+        assert_eq!(remote["enabled"], false);
+        assert_eq!(remote["web_public_url"], "");
+    }
+
+    #[test]
+    fn status_preserves_binding_on_transient_account_failure() {
+        let (origin, _requests) = account_server(vec![(
+            503,
+            r#"{"error":{"code":"network","message":"try later"}}"#,
+        )]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        membership::save(
+            &home,
+            &membership::MembershipState {
+                logged_in: true,
+                account_origin: Some(origin),
+                device_id: Some("transient-device".into()),
+                device_token: Some("transient-token".into()),
+                ..membership::MembershipState::default()
+            },
+        )
+        .expect("membership");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_status".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let result = status(&home, &request).expect("status");
+
+        assert_eq!(result["membership"]["logged_in"], true);
+        assert_eq!(result["membership"]["cut"], false);
+        assert_eq!(result["membership"]["account_reachable"], false);
+        assert_eq!(
+            membership::load(&home)
+                .expect("membership")
+                .device_token
+                .as_deref(),
+            Some("transient-token")
+        );
     }
 
     #[test]

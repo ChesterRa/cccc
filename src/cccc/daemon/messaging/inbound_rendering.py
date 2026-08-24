@@ -59,10 +59,18 @@ def render_actor_inbound_message(envelope: ActorInboundEnvelope) -> str:
     if source_bits:
         who = f"{who}[{' / '.join(source_bits)}]"
 
-    header = f"[cccc] {who} → {targets}"
+    event_id = _trim(envelope.event_id)
+    message_mode = _trim(envelope.message_mode).lower() or "send"
     reply_to = _trim(envelope.reply_to)
+
+    header = f"[cccc] {who} → {targets}"
     if reply_to:
         header += f" (reply:{reply_to[:8]})"
+    if event_id:
+        header += f" [event_id={event_id} message_mode={message_mode}"
+        if reply_to:
+            header += f" reply_to={reply_to}"
+        header += "]"
 
     quote = _quote_preview(envelope.quote_text)
     if quote:

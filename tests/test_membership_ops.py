@@ -32,7 +32,6 @@ from cccc.kernel.settings import (
     get_remote_access_settings,
     update_remote_access_settings,
 )
-from cccc.kernel.web_model_connectors import create_web_model_connector
 from tests.test_membership_account import FakeAccount
 from cccc.ports.web.runtime_control import write_web_runtime_state
 
@@ -151,7 +150,8 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(membership["logged_in"])
         self.assertIsNone(membership["hostname"])
         self.assertFalse(membership["online"])
-        self.assertIsNone(membership["connector_url"])
+        self.assertIsInstance(membership["reach_supported"], bool)
+        self.assertNotIn("connector_url", membership)
 
     def test_status_rejects_non_user_callers_before_exposing_token_urls(self) -> None:
         create_access_token("admin", is_admin=True, custom_token="acc_admin_secret")
@@ -190,6 +190,7 @@ class TestMembershipOps(unittest.TestCase):
         self.assertTrue(started.ok)
         pending = started.result["membership"]["pending"]
         self.assertEqual(pending["user_code"], "WDJB-MJHT")
+        self.assertIn("user_code=WDJB-MJHT", pending["verification_uri_complete"])
         self.assertFalse(started.result["membership"]["logged_in"])
         waiting = handle_membership_login_poll({"by": "user"})
         self.assertTrue(waiting.ok)
@@ -203,8 +204,76 @@ class TestMembershipOps(unittest.TestCase):
             granted.result["membership"]["hostname"], "https://d-abc.example.test"
         )
         self.assertEqual(load_membership()["account_origin"], "https://account.test")
+        replayed = handle_membership_login_poll({"by": "user"})
+        self.assertTrue(replayed.ok)
+        self.assertTrue(replayed.result["membership"]["logged_in"])
 
-    def test_login_issuer_remains_bound_after_the_daemon_environment_changes(self) -> None:
+    def test_login_replays_an_unexpired_pending_grant(self) -> None:
+        account = FakeAccount()
+        set_account_transport_for_tests(account)
+
+        started = handle_membership_login(
+            {"by": "user", "account_origin": "https://issuer.example.test"}
+        )
+        replayed = handle_membership_login(
+            {"by": "user", "account_origin": "https://wrong.example.test"}
+        )
+
+        self.assertTrue(started.ok)
+        self.assertTrue(replayed.ok)
+        self.assertEqual(
+            replayed.result["membership"]["pending"],
+            started.result["membership"]["pending"],
+        )
+        self.assertEqual(
+            account.calls,
+            [("POST", "https://issuer.example.test/v1/device/code")],
+        )
+
+    def _assert_terminal_login_can_restart(self, terminal_code: str) -> None:
+        calls: list[str] = []
+
+        def transport(method, url, headers, body, timeout_s):
+            _ = method, headers, body, timeout_s
+            calls.append(url)
+            if url.endswith("/v1/device/code"):
+                return 200, {
+                    "device_code": f"dc-{calls.count(url)}",
+                    "user_code": "FRESH-CODE",
+                    "verification_uri": "https://issuer.example.test/device",
+                    "expires_in": 600,
+                    "interval": 1,
+                }
+            return 400, {"error": terminal_code}
+
+        set_account_transport_for_tests(transport)
+        started = handle_membership_login(
+            {"by": "user", "account_origin": "https://issuer.example.test"}
+        )
+        self.assertTrue(started.ok)
+
+        failed = handle_membership_login_poll({"by": "user"})
+        self.assertFalse(failed.ok)
+        self.assertIsNone(load_membership().get("pending_login"))
+
+        restarted = handle_membership_login(
+            {"by": "user", "account_origin": "https://issuer.example.test"}
+        )
+        self.assertTrue(restarted.ok)
+        self.assertEqual(
+            sum(url.endswith("/v1/device/code") for url in calls),
+            2,
+        )
+
+    def test_denied_login_can_start_a_fresh_grant(self) -> None:
+        self._assert_terminal_login_can_restart("access_denied")
+
+    def test_expired_login_can_start_a_fresh_grant(self) -> None:
+        self._assert_terminal_login_can_restart("expired_token")
+
+    def test_login_issuer_remains_bound_after_the_daemon_environment_changes(
+        self,
+    ) -> None:
         account = FakeAccount()
         set_account_transport_for_tests(account)
         started = handle_membership_login(
@@ -365,6 +434,62 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(again.ok)
         self.assertEqual(again.error.code, "membership_disabled")
 
+    def test_status_treats_a_missing_linked_device_as_terminal(self) -> None:
+        def missing_device(method, url, headers, body, timeout_s):
+            _ = method, url, headers, body, timeout_s
+            return 401, {"error": {"code": "unauthorized", "message": "not logged in"}}
+
+        set_account_transport_for_tests(missing_device)
+        save_membership(
+            {
+                "logged_in": True,
+                "device_id": "d_deleted",
+                "device_token": "deleted-token",
+                "account_origin": "https://account.test",
+            }
+        )
+        update_remote_access_settings(
+            {
+                "provider": "reach",
+                "enabled": True,
+                "web_public_url": "https://deleted.example.test",
+            }
+        )
+
+        with patch.object(cloudflared_supervisor, "stop") as stop:
+            response = handle_membership_status({"by": "user"})
+
+        self.assertTrue(response.ok, response.error)
+        self.assertTrue(response.result["membership"]["cut"])
+        stop.assert_called_once_with()
+        remote = get_remote_access_settings()
+        self.assertFalse(remote["enabled"])
+        self.assertEqual(remote["web_public_url"], "")
+
+    def test_status_preserves_binding_on_transient_account_failure(self) -> None:
+        def unavailable(method, url, headers, body, timeout_s):
+            _ = method, url, headers, body, timeout_s
+            return 503, {"error": {"code": "network", "message": "try later"}}
+
+        set_account_transport_for_tests(unavailable)
+        save_membership(
+            {
+                "logged_in": True,
+                "device_id": "d_transient",
+                "device_token": "transient-token",
+                "account_origin": "https://account.test",
+            }
+        )
+
+        response = handle_membership_status({"by": "user"})
+
+        self.assertTrue(response.ok, response.error)
+        membership = response.result["membership"]
+        self.assertTrue(membership["logged_in"])
+        self.assertFalse(membership["cut"])
+        self.assertFalse(membership["account_reachable"])
+        self.assertEqual(load_membership()["device_token"], "transient-token")
+
     def test_status_fails_closed_when_cut_cannot_stop_the_helper(self) -> None:
         account = FakeAccount()
         account.disabled = True
@@ -439,18 +564,10 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(get_remote_access_settings()["enabled"])
         self.assertEqual(get_remote_access_settings()["web_public_url"], "")
 
-    def test_connector_url_stays_local_and_uses_path_token(self) -> None:
-        created = create_web_model_connector(
-            group_id="g_reach", actor_id="peer", provider="chatgpt"
-        )
-        secret = str(created.get("secret") or "")
-        connector_id = str(created.get("connector_id") or "")
+    def test_global_membership_status_does_not_select_an_actor_connector(self) -> None:
         save_membership({"logged_in": True, "hostname": "https://d-abc.example.test"})
         status = handle_membership_status({"by": "user"})
-        url = status.result["membership"]["connector_url"]
-        self.assertIsNotNone(url)
-        self.assertIn(f"/mcp/web-model/{connector_id}/token/", url)
-        self.assertIn(secret, url or "")
+        self.assertNotIn("connector_url", status.result["membership"])
         self.assertEqual(
             status.result["membership"]["hostname"], "https://d-abc.example.test"
         )
@@ -459,9 +576,7 @@ class TestMembershipOps(unittest.TestCase):
         create_access_token(
             "admin", is_admin=True, custom_token="acc_admin_must_not_escape"
         )
-        save_membership(
-            {"logged_in": True, "hostname": "http://attacker.example.test"}
-        )
+        save_membership({"logged_in": True, "hostname": "http://attacker.example.test"})
 
         status = handle_membership_status({"by": "user"})
 
@@ -469,7 +584,7 @@ class TestMembershipOps(unittest.TestCase):
         membership = status.result["membership"]
         self.assertIsNone(membership["hostname"])
         self.assertIsNone(membership["web_url"])
-        self.assertIsNone(membership["connector_url"])
+        self.assertNotIn("connector_url", membership)
 
     def test_settings_preserve_reach_provider(self) -> None:
         update_remote_access_settings({"provider": "reach", "enabled": False})
@@ -496,6 +611,7 @@ class TestMembershipOps(unittest.TestCase):
             def __call__(self, method, url, headers, body, timeout_s):
                 if url.endswith("/v1/device"):
                     self.calls.append((method, url))
+                    self.timeouts.append(timeout_s)
                     return 200, {
                         "device_id": "d_abc",
                         "hostname": "https://d-abc.example.test",
@@ -504,7 +620,8 @@ class TestMembershipOps(unittest.TestCase):
                     }
                 return super().__call__(method, url, headers, body, timeout_s)
 
-        set_account_transport_for_tests(OfflineAccount())
+        account = OfflineAccount()
+        set_account_transport_for_tests(account)
         save_membership(
             {
                 "logged_in": True,
@@ -523,6 +640,7 @@ class TestMembershipOps(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertFalse(response.result["membership"]["online"])
+        self.assertEqual(account.timeouts[-1], 2.0)
 
     def test_configure_rejects_setting_reach(self) -> None:
         resp = handle_remote_access_configure({"provider": "reach", "by": "user"})
@@ -555,10 +673,14 @@ class TestMembershipOps(unittest.TestCase):
         self.assertEqual(parser.parse_args(["reach", "install"]).action, "install")
 
     def test_logout_clears_identity_and_warns(self) -> None:
+        account = FakeAccount()
+        set_account_transport_for_tests(account)
         save_membership(
             {
                 "logged_in": True,
+                "account_origin": "https://account.test",
                 "device_id": "dev_test",
+                "device_token": "devtok",
                 "hostname": "https://d-x.example",
             }
         )
@@ -579,6 +701,28 @@ class TestMembershipOps(unittest.TestCase):
         self.assertIsNone(
             handle_membership_status({}).result["membership"]["device_id"]
         )
+        self.assertTrue(account.disabled)
+
+    def test_logout_preserves_local_identity_when_remote_retirement_fails(self) -> None:
+        def unavailable(method, url, headers, body, timeout_s):
+            _ = method, url, headers, body, timeout_s
+            raise membership_ops.AccountError("membership_network", "offline")
+
+        set_account_transport_for_tests(unavailable)
+        save_membership(
+            {
+                "logged_in": True,
+                "account_origin": "https://account.test",
+                "device_id": "dev_test",
+                "device_token": "devtok",
+            }
+        )
+
+        response = handle_membership_logout({"by": "user"})
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error.code, "membership_network")
+        self.assertTrue(load_membership()["logged_in"])
 
     def test_logout_stops_a_tracked_helper_even_after_provider_drift(self) -> None:
         save_membership(

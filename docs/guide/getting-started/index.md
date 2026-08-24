@@ -134,9 +134,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 The installer downloads a checksum-verified GitHub Release binary. It does not
 require a Rust or Python toolchain and refuses to overwrite an existing `cccc`
 command it does not own. Uninstall that command deliberately or choose another
-`CCCC_INSTALL_DIR` first. The hosted installer stays pinned to the newest
-published release with a complete asset set. You can select any fully published
-version explicitly with `CCCC_VERSION`:
+`CCCC_INSTALL_DIR` first. The hosted installer currently selects the
+experimental `v0.4.35-rc1` standalone release. You can select any fully
+published version explicitly with `CCCC_VERSION`:
 
 Commands in other directories are never removed. The default installer puts its
 directory first in the user PATH and reports every remaining `cccc` command. Open
@@ -144,11 +144,11 @@ a new terminal after installation and run `cccc doctor` to verify that PATH
 resolves to the executable you just installed.
 
 ```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34 sh
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.35-rc1 sh
 ```
 
 ```powershell
-$env:CCCC_VERSION = "0.4.34"
+$env:CCCC_VERSION = "0.4.35-rc1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 Remove-Item Env:CCCC_VERSION
 ```

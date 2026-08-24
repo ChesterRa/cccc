@@ -264,6 +264,8 @@ def build_actor_headless_delivery_text(
     by: str,
     to: list[str],
     body: str,
+    event_id: str = "",
+    message_mode: str = "send",
     reply_to: str = "",
     quote_text: str = "",
     source_platform: str = "",
@@ -272,9 +274,11 @@ def build_actor_headless_delivery_text(
 ) -> str:
     return render_actor_inbound_message(
         ActorInboundEnvelope(
+            event_id=event_id,
             by=by,
             to=to,
             text=body,
+            message_mode=message_mode,
             reply_to=reply_to,
             quote_text=quote_text,
             source_platform=source_platform,
@@ -326,6 +330,8 @@ def render_actor_event_for_delivery(event: Dict[str, Any], *, actor_id: str = ""
             by=by,
             to=_normalize_to(data.get("to"), actor_id=actor_id),
             body=body,
+            event_id=event_id,
+            message_mode=str(data.get("message_mode") or "send"),
             reply_to=str(data.get("reply_to") or ""),
             quote_text=str(data.get("quote_text") or ""),
             source_platform=str(data.get("source_platform") or ""),

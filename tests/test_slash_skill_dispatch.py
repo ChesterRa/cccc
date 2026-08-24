@@ -86,6 +86,12 @@ class TestSlashSkillDispatch(unittest.TestCase):
             self.assertEqual(delivery.get("effective_to"), ["architect"])
             self.assertEqual(str(delivery.get("by") or ""), "user")
             self.assertEqual(str(delivery.get("reply_to") or ""), "evt-original")
+            event_id = str(delivery.get("event_id") or "")
+            self.assertTrue(event_id)
+            self.assertIn(
+                f"[event_id={event_id} message_mode=send reply_to=evt-original]",
+                str(delivery.get("headless_delivery_text") or ""),
+            )
             text = str(delivery.get("delivery_text") or "")
             self.assertIn("INTERNAL CONTROL", text)
             self.assertIn("CCCC capability skill", text)

@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  GroupMeta,
-  MembershipState,
-  RemoteAccessState,
-  WebAccessSession,
-} from "../../../types";
+import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
 import { InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
 import { ReachMembershipSection } from "./ReachMembershipSection";
+import { useMembershipController } from "./useMembershipController";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
 import {
@@ -43,6 +39,8 @@ import {
 interface WebAccessTabProps {
   isDark: boolean;
   isActive?: boolean;
+  focusReach?: boolean;
+  onOpenAccount: () => void;
 }
 
 type WebModeState = { mode?: string; read_only?: boolean };
@@ -102,11 +100,41 @@ function resolveApplyRedirectUrl(
   return httpUrl(isLoopbackHost(configHost) ? "127.0.0.1" : configHost, configPort);
 }
 
-export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
+export function WebAccessTab({
+  isDark,
+  isActive = true,
+  focusReach = false,
+  onOpenAccount,
+}: WebAccessTabProps) {
   const { t } = useTranslation("settings");
+  const membershipController = useMembershipController(isActive);
+  const {
+    membership,
+    membershipBusy,
+    membershipError,
+    reachBusy,
+    reachAction,
+    refresh: refreshMembership,
+    startReach,
+    stopReach,
+  } = membershipController;
+  const reachSectionRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isActive || !focusReach) return;
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        reachSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      if (innerFrame) window.cancelAnimationFrame(innerFrame);
+    };
+  }, [focusReach, isActive]);
 
   const [remoteState, setRemoteState] = useState<RemoteAccessState | null>(null);
-  const [membership, setMembership] = useState<MembershipState | null>(null);
   const [webMode, setWebMode] = useState<WebModeState | null>(null);
   const [accessTokens, setAccessTokens] = useState<api.AccessTokenEntry[]>([]);
   const [session, setSession] = useState<WebAccessSession | null>(null);
@@ -117,7 +145,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   const [applyBusy, setApplyBusy] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
-  const [reachBusy, setReachBusy] = useState(false);
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
@@ -196,12 +223,11 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     setBusy(true);
     setError("");
     try {
-      const [pingResp, remoteResp, groupsResp, sessionResp, membershipResp] = await Promise.all([
+      const [pingResp, remoteResp, groupsResp, sessionResp] = await Promise.all([
         api.fetchPing(),
         api.fetchRemoteAccessState(),
         api.fetchGroups(),
         api.fetchWebAccessSession(),
-        api.fetchMembership(),
       ]);
       if (pingResp.ok) {
         setWebMode(pingResp.result?.web || null);
@@ -218,11 +244,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         );
       } else if (!remoteResp.ok) {
         setError(remoteResp.error?.message || t("webAccess.loadFailed"));
-      }
-      if (membershipResp.ok && membershipResp.result?.membership) {
-        setMembership(membershipResp.result.membership);
-      } else if (!membershipResp.ok && membershipResp.error?.message) {
-        setMembership(null);
       }
       if (groupsResp.ok && groupsResp.result?.groups) {
         setGroups(groupsResp.result.groups);
@@ -625,14 +646,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         return;
       }
       if (savedProvider === "reach" && !keepReach) {
-        const stopped = await api.stopMembershipReach();
-        if (!stopped.ok) {
-          setError(stopped.error?.message || t("webAccess.reach.stopFailed"));
-          return;
-        }
-        if (stopped.result?.membership) {
-          setMembership(stopped.result.membership);
-        }
+        if (!(await stopReach())) return;
       }
       const effectiveProvider =
         selectedAccessGoal === "local"
@@ -790,42 +804,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       setError(t("webAccess.stopFailed"));
     } finally {
       setStopBusy(false);
-    }
-  };
-
-  const handleReachOn = async () => {
-    setReachBusy(true);
-    setError("");
-    try {
-      const resp = await api.startMembershipReach();
-      if (!resp.ok || !resp.result?.membership) {
-        setError(resp.error?.message || t("webAccess.reach.startFailed"));
-        return;
-      }
-      setMembership(resp.result.membership);
-      await load();
-    } catch {
-      setError(t("webAccess.reach.startFailed"));
-    } finally {
-      setReachBusy(false);
-    }
-  };
-
-  const handleReachOff = async () => {
-    setReachBusy(true);
-    setError("");
-    try {
-      const resp = await api.stopMembershipReach();
-      if (!resp.ok || !resp.result?.membership) {
-        setError(resp.error?.message || t("webAccess.reach.stopFailed"));
-        return;
-      }
-      setMembership(resp.result.membership);
-      await load();
-    } catch {
-      setError(t("webAccess.reach.stopFailed"));
-    } finally {
-      setReachBusy(false);
     }
   };
 
@@ -1355,7 +1333,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
           </div>
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => void Promise.all([load(), refreshMembership()])}
             disabled={
               busy || saveBusy || startBusy || stopBusy || reachBusy || createBusy || editBusy
             }
@@ -1678,7 +1656,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         </div>
       </section>
 
-      <section className={settingsWorkspaceShellClass(isDark)}>
+      <section ref={reachSectionRef} className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -1701,11 +1679,22 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
 
         <div className={settingsWorkspaceBodyClass}>
           <ReachMembershipSection
-            isDark={isDark}
             membership={membership}
+            membershipBusy={membershipBusy}
+            membershipError={membershipError}
             reachBusy={reachBusy}
-            onReachOn={() => void handleReachOn()}
-            onReachOff={() => void handleReachOff()}
+            reachAction={reachAction}
+            onOpenAccount={onOpenAccount}
+            onReachOn={() => {
+              void startReach().then((changed) => {
+                if (changed) void load();
+              });
+            }}
+            onReachOff={() => {
+              void stopReach().then((changed) => {
+                if (changed) void load();
+              });
+            }}
             onCopied={() => pushHint(t("webAccess.copied"))}
             onCopyFailed={() => setError(t("common:copyFailed"))}
           />

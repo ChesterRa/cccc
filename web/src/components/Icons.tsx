@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  CircleUserRound,
   Clock3,
   Check,
   Clipboard,
@@ -143,6 +144,7 @@ export const CameraIcon = createIcon(Camera, 1.9);
 export const ReplyIcon = createIcon(Reply);
 export const PowerIcon = createIcon(Power);
 export const AlertIcon = createIcon(CircleAlert, 2);
+export const AccountIcon = createIcon(CircleUserRound, 1.8);
 export const InfoIcon = createIcon(Info, 2);
 export const ImageIcon = createIcon(Image);
 export const FileIcon = createIcon(File);

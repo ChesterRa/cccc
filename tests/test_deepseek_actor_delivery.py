@@ -135,6 +135,7 @@ def test_send_queues_deepseek_once_and_suppresses_generic_notify(
     queue_chat_message.assert_called_once()
     assert queue_chat_message.call_args.kwargs["actor_id"] == "deepseek-1"
     assert queue_chat_message.call_args.kwargs["event_id"] == event.get("id")
+    assert queue_chat_message.call_args.kwargs["message_mode"] == "send"
     assert text in str(queue_chat_message.call_args.kwargs["text"])
     assert queue_chat_message.call_args.kwargs["deduplicate_by_event_id"] is True
     request_flush.assert_called_once_with(ANY, actor_id="deepseek-1")
