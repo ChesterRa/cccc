@@ -34,13 +34,6 @@ def _nightly_workflow() -> dict:
     )
 
 
-def _post_merge_workflow() -> dict:
-    return yaml.load(
-        (ROOT / ".github/workflows/post-merge.yml").read_text(encoding="utf-8"),
-        Loader=yaml.BaseLoader,
-    )
-
-
 def _runs(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job.get("steps", []))
 
@@ -54,26 +47,14 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
         "group": "ci-${{ github.event.pull_request.number || github.ref }}",
         "cancel-in-progress": "true",
     }
-    assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {
-        "quality": "15",
-        "web": "15",
-        "python-tests": "25",
-        "python-compat": "15",
-        "package": "25",
-        "windows-smoke": "30",
-        "rust-lint": "15",
-        "rust-test": "45",
-        "rust-process-lifecycle": "15",
-        "interop": "30",
-        "ci-required": "5",
-    }
-    for name in ("rust-lint", "rust-test", "rust-process-lifecycle"):
-        rust_toolchain = next(
-            step["uses"]
-            for step in jobs[name]["steps"]
-            if step.get("uses", "").startswith("dtolnay/rust-toolchain")
-        )
-        assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0", name
+    assert all(job.get("timeout-minutes") for job in jobs.values())
+    assert max(int(job["timeout-minutes"]) for job in jobs.values()) <= 60
+    rust_toolchain = next(
+        step["uses"]
+        for step in jobs["rust-linux"]["steps"]
+        if step.get("uses", "").startswith("dtolnay/rust-toolchain")
+    )
+    assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0"
 
 
 def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
@@ -87,25 +68,12 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
         "package",
         "windows-smoke",
         "interop",
-        "rust-lint",
-        "rust-test",
-        "rust-process-lifecycle",
+        "rust-linux",
         "ci-required",
     } <= set(jobs)
     assert "rust-dist" not in jobs
     assert "windows-installer" not in jobs
-    assert set(jobs["ci-required"]["needs"]) == {
-        "quality",
-        "web",
-        "python-tests",
-        "python-compat",
-        "package",
-        "windows-smoke",
-        "rust-lint",
-        "rust-test",
-        "rust-process-lifecycle",
-        "interop",
-    }
+    assert set(jobs["ci-required"]["needs"]) == set(jobs) - {"ci-required"}
     assert jobs["ci-required"]["if"] == "always()"
     assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat", "interop"}
     assert "ruff check" in _runs(jobs["quality"])
@@ -113,6 +81,22 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     assert "npm -C web run build" in _runs(jobs["web"])
     assert any(step.get("uses", "").startswith("actions/upload-artifact") for step in jobs["web"]["steps"])
     assert any(step.get("uses", "").startswith("actions/download-artifact") for step in jobs["package"]["steps"])
+
+    for name in (
+        "quality",
+        "python-tests",
+        "python-compat",
+        "package",
+        "windows-smoke",
+        "interop",
+    ):
+        setup = next(
+            step
+            for step in jobs[name]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python")
+        )
+        assert setup["with"]["cache"] == "pip", name
+        assert setup["with"]["cache-dependency-path"] == "pyproject.toml", name
 
 
 def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
@@ -148,8 +132,8 @@ def test_windows_smoke_keeps_product_pty_and_process_tree_checks_without_web_mig
     assert "npm " not in runs
 
 
-def test_windows_installer_job_is_a_post_merge_native_fixture() -> None:
-    installer = _post_merge_workflow()["jobs"]["windows-installer"]
+def test_windows_installer_job_is_a_nightly_native_fixture() -> None:
+    installer = _nightly_workflow()["jobs"]["windows-installer"]
     runs = _runs(installer)
     uses = {step.get("uses", "") for step in installer["steps"]}
 
@@ -160,19 +144,16 @@ def test_windows_installer_job_is_a_post_merge_native_fixture() -> None:
     assert any(item.startswith("dtolnay/rust-toolchain") for item in uses)
 
 
-def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
+def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
     jobs = _workflow()["jobs"]
+    job = jobs["rust-linux"]
+    test_runs = _runs(job)
+    uses = {step.get("uses", "") for step in job["steps"]}
 
-    for name in ("rust-lint", "rust-test", "rust-process-lifecycle"):
-        job = jobs[name]
-        runs = _runs(job)
-        uses = {step.get("uses", "") for step in job["steps"]}
-        assert "env" not in job, name
-        assert not any(item.startswith("actions/setup-python") for item in uses), name
-        assert "python -m" not in runs.lower(), name
-        assert "pip install" not in runs.lower(), name
-
-    test_runs = _runs(jobs["rust-test"])
+    assert "env" not in job
+    assert not any(item.startswith("actions/setup-python") for item in uses)
+    assert "python -m" not in test_runs.lower()
+    assert "pip install" not in test_runs.lower()
     assert "scripts/check_version_parity.sh" not in test_runs
     assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in test_runs
     assert (
@@ -181,12 +162,11 @@ def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
     )
     assert test_runs.count("--skip python_interop_") == 2
     assert "--skip daemon_self_launch::" in test_runs
-    lifecycle_runs = _runs(jobs["rust-process-lifecycle"])
-    assert "--test integration" in lifecycle_runs
-    assert "daemon_self_launch::" in lifecycle_runs
-    assert "--test-threads=1" in lifecycle_runs
-    assert "cargo fmt --all --check" in _runs(jobs["rust-lint"])
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in _runs(jobs["rust-lint"])
+    assert "--test integration" in test_runs
+    assert "daemon_self_launch::" in test_runs
+    assert "--test-threads=1" in test_runs
+    assert "cargo fmt --all --check" in test_runs
+    assert "cargo clippy --workspace --all-targets -- -D warnings" in test_runs
     windows_runs = _runs(jobs["windows-smoke"])
     assert "cargo test --package cccc --test integration --locked" in windows_runs
     assert (
@@ -224,8 +204,8 @@ def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
         ), relative_path
 
 
-def test_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
-    dist = _post_merge_workflow()["jobs"]["rust-dist"]
+def test_nightly_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
+    dist = _nightly_workflow()["jobs"]["rust-dist"]
     runs = _runs(dist)
     unix_verifier = (ROOT / "scripts/tests/verify_release_unix.sh").read_text(encoding="utf-8")
     windows_verifier = (ROOT / "scripts/tests/verify_release_windows.ps1").read_text(encoding="utf-8")
@@ -256,7 +236,7 @@ def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance(
     assert "test:quality" not in runs
 
 
-def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
+def test_pr_python_matrix_uses_two_stable_file_shards_without_xdist() -> None:
     job = _workflow()["jobs"]["python-tests"]
     runs = _runs(job)
     web_bundle = next(
@@ -270,16 +250,16 @@ def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
         "name": "bundled-web",
         "path": "src/cccc/ports/web/dist",
     }
-    assert job["strategy"]["matrix"]["shard"] == ["0", "1", "2", "3"]
+    assert job["strategy"]["matrix"]["shard"] == ["0", "1"]
     assert "scripts/quality/pytest_shards.py" in runs
-    assert "--total 4" in runs
+    assert "--total 2" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest" in runs
     assert '-m "not packaged_web_dist"' in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
 
 
-def test_ci_exercises_the_supported_python_range_without_four_full_pr_suites() -> None:
+def test_ci_and_nightly_split_supported_python_compatibility() -> None:
     jobs = _workflow()["jobs"]
 
     for name in ("quality", "python-tests", "package", "windows-smoke"):
@@ -287,11 +267,21 @@ def test_ci_exercises_the_supported_python_range_without_four_full_pr_suites() -
         assert setup["with"]["python-version"] == "3.14"
 
     compat = jobs["python-compat"]
-    assert compat["strategy"]["matrix"]["python-version"] == ["3.11", "3.12", "3.13"]
+    compat_setup = next(
+        step for step in compat["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    )
+    assert "strategy" not in compat
+    assert compat_setup["with"]["python-version"] == "3.11"
     compat_runs = _runs(compat)
     assert "python -W error::SyntaxWarning -m compileall -q src/cccc" in compat_runs
     assert "cccc version" in compat_runs
     assert '"method": "initialize"' in compat_runs
+
+    nightly_compat = _nightly_workflow()["jobs"]["python-compat"]
+    assert nightly_compat["strategy"]["matrix"]["python-version"] == ["3.12", "3.13"]
+    nightly_runs = _runs(nightly_compat)
+    assert "python -W error::SyntaxWarning -m compileall -q src/cccc" in nightly_runs
+    assert '"method": "initialize"' in nightly_runs
 
 
 def test_package_job_owns_the_built_web_bundle_contract() -> None:
@@ -336,7 +326,11 @@ def test_nightly_workflow_runs_serial_full_python_suite_at_the_oldest_endpoint()
     }
     assert "if" not in nightly
     assert nightly["timeout-minutes"] == "45"
-    assert nightly["strategy"]["matrix"]["python-version"] == ["3.11"]
+    assert "strategy" not in nightly
+    setup = next(
+        step for step in nightly["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    )
+    assert setup["with"]["python-version"] == "3.11"
     assert "python -m pytest tests/" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/" in runs
     assert '-m "not packaged_web_dist"' in runs
@@ -345,29 +339,24 @@ def test_nightly_workflow_runs_serial_full_python_suite_at_the_oldest_endpoint()
     assert " -n " not in runs
 
 
-def test_post_merge_workflow_owns_slow_native_verification() -> None:
-    workflow = _post_merge_workflow()
+def test_nightly_workflow_owns_slow_native_verification() -> None:
+    workflow = _nightly_workflow()
     jobs = workflow["jobs"]
 
-    assert set(workflow["on"]) == {"push", "workflow_dispatch"}
-    assert workflow["on"]["push"]["branches"] == ["main", "rust"]
+    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"] == {
-        "group": "post-merge-${{ github.ref }}",
-        "cancel-in-progress": "true",
+        "group": "nightly-${{ github.ref }}",
+        "cancel-in-progress": "false",
     }
-    assert set(jobs) == {
+    assert {
+        "nightly-serial",
+        "python-compat",
         "web-bundle",
         "rust-dist",
         "windows-installer",
-        "post-merge-required",
-    }
-    assert jobs["post-merge-required"]["if"] == "always()"
-    assert set(jobs["post-merge-required"]["needs"]) == {
-        "web-bundle",
-        "rust-dist",
-        "windows-installer",
-    }
+    } <= set(jobs)
+    assert not (ROOT / ".github/workflows/post-merge.yml").exists()
 
 
 def test_workflows_use_node24_actions_and_schedule_action_updates() -> None:

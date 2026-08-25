@@ -71,4 +71,40 @@ describe("useTaskReferenceIndex", () => {
     expect(fetchByIds).toHaveBeenCalledTimes(4);
     expect(host.textContent).toBe("new-T001|new-T101");
   });
+
+  it("does not abort an in-flight task lookup for unrelated ledger events", async () => {
+    const seedTasks: Task[] = [];
+    let resolveRequest:
+      | ((value: Awaited<ReturnType<typeof api.fetchTasksByIds>>) => void)
+      | undefined;
+    fetchByIds.mockImplementation(
+      (_groupId, batch) =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+          expect(batch).toEqual(["T001"]);
+        }),
+    );
+
+    await act(async () => root.render(<Probe events={[event("T001")]} seedTasks={seedTasks} />));
+    const signal = fetchByIds.mock.calls[0]?.[2];
+    expect(fetchByIds).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(false);
+
+    const unrelated = { data: { text: "unrelated chat" } } as LedgerEvent;
+    await act(async () =>
+      root.render(<Probe events={[event("T001"), unrelated]} seedTasks={seedTasks} />),
+    );
+
+    expect(fetchByIds).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(false);
+
+    await act(async () => {
+      resolveRequest?.({
+        ok: true,
+        result: { tasks: [task("T001", "loaded")], tasksVersion: "tasksv:2" },
+      });
+      await Promise.resolve();
+    });
+    expect(host.textContent).toBe("loaded|undefined");
+  });
 });

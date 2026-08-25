@@ -134,6 +134,96 @@ class TestSelfEvolutionCapability(unittest.TestCase):
             LEGACY_SELF_EVOLUTION_CAPABILITY_ID, persisted["group_removed"][group_id]
         )
 
+    def test_legacy_manual_disable_migrates_to_the_builtin_capability(self) -> None:
+        from cccc.kernel.self_evolution_capability import (
+            LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+            SELF_EVOLUTION_CAPABILITY_ID,
+        )
+
+        group_id = self._create_group()
+        state_path = Path(self._temp.name) / "state" / "capabilities" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps(
+                {
+                    "v": 1,
+                    "group_removed": {group_id: [LEGACY_SELF_EVOLUTION_CAPABILITY_ID]},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        state = self._state(group_id)
+        self.assertNotIn(SELF_EVOLUTION_CAPABILITY_ID, state["enabled_capabilities"])
+        persisted = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertIn(
+            SELF_EVOLUTION_CAPABILITY_ID, persisted["group_removed"][group_id]
+        )
+
+    def test_legacy_block_and_hidden_controls_migrate_with_metadata(self) -> None:
+        from cccc.kernel.self_evolution_capability import (
+            LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+            SELF_EVOLUTION_CAPABILITY_ID,
+        )
+
+        group_id = self._create_group()
+        global_block = {
+            "reason": "global policy",
+            "by": "user",
+            "blocked_at": "2026-08-25T00:00:00Z",
+            "expires_at": "",
+        }
+        group_block = {
+            "reason": "group policy",
+            "by": "foreman",
+            "blocked_at": "2026-08-25T01:00:00Z",
+            "expires_at": "",
+        }
+        state_path = Path(self._temp.name) / "state" / "capabilities" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps(
+                {
+                    "v": 1,
+                    "default_group_capability_seed_versions": {group_id: 1},
+                    "global_blocked": {
+                        LEGACY_SELF_EVOLUTION_CAPABILITY_ID: global_block
+                    },
+                    "group_blocked": {
+                        group_id: {
+                            LEGACY_SELF_EVOLUTION_CAPABILITY_ID: group_block
+                        }
+                    },
+                    "actor_hidden": {
+                        group_id: {
+                            "user": [LEGACY_SELF_EVOLUTION_CAPABILITY_ID]
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        state = self._state(group_id)
+        self.assertNotIn(SELF_EVOLUTION_CAPABILITY_ID, state["enabled_capabilities"])
+        self.assertIn(
+            SELF_EVOLUTION_CAPABILITY_ID,
+            state["actor_hidden_capabilities"],
+        )
+        persisted = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["global_blocked"][SELF_EVOLUTION_CAPABILITY_ID],
+            global_block,
+        )
+        self.assertEqual(
+            persisted["group_blocked"][group_id][SELF_EVOLUTION_CAPABILITY_ID],
+            group_block,
+        )
+        self.assertIn(
+            SELF_EVOLUTION_CAPABILITY_ID,
+            persisted["actor_hidden"][group_id]["user"],
+        )
+
     def test_blocked_default_is_not_active(self) -> None:
         from cccc.kernel.self_evolution_capability import SELF_EVOLUTION_CAPABILITY_ID
 

@@ -127,6 +127,112 @@ fn legacy_self_evolution_binding_migrates_without_duplicate_activation() {
 }
 
 #[test]
+fn legacy_self_evolution_disable_migrates_to_the_builtin_capability() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("self evolution disable migration", "")
+        .expect("group");
+    std::fs::create_dir_all(home.root().join("state/capabilities")).expect("state dir");
+    write_json(
+        &home.root().join("state/capabilities/state.json"),
+        json!({"v":1,"group_removed":{(group.group_id.clone()):[LEGACY_SELF_EVOLUTION_CAPABILITY_ID]}}),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        !state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+
+    let persisted: Value =
+        cccc_core::fs::read_json(&home.root().join("state/capabilities/state.json"))
+            .expect("persisted state");
+    assert!(
+        persisted["group_removed"][&group.group_id]
+            .as_array()
+            .expect("removed")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+}
+
+#[test]
+fn legacy_self_evolution_controls_migrate_with_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("self evolution control migration", "")
+        .expect("group");
+    let global_block = json!({
+        "reason":"global policy","by":"user",
+        "blocked_at":"2026-08-25T00:00:00Z","expires_at":""
+    });
+    let group_block = json!({
+        "reason":"group policy","by":"foreman",
+        "blocked_at":"2026-08-25T01:00:00Z","expires_at":""
+    });
+    std::fs::create_dir_all(home.root().join("state/capabilities")).expect("state dir");
+    write_json(
+        &home.root().join("state/capabilities/state.json"),
+        json!({
+            "v":1,
+            "default_group_capability_seed_versions":{(group.group_id.clone()):1},
+            "global_blocked":{LEGACY_SELF_EVOLUTION_CAPABILITY_ID:global_block.clone()},
+            "group_blocked":{
+                (group.group_id.clone()):{LEGACY_SELF_EVOLUTION_CAPABILITY_ID:group_block.clone()}
+            },
+            "actor_hidden":{
+                (group.group_id.clone()):{"user":[LEGACY_SELF_EVOLUTION_CAPABILITY_ID]}
+            }
+        }),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        !state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+    assert!(
+        state["actor_hidden_capabilities"]
+            .as_array()
+            .expect("hidden")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+
+    let persisted: Value =
+        cccc_core::fs::read_json(&home.root().join("state/capabilities/state.json"))
+            .expect("persisted state");
+    assert_eq!(
+        persisted["global_blocked"][SELF_EVOLUTION_CAPABILITY_ID],
+        global_block
+    );
+    assert_eq!(
+        persisted["group_blocked"][&group.group_id][SELF_EVOLUTION_CAPABILITY_ID],
+        group_block
+    );
+    assert!(
+        persisted["actor_hidden"][&group.group_id]["user"]
+            .as_array()
+            .expect("hidden")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+}
+
+#[test]
 fn blocked_default_self_evolution_is_not_active() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

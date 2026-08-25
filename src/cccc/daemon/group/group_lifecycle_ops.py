@@ -287,6 +287,8 @@ def handle_group_start(
                 deepseek_runtime.start(
                     group_id=group.group_id,
                     actor_id=aid,
+                    actor_created_at=str(actor_doc.get("created_at") or ""),
+                    group_path=group.path,
                     cwd=cwd,
                     command=list(launch_spec["effective_command"]),
                     env=_launch_env(),

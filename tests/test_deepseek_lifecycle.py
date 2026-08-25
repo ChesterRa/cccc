@@ -7,7 +7,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from cccc.daemon.actors import deepseek_runtime
+from cccc.daemon.actors import deepseek_restart_gate, deepseek_runtime
 from cccc.daemon.actors.deepseek_setup import DeepSeekSetupOutcome
 from cccc.daemon.actors.actor_profile_store import _normalize_profile_command
 from cccc.daemon.actors.actor_runtime_ops import resolve_actor_launch_config
@@ -192,6 +192,7 @@ def test_registry_runs_first_use_setup_before_starting_dsh(
 
     class FakeSupervisor:
         def __init__(self, command, *, cwd, env):
+            self.generation = "launch-current"
             calls.append(("supervisor", list(command), cwd, dict(env)))
 
         def start(self):
@@ -220,14 +221,44 @@ def test_registry_runs_first_use_setup_before_starting_dsh(
 
     monkeypatch.setattr(deepseek_runtime, "ensure_deepseek_setup", setup)
     monkeypatch.setattr(deepseek_runtime, "DeepSeekSupervisor", FakeSupervisor)
+    group_path = tmp_path / ".cccc/groups/g-first-use"
+    deepseek_restart_gate.record_running_generation(
+        group_path=group_path,
+        group_id="g-first-use",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        generation="launch-old",
+    )
+    deepseek_restart_gate.require_manual_restart(
+        group_path=group_path,
+        group_id="g-first-use",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        expected_generation="launch-old",
+        reason_code="credential_unavailable",
+    )
+    assert deepseek_runtime.manual_restart_required(
+        group_id="g-first-use",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        group_path=group_path,
+    )
     deepseek_runtime.start(
         group_id="g-first-use",
         actor_id="deepseek",
+        actor_created_at="actor-v1",
+        group_path=group_path,
         cwd=tmp_path,
         command=["dsh-acp-demo"],
         env={},
     )
     try:
+        assert not deepseek_runtime.manual_restart_required(
+            group_id="g-first-use",
+            actor_id="deepseek",
+            actor_created_at="actor-v1",
+            group_path=group_path,
+        )
         assert [call[0] for call in calls[:4]] == [
             "setup",
             "supervisor",
@@ -246,6 +277,59 @@ def test_registry_runs_first_use_setup_before_starting_dsh(
         ]
     finally:
         deepseek_runtime.stop(group_id="g-first-use", actor_id="deepseek")
+
+
+def test_manual_restart_gate_is_durable_and_generation_fenced(tmp_path) -> None:
+    group_path = tmp_path / "groups/g-deepseek"
+    deepseek_restart_gate.record_running_generation(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        generation="launch-1",
+    )
+    assert deepseek_restart_gate.require_manual_restart(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        expected_generation="launch-1",
+        reason_code="credential_unavailable",
+    )
+    assert deepseek_restart_gate.manual_restart_required(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+    )
+
+    deepseek_restart_gate.record_running_generation(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        generation="launch-2",
+    )
+    assert not deepseek_restart_gate.require_manual_restart(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+        expected_generation="launch-1",
+        reason_code="stale_failure",
+    )
+    assert not deepseek_restart_gate.manual_restart_required(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v1",
+    )
+    assert not deepseek_restart_gate.manual_restart_required(
+        group_path=group_path,
+        group_id="g-deepseek",
+        actor_id="deepseek",
+        actor_created_at="actor-v2",
+    )
 
 
 def _deepseek_group(path) -> Group:
@@ -345,26 +429,47 @@ def test_autostart_routes_deepseek_to_dedicated_registry(tmp_path, monkeypatch) 
             AssertionError("generic headless route used")
         ),
     )
-    autostart_running_groups(
-        home,
-        effective_runner_kind=lambda runner: runner,
-        find_scope_url=lambda _group, _scope: str(tmp_path),
-        supported_runtimes=("deepseek",),
-        ensure_mcp_installed=lambda *_args, **_kwargs: True,
-        auto_mcp_runtimes=(),
-        merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
-        inject_actor_context_env=lambda env, _gid, _aid: dict(env),
-        prepare_pty_env=lambda env: dict(env),
-        normalize_runtime_command=lambda _runtime, command: list(command),
-        pty_backlog_bytes=lambda: 1024,
-        write_headless_state=lambda _gid, _aid: None,
-        write_pty_state=lambda *_args, **_kwargs: None,
-        clear_preamble_sent=lambda _group, _aid: None,
-        throttle_reset_actor=lambda *_args, **_kwargs: None,
-        automation_on_resume=lambda _group: None,
-        get_group_state=lambda _group: "active",
-        load_actor_private_env=lambda _gid, _aid: {},
-        update_actor_private_env=lambda *_args, **_kwargs: {},
-        delete_actor_private_env=lambda _gid, _aid: None,
-    )
+    def run_autostart() -> None:
+        autostart_running_groups(
+            home,
+            effective_runner_kind=lambda runner: runner,
+            find_scope_url=lambda _group, _scope: str(tmp_path),
+            supported_runtimes=("deepseek",),
+            ensure_mcp_installed=lambda *_args, **_kwargs: True,
+            auto_mcp_runtimes=(),
+            merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
+            inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+            prepare_pty_env=lambda env: dict(env),
+            normalize_runtime_command=lambda _runtime, command: list(command),
+            pty_backlog_bytes=lambda: 1024,
+            write_headless_state=lambda _gid, _aid: None,
+            write_pty_state=lambda *_args, **_kwargs: None,
+            clear_preamble_sent=lambda _group, _aid: None,
+            throttle_reset_actor=lambda *_args, **_kwargs: None,
+            automation_on_resume=lambda _group: None,
+            get_group_state=lambda _group: "active",
+            load_actor_private_env=lambda _gid, _aid: {},
+            update_actor_private_env=lambda *_args, **_kwargs: {},
+            delete_actor_private_env=lambda _gid, _aid: None,
+        )
+
+    run_autostart()
     assert starts[0]["command"] == ["dsh-acp-demo"]
+
+    deepseek_restart_gate.record_running_generation(
+        group_path=group.path,
+        group_id=group.group_id,
+        actor_id="deepseek",
+        actor_created_at="",
+        generation="failed-launch",
+    )
+    deepseek_restart_gate.require_manual_restart(
+        group_path=group.path,
+        group_id=group.group_id,
+        actor_id="deepseek",
+        actor_created_at="",
+        expected_generation="failed-launch",
+        reason_code="credential_unavailable",
+    )
+    run_autostart()
+    assert len(starts) == 1

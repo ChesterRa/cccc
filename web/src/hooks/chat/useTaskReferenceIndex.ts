@@ -54,10 +54,11 @@ export function useTaskReferenceIndex({
   }, [groupId, seedTasks]);
 
   useEffect(() => {
-    if (!groupId || ids.length === 0) return;
+    const stableIds = idsKey ? idsKey.split("\u0000") : [];
+    if (!groupId || stableIds.length === 0) return;
     const version = String(tasksVersion || "").trim();
     const refreshAll = Boolean(version && version !== fetchedVersionRef.current);
-    const wanted = refreshAll ? ids : ids.filter((id) => !byIdRef.current.has(id));
+    const wanted = refreshAll ? stableIds : stableIds.filter((id) => !byIdRef.current.has(id));
     if (wanted.length === 0) {
       if (version) fetchedVersionRef.current = version;
       return;
@@ -97,7 +98,7 @@ export function useTaskReferenceIndex({
       controller.abort();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [groupId, ids, idsKey, retryKey, tasksVersion]);
+  }, [groupId, idsKey, retryKey, tasksVersion]);
 
   return byId;
 }

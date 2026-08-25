@@ -3,7 +3,7 @@ import { apiJson, ledgerStatusesRequestKey, reuseRecentReadRequest } from "./bas
 
 const LEDGER_STATUSES_TTL_MS = 1200;
 
-type LedgerFetchInit = RequestInit & { noCache?: boolean; includeStatuses?: boolean };
+type LedgerFetchInit = RequestInit & { includeStatuses?: boolean };
 
 function buildLedgerStatusParams(includeStatuses: boolean): URLSearchParams {
   const params = new URLSearchParams();
@@ -22,6 +22,14 @@ export async function fetchLedgerTail(groupId: string, lines = 120, init?: Ledge
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?${params.toString()}`,
     init,
+  );
+}
+
+export async function fetchLedgerBoundary(groupId: string) {
+  const params = new URLSearchParams({ kind: "all", limit: "1" });
+  return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?${params.toString()}`,
+    { cache: "no-store" },
   );
 }
 
@@ -64,9 +72,9 @@ export async function fetchMessageWindow(
 export async function searchChatMessages(
   groupId: string,
   q: string,
-  opts?: { limit?: number; before?: string; after?: string },
+  opts?: { limit?: number; before?: string; after?: string; includeStatuses?: boolean },
 ) {
-  const params = buildLedgerStatusParams(true);
+  const params = buildLedgerStatusParams(opts?.includeStatuses !== false);
   params.set("kind", "chat");
   params.set("q", q || "");
   params.set("limit", String(opts?.limit ?? 50));

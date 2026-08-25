@@ -25,6 +25,7 @@ pub(super) struct RuntimeEntry {
     pub(super) supervisor: std::sync::Mutex<DeepSeekSupervisor>,
     pub(super) running: AtomicBool,
     pub(super) manual_restart_required: AtomicBool,
+    pub(super) generation: String,
 }
 
 pub(super) fn sessions() -> &'static RwLock<HashMap<Key, Arc<RuntimeEntry>>> {
@@ -46,6 +47,7 @@ pub fn start(
     let key = (group.group_id.clone(), actor.id.clone());
     stop(&group.group_id, &actor.id);
     let cancel_flag = Arc::new(AtomicBool::new(false));
+    let generation = uuid::Uuid::new_v4().simple().to_string();
     let mut supervisor = DeepSeekSupervisor::default();
     let mut env = actor.env.clone();
     env.insert(
@@ -86,12 +88,23 @@ pub fn start(
                 supervisor: std::sync::Mutex::new(supervisor),
                 running: AtomicBool::new(true),
                 manual_restart_required: AtomicBool::new(false),
+                generation: generation.clone(),
             }),
         );
     cancel_flags()
         .write()
         .map_err(|_| std::io::Error::other("deepseek cancel lock poisoned"))?
         .insert((group.group_id.clone(), actor.id.clone()), cancel_flag);
+    if let Err(error) = cccc_core::deepseek_restart_gate::record_running_generation(
+        home,
+        &group.group_id,
+        &actor.id,
+        &actor.created_at,
+        &generation,
+    ) {
+        stop(&group.group_id, &actor.id);
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -169,13 +182,33 @@ pub fn running(group_id: &str, actor_id: &str) -> bool {
         })
 }
 
-pub(super) fn manual_restart_required(group_id: &str, actor_id: &str) -> bool {
-    let key = (group_id.to_owned(), actor_id.to_owned());
-    sessions()
+pub(super) fn manual_restart_required(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> bool {
+    let key = (group.group_id.clone(), actor.id.clone());
+    if sessions()
         .read()
         .ok()
         .and_then(|map| map.get(&key).cloned())
         .is_some_and(|holder| holder.manual_restart_required.load(Ordering::Acquire))
+    {
+        return true;
+    }
+    match cccc_core::deepseek_restart_gate::manual_restart_required(
+        home,
+        &group.group_id,
+        &actor.id,
+        &actor.created_at,
+    ) {
+        Ok(required) => required,
+        Err(error) => {
+            tracing::error!(
+                %error,
+                group_id = %group.group_id,
+                actor_id = %actor.id,
+                "failed to read DeepSeek manual restart gate"
+            );
+            true
+        }
+    }
 }
 
 #[cfg(test)]

@@ -463,12 +463,32 @@ impl CapabilityStore {
                 return Ok(false);
             }
 
+            let legacy_explicitly_removed = raw
+                .pointer(&format!("/group_removed/{}", escape_pointer(group_id)))
+                .and_then(Value::as_array)
+                .is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|item| item.as_str() == Some(LEGACY_SELF_EVOLUTION_CAPABILITY_ID))
+                });
+            migrate_capability_controls(
+                raw,
+                group_id,
+                LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+                SELF_EVOLUTION_CAPABILITY_ID,
+            );
             let legacy_removed =
                 remove_enabled_bindings(raw, LEGACY_SELF_EVOLUTION_CAPABILITY_ID, Some(group_id));
             if legacy_removed > 0 {
                 let groups = object_field(raw, "group_removed");
                 let items = groups.entry(group_id).or_insert_with(|| json!([]));
                 set_array_member(items, LEGACY_SELF_EVOLUTION_CAPABILITY_ID, true);
+            }
+
+            if legacy_explicitly_removed {
+                let groups = object_field(raw, "group_removed");
+                let items = groups.entry(group_id).or_insert_with(|| json!([]));
+                set_array_member(items, SELF_EVOLUTION_CAPABILITY_ID, true);
             }
 
             let self_evolution_removed = raw
@@ -844,6 +864,47 @@ fn array_contains_id(value: &Value, id: &str) -> bool {
     value
         .as_array()
         .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(id)))
+}
+
+fn migrate_capability_controls(raw: &mut Value, group_id: &str, legacy_id: &str, new_id: &str) {
+    let global_block = raw
+        .get("global_blocked")
+        .and_then(Value::as_object)
+        .and_then(|entries| entries.get(legacy_id))
+        .cloned();
+    if let Some(entry) = global_block {
+        object_field(raw, "global_blocked")
+            .entry(new_id)
+            .or_insert(entry);
+    }
+
+    let group_block = raw
+        .get("group_blocked")
+        .and_then(Value::as_object)
+        .and_then(|groups| groups.get(group_id))
+        .and_then(Value::as_object)
+        .and_then(|entries| entries.get(legacy_id))
+        .cloned();
+    if let Some(entry) = group_block {
+        let groups = object_field(raw, "group_blocked");
+        ensure_object(groups.entry(group_id).or_insert_with(|| json!({})))
+            .entry(new_id)
+            .or_insert(entry);
+    }
+
+    let Some(hidden_by_actor) = raw
+        .get_mut("actor_hidden")
+        .and_then(Value::as_object_mut)
+        .and_then(|groups| groups.get_mut(group_id))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for hidden in hidden_by_actor.values_mut() {
+        if array_contains_id(hidden, legacy_id) {
+            set_array_member(hidden, new_id, true);
+        }
+    }
 }
 
 fn active_block_entry(value: Option<&Value>, id: &str) -> Option<Value> {

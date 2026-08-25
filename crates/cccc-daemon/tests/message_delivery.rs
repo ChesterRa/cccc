@@ -1451,6 +1451,26 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
         .expect("source events")
         .len();
 
+    let unauthorized = call_raw(
+        &home,
+        "send_cross_group_remote_record",
+        json!({
+            "group_id":source_id,"dst_group_id":"remote-group","by":"unknown-actor",
+            "to":["reviewer"],"text":"bypass membership","message_mode":"mail",
+            "insight":"The remote reviewer owns the requested decision."
+        }),
+    );
+    assert_eq!(
+        unauthorized.error.as_ref().map(|error| error.code.as_str()),
+        Some("permission_denied")
+    );
+    assert_eq!(
+        ledger::read_all(&source_ledger)
+            .expect("source events")
+            .len(),
+        before
+    );
+
     let rejected = call_raw(
         &home,
         "send_cross_group_remote_record",

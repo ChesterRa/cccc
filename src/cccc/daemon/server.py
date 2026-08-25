@@ -798,6 +798,16 @@ def _auto_wake_actor_running(wake_group: Any, actor_id: str) -> bool:
     if runtime == "claude" and runner_effective == "headless":
         return bool(claude_app_supervisor.actor_running(wake_group.group_id, actor_id))
     if runtime == "deepseek" and runner_effective == "headless":
+        # The auto-wake helper uses this predicate as an occupancy gate. A
+        # permanent DeepSeek turn error must remain blocked until an explicit
+        # actor start/restart, even though its process is no longer running.
+        if deepseek_runtime.manual_restart_required(
+            group_id=wake_group.group_id,
+            actor_id=actor_id,
+            actor_created_at=str(actor_doc.get("created_at") or ""),
+            group_path=wake_group.path,
+        ):
+            return True
         return bool(deepseek_runtime.running(group_id=wake_group.group_id, actor_id=actor_id))
     if runtime == "web_model" and runner_effective == "headless":
         return bool(_headless_state_running(wake_group.group_id, actor_id))

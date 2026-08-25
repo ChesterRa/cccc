@@ -826,32 +826,30 @@ def _search_event_ids(
         params.append(f"%{query_lower}%")
 
     anchor_id = str(before_id or after_id or "").strip()
-    comparator = ""
     order_dir = "DESC"
     if anchor_id:
         anchor = conn.execute(
-            "SELECT ts, source_seq, line_no FROM events WHERE event_id = ?",
+            "SELECT source_seq, line_no FROM events WHERE event_id = ?",
             (anchor_id,),
         ).fetchone()
         if anchor is None:
             return [], False
-        anchor_ts = str(anchor[0] or "").strip()
-        anchor_seq = int(anchor[1] or 0)
-        anchor_line = int(anchor[2] or 0)
+        anchor_seq = int(anchor[0] or 0)
+        anchor_line = int(anchor[1] or 0)
         if before_id:
-            comparator = "(ts < ? OR (ts = ? AND (source_seq < ? OR (source_seq = ? AND line_no < ?))))"
-            params.extend([anchor_ts, anchor_ts, anchor_seq, anchor_seq, anchor_line])
+            comparator = "(source_seq < ? OR (source_seq = ? AND line_no < ?))"
+            params.extend([anchor_seq, anchor_seq, anchor_line])
             order_dir = "DESC"
         else:
-            comparator = "(ts > ? OR (ts = ? AND (source_seq > ? OR (source_seq = ? AND line_no > ?))))"
-            params.extend([anchor_ts, anchor_ts, anchor_seq, anchor_seq, anchor_line])
+            comparator = "(source_seq > ? OR (source_seq = ? AND line_no > ?))"
+            params.extend([anchor_seq, anchor_seq, anchor_line])
             order_dir = "ASC"
         where.append(comparator)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = (
         f"SELECT events.event_id FROM events {join_sql} {where_sql} "
-        f"ORDER BY events.ts {order_dir}, events.source_seq {order_dir}, events.line_no {order_dir} "
+        f"ORDER BY events.source_seq {order_dir}, events.line_no {order_dir} "
         "LIMIT ?"
     )
     query_params = [*params, max(1, int(limit or 50)) + 1]

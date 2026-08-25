@@ -81,6 +81,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const hiddenDisconnectTimerRef = useRef<number | null>(null);
   const hasConnectedOnceRef = useRef<boolean>(false);
   const needsVisibilityCatchupRef = useRef<boolean>(false);
+  const ledgerCursorByGroupRef = useRef(new Map<string, string>());
   const headlessThreadIdByActorRef = useRef(new Map<string, string>());
   const pendingHeadlessMessageFlushRef = useRef<number | null>(null);
   const pendingHeadlessActivityFlushRef = useRef<number | null>(null);
@@ -139,11 +140,26 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
+  async function reconcileGroupLedger(groupId: string) {
+    const startCursor = String(ledgerCursorByGroupRef.current.get(groupId) || "").trim();
+    const nextCursor = await reconcileLedgerTail(
+      groupId,
+      () => selectedGroupIdRef.current === groupId,
+      startCursor,
+    );
+    if (
+      nextCursor &&
+      selectedGroupIdRef.current === groupId &&
+      String(ledgerCursorByGroupRef.current.get(groupId) || "").trim() === startCursor
+    ) {
+      ledgerCursorByGroupRef.current.set(groupId, nextCursor);
+    }
+  }
+
   async function resyncAfterReconnect(groupId: string) {
     await runReconnectCatchup(groupId, {
       invalidateContextRead: api.invalidateContextRead,
-      reconcileLedgerTail: (gid) =>
-        reconcileLedgerTail(gid, () => selectedGroupIdRef.current === gid),
+      reconcileLedgerTail: reconcileGroupLedger,
       refreshActors,
       fetchContextOverview: fetchContext,
     });
@@ -835,12 +851,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("connected");
       hasConnectedOnceRef.current = true;
+      needsVisibilityCatchupRef.current = false;
 
       // New SSE connections start at EOF, so every reconnect needs a
-      // lightweight catch-up to cover the disconnect window.
+      // cursor-based catch-up to cover the disconnect window. The first
+      // connection also establishes the durable boundary used by later tabs.
       if (isReconnect) {
-        needsVisibilityCatchupRef.current = false;
         void resyncAfterReconnect(groupId);
+      } else {
+        void reconcileGroupLedger(groupId);
       }
     };
 
@@ -855,7 +874,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       const msg = e as MessageEvent;
       try {
-        processLedgerEvent(groupId, JSON.parse(String(msg.data || "{}")) as LedgerEvent, {
+        const event = JSON.parse(String(msg.data || "{}")) as LedgerEvent;
+        const eventId = String(event.id || "").trim();
+        if (eventId) ledgerCursorByGroupRef.current.set(groupId, eventId);
+        processLedgerEvent(groupId, event, {
           actors: actorsRef.current,
           activeTab: activeTabRef.current,
           chatAtBottom: chatAtBottomRef.current,

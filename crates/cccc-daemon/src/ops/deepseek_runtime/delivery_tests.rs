@@ -168,7 +168,7 @@ done"#;
         &AtomicBool::new(false),
     ));
     assert!(!running(&group.group_id, &actor.id));
-    assert!(manual_restart_required(&group.group_id, &actor.id));
+    assert!(manual_restart_required(&home, &group, &actor));
     let events = std::fs::read_to_string(
         store
             .state_dir(&group.group_id)
@@ -223,7 +223,7 @@ done"#;
         &AtomicBool::new(false),
     ));
     assert!(!running(&group.group_id, &actor.id));
-    assert!(manual_restart_required(&group.group_id, &actor.id));
+    assert!(manual_restart_required(&home, &group, &actor));
     let events = std::fs::read_to_string(
         store
             .state_dir(&group.group_id)
@@ -236,7 +236,10 @@ done"#;
     assert!(events.contains("restart the actor to create a fresh session"));
     assert!(!events.contains("should-not-leak"));
     stop(&group.group_id, &actor.id);
-    assert!(!manual_restart_required(&group.group_id, &actor.id));
+    assert!(manual_restart_required(&home, &group, &actor));
+    start(&home, &group, &actor, temp.path()).expect("explicit restart");
+    assert!(!manual_restart_required(&home, &group, &actor));
+    stop(&group.group_id, &actor.id);
 }
 
 #[cfg(unix)]

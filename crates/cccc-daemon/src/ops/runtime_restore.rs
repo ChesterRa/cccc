@@ -76,6 +76,14 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
         .iter()
         .filter(|actor| should_restore_actor(group.state, actor))
     {
+        if deepseek_restore_blocked(home, &group, actor) {
+            tracing::info!(
+                group_id = %group.group_id,
+                actor_id = %actor.id,
+                "skipped automatic DeepSeek restore until an explicit actor start"
+            );
+            continue;
+        }
         match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
             Ok(_) => {
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
@@ -97,10 +105,16 @@ fn should_restore_actor(state: GroupState, actor: &Actor) -> bool {
     actor.enabled && !(state == GroupState::Paused && local_headless::supports(actor))
 }
 
+fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, actor: &Actor) -> bool {
+    actor.runtime == cccc_contracts::ActorRuntime::Deepseek
+        && crate::ops::deepseek_runtime::manual_restart_required(home, group, actor)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::should_restore_actor;
+    use super::{deepseek_restore_blocked, should_restore_actor};
     use cccc_contracts::{Actor, ActorRuntime, GroupState, RunnerKind};
+    use cccc_core::{GroupStore, HomeLayout};
 
     #[test]
     fn paused_groups_restore_retained_ptys_but_not_headless_runtimes() {
@@ -112,5 +126,46 @@ mod tests {
 
         actor.runner = RunnerKind::Pty;
         assert!(should_restore_actor(GroupState::Paused, &actor));
+    }
+
+    #[test]
+    fn durable_deepseek_gate_blocks_automatic_restore_until_a_new_generation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("deepseek restore", "").expect("group");
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save");
+
+        cccc_core::deepseek_restart_gate::record_running_generation(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "launch-1",
+        )
+        .expect("record generation");
+        cccc_core::deepseek_restart_gate::require_manual_restart(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "launch-1",
+            "credential_unavailable",
+        )
+        .expect("close gate");
+        assert!(deepseek_restore_blocked(&home, &group, &actor));
+
+        cccc_core::deepseek_restart_gate::record_running_generation(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "launch-2",
+        )
+        .expect("record explicit restart generation");
+        assert!(!deepseek_restore_blocked(&home, &group, &actor));
     }
 }

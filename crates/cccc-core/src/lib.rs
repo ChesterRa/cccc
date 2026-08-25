@@ -17,6 +17,7 @@ mod capability_legacy_tests;
 pub mod cloudflared;
 pub mod codex_hook_state;
 pub mod context;
+pub mod deepseek_restart_gate;
 pub mod fs;
 pub mod group;
 pub mod group_bridge_identity;

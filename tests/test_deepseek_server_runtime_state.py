@@ -35,6 +35,19 @@ def test_auto_wake_running_deepseek_uses_dedicated_registry(tmp_path, monkeypatc
     assert generic_calls == []
 
 
+def test_auto_wake_does_not_restart_deepseek_after_a_permanent_error(
+    tmp_path, monkeypatch
+) -> None:
+    group = _deepseek_group(tmp_path / "group")
+    monkeypatch.setattr(server.deepseek_runtime, "running", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        server.deepseek_runtime,
+        "manual_restart_required",
+        lambda **_kwargs: True,
+    )
+    assert server._auto_wake_actor_running(group, "deepseek") is True
+
+
 def test_automation_group_running_includes_deepseek_registry(monkeypatch) -> None:
     monkeypatch.setattr(runner_ops.codex_app_supervisor, "group_running", lambda _group_id: False)
     monkeypatch.setattr(runner_ops.claude_app_supervisor, "group_running", lambda _group_id: False)

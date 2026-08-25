@@ -1,6 +1,6 @@
 # Contributor Quality Gates
 
-CCCC keeps local feedback fast while preserving full pull-request coverage. Long-lived gates check current code and deliverables; one-time migrations are reviewed once instead of becoming permanent historical machinery.
+CCCC keeps local feedback fast while preserving required source-correctness coverage on every pull request. Compatibility and native-distribution checks that do not need to block each change run nightly and before release. Long-lived gates check current code and deliverables; one-time migrations are reviewed once instead of becoming permanent historical machinery.
 
 ## Local Commands
 
@@ -89,36 +89,36 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | --- | --- |
 | `quality` | Ruff and quality-tool/workflow contract tests |
 | `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
-| `python-tests` | Source-level Python tests distributed across four deterministic matrix shards |
-| `python-compat` | Import, CLI, and MCP handshake coverage on Python 3.11 through 3.13 |
+| `python-tests` | Source-level Python tests distributed across two deterministic matrix shards on Python 3.14 |
+| `python-compat` | Import, CLI, and MCP handshake coverage on the oldest supported Python, 3.11 |
 | `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
-| `rust-lint` | Rust formatting and workspace Clippy with warnings denied |
-| `rust-test` | Python-free Rust workspace plus installer/release source contracts |
-| `rust-process-lifecycle` | Serial combined daemon/Web lifecycle tests, isolated from the parallel workspace suite |
+| `rust-linux` | Rust formatting, workspace Clippy, Python-free tests, installer/release source contracts, and serial combined-process lifecycle coverage in one reused workspace |
 | `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
 | `windows-smoke` | Windows PTY compatibility, combined Web startup-failure cleanup, and forced daemon Job Object process-tree cleanup |
 | `ci-required` | Stable aggregate result for branch protection; fails when any required job fails or is skipped |
 
-The Rust pull-request jobs are self-contained: they do not install or execute
-the Python backend. Cross-language tests that launch `src/cccc` stay excluded
-from `rust-test` so its boundary remains honest, but run in the separate
-mandatory `interop` job instead. CLI tests that spawn and stop a combined
-daemon/Web process are also excluded from the parallel workspace invocation and
-run with one test thread in `rust-process-lifecycle`. This preserves the process
-exit contract without making it race the rest of the workspace test binary.
+The `rust-linux` pull-request job is self-contained: it does not install or
+execute the Python backend, and its formatting, linting, tests, and lifecycle
+steps share one checkout, toolchain, and Cargo target directory. Cross-language
+tests that launch `src/cccc` stay excluded from that job so its boundary remains
+honest, but run in the separate mandatory `interop` job instead. CLI tests that
+spawn and stop a combined daemon/Web process run last with one test thread. This
+preserves the process-exit contract without paying for three separate Rust job
+setups or racing the rest of the workspace test binary.
 
-## Post-Merge Native Verification
+## Nightly Compatibility and Native Verification
 
-Slow native distribution checks live in the separate `Post-merge` workflow so
-pull requests do not contain push-only skipped jobs and the required CI result
-stays easy to read. It runs only after changes land on `main` or `rust`:
+Slow compatibility and native-distribution checks run once per day and remain
+manually dispatchable. They do not repeat after every `main` or `rust` push;
+release workflows independently verify the exact artifacts they publish.
 
 | Job | Responsibility |
 | --- | --- |
+| `nightly-serial` | Complete source-level Python suite in one process on Python 3.11 |
+| `python-compat` | Import, CLI, and MCP handshake coverage on Python 3.12 and 3.13 |
 | `web-bundle` | Build the exact frontend embedded by native artifacts |
 | `rust-dist` | Release-build the Rust workspace and run Unix installation/replacement smoke |
 | `windows-installer` | Build the native Windows CLI and verify installer ownership and PATH handling |
-| `post-merge-required` | Stable aggregate result for the slow native verification layer |
 
 `rust-dist` executes `scripts/tests/smoke_rust_replacement.sh` against the
 actual built executable. The smoke uses a fresh `CCCC_HOME`, verifies offline
@@ -155,9 +155,9 @@ This largest-processing-time strategy gives stable assignments for the same chec
 Inspect a shard with:
 
 ```bash
-uv run python scripts/quality/pytest_shards.py --total 4 --index 0
+uv run python scripts/quality/pytest_shards.py --total 2 --index 0
 ```
 
 ## Nightly Serial Coverage
 
-The scheduled `nightly-serial` job runs the complete source-level `tests/` suite in one pytest process, excluding only the artifact-dependent `packaged_web_dist` contract owned by the package job. Pull requests use the four file shards for lower wall-clock time; nightly preserves a simple reference run that can expose shared-state or order sensitivity across files.
+The scheduled `nightly-serial` job runs the complete source-level `tests/` suite in one pytest process, excluding only the artifact-dependent `packaged_web_dist` contract owned by the package job. Pull requests use two file shards for lower wall-clock time; nightly preserves a simple reference run that can expose shared-state or order sensitivity across files. The lightweight compatibility matrix covers Python 3.12 and 3.13 without repeating the full suite on every push.

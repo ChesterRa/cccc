@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, DaemonResponse, Event};
+use cccc_contracts::{Actor, DaemonRequest, DaemonResponse, Event};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::profiles::ProfileStore;
 use cccc_core::settings::{self, GlobalSettings};
@@ -13,6 +13,105 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+#[test]
+fn python_interop_share_the_deepseek_manual_restart_gate() {
+    let repo = workspace_root();
+    let temp = tempfile::tempdir().expect("temp home");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("DeepSeek gate interop", "").expect("group");
+    let actor = Actor::new("deepseek");
+    group.actors.push(actor.clone());
+    groups.save(&group).expect("save actor");
+
+    cccc_core::deepseek_restart_gate::record_running_generation(
+        &home,
+        &group.group_id,
+        &actor.id,
+        &actor.created_at,
+        "rust-launch",
+    )
+    .expect("record Rust generation");
+    assert!(
+        cccc_core::deepseek_restart_gate::require_manual_restart(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "rust-launch",
+            "credential_unavailable",
+        )
+        .expect("close Rust gate")
+    );
+
+    let output = python(&repo, temp.path())
+        .arg(
+            r#"
+import sys
+from pathlib import Path
+from cccc.daemon.actors.deepseek_restart_gate import (
+    manual_restart_required,
+    record_running_generation,
+    require_manual_restart,
+)
+
+group_path, group_id, actor_id, actor_created_at = sys.argv[1:5]
+assert manual_restart_required(
+    group_path=Path(group_path),
+    group_id=group_id,
+    actor_id=actor_id,
+    actor_created_at=actor_created_at,
+)
+record_running_generation(
+    group_path=Path(group_path),
+    group_id=group_id,
+    actor_id=actor_id,
+    actor_created_at=actor_created_at,
+    generation="python-launch",
+)
+assert require_manual_restart(
+    group_path=Path(group_path),
+    group_id=group_id,
+    actor_id=actor_id,
+    actor_created_at=actor_created_at,
+    expected_generation="python-launch",
+    reason_code="context_window_exceeded",
+)
+"#,
+        )
+        .arg(home.groups_dir().join(&group.group_id))
+        .arg(&group.group_id)
+        .arg(&actor.id)
+        .arg(&actor.created_at)
+        .output()
+        .expect("run Python DeepSeek gate handoff");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        cccc_core::deepseek_restart_gate::manual_restart_required(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+        )
+        .expect("Rust reads Python gate")
+    );
+    assert!(
+        !cccc_core::deepseek_restart_gate::require_manual_restart(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "rust-launch",
+            "stale_failure",
+        )
+        .expect("reject stale Rust generation")
+    );
+}
 
 #[test]
 fn python_interop_voice_recording_lease_waits_for_the_shared_rust_lock() {
@@ -2831,7 +2930,7 @@ enqueue_space_job(
     );
     assert_eq!(
         capabilities["enabled_capabilities"],
-        json!(["skill:test:shared"]),
+        json!(["skill:cccc:self-evolution", "skill:test:shared"]),
         "Rust reads both its session enable and Python's actor enable as one capability"
     );
     assert_eq!(

@@ -175,6 +175,8 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
     let source = load(home, request)?;
     let destination_id = required_arg(request, "dst_group_id")?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    cccc_core::permissions::require_group_member(&source, &by)
+        .map_err(|error| OpError::new("permission_denied", error.to_string()))?;
     if let Some(event) =
         super::message_idempotency::find(home, &source.group_id, "chat.message", &by, &request.args)
     {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -189,6 +190,18 @@ def _seed_default_group_capabilities(state_doc: Dict[str, Any], *, group_id: str
     if current_version >= DEFAULT_GROUP_CAPABILITY_SEED_VERSION:
         return False
 
+    removed_before_migration = set(
+        _pkg()._collect_removed_capabilities(state_doc, group_id=gid)
+    )
+    legacy_explicitly_removed = (
+        LEGACY_SELF_EVOLUTION_CAPABILITY_ID in removed_before_migration
+    )
+    _migrate_capability_controls(
+        state_doc,
+        group_id=gid,
+        legacy_capability_id=LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+        new_capability_id=SELF_EVOLUTION_CAPABILITY_ID,
+    )
     legacy_removed = _remove_capability_bindings(
         state_doc,
         group_id=gid,
@@ -202,6 +215,13 @@ def _seed_default_group_capabilities(state_doc: Dict[str, Any], *, group_id: str
             removed=True,
         )
 
+    if legacy_explicitly_removed:
+        _set_removed_capability(
+            state_doc,
+            group_id=gid,
+            capability_id=SELF_EVOLUTION_CAPABILITY_ID,
+            removed=True,
+        )
     removed = set(_pkg()._collect_removed_capabilities(state_doc, group_id=gid))
     if SELF_EVOLUTION_CAPABILITY_ID not in removed:
         group_enabled = state_doc.setdefault("group_enabled", {})
@@ -211,6 +231,42 @@ def _seed_default_group_capabilities(state_doc: Dict[str, Any], *, group_id: str
 
     versions[gid] = DEFAULT_GROUP_CAPABILITY_SEED_VERSION
     return True
+
+
+def _migrate_capability_controls(
+    state_doc: Dict[str, Any],
+    *,
+    group_id: str,
+    legacy_capability_id: str,
+    new_capability_id: str,
+) -> None:
+    """Preserve explicit user controls while replacing a capability ID."""
+    gid = str(group_id or "").strip()
+    legacy_id = str(legacy_capability_id or "").strip()
+    new_id = str(new_capability_id or "").strip()
+    if not gid or not legacy_id or not new_id:
+        return
+
+    global_blocked = state_doc.get("global_blocked")
+    if isinstance(global_blocked, dict) and legacy_id in global_blocked:
+        global_blocked.setdefault(new_id, deepcopy(global_blocked[legacy_id]))
+
+    group_blocked = state_doc.get("group_blocked")
+    if isinstance(group_blocked, dict):
+        per_group = group_blocked.get(gid)
+        if isinstance(per_group, dict) and legacy_id in per_group:
+            per_group.setdefault(new_id, deepcopy(per_group[legacy_id]))
+
+    actor_hidden = state_doc.get("actor_hidden")
+    per_group_hidden = actor_hidden.get(gid) if isinstance(actor_hidden, dict) else None
+    if not isinstance(per_group_hidden, dict):
+        return
+    for actor_id, raw_items in list(per_group_hidden.items()):
+        if not isinstance(raw_items, list) or legacy_id not in raw_items:
+            continue
+        per_group_hidden[actor_id] = sorted(
+            {str(item).strip() for item in raw_items if str(item).strip()} | {new_id}
+        )
 
 
 def _quota_exempt_capabilities(*, actor_role: str) -> set[str]:

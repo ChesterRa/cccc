@@ -490,6 +490,8 @@ def start_actor_process(
             deepseek_runtime.start(
                 group_id=group.group_id,
                 actor_id=actor_id,
+                actor_created_at=str(actor.get("created_at") or ""),
+                group_path=group.path,
                 cwd=cwd,
                 command=list(effective_cmd),
                 env=_launch_env(),

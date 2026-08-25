@@ -33,6 +33,8 @@ def test_deepseek_delivery_persists_output_before_success(tmp_path) -> None:
     deepseek_runtime.start(
         group_id=group.group_id,
         actor_id="deepseek",
+        actor_created_at="",
+        group_path=group.path,
         cwd=tmp_path,
         command=["sh", "-c", _fake_acp_script()],
         env={**os.environ, "CCCC_HOME": str(tmp_path / "cccc-home")},
@@ -109,6 +111,8 @@ def test_terminal_append_failure_keeps_source_delivery_failed(tmp_path, monkeypa
     deepseek_runtime.start(
         group_id=group.group_id,
         actor_id="deepseek",
+        actor_created_at="",
+        group_path=group.path,
         cwd=tmp_path,
         command=["sh", "-c", _fake_acp_script()],
         env={**os.environ, "CCCC_HOME": str(tmp_path / "cccc-home")},
@@ -311,6 +315,7 @@ def test_missing_credential_is_structured_secret_free_and_stops_runtime(
 
     class FakeSupervisor:
         session_id = "fake-session"
+        generation = "launch-credential"
 
         def submit(self, _prompt: str) -> int:
             return 3
@@ -325,12 +330,12 @@ def test_missing_credential_is_structured_secret_free_and_stops_runtime(
                 },
             }
 
-    stopped: list[tuple[str, str]] = []
+    blocked: list[dict[str, object]] = []
     monkeypatch.setattr(deepseek_runtime, "get", lambda **_kwargs: FakeSupervisor())
     monkeypatch.setattr(
         deepseek_runtime,
-        "stop",
-        lambda *, group_id, actor_id: stopped.append((group_id, actor_id)),
+        "require_manual_restart",
+        lambda **kwargs: blocked.append(kwargs) or True,
     )
     message = PendingMessage(
         event_id="event-missing-credential",
@@ -341,7 +346,12 @@ def test_missing_credential_is_structured_secret_free_and_stops_runtime(
     )
 
     assert deliver_messages(group, actor_id="deepseek", messages=[message]) is False
-    assert stopped == [(group.group_id, "deepseek")]
+    assert len(blocked) == 1
+    assert blocked[0]["group_id"] == group.group_id
+    assert blocked[0]["actor_id"] == "deepseek"
+    assert blocked[0]["group_path"] == group.path
+    assert blocked[0]["expected_generation"] == "launch-credential"
+    assert blocked[0]["reason_code"] == "credential_unavailable"
     events = (tmp_path / "state" / "headless" / "events.jsonl").read_text(encoding="utf-8")
     assert '"code":"credential_unavailable"' in events
     assert '"category":"environment"' in events
@@ -358,6 +368,7 @@ def test_context_overflow_is_structured_and_stops_runtime(tmp_path, monkeypatch)
 
     class FakeSupervisor:
         session_id = "oversized-session"
+        generation = "launch-context"
 
         def submit(self, _prompt: str) -> int:
             return 3
@@ -377,12 +388,12 @@ def test_context_overflow_is_structured_and_stops_runtime(tmp_path, monkeypatch)
                 },
             }
 
-    stopped: list[tuple[str, str]] = []
+    blocked: list[dict[str, object]] = []
     monkeypatch.setattr(deepseek_runtime, "get", lambda **_kwargs: FakeSupervisor())
     monkeypatch.setattr(
         deepseek_runtime,
-        "stop",
-        lambda *, group_id, actor_id: stopped.append((group_id, actor_id)),
+        "require_manual_restart",
+        lambda **kwargs: blocked.append(kwargs) or True,
     )
     message = PendingMessage(
         event_id="event-context-overflow",
@@ -393,7 +404,12 @@ def test_context_overflow_is_structured_and_stops_runtime(tmp_path, monkeypatch)
     )
 
     assert deliver_messages(group, actor_id="deepseek", messages=[message]) is False
-    assert stopped == [(group.group_id, "deepseek")]
+    assert len(blocked) == 1
+    assert blocked[0]["group_id"] == group.group_id
+    assert blocked[0]["actor_id"] == "deepseek"
+    assert blocked[0]["group_path"] == group.path
+    assert blocked[0]["expected_generation"] == "launch-context"
+    assert blocked[0]["reason_code"] == "context_window_exceeded"
     events = (tmp_path / "state" / "headless" / "events.jsonl").read_text(encoding="utf-8")
     assert '"code":"context_window_exceeded"' in events
     assert '"category":"context"' in events

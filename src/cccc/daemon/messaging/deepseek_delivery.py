@@ -301,7 +301,25 @@ def deliver_messages(
                 )
                 if failed:
                     if manual_restart_required:
-                        deepseek_runtime.stop(group_id=str(group.group_id), actor_id=str(actor_id))
+                        actor_doc = next(
+                            (
+                                item
+                                for item in list(group.doc.get("actors") or [])
+                                if isinstance(item, dict)
+                                and str(item.get("id") or "") == str(actor_id)
+                            ),
+                            {},
+                        )
+                        deepseek_runtime.require_manual_restart(
+                            group_id=str(group.group_id),
+                            actor_id=str(actor_id),
+                            actor_created_at=str(actor_doc.get("created_at") or ""),
+                            group_path=group.path,
+                            expected_generation=str(supervisor.generation),
+                            reason_code=str(
+                                error.get("code") if isinstance(error, dict) else ""
+                            ),
+                        )
                     return False
                 break
         except Exception:

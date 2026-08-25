@@ -270,9 +270,23 @@ def autostart_running_groups(
                         model=model_from_runtime_command(launch_spec["effective_command"]),
                     )
                 elif runtime == "deepseek" and effective_runner == "headless":
+                    if deepseek_runtime.manual_restart_required(
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        actor_created_at=str(actor.get("created_at") or ""),
+                        group_path=group.path,
+                    ):
+                        logger.info(
+                            "autostart skipped manual-restart-gated DeepSeek actor group=%s actor=%s",
+                            group.group_id,
+                            actor_id,
+                        )
+                        continue
                     deepseek_runtime.start(
                         group_id=group.group_id,
                         actor_id=actor_id,
+                        actor_created_at=str(actor.get("created_at") or ""),
+                        group_path=group.path,
                         cwd=cwd,
                         command=effective_cmd,
                         env=_launch_env(),

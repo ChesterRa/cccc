@@ -3,7 +3,7 @@ use crate::capabilities::Capability;
 pub const SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:cccc:self-evolution";
 pub const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str =
     "skill:agent_self_proposed:cccc-self-evolution";
-pub const DEFAULT_GROUP_CAPABILITY_SEED_VERSION: u64 = 1;
+pub const DEFAULT_GROUP_CAPABILITY_SEED_VERSION: u64 = 2;
 
 const SELF_EVOLUTION_CAPSULE: &str =
     include_str!("../../../src/cccc/resources/cccc-self-evolution.md");

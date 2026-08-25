@@ -219,6 +219,14 @@ fn restore_recovers_one_pending_send_without_advancing_read_cursor() {
                 .rsplit_once("RESTORED:")
                 .map(|(_, restored)| restored)
                 .expect("restored turn boundary");
+            if !restored.contains("message-before-restart") {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "restored actor exposed only a partial recovered turn: {response:?}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
             assert!(restored.contains("message-before-restart"));
             assert!(!restored.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
             break;

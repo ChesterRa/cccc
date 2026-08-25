@@ -3937,7 +3937,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if group is None:
                 raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-            from ....kernel.inbox import search_messages
+            from ....kernel.inbox import find_event, search_messages
+
+            cursor_id = str(before or after or "").strip()
+            if cursor_id and find_event(group, cursor_id) is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "event_not_found",
+                        "message": f"event not found: {cursor_id}",
+                    },
+                )
 
             clamped_limit = max(1, min(200, limit))
             kind_filter = kind if kind in ("all", "chat", "notify") else "all"

@@ -191,6 +191,31 @@ class TestWebLedgerTailApi(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_ledger_search_rejects_an_unknown_pagination_cursor(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "missing-cursor", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            with self._client() as client:
+                response = client.get(
+                    f"/api/v1/groups/{group_id}/ledger/search"
+                    "?kind=chat&after=event-missing"
+                )
+
+            self.assertEqual(response.status_code, 404, response.text)
+            self.assertEqual(
+                (response.json().get("error") or {}).get("code"),
+                "event_not_found",
+            )
+        finally:
+            cleanup()
+
     def test_ledger_chat_views_hydrate_cross_group_receipt_anchor(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -83,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -109,25 +109,21 @@ jobs:
       - name: Run stable Python test shard
         shell: bash
         run: |
-          mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 4 --index "${{ matrix.shard }}")
+          mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 2 --index "${{ matrix.shard }}")
           test "${#TEST_FILES[@]}" -gt 0
           env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
   python-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up oldest supported Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -250,6 +246,8 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
@@ -282,10 +280,10 @@ jobs:
           process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history
           -- --test-threads=1
 
-  rust-lint:
+  rust-linux:
     needs: web
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -300,19 +298,6 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-  rust-test:
-    needs: web
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: bundled-web
-          path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - uses: Swatinem/rust-cache@v2
       - name: Test installer and release assets
         run: |
           scripts/tests/install_unix.sh
@@ -321,27 +306,14 @@ jobs:
         run: |
           # The dedicated interop job owns tests that execute src/cccc. Keep
           # this Rust-only job independent of a Python installation. Process
-          # lifecycle tests run serially in their own job below because they
-          # spawn and stop a combined daemon/Web process.
+          # lifecycle tests run serially in the final step because they spawn
+          # and stop a combined daemon/Web process.
           cargo test --workspace --exclude cccc-pair-daemon --locked -- \
             --skip python_interop_ \
             --skip daemon_self_launch::
           cargo test --package cccc-pair-daemon --locked -- \
             --test-threads=1 \
             --skip python_interop_
-
-  rust-process-lifecycle:
-    needs: web
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: bundled-web
-          path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - uses: Swatinem/rust-cache@v2
       - name: Test combined daemon and Web process lifecycle serially
         run: >-
           cargo test --package cccc --test integration --locked
@@ -367,6 +339,8 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.88.0
@@ -399,9 +373,7 @@ jobs:
       - python-compat
       - package
       - windows-smoke
-      - rust-lint
-      - rust-test
-      - rust-process-lifecycle
+      - rust-linux
       - interop
     runs-on: ubuntu-latest
     timeout-minutes: 5

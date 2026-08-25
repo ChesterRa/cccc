@@ -334,18 +334,16 @@ export function AppHeader({
                   aria-hidden="true"
                 />
                 {canAccessAccount ? (
-                  <button
+                  <IconButton
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={onOpenAccount}
-                    className={classNames(
-                      headerUtilityButtonClass,
-                      "w-auto gap-1.5 px-2.5 text-xs font-medium",
-                    )}
-                    aria-label={t("account")}
+                    className={headerUtilityButtonClass}
+                    label={t("account")}
                   >
                     <AccountIcon size={17} />
-                    <span className="hidden lg:inline">{t("account")}</span>
-                  </button>
+                  </IconButton>
                 ) : null}
                 <IconButton
                   type="button"

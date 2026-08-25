@@ -120,6 +120,12 @@ pub(super) fn persist_terminal(
             json!(if failed { "failed" } else { "completed" }),
         ),
     ]);
+    let reason_code = data
+        .get("error")
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let dedupe_key = if failed {
         format!(
             "deepseek.turn:{kind}:{}:{}",
@@ -141,11 +147,40 @@ pub(super) fn persist_terminal(
         return false;
     }
     if manual_restart_required {
-        holder
-            .manual_restart_required
-            .store(true, Ordering::Release);
-        holder.running.store(false, Ordering::Release);
-        let _ = supervisor.stop();
+        match cccc_core::deepseek_restart_gate::require_manual_restart(
+            projection.home,
+            &projection.group.group_id,
+            &projection.actor.id,
+            &projection.actor.created_at,
+            &holder.generation,
+            &reason_code,
+        ) {
+            Ok(true) => {
+                holder
+                    .manual_restart_required
+                    .store(true, Ordering::Release);
+                holder.running.store(false, Ordering::Release);
+                let _ = supervisor.stop();
+            }
+            Ok(false) => tracing::warn!(
+                group_id = %projection.group.group_id,
+                actor_id = %projection.actor.id,
+                "ignored a stale DeepSeek permanent failure from a replaced generation"
+            ),
+            Err(error) => {
+                holder
+                    .manual_restart_required
+                    .store(true, Ordering::Release);
+                holder.running.store(false, Ordering::Release);
+                let _ = supervisor.stop();
+                tracing::error!(
+                    %error,
+                    group_id = %projection.group.group_id,
+                    actor_id = %projection.actor.id,
+                    "failed to persist DeepSeek manual restart gate"
+                );
+            }
+        }
     }
     !failed
 }

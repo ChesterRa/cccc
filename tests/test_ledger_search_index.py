@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -707,6 +708,57 @@ class TestLedgerSearchIndex(unittest.TestCase):
             ]
             self.assertEqual(older_texts, ["ordered 0", "ordered 1", "ordered 2"])
             self.assertFalse(older_has_more)
+        finally:
+            cleanup()
+
+    def test_search_messages_cursors_follow_append_order_when_timestamps_regress(
+        self,
+    ) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            group_id = self._create_group_with_messages("append-order", count=3)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            lines = [
+                json.loads(line)
+                for line in group.ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            chat_events = [event for event in lines if event.get("kind") == "chat.message"]
+            self.assertEqual(len(chat_events), 3)
+            for event, timestamp in zip(
+                chat_events,
+                [
+                    "2026-08-26T03:00:00Z",
+                    "2026-08-26T01:00:00Z",
+                    "2026-08-26T02:00:00Z",
+                ],
+                strict=True,
+            ):
+                event["ts"] = timestamp
+            group.ledger_path.write_text(
+                "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in lines),
+                encoding="utf-8",
+            )
+
+            events, has_more = search_messages(
+                group,
+                query="",
+                kind_filter="chat",
+                after_id=str(chat_events[0].get("id") or ""),
+                limit=10,
+            )
+
+            self.assertFalse(has_more)
+            self.assertEqual(
+                [str((event.get("data") or {}).get("text") or "") for event in events],
+                ["append-order 1", "append-order 2"],
+            )
         finally:
             cleanup()
 

@@ -88,9 +88,12 @@ fn reinstall_unhides_atomically_and_publishes_one_new_change() {
         json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
     );
     assert_eq!(state["actor_hidden_capabilities"], json!([]));
-    assert_eq!(
-        state["active_capsule_skills"][0]["capability_id"],
-        "skill:local:review"
+    assert!(
+        state["active_capsule_skills"]
+            .as_array()
+            .expect("active skills")
+            .iter()
+            .any(|row| row["capability_id"] == "skill:local:review")
     );
 }
 
@@ -212,8 +215,11 @@ fn event_write_failure_keeps_the_committed_install_successful() {
         "capability_state",
         json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
     );
-    assert_eq!(
-        state["active_capsule_skills"][0]["capability_id"],
-        "skill:local:review"
+    assert!(
+        state["active_capsule_skills"]
+            .as_array()
+            .expect("active skills")
+            .iter()
+            .any(|row| row["capability_id"] == "skill:local:review")
     );
 }

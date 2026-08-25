@@ -16,20 +16,14 @@ jobs:
   nightly-serial:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        # The newest endpoint is covered by the per-push CI shards; nightly
-        # adds serial execution plus the oldest supported endpoint.
-        python-version: ["3.11"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up oldest supported Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -42,3 +36,137 @@ jobs:
         timeout-minutes: 30
         run: >-
           env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20
+
+  python-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Python 3.14 owns the per-push full suite and 3.11 owns the nightly
+        # serial suite. Exercise the intermediate supported endpoints here.
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CCCC
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
+
+      - name: Verify supported Python runtime
+        run: |
+          python -W error::SyntaxWarning -m compileall -q src/cccc
+          cccc version
+          python - <<'PY'
+          import json
+          import subprocess
+
+          proc = subprocess.Popen(
+              ["cccc", "mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          assert proc.stdin is not None
+          assert proc.stdout is not None
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
+          proc.stdin.flush()
+          response = json.loads(proc.stdout.readline().strip())
+          assert response.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
+          proc.terminate()
+          proc.wait(timeout=5)
+          print("OK: CCCC import, CLI, and MCP handshake")
+          PY
+
+  web-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web dependencies
+        run: npm ci --prefix web
+
+      - name: Build Web bundle
+        run: npm -C web run build
+
+      - name: Upload Web bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-web
+          path: web/dist
+          if-no-files-found: error
+
+  rust-dist:
+    needs: web-bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: nightly-web
+          path: web/dist
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and verify Rust distribution
+        run: |
+          cargo build --workspace --release --locked
+          scripts/tests/install_real_unix.sh target/release/cccc
+          target/release/cccc --version
+          bash scripts/tests/smoke_rust_replacement.sh target/release/cccc
+
+  windows-installer:
+    needs: web-bundle
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: nightly-web
+          path: web/dist
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build native Windows installer fixture
+        run: cargo build --release --locked -p cccc --bin cccc
+
+      - name: Test Windows installer ownership and PATH handling
+        shell: pwsh
+        timeout-minutes: 15
+        run: scripts/tests/install_windows.ps1

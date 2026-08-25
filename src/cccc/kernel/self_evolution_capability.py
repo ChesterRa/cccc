@@ -7,7 +7,7 @@ from importlib.resources import files
 
 SELF_EVOLUTION_CAPABILITY_ID = "skill:cccc:self-evolution"
 LEGACY_SELF_EVOLUTION_CAPABILITY_ID = "skill:agent_self_proposed:cccc-self-evolution"
-DEFAULT_GROUP_CAPABILITY_SEED_VERSION = 1
+DEFAULT_GROUP_CAPABILITY_SEED_VERSION = 2
 
 
 def _capsule_text() -> str:

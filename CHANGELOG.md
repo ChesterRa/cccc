@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Added
 - **CCCC Self-Evolution is now a built-in, default-enabled Skill.** New and existing Groups receive the packaged `skill:cccc:self-evolution` capability once, while an explicit disable remains durable across restarts and upgrades; former group bindings for the local self-proposed Skill migrate without activating duplicate copies.
 
+### Changed
+- **Per-push CI now focuses on source correctness instead of repeating release verification.** Python tests use two balanced shards, Linux Rust checks share one workspace, and slow native installers plus intermediate Python compatibility run nightly or on demand while release workflows retain exact artifact gates.
+
 ### Fixed
 - **Stale Vite dependency chunks no longer collapse the Web composer during development.** Dynamic-import failures trigger one bounded page reload and then degrade only the Voice Secretary launcher, while base-relative manifest and icon paths avoid duplicate `/ui/ui/` requests.
 - **Windows combined-launcher cleanup now owns the exact process object instead of trusting a reusable PID.** Graceful shutdown is fenced to that daemon identity and receives the full lifecycle deadline before bounded fallback cleanup, so normal dispatch contention cannot trigger an early kill and descriptor handoff cannot stop a replacement daemon.
