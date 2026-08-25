@@ -42,7 +42,7 @@
   "pauseMessageDelivery": "Pause Message Delivery",
   "themeLight": "Light",
   "themeDark": "Dark",
-  "themeSystem": "System",
+  "themeSystem": "Automatic",
   "themeLabel": "Theme",
   "textSizeLabel": "Text Size",
   "currentTextSize": "Current text size: {{percent}}",

@@ -228,8 +228,11 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let destination = store(home)?
         .load(&destination_id)
         .map_err(OpError::not_found)?;
-    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
-    cccc_core::permissions::require_group(&source, &by)
+    let by = string_arg(request, "by")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "user".into());
+    cccc_core::permissions::require_group_member(&source, &by)
         .map_err(|error| OpError::new("permission_denied", error.to_string()))?;
     let text = string_arg(request, "text").unwrap_or_default();
     let attachments = request

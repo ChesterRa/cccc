@@ -3,7 +3,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cccc_contracts::{Actor, Event};
-use cccc_core::{GroupStore, HomeLayout, ledger};
+use cccc_core::{GroupStore, HomeLayout, context::ContextStore, ledger};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -51,6 +51,18 @@ async fn query_flags_change_final_actor_ledger_and_context_responses() {
         format!("/api/v1/groups/{group_id}/context?detail=summary&fresh=true"),
     )
     .await;
+    let overview = get(
+        &home,
+        format!("/api/v1/groups/{group_id}/context?detail=overview"),
+    )
+    .await;
+    let task_pages = get(
+        &home,
+        format!(
+            "/api/v1/groups/{group_id}/tasks?statuses=planned,active,done&limit=30&include_index=true"
+        ),
+    )
+    .await;
     let full = get(
         &home,
         format!("/api/v1/groups/{group_id}/context?detail=full&fresh=true"),
@@ -76,6 +88,11 @@ async fn query_flags_change_final_actor_ledger_and_context_responses() {
     assert!(status_tail["result"]["events"][0]["_read_status"].is_object());
     assert!(status_tail["result"]["events"][0]["_obligation_status"].is_object());
     assert!(summary["result"].get("board").is_none());
+    assert!(overview["result"]["coordination"].get("tasks").is_none());
+    assert!(overview["result"].get("tasks_summary").is_none());
+    assert_eq!(overview["result"]["tasks_version"], "tasksv:1");
+    assert_eq!(task_pages["result"]["pages"]["planned"]["count"], 1);
+    assert_eq!(task_pages["result"]["task_index"][0]["id"], "T001");
     assert!(full["result"]["board"].is_object());
     assert_eq!(invalid["status"], 400);
     assert_eq!(invalid["body"]["error"]["code"], "invalid_boolean");
@@ -90,6 +107,7 @@ async fn missing_group_reads_return_a_resource_error_instead_of_empty_state() {
         "/api/v1/groups/g_missing/ledger/window?kind=chat&center=event-missing",
         "/api/v1/groups/g_missing/events/event-missing/read_status",
         "/api/v1/groups/g_missing/context?detail=summary",
+        "/api/v1/groups/g_missing/context?detail=overview",
         "/api/v1/groups/g_missing/context?detail=full",
         "/api/v1/groups/g_missing/tasks",
     ] {
@@ -143,6 +161,19 @@ async fn running_home() -> (tempfile::TempDir, HomeLayout, String, DaemonGuard) 
         .expect("store")
         .create("query semantics", "")
         .expect("group");
+    ContextStore::new(home.clone())
+        .expect("contexts")
+        .sync(
+            &group.group_id,
+            &[json!({"op":"task.create","title":"route task"})
+                .as_object()
+                .cloned()
+                .expect("task op")],
+            None,
+            "user",
+            false,
+        )
+        .expect("seed task");
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move {
         cccc_daemon::run(daemon_home).await.expect("daemon");

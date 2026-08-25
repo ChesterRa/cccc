@@ -9,6 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ....contracts.v1 import DaemonError, DaemonResponse
 from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS
+from ....kernel.self_evolution_capability import (
+    DEFAULT_GROUP_CAPABILITY_SEED_VERSION,
+    LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+    SELF_EVOLUTION_CAPABILITY_ID,
+)
 from ....kernel.events import publish_event
 from ....util.time import parse_utc_iso, utc_now_iso
 
@@ -114,7 +119,7 @@ def _collect_enabled_capabilities(state_doc: Dict[str, Any], *, group_id: str, a
     gid = str(group_id or "").strip()
     aid = str(actor_id or "").strip()
     enabled: List[str] = []
-    mutated = False
+    mutated = _seed_default_group_capabilities(state_doc, group_id=gid)
 
     group_enabled = state_doc.get("group_enabled") if isinstance(state_doc.get("group_enabled"), dict) else {}
     enabled.extend(list(group_enabled.get(gid) or []))
@@ -167,11 +172,53 @@ def _collect_enabled_capabilities(state_doc: Dict[str, Any], *, group_id: str, a
     return ordered, mutated
 
 
+def _seed_default_group_capabilities(state_doc: Dict[str, Any], *, group_id: str) -> bool:
+    """Seed built-in group defaults once and migrate the former local skill binding."""
+    gid = str(group_id or "").strip()
+    if not gid:
+        return False
+
+    versions = state_doc.setdefault("default_group_capability_seed_versions", {})
+    if not isinstance(versions, dict):
+        versions = {}
+        state_doc["default_group_capability_seed_versions"] = versions
+    try:
+        current_version = int(versions.get(gid) or 0)
+    except (TypeError, ValueError):
+        current_version = 0
+    if current_version >= DEFAULT_GROUP_CAPABILITY_SEED_VERSION:
+        return False
+
+    legacy_removed = _remove_capability_bindings(
+        state_doc,
+        group_id=gid,
+        capability_id=LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+    )
+    if legacy_removed:
+        _set_removed_capability(
+            state_doc,
+            group_id=gid,
+            capability_id=LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+            removed=True,
+        )
+
+    removed = set(_pkg()._collect_removed_capabilities(state_doc, group_id=gid))
+    if SELF_EVOLUTION_CAPABILITY_ID not in removed:
+        group_enabled = state_doc.setdefault("group_enabled", {})
+        items = set(group_enabled.get(gid) or [])
+        items.add(SELF_EVOLUTION_CAPABILITY_ID)
+        group_enabled[gid] = sorted(items)
+
+    versions[gid] = DEFAULT_GROUP_CAPABILITY_SEED_VERSION
+    return True
+
+
 def _quota_exempt_capabilities(*, actor_role: str) -> set[str]:
     role = str(actor_role or "").strip().lower()
+    exempt = {SELF_EVOLUTION_CAPABILITY_ID}
     if role == "foreman":
-        return {"pack:group-runtime", "pack:diagnostics"}
-    return set()
+        exempt.update({"pack:group-runtime", "pack:diagnostics"})
+    return exempt
 
 
 def _set_enabled_capability(
@@ -190,6 +237,12 @@ def _set_enabled_capability(
     if enabled:
         _set_removed_capability(state_doc, group_id=gid, capability_id=cap_id, removed=False)
     if scope == "group":
+        if cap_id == SELF_EVOLUTION_CAPABILITY_ID and gid:
+            versions = state_doc.setdefault("default_group_capability_seed_versions", {})
+            if not isinstance(versions, dict):
+                versions = {}
+                state_doc["default_group_capability_seed_versions"] = versions
+            versions[gid] = DEFAULT_GROUP_CAPABILITY_SEED_VERSION
         group_enabled = state_doc.setdefault("group_enabled", {})
         items = set(group_enabled.get(gid) or [])
         if enabled:
@@ -648,7 +701,13 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     else {}
                 )
                 current = set(group_enabled.get(group_id) or [])
-                if capability_id not in current and len(current) >= max_enabled_per_group:
+                quota_exempt = _quota_exempt_capabilities(actor_role=actor_role)
+                counted_current = current - quota_exempt
+                if (
+                    capability_id not in quota_exempt
+                    and capability_id not in counted_current
+                    and len(counted_current) >= max_enabled_per_group
+                ):
                     return f"quota_enabled_group_exceeded:{max_enabled_per_group}"
         return ""
 

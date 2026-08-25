@@ -379,17 +379,22 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     let store = CapabilityStore::new(home.clone());
+    let group = (!group_id.is_empty())
+        .then(|| cccc_core::GroupStore::new(home.clone()))
+        .transpose()
+        .map_err(OpError::io)?
+        .and_then(|store| store.load(&group_id).ok());
+    if group.is_some() {
+        store
+            .seed_default_group_capabilities(&group_id)
+            .map_err(OpError::io)?;
+    }
     let native = store.load().map_err(OpError::io)?;
     let effective =
         effective_state::load(home, &group_id, &actor_id, &native).map_err(OpError::io)?;
     let enabled = effective.enabled;
     let blocked = effective.blocked;
     let mut hidden = effective.hidden;
-    let group = (!group_id.is_empty())
-        .then(|| cccc_core::GroupStore::new(home.clone()))
-        .transpose()
-        .map_err(OpError::io)?
-        .and_then(|store| store.load(&group_id).ok());
     let actor = group
         .as_ref()
         .and_then(|group| group.actors.iter().find(|actor| actor.id == actor_id));

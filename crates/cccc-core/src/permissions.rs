@@ -58,6 +58,16 @@ pub fn require_group(group: &GroupDoc, by: &str) -> io::Result<()> {
     }
 }
 
+pub fn require_group_member(group: &GroupDoc, by: &str) -> io::Result<()> {
+    let who = by.trim();
+    if who.is_empty() || who == "user" || who == "system" {
+        return Ok(());
+    }
+    effective_role(group, who)
+        .map(|_| ())
+        .ok_or_else(|| io::Error::other(format!("unknown actor: {who}")))
+}
+
 pub fn require_inbox(group: &GroupDoc, by: &str, target: &str) -> io::Result<()> {
     let who = by.trim();
     if who.is_empty() || who == "user" || who == "system" {

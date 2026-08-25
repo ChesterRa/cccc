@@ -990,6 +990,12 @@ Result:
 }
 ```
 
+The Web slash-command adapter MUST keep `slash_skill_dispatch.task_text` non-empty. For a bare
+capsule command such as `/cccc-self-evolution`, it sends the canonical task
+`Run the skill's default workflow.`; explicit text after the command is forwarded unchanged. This
+keeps the existing daemon validation contract compatible across independently restarted Web and
+daemon processes.
+
 #### `capability_import`
 
 Import one normalized capability record prepared by the caller (agent-driven parsing), then optionally enable it.
@@ -3443,6 +3449,9 @@ Result:
 ```
 
 Notes:
+- Local `user` / `system` principals and registered source actors, including
+  peers, may send cross-group messages; unknown source actors are rejected. The
+  foreman-only group administration permission does not apply to message delivery.
 - Attachments are supported only when the destination is an active remote Group
   Bridge route. Local cross-group forwarding rejects attachments.
 
@@ -3671,13 +3680,14 @@ read-only and MUST NOT append `mail.read` or mutate any delivery state.
 
 Args:
 ```ts
-{ group_id: string }
+{ group_id: string; detail?: "overview" | "summary" | "full" }
 ```
 
 Result:
 ```ts
 {
   version: string
+  tasks_version: string
   coordination: {
     brief: {
       objective: string
@@ -3688,9 +3698,9 @@ Result:
       updated_by: string
       updated_at: string
     }
-    tasks: Array<Record<string, unknown>>
-    recent_decisions: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
-    recent_handoffs: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
+    tasks?: Array<Record<string, unknown>>
+    recent_decisions?: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
+    recent_handoffs?: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
   }
   agent_states: Array<{
     id: string
@@ -3711,7 +3721,7 @@ Result:
     updated_at?: string | null
   }>
   actors_runtime?: Array<Record<string, unknown>>
-  tasks_summary: {
+  tasks_summary?: {
     total: number
     done: number
     active: number
@@ -3738,6 +3748,11 @@ Notes:
 - Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
 - Daemon IPC defaults `detail` to `full`; the Web HTTP route defaults it to
   `summary` for routine refreshes.
+- `detail="overview"` does not read task files and omits `coordination.tasks`,
+  `tasks_summary`, `attention`, and `board`. It retains the coordination brief,
+  recent decisions/handoffs, agent states, `version`, `tasks_version`, and
+  metadata. Web startup and the context modal use this projection before loading
+  task pages separately.
 - `detail="summary"` omits `board`, recent coordination notes, and live runtime
   probing. Its `attention` fields are counts, but each task in
   `coordination.tasks` MUST retain every task-editor field, including
@@ -4023,16 +4038,101 @@ Result:
 
 Args:
 ```ts
-{ group_id: string; task_id?: string }
+{
+  group_id: string
+  task_id?: string
+  task_ids?: string // comma-separated exact ids, at most 100
+  status?: "planned" | "active" | "done" | "archived"
+  statuses?: string // comma-separated statuses for an atomic multi-column page
+  query?: string
+  assignee?: string // use "__unassigned__" for tasks without an assignee
+  attention?: "blocked" | "waiting_user" | "handoff" | "unassigned"
+  offset?: number
+  limit?: number // 1..100
+  include_index?: boolean
+}
 ```
 
 Result:
 ```ts
-{ tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
+// Exact lookup when task_id is present:
+{
+  task: Record<string, unknown> & { children: Array<Record<string, unknown>> }
+  tasks_version: string
+  delete_info: { allowed: boolean; total: number; reason: string }
+}
+
+// Batch exact lookup when task_ids is present:
+{
+  tasks: Array<Record<string, unknown>> // requested order; missing ids omitted
+  tasks_version: string
+}
+
+// Paged listing when limit is present:
+{
+  tasks: Array<Record<string, unknown>>
+  count: number
+  total_count: number
+  offset: number
+  limit: number
+  has_more: boolean
+  tasks_version: string
+  facets: {
+    status_counts: Record<string, number>
+    blocked: number
+    waiting_user: number
+    pending_handoffs: number
+    unassigned: number
+    assignees: string[]
+  }
+}
+
+// Atomic multi-column listing when statuses is present:
+{
+  pages: Partial<Record<"planned" | "active" | "done" | "archived", {
+    tasks: Array<Record<string, unknown>>
+    count: number
+    total_count: number
+    offset: number
+    limit: number
+    has_more: boolean
+  }>>
+  tasks_version: string
+  facets: {
+    status_counts: Record<string, number>
+    blocked: number
+    waiting_user: number
+    pending_handoffs: number
+    unassigned: number
+    assignees: string[]
+  }
+  task_index?: Array<{
+    id: string
+    title: string
+    status: string
+    assignee?: string | null
+    parent_id?: string | null
+  }>
+}
+
+// Compatibility listing when task_id, task_ids, statuses, and limit are absent:
+{ tasks: Array<Record<string, unknown>> }
 ```
 
 Notes:
 - Returned task objects include `task_type`.
+- `task_id` takes precedence over other arguments, followed by `task_ids`.
+  `status` and `statuses` MUST NOT be combined. A `statuses` request reads one
+  task snapshot and returns every requested column at the same `tasks_version`.
+- `include_index=true` adds an unfiltered, non-archived, lightweight task index.
+  It is intended for relationship selectors; it is not a substitute for exact
+  task detail.
+- Filters are applied before pagination. Planned tasks sort newest-created first;
+  other columns sort most-recently-updated first, with numeric task id as a stable
+  tie-breaker.
+- `offset` requires `limit`. `tasks_version` is the task-specific revision, not
+  the broader context revision. Clients MUST discard a continuation response
+  and restart all loaded pages when it differs from the initial page revision.
 
 `presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 

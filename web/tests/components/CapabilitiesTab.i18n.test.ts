@@ -27,7 +27,6 @@ describe("CapabilitiesTab i18n", () => {
       "slashCommandReplyUnsupported",
       "slashCommandQuotedPresentationUnsupported",
       "slashCommandCrossGroupUnsupported",
-      "slashCommandMissingArgs",
       "slashCommandLoadMore",
     ] as const;
 

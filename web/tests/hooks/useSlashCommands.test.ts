@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { dispatchSlashMessageOptimistically } from "../../src/hooks/useSlashCommands";
+import { DEFAULT_CAPSULE_SKILL_TASK_TEXT } from "../../src/utils/slashCommands";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -78,6 +79,28 @@ describe("dispatchSlashMessageOptimistically", () => {
       replyTarget: null,
       command: "/using-superpowers",
       capabilityId: "skill:agent_self_proposed:using-superpowers",
+    });
+  });
+
+  it("dispatches a non-empty default task for a capsule skill without arguments", async () => {
+    const dispatchMessage = vi.fn(async () => true);
+
+    await expect(
+      dispatchSlashMessageOptimistically({
+        dispatchText: DEFAULT_CAPSULE_SKILL_TASK_TEXT,
+        originalText: "/cccc-self-evolution",
+        command: "/cccc-self-evolution",
+        capabilityId: "skill:agent_self_proposed:cccc-self-evolution",
+        dispatchMessage,
+        clearComposer: vi.fn(),
+        restoreComposerText: vi.fn(),
+      }),
+    ).resolves.toEqual({ ok: true, dispatchText: DEFAULT_CAPSULE_SKILL_TASK_TEXT });
+
+    expect(dispatchMessage).toHaveBeenCalledWith(DEFAULT_CAPSULE_SKILL_TASK_TEXT, {
+      replyTarget: null,
+      command: "/cccc-self-evolution",
+      capabilityId: "skill:agent_self_proposed:cccc-self-evolution",
     });
   });
 

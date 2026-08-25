@@ -94,6 +94,7 @@ from ._state import (  # noqa: F401
     _binding_state_allows_external_tool,
     _install_state_allows_external_tool,
     _collect_enabled_capabilities,
+    _seed_default_group_capabilities,
     _collect_hidden_capabilities,
     _set_enabled_capability,
     _set_hidden_capability,

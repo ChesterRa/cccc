@@ -1,12 +1,13 @@
-import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import type { SensorDescriptor, SensorOptions } from "@dnd-kit/core";
 import type { Task } from "../../../types";
+import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
 import type { BoardColumns, BoardStatus, ContextTranslator, TaskFilterValue } from "../model";
 import type { ContextModalUi } from "../ui";
-import { TaskBoardColumn } from "./TaskBoardColumn";
+import { TaskBoardGrid } from "./TaskBoardGrid";
+import { TaskBoardLoadNotice } from "./TaskBoardLoadNotice";
 import { TaskBoardToolbar } from "./TaskBoardToolbar";
-import { TaskGhostCard } from "./TaskGhostCard";
 
 interface TaskBoardProps {
   tr: ContextTranslator;
@@ -24,6 +25,9 @@ interface TaskBoardProps {
   hasVisibleTasks: boolean;
   hiddenArchivedMatches: number;
   filteredBoard: BoardColumns;
+  columnPages: TaskColumnPages;
+  taskLoading: boolean;
+  taskLoadError: string;
   taskMap: Map<string, Task>;
   selectedTaskId: string;
   dragTaskId: string;
@@ -39,6 +43,8 @@ interface TaskBoardProps {
   onDragCancel: () => void;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onLoadMore: (status: BoardStatus) => void;
+  onRetryLoad: () => void;
 }
 
 export function TaskBoard({
@@ -57,6 +63,9 @@ export function TaskBoard({
   hasVisibleTasks,
   hiddenArchivedMatches,
   filteredBoard,
+  columnPages,
+  taskLoading,
+  taskLoadError,
   taskMap,
   selectedTaskId,
   dragTaskId,
@@ -72,10 +81,9 @@ export function TaskBoard({
   onDragCancel,
   onSelectTask,
   onMoveTaskToStatus,
+  onLoadMore,
+  onRetryLoad,
 }: TaskBoardProps) {
-  const renderWindowKey = `${taskQuery}\u0000${assigneeFilter}\u0000${taskFilter}`;
-  const columnProps = { tr, ui, syncBusy, selectedTaskId, onSelectTask, onMoveTaskToStatus };
-
   return (
     <section className={classNames(ui.surfaceClass, "p-4")}>
       <div className="flex flex-col gap-4">
@@ -120,6 +128,14 @@ export function TaskBoard({
           onArchivedExpandedChange={onArchivedExpandedChange}
         />
 
+        <TaskBoardLoadNotice
+          error={taskLoadError}
+          loading={taskLoading}
+          tr={tr}
+          ui={ui}
+          onRetry={onRetryLoad}
+        />
+
         {!hasVisibleTasks ? (
           <div className="rounded-xl border border-dashed px-4 py-5 text-sm glass-card text-[var(--color-text-muted)]">
             {hiddenArchivedMatches > 0 ? (
@@ -145,62 +161,24 @@ export function TaskBoard({
           </div>
         ) : null}
 
-        <div className="min-w-0">
-          <DndContext
-            sensors={sensors}
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-          >
-            <div
-              className={classNames(
-                "grid gap-3 md:grid-cols-2",
-                archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3",
-              )}
-            >
-              <TaskBoardColumn
-                key={`planned:${renderWindowKey}`}
-                columnKey="planned"
-                label={tr("context.planned", "Planned")}
-                items={filteredBoard.planned}
-                {...columnProps}
-              />
-              <TaskBoardColumn
-                key={`active:${renderWindowKey}`}
-                columnKey="active"
-                label={tr("context.active", "Active")}
-                items={filteredBoard.active}
-                {...columnProps}
-              />
-              <TaskBoardColumn
-                key={`done:${renderWindowKey}`}
-                columnKey="done"
-                label={tr("context.done", "Done")}
-                items={filteredBoard.done}
-                {...columnProps}
-              />
-              {archivedExpanded ? (
-                <TaskBoardColumn
-                  key={`archived:${renderWindowKey}`}
-                  columnKey="archived"
-                  label={tr("context.archived", "Archived")}
-                  items={filteredBoard.archived}
-                  {...columnProps}
-                />
-              ) : null}
-            </div>
-            <DragOverlay>
-              {dragTaskId && taskMap.get(dragTaskId) ? (
-                <TaskGhostCard
-                  task={taskMap.get(dragTaskId)!}
-                  tr={tr}
-                  mutedTextClass={ui.mutedTextClass}
-                  subtleTextClass={ui.subtleTextClass}
-                />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        </div>
+        <TaskBoardGrid
+          tr={tr}
+          ui={ui}
+          syncBusy={syncBusy}
+          archivedExpanded={archivedExpanded}
+          board={filteredBoard}
+          pages={columnPages}
+          taskMap={taskMap}
+          selectedTaskId={selectedTaskId}
+          dragTaskId={dragTaskId}
+          sensors={sensors}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={onDragCancel}
+          onSelectTask={onSelectTask}
+          onMoveTaskToStatus={onMoveTaskToStatus}
+          onLoadMore={onLoadMore}
+        />
       </div>
     </section>
   );

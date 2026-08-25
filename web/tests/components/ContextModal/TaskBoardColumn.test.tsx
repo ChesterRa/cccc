@@ -42,23 +42,28 @@ describe("TaskBoardColumn", () => {
     dndMocks.useDroppable.mockImplementation(() => ({ setNodeRef: vi.fn(), isOver: false }));
   });
 
-  it("registers only the first page of draggable cards until the user asks for more", async () => {
+  it("renders only the server-loaded page and requests the next page", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
 
+    const onLoadMore = vi.fn();
     await act(async () => {
       root.render(
         <TaskBoardColumn
           columnKey="planned"
           label="Planned"
-          items={tasks(75)}
+          items={tasks(TASK_COLUMN_PAGE_SIZE)}
+          totalCount={75}
+          hasMore
+          loading={false}
           tr={tr}
           ui={createContextModalUi(false)}
           syncBusy={false}
           selectedTaskId=""
           onSelectTask={vi.fn()}
           onMoveTaskToStatus={vi.fn()}
+          onLoadMore={onLoadMore}
         />,
       );
     });
@@ -71,13 +76,14 @@ describe("TaskBoardColumn", () => {
     expect(more).toBeDefined();
 
     await act(async () => more?.click());
-    expect(host.querySelectorAll("[data-task-id]")).toHaveLength(TASK_COLUMN_PAGE_SIZE * 2);
+    expect(onLoadMore).toHaveBeenCalledWith("planned");
+    expect(host.querySelectorAll("[data-task-id]")).toHaveLength(TASK_COLUMN_PAGE_SIZE);
 
     await act(async () => root.unmount());
     host.remove();
   });
 
-  it("keeps a directly selected task mounted even when it is outside the first page", async () => {
+  it("shows the server total after the final page is appended", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -88,18 +94,23 @@ describe("TaskBoardColumn", () => {
           columnKey="planned"
           label="Planned"
           items={tasks(75)}
+          totalCount={75}
+          hasMore={false}
+          loading={false}
           tr={tr}
           ui={createContextModalUi(false)}
           syncBusy={false}
           selectedTaskId="task-65"
           onSelectTask={vi.fn()}
           onMoveTaskToStatus={vi.fn()}
+          onLoadMore={vi.fn()}
         />,
       );
     });
 
     expect(host.querySelector('[data-task-id="task-65"]')).not.toBeNull();
-    expect(host.querySelectorAll("[data-task-id]")).toHaveLength(65);
+    expect(host.querySelectorAll("[data-task-id]")).toHaveLength(75);
+    expect(host.querySelector('[data-total-task-count="75"]')).not.toBeNull();
 
     await act(async () => root.unmount());
     host.remove();

@@ -56,10 +56,14 @@ from ...kernel.working_state import derive_effective_working_state
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
+from .context_read_projection import build_empty_summary, build_overview, normalize_context_detail, normalize_summary_snapshot, tasks_version
+from .context_state_lock import context_state_lock, serialized_context_state
+from .task_list_ops import task_list_result
 
 logger = logging.getLogger(__name__)
 _CONTEXT_DETAIL_FULL = "full"
 _CONTEXT_DETAIL_SUMMARY = "summary"
+_CONTEXT_DETAIL_OVERVIEW = "overview"
 _SUMMARY_REBUILD_LOCK = threading.Lock()
 _SUMMARY_REBUILD_IN_FLIGHT: Set[str] = set()
 
@@ -678,13 +682,6 @@ def _save_automation_state(storage: ContextStorage, doc: Dict[str, Any]) -> None
     atomic_write_json(_automation_state_path(storage), doc)
 
 
-def _normalize_context_detail(value: Any, *, default: str = _CONTEXT_DETAIL_FULL) -> str:
-    detail = str(value or default).strip().lower() or default
-    if detail not in {_CONTEXT_DETAIL_FULL, _CONTEXT_DETAIL_SUMMARY}:
-        raise ValueError(f"Invalid context detail: {value}")
-    return detail
-
-
 def _coordination_brief_to_dict(brief: CoordinationBrief) -> Dict[str, Any]:
     return {
         "objective": brief.objective,
@@ -709,6 +706,7 @@ def _build_context_full_result(
     actors_runtime = _build_actor_runtime_states(storage, ordered_agents)
     return {
         "version": storage.compute_version(),
+        "tasks_version": tasks_version(storage),
         "coordination": {
             "brief": _coordination_brief_to_dict(context.coordination.brief),
             "tasks": [_task_to_dict(task) for task in _sort_tasks(tasks)],
@@ -734,6 +732,7 @@ def _build_context_summary_result(
 ) -> Dict[str, Any]:
     return {
         "version": storage.compute_version(),
+        "tasks_version": tasks_version(storage),
         "coordination": {
             "brief": _coordination_brief_to_dict(context.coordination.brief),
             "tasks": [_task_to_summary_dict(task) for task in _sort_tasks(tasks)],
@@ -761,18 +760,7 @@ def _with_summary_snapshot_meta(result: Dict[str, Any], *, state: str) -> Dict[s
 
 
 def _empty_context_summary_result(storage: ContextStorage) -> Dict[str, Any]:
-    return {
-        "version": storage.compute_version(),
-        "coordination": {
-            "brief": _coordination_brief_to_dict(CoordinationBrief()),
-            "tasks": [],
-        },
-        "agent_states": [],
-        "actors_runtime": [],
-        "attention": {},
-        "tasks_summary": _tasks_summary([], attention={}),
-        "meta": {},
-    }
+    return build_empty_summary(storage, _coordination_brief_to_dict, _tasks_summary)
 
 
 def _rebuild_summary_snapshot(group_id: str, *, max_attempts: int = 3) -> bool:
@@ -846,10 +834,9 @@ def _wait_for_summary_snapshot_rebuild(group_id: str, *, timeout_s: float = 1.0)
 
 def _get_summary_context_fast(storage: ContextStorage, *, group_id: str) -> Dict[str, Any]:
     snapshot = storage.load_summary_snapshot()
-    basis = storage.summary_basis()
     snapshot_basis = snapshot.get("basis") if isinstance(snapshot.get("basis"), dict) else {}
-    snapshot_result = snapshot.get("result") if isinstance(snapshot.get("result"), dict) else {}
-    if snapshot_result and snapshot_basis == basis:
+    snapshot_result, needs_upgrade = normalize_summary_snapshot(snapshot)
+    if snapshot_result and snapshot_basis == storage.summary_basis() and not needs_upgrade:
         return _with_summary_snapshot_meta(snapshot_result, state="hit")
     if snapshot_result:
         _schedule_summary_snapshot_rebuild(group_id)
@@ -888,7 +875,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     try:
-        detail = _normalize_context_detail(args.get("detail"), default=_CONTEXT_DETAIL_FULL)
+        detail = normalize_context_detail(args.get("detail"), default=_CONTEXT_DETAIL_FULL)
     except ValueError as exc:
         return _error("invalid_detail", str(exc), details={"detail": str(args.get("detail") or "")})
 
@@ -899,23 +886,39 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     if detail == _CONTEXT_DETAIL_SUMMARY:
         return DaemonResponse(ok=True, result=_get_summary_context_fast(storage, group_id=group_id))
 
-    context = storage.load_context()
-    tasks = storage.list_tasks()
-    agents_state = _filter_agents_to_group(storage, storage.load_agents())
-    ordered_agents = _sort_agents_for_group(storage, agents_state)
-    attention = _attention_projection(tasks)
-    board = _board_projection(tasks)
-    result = _build_context_full_result(
-        storage=storage,
-        context=context,
-        tasks=tasks,
-        ordered_agents=ordered_agents,
-        attention=attention,
-        board=board,
-    )
-    return DaemonResponse(ok=True, result=result)
+    if detail == _CONTEXT_DETAIL_OVERVIEW:
+        with context_state_lock(storage):
+            context = storage.load_context()
+            agents_state = _filter_agents_to_group(storage, storage.load_agents())
+            return DaemonResponse(
+                ok=True,
+                result=build_overview(
+                    storage,
+                    context,
+                    _sort_agents_for_group(storage, agents_state),
+                    serialize_brief=_coordination_brief_to_dict,
+                    serialize_note=_note_to_dict,
+                    serialize_agent=_agent_state_to_dict,
+                ),
+            )
+    with context_state_lock(storage):
+        context = storage.load_context()
+        tasks = storage.list_tasks()
+        agents_state = _filter_agents_to_group(storage, storage.load_agents())
+        ordered_agents = _sort_agents_for_group(storage, agents_state)
+        attention = _attention_projection(tasks)
+        board = _board_projection(tasks)
+        result = _build_context_full_result(
+            storage=storage,
+            context=context,
+            tasks=tasks,
+            ordered_agents=ordered_agents,
+            attention=attention,
+            board=board,
+        )
+        return DaemonResponse(ok=True, result=result)
 
-
+@serialized_context_state
 def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "system").strip() or "system"
@@ -1400,9 +1403,9 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
         return _error("context_sync_error", f"unexpected error: {exc}")
 
 
+@serialized_context_state
 def handle_task_list(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
-    task_id = args.get("task_id")
     if not group_id:
         return _error("missing_group_id", "missing group_id")
 
@@ -1410,18 +1413,15 @@ def handle_task_list(args: Dict[str, Any]) -> DaemonResponse:
     if storage is None:
         return _error("group_not_found", f"group not found: {group_id}")
 
-    if task_id:
-        task = storage.load_task(str(task_id))
-        if task is None:
-            return _error("task_not_found", f"Task not found: {task_id}")
-        all_tasks = storage.list_tasks()
-        children = storage.get_task_children(str(task_id), tasks=all_tasks)
-        payload = _task_to_dict(task)
-        payload["children"] = [_task_to_dict(child) for child in _sort_tasks(children)]
-        return DaemonResponse(ok=True, result={"task": payload})
-
-    tasks = storage.list_tasks()
-    return DaemonResponse(ok=True, result={"tasks": [_task_to_dict(task) for task in _sort_tasks(tasks)]})
+    try:
+        return DaemonResponse(
+            ok=True,
+            result=task_list_result(storage, args, serialize=_task_to_dict),
+        )
+    except LookupError as exc:
+        return _error("task_not_found", f"Task not found: {exc.args[0]}")
+    except ValueError as exc:
+        return _error("invalid_args", str(exc))
 
 
 def try_handle_context_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:

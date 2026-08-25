@@ -133,3 +133,12 @@ def require_group_permission(group: Group, *, by: str, action: GroupAction) -> N
     if role == "peer":
         raise ValueError(f"permission denied: {who} cannot {action}")
     raise ValueError(f"unknown actor: {who}")
+
+
+def require_group_member(group: Group, *, by: str) -> None:
+    who = (by or "").strip()
+    if not who or who in {"user", "system"}:
+        return
+    if actor_role(group, who) in {"foreman", "peer"}:
+        return
+    raise ValueError(f"unknown actor: {who}")

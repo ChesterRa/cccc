@@ -27,8 +27,20 @@ impl ContextStore {
         })
     }
 
+    pub fn load_overview(&self, group_id: &str) -> io::Result<ContextDoc> {
+        let paths = self.paths(group_id)?;
+        with_exclusive_lock(&paths.lock_file, || {
+            migrate_legacy_json(&paths)?;
+            python_storage::load_overview(&paths)
+        })
+    }
+
     pub fn version(&self, document: &ContextDoc) -> io::Result<String> {
         Ok(format!("ctxv:{}", document.revision))
+    }
+
+    pub fn tasks_version(&self, document: &ContextDoc) -> String {
+        format!("tasksv:{}", document.tasks_revision)
     }
 
     pub fn sync(
@@ -55,6 +67,7 @@ impl ContextStore {
             } else {
                 let state = python_storage::persist_diff(&paths, &before, &document)?;
                 document.revision = state.global_rev;
+                document.tasks_revision = state.tasks_rev;
                 self.version(&document)?
             };
             Ok(ContextSyncResult {

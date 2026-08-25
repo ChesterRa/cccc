@@ -43,6 +43,16 @@ and Google; Presentation may use its own Chromium runtime. Browser-native UI tha
 page is only visible through **Browser** (or through the physical browser window on platforms that
 expose it).
 
+## Performance behavior
+
+- Hidden tabs release their group event streams immediately. Returning to the tab reconnects and
+  catches up from the last event cursor, so several open tabs do not exhaust the browser's
+  per-origin connection pool.
+- Hover-prefetched group data is reused when that group is selected; group bootstrap does not issue
+  a second actors read for the same transition.
+- Production Web responses negotiate Brotli or gzip compression. Voice Secretary code and locale
+  resources are loaded on demand instead of being part of every initial page load.
+
 ## Managing Groups
 
 ### Creating a Group
@@ -89,6 +99,10 @@ Click on an agent's tab to see its terminal output.
 
 1. Type in the message input at the bottom
 2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
+
+Recipient chips are one-shot: a successful send clears the selection, and switching Groups does not
+restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
+drafts.
 
 With an empty message input, press `Up` to recall your most recent message in the current Group.
 Continue with `Up` / `Down` to browse the already loaded message history. Editing or repositioning

@@ -4,6 +4,7 @@ export * from "./groupCreation";
 export * from "./voiceSecretary";
 export * from "./actors";
 export * from "./context";
+export * from "./tasks";
 export * from "./system";
 export * from "./messaging";
 export * from "./runtimeActivity";

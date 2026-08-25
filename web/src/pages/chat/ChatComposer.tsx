@@ -23,9 +23,9 @@ import { getPresentationRefChipLabel } from "../../utils/presentationRefs";
 import { getVoiceDocumentRefLabel } from "../../utils/voiceDocumentRefs";
 import { useTranslation } from "react-i18next";
 import {
-  VoiceSecretaryComposerControl,
+  LazyVoiceSecretaryComposerControl,
   type VoiceSecretaryCaptureMode,
-} from "./VoiceSecretaryComposerControl";
+} from "./LazyVoiceSecretaryComposerControl";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { useGroupStore } from "../../stores";
 import {
@@ -1279,7 +1279,7 @@ export function ChatComposer({
               </button>
 
               <div className="min-w-0 sm:min-w-max">
-                <VoiceSecretaryComposerControl
+                <LazyVoiceSecretaryComposerControl
                   isDark={isDark}
                   selectedGroupId={selectedGroupId}
                   busy={busy}

@@ -38,6 +38,8 @@ fn python_interop_share_context_tasks_and_version_state() {
         .sync(&group.group_id, &[create, agent, note], None, "user", false)
         .expect("Rust sync");
     assert_eq!(rust_result.context.tasks[0]["id"], "T001");
+    assert_eq!(rust_result.context.tasks_revision, 1);
+    assert_eq!(contexts.tasks_version(&rust_result.context), "tasksv:1");
     assert_eq!(rust_result.version, "ctxv:1");
 
     let output = python(&repo, temp.path())
@@ -148,6 +150,31 @@ fn legacy_rust_json_is_migrated_once_without_deleting_the_source() {
             .is_file()
     );
     assert!(group_dir.join("state/context.json").is_file());
+}
+
+#[test]
+fn python_interop_overview_load_keeps_coordination_and_version_without_materializing_tasks() {
+    let temp = tempfile::tempdir().expect("temp home");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("overview", "")
+        .expect("group");
+    let contexts = ContextStore::new(home).expect("contexts");
+    let operations = [
+        json!({"op":"task.create","title":"large task"}),
+        json!({"op":"coordination.brief.update","objective":"fast overview"}),
+    ]
+    .map(|value| value.as_object().cloned().expect("operation"));
+    contexts
+        .sync(&group.group_id, &operations, None, "user", false)
+        .expect("sync");
+
+    let overview = contexts.load_overview(&group.group_id).expect("overview");
+
+    assert!(overview.tasks.is_empty());
+    assert_eq!(overview.coordination["brief"]["objective"], "fast overview");
+    assert_eq!(contexts.version(&overview).expect("version"), "ctxv:1");
 }
 
 fn python(repo: &Path, home: &Path) -> Command {

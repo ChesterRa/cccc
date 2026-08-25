@@ -12,7 +12,6 @@ import {
   RUNTIME_INFO,
 } from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
-import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
@@ -37,6 +36,7 @@ import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
 import { attachTerminalTouchScroll } from "./agentTerminal/terminalTouchScroll";
+import { getTerminalTheme } from "./agentTerminal/terminalTheme";
 import {
   actorHasRuntimeResumeFailure,
   actorSupportsNewSession,
@@ -185,7 +185,6 @@ export function AgentTab({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalOptionsSnapshotRef = useRef({
-    isDark,
     canControl,
     scrollbackLines: terminalScrollbackLines,
   });
@@ -383,13 +382,6 @@ export function AgentTab({
     "inline-flex items-center gap-1.5 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--glass-border-subtle)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed";
 
   useEffect(() => {
-    terminalOptionsSnapshotRef.current.isDark = isDark;
-    if (terminalRef.current) {
-      terminalRef.current.options.theme = getTerminalTheme(isDark);
-    }
-  }, [isDark]);
-
-  useEffect(() => {
     terminalOptionsSnapshotRef.current.canControl = canControl;
     if (terminalRef.current) {
       terminalRef.current.options.disableStdin = !canControl;
@@ -415,7 +407,7 @@ export function AgentTab({
       cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
-      theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark),
+      theme: getTerminalTheme(),
       disableStdin: !terminalOptionsSnapshotRef.current.canControl,
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
       // Default is 8k lines; the user can override it in Global → Developer settings.

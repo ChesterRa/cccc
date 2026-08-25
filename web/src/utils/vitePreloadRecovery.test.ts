@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { claimVitePreloadReload, isDynamicImportError } from "./vitePreloadRecovery";
+import {
+  claimVitePreloadReload,
+  isDynamicImportError,
+  recoverDynamicImportError,
+} from "./vitePreloadRecovery";
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -58,5 +62,31 @@ describe("isDynamicImportError", () => {
 
   it("ignores unrelated runtime errors", () => {
     expect(isDynamicImportError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+  });
+});
+
+describe("recoverDynamicImportError", () => {
+  it("reloads once for a stale dynamic import and absorbs repeats during cooldown", () => {
+    const storage = memoryStorage();
+    const reload = vi.fn();
+    const error = new TypeError("Failed to fetch dynamically imported module: /ui/chunk.js");
+
+    expect(recoverDynamicImportError(error, storage, reload, 1_000)).toBe(true);
+    expect(recoverDynamicImportError(error, storage, reload, 2_000)).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves unrelated component errors untouched", () => {
+    const reload = vi.fn();
+
+    expect(
+      recoverDynamicImportError(
+        new TypeError("Cannot read properties of undefined"),
+        memoryStorage(),
+        reload,
+        1_000,
+      ),
+    ).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
   });
 });

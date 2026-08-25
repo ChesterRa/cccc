@@ -86,6 +86,7 @@ from ....util.fs import atomic_write_text
 from ....util.time import utc_now_iso
 from ....util.process import pid_is_alive
 from ..stream_close import close_stream_writer
+from .context_queries import task_query_args
 from .voice_transcription_upload import receive_voice_transcription
 from ..schemas import (
     AttachRequest,
@@ -984,10 +985,10 @@ async def invalidate_context_read(group_id: str, *, detail: Optional[str] = None
     if not gid:
         return
     mode = str(detail or "").strip().lower()
-    if mode in {"summary", "full"}:
+    if mode in {"overview", "summary", "full"}:
         keys = [_context_cache_key(gid, mode)]
     else:
-        keys = [_context_cache_key(gid, "summary"), _context_cache_key(gid, "full")]
+        keys = [_context_cache_key(gid, item) for item in ("overview", "summary", "full")]
     async with _CONTEXT_LOCK:
         touched = False
         for key in keys:
@@ -1576,7 +1577,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.get("/context")
     async def group_context(group_id: str, fresh: bool = False, detail: str = "summary") -> Dict[str, Any]:
-        """Get a group context view (summary by default, full when requested)."""
+        """Get a summary, overview, or full group context view."""
         gid = str(group_id or "").strip()
         if load_group(gid) is None:
             raise HTTPException(
@@ -1587,12 +1588,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 },
             )
         detail_mode = str(detail or "summary").strip().lower() or "summary"
-        if detail_mode not in {"summary", "full"}:
+        if detail_mode not in {"summary", "overview", "full"}:
             raise HTTPException(
                 status_code=400,
                 detail={
                     "code": "invalid_detail",
-                    "message": "detail must be 'summary' or 'full'",
+                    "message": "detail must be 'summary', 'overview', or 'full'",
                     "details": {"detail": detail_mode},
                 },
             )
@@ -1631,8 +1632,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/tasks")
-    async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
-        """List tasks (or fetch a single task when task_id is provided)."""
+    async def group_tasks(group_id: str, request: Request) -> Dict[str, Any]:
+        """List, page, or fetch tasks."""
         if load_group(group_id) is None:
             raise HTTPException(
                 status_code=404,
@@ -1641,10 +1642,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "message": f"group not found: {group_id}",
                 },
             )
-        args: Dict[str, Any] = {"group_id": group_id}
-        if task_id:
-            args["task_id"] = task_id
-        return await ctx.daemon({"op": "task_list", "args": args})
+        return await ctx.daemon(
+            {"op": "task_list", "args": task_query_args(group_id, request.query_params)}
+        )
 
     @group_router.get("/presentation")
     async def group_presentation_get(group_id: str) -> Dict[str, Any]:

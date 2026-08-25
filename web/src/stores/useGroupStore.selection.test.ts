@@ -39,4 +39,16 @@ describe("group selection", () => {
     expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
     expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
   });
+
+  it("ignores actor activity delivered by the previous group after selection changes", () => {
+    useGroupStore
+      .getState()
+      .updateActorActivity(
+        [{ id: "implementer", running: false, effective_working_state: "stopped" }],
+        "g_previous",
+      );
+
+    expect(useGroupStore.getState().actors).toBe(actors);
+    expect(useGroupStore.getState().actors[0].running).toBe(true);
+  });
 });

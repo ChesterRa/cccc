@@ -10,7 +10,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "context_get" => get(home, request),
         "context_sync" => sync(home, request),
-        "task_list" => task_list(home, request),
+        "task_list" => super::task_list::run(home, request),
         _ => return None,
     })
 }
@@ -19,15 +19,20 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     load_group(home, &group_id)?;
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
-    let document = contexts.load(&group_id).map_err(OpError::io)?;
-    let version = contexts.version(&document).map_err(OpError::io)?;
     let detail = string_arg(request, "detail").unwrap_or_else(|| "full".into());
-    if !matches!(detail.as_str(), "summary" | "full") {
+    if !matches!(detail.as_str(), "overview" | "summary" | "full") {
         return Err(OpError::new(
             "invalid_detail",
-            "detail must be 'summary' or 'full'",
+            "detail must be 'overview', 'summary', or 'full'",
         ));
     }
+    let document = if detail == "overview" {
+        contexts.load_overview(&group_id)
+    } else {
+        contexts.load(&group_id)
+    }
+    .map_err(OpError::io)?;
+    let version = contexts.version(&document).map_err(OpError::io)?;
     object(super::context_projection::project(
         document, version, &detail,
     ))
@@ -77,48 +82,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }))
 }
 
-fn task_list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    load_group(home, &group_id)?;
-    let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
-    let document = contexts.load(&group_id).map_err(OpError::io)?;
-    if let Some(task_id) = string_arg(request, "task_id").filter(|value| !value.trim().is_empty()) {
-        let task = document
-            .tasks
-            .iter()
-            .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id.as_str()))
-            .ok_or_else(|| OpError::new("task_not_found", format!("task not found: {task_id}")))?;
-        let mut task = task.clone();
-        task.insert(
-            "children".into(),
-            Value::Array(
-                document
-                    .tasks
-                    .iter()
-                    .filter(|candidate| {
-                        candidate.get("parent_id").and_then(Value::as_str) == Some(task_id.as_str())
-                    })
-                    .cloned()
-                    .map(Value::Object)
-                    .collect(),
-            ),
-        );
-        return object(json!({"task": task}));
-    }
-    let status = string_arg(request, "status");
-    let tasks: Vec<_> = document
-        .tasks
-        .into_iter()
-        .filter(|task| {
-            status
-                .as_deref()
-                .is_none_or(|wanted| task.get("status").and_then(Value::as_str) == Some(wanted))
-        })
-        .collect();
-    object(json!({"tasks": tasks}))
-}
-
-fn load_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {
+pub(super) fn load_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {
     store(home)?
         .load(group_id)
         .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))

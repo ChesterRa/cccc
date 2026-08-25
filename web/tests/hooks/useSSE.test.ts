@@ -35,14 +35,14 @@ import type { Actor } from "../../src/types";
 void localStorageMock;
 
 describe("computeGroupRuntimeFromActorActivityUpdate", () => {
-  it("starts group SSE only while visible but defers hidden disconnect with a grace period", () => {
+  it("starts group SSE only while visible and releases hidden-tab connections immediately", () => {
     expect(shouldStartGroupStreams(false)).toBe(true);
     expect(shouldStartGroupStreams(true)).toBe(false);
     expect(getGroupStreamsHiddenDisconnectDelayMs(false)).toBeNull();
     expect(getGroupStreamsHiddenDisconnectDelayMs(true)).toBe(
       GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS,
     );
-    expect(GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS).toBeGreaterThanOrEqual(60_000);
+    expect(GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS).toBe(0);
   });
 
   it("keeps the group active while another actor is still working", () => {

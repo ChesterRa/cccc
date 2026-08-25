@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -169,6 +170,7 @@ fn app_with_shutdown(
     let app_state = state.clone();
     let app = routes::router()
         .fallback(static_asset)
+        .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn_with_state(
@@ -493,6 +495,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod static_asset_tests {
     use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn spa_fallback_uses_index_html_content_type() {
@@ -506,6 +510,30 @@ mod static_asset_tests {
                 "unexpected content type for {path}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn static_assets_negotiate_gzip_compression() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+
+        let response = app_with_mode(home, WebMode::Normal)
+            .oneshot(
+                Request::builder()
+                    .uri("/ui/logo.svg")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_ENCODING),
+            Some(&header::HeaderValue::from_static("gzip")),
+        );
     }
 }
 

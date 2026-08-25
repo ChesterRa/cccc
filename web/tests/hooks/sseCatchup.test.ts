@@ -1,35 +1,35 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { runReconnectCatchup, scheduleContextSummaryCatchup } from "../../src/hooks/sseCatchup";
+import { runReconnectCatchup, scheduleContextOverviewCatchup } from "../../src/hooks/sseCatchup";
 
 describe("sseCatchup", () => {
-  it("reconnect catch-up refreshes summary first and unread last", async () => {
+  it("reconnect catch-up refreshes the task-free overview first and unread last", async () => {
     const invalidateContextRead = vi.fn();
     const reconcileLedgerTail = vi.fn().mockResolvedValue(undefined);
     const refreshActors = vi.fn().mockResolvedValue(undefined);
-    const fetchContextSummary = vi.fn().mockResolvedValue(undefined);
+    const fetchContextOverview = vi.fn().mockResolvedValue(undefined);
 
     await runReconnectCatchup("g-demo", {
       invalidateContextRead,
       reconcileLedgerTail,
       refreshActors,
-      fetchContextSummary,
+      fetchContextOverview,
     });
 
     expect(invalidateContextRead).toHaveBeenCalledWith("g-demo");
     expect(reconcileLedgerTail).toHaveBeenCalledWith("g-demo");
     expect(refreshActors).toHaveBeenNthCalledWith(1, "g-demo", { includeUnread: false });
-    expect(fetchContextSummary).toHaveBeenCalledWith("g-demo", { detail: "summary" });
+    expect(fetchContextOverview).toHaveBeenCalledWith("g-demo", { detail: "overview" });
     expect(refreshActors).toHaveBeenNthCalledWith(2, "g-demo", { includeUnread: true });
   });
 
-  it("context sync catch-up clears the old timer and re-schedules a summary refresh", () => {
+  it("context sync catch-up clears the old timer and re-schedules an overview refresh", () => {
     const invalidateContextRead = vi.fn();
     const clearTimer = vi.fn();
-    const fetchContextSummary = vi.fn();
+    const fetchContextOverview = vi.fn();
 
     let scheduledDelay = -1;
     let scheduledCallback: (() => void) | null = null;
-    const nextTimer = scheduleContextSummaryCatchup("g-demo", {
+    const nextTimer = scheduleContextOverviewCatchup("g-demo", {
       invalidateContextRead,
       existingTimer: 17,
       clearTimer,
@@ -38,7 +38,7 @@ describe("sseCatchup", () => {
         scheduledDelay = delayMs;
         return 23;
       },
-      fetchContextSummary,
+      fetchContextOverview,
     });
 
     expect(invalidateContextRead).toHaveBeenCalledWith("g-demo");
@@ -47,6 +47,6 @@ describe("sseCatchup", () => {
     expect(nextTimer).toBe(23);
 
     scheduledCallback?.();
-    expect(fetchContextSummary).toHaveBeenCalledWith("g-demo", { detail: "summary" });
+    expect(fetchContextOverview).toHaveBeenCalledWith("g-demo", { detail: "overview" });
   });
 });

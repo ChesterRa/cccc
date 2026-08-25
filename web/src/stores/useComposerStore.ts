@@ -146,7 +146,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       const normalToText = activeGroupId ? state.normalToTextByGroup[activeGroupId] : undefined;
       return {
         replyTarget: null,
-        toText: normalToText ?? state.toText,
+        toText: normalToText ?? "",
         messageMode: state.preferredMessageMode,
       };
     }),
@@ -186,20 +186,16 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   clearComposer: () =>
     set((state) => {
       const activeGroupId = String(state.activeGroupId || "").trim();
-      const normalToText = activeGroupId ? state.normalToTextByGroup[activeGroupId] : undefined;
-      const nextToText = state.replyTarget ? (normalToText ?? "") : state.toText;
       return {
         composerText: "",
         composerFiles: [],
-        toText: nextToText,
+        toText: "",
         replyTarget: null,
         quotedPresentationRef: null,
         quotedVoiceDocumentRef: null,
         messageMode: state.preferredMessageMode,
         destGroupId: activeGroupId,
-        normalToTextByGroup: activeGroupId
-          ? { ...state.normalToTextByGroup, [activeGroupId]: nextToText }
-          : state.normalToTextByGroup,
+        normalToTextByGroup: {},
       };
     }),
 
@@ -217,7 +213,6 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       const hasContent =
         state.composerText.trim() ||
         state.composerFiles.length > 0 ||
-        state.toText.trim() ||
         state.replyTarget ||
         state.quotedPresentationRef ||
         state.quotedVoiceDocumentRef;
@@ -226,7 +221,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         newDrafts[normalizedFromGroupId] = {
           composerText: state.composerText,
           composerFiles: state.composerFiles,
-          toText: state.toText,
+          toText: state.replyTarget ? state.toText : "",
           replyTarget: state.replyTarget,
           quotedPresentationRef: state.quotedPresentationRef,
           quotedVoiceDocumentRef: state.quotedVoiceDocumentRef,
@@ -241,10 +236,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     const draft = normalizedToGroupId ? newDrafts[normalizedToGroupId] : null;
     const normalizedDestGroupId = normalizedToGroupId;
 
-    const nextToText =
-      draft?.toText ??
-      (normalizedToGroupId ? state.normalToTextByGroup[normalizedToGroupId] : undefined) ??
-      "";
+    const nextToText = draft?.replyTarget ? draft.toText : "";
     const nextMessageMode = draft?.replyTarget
       ? normalizeReplyMessageMode(draft.messageMode)
       : draft?.messageMode || state.preferredMessageMode;
@@ -252,6 +244,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     set({
       activeGroupId: normalizedDestGroupId,
       drafts: newDrafts,
+      normalToTextByGroup: {},
       composerText: draft?.composerText || "",
       composerFiles: draft?.composerFiles || [],
       toText: nextToText,

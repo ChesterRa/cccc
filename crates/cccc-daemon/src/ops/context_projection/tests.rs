@@ -74,3 +74,25 @@ fn waiting_on_actor_or_external_is_blocked_without_a_blocked_by_list() {
         assert_eq!(summary["tasks_summary"]["blocked"], 1, "{waiting_on}");
     }
 }
+
+#[test]
+fn overview_omits_task_collections_but_keeps_coordination_notes() {
+    let mut document = document();
+    document.tasks_revision = 7;
+    document
+        .coordination
+        .insert("recent_decisions".into(), json!([{"summary":"keep this"}]));
+
+    let result = project(document, "v2".into(), "overview");
+
+    assert_eq!(result["version"], "v2");
+    assert_eq!(result["tasks_version"], "tasksv:7");
+    assert_eq!(
+        result["coordination"]["recent_decisions"][0]["summary"],
+        "keep this"
+    );
+    assert!(result["coordination"].get("tasks").is_none());
+    assert!(result.get("board").is_none());
+    assert!(result.get("tasks_summary").is_none());
+    assert!(result.get("attention").is_none());
+}

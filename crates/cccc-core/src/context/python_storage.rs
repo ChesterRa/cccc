@@ -80,6 +80,14 @@ impl VersionState {
 }
 
 pub(super) fn load(paths: &PythonContextPaths) -> io::Result<ContextDoc> {
+    load_with_tasks(paths, true)
+}
+
+pub(super) fn load_overview(paths: &PythonContextPaths) -> io::Result<ContextDoc> {
+    load_with_tasks(paths, false)
+}
+
+fn load_with_tasks(paths: &PythonContextPaths, include_tasks: bool) -> io::Result<ContextDoc> {
     let context = python_files::read_yaml_map(&paths.context_file);
     let coordination = context
         .get("coordination")
@@ -95,9 +103,14 @@ pub(super) fn load(paths: &PythonContextPaths) -> io::Result<ContextDoc> {
     Ok(ContextDoc {
         v: 3,
         revision: version.global_rev,
+        tasks_revision: version.tasks_rev,
         updated_at: String::new(),
         coordination,
-        tasks: python_files::load_tasks(&paths.tasks_dir)?,
+        tasks: if include_tasks {
+            python_files::load_tasks(&paths.tasks_dir)?
+        } else {
+            Vec::new()
+        },
         agent_states: python_files::load_agents(&paths.agents_file),
         meta,
     })

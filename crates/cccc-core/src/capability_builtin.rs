@@ -1,5 +1,13 @@
 use crate::capabilities::Capability;
 
+pub const SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:cccc:self-evolution";
+pub const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str =
+    "skill:agent_self_proposed:cccc-self-evolution";
+pub const DEFAULT_GROUP_CAPABILITY_SEED_VERSION: u64 = 1;
+
+const SELF_EVOLUTION_CAPSULE: &str =
+    include_str!("../../../src/cccc/resources/cccc-self-evolution.md");
+
 pub const WEB_MODEL_CORE_TOOL_NAMES: &[&str] = &[
     "cccc_help",
     "cccc_bootstrap",
@@ -44,6 +52,20 @@ pub fn is_builtin_capability_pack_tool(name: &str) -> bool {
 
 pub fn all() -> Vec<Capability> {
     vec![
+        skill(
+            SELF_EVOLUTION_CAPABILITY_ID,
+            "cccc-self-evolution",
+            "Review complete visible CCCC group history and propose confirmed improvements at the prompt, structured-context, workflow, Harness, or optimizer level.",
+            SELF_EVOLUTION_CAPSULE,
+            &[
+                "self-evolution",
+                "learning",
+                "workflow",
+                "harness",
+                "optimizer",
+                "cccc-glue",
+            ],
+        ),
         pack(
             "pack:group-runtime",
             "Group + Runtime Operations",
@@ -132,6 +154,22 @@ pub fn all() -> Vec<Capability> {
             &["capability", "install", "admin", "governance"],
         ),
     ]
+}
+
+fn skill(id: &str, name: &str, description: &str, capsule_text: &str, tags: &[&str]) -> Capability {
+    Capability {
+        id: id.into(),
+        kind: "skill".into(),
+        name: name.into(),
+        description: description.into(),
+        tool_names: Vec::new(),
+        tags: tags.iter().map(|value| (*value).into()).collect(),
+        capsule_text: capsule_text.trim().into(),
+        source: "cccc_builtin".into(),
+        source_uri: String::new(),
+        qualification_status: "qualified".into(),
+        enable_supported: true,
+    }
 }
 
 fn pack(id: &str, title: &str, tools: &[&str], tags: &[&str]) -> Capability {

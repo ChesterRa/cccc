@@ -281,7 +281,7 @@ class TestMaintenanceOps(unittest.TestCase):
         from cccc.contracts.v1 import DaemonResponse
         from cccc.daemon.ops import maintenance_ops
 
-        src_group = SimpleNamespace(group_id="g_src", doc={"actors": []})
+        src_group = SimpleNamespace(group_id="g_src", doc={"actors": [{"id": "peer1"}]})
         dst_group = SimpleNamespace(
             group_id="g_dst",
             doc={

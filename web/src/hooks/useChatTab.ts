@@ -15,7 +15,7 @@ import {
 } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, GroupMeta, LedgerEvent, MessageRef, Task } from "../types";
+import type { Actor, GroupMeta, LedgerEvent, MessageRef } from "../types";
 import * as api from "../services/api";
 import {
   formatSendMessageError,
@@ -72,6 +72,7 @@ import {
 } from "./chat/chatMessageSend";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
 import { useChatMessageView } from "./chat/useChatMessageView";
+import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 interface UseChatTabOptions {
   selectedGroupId: string;
   selectedGroupRunning: boolean;
@@ -474,18 +475,12 @@ export function useChatTab({
 
   // Agent state snapshot
   const agentStates = useMemo(() => groupContext?.agent_states || [], [groupContext]);
-  const tasks = useMemo(
-    () => (Array.isArray(groupContext?.coordination?.tasks) ? groupContext.coordination.tasks : []),
-    [groupContext],
-  );
-  const taskById = useMemo(() => {
-    const map = new Map<string, Task>();
-    for (const task of tasks) {
-      const taskId = String(task?.id || "").trim();
-      if (taskId) map.set(taskId, task);
-    }
-    return map;
-  }, [tasks]);
+  const taskById = useTaskReferenceIndex({
+    groupId: selectedGroupId,
+    events: chatMessages,
+    tasksVersion: groupContext?.tasks_version,
+    seedTasks: groupContext?.coordination?.tasks,
+  });
 
   // ============ Actions ============
 

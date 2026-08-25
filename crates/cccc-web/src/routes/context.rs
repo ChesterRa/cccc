@@ -39,10 +39,10 @@ async fn context_get(
     Query(query): Query<ContextQuery>,
 ) -> ApiResult {
     let detail = query.detail.as_deref().unwrap_or("summary");
-    if !matches!(detail, "summary" | "full") {
+    if !matches!(detail, "overview" | "summary" | "full") {
         return Err(crate::api::ApiError::bad_code(
             "invalid_detail",
-            "detail must be 'summary' or 'full'",
+            "detail must be 'overview', 'summary', or 'full'",
             json!({"detail":detail}),
         ));
     }
@@ -78,8 +78,21 @@ async fn tasks(
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult {
     let mut args = object(json!({"group_id":group_id}));
-    if let Some(status) = query.get("status") {
-        args.insert("status".into(), Value::String(status.clone()));
+    for name in [
+        "task_id",
+        "task_ids",
+        "status",
+        "statuses",
+        "query",
+        "assignee",
+        "attention",
+        "offset",
+        "limit",
+        "include_index",
+    ] {
+        if let Some(value) = query.get(name) {
+            args.insert(name.into(), Value::String(value.clone()));
+        }
     }
     call(&state, "task_list", args).await
 }

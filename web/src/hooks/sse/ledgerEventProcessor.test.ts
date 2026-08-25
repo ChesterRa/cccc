@@ -7,6 +7,7 @@ function processorDeps() {
   const appendEvent = vi.fn();
   const updateReadStatus = vi.fn();
   const updateObligationStatus = vi.fn();
+  const updateActorActivity = vi.fn();
   const refreshActors = vi.fn();
   const noop = vi.fn();
   const deps = {
@@ -19,7 +20,7 @@ function processorDeps() {
     updateObligationStatus,
     incrementActorUnread: noop,
     incrementWebModelQueued: noop,
-    updateActorActivity: noop,
+    updateActorActivity,
     updateGroupRuntimeState: noop,
     promoteStreamingEventsByPrefix: noop,
     removeStreamingEvent: noop,
@@ -30,8 +31,30 @@ function processorDeps() {
     markPresentationSlotAttention: noop,
     clearPresentationSlotAttention: noop,
   } as unknown as LedgerEventProcessorDeps;
-  return { deps, appendEvent, updateReadStatus, updateObligationStatus, refreshActors };
+  return {
+    deps,
+    appendEvent,
+    updateReadStatus,
+    updateObligationStatus,
+    updateActorActivity,
+    refreshActors,
+  };
 }
+
+describe("processLedgerEvent actor activity", () => {
+  it("keeps the source group id on actor activity updates", () => {
+    const { deps, updateActorActivity } = processorDeps();
+    const actors = [{ id: "peer1", running: false }];
+
+    processLedgerEvent(
+      "g_previous",
+      { kind: "actor.activity", data: { actors } } as LedgerEvent,
+      deps,
+    );
+
+    expect(updateActorActivity).toHaveBeenCalledWith(actors, "g_previous");
+  });
+});
 
 describe("processLedgerEvent obligation facts", () => {
   it("refreshes authoritative unread counts after a Mail read fact", () => {

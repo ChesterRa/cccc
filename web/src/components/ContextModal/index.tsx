@@ -19,6 +19,7 @@ import {
   type ApiResponse,
 } from "../../services/api";
 import { reloadContextAfterWrite } from "../../features/contextModal/contextWriteback";
+import { useTaskBoardData } from "../../features/contextModal/useTaskBoardData";
 import type { GroupContext, ProjectMdInfo, Task } from "../../types";
 import {
   evaluateTaskWorkflow,
@@ -38,15 +39,11 @@ import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
 import {
   briefDraftMatches,
   briefToDraft,
-  buildBoard,
-  countLike,
   emptyNoteDraft,
   emptyTaskDraft,
-  getTaskDeleteInfo,
   parseChecklist,
   parseLineList,
   isVisibleContextAgent,
-  taskDisplaySummary,
   taskDraftDirty,
   taskDraftMatches,
   taskStatus,
@@ -57,6 +54,7 @@ import {
   type NoteDraft,
   type SteeringTab,
   type TaskDraft,
+  type TaskDeleteInfo,
   type TaskFilterValue,
 } from "./model";
 import { createContextModalUi } from "./ui";
@@ -128,11 +126,32 @@ export function ContextModal({
   const [activityError, setActivityError] = useState("");
   const lastOpenedGroupRef = useRef("");
 
+  const {
+    columns: taskColumnPages,
+    board,
+    taskIndex,
+    taskMap,
+    tasksSummary,
+    facets: taskFacets,
+    error: taskLoadError,
+    loading: taskLoading,
+    deleteInfoById,
+    refresh: refreshTasks,
+    loadMore: loadMoreTasks,
+    loadTaskDetail,
+    forgetTask,
+  } = useTaskBoardData({
+    groupId,
+    isOpen,
+    query: taskQuery,
+    assignee: assigneeFilter,
+    filter: taskFilter,
+    includeArchived: archivedExpanded,
+    contextTasksVersion: context?.tasks_version,
+    selectedTaskId,
+  });
+
   const brief = context?.coordination?.brief || null;
-  const tasks = useMemo(
-    () => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []),
-    [context],
-  );
   const agents = useMemo(
     () =>
       Array.isArray(context?.agent_states)
@@ -140,17 +159,6 @@ export function ContextModal({
         : [],
     [context],
   );
-  const board = useMemo(() => buildBoard(tasks, context?.board), [context?.board, tasks]);
-
-  const allBoardTasks = useMemo(
-    () => [...board.active, ...board.planned, ...board.done, ...board.archived],
-    [board.active, board.archived, board.done, board.planned],
-  );
-  const taskMap = useMemo(() => {
-    const map = new Map<string, Task>();
-    for (const task of allBoardTasks) map.set(task.id, task);
-    return map;
-  }, [allBoardTasks]);
 
   const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
   const taskWorkflowCoverage = useMemo(
@@ -171,43 +179,14 @@ export function ContextModal({
     [taskDraft?.taskType],
   );
 
-  const tasksSummary = useMemo(() => {
-    const fallback = {
-      total: tasks.length,
-      planned: board.planned.length,
-      active: board.active.length,
-      done: board.done.length,
-      archived: board.archived.length,
-    };
-    return context?.tasks_summary || fallback;
-  }, [
-    board.active.length,
-    board.archived.length,
-    board.done.length,
-    board.planned.length,
-    context?.tasks_summary,
-    tasks.length,
-  ]);
-
-  const attentionCounts = useMemo(() => {
-    const blockedFallback = tasks.filter(
-      (task) =>
-        taskStatus(task) === "active" &&
-        Array.isArray(task.blocked_by) &&
-        task.blocked_by.length > 0,
-    ).length;
-    const waitingUserFallback = tasks.filter(
-      (task) => String(task.waiting_on || "none") === "user",
-    ).length;
-    const handoffFallback = tasks.filter(
-      (task) => !!String(task.handoff_to || "").trim() && taskStatus(task) !== "archived",
-    ).length;
-    return {
-      blocked: countLike(context?.attention?.blocked, blockedFallback),
-      waitingUser: countLike(context?.attention?.waiting_user, waitingUserFallback),
-      pendingHandoffs: countLike(context?.attention?.pending_handoffs, handoffFallback),
-    };
-  }, [context?.attention, tasks]);
+  const attentionCounts = useMemo(
+    () => ({
+      blocked: taskFacets.blocked,
+      waitingUser: taskFacets.waitingUser,
+      pendingHandoffs: taskFacets.pendingHandoffs,
+    }),
+    [taskFacets],
+  );
 
   const recentDecisions = useMemo(
     () =>
@@ -237,22 +216,11 @@ export function ContextModal({
     [projectPathLabel, tr],
   );
 
-  const assigneeOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(tasks.map((task) => String(task.assignee || "").trim()).filter(Boolean)),
-      ).sort((a, b) => a.localeCompare(b)),
-    [tasks],
-  );
-  const unassignedCount = useMemo(
-    () =>
-      tasks.filter((task) => taskStatus(task) !== "archived" && !String(task.assignee || "").trim())
-        .length,
-    [tasks],
-  );
+  const assigneeOptions = taskFacets.assignees;
+  const unassignedCount = taskFacets.unassigned;
   const activeTaskOptions = useMemo(
-    () => tasks.filter((task) => taskStatus(task) !== "archived"),
-    [tasks],
+    () => taskIndex.filter((task) => taskStatus(task) !== "archived"),
+    [taskIndex],
   );
   const hasBriefUnsaved = useMemo(
     () => editingBrief && !briefDraftMatches(brief, briefDraft),
@@ -268,10 +236,15 @@ export function ContextModal({
     if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
     return !!selectedTask && !taskDraftMatches(selectedTask, taskDraft);
   }, [selectedTask, taskDraft, taskEditorMode]);
-  const selectedTaskDeleteInfo = useMemo(
-    () => getTaskDeleteInfo(selectedTask, tasks),
-    [selectedTask, tasks],
-  );
+  const selectedTaskDeleteInfo = useMemo<TaskDeleteInfo>(() => {
+    const info = selectedTask ? deleteInfoById[selectedTask.id] : null;
+    const reason = info?.reason;
+    return {
+      allowed: Boolean(info?.allowed),
+      total: Number(info?.total || 0),
+      reason: reason === "self_history" || reason === "subtree_history" ? reason : "",
+    };
+  }, [deleteInfoById, selectedTask]);
   const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
 
   const loadProjectMd = useCallback(
@@ -353,57 +326,11 @@ export function ContextModal({
     }
   }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
 
-  const taskMatches = useCallback(
-    (task: Task): boolean => {
-      const assignee = String(task.assignee || "").trim();
-      const status = taskStatus(task);
-      const blocked = Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
-      const waitingUser = String(task.waiting_on || "none") === "user";
-      const handoff = !!String(task.handoff_to || "").trim();
-      const query = taskQuery.trim().toLowerCase();
-
-      if (assigneeFilter === "__unassigned__") {
-        if (assignee) return false;
-      } else if (assigneeFilter !== "__all__" && assignee !== assigneeFilter) {
-        return false;
-      }
-
-      if (taskFilter === "blocked" && !(status !== "archived" && blocked)) return false;
-      if (taskFilter === "waiting_user" && !(status !== "archived" && waitingUser)) return false;
-      if (taskFilter === "handoff" && !(status !== "archived" && handoff)) return false;
-      if (taskFilter === "unassigned" && !(status !== "archived" && !assignee)) return false;
-
-      if (query) {
-        const haystack = [
-          task.id,
-          taskTitle(task),
-          taskDisplaySummary(task),
-          assignee,
-          String(task.priority || ""),
-          String(task.handoff_to || ""),
-        ]
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    },
-    [assigneeFilter, taskFilter, taskQuery],
-  );
-
-  const filteredBoard = useMemo(
-    () => ({
-      planned: board.planned.filter(taskMatches),
-      active: board.active.filter(taskMatches),
-      done: board.done.filter(taskMatches),
-      archived: board.archived.filter(taskMatches),
-    }),
-    [board, taskMatches],
-  );
-
+  const filteredBoard = board;
   const hasTaskFilters =
     taskFilter !== "all" || assigneeFilter !== "__all__" || taskQuery.trim().length > 0;
-  const hiddenArchivedMatches = archivedExpanded ? 0 : filteredBoard.archived.length;
+  const hiddenArchivedMatches =
+    archivedExpanded || hasTaskFilters ? 0 : Number(tasksSummary.archived || 0);
   const visibleTaskTotal = useMemo(
     () =>
       filteredBoard.planned.length +
@@ -412,9 +339,9 @@ export function ContextModal({
       (archivedExpanded ? filteredBoard.archived.length : 0),
     [archivedExpanded, filteredBoard],
   );
-  const hasVisibleTasks = visibleTaskTotal > 0;
+  const hasVisibleTasks = visibleTaskTotal > 0 || taskLoading;
   const archivedToggleCount = hasTaskFilters
-    ? filteredBoard.archived.length
+    ? taskColumnPages.archived.totalCount
     : Number(tasksSummary.archived || 0);
   const hasArchivedTasks =
     archivedExpanded || archivedToggleCount > 0 || Number(tasksSummary.archived || 0) > 0;
@@ -425,6 +352,11 @@ export function ContextModal({
       setArchivedExpanded(true);
     }
   }, [isOpen, selectedTask]);
+
+  useEffect(() => {
+    if (!isOpen || !selectedTaskId) return;
+    void loadTaskDetail(selectedTaskId);
+  }, [isOpen, loadTaskDetail, selectedTaskId]);
 
   useEffect(() => {
     if (taskEditorMode !== "edit") return;
@@ -554,6 +486,8 @@ export function ContextModal({
             previousUpdatedAt: String(task.updated_at || ""),
           });
         }
+        await refreshTasks();
+        if (selectedTaskId === task.id) await loadTaskDetail(task.id);
       } finally {
         setSyncBusy(false);
       }
@@ -562,7 +496,9 @@ export function ContextModal({
       applyContextWriteback,
       formatDoneTransitionGuardMessage,
       groupId,
+      loadTaskDetail,
       openTaskEditorForTask,
+      refreshTasks,
       selectedTaskId,
       taskDraft,
       taskEditorMode,
@@ -617,19 +553,24 @@ export function ContextModal({
     const targetTaskId = String(initialTaskId || "").trim();
     if (!targetTaskId) return;
     if (selectedTaskId === targetTaskId && taskEditorMode === "edit") return;
-    const task = taskMap.get(targetTaskId);
-    if (!task) return;
-    if (taskStatus(task) === "archived") {
-      setArchivedExpanded(true);
-    }
     setTaskFilter("all");
     setAssigneeFilter("__all__");
     setTaskQuery("");
-    selectTask(task);
-    onInitialTaskHandled?.();
+    let cancelled = false;
+    void (async () => {
+      const task = taskMap.get(targetTaskId) || (await loadTaskDetail(targetTaskId));
+      if (cancelled || !task) return;
+      if (taskStatus(task) === "archived") setArchivedExpanded(true);
+      selectTask(task);
+      onInitialTaskHandled?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [
     initialTaskId,
     isOpen,
+    loadTaskDetail,
     onInitialTaskHandled,
     selectTask,
     selectedTaskId,
@@ -799,6 +740,7 @@ export function ContextModal({
           );
           return;
         }
+        await refreshTasks();
         setTaskEditorMode("none");
         setSelectedTaskId("");
         setTaskDraft(null);
@@ -834,6 +776,8 @@ export function ContextModal({
         taskId: selectedTask.id,
         previousUpdatedAt: String(selectedTask.updated_at || ""),
       });
+      await refreshTasks();
+      await loadTaskDetail(selectedTask.id);
     } finally {
       setSyncBusy(false);
     }
@@ -841,6 +785,8 @@ export function ContextModal({
     applyContextWriteback,
     formatDoneTransitionGuardMessage,
     groupId,
+    loadTaskDetail,
+    refreshTasks,
     selectedTask,
     taskDraft,
     taskEditorMode,
@@ -850,8 +796,8 @@ export function ContextModal({
   const handleDeleteTask = useCallback(
     async (task: Task) => {
       if (!groupId) return;
-      const deleteInfo = getTaskDeleteInfo(task, tasks);
-      if (!deleteInfo.allowed) return;
+      const deleteInfo = deleteInfoById[task.id];
+      if (!deleteInfo?.allowed) return;
       if (!confirmDiscardTaskChanges()) return;
       if (typeof window !== "undefined") {
         const confirmed = window.confirm(
@@ -886,11 +832,22 @@ export function ContextModal({
           setSelectedTaskId("");
           setTaskDraft(null);
         }
+        forgetTask(task.id);
+        await refreshTasks();
       } finally {
         setSyncBusy(false);
       }
     },
-    [applyContextWriteback, confirmDiscardTaskChanges, groupId, selectedTaskId, tasks, tr],
+    [
+      applyContextWriteback,
+      confirmDiscardTaskChanges,
+      deleteInfoById,
+      forgetTask,
+      groupId,
+      refreshTasks,
+      selectedTaskId,
+      tr,
+    ],
   );
 
   const handleResetTask = useCallback(() => {
@@ -1174,6 +1131,9 @@ export function ContextModal({
                   hasVisibleTasks={hasVisibleTasks}
                   hiddenArchivedMatches={hiddenArchivedMatches}
                   filteredBoard={filteredBoard}
+                  columnPages={taskColumnPages}
+                  taskLoading={taskLoading}
+                  taskLoadError={taskLoadError}
                   taskMap={taskMap}
                   selectedTaskId={selectedTaskId}
                   dragTaskId={dragTaskId}
@@ -1193,6 +1153,8 @@ export function ContextModal({
                   onDragCancel={() => setDragTaskId("")}
                   onSelectTask={selectTask}
                   onMoveTaskToStatus={(task, nextStatus) => void moveTaskToStatus(task, nextStatus)}
+                  onLoadMore={(status) => void loadMoreTasks(status)}
+                  onRetryLoad={() => void refreshTasks()}
                 />
               </div>
             ) : activeView === "agents" ? (

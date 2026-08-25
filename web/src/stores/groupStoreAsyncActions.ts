@@ -51,6 +51,7 @@ import type {
 } from "./groupStoreTypes";
 import { useComposerStore } from "./useComposerStore";
 import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
+import { getGroupWarmupRead, startGroupWarmupRead } from "./groupWarmupRead";
 
 function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntimeActors: Actor[] } {
   const visibleActors: Actor[] = [];
@@ -426,21 +427,23 @@ export function createGroupStoreAsyncActions(
         get().mergeEventStatuses(statusesResp.result.statuses || {}, gid);
       };
 
-      const showPromise = api.fetchGroup(gid, { signal: loadSignal });
+      const warmupRead = getGroupWarmupRead(gid);
+      const showPromise = warmupRead
+        ? warmupRead.then((result) => result.group)
+        : api.fetchGroup(gid, { signal: loadSignal });
       const fetchTail = () =>
         api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, {
           includeStatuses: false,
           signal: loadSignal,
         });
-      const tailPromise = shouldDeferInitialTailRefresh(chatBucket)
-        ? delayCachedTailRefresh(fetchTail, loadSignal)
-        : fetchTail();
-      const actorsPromise = api.fetchActors(
-        gid,
-        false,
-        { signal: loadSignal },
-        { includeInternal: true },
-      );
+      const tailPromise = warmupRead
+        ? warmupRead.then((result) => result.ledgerTail)
+        : shouldDeferInitialTailRefresh(chatBucket)
+          ? delayCachedTailRefresh(fetchTail, loadSignal)
+          : fetchTail();
+      const actorsPromise = warmupRead
+        ? warmupRead.then((result) => result.actors)
+        : api.fetchActors(gid, false, { signal: loadSignal }, { includeInternal: true });
       const contextEpoch = beginContextRequest(gid);
       const settingsEpoch = beginGroupRequestEpoch(settingsRequestEpochByGroup, gid);
 
@@ -538,44 +541,11 @@ export function createGroupStoreAsyncActions(
         });
 
       void api
-        .fetchContext(gid, { detail: "summary", signal: loadSignal })
+        .fetchContext(gid, { detail: "overview", signal: loadSignal })
         .then((ctx) => {
           if (!ctx.ok) return;
           if (!isLatestContextRequest(gid, contextEpoch)) return;
-          const summary = ctx.result as GroupContext;
-          const meta =
-            summary && typeof summary === "object" ? (summary as { meta?: unknown }).meta : null;
-          const summarySnapshot =
-            meta && typeof meta === "object"
-              ? ((meta as { summary_snapshot?: unknown }).summary_snapshot ?? null)
-              : null;
-          const snapshotState =
-            summarySnapshot && typeof summarySnapshot === "object"
-              ? String((summarySnapshot as { state?: unknown }).state || "")
-                  .trim()
-                  .toLowerCase()
-              : "";
-          const currentState = get();
-          const hasCachedContext =
-            String(currentState.groupDoc?.group_id || "").trim() === gid &&
-            currentState.groupContext !== null;
-
-          if (snapshotState === "stale" && hasCachedContext) return;
-          if (snapshotState === "missing" || (snapshotState === "stale" && !hasCachedContext)) {
-            void api
-              .fetchContext(gid, { detail: "full", fresh: true, signal: loadSignal })
-              .then((fullCtx) => {
-                if (!fullCtx.ok) return;
-                if (!isLatestContextRequest(gid, contextEpoch)) return;
-                commitViewPatch({ groupContext: fullCtx.result as GroupContext });
-              })
-              .catch((error) => {
-                console.error(`Failed to load fresh context for group=${gid}:`, error);
-              });
-            return;
-          }
-
-          commitViewPatch({ groupContext: summary });
+          commitViewPatch({ groupContext: ctx.result as GroupContext });
         })
         .catch((error) => {
           console.error(`Failed to load context for group=${gid}:`, error);
@@ -637,11 +607,11 @@ export function createGroupStoreAsyncActions(
 
       warmGroupInFlight.add(gid);
       try {
-        const [show, tail, actorsResp] = await Promise.all([
-          api.fetchGroup(gid),
-          api.fetchLedgerTail(gid, INITIAL_LEDGER_TAIL_LIMIT, { includeStatuses: false }),
-          api.fetchActors(gid, false, undefined, { includeInternal: true }),
-        ]);
+        const {
+          group: show,
+          ledgerTail: tail,
+          actors: actorsResp,
+        } = await startGroupWarmupRead(gid);
 
         const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
         if (show.ok) {

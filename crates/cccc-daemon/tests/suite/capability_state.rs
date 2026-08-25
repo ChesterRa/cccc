@@ -4,6 +4,166 @@ use cccc_core::GroupStore;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
+const SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:cccc:self-evolution";
+const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:agent_self_proposed:cccc-self-evolution";
+
+#[test]
+fn self_evolution_is_builtin_and_default_enabled_once() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("self evolution", "")
+        .expect("group");
+
+    let first = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        first["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+    assert!(
+        first["active_capsule_skills"]
+            .as_array()
+            .expect("skills")
+            .iter()
+            .any(|row| row["capability_id"] == SELF_EVOLUTION_CAPABILITY_ID)
+    );
+    let builtin = cccc_core::capabilities::CapabilityStore::new(home.clone())
+        .require(SELF_EVOLUTION_CAPABILITY_ID)
+        .expect("built-in self evolution");
+    assert_eq!(builtin.source, "cccc_builtin");
+
+    call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":SELF_EVOLUTION_CAPABILITY_ID,"scope":"group","enabled":false
+        }),
+    );
+    for _ in 0..2 {
+        let state = call(
+            &home,
+            "capability_state",
+            json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+        );
+        assert!(
+            !state["enabled_capabilities"]
+                .as_array()
+                .expect("enabled")
+                .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+        );
+    }
+}
+
+#[test]
+fn self_evolution_disable_before_first_state_read_is_durable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("early self evolution disable", "")
+        .expect("group");
+
+    call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":SELF_EVOLUTION_CAPABILITY_ID,"scope":"group","enabled":false
+        }),
+    );
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        !state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+}
+
+#[test]
+fn legacy_self_evolution_binding_migrates_without_duplicate_activation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("self evolution migration", "")
+        .expect("group");
+    std::fs::create_dir_all(home.root().join("state/capabilities")).expect("state dir");
+    write_json(
+        &home.root().join("state/capabilities/state.json"),
+        json!({"v":1,"group_enabled":{(group.group_id.clone()):[LEGACY_SELF_EVOLUTION_CAPABILITY_ID]}}),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    let enabled = state["enabled_capabilities"].as_array().expect("enabled");
+    assert!(enabled.contains(&json!(SELF_EVOLUTION_CAPABILITY_ID)));
+    assert!(!enabled.contains(&json!(LEGACY_SELF_EVOLUTION_CAPABILITY_ID)));
+
+    let persisted: Value =
+        cccc_core::fs::read_json(&home.root().join("state/capabilities/state.json"))
+            .expect("persisted state");
+    assert!(
+        persisted["group_removed"][&group.group_id]
+            .as_array()
+            .expect("removed")
+            .contains(&json!(LEGACY_SELF_EVOLUTION_CAPABILITY_ID))
+    );
+}
+
+#[test]
+fn blocked_default_self_evolution_is_not_active() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("blocked self evolution", "")
+        .expect("group");
+    call(
+        &home,
+        "capability_block",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":SELF_EVOLUTION_CAPABILITY_ID,"scope":"group",
+            "blocked":true,"reason":"test"
+        }),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert!(
+        !state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(SELF_EVOLUTION_CAPABILITY_ID))
+    );
+    assert!(
+        !state["active_capsule_skills"]
+            .as_array()
+            .expect("skills")
+            .iter()
+            .any(|row| row["capability_id"] == SELF_EVOLUTION_CAPABILITY_ID)
+    );
+}
+
 #[test]
 fn legacy_registered_skills_are_projected_for_slash_commands() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -51,16 +211,18 @@ fn legacy_registered_skills_are_projected_for_slash_commands() {
         "capability_overview",
         json!({"kind":"skill","limit":80,"offset":0}),
     );
-    assert_eq!(overview["total_count"], 1);
-    assert_eq!(overview["kind_counts"]["skill"], 1);
-    assert_eq!(overview["items"][0]["capability_id"], "skill:test:review");
-    assert_eq!(overview["items"][0]["kind"], "skill");
-    assert_eq!(overview["items"][0]["source_id"], "github_skills_curated");
-    assert_eq!(
-        overview["items"][0]["source_uri"],
-        "https://example.test/review"
-    );
-    assert_eq!(overview["items"][0]["autoload_candidate"], true);
+    assert_eq!(overview["total_count"], 2);
+    assert_eq!(overview["kind_counts"]["skill"], 2);
+    let review = overview["items"]
+        .as_array()
+        .expect("overview items")
+        .iter()
+        .find(|row| row["capability_id"] == "skill:test:review")
+        .expect("legacy review skill");
+    assert_eq!(review["kind"], "skill");
+    assert_eq!(review["source_id"], "github_skills_curated");
+    assert_eq!(review["source_uri"], "https://example.test/review");
+    assert_eq!(review["autoload_candidate"], true);
 }
 
 #[test]
@@ -166,13 +328,19 @@ fn native_updates_override_legacy_capability_flags() {
         "capability_state",
         json!({"group_id":group_id,"actor_id":"user"}),
     );
-    assert_eq!(state["enabled_capabilities"], json!([]));
+    assert_eq!(
+        state["enabled_capabilities"],
+        json!([SELF_EVOLUTION_CAPABILITY_ID])
+    );
     assert_eq!(state["actor_hidden_capabilities"], json!([]));
     let stored: Value = serde_json::from_slice(
         &std::fs::read(home.root().join("state/capabilities/state.json")).expect("state"),
     )
     .expect("state JSON");
-    assert!(stored["group_enabled"].get(&group_id).is_none());
+    assert_eq!(
+        stored["group_enabled"][&group_id],
+        json!([SELF_EVOLUTION_CAPABILITY_ID])
+    );
     assert!(
         stored["global_blocked"]
             .as_object()
@@ -454,7 +622,10 @@ fn expired_block_does_not_prevent_enable_or_effective_exposure() {
         "capability_state",
         json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
     );
-    assert_eq!(effective["enabled_capabilities"], json!(["pack:space"]));
+    assert_eq!(
+        effective["enabled_capabilities"],
+        json!(["pack:space", SELF_EVOLUTION_CAPABILITY_ID])
+    );
 }
 
 #[test]
@@ -1163,7 +1334,10 @@ fn actor_start_applies_and_projects_role_profile_and_actor_autoload() {
         before["autoload_capabilities"],
         json!(["pack:space", "pack:context-advanced"])
     );
-    assert_eq!(before["enabled_capabilities"], json!([]));
+    assert_eq!(
+        before["enabled_capabilities"],
+        json!([SELF_EVOLUTION_CAPABILITY_ID])
+    );
 
     call(
         &home,

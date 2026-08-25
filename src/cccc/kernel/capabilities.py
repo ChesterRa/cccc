@@ -12,6 +12,10 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Set, Tuple
 
 from .install_capability import INSTALL_CAPABILITY_ID, INSTALL_CAPABILITY_RECORD
+from .self_evolution_capability import (
+    SELF_EVOLUTION_CAPABILITY_ID,
+    SELF_EVOLUTION_CAPABILITY_RECORD,
+)
 
 
 CORE_BASIC_TOOLS: Tuple[str, ...] = (
@@ -196,6 +200,7 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
 
 BUILTIN_CAPSULE_SKILLS: Dict[str, Dict[str, object]] = {
     INSTALL_CAPABILITY_ID: INSTALL_CAPABILITY_RECORD,
+    SELF_EVOLUTION_CAPABILITY_ID: SELF_EVOLUTION_CAPABILITY_RECORD,
     "skill:cccc:app-i18n-localization": {
         "name": "app-i18n-localization",
         "description_short": (

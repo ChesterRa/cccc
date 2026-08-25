@@ -9,6 +9,7 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("../../src/services/api", () => apiMocks);
 
 import { sendSlashSkillMessageRequest } from "../../src/hooks/useSlashSkillDispatch";
+import { DEFAULT_CAPSULE_SKILL_TASK_TEXT } from "../../src/utils/slashCommands";
 
 describe("sendSlashSkillMessageRequest", () => {
   beforeEach(() => {
@@ -97,5 +98,24 @@ describe("sendSlashSkillMessageRequest", () => {
     });
     expect(apiMocks.sendMessage).not.toHaveBeenCalled();
     expect(apiMocks.replyMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default workflow task non-empty at the hidden API boundary", async () => {
+    apiMocks.dispatchSlashSkill.mockResolvedValueOnce({ ok: true, result: {} });
+
+    await sendSlashSkillMessageRequest({
+      selectedGroupId: "g1",
+      message: DEFAULT_CAPSULE_SKILL_TASK_TEXT,
+      command: "/cccc-self-evolution",
+      capabilityId: "skill:agent_self_proposed:cccc-self-evolution",
+      toTokens: ["@all"],
+      localId: "local-default",
+      replyTarget: null,
+    });
+
+    expect(apiMocks.dispatchSlashSkill).toHaveBeenCalledWith(
+      "g1",
+      expect.objectContaining({ taskText: DEFAULT_CAPSULE_SKILL_TASK_TEXT }),
+    );
   });
 });

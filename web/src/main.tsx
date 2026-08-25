@@ -4,19 +4,15 @@ import { AuthGate } from "./components/AuthGate";
 import App from "./App";
 import { CapabilityCenterStandaloneApp } from "./components/capabilities/CapabilityCenterStandaloneApp";
 import { isCapabilityCenterPath } from "./components/capabilities/capabilityCenterRoute";
-import "./i18n";
+import { i18nReady } from "./i18n";
 import "./index.css";
 import { useBrandingStore } from "./stores";
 import { applyBrandingToDocument, DEFAULT_WEB_BRANDING } from "./utils/branding";
 import { applyTextScale, getStoredTextScale } from "./utils/textScale";
-import { claimVitePreloadReload, isDynamicImportError } from "./utils/vitePreloadRecovery";
+import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
-  if (!isDynamicImportError(error)) return false;
-  if (claimVitePreloadReload(window.sessionStorage)) {
-    window.location.reload();
-  }
-  return true;
+  return recoverDynamicImportError(error, window.sessionStorage, () => window.location.reload());
 }
 
 window.addEventListener("vite:preloadError", (event) => {
@@ -68,6 +64,14 @@ applyTextScale(getStoredTextScale());
 void useBrandingStore.getState().refreshBranding();
 const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>,
-);
+function renderApp() {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>,
+  );
+}
+
+void i18nReady
+  .catch((error: unknown) => {
+    console.error("Failed to load initial locale resources:", error);
+  })
+  .then(renderApp);

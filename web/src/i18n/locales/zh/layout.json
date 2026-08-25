@@ -42,7 +42,7 @@
   "pauseMessageDelivery": "暂停消息推送",
   "themeLight": "浅色",
   "themeDark": "深色",
-  "themeSystem": "跟随系统",
+  "themeSystem": "自动",
   "themeLabel": "主题",
   "textSizeLabel": "文字大小",
   "currentTextSize": "当前文字大小：{{percent}}",

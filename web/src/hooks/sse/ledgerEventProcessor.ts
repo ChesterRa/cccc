@@ -68,7 +68,7 @@ export function processLedgerEvent(
     const actors = event.data?.actors;
     if (Array.isArray(actors) && actors.length > 0) {
       const store = useGroupStore.getState();
-      deps.updateActorActivity(actors);
+      deps.updateActorActivity(actors, groupId);
       deps.updateGroupRuntimeState(
         groupId,
         computeGroupRuntimeFromActorActivityUpdates(

@@ -130,18 +130,15 @@ def test_agent_terminal_initial_snapshot_does_not_replace_live_option_updates() 
     source = (ROOT / "web/src/components/AgentTab.tsx").read_text(encoding="utf-8")
 
     assert "terminalOptionsSnapshotRef" in source
-    assert "terminalOptionsSnapshotRef.current.isDark = isDark" in source
     assert "terminalOptionsSnapshotRef.current.canControl = canControl" in source
     assert "terminalOptionsSnapshotRef.current.scrollbackLines = terminalScrollbackLines" in source
-    assert "theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark)" in source
+    assert "theme: getTerminalTheme()" in source
     assert "cursorBlink: terminalOptionsSnapshotRef.current.canControl" in source
     assert "disableStdin: !terminalOptionsSnapshotRef.current.canControl" in source
     assert "scrollback: terminalOptionsSnapshotRef.current.scrollbackLines || 8000" in source
-    assert "terminalRef.current.options.theme = getTerminalTheme(isDark)" in source
     assert "terminalRef.current.options.disableStdin = !canControl" in source
     assert "terminalRef.current.options.cursorBlink = canControl" in source
     assert "terminalRef.current.options.scrollback = terminalScrollbackLines" in source
-    assert "}, [isDark]);" in source
     assert "}, [canControl]);" in source
     assert "}, [terminalScrollbackLines]);" in source
     assert "}, [actor.id, groupId, isHeadless, isRunning, activated]);" in source

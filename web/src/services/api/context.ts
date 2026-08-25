@@ -25,13 +25,12 @@ import {
   contextRequestKey,
   FetchContextOptions,
   normalizeContext,
-  normalizeTask,
   reuseSharedReadRequest,
 } from "./base";
 
 export async function fetchContext(groupId: string, opts?: FetchContextOptions) {
   const gid = String(groupId || "").trim();
-  const detail: ContextDetailLevel = opts?.detail === "full" ? "full" : "summary";
+  const detail: ContextDetailLevel = opts?.detail || "summary";
   const params = new URLSearchParams();
   if (detail !== "summary") {
     params.set("detail", detail);
@@ -75,17 +74,6 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
     if (!resp.ok) return resp as ApiResponse<GroupContext>;
     return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
   });
-}
-
-export async function fetchTasks(groupId: string) {
-  const resp = await apiJson<{ tasks?: unknown[] }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/tasks`,
-  );
-  if (!resp.ok) return resp as ApiResponse<{ tasks: Task[] }>;
-  const tasks = Array.isArray(resp.result?.tasks)
-    ? resp.result.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
-    : [];
-  return { ok: true, result: { tasks } } as ApiResponse<{ tasks: Task[] }>;
 }
 
 export async function contextSync(

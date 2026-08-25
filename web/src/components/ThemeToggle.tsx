@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Theme } from "../types";
 import { classNames } from "../utils/classNames";
+import { getAutomaticTheme } from "../utils/theme";
 import { SunIcon, MoonIcon, MonitorIcon } from "./Icons";
 
 interface ThemeToggleProps {
@@ -25,13 +26,8 @@ function getNextTheme(theme: Theme): Theme {
   return "light";
 }
 
-function getSystemTheme(): "light" | "dark" {
-  if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
 function getEffectiveTheme(theme: Theme): "light" | "dark" {
-  return theme === "system" ? getSystemTheme() : theme;
+  return theme === "system" ? getAutomaticTheme() : theme;
 }
 
 export function ThemeToggle({ theme, onThemeChange, isDark: _isDark }: ThemeToggleProps) {

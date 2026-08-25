@@ -117,6 +117,7 @@ export interface GroupState {
       runtime_session_resume_eligible?: boolean | null;
       runtime_session_last_resume_error?: string | null;
     }>,
+    groupId: string,
   ) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;

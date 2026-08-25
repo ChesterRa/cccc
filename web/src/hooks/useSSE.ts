@@ -6,7 +6,7 @@ import { beginContextRequest, isLatestContextRequest } from "../stores/groupStor
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
 import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity } from "../types";
-import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
+import { runReconnectCatchup, scheduleContextOverviewCatchup } from "./sseCatchup";
 import { getRecipientActorIdsForEvent } from "../utils/ledgerEventHandlers";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
@@ -126,7 +126,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const contextEpoch = beginContextRequest(groupId);
     const resp = await api.fetchContext(groupId, {
       fresh: opts?.fresh,
-      detail: opts?.detail ?? "summary",
+      detail: opts?.detail ?? "overview",
     });
     if (
       resp.ok &&
@@ -145,7 +145,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       reconcileLedgerTail: (gid) =>
         reconcileLedgerTail(gid, () => selectedGroupIdRef.current === gid),
       refreshActors,
-      fetchContextSummary: fetchContext,
+      fetchContextOverview: fetchContext,
     });
   }
 
@@ -373,7 +373,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
         const storeState = useGroupStore.getState();
         const actorsSnapshot = storeState.actors;
-        updateActorActivity([update]);
+        updateActorActivity([update], groupId);
         updateGroupRuntimeState(
           groupId,
           computeGroupRuntimeFromActorActivityUpdate(
@@ -860,12 +860,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           activeTab: activeTabRef.current,
           chatAtBottom: chatAtBottomRef.current,
           onContextSync: () => {
-            contextRefreshTimerRef.current = scheduleContextSummaryCatchup(groupId, {
+            contextRefreshTimerRef.current = scheduleContextOverviewCatchup(groupId, {
               invalidateContextRead: api.invalidateContextRead,
               existingTimer: contextRefreshTimerRef.current,
               clearTimer: window.clearTimeout,
               setTimer: (callback, delayMs) => window.setTimeout(callback, delayMs),
-              fetchContextSummary: (gid, options) => void fetchContext(gid, options),
+              fetchContextOverview: (gid, options) => void fetchContext(gid, options),
             });
           },
           appendEvent,

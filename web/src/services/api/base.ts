@@ -314,12 +314,10 @@ export function clearActorsReadOnlyRequest(groupId: string): void {
 }
 
 export function clearContextRequest(groupId: string, detail?: ContextDetailLevel): void {
-  if (detail) {
-    clearSharedReadRequest(contextRequestKey(groupId, detail));
-    return;
+  const details = detail ? [detail] : (["overview", "summary", "full"] as const);
+  for (const level of details) {
+    clearSharedReadRequest(contextRequestKey(groupId, level));
   }
-  clearSharedReadRequest(contextRequestKey(groupId, "summary"));
-  clearSharedReadRequest(contextRequestKey(groupId, "full"));
 }
 
 export function invalidateContextRead(groupId: string): void {
@@ -549,7 +547,7 @@ export function normalizeContext(raw: unknown): GroupContext {
   const coordination = asRecord(record.coordination) ?? {};
   const tasks = Array.isArray(coordination.tasks)
     ? coordination.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
-    : [];
+    : undefined;
   const agentStates = Array.isArray(record.agent_states)
     ? record.agent_states
         .map((item) => normalizeAgentState(item))
@@ -561,13 +559,14 @@ export function normalizeContext(raw: unknown): GroupContext {
         .filter((item): item is ActorRuntimeState => !!item)
     : [];
   const briefRecord = asRecord(coordination.brief);
-  const summary = normalizeTaskSummary(record.tasks_summary, tasks);
+  const summary = normalizeTaskSummary(record.tasks_summary, tasks || []);
   const boardRecord = asRecord(record.board);
   const attentionRecord = asRecord(record.attention);
   const metaRecord = asRecord(record.meta);
 
   return {
     version: asString(record.version).trim() || undefined,
+    tasks_version: asString(record.tasks_version).trim() || undefined,
     coordination: {
       brief: briefRecord
         ? {

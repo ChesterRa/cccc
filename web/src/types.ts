@@ -705,10 +705,10 @@ export type ContextBoard = {
   archived?: TaskBoardEntry[];
 };
 
-export type ContextDetailLevel = "summary" | "full";
-
+export type ContextDetailLevel = "overview" | "summary" | "full";
 export type GroupContext = {
   version?: string;
+  tasks_version?: string;
   coordination?: {
     brief?: CoordinationBrief | null;
     tasks?: Task[];

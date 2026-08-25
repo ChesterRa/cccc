@@ -1,51 +1,55 @@
-import { useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import type { Task } from "../../../types";
+import { TASK_PAGE_SIZE } from "../../../features/contextModal/taskBoardData";
 import { classNames } from "../../../utils/classNames";
 import type { BoardStatus, ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
 import { TaskCard } from "./TaskCard";
 
-export const TASK_COLUMN_PAGE_SIZE = 30;
+export const TASK_COLUMN_PAGE_SIZE = TASK_PAGE_SIZE;
 
 export function TaskBoardColumn({
   columnKey,
   label,
   items,
+  totalCount,
+  hasMore,
+  loading,
   tr,
   ui,
   syncBusy,
   selectedTaskId,
   onSelectTask,
   onMoveTaskToStatus,
+  onLoadMore,
 }: {
   columnKey: BoardStatus;
   label: string;
   items: Task[];
+  totalCount: number;
+  hasMore: boolean;
+  loading: boolean;
   tr: ContextTranslator;
   ui: ContextModalUi;
   syncBusy: boolean;
   selectedTaskId: string;
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
+  onLoadMore: (status: BoardStatus) => void;
 }) {
-  const [visibleLimit, setVisibleLimit] = useState(TASK_COLUMN_PAGE_SIZE);
   const { setNodeRef, isOver } = useDroppable({
     id: `column:${columnKey}`,
     data: { type: "column", status: columnKey },
   });
-  const selectedIndex = selectedTaskId ? items.findIndex((task) => task.id === selectedTaskId) : -1;
-  const effectiveLimit = Math.max(visibleLimit, selectedIndex + 1);
-  const visibleItems = items.slice(0, effectiveLimit);
-  const remainingCount = Math.max(0, items.length - visibleItems.length);
+  const remainingCount = Math.max(0, totalCount - items.length);
   const nextCount = Math.min(TASK_COLUMN_PAGE_SIZE, remainingCount);
 
   return (
     <section
       ref={setNodeRef}
       data-task-column={columnKey}
-      data-rendered-task-count={visibleItems.length}
-      data-total-task-count={items.length}
+      data-rendered-task-count={items.length}
+      data-total-task-count={totalCount}
       className={classNames(
         "min-w-0 rounded-2xl border p-3 transition-all",
         isOver
@@ -57,16 +61,16 @@ export function TaskBoardColumn({
         <div className="min-w-0">
           <div className="text-sm font-semibold text-[var(--color-text-primary)]">{label}</div>
           <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
-            {items.length} {tr("context.items", "items")}
+            {totalCount} {tr("context.items", "items")}
           </div>
         </div>
         <span className="rounded-full px-2 py-0.5 text-[11px] glass-panel text-[var(--color-text-tertiary)]">
-          {items.length}
+          {totalCount}
         </span>
       </div>
       <div className="mt-3 space-y-2">
         {items.length > 0 ? (
-          visibleItems.map((task) => (
+          items.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
@@ -84,13 +88,16 @@ export function TaskBoardColumn({
           </div>
         )}
       </div>
-      {remainingCount > 0 ? (
+      {hasMore ? (
         <button
           type="button"
-          onClick={() => setVisibleLimit((current) => current + TASK_COLUMN_PAGE_SIZE)}
+          onClick={() => onLoadMore(columnKey)}
+          disabled={loading}
           className={classNames(ui.buttonSecondaryClass, "mt-3 w-full justify-center")}
         >
-          {tr("context.showMoreTasks", "Show {{count}} more", { count: nextCount })}
+          {loading
+            ? tr("context.loadingTasks", "Loading tasks…")
+            : tr("context.showMoreTasks", "Show {{count}} more", { count: nextCount })}
         </button>
       ) : null}
     </section>

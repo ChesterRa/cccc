@@ -1,7 +1,21 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem("cccc-theme");
+        } catch {
+          // Storage can be unavailable in hardened or private browser contexts.
+        }
+        const hour = new Date().getHours();
+        const automatic = hour >= 7 && hour < 19 ? "light" : "dark";
+        const theme = stored === "light" || stored === "dark" ? stored : automatic;
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
@@ -12,9 +26,9 @@
       name="description"
       content="Multi-agent AI collaboration platform for software development"
     />
-    <link rel="icon" type="image/svg+xml" href="/ui/logo.svg" />
-    <link rel="manifest" href="/ui/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/ui/logo.png" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%logo.svg" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="%BASE_URL%logo.png" />
   </head>
   <body>
     <div id="root"></div>

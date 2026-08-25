@@ -42,7 +42,7 @@
   "pauseMessageDelivery": "メッセージ配信を一時停止",
   "themeLight": "ライト",
   "themeDark": "ダーク",
-  "themeSystem": "システム",
+  "themeSystem": "自動",
   "themeLabel": "テーマ",
   "textSizeLabel": "文字サイズ",
   "currentTextSize": "現在の文字サイズ：{{percent}}",

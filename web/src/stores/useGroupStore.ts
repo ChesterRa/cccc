@@ -580,9 +580,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
       return { actors: next };
     }),
-  updateActorActivity: (updates) =>
+  updateActorActivity: (updates, groupId) =>
     set((state) => {
-      if (!updates.length) return state;
+      if (!updates.length || state.selectedGroupId !== groupId) return state;
       const updateById = new Map(updates.map((u) => [String(u.id || "").trim(), u]));
       const applyUpdates = (actors: typeof state.actors) => {
         if (!Array.isArray(actors) || actors.length === 0) {

@@ -2,12 +2,17 @@ use cccc_core::context::ContextDoc;
 use serde_json::{Map, Value, json};
 
 pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Value {
+    if detail == "overview" {
+        return context_overview::project(document, version);
+    }
     let tasks = document.tasks;
+    let tasks_version = format!("tasksv:{}", document.tasks_revision);
     let full = detail == "full";
     let attention = attention(&tasks, full);
     let coordination = coordination(&document.coordination, &tasks, full);
     let mut result = Map::from_iter([
         ("version".into(), Value::String(version)),
+        ("tasks_version".into(), Value::String(tasks_version)),
         ("coordination".into(), Value::Object(coordination)),
         ("agent_states".into(), agent_states(document.agent_states)),
         ("actors_runtime".into(), Value::Array(Vec::new())),
@@ -212,3 +217,6 @@ fn board(tasks: &[Map<String, Value>]) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+#[path = "context_overview.rs"]
+mod context_overview;

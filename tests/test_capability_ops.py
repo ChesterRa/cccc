@@ -2874,9 +2874,10 @@ class TestCapabilityOps(unittest.TestCase):
                 state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
             )
             self.assertEqual(len(active_capsule_skills), 1)
-            self.assertEqual(int(state.get("active_capsule_skills_dropped") or 0), 1)
+            self.assertEqual(active_capsule_skills[0].get("capability_id"), "skill:cccc:self-evolution")
+            self.assertEqual(int(state.get("active_capsule_skills_dropped") or 0), 2)
             dropped_ids = set(state.get("active_capsule_skill_dropped_ids") or [])
-            self.assertEqual(dropped_ids, {"skill:cccc:install"})
+            self.assertEqual(dropped_ids, {"skill:cccc:install", "skill:cccc:meeting-notes"})
         finally:
             cleanup()
 

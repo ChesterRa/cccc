@@ -151,10 +151,7 @@ describe("useGroupStore selection and archive persistence", () => {
     expect(composerState.activeGroupId).toBe("g-b");
     expect(composerState.destGroupId).toBe("g-b");
     expect(composerState.toText).toBe("");
-    expect(composerState.drafts["g-a"]).toMatchObject({
-      composerText: "draft for a",
-      toText: "@all",
-    });
+    expect(composerState.drafts["g-a"]).toMatchObject({ composerText: "draft for a", toText: "" });
   });
 
   it("refreshGroups prefers the persisted selection when current state is empty", async () => {
@@ -649,16 +646,19 @@ describe("useGroupStore actors fetch policy", () => {
 
     useGroupStore
       .getState()
-      .updateActorActivity([
-        {
-          id: "peer-1",
-          running: true,
-          idle_seconds: 2,
-          effective_working_state: "working",
-          effective_working_reason: "agent_active_task",
-          effective_active_task_id: "T1",
-        },
-      ]);
+      .updateActorActivity(
+        [
+          {
+            id: "peer-1",
+            running: true,
+            idle_seconds: 2,
+            effective_working_state: "working",
+            effective_working_reason: "agent_active_task",
+            effective_active_task_id: "T1",
+          },
+        ],
+        "g-demo",
+      );
 
     expect(useGroupStore.getState().actors).toEqual([
       {
@@ -693,15 +693,18 @@ describe("useGroupStore actors fetch policy", () => {
 
     useGroupStore
       .getState()
-      .updateActorActivity([
-        {
-          id: "voice-secretary",
-          running: true,
-          idle_seconds: 1,
-          effective_working_state: "waiting",
-          effective_working_reason: "runtime_running",
-        },
-      ]);
+      .updateActorActivity(
+        [
+          {
+            id: "voice-secretary",
+            running: true,
+            idle_seconds: 1,
+            effective_working_state: "waiting",
+            effective_working_reason: "runtime_running",
+          },
+        ],
+        "g-demo",
+      );
 
     expect(useGroupStore.getState().actors).toEqual([{ id: "peer-1", running: true }]);
     expect(useGroupStore.getState().internalRuntimeActorsByGroup["g-demo"]).toEqual([
@@ -801,16 +804,19 @@ describe("useGroupStore actors fetch policy", () => {
 
     useGroupStore
       .getState()
-      .updateActorActivity([
-        {
-          id: "peer-1",
-          running: true,
-          idle_seconds: 2,
-          effective_working_state: "working",
-          effective_working_reason: "agent_active_task",
-          effective_active_task_id: "T1",
-        },
-      ]);
+      .updateActorActivity(
+        [
+          {
+            id: "peer-1",
+            running: true,
+            idle_seconds: 2,
+            effective_working_state: "working",
+            effective_working_reason: "agent_active_task",
+            effective_active_task_id: "T1",
+          },
+        ],
+        "g-demo",
+      );
 
     useGroupStore.getState().setSelectedGroupId("g-other");
     useGroupStore.getState().setSelectedGroupId("g-demo");
@@ -1187,45 +1193,31 @@ describe("useGroupStore actors fetch policy", () => {
     ).toBe(true);
   });
 
-  it("loadGroup falls back to full fresh context when summary snapshot is missing and no cached context exists", async () => {
-    vi.mocked(api.fetchContext)
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          version: "ctxv:1",
-          coordination: { tasks: [] },
-          agent_states: [],
-          meta: { summary_snapshot: { state: "missing" } },
-        },
-      } as Awaited<ReturnType<typeof api.fetchContext>>)
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          version: "ctxv:2",
-          coordination: { tasks: [{ id: "t-1", title: "Real", outcome: "x" }] },
-          agent_states: [{ id: "peer-1" }],
-          meta: {},
-        },
-      } as Awaited<ReturnType<typeof api.fetchContext>>);
+  it("loadGroup uses one task-free overview request even when old summary metadata is missing", async () => {
+    vi.mocked(api.fetchContext).mockResolvedValue({
+      ok: true,
+      result: {
+        version: "ctxv:1",
+        coordination: { brief: { objective: "Fast startup" } },
+        agent_states: [{ id: "peer-1" }],
+        meta: { summary_snapshot: { state: "missing" } },
+      },
+    } as Awaited<ReturnType<typeof api.fetchContext>>);
 
     await useGroupStore.getState().loadGroup("g-demo");
 
     await vi.waitFor(() => {
       expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", {
-        detail: "summary",
+        detail: "overview",
         signal: expect.any(AbortSignal),
       });
-      expect(api.fetchContext).toHaveBeenNthCalledWith(2, "g-demo", {
-        detail: "full",
-        fresh: true,
-        signal: expect.any(AbortSignal),
-      });
-      expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:2");
+      expect(api.fetchContext).toHaveBeenCalledTimes(1);
+      expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:1");
       expect(useGroupStore.getState().groupContext?.agent_states?.[0]?.id).toBe("peer-1");
     });
   });
 
-  it("loadGroup preserves existing context when summary snapshot is stale", async () => {
+  it("loadGroup accepts the live overview regardless of old summary snapshot metadata", async () => {
     useGroupStore.setState({
       groupDoc: { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
       groupContext: {
@@ -1249,11 +1241,11 @@ describe("useGroupStore actors fetch policy", () => {
     await vi.waitFor(() => {
       expect(api.fetchContext).toHaveBeenCalledTimes(1);
       expect(api.fetchContext).toHaveBeenNthCalledWith(1, "g-demo", {
-        detail: "summary",
+        detail: "overview",
         signal: expect.any(AbortSignal),
       });
-      expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:cached");
-      expect(useGroupStore.getState().groupContext?.agent_states?.[0]?.id).toBe("peer-cached");
+      expect(useGroupStore.getState().groupContext?.version).toBe("ctxv:stale");
+      expect(useGroupStore.getState().groupContext?.agent_states).toEqual([]);
     });
   });
 

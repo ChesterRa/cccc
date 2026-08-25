@@ -167,8 +167,7 @@ import {
   documentContentLoadingMatches,
   documentNeedsContentLoad,
 } from "./voice-secretary/documentContentLoad";
-
-type VoiceSecretaryComposerControlProps = {
+export type VoiceSecretaryComposerControlProps = {
   isDark: boolean;
   selectedGroupId: string;
   busy: string;
@@ -182,12 +181,10 @@ type VoiceSecretaryComposerControlProps = {
   composerText?: string;
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
+  initiallyOpen?: boolean;
 };
-
 export type VoiceSecretaryCaptureMode = "document" | "instruction" | "prompt";
-
 type BrowserSpeechRecognitionAlternative = { transcript: string };
-
 type BrowserSpeechRecognitionResult = {
   isFinal: boolean;
   length: number;
@@ -377,6 +374,7 @@ export function VoiceSecretaryComposerControl({
   composerText = "",
   composerContext = {},
   onPromptDraft,
+  initiallyOpen = false,
 }: VoiceSecretaryComposerControlProps) {
   const { t } = useTranslation("chat");
   const showError = useUIStore((state) => state.showError);
@@ -1683,6 +1681,9 @@ export function VoiceSecretaryComposerControl({
     }
   }, [loadDocumentDraft, releaseVoiceRecordingGuards, selectedGroupId, stopBrowserMeter]);
 
+  useEffect(() => {
+    if (initiallyOpen) setOpen(true);
+  }, [initiallyOpen]);
   useEffect(() => {
     if (!selectedGroupId) return;
     void refreshAssistant({ quiet: true });

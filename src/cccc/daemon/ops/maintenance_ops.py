@@ -16,7 +16,7 @@ from ...kernel.inbox import iter_events
 from ...kernel.ledger import append_event
 from ...kernel.ledger_retention import compact as compact_ledger
 from ...kernel.ledger_retention import snapshot as snapshot_ledger
-from ...kernel.permissions import require_group_permission
+from ...kernel.permissions import require_group_member, require_group_permission
 from ...kernel.messaging import recipient_actor_ids
 from ...kernel.peer_insight import (
     PeerRecipientError,
@@ -249,6 +249,10 @@ def handle_send_cross_group(
     src_group = load_group(src_group_id)
     if src_group is None:
         return _error("group_not_found", f"group not found: {src_group_id}")
+    try:
+        require_group_member(src_group, by=by)
+    except ValueError as exc:
+        return _error("permission_denied", str(exc))
     source_replay = find_existing_reply_result(src_group, client_id=client_id, by=by) if client_id else None
     source_event = source_replay.get("event") if isinstance(source_replay, dict) else None
     source_data = source_event.get("data") if isinstance(source_event, dict) and isinstance(source_event.get("data"), dict) else {}

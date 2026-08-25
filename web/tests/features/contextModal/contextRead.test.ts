@@ -7,28 +7,28 @@ import {
 } from "../../../src/features/contextModal/contextRead";
 
 describe("contextRead", () => {
-  it("opens modal data on the full-detail path without forcing fresh", async () => {
+  it("opens modal data on the task-free overview path without forcing fresh", async () => {
     const fetchContext = vi.fn<ContextModalFetch>().mockResolvedValue(undefined);
 
     await openContextModalData(fetchContext, "g-1");
 
-    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "full", fresh: undefined });
+    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "overview", fresh: undefined });
   });
 
-  it("syncs modal data after writes on the full-detail path", async () => {
+  it("syncs modal data after writes on the task-free overview path", async () => {
     const fetchContext = vi.fn<ContextModalFetch>().mockResolvedValue(undefined);
 
     await syncContextModalData(fetchContext, "g-1");
 
-    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "full", fresh: undefined });
+    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "overview", fresh: undefined });
   });
 
-  it("reloads modal data on an explicit fresh full path", async () => {
+  it("reloads modal data on an explicit fresh overview path", async () => {
     const fetchContext = vi.fn<ContextModalFetch>().mockResolvedValue(undefined);
 
     await reloadContextModalData(fetchContext, "g-1");
 
-    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "full", fresh: true });
+    expect(fetchContext).toHaveBeenCalledWith("g-1", { detail: "overview", fresh: true });
   });
 
   it("skips empty group ids", async () => {

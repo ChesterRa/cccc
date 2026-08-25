@@ -151,16 +151,10 @@ export function useSlashCommands(args: {
         }
 
         if (item.sourceType === "capsule_skill") {
-          const resolution = resolveCapsuleSkillSlashCommand(item, slashCommand.argsText, {
-            missingArgs: (command) =>
-              t("slashCommandMissingArgs", {
-                command,
-                defaultValue: "Enter a task after {{command}}.",
-              }),
-          });
+          const resolution = resolveCapsuleSkillSlashCommand(item, slashCommand.argsText);
           if (resolution.kind === "dispatch" && dispatchMessage) {
             const sent = await dispatchSlashMessageOptimistically({
-              dispatchText: slashCommand.argsText,
+              dispatchText: resolution.dispatchText,
               originalText: opts.text,
               command: item.command,
               capabilityId: item.capabilityId,
@@ -174,11 +168,7 @@ export function useSlashCommands(args: {
             onExecuted?.();
             return true;
           }
-          showError(
-            resolution.kind === "missing_args"
-              ? resolution.message
-              : t("sendFailed", { defaultValue: "Failed to send message." }),
-          );
+          showError(t("sendFailed", { defaultValue: "Failed to send message." }));
           return true;
         }
 

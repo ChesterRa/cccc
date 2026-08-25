@@ -219,7 +219,8 @@ export default function App() {
     if (!gid) {
       return undefined;
     }
-    void refreshInternalRuntimeActors(gid);
+    // loadGroup already hydrates internal actors for a newly selected group.
+    // Keep this interval as a freshness poll instead of duplicating that initial read.
     const interval = window.setInterval(() => {
       void refreshInternalRuntimeActors(gid);
     }, 60000);

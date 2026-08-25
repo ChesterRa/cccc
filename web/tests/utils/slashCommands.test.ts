@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  DEFAULT_CAPSULE_SKILL_TASK_TEXT,
   buildCapsuleSkillDispatchText,
   buildSlashCommandToolArgumentsForItem,
   buildSlashCommands,
@@ -199,7 +200,7 @@ describe("slashCommands", () => {
     expect(buildSlashCommandToolArgumentsForItem(parsed!.item, parsed!.argsText)).toEqual({});
   });
 
-  it("builds a chat dispatch message for capsule skill commands with arguments", () => {
+  it("builds non-empty capsule skill task text with or without arguments", () => {
     const commands = buildSlashCommands({
       state: {
         group_id: "g1",
@@ -213,13 +214,11 @@ describe("slashCommands", () => {
     });
     const parsed = parseSlashCommandInput("/writer make this concise", commands);
 
-    expect(buildCapsuleSkillDispatchText(parsed!.item, parsed!.argsText)).toBe(
-      "请使用已激活的 /writer skill 完成以下任务：\n\nmake this concise",
-    );
-    expect(buildCapsuleSkillDispatchText(parsed!.item, "")).toBe("");
+    expect(buildCapsuleSkillDispatchText(parsed!.item, parsed!.argsText)).toBe("make this concise");
+    expect(buildCapsuleSkillDispatchText(parsed!.item, "")).toBe(DEFAULT_CAPSULE_SKILL_TASK_TEXT);
   });
 
-  it("requires task text for capsule skill slash commands instead of activating the skill again", () => {
+  it("dispatches the default capsule skill workflow when arguments are omitted", () => {
     const commands = buildSlashCommands({
       state: {
         group_id: "g1",
@@ -233,14 +232,13 @@ describe("slashCommands", () => {
     });
     const parsed = parseSlashCommandInput("/writer", commands);
 
-    expect(
-      resolveCapsuleSkillSlashCommand(parsed!.item, parsed!.argsText, {
-        missingArgs: (command) => `请在 ${command} 后输入任务。`,
-      }),
-    ).toEqual({ kind: "missing_args", message: "请在 /writer 后输入任务。" });
+    expect(resolveCapsuleSkillSlashCommand(parsed!.item, parsed!.argsText)).toEqual({
+      kind: "dispatch",
+      dispatchText: DEFAULT_CAPSULE_SKILL_TASK_TEXT,
+    });
     expect(resolveCapsuleSkillSlashCommand(parsed!.item, "make this concise")).toEqual({
       kind: "dispatch",
-      dispatchText: "请使用已激活的 /writer skill 完成以下任务：\n\nmake this concise",
+      dispatchText: "make this concise",
     });
   });
 

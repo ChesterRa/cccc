@@ -26,7 +26,7 @@ describe("isComposerGroupSettled", () => {
   });
 });
 
-describe("useComposerStore recipient memory", () => {
+describe("useComposerStore one-shot recipients", () => {
   beforeEach(() => {
     useComposerStore.setState({
       activeGroupId: "",
@@ -44,7 +44,7 @@ describe("useComposerStore recipient memory", () => {
     });
   });
 
-  it("keeps the current group's normal recipient after clearing a sent composer", () => {
+  it("clears the current recipient after clearing a sent composer", () => {
     const store = useComposerStore.getState();
     store.switchGroup(null, "g-1");
     useComposerStore.getState().setToText("@foreman");
@@ -53,7 +53,8 @@ describe("useComposerStore recipient memory", () => {
     useComposerStore.getState().clearComposer();
 
     expect(useComposerStore.getState().composerText).toBe("");
-    expect(useComposerStore.getState().toText).toBe("@foreman");
+    expect(useComposerStore.getState().toText).toBe("");
+    expect(useComposerStore.getState().normalToTextByGroup).toEqual({});
     expect(useComposerStore.getState().replyTarget).toBe(null);
   });
 
@@ -70,14 +71,17 @@ describe("useComposerStore recipient memory", () => {
     expect(useComposerStore.getState().replyTarget).toBe(null);
   });
 
-  it("does not carry recipient memory across groups", () => {
+  it("does not restore a manual recipient after switching away and back", () => {
     const store = useComposerStore.getState();
     store.switchGroup(null, "g-1");
     useComposerStore.getState().setToText("peer-1");
+    useComposerStore.getState().setComposerText("draft for one");
 
     useComposerStore.getState().switchGroup("g-1", "g-2");
+    useComposerStore.getState().switchGroup("g-2", "g-1");
 
     expect(useComposerStore.getState().toText).toBe("");
+    expect(useComposerStore.getState().composerText).toBe("draft for one");
   });
 
   it("ignores duplicate switches to the already active group", () => {
@@ -95,6 +99,6 @@ describe("useComposerStore recipient memory", () => {
     expect(state.activeGroupId).toBe("g-b");
     expect(state.composerText).toBe("fresh text for b");
     expect(state.toText).toBe("");
-    expect(state.drafts["g-a"]).toMatchObject({ composerText: "draft for a", toText: "@all" });
+    expect(state.drafts["g-a"]).toMatchObject({ composerText: "draft for a", toText: "" });
   });
 });

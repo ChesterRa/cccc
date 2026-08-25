@@ -442,6 +442,57 @@ impl CapabilityStore {
         )
     }
 
+    pub fn seed_default_group_capabilities(&self, group_id: &str) -> io::Result<bool> {
+        use crate::capability_builtin::{
+            DEFAULT_GROUP_CAPABILITY_SEED_VERSION, LEGACY_SELF_EVOLUTION_CAPABILITY_ID,
+            SELF_EVOLUTION_CAPABILITY_ID,
+        };
+
+        if group_id.is_empty() {
+            return Ok(false);
+        }
+        self.mutate_state(|raw| {
+            let current_version = raw
+                .pointer(&format!(
+                    "/default_group_capability_seed_versions/{}",
+                    escape_pointer(group_id)
+                ))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if current_version >= DEFAULT_GROUP_CAPABILITY_SEED_VERSION {
+                return Ok(false);
+            }
+
+            let legacy_removed =
+                remove_enabled_bindings(raw, LEGACY_SELF_EVOLUTION_CAPABILITY_ID, Some(group_id));
+            if legacy_removed > 0 {
+                let groups = object_field(raw, "group_removed");
+                let items = groups.entry(group_id).or_insert_with(|| json!([]));
+                set_array_member(items, LEGACY_SELF_EVOLUTION_CAPABILITY_ID, true);
+            }
+
+            let self_evolution_removed = raw
+                .pointer(&format!("/group_removed/{}", escape_pointer(group_id)))
+                .and_then(Value::as_array)
+                .is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|item| item.as_str() == Some(SELF_EVOLUTION_CAPABILITY_ID))
+                });
+            if !self_evolution_removed {
+                let groups = object_field(raw, "group_enabled");
+                let items = groups.entry(group_id).or_insert_with(|| json!([]));
+                set_array_member(items, SELF_EVOLUTION_CAPABILITY_ID, true);
+            }
+
+            object_field(raw, "default_group_capability_seed_versions").insert(
+                group_id.into(),
+                json!(DEFAULT_GROUP_CAPABILITY_SEED_VERSION),
+            );
+            Ok(true)
+        })
+    }
+
     pub fn enable_and_unhide_for(
         &self,
         id: &str,
@@ -487,6 +538,12 @@ impl CapabilityStore {
             }
             match scope {
                 "group" => {
+                    if id == crate::capability_builtin::SELF_EVOLUTION_CAPABILITY_ID {
+                        object_field(raw, "default_group_capability_seed_versions").insert(
+                            group_id.into(),
+                            json!(crate::capability_builtin::DEFAULT_GROUP_CAPABILITY_SEED_VERSION),
+                        );
+                    }
                     let groups = object_field(raw, "group_enabled");
                     let items = groups.entry(group_id).or_insert_with(|| json!([]));
                     set_array_member(items, id, enabled);

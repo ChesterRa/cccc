@@ -62,6 +62,16 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.split(path.sep).join("/");
 
+          // Leave the complete voice feature graph to Rollup's dynamic-import
+          // splitter. A named manual chunk can become an entry dependency when
+          // it also owns shared modules, which eagerly downloads the feature.
+          if (
+            normalizedId.includes("/src/pages/chat/VoiceSecretaryComposerControl.tsx") ||
+            normalizedId.includes("/src/pages/chat/voice-secretary/")
+          ) {
+            return;
+          }
+
           if (
             normalizedId.includes("/src/pages/chat/") ||
             normalizedId.includes("/src/components/messageBubble/") ||
