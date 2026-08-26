@@ -1,5 +1,6 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useModalA11y } from "../../hooks/useModalA11y";
 import { classNames } from "../../utils/classNames";
 
 export function MobilePresentationSurface({
@@ -15,28 +16,13 @@ export function MobilePresentationSurface({
   onClose: () => void;
   children: ReactNode;
 }) {
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.requestAnimationFrame(() => surfaceRef.current?.focus());
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      previousFocus?.focus();
-    };
-  }, [isOpen, onClose]);
+  const { modalRef } = useModalA11y(isOpen, onClose);
 
   if (!isOpen || typeof document === "undefined") return null;
 
   return createPortal(
     <div
-      ref={surfaceRef}
+      ref={modalRef}
       className={classNames(
         "fixed inset-0 z-[45] flex min-h-0 min-w-0 flex-col overflow-hidden",
         "pt-[env(safe-area-inset-top,0px)] pr-[env(safe-area-inset-right,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)]",

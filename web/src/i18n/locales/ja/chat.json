@@ -208,6 +208,7 @@
   "voiceSecretaryPromptDraftReady": "整えたプロンプトを用意しました",
   "voiceSecretaryPromptDraftWaiting": "音声秘書がプロンプトを素早く整えています…",
   "voiceSecretaryPromptOptimizeQueued": "音声秘書が現在のプロンプトを素早く整えています。",
+  "voiceSecretaryPromptPendingOtherGroup": "別のグループでプロンプトの調整が進行中です。完了してから新しい調整を開始してください。",
   "voiceSecretaryAskStatusPending": "待機中",
   "voiceSecretaryAskStatusWorking": "処理中",
   "voiceSecretaryAskStatusNeedsUser": "追加入力が必要",

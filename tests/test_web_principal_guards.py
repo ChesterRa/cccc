@@ -422,7 +422,9 @@ class TestWebPrincipalGuards(unittest.TestCase):
                 client = self._create_client()
                 resp = client.get("/api/v1/ready")
             self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.json(), {"ok": True, "result": {"web": "ready"}})
+            result = resp.json().get("result") or {}
+            self.assertEqual(result.get("web"), "ready")
+            self.assertTrue(str(result.get("runtime_id") or "").startswith("web_"))
         finally:
             cleanup()
 

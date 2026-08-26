@@ -432,7 +432,10 @@ mod tests {
         let polled = daemon(&client, "group_bridge_session_poll", poll_args)
             .await
             .expect("poll");
-        let frame = &polled["request"];
+        let frame = polled
+            .get("request")
+            .filter(|request| request.is_object())
+            .expect("live session must receive the remote_send request");
         assert_eq!(frame["op"], "remote_send");
         assert!(frame["payload"]["text"].as_str().is_some_and(|text| {
             text.starts_with("through the live reverse session")
@@ -552,12 +555,13 @@ mod tests {
         let polled = daemon(&client, "group_bridge_session_poll", poll_args)
             .await
             .expect("poll");
+        let frame = polled
+            .get("request")
+            .filter(|request| request.is_object())
+            .expect("live session must receive the remote_send request");
         let mut complete_args = route.as_object().cloned().expect("complete route");
         complete_args.insert("generation".into(), opened["generation"].clone());
-        complete_args.insert(
-            "response_to".into(),
-            polled["request"]["request_id"].clone(),
-        );
+        complete_args.insert("response_to".into(), frame["request_id"].clone());
         complete_args.insert(
             "result".into(),
             json!({"ok":false,"error":{"code":"peer_busy","message":"retry over HTTP"}}),

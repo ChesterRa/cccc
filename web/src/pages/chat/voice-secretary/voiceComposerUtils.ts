@@ -69,6 +69,27 @@ export function isVoicePromptRequestFresh(startedAt: number, nowMs = Date.now())
   return startedAt > 0 && nowMs - startedAt < VOICE_PROMPT_REQUEST_STALE_MS;
 }
 
+export function voicePromptRequestOwnership({
+  requestId,
+  pendingGroupId,
+  targetGroupId,
+  startedAt,
+  nowMs = Date.now(),
+}: {
+  requestId: string;
+  pendingGroupId: string;
+  targetGroupId: string;
+  startedAt: number;
+  nowMs?: number;
+}): "none" | "same_group" | "other_group" {
+  if (!String(requestId || "").trim() || !isVoicePromptRequestFresh(startedAt, nowMs)) {
+    return "none";
+  }
+  const pending = String(pendingGroupId || "").trim();
+  const target = String(targetGroupId || "").trim();
+  return pending && target && pending === target ? "same_group" : "other_group";
+}
+
 export function assistantVoiceTimestampMs(value?: string): number {
   const text = String(value || "").trim();
   if (!text) return 0;

@@ -46,6 +46,7 @@ fn test_state(home: HomeLayout) -> AppState {
         shutdown: broadcast::channel(1).0,
         restart: None,
         live_binding: crate::LiveBinding::from_env(),
+        runtime_id: "web_test".into(),
         web_mode: crate::WebMode::Normal,
         exhibit_allow_terminal: false,
         home,

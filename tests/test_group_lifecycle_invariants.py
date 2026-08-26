@@ -91,6 +91,12 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
             )
             self.assertTrue(add_2_resp.ok, getattr(add_2_resp, "error", None))
 
+            actor_stop_resp, _ = self._call(
+                "actor_stop",
+                {"group_id": group_id, "actor_id": "a2", "by": "user"},
+            )
+            self.assertTrue(actor_stop_resp.ok, getattr(actor_stop_resp, "error", None))
+
             stop_resp, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
             self.assertTrue(stop_resp.ok, getattr(stop_resp, "error", None))
 
@@ -106,10 +112,12 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
             actors_after_stop = (actor_list_after_stop_resp.result or {}).get("actors") if isinstance(actor_list_after_stop_resp.result, dict) else []
             self.assertIsInstance(actors_after_stop, list)
             assert isinstance(actors_after_stop, list)
-            for actor in actors_after_stop:
-                if not isinstance(actor, dict):
-                    continue
-                self.assertFalse(bool(actor.get("enabled", True)))
+            enabled_after_stop = {
+                str(actor.get("id") or ""): bool(actor.get("enabled", True))
+                for actor in actors_after_stop
+                if isinstance(actor, dict)
+            }
+            self.assertEqual(enabled_after_stop, {"a1": True, "a2": False})
 
             with self._fake_codex_headless_start():
                 start_resp, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
@@ -127,10 +135,12 @@ class TestGroupLifecycleInvariants(unittest.TestCase):
             actors_after_start = (actor_list_after_start_resp.result or {}).get("actors") if isinstance(actor_list_after_start_resp.result, dict) else []
             self.assertIsInstance(actors_after_start, list)
             assert isinstance(actors_after_start, list)
-            for actor in actors_after_start:
-                if not isinstance(actor, dict):
-                    continue
-                self.assertTrue(bool(actor.get("enabled", False)))
+            enabled_after_start = {
+                str(actor.get("id") or ""): bool(actor.get("enabled", True))
+                for actor in actors_after_start
+                if isinstance(actor, dict)
+            }
+            self.assertEqual(enabled_after_start, {"a1": True, "a2": False})
         finally:
             cleanup()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import logging
 import os
 import socket
@@ -495,15 +496,6 @@ def _desired_daemon_transport() -> str:
     return "tcp" if os.name == "nt" else "unix"
 
 
-def _allow_remote_daemon() -> bool:
-    """Whether it's OK to bind the daemon to a non-loopback TCP host.
-
-    Warning: the daemon IPC has no authentication.
-    """
-    v = str(os.environ.get("CCCC_DAEMON_ALLOW_REMOTE") or "").strip().lower()
-    return v in ("1", "true", "yes", "y", "on")
-
-
 def _daemon_tcp_connect_host(bind_host: str) -> str:
     """Return a TCP host that local clients can connect to."""
     h = str(bind_host or "").strip()
@@ -521,19 +513,19 @@ def _daemon_tcp_bind_host() -> str:
     host = str(os.environ.get("CCCC_DAEMON_HOST") or "").strip()
     if not host or host == "localhost":
         return "127.0.0.1"
-    if ":" in host:
-        logger.warning("CCCC_DAEMON_HOST=%s looks like IPv6; only IPv4 is supported. Using 127.0.0.1.", host)
-        return "127.0.0.1"
-    if host == "127.0.0.1":
-        return host
-    if not _allow_remote_daemon():
-        logger.warning(
-            "Refusing to bind daemon to non-loopback host %s (no auth). Using 127.0.0.1. "
-            "Set CCCC_DAEMON_ALLOW_REMOTE=1 to override.",
-            host,
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise ValueError(f"CCCC_DAEMON_HOST must be a loopback IP address, got {host!r}") from exc
+    if not address.is_loopback:
+        raise ValueError(
+            f"refusing unauthenticated daemon IPC binding on non-loopback address {address}; "
+            "use a Unix socket or a loopback TCP address"
         )
+    if address.version == 6:
+        logger.warning("Python daemon TCP uses IPv4; normalizing loopback host %s to 127.0.0.1.", host)
         return "127.0.0.1"
-    return host
+    return str(address)
 
 
 def _daemon_tcp_port() -> int:

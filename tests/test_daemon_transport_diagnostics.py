@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -73,6 +74,22 @@ class TestDaemonTransportDiagnostics(unittest.TestCase):
         self.assertFalse(resp1["ok"])
         self.assertFalse(resp2["ok"])
         mock_warning.assert_called_once()
+
+    def test_daemon_tcp_binding_rejects_legacy_remote_override(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CCCC_DAEMON_HOST": "0.0.0.0",
+                "CCCC_DAEMON_ALLOW_REMOTE": "1",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "non-loopback"):
+                server._daemon_tcp_bind_host()
+
+    def test_daemon_tcp_binding_accepts_ipv4_loopback_only(self) -> None:
+        with patch.dict(os.environ, {"CCCC_DAEMON_HOST": "127.0.0.2"}, clear=False):
+            self.assertEqual(server._daemon_tcp_bind_host(), "127.0.0.2")
 
 
 if __name__ == "__main__":

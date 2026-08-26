@@ -12,11 +12,13 @@ pub(super) fn write(
     port: u16,
     mode: &str,
     supervisor_managed: bool,
+    runtime_id: &str,
 ) -> io::Result<()> {
     fs::write_json(
         &path(home),
         &json!({
             "pid":std::process::id(),
+            "runtime_id":runtime_id,
             "host":host,
             "port":port,
             "mode":mode,

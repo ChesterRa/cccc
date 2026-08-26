@@ -8,6 +8,33 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn ready_identifies_the_web_instance_without_a_daemon_round_trip() {
+    let (_temp, home) = home();
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/ready")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["result"]["web"], "ready");
+    assert!(
+        payload["result"]["runtime_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("web_"))
+    );
+}
+
+#[tokio::test]
 async fn first_admin_token_bootstraps_login_cookie() {
     let (_temp, home) = home();
     let bootstrap_path = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&home)
@@ -187,6 +214,37 @@ async fn cookie_authenticated_writes_require_an_allowed_origin() {
         .await
         .expect("response");
     assert_eq!(bearer_without_origin.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn incidental_web_cookie_does_not_block_a_public_connector_request() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("admin", Vec::new(), true, None)
+        .expect("token");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::post("/mcp/web-model/missing")
+                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("connector token required"), "{text}");
+    assert!(!text.contains("csrf_origin_invalid"), "{text}");
 }
 
 #[tokio::test]

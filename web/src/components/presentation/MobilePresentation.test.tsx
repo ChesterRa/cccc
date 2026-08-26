@@ -116,7 +116,8 @@ describe("mobile presentation surface", () => {
     await act(async () => {
       root.render(
         <MobilePresentationSurface isOpen isDark={false} label="Presentation" onClose={onClose}>
-          <div>Mobile content</div>
+          <button type="button">First</button>
+          <button type="button">Last</button>
         </MobilePresentationSurface>,
       );
     });
@@ -125,9 +126,37 @@ describe("mobile presentation surface", () => {
     expect(surface?.getAttribute("role")).toBe("dialog");
     expect(surface?.className).toContain("fixed inset-0");
     expect(surface?.className).toContain("safe-area-inset-top");
-    expect(surface?.textContent).toContain("Mobile content");
+    expect(surface?.textContent).toContain("First");
 
-    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    const buttons = surface?.querySelectorAll<HTMLButtonElement>("button") || [];
+    const first = buttons[0];
+    const last = buttons[1];
+    last.focus();
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(document.activeElement).toBe(last);
+
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      ),
+    );
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

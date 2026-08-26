@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 import mimetypes
 import os
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -228,6 +229,8 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def create_app() -> FastAPI:
+    web_runtime_id = f"web_{secrets.token_hex(16)}"
+
     def _int_env(name: str, default: int) -> int:
         raw = str(os.environ.get(name) or "").strip()
         if not raw:
@@ -265,6 +268,7 @@ def create_app() -> FastAPI:
                 supervisor_pid=runtime_supervisor_pid if restart_supported and runtime_supervisor_pid > 0 else None,
                 launcher_pid=runtime_launcher_pid if runtime_launcher_pid > 0 else None,
                 launch_source=runtime_launch_source,
+                runtime_id=web_runtime_id,
             )
 
         if restart_supported:
@@ -528,6 +532,7 @@ def create_app() -> FastAPI:
         daemon=_daemon,
         cached_json=_cached_json,
         apply_web_logging=_apply_web_logging,
+        runtime_id=web_runtime_id,
     )
 
     register_base_routes(app, ctx=route_ctx)

@@ -417,6 +417,7 @@ class TestMessageObligation(unittest.TestCase):
         from cccc.daemon.messaging.chat_ops import handle_message_deliver
         from cccc.daemon.messaging.runtime_delivery import append_delivery_state
         from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import get_group_state, load_group
         from cccc.kernel.inbox import iter_events
         from cccc.kernel.ledger import append_event
 
@@ -451,6 +452,8 @@ class TestMessageObligation(unittest.TestCase):
                     state=state,
                     transport="manual_request",
                 )
+            group.doc["state"] = "paused"
+            group.save()
             queued: list[object] = []
 
             with patch(
@@ -474,6 +477,10 @@ class TestMessageObligation(unittest.TestCase):
             self.assertEqual(getattr(response.error, "code", ""), "delivery_in_progress")
             self.assertEqual(getattr(response.error, "details", {}).get("actor_id"), "peer2")
             self.assertEqual(queued, [])
+            reloaded = load_group(group.group_id)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(get_group_state(reloaded), "paused")
             self.assertEqual(
                 sum(
                     1
@@ -485,41 +492,44 @@ class TestMessageObligation(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_manual_delivery_is_blocked_without_a_claim_while_paused(self) -> None:
+    def test_manual_delivery_claim_resumes_a_paused_or_stopped_group(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_message_deliver
         from cccc.kernel.group import get_group_state, load_group
         from cccc.kernel.inbox import iter_events
 
         cleanup = self._with_home()
         try:
-            group, _group_id = self._create_group_with_peer()
-            source = self._append_request(group)
-            group.doc["state"] = "paused"
-            group.save()
+            for state in ("paused", "stopped"):
+                with self.subTest(state=state):
+                    group, _group_id = self._create_group_with_peer()
+                    source = self._append_request(group)
+                    group.doc["state"] = state
+                    group.doc["running"] = state != "stopped"
+                    group.save()
 
-            with patch("cccc.daemon.messaging.chat_ops.run_group_chat_post_commit"):
-                response = handle_message_deliver(
-                    {
-                        "group_id": group.group_id,
-                        "source_event_id": source["id"],
-                        "actor_ids": ["peer1"],
-                        "by": "user",
-                    },
-                    coerce_bool=bool,
-                    effective_runner_kind=lambda _runtime: "pty",
-                    auto_wake_recipients=lambda _group, _actors, _by: [],
-                )
+                    with patch("cccc.daemon.messaging.chat_ops.run_group_chat_post_commit"):
+                        response = handle_message_deliver(
+                            {
+                                "group_id": group.group_id,
+                                "source_event_id": source["id"],
+                                "actor_ids": ["peer1"],
+                                "by": "user",
+                            },
+                            coerce_bool=bool,
+                            effective_runner_kind=lambda _runtime: "pty",
+                            auto_wake_recipients=lambda _group, _actors, _by: [],
+                        )
 
-            self.assertFalse(response.ok)
-            self.assertEqual(getattr(response.error, "code", ""), "delivery_blocked")
-            reloaded = load_group(group.group_id)
-            self.assertIsNotNone(reloaded)
-            assert reloaded is not None
-            self.assertEqual(get_group_state(reloaded), "paused")
-            self.assertNotIn(
-                "runtime.delivery",
-                {str(event.get("kind") or "") for event in iter_events(group.ledger_path)},
-            )
+                    self.assertTrue(response.ok, getattr(response, "error", None))
+                    self.assertEqual((response.result or {}).get("delivery_state"), "claimed")
+                    reloaded = load_group(group.group_id)
+                    self.assertIsNotNone(reloaded)
+                    assert reloaded is not None
+                    self.assertEqual(get_group_state(reloaded), "active")
+                    self.assertIn(
+                        "runtime.delivery",
+                        {str(event.get("kind") or "") for event in iter_events(group.ledger_path)},
+                    )
         finally:
             cleanup()
 

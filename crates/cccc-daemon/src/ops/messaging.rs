@@ -776,7 +776,6 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .map(|actor| actor.id.clone())
         .collect::<Vec<_>>();
-    group = message_wake::activate_message_targets(home, group, &actor_ids)?;
     let delivery_claims = requested
         .iter()
         .map(|actor| {
@@ -825,6 +824,27 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         return Err(error);
     }
+    group = match message_wake::activate_message_targets(home, group, &actor_ids) {
+        Ok(group) => group,
+        Err(error) => {
+            let reason = format!("group resume failed: {}", error.message);
+            let mut settlement_error = None;
+            for (actor, transport) in &delivery_claims {
+                if let Err(settle_error) = crate::ops::runtime_delivery::append_state(
+                    home,
+                    &source.group_id,
+                    &actor.id,
+                    &actor.created_at,
+                    &source_event_id,
+                    transport,
+                    crate::ops::runtime_delivery::DeliveryOutcome::Failed(&reason),
+                ) {
+                    settlement_error.get_or_insert(settle_error);
+                }
+            }
+            return Err(settlement_error.unwrap_or(error));
+        }
+    };
     actor_delivery::dispatch_preclaimed(home, &group, &source, &requested);
     object(json!({
         "event": source,

@@ -89,7 +89,7 @@ Daemon endpoint selection is controlled by environment variables:
 - `CCCC_DAEMON_HOST`: bind host for TCP (default: `127.0.0.1`)
 - `CCCC_DAEMON_PORT`: bind port for TCP (default: `0` meaning “choose a free port”)
 
-The Rust daemon rejects every non-loopback TCP host before binding. Daemon IPC
+Both daemon implementations reject every non-loopback TCP host before binding. Daemon IPC
 has no authentication and cannot be exposed with `0.0.0.0`, a LAN address, or a
 public address. Use the authenticated Web API for remote access.
 
@@ -2736,7 +2736,8 @@ Result:
 
 #### `group_start`
 
-Start (enable + run) all actors in the group.
+Resume the Group and run every actor whose desired `enabled` state is true.
+Actors explicitly disabled through `actor_stop` remain disabled.
 
 Args:
 ```ts
@@ -2750,7 +2751,8 @@ Result:
 
 #### `group_stop`
 
-Stop (disable + terminate) all actors in the group.
+Stop the Group's actor runtimes without changing any actor's desired `enabled`
+state. This is a group-level suspension; use `actor_stop` to disable one actor.
 
 Args:
 ```ts
@@ -3509,8 +3511,11 @@ Only the source sender or `user` may request delivery. Recipients MUST be
 explicit concrete recipients of the source event. Existing `accepted` evidence
 is never retried. Existing `claimed` evidence reports `delivery_in_progress`.
 Existing `ambiguous` evidence is rejected unless `force_ambiguous=true`.
-Paused or stopped groups return `delivery_blocked` without creating a delivery
-claim. A successful request records all claims before returning:
+Disabled recipients return `delivery_blocked` without creating a delivery
+claim. A request that reserves new claims while the Group is paused or stopped
+explicitly resumes the Group before handoff. A conflicting, already accepted,
+or otherwise no-op request MUST NOT change lifecycle state. A successful
+request records all claims before returning:
 
 ```ts
 {
@@ -5061,7 +5066,7 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier, and the loopback `/api/v1/ready` response MUST return that exact identifier before Reach may start; a live PID or an accepting TCP port alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
 The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 

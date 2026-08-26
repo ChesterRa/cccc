@@ -11,7 +11,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/ping", get(ping))
         .route("/api/v1/health", get(health))
-        .route("/api/v1/ready", get(health))
+        .route("/api/v1/ready", get(ready))
         .route("/api/v1/runtimes", get(runtimes))
         .route(
             "/api/v1/observability",
@@ -57,6 +57,9 @@ async fn health(State(state): State<AppState>) -> ApiResult {
         .and_then(Value::as_object_mut)
         .map(|value| value.insert("status".into(), Value::String("ok".into())));
     Ok(response)
+}
+async fn ready(State(state): State<AppState>) -> Json<Value> {
+    success(json!({"web":"ready","runtime_id":state.runtime_id}))
 }
 async fn runtimes() -> Json<Value> {
     let runtimes = cccc_runtime::detect_runtimes();

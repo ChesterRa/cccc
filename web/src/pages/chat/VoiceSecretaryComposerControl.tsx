@@ -108,6 +108,7 @@ import {
   voiceDocumentPath,
   voiceLanguageOptionValues,
   voiceReplyDismissKey,
+  voicePromptRequestOwnership,
   voiceTranscriptItemsFromMeetingSession,
 } from "./voice-secretary/voiceComposerUtils";
 import {
@@ -1173,7 +1174,10 @@ export function VoiceSecretaryComposerControl({
       });
       if (ownership.shouldShowLoading) setLoading(true);
       try {
-        const promptRequestId = String(pendingPromptRequestIdRef.current || "").trim();
+        const promptRequestId =
+          String(pendingPromptGroupIdRef.current || "").trim() === gid
+            ? String(pendingPromptRequestIdRef.current || "").trim()
+            : "";
         const resp = await fetchVoiceAssistantWorkspace(gid, { promptRequestId });
         if (
           !shouldApplyVoiceAssistantRefresh(
@@ -1193,6 +1197,7 @@ export function VoiceSecretaryComposerControl({
         const promptDraft = resp.result.prompt_draft || null;
         if (
           promptDraft &&
+          pendingPromptGroupIdRef.current === gid &&
           pendingPromptRequestIdRef.current &&
           promptDraft.request_id === pendingPromptRequestIdRef.current
         ) {
@@ -1458,7 +1463,8 @@ export function VoiceSecretaryComposerControl({
   useEffect(() => {
     if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
     if (typeof window === "undefined") return undefined;
-    const timer = window.setInterval(() => {
+    let cancelled = false;
+    const poll = () => {
       const requestId = String(
         pendingPromptRequestIdRef.current || pendingPromptRequestId || "",
       ).trim();
@@ -1470,7 +1476,7 @@ export function VoiceSecretaryComposerControl({
       )
         return;
       void fetchVoiceAssistantStatus(gid, { promptRequestId: requestId }).then((resp) => {
-        if (!resp.ok) return;
+        if (cancelled || !resp.ok) return;
         const promptDraft = resp.result.prompt_draft || null;
         if (
           promptDraft &&
@@ -1481,8 +1487,11 @@ export function VoiceSecretaryComposerControl({
           setPendingPromptDraft(promptDraft);
         }
       });
-    }, VOICE_PROMPT_DRAFT_POLL_MS);
+    };
+    poll();
+    const timer = window.setInterval(poll, VOICE_PROMPT_DRAFT_POLL_MS);
     return () => {
+      cancelled = true;
       window.clearInterval(timer);
     };
   }, [pendingPromptDraft, pendingPromptRequestId, selectedGroupId]);
@@ -1569,27 +1578,6 @@ export function VoiceSecretaryComposerControl({
     if (!requested || pendingPromptDraft.request_id !== requested) return;
     void applyPromptDraft(pendingPromptDraft);
   }, [applyPromptDraft, pendingPromptDraft, pendingPromptRequestId]);
-
-  useEffect(() => {
-    if (!pendingPromptRequestId || pendingPromptDraft) return undefined;
-    if (typeof window === "undefined") return undefined;
-    let cancelled = false;
-    let timer = 0;
-    const poll = () => {
-      if (cancelled) return;
-      if (!isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current)) {
-        clearPendingPromptRequest(true);
-        return;
-      }
-      if (!cancelled) void refreshAssistant({ quiet: true });
-      timer = window.setTimeout(poll, VOICE_PROMPT_DRAFT_POLL_MS);
-    };
-    poll();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [clearPendingPromptRequest, pendingPromptDraft, pendingPromptRequestId, refreshAssistant]);
 
   useEffect(() => {
     if (!open || !serviceAsrReady) return;
@@ -2165,8 +2153,29 @@ export function VoiceSecretaryComposerControl({
       const existingRequestId = String(
         pendingPromptRequestIdRef.current || pendingPromptRequestId || "",
       ).trim();
+      const requestOwnership = voicePromptRequestOwnership({
+        requestId: existingRequestId,
+        pendingGroupId: pendingPromptGroupIdRef.current,
+        targetGroupId: gid,
+        startedAt: pendingPromptRequestStartedAtRef.current,
+        nowMs,
+      });
+      if (requestOwnership === "other_group") {
+        if (isCurrentGroup(gid)) {
+          showError(
+            t("voiceSecretaryPromptPendingOtherGroup", {
+              defaultValue:
+                "Another Group already has a prompt refinement in progress. Wait for it to finish before starting another.",
+            }),
+          );
+        }
+        return;
+      }
+      if (requestOwnership === "none" && existingRequestId) {
+        clearPendingPromptRequest(true);
+      }
       const reuseExistingRequest = Boolean(
-        existingRequestId &&
+        requestOwnership === "same_group" &&
         operation === "append_to_composer_end" &&
         isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current, nowMs),
       );
@@ -4425,7 +4434,16 @@ export function VoiceSecretaryComposerControl({
   const openButtonIconSizePx = buttonClassName
     ? buttonSizePx
     : Math.max(20, Math.min(26, Math.round(buttonSizePx - 14)));
-  const promptDraftWaiting = Boolean(pendingPromptRequestId && !pendingPromptDraft);
+  const pendingPromptInOtherGroup = Boolean(
+    pendingPromptRequestId &&
+    pendingPromptGroupIdRef.current &&
+    currentSelectedGroupId &&
+    pendingPromptGroupIdRef.current !== currentSelectedGroupId &&
+    isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current),
+  );
+  const promptDraftWaiting = Boolean(
+    pendingPromptRequestId && !pendingPromptDraft && !pendingPromptInOtherGroup,
+  );
   const promptDraftWaitingTitle = t("voiceSecretaryPromptDraftWaitingShort", {
     defaultValue: "Polishing prompt...",
   });
@@ -4556,7 +4574,7 @@ export function VoiceSecretaryComposerControl({
   );
   const activityFeedItems = useMemo<VoiceActivityFeedItem[]>(() => {
     const items: VoiceActivityFeedItem[] = [];
-    if (pendingPromptRequestId || pendingPromptDraft) {
+    if (!pendingPromptInOtherGroup && (pendingPromptRequestId || pendingPromptDraft)) {
       items.push({
         kind: "prompt",
         id: `prompt-${pendingPromptDraft?.request_id || pendingPromptRequestId}`,
@@ -4580,6 +4598,7 @@ export function VoiceSecretaryComposerControl({
     activityClockMs,
     askFeedbackItems,
     pendingPromptDraft,
+    pendingPromptInOtherGroup,
     pendingPromptRequestId,
     promptDraftWaitingTitle,
   ]);
@@ -4783,11 +4802,16 @@ export function VoiceSecretaryComposerControl({
   const directDictationLabel = t("voiceDirectDictationMode", { defaultValue: "Dictate" });
   const promptOptimizeTitle = !assistantEnabled
     ? t("voiceSecretaryEnableFirst", { defaultValue: "Enable Voice Secretary first." })
-    : promptOptimizePending
-      ? t("voiceSecretaryPromptOptimizingButton", { defaultValue: "Optimizing..." })
-      : !composerText.trim()
-        ? t("voiceSecretaryPromptOptimizeNeedsText", { defaultValue: "Type a prompt first" })
-        : t("voiceSecretaryPromptOptimizeButton", { defaultValue: "Optimize current prompt" });
+    : pendingPromptInOtherGroup
+      ? t("voiceSecretaryPromptPendingOtherGroup", {
+          defaultValue:
+            "Another Group already has a prompt refinement in progress. Wait for it to finish before starting another.",
+        })
+      : promptOptimizePending
+        ? t("voiceSecretaryPromptOptimizingButton", { defaultValue: "Optimizing..." })
+        : !composerText.trim()
+          ? t("voiceSecretaryPromptOptimizeNeedsText", { defaultValue: "Type a prompt first" })
+          : t("voiceSecretaryPromptOptimizeButton", { defaultValue: "Optimize current prompt" });
   const handleAssistantRowModeChange = useCallback(
     (nextMode: VoiceSecretaryCaptureMode) => {
       if (recording || recordingStarting) return;
@@ -5886,11 +5910,18 @@ export function VoiceSecretaryComposerControl({
                 !!actionBusy ||
                 recordingStarting ||
                 controlDisabled ||
+                (!recording && captureMode === "prompt" && pendingPromptInOtherGroup) ||
                 (!recording && !dictationSupported)
               }
               aria-pressed={recording}
-              aria-label={assistantRowControlLabel}
-              title={`${assistantRowControlLabel} · ${assistantEnabled ? assistantRowCurrentMode.label : directDictationLabel}`}
+              aria-label={
+                pendingPromptInOtherGroup ? promptOptimizeTitle : assistantRowControlLabel
+              }
+              title={
+                pendingPromptInOtherGroup
+                  ? promptOptimizeTitle
+                  : `${assistantRowControlLabel} · ${assistantEnabled ? assistantRowCurrentMode.label : directDictationLabel}`
+              }
             >
               {recording ? (
                 <StopIcon size={13} aria-hidden="true" />
@@ -6173,7 +6204,7 @@ export function VoiceSecretaryComposerControl({
               </span>
             </div>
           ) : null}
-          {pendingPromptDraft || promptDraftWaiting ? (
+          {!pendingPromptInOtherGroup && (pendingPromptDraft || promptDraftWaiting) ? (
             <div
               className={classNames(
                 "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",

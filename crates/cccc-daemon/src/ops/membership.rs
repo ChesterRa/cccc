@@ -581,6 +581,17 @@ fn live_web_port(home: &HomeLayout) -> Result<u16, OpError> {
             "CCCC Web runtime is no longer running; restart `cccc` before enabling reach",
         ));
     }
+    let runtime_id = runtime
+        .get("runtime_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            OpError::new(
+                "membership_gate",
+                "CCCC Web runtime identity is missing; restart `cccc` before enabling reach",
+            )
+        })?;
     let host = runtime
         .get("host")
         .and_then(Value::as_str)
@@ -604,22 +615,39 @@ fn live_web_port(home: &HomeLayout) -> Result<u16, OpError> {
                 "CCCC Web runtime port is invalid; restart `cccc` before enabling reach",
             )
         })?;
-    // The default Rust launcher serves daemon IPC and Web from one process.
-    // A blocking HTTP readiness request made while handling a Web -> daemon
-    // operation can wait on that same process and falsely time out. PID identity
-    // is checked above, so a direct loopback TCP probe is sufficient here.
-    let ready = std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(500),
-    )
-    .is_ok();
-    if !ready {
+    if !web_runtime_identity_matches(port, runtime_id) {
         return Err(OpError::new(
             "membership_gate",
-            "CCCC Web recorded binding is not accepting connections on 127.0.0.1; restart `cccc` before enabling reach",
+            "CCCC Web recorded binding did not prove its runtime identity; restart `cccc` before enabling reach",
         ));
     }
     Ok(port)
+}
+
+fn web_runtime_identity_matches(port: u16, expected_runtime_id: &str) -> bool {
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(500))
+        .timeout(std::time::Duration::from_millis(750))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+    else {
+        return false;
+    };
+    let Ok(response) = client
+        .get(format!("http://127.0.0.1:{port}/api/v1/ready"))
+        .send()
+    else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response.json::<Value>().is_ok_and(|payload| {
+        payload["ok"] == true
+            && payload["result"]["web"] == "ready"
+            && payload["result"]["runtime_id"] == expected_runtime_id
+    })
 }
 
 fn pending_expired(pending: &Map<String, Value>) -> bool {
@@ -741,6 +769,27 @@ mod tests {
             }
         });
         (origin, received)
+    }
+
+    fn web_ready_server(runtime_id: &str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        let runtime_id = runtime_id.to_owned();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept Web readiness");
+            let mut request = [0_u8; 2048];
+            let count = stream.read(&mut request).expect("read readiness request");
+            assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /api/v1/ready "));
+            let body =
+                json!({"ok":true,"result":{"web":"ready","runtime_id":runtime_id}}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write readiness response");
+        });
+        port
     }
 
     #[test]
@@ -1111,15 +1160,14 @@ mod tests {
     }
 
     #[test]
-    fn reach_uses_the_recorded_live_web_port() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
-        let port = listener.local_addr().expect("fixture address").port();
+    fn reach_uses_the_identity_verified_live_web_port() {
+        let port = web_ready_server("web_fixture");
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
         fs::write_json(
             &home.daemon_dir().join("web_runtime.json"),
-            &json!({"pid":std::process::id(),"host":"127.0.0.1","port":port}),
+            &json!({"pid":std::process::id(),"runtime_id":"web_fixture","host":"127.0.0.1","port":port}),
         )
         .expect("runtime state");
         assert_eq!(live_web_port(&home).expect("live port"), port);
@@ -1135,12 +1183,30 @@ mod tests {
         home.initialize().expect("home");
         fs::write_json(
             &home.daemon_dir().join("web_runtime.json"),
-            &json!({"pid":std::process::id(),"host":"127.0.0.1","port":port}),
+            &json!({"pid":std::process::id(),"runtime_id":"web_fixture","host":"127.0.0.1","port":port}),
         )
         .expect("runtime state");
         let error = live_web_port(&home).expect_err("closed binding must fail");
         assert_eq!(error.code, "membership_gate");
-        assert!(error.message.contains("not accepting connections"));
+        assert!(error.message.contains("did not prove its runtime identity"));
+    }
+
+    #[test]
+    fn reach_rejects_a_listener_with_the_wrong_runtime_identity() {
+        let port = web_ready_server("web_other");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        fs::write_json(
+            &home.daemon_dir().join("web_runtime.json"),
+            &json!({"pid":std::process::id(),"runtime_id":"web_expected","host":"127.0.0.1","port":port}),
+        )
+        .expect("runtime state");
+
+        let error = live_web_port(&home).expect_err("foreign listener must fail");
+
+        assert_eq!(error.code, "membership_gate");
+        assert!(error.message.contains("did not prove its runtime identity"));
     }
 
     #[test]
@@ -1150,7 +1216,7 @@ mod tests {
         home.initialize().expect("home");
         fs::write_json(
             &home.daemon_dir().join("web_runtime.json"),
-            &json!({"pid":std::process::id(),"host":"192.0.2.10","port":9123}),
+            &json!({"pid":std::process::id(),"runtime_id":"web_fixture","host":"192.0.2.10","port":9123}),
         )
         .expect("runtime state");
         let error = live_web_port(&home).expect_err("non-loopback-only binding must fail");

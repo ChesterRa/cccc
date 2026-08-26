@@ -184,6 +184,8 @@ class ActorLifecycleData(BaseModel):
     runner: Optional[str] = None  # pty or headless
     # Effective runner used at runtime (e.g., PTY → headless fallback).
     runner_effective: Optional[str] = None
+    reason: Optional[str] = None
+    exit_code: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 

@@ -359,7 +359,7 @@ class TestWebModelActorLifecycle(unittest.TestCase):
                 },
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
-            stop, _ = self._call("actor_stop", {"group_id": group_id, "actor_id": "webpeer", "by": "user"})
+            stop, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
             self.assertTrue(stop.ok, getattr(stop, "error", None))
 
             with patch(

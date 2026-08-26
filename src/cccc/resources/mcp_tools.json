@@ -369,7 +369,7 @@
   },
   {
     "name": "cccc_message_deliver",
-    "description": "Send an existing message to selected actor runtimes without creating a duplicate chat message. Use this to promote Mail to Send or retry a blocked/failed delivery. Ambiguous delivery requires force_ambiguous=true because the recipient may already have received the prompt.",
+    "description": "Send an existing message to selected actor runtimes without creating a duplicate chat message. Use this to promote Mail to Send or retry a blocked/failed delivery. Reserving new delivery work resumes a paused Group; a conflict or no-op does not. Ambiguous delivery requires force_ambiguous=true because the recipient may already have received the prompt.",
     "inputSchema": {
       "type": "object",
       "properties": {

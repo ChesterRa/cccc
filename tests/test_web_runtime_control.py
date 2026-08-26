@@ -15,14 +15,19 @@ class _PollingProc:
 
 
 class _UrlopenResponse:
-    def __init__(self, status: int):
+    def __init__(self, status: int, body: bytes = b""):
         self.status = status
+        self._body = body
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+    def read(self):
+        body, self._body = self._body, b""
+        return body
 
 
 class TestWebRuntimeControl(unittest.TestCase):
@@ -64,6 +69,23 @@ class TestWebRuntimeControl(unittest.TestCase):
 
         self.assertTrue(ready)
         self.assertEqual(mock_urlopen.call_args.args[0], "http://127.0.0.1:8848/api/v1/ready")
+
+    def test_wait_for_web_ready_requires_the_expected_runtime_identity(self) -> None:
+        from cccc.ports.web.runtime_control import wait_for_web_ready
+
+        body = b'{"ok":true,"result":{"web":"ready","runtime_id":"web_other"}}'
+        with patch(
+            "cccc.ports.web.runtime_control.urllib.request.urlopen",
+            return_value=_UrlopenResponse(200, body),
+        ), patch("cccc.ports.web.runtime_control.time.sleep"):
+            ready = wait_for_web_ready(
+                host="127.0.0.1",
+                port=8848,
+                timeout_s=0.01,
+                expected_runtime_id="web_expected",
+            )
+
+        self.assertFalse(ready)
 
     def test_wait_for_child_exit_interruptibly_returns_exit_code(self) -> None:
         from cccc.ports.web.runtime_control import wait_for_child_exit_interruptibly

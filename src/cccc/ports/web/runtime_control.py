@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import http.client
+import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -58,6 +60,7 @@ def write_web_runtime_state(
     launcher_pid: Optional[int] = None,
     launch_source: str,
     last_apply_error: Optional[str] = None,
+    runtime_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     current = read_json(web_runtime_state_path(home))
     current_doc = current if isinstance(current, dict) else {}
@@ -72,6 +75,7 @@ def write_web_runtime_state(
             resolved_launcher_pid = 0
     doc: Dict[str, Any] = {
         "pid": int(pid),
+        "runtime_id": str(runtime_id or "").strip() or f"web_{secrets.token_hex(16)}",
         "host": str(host or "").strip() or "127.0.0.1",
         "port": int(port),
         "mode": str(mode or "normal").strip() or "normal",
@@ -272,13 +276,30 @@ def wait_for_child_exit_interruptibly(
         time.sleep(interval)
 
 
-def wait_for_web_ready(*, host: str, port: int, timeout_s: float = 6.0) -> bool:
+def wait_for_web_ready(
+    *,
+    host: str,
+    port: int,
+    timeout_s: float = 6.0,
+    expected_runtime_id: str = "",
+) -> bool:
     target = http_url(local_connect_host(host), int(port), path="/api/v1/ready")
     deadline = time.time() + max(float(timeout_s or 0.0), 0.1)
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(target, timeout=0.5) as resp:
-                if int(getattr(resp, "status", 0) or 0) == 200:
+                if int(getattr(resp, "status", 0) or 0) != 200:
+                    continue
+                expected = str(expected_runtime_id or "").strip()
+                if not expected:
+                    return True
+                payload = json.load(resp)
+                result = payload.get("result") if isinstance(payload, dict) else None
+                if (
+                    isinstance(result, dict)
+                    and result.get("web") == "ready"
+                    and str(result.get("runtime_id") or "").strip() == expected
+                ):
                     return True
         except (urllib.error.URLError, urllib.error.HTTPError, http.client.HTTPException, OSError, ValueError):
             pass

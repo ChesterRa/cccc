@@ -91,6 +91,7 @@ pub async fn authorize(
         Err(error) => return auth_store_failure(error),
     };
     if principal.is_some()
+        && !is_public(request.method(), request.uri().path())
         && token_source == TokenSource::Cookie
         && is_unsafe_method(request.method())
         && !crate::request_origin::cookie_csrf_allowed(request.headers())

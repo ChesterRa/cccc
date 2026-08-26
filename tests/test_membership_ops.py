@@ -73,12 +73,18 @@ class TestMembershipOps(unittest.TestCase):
             os.environ["CCCC_ACCOUNT_TIMEOUT_S"] = self._old_timeout
 
     def _record_live_web(self, port: int = 0) -> int:
+        runtime_id = "web_membership_test"
+
         class ReadyHandler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 if self.path != "/api/v1/ready":
                     self.send_error(404)
                     return
-                body = b'{"ok":true,"result":{"web":"ready"}}'
+                body = (
+                    '{"ok":true,"result":{"web":"ready","runtime_id":"'
+                    + runtime_id
+                    + '"}}'
+                ).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -107,6 +113,7 @@ class TestMembershipOps(unittest.TestCase):
             supervisor_managed=True,
             supervisor_pid=None,
             launch_source="test",
+            runtime_id=runtime_id,
         )
         return live_port
 
@@ -125,7 +132,24 @@ class TestMembershipOps(unittest.TestCase):
             launch_source="test",
         )
 
-        with self.assertRaisesRegex(RuntimeError, "not accepting connections"):
+        with self.assertRaisesRegex(RuntimeError, "did not prove its runtime identity"):
+            membership_ops._live_web_port()
+
+    def test_reach_origin_rejects_a_listener_with_the_wrong_runtime_identity(self) -> None:
+        port = self._record_live_web()
+        runtime = membership_ops.read_web_runtime_state()
+        write_web_runtime_state(
+            pid=os.getpid(),
+            host="127.0.0.1",
+            port=port,
+            mode="normal",
+            supervisor_managed=True,
+            supervisor_pid=None,
+            launch_source="test",
+            runtime_id=f"{runtime.get('runtime_id')}-wrong",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "did not prove its runtime identity"):
             membership_ops._live_web_port()
 
     def test_reach_origin_rejects_a_live_web_binding_that_cannot_accept_loopback(

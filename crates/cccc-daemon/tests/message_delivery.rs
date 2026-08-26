@@ -1704,7 +1704,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
 }
 
 #[test]
-fn manual_delivery_resumes_a_paused_group_before_claiming() {
+fn manual_delivery_resumes_a_paused_group_after_claiming() {
     use cccc_contracts::GroupState;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1825,6 +1825,8 @@ fn manual_delivery_is_blocked_without_a_claim_for_disabled_actor() {
 
 #[test]
 fn manual_delivery_reports_the_actual_conflicting_claim_without_partial_reservation() {
+    use cccc_contracts::GroupState;
+
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(
@@ -1869,6 +1871,12 @@ fn manual_delivery_reports_the_actual_conflicting_claim_without_partial_reservat
         .expect("delivery data");
         ledger::append(&ledger_path, &event).expect("append delivery state");
     }
+    store
+        .mutate(group_id, |group| {
+            group.state = GroupState::Paused;
+            Ok(())
+        })
+        .expect("pause group");
 
     let response = call_raw(
         &home,
@@ -1897,6 +1905,10 @@ fn manual_delivery_reports_the_actual_conflicting_claim_without_partial_reservat
             .filter(|event| event.kind == "runtime.delivery")
             .count(),
         2
+    );
+    assert_eq!(
+        store.load(group_id).expect("unchanged group").state,
+        GroupState::Paused
     );
 }
 

@@ -1357,6 +1357,8 @@ def handle_message_deliver(
     coerce_bool: Callable[[Any], bool],
     effective_runner_kind: Callable[[str], str],
     auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
+    automation_on_resume: Callable[[Any], None] = lambda _group: None,
+    clear_pending_system_notifies: Callable[[str, set[str]], None] = lambda _group_id, _kinds: None,
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     source_event_id = str(args.get("source_event_id") or "").strip()
@@ -1377,11 +1379,6 @@ def handle_message_deliver(
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    if get_group_state(group) in {"paused", "stopped"}:
-        return _error(
-            "delivery_blocked",
-            "message delivery is disabled while the group is paused or stopped",
-        )
     source = find_event(group, source_event_id)
     if source is None or str(source.get("kind") or "") != "chat.message":
         return _error("event_not_found", f"chat message not found: {source_event_id}")
@@ -1452,9 +1449,7 @@ def handle_message_deliver(
                 details={"actor_id": actor_id, "force_ambiguous_required": True},
             )
 
-    try:
-        woken = auto_wake_recipients(group, actor_ids, by)
-    except Exception as exc:
+    def _settle_claims_failed(reason: str) -> None:
         for actor_id, (actor_created_at, transport) in preclaimed_actors.items():
             append_delivery_state(
                 group,
@@ -1463,8 +1458,31 @@ def handle_message_deliver(
                 source_event_id=source_event_id,
                 state="failed",
                 transport=transport,
-                reason=f"recipient wake failed: {exc}",
+                reason=reason,
             )
+
+    if get_group_state(group) in {"paused", "stopped"}:
+        try:
+            group = set_group_state(group, state="active")
+        except Exception as exc:
+            _settle_claims_failed(f"group resume failed: {exc}")
+            return _error("delivery_failed", f"group resume failed: {exc}")
+        try:
+            automation_on_resume(group)
+        except Exception:
+            pass
+        try:
+            clear_pending_system_notifies(
+                group.group_id,
+                {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"},
+            )
+        except Exception:
+            pass
+
+    try:
+        woken = auto_wake_recipients(group, actor_ids, by)
+    except Exception as exc:
+        _settle_claims_failed(f"recipient wake failed: {exc}")
         return _error("delivery_failed", f"recipient wake failed: {exc}")
     delivery_event = dict(source)
     delivery_event["data"] = dict(data)
@@ -1669,6 +1687,8 @@ def try_handle_chat_op(
             coerce_bool=coerce_bool,
             effective_runner_kind=effective_runner_kind,
             auto_wake_recipients=auto_wake_recipients,
+            automation_on_resume=automation_on_resume,
+            clear_pending_system_notifies=clear_pending_system_notifies,
         )
     if op == "reply":
         return handle_reply(

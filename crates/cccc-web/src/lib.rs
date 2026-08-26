@@ -90,6 +90,7 @@ pub(crate) struct AppState {
     shutdown: broadcast::Sender<()>,
     restart: Option<Arc<RestartHandle>>,
     live_binding: LiveBinding,
+    runtime_id: String,
     web_mode: WebMode,
     exhibit_allow_terminal: bool,
 }
@@ -123,7 +124,19 @@ pub fn app(home: HomeLayout) -> Router {
 
 pub fn app_with_mode(home: HomeLayout, web_mode: WebMode) -> Router {
     let (shutdown, _) = broadcast::channel(1);
-    app_with_shutdown(home, shutdown, web_mode, None, LiveBinding::from_env()).0
+    app_with_shutdown(
+        home,
+        shutdown,
+        web_mode,
+        None,
+        LiveBinding::from_env(),
+        new_web_runtime_id(),
+    )
+    .0
+}
+
+fn new_web_runtime_id() -> String {
+    format!("web_{}", uuid::Uuid::new_v4().simple())
 }
 
 fn app_with_shutdown(
@@ -132,6 +145,7 @@ fn app_with_shutdown(
     web_mode: WebMode,
     restart: Option<Arc<RestartHandle>>,
     live_binding: LiveBinding,
+    runtime_id: String,
 ) -> (
     Router,
     Arc<im_runtime::ImWorkerRegistry>,
@@ -165,6 +179,7 @@ fn app_with_shutdown(
         shutdown,
         restart,
         live_binding,
+        runtime_id,
         web_mode,
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
@@ -390,12 +405,14 @@ where
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
     ensure_listener_auth(&home, address)?;
+    let runtime_id = new_web_runtime_id();
     if let Err(error) = web_runtime_state::write(
         &home,
         host,
         address.port(),
         web_mode.as_str(),
         !matches!(restart_behavior, RestartBehavior::Disabled),
+        &runtime_id,
     ) {
         tracing::warn!(%error, "failed to record live Web binding");
     }
@@ -416,6 +433,7 @@ where
             host: host.to_owned(),
             port: address.port(),
         },
+        runtime_id,
     );
     routes::spawn_web_model_supervisor(app_state);
     let server = async move {
@@ -623,6 +641,7 @@ mod lifecycle_tests {
             WebMode::Normal,
             None,
             LiveBinding::from_env(),
+            new_web_runtime_id(),
         )
         .0
         .oneshot(
@@ -672,6 +691,7 @@ mod lifecycle_tests {
             WebMode::Normal,
             None,
             LiveBinding::from_env(),
+            new_web_runtime_id(),
         )
         .0
         .oneshot(

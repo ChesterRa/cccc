@@ -39,6 +39,11 @@ class TestWebAccessAuth(unittest.TestCase):
             payload["present"] = True
             return payload
 
+        @app.post("/__test__/write")
+        async def write_probe(request: Request) -> dict:
+            principal = getattr(request.state, "principal", None)
+            return {"user_id": str(getattr(principal, "user_id", "") or "")}
+
         return TestClient(app)
 
     def test_websocket_origin_requires_same_origin(self) -> None:
@@ -194,7 +199,10 @@ class TestWebAccessAuth(unittest.TestCase):
             token = str(created.get("token") or "")
             client = self._create_probe_client()
             client.cookies.set("cccc_access_token", token)
-            resp = client.post("/api/v1/web_access/logout")
+            resp = client.post(
+                "/api/v1/web_access/logout",
+                headers={"Origin": "http://testserver"},
+            )
             self.assertEqual(resp.status_code, 200)
             set_cookie = str(resp.headers.get("set-cookie") or "")
             self.assertIn("cccc_access_token=""", set_cookie)
@@ -203,6 +211,52 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertEqual(follow.status_code, 200)
             session = ((follow.json().get("result") or {}).get("web_access_session") or {})
             self.assertFalse(bool(session.get("current_browser_signed_in")))
+        finally:
+            cleanup()
+
+    def test_cookie_authenticated_writes_require_an_exact_origin(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            token = str(create_access_token("admin-user", is_admin=True).get("token") or "")
+            client = self._create_probe_client()
+            client.cookies.set("cccc_access_token", token)
+
+            same_origin = client.post(
+                "/__test__/write",
+                headers={"Origin": "http://testserver"},
+            )
+            self.assertEqual(same_origin.status_code, 200)
+
+            same_origin_referer = client.post(
+                "/__test__/write",
+                headers={"Referer": "http://testserver/ui/"},
+            )
+            self.assertEqual(same_origin_referer.status_code, 200)
+
+            cross_origin = client.post(
+                "/__test__/write",
+                headers={"Origin": "http://sibling.example"},
+            )
+            self.assertEqual(cross_origin.status_code, 403)
+            self.assertEqual(
+                (cross_origin.json().get("error") or {}).get("code"),
+                "csrf_origin_invalid",
+            )
+
+            missing_origin = client.post("/__test__/write")
+            self.assertEqual(missing_origin.status_code, 403)
+            self.assertEqual(
+                (missing_origin.json().get("error") or {}).get("code"),
+                "csrf_origin_invalid",
+            )
+
+            bearer = self._create_probe_client().post(
+                "/__test__/write",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(bearer.status_code, 200)
         finally:
             cleanup()
 

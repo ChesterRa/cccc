@@ -147,6 +147,7 @@ def _refresh_cut_from_account() -> Tuple[Optional[str], Optional[bool], Optional
 def _live_web_port() -> int:
     runtime = read_web_runtime_state()
     host = str(runtime.get("host") or "").strip().lower()
+    runtime_id = str(runtime.get("runtime_id") or "").strip()
     try:
         pid = int(runtime.get("pid") or 0)
         port = int(runtime.get("port") or 0)
@@ -157,13 +158,22 @@ def _live_web_port() -> int:
         raise RuntimeError(
             "CCCC Web is not running with a known live binding; start `cccc` before enabling reach"
         )
+    if not runtime_id:
+        raise RuntimeError(
+            "CCCC Web runtime identity is missing; restart `cccc` before enabling reach"
+        )
     if host not in {"127.0.0.1", "localhost", "0.0.0.0"}:
         raise RuntimeError(
             "CCCC Web must accept connections on 127.0.0.1 before reach can start"
         )
-    if not wait_for_web_ready(host="127.0.0.1", port=port, timeout_s=0.5):
+    if not wait_for_web_ready(
+        host="127.0.0.1",
+        port=port,
+        timeout_s=0.5,
+        expected_runtime_id=runtime_id,
+    ):
         raise RuntimeError(
-            "CCCC Web recorded binding is not accepting connections on 127.0.0.1; "
+            "CCCC Web recorded binding did not prove its runtime identity; "
             "restart `cccc` before enabling reach"
         )
     return port

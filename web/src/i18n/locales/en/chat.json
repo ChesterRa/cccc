@@ -208,6 +208,7 @@
   "voiceSecretaryPromptDraftReady": "Refined prompt ready",
   "voiceSecretaryPromptDraftWaiting": "Voice Secretary is quickly polishing the prompt...",
   "voiceSecretaryPromptOptimizeQueued": "Voice Secretary is quickly optimizing the current prompt.",
+  "voiceSecretaryPromptPendingOtherGroup": "Another Group already has a prompt refinement in progress. Wait for it to finish before starting another.",
   "voiceSecretaryAskStatusPending": "Queued",
   "voiceSecretaryAskStatusWorking": "Working",
   "voiceSecretaryAskStatusNeedsUser": "Needs input",

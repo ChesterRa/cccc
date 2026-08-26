@@ -7,7 +7,7 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 - Resume with `cccc_bootstrap`.
 - Reply with `cccc_message_reply`; start with `cccc_message_send`. Terminal output is not delivered.
 - Target either `user` alone or one/more agents; never mix domains. Mail is agent-only, so send separate messages to humans.
-- Promote/retry an event with `cccc_message_deliver`; confirm an `ambiguous` retry.
+- Promote/retry with `cccc_message_deliver`; a new claim wakes a paused/stopped Group; confirm `ambiguous` retries.
 - `cccc_inbox_read` consumes Mail; `cccc_message_history` inspects messages without changing Mail state.
 - Read shared truth with `cccc_context_get`; reserve `cccc_agent_state` for cross-turn recovery.
 - Invoke known hidden tools with `cccc_capability_use`; search only when unknown.

@@ -27,7 +27,7 @@ class TestServerPtyExit(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
-    def test_pty_process_exit_persists_visible_actor_as_stopped(self) -> None:
+    def test_pty_process_exit_preserves_desired_actor_and_group_lifecycle(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.daemon.runner_state_ops import pty_state_path, write_pty_state
@@ -56,8 +56,8 @@ class TestServerPtyExit(unittest.TestCase):
             actor = find_actor(reloaded, "peer1")
             self.assertIsInstance(actor, dict)
             assert isinstance(actor, dict)
-            self.assertFalse(bool(actor.get("enabled")))
-            self.assertFalse(bool(reloaded.doc.get("running")))
+            self.assertTrue(bool(actor.get("enabled")))
+            self.assertTrue(bool(reloaded.doc.get("running")))
             self.assertFalse(pty_state_path(group_id, "peer1").exists())
             ledger_events = [
                 json.loads(line)
@@ -67,6 +67,8 @@ class TestServerPtyExit(unittest.TestCase):
             stop_events = [event for event in ledger_events if event.get("kind") == "actor.stop"]
             self.assertEqual(len(stop_events), 1)
             self.assertEqual(stop_events[0].get("by"), "system")
+            self.assertEqual((stop_events[0].get("data") or {}).get("reason"), "process_exit")
+            self.assertEqual((stop_events[0].get("data") or {}).get("runner"), "pty")
         finally:
             cleanup()
 
@@ -234,7 +236,7 @@ class TestServerPtyExit(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_headless_process_exit_uses_same_persistent_stop_semantics(self) -> None:
+    def test_headless_process_exit_preserves_desired_lifecycle_and_records_reason(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.daemon.actors.actor_exit_ops import persist_actor_process_exit_stopped
@@ -260,7 +262,16 @@ class TestServerPtyExit(unittest.TestCase):
             actor = find_actor(reloaded, "peer1")
             self.assertIsInstance(actor, dict)
             assert isinstance(actor, dict)
-            self.assertFalse(bool(actor.get("enabled")))
-            self.assertFalse(bool(reloaded.doc.get("running")))
+            self.assertTrue(bool(actor.get("enabled")))
+            self.assertTrue(bool(reloaded.doc.get("running")))
+            ledger_events = [
+                json.loads(line)
+                for line in reloaded.ledger_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            stop_events = [event for event in ledger_events if event.get("kind") == "actor.stop"]
+            self.assertEqual(len(stop_events), 1)
+            self.assertEqual((stop_events[0].get("data") or {}).get("reason"), "process_exit")
+            self.assertEqual((stop_events[0].get("data") or {}).get("runner"), "headless")
         finally:
             cleanup()

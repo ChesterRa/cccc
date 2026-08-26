@@ -170,8 +170,8 @@ Always mount `/data` to a named volume or host path to persist state across cont
 
 ### Daemon IPC Stays Local
 
-Do not publish the daemon IPC port. It has no authentication, and the Rust
-daemon rejects `CCCC_DAEMON_HOST=0.0.0.0` and every other non-loopback address.
+Do not publish the daemon IPC port. It has no authentication, and both daemon
+implementations reject `CCCC_DAEMON_HOST=0.0.0.0` and every other non-loopback address.
 Remote integrations must use the authenticated Web API; container-local
 diagnostics can use `docker exec`.
 

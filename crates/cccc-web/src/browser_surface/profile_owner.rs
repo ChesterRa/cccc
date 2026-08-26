@@ -437,6 +437,7 @@ mod tests {
         let listener =
             std::os::unix::net::UnixListener::bind(&stale_socket).expect("singleton listener");
         drop(listener);
+        std::fs::remove_file(&stale_socket).expect("remove stale socket endpoint");
         symlink(&stale_socket, profile.join("SingletonSocket")).expect("singleton socket");
 
         let _lease = ProfileLease::acquire(&profile)

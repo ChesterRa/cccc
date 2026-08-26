@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import is_internal_actor, is_supported_internal_actor, list_actors, update_actor
+from ...kernel.actors import is_internal_actor, is_supported_internal_actor, list_actors
 from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
@@ -125,6 +125,8 @@ def handle_group_start(
                     str(actor.get("internal_kind") or "").strip(),
                 )
                 continue
+            if not coerce_bool(actor.get("enabled"), default=True):
+                continue
 
             try:
                 launch_spec = resolve_actor_launch_spec(
@@ -201,7 +203,6 @@ def handle_group_start(
             runner_kind = str(launch_spec["runner"])
             runtime = str(launch_spec["runtime"])
             runner_effective = str(launch_spec["effective_runner"])
-            update_actor(group, aid, {"enabled": True})
             effective_env = dict(launch_spec["merged_env"])
 
             def _launch_env(actor_id: str = aid) -> Dict[str, str]:
@@ -338,15 +339,14 @@ def handle_group_start(
             return _error("profile_not_found", msg)
         return _error("group_start_failed", msg)
 
-    if started:
-        try:
-            if str(group.doc.get("state") or "").strip() == "stopped":
-                group.doc["state"] = "active"
-            group.doc["running"] = True
-            group.save()
-        except Exception:
-            pass
-        reset_automation_timers_if_active(group)
+    try:
+        if str(group.doc.get("state") or "").strip() == "stopped":
+            group.doc["state"] = "active"
+        group.doc["running"] = True
+        group.save()
+    except Exception:
+        pass
+    reset_automation_timers_if_active(group)
 
     data: Dict[str, Any] = {"started": started}
     event = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data=data)
@@ -377,11 +377,7 @@ def handle_group_stop(
             aid = str(actor.get("id") or "").strip()
             if not aid:
                 continue
-            try:
-                update_actor(group, aid, {"enabled": False})
-                stopped.append(aid)
-            except Exception:
-                pass
+            stopped.append(aid)
 
         pty_runner.SUPERVISOR.stop_group(group_id=group.group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group.group_id)

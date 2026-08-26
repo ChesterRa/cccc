@@ -208,6 +208,7 @@
   "voiceSecretaryPromptDraftReady": "提示词已准备好",
   "voiceSecretaryPromptDraftWaiting": "语音小秘书正在快速润色提示词…",
   "voiceSecretaryPromptOptimizeQueued": "语音小秘书正在快速优化当前提示词。",
+  "voiceSecretaryPromptPendingOtherGroup": "另一个工作组仍有提示词优化正在进行，请等待完成后再开始新的优化。",
   "voiceSecretaryAskStatusPending": "已排队",
   "voiceSecretaryAskStatusWorking": "处理中",
   "voiceSecretaryAskStatusNeedsUser": "需补充",

@@ -72,6 +72,42 @@ def served_request_origin(request: Request) -> str:
     return f"{scheme}://{display_host}{suffix}"
 
 
+def _canonical_origin(value: str) -> str:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        scheme = str(parsed.scheme or "").lower()
+        hostname = str(parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return ""
+    if scheme not in {"http", "https"} or not hostname:
+        return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = 443 if scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{scheme}://{display_host}{suffix}"
+
+
+def _cookie_write_origin_allowed(request: Request) -> bool:
+    source = str(request.headers.get("origin") or "").strip()
+    if not source:
+        source = str(request.headers.get("referer") or "").strip()
+    source_origin = _canonical_origin(source)
+    if not source_origin:
+        return False
+    if source_origin == served_request_origin(request):
+        return True
+    allowed = {
+        origin
+        for item in str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").split(",")
+        if item.strip() and item.strip() != "*"
+        if (origin := _canonical_origin(item))
+    }
+    return source_origin in allowed
+
+
 def set_access_token_cookie(response: Response, request: Request, token: str) -> None:
     actual_scheme = _actual_request_scheme(request)
     response.set_cookie(
@@ -179,6 +215,27 @@ class AuthMiddleware:
                 )
                 await resp(scope, receive, send)
                 return
+
+        if (
+            not self._is_public_path(request)
+            and principal.kind == "user"
+            and token_source == "cookie"
+            and str(request.method or "").upper() not in {"GET", "HEAD", "OPTIONS"}
+            and not _cookie_write_origin_allowed(request)
+        ):
+            resp = JSONResponse(
+                status_code=403,
+                content={
+                    "ok": False,
+                    "error": {
+                        "code": "csrf_origin_invalid",
+                        "message": "Cookie-authenticated write requests require an allowed Origin or Referer",
+                        "details": {},
+                    },
+                },
+            )
+            await resp(scope, receive, send)
+            return
 
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
