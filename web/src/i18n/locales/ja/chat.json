@@ -441,6 +441,8 @@
   "senderPerspective": "送信者の見解",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Presentation を開く",
+  "presentationMobileOpenHighlighted": "Presentation を開く、ハイライトスロット {{index}}：{{title}}",
+  "presentationHighlightedSlotLabel": "ハイライトスロット {{index}}",
   "presentationCloseDockAction": "Presentation を閉じる",
   "presentationDockAriaLabel": "Presentation スロット",
   "presentationSectionLabel": "Presentation surface",

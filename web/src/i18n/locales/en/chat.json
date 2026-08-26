@@ -441,6 +441,8 @@
   "senderPerspective": "Sender perspective",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Open presentation",
+  "presentationMobileOpenHighlighted": "Open Presentation, slot {{index}}: {{title}}",
+  "presentationHighlightedSlotLabel": "Highlighted slot {{index}}",
   "presentationCloseDockAction": "Hide presentation",
   "presentationDockAriaLabel": "Presentation slots",
   "presentationSectionLabel": "Presentation surface",

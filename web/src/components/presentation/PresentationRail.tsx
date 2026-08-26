@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupPresentation, PresentationSlot } from "../../types";
-import { BookmarkIcon } from "../Icons";
+import { BookmarkIcon, ChevronLeftIcon } from "../Icons";
 import { classNames } from "../../utils/classNames";
 import { ensurePresentation } from "../../utils/presentation";
 
@@ -248,15 +248,16 @@ export function PresentationRail({
                 title={t("presentationCloseDockAction", { defaultValue: "Hide presentation" })}
                 aria-label={t("presentationCloseDockAction", { defaultValue: "Hide presentation" })}
                 aria-expanded={isOpen}
+                data-mobile-presentation-close="true"
               >
-                <BookmarkIcon size={18} />
+                <ChevronLeftIcon size={20} aria-hidden="true" />
               </button>
             ) : null}
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto p-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
             {normalizedPresentation.slots.map((slot) => {
               const card = slot.card;
               const isHighlighted = slot.slot_id === highlightSlotId;

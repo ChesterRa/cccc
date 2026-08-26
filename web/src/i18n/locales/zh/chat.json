@@ -441,6 +441,8 @@
   "senderPerspective": "发送者观点",
   "presentationTitle": "展示区",
   "presentationOpenDockAction": "打开展示区",
+  "presentationMobileOpenHighlighted": "打开展示区，高亮槽位 {{index}}：{{title}}",
+  "presentationHighlightedSlotLabel": "高亮槽位 {{index}}",
   "presentationCloseDockAction": "收起展示区",
   "presentationDockAriaLabel": "展示槽位",
   "presentationSectionLabel": "展示区",
