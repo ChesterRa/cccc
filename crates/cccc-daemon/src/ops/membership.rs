@@ -604,17 +604,15 @@ fn live_web_port(home: &HomeLayout) -> Result<u16, OpError> {
                 "CCCC Web runtime port is invalid; restart `cccc` before enabling reach",
             )
         })?;
-    let ready = reqwest::blocking::Client::builder()
-        .connect_timeout(std::time::Duration::from_millis(300))
-        .timeout(std::time::Duration::from_millis(500))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .and_then(|client| {
-            client
-                .get(format!("http://127.0.0.1:{port}/api/v1/ready"))
-                .send()
-        })
-        .is_ok_and(|response| response.status().is_success());
+    // The default Rust launcher serves daemon IPC and Web from one process.
+    // A blocking HTTP readiness request made while handling a Web -> daemon
+    // operation can wait on that same process and falsely time out. PID identity
+    // is checked above, so a direct loopback TCP probe is sufficient here.
+    let ready = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(500),
+    )
+    .is_ok();
     if !ready {
         return Err(OpError::new(
             "membership_gate",
@@ -1116,17 +1114,6 @@ mod tests {
     fn reach_uses_the_recorded_live_web_port() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
         let port = listener.local_addr().expect("fixture address").port();
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept readiness probe");
-            let mut request = [0_u8; 1024];
-            let count = stream.read(&mut request).expect("read readiness probe");
-            assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /api/v1/ready "));
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{{\"ok\":true,\"result\":{{\"web\":\"ready\"}}}}"
-            )
-            .expect("readiness response");
-        });
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");

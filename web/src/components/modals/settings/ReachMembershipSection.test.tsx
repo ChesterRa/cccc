@@ -114,6 +114,16 @@ describe("ReachMembershipSection", () => {
     expect(html).toContain("account service unavailable");
   });
 
+  it("does not replay a persisted historical failure as a current alert", () => {
+    const html = render(
+      { logged_in: true, online: false, last_error: "old Reach binding failure" },
+      { hasAdminToken: true },
+    );
+
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("old Reach binding failure");
+  });
+
   it("does not misreport the initial status check as logged out", () => {
     const html = render(null, { membershipBusy: true });
 

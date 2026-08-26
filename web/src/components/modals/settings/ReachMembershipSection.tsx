@@ -68,7 +68,7 @@ export function ReachMembershipSection({
   const pendingCode = String(membership?.pending?.user_code || "").trim();
   const reachSupported = membership?.reach_supported !== false;
   const canStop = kind === "online" || Boolean(membership?.in_reach);
-  const visibleError = membershipError || String(membership?.last_error || "").trim();
+  const visibleError = membershipError;
 
   const statusLabel =
     reachAction === "starting"

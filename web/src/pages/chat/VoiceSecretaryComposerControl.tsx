@@ -572,6 +572,14 @@ export function VoiceSecretaryComposerControl({
   const [pendingPromptDraft, setPendingPromptDraft] = useState<AssistantVoicePromptDraft | null>(
     null,
   );
+  const clearPendingPromptRequest = useCallback((clearDraft: boolean) => {
+    pendingPromptRequestIdRef.current = "";
+    pendingPromptGroupIdRef.current = "";
+    pendingPromptRequestStartedAtRef.current = 0;
+    pendingPromptComposerHashRef.current = "";
+    setPendingPromptRequestId("");
+    if (clearDraft) setPendingPromptDraft(null);
+  }, []);
   const [askFeedbackItems, setAskFeedbackItems] = useState<AssistantVoiceAskFeedback[]>([]);
   const [askFeedbackClockMs, setAskFeedbackClockMs] = useState(() => Date.now());
   const [liveTranscriptPreview, setLiveTranscriptPreview] = useState<VoiceTranscriptPreview | null>(
@@ -1518,14 +1526,9 @@ export function VoiceSecretaryComposerControl({
     async (draft: AssistantVoicePromptDraft) => {
       const text = String(draft.draft_text || "").trim();
       if (!text) return;
-      pendingPromptRequestIdRef.current = "";
-      pendingPromptRequestStartedAtRef.current = 0;
-      pendingPromptComposerHashRef.current = "";
-      setPendingPromptRequestId("");
-      setPendingPromptDraft(null);
       const applyMode = promptDraftApplyMode(draft);
       const groupId = String(pendingPromptGroupIdRef.current || recordingTargetGroupId()).trim();
-      pendingPromptGroupIdRef.current = "";
+      clearPendingPromptRequest(true);
       if (isCurrentGroup(groupId)) {
         onPromptDraft?.(text, { mode: applyMode });
       } else {
@@ -1547,7 +1550,15 @@ export function VoiceSecretaryComposerControl({
               }),
       });
     },
-    [acknowledgePromptDraft, isCurrentGroup, onPromptDraft, recordingTargetGroupId, showNotice, t],
+    [
+      acknowledgePromptDraft,
+      clearPendingPromptRequest,
+      isCurrentGroup,
+      onPromptDraft,
+      recordingTargetGroupId,
+      showNotice,
+      t,
+    ],
   );
 
   useEffect(() => {
@@ -1564,18 +1575,10 @@ export function VoiceSecretaryComposerControl({
     if (typeof window === "undefined") return undefined;
     let cancelled = false;
     let timer = 0;
-    const clearStaleRequest = () => {
-      pendingPromptRequestIdRef.current = "";
-      pendingPromptGroupIdRef.current = "";
-      pendingPromptRequestStartedAtRef.current = 0;
-      pendingPromptComposerHashRef.current = "";
-      setPendingPromptRequestId("");
-      setPendingPromptDraft(null);
-    };
     const poll = () => {
       if (cancelled) return;
       if (!isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current)) {
-        clearStaleRequest();
+        clearPendingPromptRequest(true);
         return;
       }
       if (!cancelled) void refreshAssistant({ quiet: true });
@@ -1586,7 +1589,7 @@ export function VoiceSecretaryComposerControl({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [pendingPromptDraft, pendingPromptRequestId, refreshAssistant]);
+  }, [clearPendingPromptRequest, pendingPromptDraft, pendingPromptRequestId, refreshAssistant]);
 
   useEffect(() => {
     if (!open || !serviceAsrReady) return;
@@ -1601,6 +1604,9 @@ export function VoiceSecretaryComposerControl({
     refreshSeq.current = ownership.dataSeq;
     visibleLoadSeqRef.current = ownership.visibleLoadingSeq;
     const keepActiveRecording = recordingRef.current;
+    const keepPendingPromptRequest =
+      Boolean(pendingPromptRequestIdRef.current.trim()) &&
+      isVoicePromptRequestFresh(pendingPromptRequestStartedAtRef.current);
     if (!keepActiveRecording) {
       const recognition = recognitionRef.current;
       recognitionRef.current = null;
@@ -1642,17 +1648,12 @@ export function VoiceSecretaryComposerControl({
     setAudioDevices([]);
     setSelectedAudioDeviceId("");
     if (!keepActiveRecording) {
-      pendingPromptRequestIdRef.current = "";
-      pendingPromptGroupIdRef.current = "";
-      pendingPromptRequestStartedAtRef.current = 0;
+      if (!keepPendingPromptRequest) clearPendingPromptRequest(true);
       pendingAskRequestIdRef.current = "";
-      pendingPromptComposerHashRef.current = "";
       dismissedVoiceReplyKeysRef.current.clear();
       localVoiceReplyRequestIdsRef.current.clear();
       askFeedbackReplyKeyByRequestIdRef.current.clear();
-      setPendingPromptRequestId("");
       setPendingAskRequestId("");
-      setPendingPromptDraft(null);
       setAskFeedbackItems([]);
       liveTranscriptPreviewRef.current = null;
       setLiveTranscriptPreview(null);
@@ -1701,7 +1702,13 @@ export function VoiceSecretaryComposerControl({
         browserSpeechStopFinalizeTimerRef.current = null;
       }
     }
-  }, [loadDocumentDraft, releaseVoiceRecordingGuards, selectedGroupId, stopBrowserMeter]);
+  }, [
+    clearPendingPromptRequest,
+    loadDocumentDraft,
+    releaseVoiceRecordingGuards,
+    selectedGroupId,
+    stopBrowserMeter,
+  ]);
 
   useEffect(() => {
     if (initiallyOpen) setOpen(true);
@@ -2196,11 +2203,7 @@ export function VoiceSecretaryComposerControl({
           by: "user",
         });
         if (!resp.ok) {
-          pendingPromptRequestIdRef.current = "";
-          pendingPromptGroupIdRef.current = "";
-          pendingPromptRequestStartedAtRef.current = 0;
-          pendingPromptComposerHashRef.current = "";
-          setPendingPromptRequestId("");
+          clearPendingPromptRequest(false);
           if (isCurrentGroup(gid)) showError(resp.error.message);
           return;
         }
@@ -2220,11 +2223,7 @@ export function VoiceSecretaryComposerControl({
         });
         void refreshAssistant({ quiet: true });
       } catch {
-        pendingPromptRequestIdRef.current = "";
-        pendingPromptGroupIdRef.current = "";
-        pendingPromptRequestStartedAtRef.current = 0;
-        pendingPromptComposerHashRef.current = "";
-        setPendingPromptRequestId("");
+        clearPendingPromptRequest(false);
         if (!isCurrentGroup(gid)) return;
         showError(
           t("voiceSecretaryPromptRefineFailed", {
@@ -2235,6 +2234,7 @@ export function VoiceSecretaryComposerControl({
     },
     [
       assistantEnabled,
+      clearPendingPromptRequest,
       composerContext,
       composerText,
       effectiveRecognitionLanguage,
