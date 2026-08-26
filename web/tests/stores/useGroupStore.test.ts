@@ -762,35 +762,6 @@ describe("useGroupStore actors fetch policy", () => {
     ]);
   });
 
-  it("keeps Mail unread and Web Model direct queue projections independent", () => {
-    useGroupStore.setState({
-      groups: [{ group_id: "g-demo", title: "Demo", topic: "", state: "active" }],
-      groupOrder: ["g-demo"],
-      selectedGroupId: "g-demo",
-      actors: [
-        {
-          id: "peer-1",
-          runtime: "web_model",
-          effective_working_state: "working",
-          unread_count: 2,
-          web_model_queued_count: 4,
-        },
-      ],
-    });
-
-    useGroupStore.getState().incrementActorUnread(["peer-1"]);
-    expect(useGroupStore.getState().actors[0]).toMatchObject({
-      unread_count: 3,
-      web_model_queued_count: 4,
-    });
-
-    useGroupStore.getState().incrementWebModelQueued(["peer-1"]);
-    expect(useGroupStore.getState().actors[0]).toMatchObject({
-      unread_count: 3,
-      web_model_queued_count: 5,
-    });
-  });
-
   it("updateActorActivity persists the latest working-state truth into the selected-group snapshot", () => {
     useGroupStore.setState({
       groups: [

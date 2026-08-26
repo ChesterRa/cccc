@@ -396,7 +396,7 @@ def handle_membership_reach_on(args: Dict[str, Any]) -> DaemonResponse:
         )
     remote = get_remote_access_settings()
     provider = str(remote.get("provider") or "off").strip().lower()
-    if provider in {"manual", "tailscale"} and bool(remote.get("enabled")):
+    if provider == "tailscale" and bool(remote.get("enabled")):
         remember_membership_error(f"remote access is already using {provider}")
         return _error(
             "membership_gate",

@@ -32,7 +32,12 @@ from .runtime_control import (
     clear_web_runtime_state,
     write_web_runtime_state,
 )
-from .middleware import AuthMiddleware, ReadOnlyGuardMiddleware, UiCacheControlMiddleware
+from .middleware import (
+    AuthMiddleware,
+    ReadOnlyGuardMiddleware,
+    UiCacheControlMiddleware,
+    WebSocketOriginMiddleware,
+)
 from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
@@ -139,9 +144,12 @@ def _resolve_web_dist_dir() -> Optional[Path]:
 
 
 _PUBLIC_API_PATHS = frozenset({
+    "/api/v1/ping",
     "/api/v1/health",
     "/api/v1/ready",
     "/api/v1/branding",
+    "/api/v1/web_access/session",
+    "/api/v1/web_access/exchange",
     "/api/group-bridge/pairing/requests/remote",
     "/api/group-bridge/pairing/requests/remote/status",
     "/api/group-bridge/session/ws",
@@ -171,10 +179,6 @@ def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "
     auth = str(request.headers.get("authorization") or "").strip()
     if auth.lower().startswith("bearer "):
         return str(auth[7:] or "").strip(), "header"
-
-    q = str(request.query_params.get("token") or "").strip()
-    if q:
-        return q, "query"
 
     cookie = str(request.cookies.get("cccc_access_token") or "").strip()
     if cookie:
@@ -427,13 +431,16 @@ def create_app() -> FastAPI:
 
     cors = str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").strip()
     if cors:
-        allow_origins = [o.strip() for o in cors.split(",") if o.strip()]
+        allow_origins = [
+            o.strip() for o in cors.split(",") if o.strip() and o.strip() != "*"
+        ]
         if allow_origins:
             app.add_middleware(
                 CORSMiddleware,
                 allow_origins=allow_origins,
                 allow_methods=["*"],
                 allow_headers=["*"],
+                allow_credentials=True,
             )
 
     @app.exception_handler(HTTPException)
@@ -488,8 +495,14 @@ def create_app() -> FastAPI:
         is_public_path=_is_public_path,
         resolve_principal=_resolve_principal,
         tokens_active=list_access_tokens,
+        admin_tokens_active=lambda: any(
+            bool((item or {}).get("is_admin"))
+            for item in list_access_tokens()
+            if isinstance(item, dict)
+        ),
     )
     app.add_middleware(ReadOnlyGuardMiddleware, read_only=read_only)
+    app.add_middleware(WebSocketOriginMiddleware)
     app.add_middleware(UiCacheControlMiddleware)
 
     from .routes.base import register_base_routes
@@ -499,6 +512,7 @@ def create_app() -> FastAPI:
     from .routes.actors import create_routers as create_actor_routers
     from .routes.im import register_im_routes
     from .routes.access_tokens import create_routers as create_access_token_routers
+    from .routes.web_access_exchange import create_routers as create_web_access_exchange_routers
     from .routes.group_bridge import create_routers as create_group_bridge_routers
     from .routes.nomcp import create_routers as create_nomcp_routers
     from .routes.runtime_activity import create_routers as create_runtime_activity_routers
@@ -528,6 +542,8 @@ def create_app() -> FastAPI:
         app.include_router(router)
     register_im_routes(app, ctx=route_ctx)
     for router in create_access_token_routers(route_ctx):
+        app.include_router(router)
+    for router in create_web_access_exchange_routers(route_ctx):
         app.include_router(router)
     for router in create_group_bridge_routers(route_ctx):
         app.include_router(router)

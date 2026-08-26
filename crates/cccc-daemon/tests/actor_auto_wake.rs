@@ -2,14 +2,93 @@
 
 use cccc_client::DaemonClient;
 use cccc_contracts::{DaemonRequest, DaemonResponse};
-use cccc_core::HomeLayout;
+use cccc_core::{HomeLayout, ledger};
 use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 static DAEMON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
+async fn directed_message_restarts_an_actor_after_unexpected_process_exit() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("crash-auto-wake-test", false).await;
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","sleep 1; exit 17"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_restart",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    wait_until_async(|| async {
+        let actors = raw_call(
+            &client,
+            "actor_list",
+            json!({"group_id":group_id,"by":"user"}),
+        )
+        .await;
+        let exit_recorded = ledger::read_all(&ledger_path).is_ok_and(|events| {
+            events.iter().any(|event| {
+                event.kind == "actor.stop"
+                    && event.data["actor_id"] == "peer1"
+                    && event.data["reason"] == "process_exit"
+            })
+        });
+        exit_recorded
+            && actors.ok
+            && actors.result["actors"][0]["enabled"] == true
+            && actors.result["actors"][0]["running"] == false
+    })
+    .await;
+
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","stty -echo; while IFS= read -r line; do printf 'RECOVERED:%s\\n' \"$line\"; done"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    let sent = call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake after crash","message_mode":"send"}),
+    )
+    .await;
+    let source_event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("source event id")
+        .to_owned();
+    wait_for_accepted_delivery(&ledger_path, &source_event_id).await;
+    let actors = call(
+        &client,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await;
+    assert_eq!(actors.result["actors"][0]["enabled"], true);
+    assert_eq!(actors.result["actors"][0]["running"], true);
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn request_reply_wakes_an_explicitly_stopped_actor() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("auto-wake-test", true).await;
 
@@ -25,51 +104,16 @@ async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
     let sent = call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake up","message_mode":"send"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake up","message_mode":"request_reply"}),
     )
     .await;
-    assert_eq!(sent.result["message_mode"], "send");
-    assert!(sent.result.get("delivery").is_none());
+    assert_eq!(sent.result["message_mode"], "request_reply");
     let sent_event_id = sent.result["event"]["id"]
         .as_str()
         .expect("sent event id")
         .to_owned();
-
-    let actors = call(
-        &client,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    )
-    .await;
-    assert_eq!(actors.result["actors"][0]["enabled"], false);
-    assert_eq!(actors.result["actors"][0]["running"], false);
-    let inbox = call(
-        &client,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
-    )
-    .await;
-    assert_eq!(inbox.result["messages"], json!([]));
-    let history = call(
-        &client,
-        "message_history",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","mode":"send"}),
-    )
-    .await;
-    assert_eq!(history.result["messages"][0]["data"]["text"], "wake up");
-
-    call(
-        &client,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    )
-    .await;
-
-    let metadata = format!("[event_id={sent_event_id} message_mode=send]");
-    let output = wait_for_terminal(&client, &group_id, &metadata).await;
-    assert!(output.contains(&format!(
-        "[cccc] user → peer1 [event_id={sent_event_id} message_mode=send]: wake up"
-    )));
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    wait_for_accepted_delivery(&ledger_path, &sent_event_id).await;
     let actors = call(
         &client,
         "actor_list",
@@ -78,41 +122,13 @@ async fn directed_message_waits_for_an_explicitly_stopped_actor_to_start() {
     .await;
     assert_eq!(actors.result["actors"][0]["enabled"], true);
     assert_eq!(actors.result["actors"][0]["running"], true);
-    call(
-        &client,
-        "group_set_state",
-        json!({"group_id":group_id,"state":"paused","by":"user"}),
-    )
-    .await;
-    call(
-        &client,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-C","message_mode":"send"}),
-    )
-    .await;
-    call(
-        &client,
-        "group_set_state",
-        json!({"group_id":group_id,"state":"active","by":"user"}),
-    )
-    .await;
-
-    let output = wait_for_terminal(&client, &group_id, "message-C").await;
-    assert!(output.contains("message-C"));
-    let inbox = call(
-        &client,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
-    )
-    .await;
-    assert_eq!(inbox.result["messages"], json!([]));
 
     shutdown(&client, daemon).await;
     drop(temp);
 }
 
 #[tokio::test]
-async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
+async fn directed_message_wakes_an_explicitly_stopped_group() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("stopped-group-test", false).await;
     call(
@@ -129,8 +145,53 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
     )
     .await;
     assert_eq!(sent.result["message_mode"], "send");
+    let sent_event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("sent event id")
+        .to_owned();
+    wait_for_accepted_delivery(&group_ledger_path(&temp, &group_id), &sent_event_id).await;
+    let group = call(
+        &client,
+        "group_show",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await;
+    assert_eq!(group.result["group"]["state"], "active");
+    assert_eq!(group.result["group"]["actors"][0]["enabled"], true);
+    assert_eq!(group.result["group"]["actors"][0]["running"], true);
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn mail_does_not_wake_an_explicitly_stopped_group() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("stopped-group-mail-test", false).await;
+    call(
+        &client,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await;
+
+    let sent = call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"stay in inbox","message_mode":"mail"}),
+    )
+    .await;
+    assert_eq!(sent.result["message_mode"], "mail");
+    let sent_event_id = sent.result["event"]["id"].as_str().expect("sent event id");
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!cccc_runtime::status(&group_id, "peer1").is_ok_and(|status| status.running));
+    let deliveries = ledger::read_all(&group_ledger_path(&temp, &group_id))
+        .expect("read ledger")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "runtime.delivery" && event.data["source_event_id"] == sent_event_id
+        })
+        .count();
+    assert_eq!(deliveries, 0);
     let group = call(
         &client,
         "group_show",
@@ -138,13 +199,14 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
     )
     .await;
     assert_eq!(group.result["group"]["state"], "stopped");
+    assert_eq!(group.result["group"]["actors"][0]["running"], false);
 
     shutdown(&client, daemon).await;
     drop(temp);
 }
 
 #[tokio::test]
-async fn resume_delivers_paused_messages_in_order_without_creating_mail() {
+async fn directed_message_resumes_a_paused_group_and_delivers() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("paused-session-recovery", false).await;
     call(
@@ -153,67 +215,33 @@ async fn resume_delivers_paused_messages_in_order_without_creating_mail() {
         json!({"group_id":group_id,"state":"paused","by":"user"}),
     )
     .await;
-    call(
-        &client,
-        "actor_update",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "patch":{"command":["sh","-c","stty -echo; while IFS= read -r line; do printf 'RECOVERED:%s\\n' \"$line\"; done"]},
-            "by":"user"
-        }),
-    )
-    .await;
-    call(
-        &client,
-        "actor_restart",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    )
-    .await;
-    call(
+    let sent = call(
         &client,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A","message_mode":"send"}),
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"resume-on-send","message_mode":"send"}),
     )
     .await;
-    call(
+    let sent_event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("sent event id")
+        .to_owned();
+    wait_for_accepted_delivery(&group_ledger_path(&temp, &group_id), &sent_event_id).await;
+    let group = call(
         &client,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-B","message_mode":"send"}),
+        "group_show",
+        json!({"group_id":group_id,"by":"user"}),
     )
     .await;
-    call(
-        &client,
-        "group_set_state",
-        json!({"group_id":group_id,"state":"active","by":"user"}),
-    )
-    .await;
-
-    let output = wait_for_terminal(&client, &group_id, "message-B").await;
-    assert!(output.contains("message-A"));
-    assert!(output.contains("message-B"));
-    let inbox = call(
-        &client,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
-    )
-    .await;
-    assert_eq!(inbox.result["messages"], json!([]));
-    let history = call(
-        &client,
-        "message_history",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","mode":"send"}),
-    )
-    .await;
-    assert_eq!(history.result["messages"][0]["data"]["text"], "message-B");
-    assert_eq!(history.result["messages"][1]["data"]["text"], "message-A");
+    assert_eq!(group.result["group"]["state"], "active");
+    assert_eq!(group.result["group"]["actors"][0]["enabled"], true);
+    assert_eq!(group.result["group"]["actors"][0]["running"], true);
 
     shutdown(&client, daemon).await;
     drop(temp);
 }
 
 #[tokio::test]
-async fn actor_start_delivers_work_that_arrived_while_the_actor_was_paused() {
+async fn directed_message_resumes_a_paused_group_and_stopped_actor() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("actor-start-recovery", false).await;
     call(
@@ -228,46 +256,26 @@ async fn actor_start_delivers_work_that_arrived_while_the_actor_was_paused() {
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     )
     .await;
-    call(
+    let sent = call(
         &client,
         "send",
         json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A","message_mode":"send"}),
     )
     .await;
-    call(
+    let sent_event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("sent event id")
+        .to_owned();
+    wait_for_accepted_delivery(&group_ledger_path(&temp, &group_id), &sent_event_id).await;
+    let group = call(
         &client,
-        "group_set_state",
-        json!({"group_id":group_id,"state":"active","by":"user"}),
+        "group_show",
+        json!({"group_id":group_id,"by":"user"}),
     )
     .await;
-
-    call(
-        &client,
-        "actor_update",
-        json!({
-            "group_id":group_id,
-            "actor_id":"peer1",
-            "patch":{"command":["sh","-c","stty -echo; while IFS= read -r line; do printf 'RECOVERED:%s\\n' \"$line\"; done"]},
-            "by":"user"
-        }),
-    )
-    .await;
-    call(
-        &client,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    )
-    .await;
-
-    let output = wait_for_terminal(&client, &group_id, "message-A").await;
-    assert!(output.contains("message-A"));
-    let inbox = call(
-        &client,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
-    )
-    .await;
-    assert_eq!(inbox.result["messages"], json!([]));
+    assert_eq!(group.result["group"]["state"], "active");
+    assert_eq!(group.result["group"]["actors"][0]["enabled"], true);
+    assert_eq!(group.result["group"]["actors"][0]["running"], true);
 
     shutdown(&client, daemon).await;
     drop(temp);
@@ -337,33 +345,6 @@ async fn setup(
     (temp, daemon, client, group_id)
 }
 
-async fn wait_for_terminal(client: &DaemonClient, group_id: &str, expected: &str) -> String {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
-    loop {
-        let response = raw_call(
-            client,
-            "terminal_tail",
-            json!({"group_id":group_id,"actor_id":"peer1"}),
-        )
-        .await;
-        if response.ok
-            && response.result["text"]
-                .as_str()
-                .is_some_and(|text| text.contains(expected))
-        {
-            return response.result["text"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "PTY did not receive {expected:?}; response={response:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 async fn shutdown(client: &DaemonClient, daemon: tokio::task::JoinHandle<anyhow::Result<()>>) {
     call(client, "shutdown", json!({})).await;
     tokio::time::timeout(Duration::from_secs(5), daemon)
@@ -390,9 +371,45 @@ async fn raw_call(client: &DaemonClient, op: &str, args: Value) -> DaemonRespons
         .expect("daemon request")
 }
 
+fn group_ledger_path(temp: &tempfile::TempDir, group_id: &str) -> std::path::PathBuf {
+    temp.path()
+        .join("rust-home/groups")
+        .join(group_id)
+        .join("ledger.jsonl")
+}
+
+async fn wait_for_accepted_delivery(ledger_path: &std::path::Path, source_event_id: &str) {
+    wait_until_async(|| async {
+        ledger::read_all(ledger_path).is_ok_and(|events| {
+            events.iter().any(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == source_event_id
+                    && event.data["actor_id"] == "peer1"
+                    && event.data["state"] == "accepted"
+            })
+        })
+    })
+    .await;
+}
+
 async fn wait_until(mut condition: impl FnMut() -> bool) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while !condition() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition timed out"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_until_async<F, Fut>(mut condition: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !condition().await {
         assert!(
             tokio::time::Instant::now() < deadline,
             "condition timed out"

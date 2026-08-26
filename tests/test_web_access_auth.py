@@ -41,6 +41,67 @@ class TestWebAccessAuth(unittest.TestCase):
 
         return TestClient(app)
 
+    def test_websocket_origin_requires_same_origin(self) -> None:
+        from cccc.ports.web.middleware import _websocket_origin_allowed
+
+        base = {
+            "type": "websocket",
+            "headers": [
+                (b"host", b"cccc.example"),
+                (b"x-forwarded-proto", b"https"),
+            ],
+        }
+        self.assertTrue(
+            _websocket_origin_allowed(
+                {**base, "headers": [*base["headers"], (b"origin", b"https://cccc.example")]}
+            )
+        )
+        self.assertFalse(
+            _websocket_origin_allowed(
+                {**base, "headers": [*base["headers"], (b"origin", b"https://evil.example")]}
+            )
+        )
+        proxied = {
+            "type": "websocket",
+            "headers": [
+                (b"host", b"127.0.0.1:8848"),
+                (b"x-forwarded-host", b"localhost:5555"),
+                (b"x-forwarded-proto", b"http"),
+                (b"origin", b"http://localhost:5555"),
+            ],
+        }
+        self.assertTrue(_websocket_origin_allowed(proxied))
+
+        forwarded = {
+            "type": "websocket",
+            "headers": [
+                (b"host", b"127.0.0.1:8848"),
+                (b"forwarded", b'for=192.0.2.1;proto=https;host="cccc.example"'),
+                (b"origin", b"https://cccc.example"),
+            ],
+        }
+        self.assertTrue(_websocket_origin_allowed(forwarded))
+
+        chained = {
+            "type": "websocket",
+            "headers": [
+                (b"x-forwarded-host", b"cccc.example, 127.0.0.1:8848"),
+                (b"x-forwarded-proto", b"https, http"),
+                (b"origin", b"https://cccc.example"),
+            ],
+        }
+        self.assertTrue(_websocket_origin_allowed(chained))
+
+        direct_tls = {
+            "type": "websocket",
+            "scheme": "wss",
+            "headers": [
+                (b"host", b"cccc.example"),
+                (b"origin", b"https://cccc.example"),
+            ],
+        }
+        self.assertTrue(_websocket_origin_allowed(direct_tls))
+
     def test_web_access_session_reports_open_access_before_tokens_exist(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -114,15 +175,13 @@ class TestWebAccessAuth(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_request_without_access_token_gets_anonymous_principal(self) -> None:
+    def test_non_api_probe_keeps_anonymous_principal_for_static_ui_compatibility(self) -> None:
         _, cleanup = self._with_home()
         try:
             client = self._create_probe_client()
             resp = client.get("/__test__/principal")
             self.assertEqual(resp.status_code, 200)
-            body = resp.json()
-            self.assertTrue(body.get("present"))
-            self.assertEqual(str(body.get("kind") or ""), "anonymous")
+            self.assertEqual(resp.json().get("kind"), "anonymous")
         finally:
             cleanup()
 
@@ -141,7 +200,9 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertIn("cccc_access_token=""", set_cookie)
             self.assertIn("Max-Age=0", set_cookie)
             follow = client.get("/api/v1/web_access/session")
-            self.assertEqual(follow.status_code, 401)
+            self.assertEqual(follow.status_code, 200)
+            session = ((follow.json().get("result") or {}).get("web_access_session") or {})
+            self.assertFalse(bool(session.get("current_browser_signed_in")))
         finally:
             cleanup()
 
@@ -183,7 +244,7 @@ class TestWebAccessAuth(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_query_token_replaces_a_stale_cookie_for_http_and_websocket_auth(
+    def test_query_token_cannot_replace_cookie_or_authenticate_websocket(
         self,
     ) -> None:
         from cccc.kernel.access_tokens import create_access_token
@@ -198,10 +259,11 @@ class TestWebAccessAuth(unittest.TestCase):
             client = self._create_probe_client()
             client.cookies.set("cccc_access_token", stale_token)
 
-            response = client.get(f"/__test__/principal?token={current_token}")
+            response = client.get(f"/api/v1/web_access/session?token={current_token}")
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json().get("user_id"), "current-user")
-            self.assertIn(current_token, str(response.headers.get("set-cookie") or ""))
+            session = ((response.json().get("result") or {}).get("web_access_session") or {})
+            self.assertEqual(session.get("user_id"), "stale-user")
+            self.assertNotIn(current_token, str(response.headers.get("set-cookie") or ""))
 
             websocket = SimpleNamespace(
                 headers={},
@@ -209,12 +271,12 @@ class TestWebAccessAuth(unittest.TestCase):
                 query_params={"token": current_token},
             )
             self.assertEqual(
-                resolve_websocket_principal(websocket).user_id, "current-user"
+                resolve_websocket_principal(websocket).user_id, "stale-user"
             )
         finally:
             cleanup()
 
-    def test_invalid_query_token_does_not_fall_back_to_a_valid_cookie(self) -> None:
+    def test_non_session_query_token_is_ignored_in_favor_of_a_valid_cookie(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
@@ -225,19 +287,17 @@ class TestWebAccessAuth(unittest.TestCase):
 
             response = client.get("/__test__/principal?token=invalid")
 
-            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json().get("user_id"), "admin")
         finally:
             cleanup()
 
-    def test_stale_cookie_is_ignored_when_no_access_token_is_configured(self) -> None:
+    def test_stale_cookie_is_rejected_when_no_access_token_is_configured(self) -> None:
         _, cleanup = self._with_home()
         try:
             client = self._create_probe_client()
             client.cookies.set("cccc_access_token", "stale-cookie")
             resp = client.get("/__test__/principal")
-            self.assertEqual(resp.status_code, 200)
-            body = resp.json()
-            self.assertEqual(str(body.get("kind") or ""), "anonymous")
-            self.assertIn("cccc_access_token=\"\"", str(resp.headers.get("set-cookie") or ""))
+            self.assertEqual(resp.status_code, 401)
         finally:
             cleanup()

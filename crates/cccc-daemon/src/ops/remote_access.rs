@@ -96,11 +96,7 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
     let public_url = text(&global.remote_access, "web_public_url", "");
     let remotely_reachable = remote_web_exposure(&host, &public_url);
     let (_, admin_token_count) = token_counts(home);
-    if running
-        && remotely_reachable
-        && !environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED")
-        && admin_token_count == 0
-    {
+    if running && remotely_reachable && admin_token_count == 0 {
         return Err(OpError::new(
             "remote_access_admin_token_required",
             "an administrator access token is required before remote access can start",
@@ -193,16 +189,27 @@ fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {
         ));
     }
     let public_url = text(config, "web_public_url", "");
+    let host = text(config, "web_host", "127.0.0.1");
     if provider == "tailscale" && !public_url.is_empty() {
         return Err(OpError::new(
             "remote_access_invalid_config",
             "tailscale does not use web_public_url",
         ));
     }
-    if !public_url.is_empty() && !boolean(config, "require_access_token", true) {
+    if remote_web_exposure(&host, &public_url) && !boolean(config, "require_access_token", true) {
         return Err(OpError::new(
             "remote_access_invalid_config",
-            "public remote access requires an access token",
+            "remote Web exposure requires an access token",
+        ));
+    }
+    if provider == "manual"
+        && public_url.is_empty()
+        && !is_loopback_host(&host)
+        && !environment_flag("CCCC_REMOTE_ALLOW_INSECURE")
+    {
+        return Err(OpError::new(
+            "remote_access_invalid_config",
+            "plain HTTP LAN exposure requires CCCC_REMOTE_ALLOW_INSECURE=1; prefer an HTTPS reverse proxy or encrypted overlay",
         ));
     }
     config.insert("provider".into(), Value::String(provider));
@@ -226,10 +233,10 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     let reachable = remote_web_exposure(&host, &public_url);
     let allow_unauthenticated_listener = environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED");
     let allow_loopback_remote = environment_flag("CCCC_REMOTE_ALLOW_LOOPBACK");
-    let remote_listener_auth_required = reachable && !allow_unauthenticated_listener;
+    let remote_listener_auth_required = reachable;
     let remote_listener_auth_requirement_satisfied =
         !remote_listener_auth_required || admin_tokens > 0;
-    let effective_require_token = if !reachable || allow_unauthenticated_listener {
+    let effective_require_token = if !reachable {
         false
     } else if !public_url.is_empty() {
         true

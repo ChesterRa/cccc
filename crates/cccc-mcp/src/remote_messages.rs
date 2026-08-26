@@ -301,7 +301,7 @@ mod tests {
     use axum::Json;
     use axum::routing::post;
     use axum::{Router, extract::State};
-    use cccc_contracts::Event;
+    use cccc_contracts::{Actor, Event};
     use cccc_core::{GroupStore, ledger};
     use std::sync::{Arc, Mutex};
 
@@ -312,6 +312,17 @@ mod tests {
             Ok(())
         })
         .expect("bridge state");
+    }
+
+    fn source_group_with_helper(home: &HomeLayout) -> cccc_core::GroupDoc {
+        let store = GroupStore::new(home.clone()).expect("group store");
+        let group = store.create("source", "").expect("source group");
+        store
+            .mutate(&group.group_id, |current| {
+                current.actors.push(Actor::new("helper"));
+                Ok(current.clone())
+            })
+            .expect("helper actor")
     }
 
     #[test]
@@ -368,9 +379,7 @@ mod tests {
     async fn remote_message_prefers_live_daemon_session_over_a_complete_direct_route() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-        let group = GroupStore::new(home.clone())
-            .and_then(|store| store.create("source", ""))
-            .expect("source group");
+        let group = source_group_with_helper(&home);
         seed_bridge(
             &home,
             json!({"trusts":[{
@@ -497,9 +506,7 @@ mod tests {
 
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-        let group = GroupStore::new(home.clone())
-            .and_then(|store| store.create("source", ""))
-            .expect("source group");
+        let group = source_group_with_helper(&home);
         seed_bridge(
             &home,
             json!({"trusts":[{
@@ -877,9 +884,7 @@ mod tests {
     async fn trusted_read_route_is_selected_for_remote_message_delivery() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-        let group = GroupStore::new(home.clone())
-            .and_then(|store| store.create("source", ""))
-            .expect("source group");
+        let group = source_group_with_helper(&home);
         seed_bridge(
             &home,
             json!({

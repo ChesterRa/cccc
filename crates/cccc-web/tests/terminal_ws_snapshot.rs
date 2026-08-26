@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use cccc_contracts::{Actor, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, actors};
@@ -58,7 +59,9 @@ async fn negotiated_snapshot_opens_at_the_latest_screen_and_fences_live_output()
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=control&output_flow=ack_v1&bootstrap=snapshot_v1&cols=80&rows=24",
         group.group_id

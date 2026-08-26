@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -37,7 +38,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
     multipart.extend_from_slice(PNG);
     multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
                 .header(
@@ -78,7 +79,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
     assert!(path.starts_with("state/blobs/"));
     let blob_name = path.rsplit('/').next().expect("blob name").to_owned();
 
-    let blob = cccc_web::app(home.clone())
+    let blob = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::get(format!(
                 "/api/v1/groups/{}/blobs/{blob_name}",
@@ -101,7 +102,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
         PNG
     );
 
-    let download = cccc_web::app(home.clone())
+    let download = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::get(format!(
                 "/api/v1/groups/{}/blobs/{blob_name}?filename=overview.png&download=true",
@@ -154,7 +155,7 @@ async fn upload_larger_than_axum_default_limit_is_streamed_successfully() {
     multipart.extend(std::iter::repeat_n(b'x', 3 * 1024 * 1024));
     multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
                 .header(
@@ -207,7 +208,7 @@ async fn cross_group_upload_requires_destination_before_persisting_blob() {
         let boundary = format!("cccc-cross-group-{label}");
         let multipart =
             invalid_cross_group_multipart(&boundary, destination, destination_before_file);
-        let response = cccc_web::app(home.clone())
+        let response = auth_support::authenticated_app(home.clone())
             .oneshot(
                 Request::post(format!(
                     "/api/v1/groups/{}/send_cross_group_upload",
@@ -270,7 +271,7 @@ async fn cross_group_upload_preflights_mode_before_persisting_blob() {
         ),
         boundary = boundary,
     );
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!(
                 "/api/v1/groups/{}/send_cross_group_upload",
@@ -332,7 +333,7 @@ async fn reply_upload_rejects_nested_reply_mode_before_persisting_blob() {
     multipart.extend_from_slice(b"reply payload");
     multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-    let response = cccc_web::app(home)
+    let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::post(format!("/api/v1/groups/{}/reply_upload", group.group_id))
                 .header(
@@ -380,7 +381,7 @@ async fn send_upload_preflights_audience_before_persisting_blob() {
         ),
         boundary = boundary,
     );
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
                 .header(
@@ -473,7 +474,7 @@ async fn send_upload_replays_client_id_before_persisting_blob() {
         ),
         boundary = boundary,
     );
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
                 .header(

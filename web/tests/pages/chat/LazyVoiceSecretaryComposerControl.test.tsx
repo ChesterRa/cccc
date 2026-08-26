@@ -18,7 +18,7 @@ import { LazyVoiceSecretaryComposerControl } from "../../../src/pages/chat/LazyV
 describe("LazyVoiceSecretaryComposerControl", () => {
   beforeEach(() => voiceControl.mockClear());
 
-  it("does not mount the voice feature until the user activates its launcher", async () => {
+  it("initializes the voice feature automatically after a group is selected", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
     await act(async () =>
@@ -32,14 +32,11 @@ describe("LazyVoiceSecretaryComposerControl", () => {
       ),
     );
 
-    expect(voiceControl).not.toHaveBeenCalled();
-    const launcher = host.querySelector<HTMLButtonElement>("button");
-    expect(launcher).not.toBeNull();
-    await act(async () => launcher?.click());
     await vi.waitFor(() => expect(voiceControl).toHaveBeenCalled());
     expect(voiceControl.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ initiallyOpen: true }),
+      expect.objectContaining({ selectedGroupId: "g-1" }),
     );
+    expect(voiceControl.mock.calls.at(-1)?.[0]).not.toHaveProperty("initiallyOpen");
     await act(async () => root.unmount());
   });
 });

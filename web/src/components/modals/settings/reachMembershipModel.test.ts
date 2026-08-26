@@ -20,11 +20,16 @@ describe("reach membership addresses", () => {
       logged_in: true,
       online: true,
       hostname: "https://d-1.cccc.foo",
-      web_url: "https://d-1.cccc.foo/ui/?token=acc_secret",
+      web_url: "https://d-1.cccc.foo/ui/",
     });
 
     expect(membershipPublicAddress(state)).toBe("https://d-1.cccc.foo");
-    expect(membershipAdminWebUrl(state)).toContain("token=acc_secret");
+    expect(membershipAdminWebUrl(state)).toBe("https://d-1.cccc.foo/ui/");
+    expect(
+      membershipAdminWebUrl(
+        membership({ logged_in: true, web_url: "https://d-1.cccc.foo/ui/?token=acc_secret" }),
+      ),
+    ).toBe("");
   });
 
   it("does not advertise an offline or credential-bearing hostname", () => {

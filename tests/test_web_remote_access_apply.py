@@ -132,11 +132,11 @@ class TestWebRemoteAccessApply(unittest.TestCase):
                 with TestClient(app) as client:
                     client.app.state.request_web_restart = lambda: called.append("restart")
                     resp = client.post("/api/v1/remote_access/apply?by=user")
-            self.assertEqual(resp.status_code, 409)
+            self.assertEqual(resp.status_code, 401)
             error = resp.json().get("error") or {}
             self.assertEqual(
                 str(error.get("code") or ""),
-                "remote_access_admin_token_required",
+                "bootstrap_required",
             )
             self.assertEqual(called, [])
         finally:

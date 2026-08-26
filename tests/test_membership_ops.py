@@ -313,10 +313,10 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(resp.ok)
         self.assertEqual(resp.error.code, "membership_gate")
 
-    def test_reach_on_refuses_enabled_manual_provider(self) -> None:
+    def test_reach_on_refuses_enabled_tailscale_provider(self) -> None:
         create_access_token("admin", is_admin=True)
         update_remote_access_settings(
-            {"provider": "manual", "enabled": True, "web_host": "0.0.0.0"}
+            {"provider": "tailscale", "enabled": True, "web_host": "0.0.0.0"}
         )
         resp = handle_membership_reach_on({"by": "user"})
         self.assertFalse(resp.ok)
@@ -343,7 +343,14 @@ class TestMembershipOps(unittest.TestCase):
         set_reach_command_for_tests(
             [sys.executable, "-c", "import time; time.sleep(30)"]
         )
-        update_remote_access_settings({"web_port": 9000})
+        update_remote_access_settings(
+            {
+                "provider": "manual",
+                "enabled": True,
+                "web_port": 9000,
+                "web_public_url": "https://manual.example.test",
+            }
+        )
         live_port = self._record_live_web()
         create_access_token("admin", is_admin=True, custom_token="acc_admin_fixture")
         save_membership(
@@ -362,7 +369,8 @@ class TestMembershipOps(unittest.TestCase):
         membership = resp.result["membership"]
         self.assertTrue(membership["online"])
         self.assertEqual(membership["hostname"], "https://d-abc.example.test")
-        self.assertIn("token=acc_admin_fixture", membership["web_url"] or "")
+        self.assertEqual(membership["web_url"], "https://d-abc.example.test/ui/")
+        self.assertNotIn("acc_admin_fixture", membership["web_url"] or "")
         self.assertNotIn("acc_admin_fixture", membership["hostname"] or "")
         remote = get_remote_access_settings()
         self.assertEqual(remote["provider"], "reach")
@@ -388,6 +396,13 @@ class TestMembershipOps(unittest.TestCase):
         )
         create_access_token("admin", is_admin=True)
         self._record_live_web()
+        update_remote_access_settings(
+            {
+                "provider": "manual",
+                "enabled": True,
+                "web_public_url": "https://manual.example.test",
+            }
+        )
         save_membership(
             {
                 "logged_in": True,
@@ -405,6 +420,9 @@ class TestMembershipOps(unittest.TestCase):
                 handle_membership_reach_on({"by": "user"})
 
         self.assertIsNone(cloudflared_supervisor.running_pid())
+        remote = get_remote_access_settings()
+        self.assertEqual(remote["provider"], "manual")
+        self.assertEqual(remote["web_public_url"], "https://manual.example.test")
 
     def test_status_stops_helper_when_account_reports_cut(self) -> None:
         os.environ["CCCC_ACCOUNT_ORIGIN"] = "https://account.test"
@@ -538,6 +556,9 @@ class TestMembershipOps(unittest.TestCase):
 
         account = ReachDisabledAccount()
         set_account_transport_for_tests(account)
+        set_reach_command_for_tests(
+            [sys.executable, "-c", "import time; time.sleep(30)"]
+        )
         create_access_token("admin", is_admin=True)
         self._record_live_web()
         save_membership(
@@ -817,21 +838,30 @@ class TestMembershipOps(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "helper process fixture is Unix-specific")
     def test_supervisor_reaps_child_when_pid_tracking_cannot_be_written(self) -> None:
         helper = Path(self._tmp.name) / "cloudflared-pid-fixture"
-        observed_pid = Path(self._tmp.name) / "observed.pid"
-        helper.write_text(
-            '#!/bin/sh\necho $$ > "$1"\nexec sleep 30\n', encoding="utf-8"
-        )
+        helper.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
         helper.chmod(0o700)
-        cloudflared_supervisor.pid_path().mkdir(parents=True)
+        children = []
+        real_popen = subprocess.Popen
 
-        with self.assertRaises(OSError):
-            cloudflared_supervisor.start(
-                "secret-token", command=[str(helper), str(observed_pid)]
-            )
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
 
-        child_pid = int(observed_pid.read_text(encoding="utf-8").strip())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(child_pid, 0)
+        with patch.object(
+            cloudflared_supervisor.subprocess,
+            "Popen",
+            side_effect=spawn,
+        ), patch.object(
+            cloudflared_supervisor,
+            "atomic_write_json",
+            side_effect=OSError("pid tracking failed"),
+        ):
+            with self.assertRaises(OSError):
+                cloudflared_supervisor.start("secret-token", command=[str(helper)])
+
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
 
     @unittest.skipUnless(
         os.name == "posix", "process command inspection is Unix-specific"

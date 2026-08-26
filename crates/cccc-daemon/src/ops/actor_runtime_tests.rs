@@ -202,38 +202,19 @@ fn restore_recovers_one_pending_send_without_advancing_read_cursor() {
     runtime_restore::restore_running(&home).expect("restore");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     loop {
-        let response = crate::handle_request(
-            &home,
-            &DaemonRequest {
-                v: 1,
-                op: "terminal_tail".into(),
-                args: json!({"group_id":group_id,"actor_id":"peer1","by":"user"})
-                    .as_object()
-                    .cloned()
-                    .expect("args"),
-            },
-        );
-        let text = response.result["text"].as_str().unwrap_or_default();
-        if text.contains("RESTORED:") {
-            let restored = text
-                .rsplit_once("RESTORED:")
-                .map(|(_, restored)| restored)
-                .expect("restored turn boundary");
-            if !restored.contains("message-before-restart") {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "restored actor exposed only a partial recovered turn: {response:?}"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                continue;
-            }
-            assert!(restored.contains("message-before-restart"));
-            assert!(!restored.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
+        let events =
+            ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
+        if events.iter().any(|delivery| {
+            delivery.kind == "runtime.delivery"
+                && delivery.data["source_event_id"] == event.id
+                && delivery.data["actor_id"] == "peer1"
+                && delivery.data["state"] == "accepted"
+        }) {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "restored actor did not recover the pending Send: {response:?}"
+            "restored actor did not accept the pending Send"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }

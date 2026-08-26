@@ -28,16 +28,54 @@ class TestAccessTokenRoutes(unittest.TestCase):
 
         return TestClient(create_app())
 
-    def test_list_access_tokens_no_auth_when_no_tokens(self) -> None:
+    def test_list_access_tokens_requires_bootstrap_when_no_tokens(self) -> None:
         _, cleanup = self._with_home()
         try:
             client = self._create_client()
             resp = client.get("/api/v1/access-tokens")
-            self.assertEqual(resp.status_code, 200)
-            data = resp.json()
-            self.assertTrue(data.get("ok"))
-            self.assertEqual(data["result"]["access_tokens"], [])
+            self.assertEqual(resp.status_code, 401)
+            self.assertEqual((resp.json().get("error") or {}).get("code"), "bootstrap_required")
         finally:
+            cleanup()
+
+    def test_empty_store_rejects_protected_routes_and_wrong_bootstrap(self) -> None:
+        _, cleanup = self._with_home()
+        old_override = os.environ.get("CCCC_WEB_ALLOW_UNAUTHENTICATED")
+        os.environ["CCCC_WEB_ALLOW_UNAUTHENTICATED"] = "1"
+        try:
+            client = self._create_client()
+            protected = client.get(
+                "/api/v1/fs/list",
+                params={"path": "~"},
+                headers={
+                    "host": "cccc.example",
+                    "x-forwarded-for": "203.0.113.10",
+                    "x-forwarded-proto": "https",
+                },
+            )
+            self.assertEqual(protected.status_code, 401)
+            self.assertEqual(
+                (protected.json().get("error") or {}).get("code"),
+                "bootstrap_required",
+            )
+            bootstrap = client.post(
+                "/api/v1/access-tokens",
+                json={
+                    "user_id": "attacker",
+                    "is_admin": True,
+                    "bootstrap_token": "wrong",
+                },
+            )
+            self.assertEqual(bootstrap.status_code, 401)
+            self.assertEqual(
+                (bootstrap.json().get("error") or {}).get("code"),
+                "bootstrap_required",
+            )
+        finally:
+            if old_override is None:
+                os.environ.pop("CCCC_WEB_ALLOW_UNAUTHENTICATED", None)
+            else:
+                os.environ["CCCC_WEB_ALLOW_UNAUTHENTICATED"] = old_override
             cleanup()
 
     def test_malformed_access_token_store_fails_closed(self) -> None:
@@ -87,12 +125,21 @@ class TestAccessTokenRoutes(unittest.TestCase):
             cleanup()
 
     def test_first_admin_access_token_sets_login_cookie(self) -> None:
-        _, cleanup = self._with_home()
+        home, cleanup = self._with_home()
         try:
+            from cccc.kernel.web_bootstrap import ensure_web_bootstrap_token
+
+            bootstrap_path = ensure_web_bootstrap_token(Path(home))
+            self.assertIsNotNone(bootstrap_path)
+            bootstrap_token = Path(bootstrap_path).read_text(encoding="utf-8").strip()
             client = self._create_client()
             resp = client.post(
                 "/api/v1/access-tokens",
-                json={"user_id": "first-admin", "is_admin": True},
+                json={
+                    "user_id": "first-admin",
+                    "is_admin": True,
+                    "bootstrap_token": bootstrap_token,
+                },
             )
             self.assertEqual(resp.status_code, 200)
             created = resp.json()["result"]["access_token"]
@@ -112,19 +159,28 @@ class TestAccessTokenRoutes(unittest.TestCase):
             cleanup()
 
     def test_first_admin_access_token_cookie_honors_forwarded_https(self) -> None:
-        _, cleanup = self._with_home()
+        home, cleanup = self._with_home()
         try:
+            from cccc.kernel.web_bootstrap import ensure_web_bootstrap_token
+
+            bootstrap_path = ensure_web_bootstrap_token(Path(home))
+            self.assertIsNotNone(bootstrap_path)
+            bootstrap_token = Path(bootstrap_path).read_text(encoding="utf-8").strip()
             client = self._create_client()
             resp = client.post(
                 "/api/v1/access-tokens",
-                json={"user_id": "first-admin", "is_admin": True},
+                json={
+                    "user_id": "first-admin",
+                    "is_admin": True,
+                    "bootstrap_token": bootstrap_token,
+                },
                 headers={"x-forwarded-proto": "https"},
             )
             self.assertEqual(resp.status_code, 200)
             set_cookie = str(resp.headers.get("set-cookie") or "").lower()
             self.assertIn("cccc_access_token=", set_cookie)
             self.assertIn("secure", set_cookie)
-            self.assertIn("samesite=none", set_cookie)
+            self.assertIn("samesite=lax", set_cookie)
         finally:
             cleanup()
 
@@ -369,6 +425,7 @@ class TestAccessTokenRoutes(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
+            create_access_token("admin-user", is_admin=True)
             user = create_access_token("regular-user", is_admin=False)
             token = str(user.get("token") or "")
             client = self._create_client()
@@ -391,5 +448,26 @@ class TestAccessTokenRoutes(unittest.TestCase):
             self.assertEqual(resp.status_code, 400)
             body = resp.json()
             self.assertEqual(str((body.get("error") or {}).get("code") or ""), "admin_required_first")
+        finally:
+            cleanup()
+
+    def test_cannot_delete_the_only_admin_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin", is_admin=True)
+            token = str(admin.get("token") or "")
+            token_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+            client = self._create_client()
+            response = client.delete(
+                f"/api/v1/access-tokens/{token_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                (response.json().get("error") or {}).get("code"),
+                "last_admin_required",
+            )
         finally:
             cleanup()

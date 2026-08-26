@@ -181,6 +181,23 @@ def _new_access_token_value(existing: Dict[str, Dict[str, Any]]) -> str:
             return candidate
 
 
+def _valid_bearer_token(value: str) -> bool:
+    saw_base = False
+    saw_padding = False
+    for char in value:
+        if char == "=":
+            if not saw_base:
+                return False
+            saw_padding = True
+            continue
+        if saw_padding or not (
+            char.isascii() and (char.isalnum() or char in "-._~+/")
+        ):
+            return False
+        saw_base = True
+    return saw_base
+
+
 def create_access_token(
     user_id: str,
     *,
@@ -200,6 +217,8 @@ def create_access_token(
                 raise ValueError("access token already exists")
         else:
             token = _new_access_token_value(tokens)
+        if not _valid_bearer_token(token):
+            raise ValueError("access token must use HTTP bearer-token characters only")
         effective_is_admin = bool(is_admin)
         entry = {
             "token": token,
@@ -256,11 +275,11 @@ def delete_access_token(token: str, home: Optional[Path] = None) -> bool:
         entry = tokens.get(tok)
         if entry is None:
             return False, False
-        if bool(entry.get("is_admin")) and len(tokens) > 1:
+        if bool(entry.get("is_admin")):
             admin_count = sum(1 for item in tokens.values() if bool(item.get("is_admin")))
             if admin_count <= 1:
                 raise LastAdminRequiredError(
-                    "cannot delete the last administrator while scoped tokens remain"
+                    "cannot delete the last administrator access token"
                 )
         del tokens[tok]
         return True, True

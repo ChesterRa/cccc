@@ -6,8 +6,9 @@ import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
 import { ReachMembershipSection } from "./ReachMembershipSection";
-import { membershipAdminWebUrl } from "./reachMembershipModel";
 import { useMembershipController } from "./useMembershipController";
+import { useReachWebLogin } from "./useReachWebLogin";
+import { useWebAccessSessionSummaries } from "./useWebAccessSessionSummaries";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
 import {
@@ -149,6 +150,7 @@ export function WebAccessTab({
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
+  const createReachWebLogin = useReachWebLogin(setError);
 
   const [provider, setProvider] = useState<"off" | "manual" | "tailscale" | "reach">("off");
   const [mode, setMode] = useState("tailnet_only");
@@ -160,6 +162,7 @@ export function WebAccessTab({
 
   const [userId, setUserId] = useState("");
   const [customToken, setCustomToken] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [createBusy, setCreateBusy] = useState(false);
@@ -185,6 +188,11 @@ export function WebAccessTab({
   const loginActive = Boolean(session?.login_active ?? knownAccessTokenCount > 0);
   const canAccessGlobalSettings = Boolean(session?.can_access_global_settings ?? !loginActive);
   const publicAccessTokenConfigured = hasAdminToken;
+  const { accessSummary, currentBrowserSummary } = useWebAccessSessionSummaries(
+    knownAccessTokenCount,
+    loginActive,
+    session,
+  );
 
   const pushHint = (value: string) => {
     setHint(value);
@@ -202,6 +210,7 @@ export function WebAccessTab({
     setCopiedNewToken(false);
     setUserId("");
     setCustomToken("");
+    setBootstrapToken("");
     setIsAdmin(false);
     setSelectedGroups(new Set());
   }, []);
@@ -224,10 +233,25 @@ export function WebAccessTab({
     setBusy(true);
     setError("");
     try {
-      const [remoteResp, groupsResp, sessionResp] = await Promise.all([
+      const sessionResp = await api.fetchWebAccessSession();
+      let sessionState: WebAccessSession | null = null;
+      if (sessionResp.ok && sessionResp.result?.web_access_session) {
+        sessionState = sessionResp.result.web_access_session;
+        setSession(sessionState);
+      } else {
+        setError(sessionResp.error?.message || t("webAccess.loadFailed"));
+        return;
+      }
+      if (sessionState.bootstrap_required) {
+        setAccessTokens([]);
+        setGroups([]);
+        setEditingTokenId(null);
+        setPendingDeleteTokenId(null);
+        return;
+      }
+      const [remoteResp, groupsResp] = await Promise.all([
         api.fetchRemoteAccessState(),
         api.fetchGroups(),
-        api.fetchWebAccessSession(),
       ]);
       if (remoteResp.ok && remoteResp.result?.remote_access) {
         const state = remoteResp.result.remote_access;
@@ -245,17 +269,10 @@ export function WebAccessTab({
       if (groupsResp.ok && groupsResp.result?.groups) {
         setGroups(groupsResp.result.groups);
       }
-      let sessionState: WebAccessSession | null = null;
-      if (sessionResp.ok && sessionResp.result?.web_access_session) {
-        sessionState = sessionResp.result.web_access_session;
-        setSession(sessionState);
-      } else if (!sessionResp.ok) {
-        setError(sessionResp.error?.message || t("webAccess.loadFailed"));
-      }
       const canAccessGlobal = Boolean(
         sessionState?.can_access_global_settings ?? !(sessionState?.login_active ?? false),
       );
-      if (canAccessGlobal) {
+      if (canAccessGlobal && !sessionState?.bootstrap_required) {
         const tokensResp = await api.fetchAccessTokens();
         if (tokensResp.ok && tokensResp.result?.access_tokens) {
           setAccessTokens(tokensResp.result.access_tokens);
@@ -508,53 +525,6 @@ export function WebAccessTab({
     },
     [provider],
   );
-
-  const accessSummary = useMemo(() => {
-    if (knownAccessTokenCount <= 0) {
-      return {
-        label: t("webAccess.summary.open"),
-        detail: t("webAccess.summary.openHint"),
-        tone: "neutral" as const,
-      };
-    }
-    return {
-      label: t("webAccess.summary.protected"),
-      detail: t("webAccess.summary.protectedHint", { count: knownAccessTokenCount }),
-      tone: "good" as const,
-    };
-  }, [knownAccessTokenCount, t]);
-
-  const currentBrowserSummary = useMemo(() => {
-    if (!loginActive) {
-      return {
-        label: t("webAccess.currentBrowserOpen"),
-        detail: t("webAccess.currentBrowserOpenHint"),
-        tone: "neutral" as const,
-      };
-    }
-    if (session == null) {
-      return {
-        label: t("webAccess.currentBrowserChecking"),
-        detail: t("webAccess.currentBrowserCheckingHint"),
-        tone: "warn" as const,
-      };
-    }
-    if (session.current_browser_signed_in) {
-      return {
-        label: t("webAccess.currentBrowserSignedIn"),
-        detail: t("webAccess.currentBrowserSignedInHint", {
-          userId: session.user_id || t("webAccess.unknownUser"),
-          role: session.is_admin ? t("webAccess.adminBadge") : t("webAccess.scopedBadge"),
-        }),
-        tone: "good" as const,
-      };
-    }
-    return {
-      label: t("webAccess.currentBrowserNotSignedIn"),
-      detail: t("webAccess.currentBrowserNotSignedInHint"),
-      tone: "warn" as const,
-    };
-  }, [loginActive, session, t]);
 
   const handleSignOut = async () => {
     setError("");
@@ -810,6 +780,7 @@ export function WebAccessTab({
         effectiveAdmin,
         allowedGroups,
         customToken.trim() || undefined,
+        bootstrapToken.trim() || undefined,
       );
       if (!resp.ok || !resp.result?.access_token) {
         setCreateError(resp.error?.message || t("webAccess.createFailed"));
@@ -1019,6 +990,21 @@ export function WebAccessTab({
                         placeholder={t("webAccess.customTokenPlaceholder")}
                       />
                     </div>
+                    {session?.bootstrap_required || knownAccessTokenCount === 0 ? (
+                      <div>
+                        <label className={labelClass()}>{t("webAccess.bootstrapTokenLabel")}</label>
+                        <input
+                          value={bootstrapToken}
+                          onChange={(e) => setBootstrapToken(e.target.value)}
+                          className={inputClass()}
+                          placeholder={t("webAccess.bootstrapTokenPlaceholder")}
+                          autoComplete="one-time-code"
+                        />
+                        <div className={`mt-1 text-xs text-[var(--color-text-muted)]`}>
+                          {t("webAccess.bootstrapTokenHint")}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-3">
@@ -1645,17 +1631,14 @@ export function WebAccessTab({
             membershipBusy={membershipBusy}
             membershipError={membershipError}
             membershipPollReady={membershipPollReady}
-            hasAdminToken={hasAdminToken || Boolean(membershipAdminWebUrl(membership))}
+            hasAdminToken={hasAdminToken}
             reachBusy={reachBusy}
             reachAction={reachAction}
             onConnectAccount={() => void connectMembership()}
             onPollAccount={() => void pollMembership()}
             onOpenAccount={onOpenAccount}
             onCreateAdminToken={openCreateDialog}
-            onOpenWeb={() => {
-              const url = membershipAdminWebUrl(membership);
-              if (url) window.open(url, "_blank", "noopener,noreferrer");
-            }}
+            onCreateWebLogin={createReachWebLogin}
             onReachOn={() => {
               void startReach().then((changed) => {
                 if (changed) void load();

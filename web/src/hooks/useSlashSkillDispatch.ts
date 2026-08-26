@@ -3,12 +3,7 @@ import { useCallback } from "react";
 import * as api from "../services/api";
 import type { ChatFilter } from "../stores/useUIStore";
 import type { LedgerEvent, ReplyTarget } from "../types";
-import {
-  formatSendMessageError,
-  getGroupSendBlockedMessage,
-  type ChatTFunction,
-  type GroupSendBlockedReason,
-} from "../utils/chatSend";
+import { formatSendMessageError, type ChatTFunction } from "../utils/chatSend";
 import type { SlashDispatchMessageOptions } from "./useSlashCommands";
 
 export async function sendSlashSkillMessageRequest(args: {
@@ -59,7 +54,6 @@ export async function sendSlashSkillMessageRequest(args: {
 export function useSlashSkillDispatch(args: {
   selectedGroupId: string;
   toTokens: string[];
-  groupSendBlockedReason: GroupSendBlockedReason | null;
   clearDraft: (groupId: string) => void;
   setChatUnreadCount: (groupId: string, count: number) => void;
   setChatFilter: (groupId: string, filter: ChatFilter) => void;
@@ -73,7 +67,6 @@ export function useSlashSkillDispatch(args: {
   const {
     selectedGroupId,
     toTokens,
-    groupSendBlockedReason,
     clearDraft,
     setChatUnreadCount,
     setChatFilter,
@@ -94,11 +87,6 @@ export function useSlashSkillDispatch(args: {
       const command = String(options?.command || "").trim();
       const capabilityId = String(options?.capabilityId || "").trim();
       const replyTarget: ReplyTarget = options?.replyTarget || null;
-      if (groupSendBlockedReason) {
-        showError(getGroupSendBlockedMessage(groupSendBlockedReason, t));
-        return false;
-      }
-
       const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const resp = await sendSlashSkillMessageRequest({
         selectedGroupId,
@@ -111,12 +99,7 @@ export function useSlashSkillDispatch(args: {
       });
       if (!resp.ok) {
         showError(
-          formatSendMessageError({
-            code: resp.error.code,
-            message: resp.error.message,
-            groupSendBlockedReason,
-            t,
-          }),
+          formatSendMessageError({ code: resp.error.code, message: resp.error.message, t }),
         );
         return false;
       }
@@ -130,7 +113,6 @@ export function useSlashSkillDispatch(args: {
     },
     [
       clearDraft,
-      groupSendBlockedReason,
       onMessageSent,
       selectedGroupId,
       setChatFilter,

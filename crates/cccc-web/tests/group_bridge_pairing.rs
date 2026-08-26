@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::extract::Query;
 use axum::http::{Request, StatusCode, header};
@@ -28,7 +29,7 @@ async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
         "remote_access:\n  web_host: 0.0.0.0\n  web_port: 80\n  web_public_url: http://fallback.example\n",
     )
     .expect("settings");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     let created = call(
         &app,
         "/api/group-bridge/pairing/invites",
@@ -69,7 +70,7 @@ async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() 
         .expect("store")
         .create("joiner", "")
         .expect("group");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let created = call(
         &app,
@@ -131,7 +132,7 @@ async fn python_shaped_remote_pairing_response_becomes_active_without_claim_rout
         .expect("store")
         .create("joiner", "")
         .expect("group");
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let created = call(
         &app,
         "/api/group-bridge/pairing/remote-requests",
@@ -297,7 +298,7 @@ async fn list_repairs_legacy_active_outbound_when_matching_active_trust_exists()
         })],
     );
 
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let listed = get_json(
         &app,
         &format!(
@@ -337,7 +338,7 @@ async fn list_leaves_legacy_active_outbound_alone_without_matching_trust() {
         vec![],
     );
 
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let listed = get_json(
         &app,
         &format!(
@@ -377,7 +378,7 @@ async fn list_does_not_cross_repair_outbounds_for_different_remote_group() {
         })],
     );
 
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let listed = get_json(
         &app,
         &format!(

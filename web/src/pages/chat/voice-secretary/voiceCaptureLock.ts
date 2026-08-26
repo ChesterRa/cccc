@@ -76,7 +76,10 @@ export function openVoiceCaptureChannel(): BroadcastChannel | null {
 
 function probeVoiceCaptureOwner(lock: VoiceCaptureLock): Promise<boolean> {
   const channel = openVoiceCaptureChannel();
-  if (!channel) return Promise.resolve(true);
+  // The daemon lease is the authoritative cross-tab/process guard. When the
+  // advisory BroadcastChannel is unavailable, do not let a stale localStorage
+  // marker block recording until its TTL expires.
+  if (!channel) return Promise.resolve(false);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (alive: boolean) => {

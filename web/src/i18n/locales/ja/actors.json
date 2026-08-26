@@ -202,6 +202,7 @@
   "linkedSecretsHint": "シークレットはリンクされた runtime profile で管理されます。Settings > Actor Profiles で編集してください。",
   "connectionLost": "接続が切断されました",
   "connectionLostDescription": "ターミナル接続に失敗しました。エージェントプロセスが停止したか、サーバーに到達できません。",
+  "connectionRejectedHint": "再接続に失敗し続ける場合は、Web ログインセッションとリバースプロキシの Origin 転送ヘッダーを確認してください。",
   "reconnect": "再接続",
   "actorNotes": "Actor Notes",
   "actorNotesHint": "この actor の安定したガイダンスです。",

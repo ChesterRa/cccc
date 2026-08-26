@@ -6,12 +6,19 @@ use serde_json::{Map, Value, json};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+const TEST_ADMIN_TOKEN: &str = "assistant-voice-ws-test-admin";
 
 #[tokio::test]
 async fn mock_streaming_recordings_complete_twice_without_poisoning_the_daemon() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
+    cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .expect("access token store")
+        .create("test-admin", Vec::new(), true, Some(TEST_ADMIN_TOKEN))
+        .expect("test admin token");
     let groups = GroupStore::new(home.clone()).expect("groups");
     let group = groups.create("voice websocket", "").expect("group");
     groups
@@ -37,7 +44,17 @@ async fn mock_streaming_recordings_complete_twice_without_poisoning_the_daemon()
     let address = format!("127.0.0.1:{port}").parse().expect("web address");
     let mut web = spawn_mock_web(&home, port);
     wait_for_port(port).await;
-    let client = reqwest::Client::new();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {TEST_ADMIN_TOKEN}")
+            .parse()
+            .expect("authorization header"),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("HTTP client");
     assert_mock_readiness(&client, address, &group.group_id).await;
 
     let failed_owner = "tab-failed";
@@ -158,7 +175,7 @@ async fn fail_before_start(
     owner_id: &str,
     lease_id: &str,
 ) {
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+    let (mut socket, _) = connect_ws(format!(
         "ws://{address}/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws?owner_id={owner_id}&lease_id={lease_id}"
     ))
     .await
@@ -216,7 +233,7 @@ async fn record_once(
     lease_id: &str,
     session_id: &str,
 ) -> Vec<Value> {
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+    let (mut socket, _) = connect_ws(format!(
         "ws://{address}/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws?owner_id={owner_id}&lease_id={lease_id}"
     ))
     .await
@@ -271,6 +288,27 @@ async fn next_json(
         panic!("expected text websocket response");
     };
     serde_json::from_str(&text).expect("websocket JSON")
+}
+
+async fn connect_ws(
+    url: String,
+) -> Result<
+    (
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    ),
+    tokio_tungstenite::tungstenite::Error,
+> {
+    let mut request = url.into_client_request()?;
+    request.headers_mut().insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {TEST_ADMIN_TOKEN}")
+            .parse()
+            .expect("authorization header"),
+    );
+    tokio_tungstenite::connect_async(request).await
 }
 
 async fn wait_for_daemon(home: &HomeLayout) {

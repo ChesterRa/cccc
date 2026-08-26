@@ -11,6 +11,10 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
+    let admin = cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .expect("access token store")
+        .create("admin", Vec::new(), true, None)
+        .expect("admin token");
     let live_port = free_port().await;
     let desired_port = free_port().await;
     call(
@@ -35,7 +39,7 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
         .kill_on_drop(true);
     let mut child = command.spawn().expect("web child");
     wait_for_port(live_port).await;
-    let response = post_apply(live_port).await;
+    let response = post_apply(live_port, Some(&admin.token)).await;
     let status = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
         .await
         .expect("web child did not exit")
@@ -61,7 +65,7 @@ async fn supervised_apply_rejects_remote_binding_without_admin_token() {
     call(
         &home,
         "remote_access_configure",
-        json!({"provider":"manual","web_host":"0.0.0.0","web_port":desired_port,"by":"user"}),
+        json!({"provider":"manual","web_public_url":"https://public.example","web_port":desired_port,"by":"user"}),
     );
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
@@ -80,15 +84,15 @@ async fn supervised_apply_rejects_remote_binding_without_admin_token() {
         .spawn()
         .expect("web child");
     wait_for_port(live_port).await;
-    let response = post_apply(live_port).await;
+    let response = post_apply(live_port, None).await;
     child.kill().await.expect("stop web child");
     let _ = child.wait().await;
     daemon.abort();
     let _ = daemon.await;
 
-    assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+    assert!(response.starts_with("HTTP/1.1 401"), "{response}");
     assert!(
-        response.contains(r#""code":"remote_access_admin_token_required""#),
+        response.contains(r#""code":"bootstrap_required""#),
         "{response}"
     );
 }
@@ -136,14 +140,15 @@ async fn wait_for_port(port: u16) {
     panic!("web child did not listen");
 }
 
-async fn post_apply(port: u16) -> String {
+async fn post_apply(port: u16, token: Option<&str>) -> String {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect");
     stream
         .write_all(
             format!(
-                "POST /api/v1/remote_access/apply HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                "POST /api/v1/remote_access/apply HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
+                token.map_or_else(String::new, |value| format!("Authorization: Bearer {value}\r\n")),
             )
             .as_bytes(),
         )

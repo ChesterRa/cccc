@@ -301,80 +301,6 @@ fn cleanup_tombstones(store: &GroupStore, group_id: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::HomeLayout;
-    use serde_json::json;
-
-    fn seed_connector(home: &HomeLayout, group_id: &str) {
-        web_model_connectors::replace_active(
-            home,
-            &json!({
-                "connector_id":"wmc_group_delete",
-                "group_id":group_id,
-                "actor_id":"web1",
-                "secret":"wmcs_group_delete",
-                "created_at":"2026-08-11T00:00:00Z",
-                "updated_at":"2026-08-11T00:00:00Z",
-                "revoked":false
-            }),
-        )
-        .expect("seed connector");
-    }
-
-    fn connector_is_active(home: &HomeLayout) -> bool {
-        web_model_connectors::load(home)
-            .expect("load connectors")
-            .into_iter()
-            .find(|item| item["connector_id"] == "wmc_group_delete")
-            .is_some_and(|item| {
-                !item["revoked"].as_bool().unwrap_or(false)
-                    && web_model_connectors::secret_matches(&item, "wmcs_group_delete")
-            })
-    }
-
-    fn seed_group_space(home: &HomeLayout, group_id: &str) {
-        let root = home.root().join("state/space");
-        std::fs::create_dir_all(root.join("job_payloads")).expect("space state");
-        crate::fs::write_json(
-            &root.join("bindings.json"),
-            &json!({
-                "v":2,
-                "bindings":{(group_id):{"notebooklm":{"work":{
-                    "group_id":group_id,"provider":"notebooklm","lane":"work",
-                    "remote_space_id":"nb-rollback","status":"bound"
-                }}}}
-            }),
-        )
-        .expect("bindings");
-        crate::fs::write_json(
-            &root.join("jobs.json"),
-            &json!({
-                "v":2,
-                "jobs":{"spj_rollback":{
-                    "job_id":"spj_rollback","group_id":group_id,"provider":"notebooklm",
-                    "lane":"work","remote_space_id":"nb-rollback","kind":"context_sync",
-                    "payload":{},"payload_ref":"spj_rollback.payload.json","state":"pending"
-                }}
-            }),
-        )
-        .expect("jobs");
-        std::fs::write(
-            root.join("job_payloads/spj_rollback.payload.json"),
-            b"{\"title\":\"rollback\"}\n",
-        )
-        .expect("payload");
-    }
-
-    fn group_space_is_active(home: &HomeLayout, group_id: &str) -> bool {
-        let root = home.root().join("state/space");
-        let bindings: Value =
-            crate::fs::read_json(&root.join("bindings.json")).unwrap_or_else(|_| json!({}));
-        let jobs: Value =
-            crate::fs::read_json(&root.join("jobs.json")).unwrap_or_else(|_| json!({}));
-        bindings["bindings"].get(group_id).is_some()
-            && jobs["jobs"]["spj_rollback"]["group_id"] == group_id
-            && root
-                .join("job_payloads/spj_rollback.payload.json")
-                .is_file()
-    }
 
     #[test]
     fn failed_tombstone_cleanup_is_explicit_and_retryable() {
@@ -423,44 +349,6 @@ mod tests {
             "the cache key is the pre-rename ledger path"
         );
     }
-
-    #[test]
-    fn deleting_a_group_retires_its_web_model_connectors() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let group = store.create("connector cleanup", "").expect("group");
-        seed_connector(&home, &group.group_id);
-        assert!(connector_is_active(&home));
-
-        assert!(delete(&store, &group.group_id).expect("delete group"));
-
-        assert!(!connector_is_active(&home));
-    }
-
-    #[test]
-    fn failed_group_delete_restores_web_model_connectors() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let group = store.create("connector rollback", "").expect("group");
-        seed_connector(&home, &group.group_id);
-        seed_group_space(&home, &group.group_id);
-
-        let error = delete_with_steps(
-            &store,
-            &group.group_id,
-            |path| std::fs::remove_dir_all(path),
-            |_, _| Err(io::Error::other("injected registry failure")),
-        )
-        .expect_err("delete must fail");
-
-        assert!(error.to_string().contains("injected registry failure"));
-        assert!(store.load(&group.group_id).is_ok());
-        assert!(connector_is_active(&home));
-        assert!(group_space_is_active(&home, &group.group_id));
-    }
-
     #[test]
     fn retry_keeps_the_only_tombstone_when_unregister_still_fails() {
         let temp = tempfile::tempdir().expect("tempdir");

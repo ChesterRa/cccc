@@ -160,6 +160,10 @@ import { createVoiceRequestDispatchGate } from "./voice-secretary/voiceRequestDi
 import * as voicePcmTransport from "./voice-secretary/voicePcmBackpressure";
 import { Pcm16Resampler } from "./voice-secretary/voicePcmResampler";
 import {
+  getUserMediaWithTimeout,
+  VoiceAudioCaptureTimeoutError,
+} from "./voice-secretary/voiceAudioCapture";
+import {
   voiceCaptureDispatchTarget,
   voiceCaptureTransportMode,
 } from "./voice-secretary/voiceDictationRoute";
@@ -897,6 +901,24 @@ export function VoiceSecretaryComposerControl({
           message: t("voiceSecretaryMicBusyOrUnavailable", {
             defaultValue:
               "The microphone could not be started. Check whether another app is using it or the OS blocked access.",
+          }),
+          resetSelectedDevice: false,
+        };
+      }
+      if (errorName === "AbortError") {
+        return {
+          message: t("voiceSecretaryMicBusyOrUnavailable", {
+            defaultValue:
+              "The microphone could not be started. Check whether another app is using it or the OS blocked access.",
+          }),
+          resetSelectedDevice: false,
+        };
+      }
+      if (error instanceof VoiceAudioCaptureTimeoutError) {
+        return {
+          message: t("voiceSecretaryMicPermissionPending", {
+            defaultValue:
+              "Microphone access is still waiting for browser permission. Allow it from the address bar site settings, or close another page that is using the microphone, then retry.",
           }),
           resetSelectedDevice: false,
         };
@@ -2736,7 +2758,7 @@ export function VoiceSecretaryComposerControl({
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await getUserMediaWithTimeout({ audio: true });
     } catch (error) {
       failStart();
       releaseVoiceRecordingGuards(gid);
@@ -3276,7 +3298,7 @@ export function VoiceSecretaryComposerControl({
       };
       if (selectedAudioDeviceId) audioConstraints.deviceId = { exact: selectedAudioDeviceId };
       const constraints: MediaStreamConstraints = { audio: audioConstraints };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await getUserMediaWithTimeout(constraints);
       pendingStream = stream;
       if (!isActiveRecordingRun(runId)) {
         stopMediaStream(stream);
@@ -3620,8 +3642,9 @@ export function VoiceSecretaryComposerControl({
       };
       ws.onerror = () => {
         if (!isActiveRecordingRun(runId)) return;
-        const message = t("voiceSecretaryAudioCaptureFailed", {
-          defaultValue: "Audio capture failed.",
+        const message = t("voiceSecretaryLocalAsrConnectionFailed", {
+          defaultValue:
+            "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
         });
         if (isCurrentGroup(gid)) {
           setSpeechError(message);

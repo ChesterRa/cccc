@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -21,7 +22,7 @@ async fn recent_list_and_repeated_scope_create_complete_as_one_user_flow() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_address(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let recent = get_json(&app, "/api/v1/fs/recent", &admin.token).await;
     assert!(

@@ -23,7 +23,7 @@ fn creates_scoped_token_and_deletes_by_hash_id() {
 }
 
 #[test]
-fn preserves_an_administrator_until_scoped_tokens_are_removed() {
+fn preserves_the_last_administrator() {
     let temp = tempfile::tempdir().expect("tempdir");
     let store =
         AccessTokenStore::new(HomeLayout::from_path(temp.path().join("rust-home")).expect("home"))
@@ -58,9 +58,11 @@ fn preserves_an_administrator_until_scoped_tokens_are_removed() {
         store.delete(&member.token_id()).expect("delete member"),
         Some(member)
     );
-    assert_eq!(
-        store.delete(&admin.token_id()).expect("delete sole admin"),
-        Some(admin)
+    let delete = store.delete(&admin.token_id());
+    assert!(
+        delete
+            .as_ref()
+            .is_err_and(cccc_core::access_tokens::is_last_admin_required)
     );
-    assert!(store.list().expect("list").is_empty());
+    assert_eq!(store.list().expect("list"), [admin]);
 }

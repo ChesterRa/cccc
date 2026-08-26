@@ -1,9 +1,9 @@
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use cccc_core::access_tokens::is_last_admin_required;
+use cccc_core::access_tokens::{AccessTokenStore, is_last_admin_required};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -21,12 +21,19 @@ struct CreateBody {
     #[serde(default)]
     is_admin: bool,
     custom_token: Option<String>,
+    bootstrap_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UpdateBody {
     allowed_groups: Option<Vec<String>>,
     is_admin: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExchangeQuery {
+    #[serde(default)]
+    code: String,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -38,6 +45,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/v1/access-tokens/{token_id}/reveal", get(reveal))
         .route("/api/v1/web_access/session", get(web_session))
+        .route("/api/v1/web_access/exchange", get(exchange))
         .route("/api/v1/web_access/logout", axum::routing::post(logout))
 }
 
@@ -65,14 +73,29 @@ async fn create(
         Ok(items) => items,
         Err(error) => return server_error(error),
     };
-    let groups = clean_groups(body.allowed_groups);
-    if existing.is_empty() && !body.is_admin {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "admin_required_first",
-            "the first access token must be an administrator",
-        );
+    let first_admin = !existing.iter().any(|token| token.is_admin);
+    if first_admin {
+        if !body.is_admin {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "admin_required_first",
+                "the first access token must be an administrator",
+            );
+        }
+        let supplied = body.bootstrap_token.as_deref().unwrap_or_default();
+        match cccc_core::web_bootstrap::consume_web_bootstrap_token(&state.home, supplied) {
+            Ok(true) => {}
+            Ok(false) => {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "bootstrap_required",
+                    "a valid local Web bootstrap code is required",
+                );
+            }
+            Err(error_value) => return server_error(error_value),
+        }
     }
+    let groups = clean_groups(body.allowed_groups);
     if !body.is_admin && groups.is_empty() {
         return error(
             StatusCode::BAD_REQUEST,
@@ -88,21 +111,23 @@ async fn create(
     ) {
         Ok(token) => {
             let body = Json(json!({"ok":true,"result":{"access_token":token}}));
-            if existing.is_empty() {
-                let secure = headers
-                    .get("x-forwarded-proto")
-                    .and_then(|value| value.to_str().ok())
-                    .is_some_and(|value| value.eq_ignore_ascii_case("https"));
+            if first_admin {
+                let secure = crate::request_origin::is_https(&headers);
                 return ([(header::SET_COOKIE, cookie(&token.token, secure))], body)
                     .into_response();
             }
             body.into_response()
         }
-        Err(error_value) => error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            &error_value.to_string(),
-        ),
+        Err(error_value) => {
+            if first_admin {
+                let _ = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&state.home);
+            }
+            error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &error_value.to_string(),
+            )
+        }
     }
 }
 
@@ -219,13 +244,82 @@ async fn web_session(
     principal: Option<Extension<Principal>>,
 ) -> Json<Value> {
     let principal = principal.map(|value| value.0);
+    let access_tokens = AccessTokenStore::new(state.home.clone())
+        .and_then(|store| store.list())
+        .unwrap_or_default();
+    let access_token_count = access_tokens.len();
+    let bootstrap_required = !access_tokens.iter().any(|token| token.is_admin);
+    if bootstrap_required {
+        let _ = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&state.home);
+    }
     let runtime_visibility = runtime_visibility(&state.home);
     Json(json!({"ok":true,"result":{"web_access_session":{
+        "login_active": access_token_count > 0,
         "current_browser_signed_in":principal.is_some(),
-        "can_access_global_settings":principal.as_ref().is_some_and(|item| item.is_admin),
+        "access_token_count":access_token_count,
+        "bootstrap_required":bootstrap_required,
+        "can_access_global_settings":bootstrap_required || principal.as_ref().is_some_and(|item| item.is_admin),
         "user_id":principal.map(|item| item.user_id).unwrap_or_default(),
         "runtime_visibility":runtime_visibility
     }}}))
+}
+
+async fn exchange(
+    State(state): State<AppState>,
+    Query(query): Query<ExchangeQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(origin) = crate::request_origin::served_origin(&headers) else {
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "web_login_grant_invalid",
+            "Web login link is invalid or expired",
+        );
+    };
+    let token_id = match cccc_core::web_login_grants::consume(&state.home, &query.code, &origin) {
+        Ok(Some(token_id)) => token_id,
+        Ok(None) => {
+            return error(
+                StatusCode::UNAUTHORIZED,
+                "web_login_grant_invalid",
+                "Web login link is invalid or expired",
+            );
+        }
+        Err(error_value) => return server_error(error_value),
+    };
+    let token = match AccessTokenStore::new(state.home.clone()).and_then(|store| store.list()) {
+        Ok(tokens) => tokens
+            .into_iter()
+            .find(|token| token.is_admin && token.token_id() == token_id),
+        Err(error_value) => return server_error(error_value),
+    };
+    let Some(token) = token else {
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "web_login_grant_invalid",
+            "Web login link is invalid or expired",
+        );
+    };
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    response.headers_mut().insert(
+        header::LOCATION,
+        axum::http::HeaderValue::from_static("/ui/"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie(
+        &token.token,
+        crate::request_origin::is_https(&headers),
+    )) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    response
 }
 
 fn runtime_visibility(home: &cccc_core::HomeLayout) -> Value {

@@ -170,6 +170,7 @@ class TestWebBindPreflight(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_config.assert_called_once()
         self.assertEqual(mock_config.call_args.kwargs.get("timeout_graceful_shutdown"), 0.2)
+        self.assertEqual(mock_config.call_args.kwargs.get("access_log"), False)
         mock_server.assert_called_once()
         server_instance.run.assert_called_once_with()
 

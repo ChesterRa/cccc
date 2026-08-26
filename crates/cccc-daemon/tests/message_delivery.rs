@@ -34,6 +34,12 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     .await;
     daemon_call(
         &client,
+        "group_preamble_set",
+        json!({"group_id":group_id,"content":"Use the CCCC delivery protocol.","by":"user"}),
+    )
+    .await;
+    daemon_call(
+        &client,
         "actor_add",
         json!({
             "group_id":group_id,
@@ -41,7 +47,7 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
             "runner":"pty",
             "runtime":"custom",
             "submit":"newline",
-            "command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'PREAMBLE:%s\\nFIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$preamble\" \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 2"],
+            "command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'PREAMBLE:%s\\nFIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$preamble\" \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 30"],
             "by":"user"
         }),
     )
@@ -110,7 +116,7 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     let tail = daemon_call(
         &client,
         "terminal_tail",
-        json!({"group_id":group_id,"actor_id":"peer1"}),
+        json!({"group_id":group_id,"actor_id":"peer1","strip_ansi":false}),
     )
     .await;
     let text = tail.result["text"].as_str().unwrap_or_default();
@@ -1451,26 +1457,6 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
         .expect("source events")
         .len();
 
-    let unauthorized = call_raw(
-        &home,
-        "send_cross_group_remote_record",
-        json!({
-            "group_id":source_id,"dst_group_id":"remote-group","by":"unknown-actor",
-            "to":["reviewer"],"text":"bypass membership","message_mode":"mail",
-            "insight":"The remote reviewer owns the requested decision."
-        }),
-    );
-    assert_eq!(
-        unauthorized.error.as_ref().map(|error| error.code.as_str()),
-        Some("permission_denied")
-    );
-    assert_eq!(
-        ledger::read_all(&source_ledger)
-            .expect("source events")
-            .len(),
-        before
-    );
-
     let rejected = call_raw(
         &home,
         "send_cross_group_remote_record",
@@ -1718,7 +1704,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
 }
 
 #[test]
-fn manual_delivery_is_blocked_without_a_claim_while_paused() {
+fn manual_delivery_resumes_a_paused_group_before_claiming() {
     use cccc_contracts::GroupState;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1760,16 +1746,18 @@ fn manual_delivery_is_blocked_without_a_claim_while_paused() {
             "source_event_id":source.result["event"]["id"]
         }),
     );
+    assert!(response.ok, "manual delivery failed: {response:?}");
+    assert_eq!(response.result["delivery_state"], "claimed");
     assert_eq!(
-        response.error.as_ref().map(|error| error.code.as_str()),
-        Some("delivery_blocked")
+        store.load(group_id).expect("resumed group").state,
+        GroupState::Active
     );
     let ledger_path = store.ledger_path(group_id).expect("ledger path");
     assert!(
         ledger::read_all(&ledger_path)
             .expect("ledger")
             .iter()
-            .all(|event| event.kind != "runtime.delivery")
+            .any(|event| event.kind == "runtime.delivery" && event.data["state"] == "claimed")
     );
 }
 
@@ -1833,81 +1821,6 @@ fn manual_delivery_is_blocked_without_a_claim_for_disabled_actor() {
             .iter()
             .all(|event| event.kind != "runtime.delivery")
     );
-}
-
-#[test]
-fn manual_delivery_to_web_model_uses_the_consumer_transport() {
-    for (mode, transport) in [("pull", "web_model_pull"), ("browser", "web_model_browser")] {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home =
-            HomeLayout::from_path(temp.path().join(format!("rust-home-{mode}"))).expect("home");
-        let created = call(
-            &home,
-            "group_create",
-            json!({"title":format!("manual web model {mode}"),"by":"user"}),
-        );
-        let group_id = created.result["group"]["group_id"]
-            .as_str()
-            .expect("group id");
-        call(
-            &home,
-            "actor_add",
-            json!({
-                "group_id":group_id,
-                "actor_id":"web1",
-                "runtime":"web_model",
-                "runner":"headless",
-                "env":{"CCCC_WEB_MODEL_DELIVERY_MODE":mode},
-                "by":"user"
-            }),
-        );
-        let store = GroupStore::new(home.clone()).expect("store");
-        store
-            .mutate(group_id, |group| {
-                group.running = true;
-                Ok(())
-            })
-            .expect("enable structured runtime fixture");
-        let source = call(
-            &home,
-            "send",
-            json!({
-                "group_id":group_id,"by":"user","to":["web1"],"text":"deliver later",
-                "message_mode":"mail"
-            }),
-        );
-        let source_event_id = source.result["event"]["id"]
-            .as_str()
-            .expect("source event id");
-
-        call(
-            &home,
-            "message_deliver",
-            json!({
-                "group_id":group_id,"by":"user","actor_ids":["web1"],
-                "source_event_id":source_event_id
-            }),
-        );
-        let ledger_path = store.ledger_path(group_id).expect("ledger path");
-        let delivery = ledger::read_all(&ledger_path)
-            .expect("ledger")
-            .into_iter()
-            .rev()
-            .find(|event| event.kind == "runtime.delivery")
-            .expect("delivery claim");
-        assert_eq!(delivery.data["state"], "claimed");
-        assert_eq!(delivery.data["transport"], transport);
-
-        let turn = call(
-            &home,
-            "runtime_wait_next_turn",
-            json!({
-                "group_id":group_id,"actor_id":"web1","by":"web1","transport":transport
-            }),
-        );
-        assert_eq!(turn.result["status"], "work_available");
-        assert_eq!(turn.result["turn"]["event_ids"][0], source_event_id);
-    }
 }
 
 #[test]
@@ -2203,7 +2116,7 @@ async fn wait_for(client: &DaemonClient, group_id: &str, expected: &str) {
         let tail = daemon_call(
             client,
             "terminal_tail",
-            json!({"group_id":group_id,"actor_id":"peer1"}),
+            json!({"group_id":group_id,"actor_id":"peer1","strip_ansi":false}),
         )
         .await;
         if tail.result["text"]

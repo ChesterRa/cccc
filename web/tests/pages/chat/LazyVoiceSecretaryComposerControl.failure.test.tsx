@@ -34,9 +34,6 @@ describe("LazyVoiceSecretaryComposerControl load failure", () => {
       ),
     );
 
-    const launcher = host.querySelector<HTMLButtonElement>("button");
-    await act(async () => launcher?.click());
-
     await vi.waitFor(() => expect(recoverDynamicImportError).toHaveBeenCalledTimes(1));
     const fallback = host.querySelector<HTMLButtonElement>("button");
     expect(fallback?.getAttribute("aria-label")).toMatch(/failed|加载失败|読み込めません/i);

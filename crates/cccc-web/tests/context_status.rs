@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::{DaemonRequest, Event};
@@ -31,7 +32,7 @@ async fn status_routes_return_ledger_derived_payloads() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let batch = request_json(
         &app,

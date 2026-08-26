@@ -1573,6 +1573,7 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             result = create_resp.json().get("result") or {}
             connector_id = str(((result.get("connector") or {}).get("connector_id")) or "")
             secret = str(result.get("secret") or "")
+            client.headers.pop("Authorization", None)
 
             options = client.options(f"/mcp/web-model/{connector_id}")
             self.assertEqual(options.status_code, 204)

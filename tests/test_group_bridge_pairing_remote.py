@@ -1,4 +1,5 @@
 import os
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -676,7 +677,15 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
                 else:
                     os.environ["CCCC_HOME"] = old_home
             invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
-            payload = build_connection_payload(invite, issuer_endpoint="http://127.0.0.1:5555", issuer_group_title="Issuer Group", home=issuer_home)
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                unavailable_port = int(listener.getsockname()[1])
+            payload = build_connection_payload(
+                invite,
+                issuer_endpoint=f"http://127.0.0.1:{unavailable_port}",
+                issuer_group_title="Issuer Group",
+                home=issuer_home,
+            )
 
             def submit_client(_endpoint: str, body: dict, *, timeout_seconds: float = 3.0) -> dict:
                 request = pairing.create_pairing_request(
@@ -731,7 +740,11 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
                     os.environ["CCCC_HOME"] = old_home
 
             self.assertTrue(result.ok)
-            self.assertEqual(result.result["receipt"]["status"], "retrying")
+            self.assertEqual(
+                result.result["receipt"]["status"],
+                "retrying",
+                result.result["receipt"],
+            )
             self.assertEqual(result.result["receipt"]["error"]["code"], "peer_session_unavailable")
         finally:
             issuer_cleanup()

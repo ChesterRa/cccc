@@ -271,22 +271,22 @@ describe("api.fetchPresentation", () => {
     expect(resp.result.presentation.slots[1]?.card?.content.table?.rows).toEqual([["demo"]]);
   });
 
-  it("builds token-aware asset urls for presentation slots", async () => {
+  it("builds cookie-authenticated asset urls without query secrets", async () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
     const api = await import("../../src/services/api");
     expect(api.getPresentationAssetUrl("g-demo", "slot-4")).toBe(
-      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token",
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset",
     );
     expect(api.getPresentationAssetUrl("g-demo", "slot-4", "tick-2")).toBe(
-      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token&v=tick-2",
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?v=tick-2",
     );
   });
 
-  it("builds token-aware blob urls only for group-scoped blob paths", async () => {
+  it("builds cookie-authenticated blob urls only for group-scoped blob paths", async () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
     const api = await import("../../src/services/api");
     expect(api.getGroupBlobUrl("g-demo", "state/blobs/sha256_demo.jpg")).toBe(
-      "/api/v1/groups/g-demo/blobs/sha256_demo.jpg?token=dev-token",
+      "/api/v1/groups/g-demo/blobs/sha256_demo.jpg",
     );
     expect(api.getGroupBlobUrl("g-demo", "workspace/demo.jpg")).toBe("");
   });
@@ -343,12 +343,12 @@ describe("api.fetchPresentation", () => {
     );
   });
 
-  it("builds a token-aware websocket url for browser-surface streaming", async () => {
+  it("builds a cookie-authenticated websocket url without query secrets", async () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
     vi.stubGlobal("window", { location: { search: "", protocol: "https:", host: "cccc.test" } });
     const api = await import("../../src/services/api");
     expect(api.getPresentationBrowserSurfaceWebSocketUrl("g-demo", "slot-3")).toBe(
-      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?slot=slot-3&token=dev-token",
+      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?slot=slot-3",
     );
   });
 

@@ -70,6 +70,7 @@ type ProjectedBrowserSurfacePanelProps = {
     failed: string;
     closed: string;
     reconnecting: string;
+    connectionFailed: string;
     reconnect: string;
     refreshPending: string;
     refreshing: string;
@@ -255,6 +256,12 @@ export function ProjectedBrowserSurfacePanel({
     reconnecting:
       labels?.reconnecting ||
       t("presentationBrowserReconnecting", { defaultValue: "Reconnecting interactive view..." }),
+    connectionFailed:
+      labels?.connectionFailed ||
+      t("presentationBrowserConnectionFailed", {
+        defaultValue:
+          "The interactive connection was rejected. Check the Web session and reverse-proxy Origin headers.",
+      }),
     reconnect:
       labels?.reconnect || t("presentationBrowserReconnect", { defaultValue: "Reconnect" }),
     refreshPending:
@@ -462,6 +469,7 @@ export function ProjectedBrowserSurfacePanel({
       wsRef.current = ws;
 
       ws.onopen = () => {
+        setPanelError("");
         const pendingId = pendingRefreshIdRef.current;
         if (!pendingId) return;
         if (sendCommand({ t: "refresh", id: pendingId })) {
@@ -544,6 +552,11 @@ export function ProjectedBrowserSurfacePanel({
         } catch {
           // Ignore malformed websocket payloads.
         }
+      };
+
+      ws.onerror = () => {
+        if (disposed || runIdRef.current !== runId) return;
+        setPanelError(texts.connectionFailed);
       };
 
       ws.onclose = () => {
@@ -677,6 +690,7 @@ export function ProjectedBrowserSurfacePanel({
     onFrameUpdate,
     runNonce,
     texts.closed,
+    texts.connectionFailed,
     texts.reconnecting,
     texts.refreshFailed,
     reuseActiveSession,

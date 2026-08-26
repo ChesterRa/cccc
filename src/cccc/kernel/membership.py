@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
 
 from ..paths import ensure_home
 from ..util.file_lock import acquire_lockfile, release_lockfile
@@ -310,27 +310,12 @@ def store_device_grant(
     return update_membership(change, home)
 
 
-def _first_admin_token(home: Optional[Path] = None) -> Optional[str]:
-    from .access_tokens import list_access_tokens
-
-    for item in list_access_tokens(home):
-        if item.get("is_admin"):
-            token = str(item.get("token") or "").strip()
-            if token:
-                return token
-    return None
-
-
 def public_urls(
     hostname: Optional[str], home: Optional[Path] = None
 ) -> Dict[str, Optional[str]]:
+    _ = home
     origin = normalize_reach_hostname(hostname)
-    web_url = None
-    if origin:
-        admin = _first_admin_token(home)
-        if admin:
-            web_url = f"{origin}/ui/?{urlencode({'token': admin})}"
     return {
         "hostname": origin,
-        "web_url": web_url,
+        "web_url": f"{origin}/ui/" if origin else None,
     }

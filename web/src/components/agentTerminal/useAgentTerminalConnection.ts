@@ -71,6 +71,7 @@ export function useAgentTerminalConnection(args: {
 
   const [connectionStatus, setConnectionStatus] =
     useState<AgentTerminalConnectionStatus>("disconnected");
+  const [connectionFailed, setConnectionFailed] = useState(false);
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalWritable, setTerminalWritable] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -123,6 +124,7 @@ export function useAgentTerminalConnection(args: {
   const requestReconnect = useCallback(() => {
     reconnectAttemptRef.current = 0;
     terminalAttachNoRetryRef.current = false;
+    setConnectionFailed(false);
     setReconnectTrigger((n) => n + 1);
   }, [setReconnectTrigger]);
 
@@ -222,6 +224,7 @@ export function useAgentTerminalConnection(args: {
             return;
           }
           setConnectionStatus("connected");
+          setConnectionFailed(false);
           setTerminalWritable(false);
           reconnectAttemptRef.current = 0;
           terminalSignalBufferRef.current = "";
@@ -416,6 +419,7 @@ export function useAgentTerminalConnection(args: {
         };
 
         ws.onerror = () => {
+          setConnectionFailed(true);
           // onclose owns reconnect policy.
         };
 
@@ -452,6 +456,7 @@ export function useAgentTerminalConnection(args: {
       openWebSocket(cursors.deliveredCursor === null);
     };
 
+    setConnectionFailed(false);
     void connect();
 
     return () => {
@@ -495,5 +500,12 @@ export function useAgentTerminalConnection(args: {
     requestReconnect();
   }, [activated, isHeadless, isRunning, requestReconnect, termEpoch, terminalRef]);
 
-  return { connectionStatus, terminalReady, terminalWritable, requestReconnect, sendInterrupt };
+  return {
+    connectionStatus,
+    connectionFailed,
+    terminalReady,
+    terminalWritable,
+    requestReconnect,
+    sendInterrupt,
+  };
 }

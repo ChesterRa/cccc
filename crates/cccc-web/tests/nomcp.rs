@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_core::access_tokens::AccessTokenStore;
@@ -31,7 +32,7 @@ async fn public_session_reads_allowed_text_and_rejects_escape() {
         .expect("tokens")
         .create("admin", Vec::new(), true, None)
         .expect("admin");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     let created = app
         .clone()
         .oneshot(

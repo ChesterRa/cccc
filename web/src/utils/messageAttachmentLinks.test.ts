@@ -22,10 +22,10 @@ describe("message attachment links", () => {
     expect(preview.pathname).toBe("/api/v1/groups/g%20demo/blobs/content-hash");
     expect(preview.searchParams.get("filename")).toBe("分析 报告.txt");
     expect(preview.searchParams.get("download")).toBeNull();
-    expect(preview.searchParams.get("token")).toBe("dev-token");
+    expect(preview.searchParams.get("token")).toBeNull();
     expect(download.searchParams.get("filename")).toBe("分析 报告.txt");
     expect(download.searchParams.get("download")).toBe("true");
-    expect(download.searchParams.get("token")).toBe("dev-token");
+    expect(download.searchParams.get("token")).toBeNull();
     expect(links.downloadName).toBe("分析 报告.txt");
   });
 

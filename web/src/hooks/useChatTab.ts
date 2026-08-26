@@ -17,12 +17,7 @@ import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, GroupMeta, LedgerEvent, MessageRef } from "../types";
 import * as api from "../services/api";
-import {
-  formatSendMessageError,
-  getGroupSendBlockedMessage,
-  getGroupSendBlockedReason,
-  shouldBlockLocalCrossGroupAttachments,
-} from "../utils/chatSend";
+import { formatSendMessageError, shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
@@ -371,26 +366,9 @@ export function useChatTab({
   const needsActors = !!selectedGroupId && actors.length === 0;
   const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
   const showSetupCard = needsScope || needsActors || needsStart;
-  const selectedGroupLifecycleState = useMemo(() => {
-    if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || "")) return "";
-    return String(groupDoc.runtime_status?.lifecycle_state || groupDoc.state || "")
-      .trim()
-      .toLowerCase();
-  }, [groupDoc, selectedGroupId]);
-  const groupSendBlockedReason = useMemo(
-    () =>
-      getGroupSendBlockedReason({
-        lifecycleState: selectedGroupLifecycleState,
-        runtimeRunning: selectedGroupRunning,
-        actorCount: actors.length,
-      }),
-    [actors.length, selectedGroupLifecycleState, selectedGroupRunning],
-  );
-
   const dispatchSlashSkillMessage = useSlashSkillDispatch({
     selectedGroupId,
     toTokens,
-    groupSendBlockedReason,
     clearDraft,
     setChatUnreadCount,
     setChatFilter,
@@ -604,11 +582,6 @@ export function useChatTab({
     ) {
       return;
     }
-    if (groupSendBlockedReason) {
-      showError(getGroupSendBlockedMessage(groupSendBlockedReason, t));
-      return;
-    }
-
     const replyTargetSnapshot = composerStateSnapshot.replyTarget;
     const remoteReplyDstGroupId = String(replyTargetSnapshot?.remoteDstGroupId || "").trim();
     const remoteReplyDstTo = Array.isArray(replyTargetSnapshot?.remoteDstTo)
@@ -784,14 +757,7 @@ export function useChatTab({
         const shouldRestoreComposer = shouldRestoreComposerAfterFailedSend(successfulSendCount);
         if (shouldRestoreComposer) restoreComposerState();
         const sendError = resp.error || { code: "send_failed", message: "send failed" };
-        showError(
-          formatSendMessageError({
-            code: sendError.code,
-            message: sendError.message,
-            groupSendBlockedReason,
-            t,
-          }),
-        );
+        showError(formatSendMessageError({ code: sendError.code, message: sendError.message, t }));
         return;
       }
       const canonicalEvent =
@@ -844,7 +810,6 @@ export function useChatTab({
     }
   }, [
     selectedGroupId,
-    groupSendBlockedReason,
     tryExecuteSlashCommand,
     validRecipientSet,
     crossGroupValidRecipientSet,

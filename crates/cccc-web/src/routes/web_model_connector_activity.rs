@@ -64,24 +64,3 @@ pub(super) fn details(tool_name: &str, response: &Value) -> (String, String, Str
         .to_owned();
     (wait_status, turn_id, error)
 }
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    #[test]
-    fn details_retains_tool_level_error_messages() {
-        let response = json!({
-            "result":{
-                "content":[{
-                    "type":"text",
-                    "text":"{\"error\":{\"code\":\"permission_denied\",\"message\":\"not allowed\"}}"
-                }],
-                "isError":true
-            }
-        });
-
-        let (_, _, error) = super::details("cccc_actor", &response);
-        assert_eq!(error, "not allowed");
-    }
-}

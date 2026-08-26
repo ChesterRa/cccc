@@ -24,7 +24,7 @@ interface ReachMembershipSectionProps {
   onPollAccount: () => void;
   onOpenAccount: () => void;
   onCreateAdminToken: () => void;
-  onOpenWeb: () => void;
+  onCreateWebLogin: () => Promise<string>;
   onReachOn: () => void;
   onReachOff: () => void;
   onCopied: () => void;
@@ -43,7 +43,7 @@ export function ReachMembershipSection({
   onPollAccount,
   onOpenAccount,
   onCreateAdminToken,
-  onOpenWeb,
+  onCreateWebLogin,
   onReachOn,
   onReachOff,
   onCopied,
@@ -51,6 +51,7 @@ export function ReachMembershipSection({
 }: ReachMembershipSectionProps) {
   const { t, i18n } = useTranslation("settings");
   const [copied, setCopied] = useState<"public" | "admin" | null>(null);
+  const [webLoginBusy, setWebLoginBusy] = useState(false);
   const kind = membership
     ? membershipPanelKind(membership)
     : membershipBusy
@@ -118,6 +119,35 @@ export function ReachMembershipSection({
     setCopied(id);
     window.setTimeout(() => setCopied((current) => (current === id ? null : current)), 1500);
     onCopied();
+  };
+
+  const openAdminWeb = async () => {
+    if (webLoginBusy) return;
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    setWebLoginBusy(true);
+    try {
+      const url = await onCreateWebLogin();
+      if (!url) {
+        popup?.close();
+        return;
+      }
+      if (popup) popup.location.replace(url);
+      else window.open(url, "_blank", "noopener,noreferrer");
+    } finally {
+      setWebLoginBusy(false);
+    }
+  };
+
+  const copyAdminWeb = async () => {
+    if (webLoginBusy) return;
+    setWebLoginBusy(true);
+    try {
+      const url = await onCreateWebLogin();
+      if (url) await copyValue("admin", url);
+    } finally {
+      setWebLoginBusy(false);
+    }
   };
 
   return (
@@ -201,7 +231,12 @@ export function ReachMembershipSection({
             </button>
           ) : null}
           {kind === "online" && adminWebUrl ? (
-            <button type="button" onClick={onOpenWeb} className={primaryButtonClass(false)}>
+            <button
+              type="button"
+              onClick={() => void openAdminWeb()}
+              disabled={webLoginBusy}
+              className={primaryButtonClass(webLoginBusy)}
+            >
               {t("webAccess.reach.openWeb")}
             </button>
           ) : null}
@@ -285,7 +320,8 @@ export function ReachMembershipSection({
               </p>
               <button
                 type="button"
-                onClick={() => void copyValue("admin", adminWebUrl)}
+                onClick={() => void copyAdminWeb()}
+                disabled={webLoginBusy}
                 className={`${secondaryButtonClass("sm")} mt-3`}
               >
                 {copied === "admin"

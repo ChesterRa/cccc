@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cccc_contracts::DaemonRequest;
@@ -10,7 +11,7 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn exhibit_mode_rejects_writes_with_stable_error() {
     let (_temp, home) = home();
-    let response = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit)
+    let response = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit)
         .oneshot(
             Request::post("/api/v1/groups")
                 .body(Body::from(r#"{"title":"blocked"}"#))
@@ -32,7 +33,7 @@ async fn exhibit_mode_rejects_writes_with_stable_error() {
 #[tokio::test]
 async fn normal_mode_does_not_apply_read_only_guard() {
     let (_temp, home) = home();
-    let response = cccc_web::app_with_mode(home, cccc_web::WebMode::Normal)
+    let response = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Normal)
         .oneshot(
             Request::post("/missing")
                 .body(Body::empty())
@@ -46,7 +47,7 @@ async fn normal_mode_does_not_apply_read_only_guard() {
 #[tokio::test]
 async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
     let (_temp, home) = home();
-    let app = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit);
+    let app = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit);
     for path in [
         "/api/v1/registry/reconcile",
         "/nomcp/s/session-1/send",
@@ -72,7 +73,7 @@ async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
 #[tokio::test]
 async fn exhibit_mode_rejects_filesystem_reads_like_legacy_web() {
     let (_temp, home) = home();
-    let app = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit);
+    let app = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit);
     for path in ["/api/v1/fs/recent", "/api/v1/fs/list?path=~"] {
         let response = app
             .clone()
@@ -96,7 +97,7 @@ async fn exhibit_mode_rejects_filesystem_reads_like_legacy_web() {
 #[tokio::test]
 async fn exhibit_mode_rejects_directory_creation() {
     let (temp, home) = home();
-    let response = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit)
+    let response = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit)
         .oneshot(
             Request::post("/api/v1/fs/directory")
                 .header("content-type", "application/json")
@@ -114,18 +115,27 @@ async fn exhibit_mode_rejects_directory_creation() {
 #[tokio::test]
 async fn exhibit_ping_matches_python_contract() {
     let (_temp, home) = home();
+    let token = cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("admin", Vec::new(), true, None)
+        .expect("admin");
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app_with_mode(home.clone(), cccc_web::WebMode::Exhibit)
-        .oneshot(
-            Request::get("/api/v1/ping?include_home=true")
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
+    let response =
+        auth_support::authenticated_app_with_mode(home.clone(), cccc_web::WebMode::Exhibit)
+            .oneshot(
+                Request::get("/api/v1/ping?include_home=true")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {}", token.token),
+                    )
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
     let body = response
         .into_body()
@@ -156,7 +166,7 @@ async fn exhibit_browser_surface_socket_reports_read_only_error() {
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
-            cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit),
+            auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit),
         )
         .await
     });

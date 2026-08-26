@@ -80,6 +80,7 @@ def _wake_group_on_human_message(
     group: Any,
     *,
     by: str,
+    targets_agent: bool = True,
     state_at_accept: str = "",
     automation_on_resume: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
@@ -87,9 +88,15 @@ def _wake_group_on_human_message(
     # Keep idle stable against agent chatter / throttled deliveries.
     try:
         accept_state = str(state_at_accept or "").strip().lower()
-        if accept_state and accept_state != "idle":
+        explicit_user_wake = str(by or "").strip() == "user" and targets_agent
+        if accept_state and accept_state != "idle" and not (
+            accept_state in {"paused", "stopped"} and explicit_user_wake
+        ):
             return group
-        if get_group_state(group) != "idle":
+        current_state = get_group_state(group)
+        if current_state not in {"idle", "paused", "stopped"}:
+            return group
+        if current_state in {"paused", "stopped"} and not explicit_user_wake:
             return group
         is_actor_sender = isinstance(find_actor(group, by), dict)
         if not by or by == "system" or is_actor_sender:
@@ -467,6 +474,7 @@ def handle_send(
         group = _wake_group_on_human_message(
             group,
             by=by,
+            targets_agent=targets_any_agent(to),
             state_at_accept=str(args.get("__group_state_at_accept") or ""),
             automation_on_resume=automation_on_resume,
             clear_pending_system_notifies=clear_pending_system_notifies,
@@ -982,6 +990,7 @@ def handle_reply(
         group = _wake_group_on_human_message(
             group,
             by=by,
+            targets_agent=targets_any_agent(to),
             state_at_accept=str(args.get("__group_state_at_accept") or ""),
             automation_on_resume=automation_on_resume,
             clear_pending_system_notifies=clear_pending_system_notifies,

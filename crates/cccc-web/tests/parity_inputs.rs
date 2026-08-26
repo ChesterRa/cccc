@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -10,7 +11,7 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn terminal_clear_accepts_actor_id_from_query_without_json_body() {
     let (_temp, home, group_id, daemon) = running_home("terminal clear").await;
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!(
                 "/api/v1/groups/{group_id}/terminal/clear?actor_id=missing"
@@ -47,7 +48,7 @@ async fn invalid_refs_json_is_rejected_before_upload_commit() {
         ),
         boundary = boundary,
     );
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{group_id}/send_upload"))
                 .header(
@@ -80,7 +81,7 @@ async fn invalid_refs_json_is_rejected_before_upload_commit() {
 #[tokio::test]
 async fn group_update_http_surface_returns_the_standard_receipt() {
     let (_temp, home, group_id, daemon) = running_home("group update").await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let response = app
         .clone()
         .oneshot(
@@ -123,7 +124,7 @@ async fn group_update_http_surface_returns_the_standard_receipt() {
 #[tokio::test]
 async fn capability_install_http_surface_uses_the_canonical_daemon_operation() {
     let (_temp, home, group_id, daemon) = running_home("capability install").await;
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{group_id}/capabilities/install"))
                 .header(header::CONTENT_TYPE, "application/json")
@@ -143,7 +144,7 @@ async fn capability_install_http_surface_uses_the_canonical_daemon_operation() {
 #[tokio::test]
 async fn message_control_http_routes_use_existing_event_operations() {
     let (_temp, home, group_id, daemon) = running_home("message controls").await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let deliver = app
         .clone()
         .oneshot(
@@ -182,7 +183,7 @@ async fn message_control_http_routes_use_existing_event_operations() {
 #[tokio::test]
 async fn actor_command_uses_shell_quoting_like_python() {
     let (_temp, home, group_id, daemon) = running_home("quoted command").await;
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!("/api/v1/groups/{group_id}/actors"))
                 .header(header::CONTENT_TYPE, "application/json")

@@ -94,7 +94,7 @@ class TestEnabledFlagCoercion(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_auto_wake_treats_string_false_as_disabled(self) -> None:
+    def test_user_message_reenables_string_false_recipient_before_wake(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon import server as daemon_server
         from cccc.daemon.server import handle_request
@@ -139,14 +139,17 @@ class TestEnabledFlagCoercion(unittest.TestCase):
                     )
 
                 self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
-                self.assertEqual(start_mock.call_count, 0)
+                deadline = time.monotonic() + 1.0
+                while start_mock.call_count == 0 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(start_mock.call_count, 1)
 
                 after = load_group(gid)
                 self.assertIsNotNone(after)
                 assert after is not None
                 actor_after = find_actor(after, "peer1")
                 self.assertIsNotNone(actor_after)
-                self.assertFalse(coerce_bool((actor_after or {}).get("enabled"), default=True))
+                self.assertTrue(coerce_bool((actor_after or {}).get("enabled"), default=False))
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

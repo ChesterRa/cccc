@@ -353,10 +353,11 @@ def test_handle_send_schedules_browser_delivery_for_web_model_actor(monkeypatch,
     request_flush.assert_not_called()
 
 
-def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, tmp_path) -> None:
+def test_handle_send_resumes_paused_group_for_direct_headless_delivery(monkeypatch, tmp_path) -> None:
     from cccc.contracts.v1 import DaemonRequest
     from cccc.daemon.messaging.chat_ops import handle_send
     from cccc.daemon.server import handle_request
+    from cccc.kernel.group import get_group_state, load_group
 
     monkeypatch.setenv("CCCC_HOME", str(tmp_path))
     create_resp, _ = handle_request(
@@ -413,7 +414,7 @@ def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, t
                 "message_mode": "send",
                 "group_id": group_id,
                 "by": "user",
-                "text": "keep this unread while paused",
+                "text": "resume and deliver while paused",
                 "to": ["@all"],
                 "client_id": "paused-direct-delivery",
             },
@@ -427,6 +428,9 @@ def test_handle_send_defers_direct_headless_delivery_while_paused(monkeypatch, t
         )
 
     assert resp.ok
-    codex_submit.assert_not_called()
-    claude_submit.assert_not_called()
-    web_schedule.assert_not_called()
+    group = load_group(group_id)
+    assert group is not None
+    assert get_group_state(group) == "active"
+    codex_submit.assert_called_once()
+    claude_submit.assert_called_once()
+    web_schedule.assert_called_once()

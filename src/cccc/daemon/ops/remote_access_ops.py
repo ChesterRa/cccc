@@ -191,13 +191,13 @@ def _web_binding_diagnostics(*, provider: str, require_access_token: bool, mode:
     access_token_present = access_token_count > 0
     admin_access_token_present = admin_access_token_count > 0
     allow_unauthenticated_listener = allow_unauthenticated_web_listener()
-    if exposure_class == "local" or allow_unauthenticated_listener:
+    if exposure_class == "local":
         effective_require_access_token = False
     elif exposure_class == "public":
         effective_require_access_token = True
     else:
         effective_require_access_token = bool(require_access_token)
-    remote_listener_auth_required = remote_web_exposure(host=host, public_url=public_url) and not allow_unauthenticated_listener
+    remote_listener_auth_required = remote_web_exposure(host=host, public_url=public_url)
     remote_listener_auth_requirement_satisfied = not remote_listener_auth_required or admin_access_token_present
     runtime = _effective_web_runtime_state()
     runtime_pid = int(runtime.get("pid") or 0)
@@ -468,10 +468,19 @@ def _validate_secure_defaults(*, provider: str, require_access_token: bool, bind
             "tailscale does not use web_public_url; use provider=manual for public or tunneled routes",
         )
     exposure_class = _exposure_class(binding)
-    if exposure_class == "public" and not require_access_token:
+    if exposure_class != "local" and not require_access_token:
         return _error(
             "remote_access_invalid_config",
-            "require_access_token=false is not allowed when web_public_url is set",
+            "remote Web exposure requires an access token",
+        )
+    if (
+        provider == "manual"
+        and exposure_class == "private"
+        and not _allow_insecure_remote()
+    ):
+        return _error(
+            "remote_access_invalid_config",
+            "plain HTTP LAN exposure requires CCCC_REMOTE_ALLOW_INSECURE=1; prefer an HTTPS reverse proxy or encrypted overlay",
         )
     return None
 

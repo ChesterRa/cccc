@@ -65,7 +65,7 @@ class TestWebPrincipalGuards(unittest.TestCase):
             client = self._create_client()
             resp = client.get(f"/api/v1/groups/{gid}")
             self.assertEqual(resp.status_code, 401)
-            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "unauthorized")
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "auth_required")
         finally:
             cleanup()
 
@@ -125,7 +125,8 @@ class TestWebPrincipalGuards(unittest.TestCase):
                 new=fake_global_tail,
             ):
                 client = self._create_client()
-                resp = client.get(f"/api/v1/events/stream?token={token}")
+                client.cookies.set("cccc_access_token", token)
+                resp = client.get("/api/v1/events/stream")
 
             self.assertEqual(resp.status_code, 200)
             self.assertIn(allowed_group, resp.text)
@@ -171,6 +172,8 @@ class TestWebPrincipalGuards(unittest.TestCase):
             cleanup()
 
     def test_ping_omits_home_by_default_and_includes_it_on_demand(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
         _, cleanup = self._with_home()
         try:
             with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
@@ -182,6 +185,15 @@ class TestWebPrincipalGuards(unittest.TestCase):
                 self.assertNotIn("home", default_result)
 
                 detailed_resp = client.get("/api/v1/ping?include_home=1")
+                self.assertEqual(detailed_resp.status_code, 200)
+                detailed_result = detailed_resp.json().get("result") or {}
+                self.assertNotIn("home", detailed_result)
+
+                token = str(create_access_token("admin", is_admin=True).get("token") or "")
+                detailed_resp = client.get(
+                    "/api/v1/ping?include_home=1",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
                 self.assertEqual(detailed_resp.status_code, 200)
                 detailed_result = detailed_resp.json().get("result") or {}
                 self.assertTrue(bool(str(detailed_result.get("home") or "").strip()))
@@ -334,7 +346,8 @@ class TestWebPrincipalGuards(unittest.TestCase):
             gid2 = self._create_group("g2")
             token = str(create_access_token("user-a", allowed_groups=[gid1], is_admin=False).get("token") or "")
             client = self._create_client()
-            with client.websocket_connect(f"/api/v1/groups/{gid2}/actors/demo/term?token={token}") as ws:
+            client.cookies.set("cccc_access_token", token)
+            with client.websocket_connect(f"/api/v1/groups/{gid2}/actors/demo/term") as ws:
                 payload = ws.receive_json()
                 self.assertFalse(payload.get("ok"))
                 self.assertEqual(str((payload.get("error") or {}).get("code") or ""), "permission_denied")
@@ -349,7 +362,8 @@ class TestWebPrincipalGuards(unittest.TestCase):
             gid = self._create_group("g1")
             token = str(create_access_token("user-a", allowed_groups=[gid], is_admin=True).get("token") or "")
             client = self._create_client()
-            with client.websocket_connect(f"/api/v1/groups/{gid}/actors/demo/term?token={token}") as ws:
+            client.cookies.set("cccc_access_token", token)
+            with client.websocket_connect(f"/api/v1/groups/{gid}/actors/demo/term") as ws:
                 payload = ws.receive_json()
                 self.assertFalse(payload.get("ok"))
                 self.assertNotEqual(str((payload.get("error") or {}).get("code") or ""), "auth_required")

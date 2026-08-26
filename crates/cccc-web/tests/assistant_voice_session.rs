@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::DaemonRequest;
@@ -19,7 +20,7 @@ async fn latest_document_session_aggregates_the_shared_transcript_log() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::get(format!(
                 "/api/v1/groups/{}/assistants/voice_secretary/sessions/latest?document_path=notes.md",
@@ -68,7 +69,7 @@ async fn session_by_id_preserves_the_daemon_empty_session_contract() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let known = app
         .clone()
@@ -145,7 +146,7 @@ async fn clearing_a_transcript_removes_shared_state_and_persisted_logs() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::delete(format!(
                 "/api/v1/groups/{}/assistants/voice_secretary/sessions/latest/transcript",

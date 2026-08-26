@@ -1,15 +1,21 @@
 #![cfg(unix)]
 
-use cccc_core::HomeLayout;
+use cccc_core::{HomeLayout, access_tokens::AccessTokenStore};
 use serde_json::json;
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
+    const ACCESS_TOKEN: &str = "acc_web_restart_test";
+
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
+    AccessTokenStore::new(home.clone())
+        .expect("token store")
+        .create("admin", Vec::new(), true, Some(ACCESS_TOKEN))
+        .expect("admin token");
     let live_port = free_port().await;
     let desired_port = free_port().await;
 
@@ -34,11 +40,19 @@ async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
             "by":"user"
         })
         .to_string(),
+        ACCESS_TOKEN,
     )
     .await;
     assert!(configured.starts_with("HTTP/1.1 200"), "{configured}");
 
-    let applied = request(live_port, "POST", "/api/v1/remote_access/apply", "").await;
+    let applied = request(
+        live_port,
+        "POST",
+        "/api/v1/remote_access/apply",
+        "",
+        ACCESS_TOKEN,
+    )
+    .await;
     assert!(applied.starts_with("HTTP/1.1 200"), "{applied}");
     assert!(applied.contains(r#""accepted":true"#), "{applied}");
 
@@ -46,7 +60,14 @@ async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
     wait_for_port_to_close(live_port).await;
     assert!(child.try_wait().expect("CLI status").is_none());
 
-    let state = request(desired_port, "GET", "/api/v1/remote_access", "").await;
+    let state = request(
+        desired_port,
+        "GET",
+        "/api/v1/remote_access",
+        "",
+        ACCESS_TOKEN,
+    )
+    .await;
     assert!(state.starts_with("HTTP/1.1 200"), "{state}");
     assert!(state.contains(r#""apply_supported":true"#), "{state}");
     assert!(state.contains(r#""restart_required":false"#), "{state}");
@@ -89,14 +110,14 @@ async fn wait_for_port_to_close(port: u16) {
     panic!("old Web listener on port {port} stayed open");
 }
 
-async fn request(port: u16, method: &str, path: &str, body: &str) -> String {
+async fn request(port: u16, method: &str, path: &str, body: &str, token: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect Web");
     stream
         .write_all(
             format!(
-                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
             .as_bytes(),

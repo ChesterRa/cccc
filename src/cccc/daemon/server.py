@@ -27,7 +27,7 @@ from ..kernel.settings import (
     update_web_branding_settings,
 )
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
-from ..kernel.messaging import enabled_recipient_actor_ids
+from ..kernel.messaging import recipient_actor_ids
 from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
@@ -892,7 +892,7 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             group,
             to,
             by=by,
-            enabled_recipient_actor_ids=enabled_recipient_actor_ids,
+            recipient_actor_ids=recipient_actor_ids,
             find_actor=find_actor,
             is_actor_running=_auto_wake_actor_running,
             start_actor_process=_start_actor_process,
@@ -900,6 +900,11 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             request_flush_pending_messages=lambda wake_group, actor_id: request_flush_pending_messages(
                 wake_group,
                 actor_id=actor_id,
+            ),
+            enable_recipient=lambda wake_group, actor_id: update_actor(
+                wake_group,
+                actor_id,
+                {"enabled": True},
             ),
             logger=logger,
             auto_wake_lock=_AUTO_WAKE_LOCK,

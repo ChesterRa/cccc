@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::post;
@@ -44,7 +45,9 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
 
     let mut socket =
         connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
@@ -297,7 +300,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let payload = json!({
         "source_group_id":"g_sender","source_group_title":"Sender",
         "source_by":"sender-agent","src_event_id":"sender-event-1",
@@ -442,7 +445,7 @@ async fn authenticated_reply_request_cancellation_reaches_the_remote_message_onc
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let delivered = app
         .clone()
         .oneshot(request(
@@ -529,7 +532,7 @@ async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_for
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(request(
             &json!({"source_group_id":"g_sender","text":"must not append",
                 "to":["@foreman"],"idempotency_key":"missing-foreman",
@@ -573,7 +576,10 @@ async fn signed_python_style_websocket_is_authorized_without_bearer_token() {
         .await
         .expect("listener");
     let address = listener.local_addr().expect("address");
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(home)).await });
+    let server =
+        tokio::spawn(
+            async move { axum::serve(listener, auth_support::authenticated_app(home)).await },
+        );
     let (mut socket, _) =
         tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws"))
             .await
@@ -642,7 +648,7 @@ async fn cross_group_send_does_not_downgrade_to_legacy_remote_mcp() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::post(format!(
                 "/api/v1/groups/{}/send_cross_group",
@@ -709,7 +715,7 @@ async fn remote_mcp_reports_access_and_does_not_expose_unscoped_full_tools() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let access = app
         .clone()
@@ -770,7 +776,7 @@ async fn remote_exec_session_is_bound_to_the_authorized_registration() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let started = app
         .clone()
@@ -866,7 +872,7 @@ async fn revoked_trust_invalidates_credential_and_removes_registration() {
         Ok(())
     })
     .expect("bridge state");
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let revoked = app
         .clone()
@@ -950,7 +956,7 @@ async fn session_authorization_requires_complete_registration_and_active_trust()
         Ok(())
     })
     .expect("bridge state");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     for credential in ["no-trust-token", "incomplete-token", "mismatch-token"] {
         let response = app
@@ -1040,6 +1046,7 @@ async fn revoke_bridge(address: &str) {
         .post(format!(
             "http://{address}/api/group-bridge/pairing/trusts/trust_ws/revoke"
         ))
+        .bearer_auth(auth_support::TEST_ADMIN_TOKEN)
         .json(&json!({"revoked_by":"websocket-test"}))
         .send()
         .await
@@ -1058,7 +1065,10 @@ async fn connect_bridge_socket(
         .await
         .expect("listener");
     let address = listener.local_addr().expect("address");
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(home)).await });
+    let server =
+        tokio::spawn(
+            async move { axum::serve(listener, auth_support::authenticated_app(home)).await },
+        );
     let (socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{address}/api/group-bridge/session/ws?token=ws-token&message_contract_version={GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}"
     ))

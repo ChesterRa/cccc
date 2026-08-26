@@ -46,8 +46,6 @@ import { useGroupStore } from "../../src/stores/useGroupStore";
 import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../../src/stores/useUIStore";
 import {
   formatSendMessageError,
-  getGroupSendBlockedMessage,
-  getGroupSendBlockedReason,
   isFormalChatMessageEvent,
   supportsChatStreamingPlaceholder,
 } from "../../src/utils/chatSend";
@@ -55,8 +53,6 @@ import { latestSuggestedUserMessage } from "../../src/utils/suggestedUserMessage
 import type { LedgerEvent } from "../../src/types";
 
 void localStorageMock;
-
-const t = (key: string, options?: Record<string, unknown>) => String(options?.defaultValue || key);
 
 const resetComposerAndGroupSelection = () => {
   useGroupStore.setState({ selectedGroupId: "" });
@@ -420,46 +416,15 @@ describe("isFormalChatMessageEvent", () => {
   });
 });
 
-describe("group send blocked state", () => {
-  it("blocks only explicit paused lifecycle states before optimistic send feedback", () => {
-    expect(
-      getGroupSendBlockedReason({ lifecycleState: "paused", runtimeRunning: true, actorCount: 2 }),
-    ).toBe("paused");
-    expect(
-      getGroupSendBlockedReason({ lifecycleState: "active", runtimeRunning: false, actorCount: 2 }),
-    ).toBeNull();
-    expect(
-      getGroupSendBlockedReason({
-        lifecycleState: "stopped",
-        runtimeRunning: false,
-        actorCount: 2,
-      }),
-    ).toBeNull();
-    expect(
-      getGroupSendBlockedReason({ lifecycleState: "idle", runtimeRunning: true, actorCount: 2 }),
-    ).toBeNull();
-  });
-
-  it("maps recipient-resolution failures to group-state recovery copy", () => {
-    expect(getGroupSendBlockedMessage("paused", t)).toBe(
-      "This group is paused. Resume the group before sending a message to agents.",
-    );
+describe("send error formatting", () => {
+  it("preserves the server error after automatic group wake-up", () => {
     expect(
       formatSendMessageError({
         code: "no_enabled_recipients",
         message: "No enabled recipients after excluding sender.",
-        groupSendBlockedReason: "paused",
-        t,
+        t: (key, options) => String(options?.defaultValue || key),
       }),
-    ).toBe("This group is paused. Resume the group before sending a message to agents.");
-    expect(
-      formatSendMessageError({
-        code: "invalid_recipient",
-        message: "unknown recipient",
-        groupSendBlockedReason: "paused",
-        t,
-      }),
-    ).toBe("invalid_recipient: unknown recipient");
+    ).toBe("no_enabled_recipients: No enabled recipients after excluding sender.");
   });
 });
 

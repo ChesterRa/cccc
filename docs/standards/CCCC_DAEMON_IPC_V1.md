@@ -88,7 +88,10 @@ Daemon endpoint selection is controlled by environment variables:
 - `CCCC_DAEMON_TRANSPORT`: `"unix"` or `"tcp"` (default: `"unix"` on POSIX, `"tcp"` on Windows)
 - `CCCC_DAEMON_HOST`: bind host for TCP (default: `127.0.0.1`)
 - `CCCC_DAEMON_PORT`: bind port for TCP (default: `0` meaning “choose a free port”)
-- `CCCC_DAEMON_ALLOW_REMOTE`: when set truthy, allows binding to a non-loopback host (**dangerous**, no auth)
+
+The Rust daemon rejects every non-loopback TCP host before binding. Daemon IPC
+has no authentication and cannot be exposed with `0.0.0.0`, a LAN address, or a
+public address. Use the authenticated Web API for remote access.
 
 ## 4. Transport and Framing (Normative)
 
@@ -98,7 +101,7 @@ Daemon IPC v1 uses a stream transport:
 - Unix domain socket (`transport="unix"`) where available.
 - TCP (`transport="tcp"`) for cross-platform fallback.
 
-Security note: there is **no authentication** at this layer. TCP bindings MUST be treated as local-only unless an implementation explicitly accepts the risk.
+Security note: there is **no authentication** at this layer. TCP bindings MUST remain loopback-only.
 
 ### 4.2 Framing: NDJSON
 
@@ -1612,10 +1615,13 @@ Args:
 Notes:
 - `stopped` is not a valid `group_set_state` value in daemon IPC v1.
 - Higher-level surfaces (CLI/MCP) MAY expose `stopped` as a convenience alias that maps to `group_stop`.
-- While a group is `paused`, the daemon MUST NOT submit `chat.message` or
-  `system.notify` work to PTY or headless actor runtimes. Canonical unread work
-  remains in the ledger and MAY be surfaced through one bounded recovery notice
-  after the group returns to `active` or `idle`.
+- While a group remains `paused`, the daemon MUST NOT submit queued
+  `chat.message` or `system.notify` work to PTY or headless actor runtimes.
+  A user-authored Send or Request Reply is an explicit use action: it MUST first
+  resume the group to `active`, enable its addressed actors, and then deliver
+  through the normal runtime path. Mail does not resume the group. Canonical
+  unread work remains in the ledger and MAY be surfaced through one bounded
+  recovery notice after the group returns to `active` or `idle`.
 
 Result:
 ```ts
@@ -2871,6 +2877,7 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
+- A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply to an actor is also an explicit wake action: it MUST enable the targeted actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
@@ -5054,7 +5061,7 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set, or if `manual`/`tailscale` is already enabled. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, PID-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default; Reach MUST refuse to start when no live listener binding can be verified or that binding cannot accept connections on `127.0.0.1`. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
 The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 

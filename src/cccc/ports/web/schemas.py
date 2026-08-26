@@ -646,8 +646,6 @@ def get_principal(conn: Request | WebSocket) -> Any:
 
 def check_admin(conn: Request | WebSocket) -> Any:
     principal = get_principal(conn)
-    if not _tokens_enabled():
-        return principal
     if _principal_kind(principal) == "user" and _principal_is_admin(principal):
         return principal
     raise HTTPException(
@@ -662,8 +660,6 @@ def check_admin(conn: Request | WebSocket) -> Any:
 
 def check_group(conn: Request | WebSocket, group_id: str) -> Any:
     principal = get_principal(conn)
-    if not _tokens_enabled():
-        return principal
     gid = str(group_id or "").strip()
     allowed_groups = _principal_allowed_groups(principal)
     if _principal_kind(principal) != "user":
@@ -696,8 +692,6 @@ def require_admin(request: Request) -> Any:
 def require_user(request: Request) -> Any:
     """Allow any authenticated user (admin or non-admin). Reject non-user principals."""
     principal = get_principal(request)
-    if not _tokens_enabled():
-        return principal
     if _principal_kind(principal) == "user":
         return principal
     raise HTTPException(
@@ -718,7 +712,7 @@ def filter_groups_for_principal(
     conn: Request | WebSocket, groups: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     principal = get_principal(conn)
-    if not _tokens_enabled() or _principal_is_admin(principal):
+    if _principal_is_admin(principal):
         return groups
     if _principal_kind(principal) != "user":
         return []
@@ -741,11 +735,6 @@ def _extract_token_from_headers(headers: Any) -> str:
 
 def resolve_websocket_principal(websocket: WebSocket) -> Any:
     token = _extract_token_from_headers(getattr(websocket, "headers", {}) or {})
-    if not token:
-        try:
-            token = str(websocket.query_params.get("token") or "").strip()
-        except Exception:
-            token = ""
     if not token:
         try:
             cookies = getattr(websocket, "cookies", None) or {}

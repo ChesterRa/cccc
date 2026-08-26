@@ -38,6 +38,7 @@ class FakeWebSocket {
   readyState = FakeWebSocket.OPEN;
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   sent: string[] = [];
 
@@ -141,6 +142,31 @@ describe("ProjectedBrowserSurfacePanel viewer switching", () => {
     expect(loadSession).toHaveBeenCalledTimes(2);
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(FakeWebSocket.instances.at(-1)?.url).toContain("viewer_mode=auto");
+  });
+
+  it("shows an actionable hint when the websocket handshake is rejected", async () => {
+    const loadSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+
+    await act(async () => {
+      root.render(
+        <ProjectedBrowserSurfacePanel
+          isDark={false}
+          refreshNonce={0}
+          defaultViewerMode="page"
+          loadSession={loadSession}
+          webSocketUrl="ws://localhost/browser"
+        />,
+      );
+    });
+
+    await act(async () => {
+      FakeWebSocket.instances.at(-1)?.onerror?.();
+    });
+
+    expect(host.textContent).toContain("reverse-proxy Origin headers");
   });
 
   it("sends a native wheel target mapped into page coordinates", async () => {

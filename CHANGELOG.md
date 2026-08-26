@@ -11,9 +11,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 - **Per-push CI now focuses on source correctness instead of repeating release verification.** Python tests use two balanced shards, Linux Rust checks share one workspace, and slow native installers plus intermediate Python compatibility run nightly or on demand while release workflows retain exact artifact gates.
+- **Web Model automated tests and their visible browser prompt fixtures were removed.** Product implementation remains available, while the default Rust/frontend test run no longer opens local `Send` fixture pages in Chrome.
 
 ### Fixed
+- **Rust remote-control boundaries now fail closed.** Unauthenticated daemon IPC rejects every non-loopback TCP bind; Reach admin links use short-lived, one-time, origin-bound exchanges instead of long-lived tokens; and cookie-authenticated writes require an exact allowed Origin or same-origin Referer.
+- **The Vite development proxy now preserves the browser-facing Host for terminal WebSockets.** Rust Web Origin validation no longer rejects legitimate `127.0.0.1:5555` runtime-inspector connections and leaves the xterm surface blank.
 - **Stale Vite dependency chunks no longer collapse the Web composer during development.** Dynamic-import failures trigger one bounded page reload and then degrade only the Voice Secretary launcher, while base-relative manifest and icon paths avoid duplicate `/ui/ui/` requests.
+- **User messages now wake their targeted actors consistently across Python and Rust after a provider exit, pause, or explicit stop.** Send and Request Reply reactivate the Group and targeted recipients before delivery; manual delivery also resumes paused Groups, while Mail remains non-waking.
 - **Windows combined-launcher cleanup now owns the exact process object instead of trusting a reusable PID.** Graceful shutdown is fenced to that daemon identity and receives the full lifecycle deadline before bounded fallback cleanup, so normal dispatch contention cannot trigger an early kill and descriptor handoff cannot stop a replacement daemon.
 - **Python release retries now verify immutable artifact hashes from one package-index snapshot.** Matching files remain idempotent, while a same-name rebuild fails instead of mixing distributions from different builds under one version.
 

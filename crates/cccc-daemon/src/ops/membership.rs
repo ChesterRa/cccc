@@ -243,7 +243,7 @@ fn reach_on_with(
     let remote = settings::load(home).map_err(OpError::io)?.remote_access;
     let provider = text(&remote, "provider", "off");
     let enabled = boolean(&remote, "enabled", false);
-    if matches!(provider.as_str(), "manual" | "tailscale") && enabled {
+    if provider == "tailscale" && enabled {
         return fail(
             home,
             "membership_gate",
@@ -501,7 +501,7 @@ fn mark_cut(
     Ok(())
 }
 
-fn public_urls(home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, OpError> {
+fn public_urls(_home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, OpError> {
     let hostname = hostname.and_then(canonical_reach_hostname);
     let Some(origin) = hostname else {
         return Ok(PublicUrls {
@@ -509,21 +509,9 @@ fn public_urls(home: &HomeLayout, hostname: Option<&str>) -> Result<PublicUrls, 
             web: None,
         });
     };
-    let admin = AccessTokenStore::new(home.clone())
-        .and_then(|store| store.list())
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|token| token.is_admin)
-        .map(|token| token.token);
-    let web_url = admin.map(|token| {
-        let query = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("token", &token)
-            .finish();
-        format!("{origin}/ui/?{query}")
-    });
     Ok(PublicUrls {
+        web: Some(format!("{origin}/ui/")),
         hostname: Some(origin),
-        web: web_url,
     })
 }
 
@@ -990,6 +978,16 @@ mod tests {
         settings::update(&home, |global| {
             global
                 .remote_access
+                .insert("provider".into(), Value::String("manual".into()));
+            global
+                .remote_access
+                .insert("enabled".into(), Value::Bool(true));
+            global.remote_access.insert(
+                "web_public_url".into(),
+                Value::String("https://manual.example.test".into()),
+            );
+            global
+                .remote_access
                 .insert("web_port".into(), Value::from(9000));
             Ok(())
         })
@@ -1031,16 +1029,54 @@ mod tests {
         let remote = settings::load(&home).expect("saved settings").remote_access;
         assert_eq!(remote["provider"], "reach");
         assert_eq!(remote["enabled"], true);
+        assert_eq!(remote["web_public_url"], "https://device-rust.example.test");
     }
 
     #[test]
-    fn public_urls_include_only_the_local_admin_credential() {
+    fn reach_on_rejects_an_enabled_tailscale_provider() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("home");
         AccessTokenStore::new(home.clone())
             .expect("tokens")
-            .create("admin", Vec::new(), true, Some("acc secret"))
+            .create("admin", Vec::new(), true, Some("acc_rust_fixture"))
+            .expect("admin token");
+        settings::update(&home, |global| {
+            global
+                .remote_access
+                .insert("provider".into(), Value::String("tailscale".into()));
+            global
+                .remote_access
+                .insert("enabled".into(), Value::Bool(true));
+            Ok(())
+        })
+        .expect("settings");
+        let request = DaemonRequest {
+            v: 1,
+            op: "membership_reach_on".into(),
+            args: json!({"by":"user"}).as_object().cloned().expect("args"),
+        };
+
+        let error = reach_on_with(
+            &home,
+            &request,
+            |_home| panic!("tailscale conflict must fail before port resolution"),
+            |_home| panic!("tailscale conflict must fail before helper setup"),
+            |_home, _token| panic!("tailscale conflict must fail before helper start"),
+        )
+        .expect_err("tailscale must remain explicit");
+
+        assert_eq!(error.code, "membership_gate");
+    }
+
+    #[test]
+    fn public_urls_never_include_a_local_admin_credential() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("home");
+        AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", Vec::new(), true, Some("acc_secret"))
             .expect("admin token");
         let urls = public_urls(&home, Some("d-fixture.example.test/")).expect("urls");
         assert_eq!(
@@ -1049,7 +1085,14 @@ mod tests {
         );
         assert_eq!(
             urls.web.as_deref(),
-            Some("https://d-fixture.example.test/ui/?token=acc+secret")
+            Some("https://d-fixture.example.test/ui/")
+        );
+        assert!(
+            !urls
+                .web
+                .as_deref()
+                .unwrap_or_default()
+                .contains("acc_secret")
         );
     }
 

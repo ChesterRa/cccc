@@ -1,4 +1,4 @@
-use cccc_contracts::{Event, RuntimeStateSource};
+use cccc_contracts::Event;
 use cccc_core::ledger;
 use cccc_core::{GroupStore, HomeLayout};
 use cccc_runtime::SessionStatus;
@@ -53,29 +53,11 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     let Ok(group) = store.load(&status.group_id) else {
         return Ok(());
     };
-    let Some(actor) = group
-        .actors
-        .iter()
-        .find(|actor| actor.id == status.actor_id)
-    else {
+    if !group.actors.iter().any(|actor| actor.id == status.actor_id) {
         return Ok(());
-    };
-    if actor.runtime_state_source != RuntimeStateSource::Terminal {
-        return append_exit_event(store, status);
     }
-    store
-        .mutate(&status.group_id, |doc| {
-            if let Some(actor) = doc
-                .actors
-                .iter_mut()
-                .find(|actor| actor.id == status.actor_id)
-            {
-                actor.enabled = false;
-            }
-            doc.running = doc.actors.iter().any(|actor| actor.enabled);
-            Ok(())
-        })
-        .map_err(OpError::io)?;
+    // Preserve desired lifecycle after a provider exit. A later user-directed
+    // message follows the same wake path whether the process exited or was stopped.
     append_exit_event(store, status)
 }
 
@@ -144,6 +126,45 @@ mod tests {
         assert_eq!(event.kind, "actor.stop");
         assert_eq!(event.data["actor_id"], "peer1");
         assert_eq!(event.data["exit_code"], 7);
+    }
+
+    #[test]
+    fn terminal_exit_preserves_desired_lifecycle_for_message_auto_wake() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("recoverable terminal", "").expect("group");
+        store
+            .mutate(&group.group_id, |doc| {
+                doc.actors.push(Actor::new("peer1"));
+                doc.running = true;
+                Ok(())
+            })
+            .expect("add actor");
+
+        reconcile_exited(
+            &home,
+            vec![SessionStatus {
+                group_id: group.group_id.clone(),
+                actor_id: "peer1".into(),
+                runner: RunnerKind::Pty,
+                running: false,
+                pid: Some(42),
+                started_at: "2026-08-25T00:00:00Z".into(),
+                exit_code: Some(1),
+            }],
+        )
+        .expect("reconcile terminal exit");
+
+        let reloaded = store.load(&group.group_id).expect("reload group");
+        assert!(reloaded.running);
+        assert!(reloaded.actors[0].enabled);
+        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("read ledger");
+        let event = events.last().expect("exit event");
+        assert_eq!(event.kind, "actor.stop");
+        assert_eq!(event.by, "system");
+        assert_eq!(event.data["reason"], "process_exit");
     }
 
     #[test]

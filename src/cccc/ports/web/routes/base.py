@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ....kernel.access_tokens import list_access_tokens
+from ....kernel.web_bootstrap import ensure_web_bootstrap_token
 from ....kernel.actors import find_actor
 from ....kernel.group import load_group
 from ....kernel.scope import detect_scope
@@ -66,6 +67,7 @@ from .browser_surface_proxy import (
     send_daemon_attach_request,
 )
 from .filesystem_directory import CreateDirectoryRequest, create_directory
+from .reach_web_login import issue_reach_web_login
 
 _WEB_MODEL_BROWSER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _WEB_MODEL_CONNECTOR_GET_ACTIVITY_MIN_SECONDS = 30.0
@@ -192,14 +194,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return _branding_asset_file_response(normalized_kind)
 
     @global_router.get("/api/v1/ping")
-    async def ping(include_home: bool = False) -> Dict[str, Any]:
+    async def ping(request: Request, include_home: bool = False) -> Dict[str, Any]:
         resp = await ctx.daemon({"op": "ping"})
         result: Dict[str, Any] = {
             "daemon": resp.get("result", {}),
             "version": ctx.version,
             "web": {"mode": ctx.web_mode, "read_only": ctx.read_only},
         }
-        if include_home:
+        principal = get_principal(request)
+        if include_home and bool(getattr(principal, "is_admin", False)):
             result["home"] = str(ctx.home)
         return {
             "ok": True,
@@ -1187,9 +1190,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         access_tokens = list_access_tokens()
         access_token_count = len(access_tokens)
         login_active = access_token_count > 0
+        bootstrap_required = not any(
+            bool((item or {}).get("is_admin"))
+            for item in access_tokens
+            if isinstance(item, dict)
+        )
+        if bootstrap_required:
+            ensure_web_bootstrap_token(ctx.home)
         principal_kind = str(getattr(principal, "kind", "anonymous") or "anonymous")
         is_admin = bool(getattr(principal, "is_admin", False))
-        can_access_global_settings = access_token_count == 0 or (principal_kind == "user" and is_admin)
+        can_access_global_settings = bootstrap_required or (principal_kind == "user" and is_admin)
         observability = get_observability_settings()
         runtime_visibility = observability.get("runtime_visibility") if isinstance(observability, dict) else {}
         return {
@@ -1203,6 +1213,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "is_admin": is_admin,
                     "allowed_groups": groups,
                     "access_token_count": access_token_count,
+                    "bootstrap_required": bootstrap_required,
                     "can_access_global_settings": can_access_global_settings,
                     "runtime_visibility": {
                         "peer_runtime": str(
@@ -1559,6 +1570,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def membership_reach_off(by: str = "user") -> Dict[str, Any]:
         """Stop membership reach but keep this device logged in."""
         return await ctx.daemon({"op": "membership_reach_off", "args": {"by": str(by or "user")}})
+
+    @global_router.post(
+        "/api/v1/membership/reach/web-login",
+        dependencies=[Depends(require_admin)],
+    )
+    async def membership_reach_web_login(request: Request) -> Dict[str, Any]:
+        return await issue_reach_web_login(ctx, request)
 
     @global_router.get("/api/v1/remote_access", dependencies=[Depends(require_admin)])
     async def remote_access_get() -> Dict[str, Any]:

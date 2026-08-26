@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -27,7 +28,7 @@ async fn recording_lease_route_uses_the_daemon_owned_global_contract() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_address(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let path = format!(
         "/api/v1/groups/{}/assistants/voice_secretary/recording_lease",
         group.group_id

@@ -17,16 +17,14 @@ pub struct Principal {
     pub raw_token: String,
 }
 
-impl Principal {
-    fn local_admin() -> Self {
-        Self {
-            user_id: "local-user".into(),
-            allowed_groups: Vec::new(),
-            is_admin: true,
-            raw_token: String::new(),
-        }
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TokenSource {
+    None,
+    Bearer,
+    Cookie,
+}
 
+impl Principal {
     fn from_token(token: AccessToken) -> Self {
         Self {
             user_id: token.user_id,
@@ -46,6 +44,23 @@ pub async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
+    if !websocket_origin_allowed(&request) {
+        tracing::warn!(
+            origin = request
+                .headers()
+                .get(header::ORIGIN)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default(),
+            served_origin = ?crate::request_origin::served_origin(request.headers()),
+            path = request.uri().path(),
+            "rejected WebSocket origin"
+        );
+        return failure_text(
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+            "WebSocket origin is not allowed",
+        );
+    }
     let store = match AccessTokenStore::new(state.home.clone()) {
         Ok(store) => store,
         Err(error) => return auth_store_failure(error),
@@ -54,27 +69,41 @@ pub async fn authorize(
         Ok(tokens) => tokens,
         Err(error) => return auth_store_failure(error),
     };
-    if tokens.is_empty() {
-        request.extensions_mut().insert(Principal::local_admin());
+    let has_admin = tokens.iter().any(|token| token.is_admin);
+    if is_first_admin_bootstrap(request.method(), request.uri().path()) && !has_admin {
         return next.run(request).await;
     }
-    let query_token = query_token(&request);
-    let secure_cookie = request
-        .headers()
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("https"));
-    let raw = request_token(&request);
+    if tokens.is_empty() {
+        if is_public(request.method(), request.uri().path()) {
+            return next.run(request).await;
+        }
+        return failure_text(
+            StatusCode::UNAUTHORIZED,
+            "bootstrap_required",
+            "create the first administrator access token with the local Web bootstrap code",
+        );
+    }
+    let secure_cookie = crate::request_origin::is_https(request.headers());
+    let (raw, token_source) = request_token(&request);
     let principal = match store.lookup(&raw) {
         Ok(Some(token)) => Some(Principal::from_token(token)),
         Ok(None) => None,
         Err(error) => return auth_store_failure(error),
     };
+    if principal.is_some()
+        && token_source == TokenSource::Cookie
+        && is_unsafe_method(request.method())
+        && !crate::request_origin::cookie_csrf_allowed(request.headers())
+    {
+        return failure_text(
+            StatusCode::FORBIDDEN,
+            "csrf_origin_invalid",
+            "Cookie-authenticated write requests require an allowed Origin or Referer",
+        );
+    }
     let bootstrap_cookie = principal.as_ref().and_then(|principal| {
-        query_token
-            .as_deref()
-            .filter(|token| *token == principal.raw_token)
-            .map(|token| cookie(token, secure_cookie))
+        (request.uri().path() == "/api/v1/web_access/session" && !principal.raw_token.is_empty())
+            .then(|| cookie(&principal.raw_token, secure_cookie))
     });
     if is_public(request.method(), request.uri().path()) {
         if let Some(principal) = principal {
@@ -125,6 +154,27 @@ pub async fn authorize(
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
 }
 
+fn websocket_origin_allowed(request: &Request) -> bool {
+    let websocket = request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    if !websocket {
+        return true;
+    }
+    let Some(origin) = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return true;
+    };
+    crate::request_origin::origin_allowed(request.headers(), origin)
+}
+
 fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {
     if let Some(cookie) = cookie
         && let Ok(value) = HeaderValue::from_str(cookie)
@@ -134,7 +184,7 @@ fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Respon
     response
 }
 
-fn request_token(request: &Request) -> String {
+fn request_token(request: &Request) -> (String, TokenSource) {
     let bearer = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -147,7 +197,7 @@ fn request_token(request: &Request) -> String {
         .map(str::trim)
         .unwrap_or("");
     if !bearer.is_empty() {
-        return bearer.into();
+        return (bearer.into(), TokenSource::Bearer);
     }
     let cookie = request
         .headers()
@@ -161,14 +211,18 @@ fn request_token(request: &Request) -> String {
                     .map(decode_token)
             })
         });
-    query_token(request).or(cookie).unwrap_or_default()
+    cookie.map_or_else(
+        || (String::new(), TokenSource::None),
+        |token| (token, TokenSource::Cookie),
+    )
 }
 
-fn query_token(request: &Request) -> Option<String> {
-    request.uri().query()?.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == "token").then(|| decode_token(value))
-    })
+fn is_unsafe_method(method: &Method) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+fn is_first_admin_bootstrap(method: &Method, path: &str) -> bool {
+    *method == Method::POST && path == "/api/v1/access-tokens"
 }
 
 fn decode_token(value: &str) -> String {
@@ -178,7 +232,11 @@ fn decode_token(value: &str) -> String {
 fn is_public(method: &Method, path: &str) -> bool {
     matches!(
         path,
-        "/api/v1/ping" | "/api/v1/health" | "/api/v1/ready" | "/api/v1/web_access/session"
+        "/api/v1/ping"
+            | "/api/v1/health"
+            | "/api/v1/ready"
+            | "/api/v1/web_access/session"
+            | "/api/v1/web_access/exchange"
     ) || matches!(
         path,
         "/api/group-bridge/pairing/requests/remote"
@@ -255,6 +313,7 @@ fn failure_text(status: StatusCode, code: &str, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
 
     #[test]
     fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {
@@ -269,6 +328,56 @@ mod tests {
             "/api/v1/space/providers/notebooklm/credential"
         ));
         assert!(!requires_admin(&Method::GET, "/api/v1/groups/g_one/actors"));
+    }
+
+    #[test]
+    fn websocket_origin_must_match_the_served_origin() {
+        let same_origin = Request::builder()
+            .uri("/api/v1/groups/g_one/actors/a/term")
+            .header(header::UPGRADE, "websocket")
+            .header(header::HOST, "cccc.example")
+            .header(header::ORIGIN, "https://cccc.example")
+            .header("x-forwarded-proto", "https")
+            .body(Body::empty())
+            .expect("request");
+        assert!(websocket_origin_allowed(&same_origin));
+
+        let cross_origin = Request::builder()
+            .uri("/api/v1/groups/g_one/actors/a/term")
+            .header(header::UPGRADE, "websocket")
+            .header(header::HOST, "cccc.example")
+            .header(header::ORIGIN, "https://evil.example")
+            .header("x-forwarded-proto", "https")
+            .body(Body::empty())
+            .expect("request");
+        assert!(!websocket_origin_allowed(&cross_origin));
+    }
+
+    #[test]
+    fn cookie_writes_require_same_origin_or_referer() {
+        let same_origin = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/groups/g_one/start")
+            .header(header::HOST, "cccc.example")
+            .header(header::ORIGIN, "https://cccc.example")
+            .header("x-forwarded-proto", "https")
+            .body(Body::empty())
+            .expect("request");
+        assert!(crate::request_origin::cookie_csrf_allowed(
+            same_origin.headers()
+        ));
+
+        let sibling_origin = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/groups/g_one/start")
+            .header(header::HOST, "cccc.example")
+            .header(header::ORIGIN, "https://evil.example")
+            .header("x-forwarded-proto", "https")
+            .body(Body::empty())
+            .expect("request");
+        assert!(!crate::request_origin::cookie_csrf_allowed(
+            sibling_origin.headers()
+        ));
     }
 
     #[test]

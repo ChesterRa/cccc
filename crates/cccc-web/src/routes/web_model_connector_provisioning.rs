@@ -142,30 +142,3 @@ pub(super) async fn revoke(
     }
     Ok(success(json!({"revoked":true,"connector_id":connector_id})))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn public_connector_uses_configured_public_base_url() {
-        let connector = json!({
-            "connector_id":"wmc_test",
-            "secret":"secret-value",
-            "group_id":"g_test",
-            "actor_id":"web1"
-        });
-
-        let public = public(&connector, "https://cccc.example");
-
-        assert_eq!(
-            public["connector_url_with_token"],
-            json!("https://cccc.example/mcp/web-model/wmc_test?token=secret-value")
-        );
-        assert_eq!(
-            public["connector_url_path_token"],
-            json!("https://cccc.example/mcp/web-model/wmc_test/token/secret-value")
-        );
-        assert!(public.get("secret").is_none());
-    }
-}

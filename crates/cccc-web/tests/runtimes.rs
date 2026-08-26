@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cccc_core::HomeLayout;
@@ -9,7 +10,7 @@ use tower::ServiceExt;
 async fn runtime_endpoint_returns_frontend_availability_contract() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let response = cccc_web::app(home)
+    let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::get("/api/v1/runtimes")
                 .body(Body::empty())

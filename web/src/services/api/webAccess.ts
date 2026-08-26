@@ -105,6 +105,13 @@ export async function stopMembershipReach() {
   });
 }
 
+export async function createMembershipReachWebLogin() {
+  return apiJson<{ web_url: string; expires_at_epoch: number }>(
+    "/api/v1/membership/reach/web-login",
+    { method: "POST" },
+  );
+}
+
 export async function fetchWebAccessSession() {
   return reuseRecentReadRequest(webAccessSessionRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
     apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session"),
@@ -207,6 +214,7 @@ export async function createAccessToken(
   isAdmin: boolean,
   allowedGroups: string[],
   customToken?: string,
+  bootstrapToken?: string,
 ) {
   clearWebAccessSessionReadRequest();
   const body: Record<string, unknown> = {
@@ -215,6 +223,7 @@ export async function createAccessToken(
     allowed_groups: allowedGroups,
   };
   if (customToken?.trim()) body.custom_token = customToken.trim();
+  if (bootstrapToken?.trim()) body.bootstrap_token = bootstrapToken.trim();
   return apiJson<{ access_token: AccessTokenEntry }>("/api/v1/access-tokens", {
     method: "POST",
     body: JSON.stringify(body),

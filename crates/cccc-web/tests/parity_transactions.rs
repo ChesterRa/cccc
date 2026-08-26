@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::DaemonRequest;
@@ -16,6 +17,7 @@ async fn branding_upload_rolls_back_staged_asset_when_daemon_commit_fails() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_address(&home).await;
+    let app = auth_support::authenticated_app(home.clone());
     std::fs::set_permissions(home.root(), std::fs::Permissions::from_mode(0o555))
         .expect("make settings directory read-only");
     let boundary = "branding-rollback";
@@ -24,7 +26,7 @@ async fn branding_upload_rolls_back_staged_asset_when_daemon_commit_fails() {
     );
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        cccc_web::app(home.clone()).oneshot(
+        app.oneshot(
             Request::post("/api/v1/branding/assets/logo_icon")
                 .header(
                     header::CONTENT_TYPE,

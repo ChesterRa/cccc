@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -38,7 +39,7 @@ async fn changed_help_notifies_only_running_actors() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
     let response = app
         .oneshot(
             Request::put(format!("/api/v1/groups/{group_id}/prompts/help"))

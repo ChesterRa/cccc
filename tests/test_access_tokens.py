@@ -55,6 +55,20 @@ class TestAccessTokens(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_custom_access_token_must_be_http_bearer_safe(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            with self.assertRaisesRegex(ValueError, "bearer-token"):
+                create_access_token(
+                    "admin",
+                    is_admin=True,
+                    custom_token="token; 含",
+                )
+        finally:
+            cleanup()
+
     def test_load_access_tokens_rejects_invalid_yaml(self) -> None:
         from cccc.kernel.access_tokens import load_access_tokens
 
@@ -237,7 +251,11 @@ class TestAccessTokens(unittest.TestCase):
                 ["admin", "member"],
             )
             self.assertTrue(delete_access_token(member_token))
-            self.assertTrue(delete_access_token(admin_token))
-            self.assertEqual(list_access_tokens(), [])
+            with self.assertRaises(LastAdminRequiredError):
+                delete_access_token(admin_token)
+            self.assertEqual(
+                [item.get("user_id") for item in list_access_tokens()],
+                ["admin"],
+            )
         finally:
             cleanup()

@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestDiagnosticsOps(unittest.TestCase):
@@ -701,15 +702,16 @@ class TestDiagnosticsOps(unittest.TestCase):
             update, _ = self._call("observability_update", {"by": "user", "patch": {"developer_mode": True}})
             self.assertTrue(update.ok, getattr(update, "error", None))
 
-            cfg, _ = self._call(
-                "remote_access_configure",
-                {
-                    "by": "user",
-                    "provider": "manual",
-                    "web_host": "0.0.0.0",
-                    "web_port": 9001,
-                },
-            )
+            with patch.dict(os.environ, {"CCCC_REMOTE_ALLOW_INSECURE": "1"}):
+                cfg, _ = self._call(
+                    "remote_access_configure",
+                    {
+                        "by": "user",
+                        "provider": "manual",
+                        "web_host": "0.0.0.0",
+                        "web_port": 9001,
+                    },
+                )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
 
             write_web_runtime_state(

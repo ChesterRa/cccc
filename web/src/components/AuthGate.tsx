@@ -18,6 +18,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const { isDark } = useTheme();
   const initialForceLogin = api.shouldForceTokenLogin();
   const forceLoginRef = useRef(initialForceLogin);
+  const bootstrapRequiredRef = useRef(false);
   const [status, setStatus] = useState<AuthStatus>(initialForceLogin ? "login" : "checking");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -39,16 +40,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     hostname === "::1" ||
     hostname === "[::1]";
   const localRecoveryPath = "~/.cccc/access_tokens.yaml";
+  const localBootstrapPath = "~/.cccc/web_bootstrap_token";
 
-  // Probe a protected endpoint on startup; 401/403 means token auth is enabled
-  // and this browser is not authenticated yet.
+  // Establish the HttpOnly session cookie before opening any SSE/WebSocket.
+  // Existing browsers may still hold only the header token in sessionStorage.
   useEffect(() => {
     if (forceLoginRef.current) {
       api.clearAuthToken();
       return;
     }
     let cancelled = false;
-    api.fetchGroups().then((resp) => {
+    void api.fetchWebAccessSession().then(async (session) => {
+      const bootstrapRequired = Boolean(
+        session.ok && session.result?.web_access_session?.bootstrap_required,
+      );
+      bootstrapRequiredRef.current = bootstrapRequired;
+      if (bootstrapRequired) {
+        if (!cancelled) setStatus("authenticated");
+        return;
+      }
+      const resp = session.ok ? await api.fetchGroups() : session;
       if (cancelled) return;
       if (resp.ok) {
         setStatus("authenticated");
@@ -68,6 +79,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   // Subscribe to mid-session 401s so the gate re-appears.
   useEffect(() => {
     api.onAuthRequired(() => {
+      if (bootstrapRequiredRef.current) return;
       api.clearAuthToken();
       setStatus("login");
     });
@@ -81,7 +93,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setSubmitting(true);
       setError("");
       api.setAuthToken(trimmed);
-      const resp = await api.fetchGroups();
+      const session = await api.fetchWebAccessSession();
+      const resp = session.ok ? await api.fetchGroups() : session;
       setSubmitting(false);
       if (resp.ok) {
         api.clearForceTokenLogin();
@@ -191,7 +204,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                       <li>{t("recoveryLocalStep1")}</li>
                       <li>{t("recoveryLocalStep2", { path: localRecoveryPath })}</li>
                       <li>{t("recoveryLocalStep3")}</li>
-                      <li>{t("recoveryLocalStep4")}</li>
+                      <li>{t("recoveryLocalStep4", { bootstrapPath: localBootstrapPath })}</li>
                     </ol>
                   </div>
                 ) : (
@@ -200,7 +213,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                       {t("recoveryRemoteTitle")}
                     </div>
                     <p className="mt-1 text-xs leading-6 text-[var(--color-text-tertiary)]">
-                      {t("recoveryRemoteBody", { path: localRecoveryPath })}
+                      {t("recoveryRemoteBody", {
+                        path: localRecoveryPath,
+                        bootstrapPath: localBootstrapPath,
+                      })}
                     </p>
                   </div>
                 )}

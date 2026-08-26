@@ -105,19 +105,20 @@ describe("authenticated URLs", () => {
     vi.unstubAllGlobals();
   });
 
-  it("replaces an expired token instead of appending a duplicate", () => {
+  it("does not place long-lived access tokens in URLs", () => {
     vi.stubGlobal("window", {
       location: { origin: "http://localhost:5555", href: "http://localhost:5555/ui/", search: "" },
     });
     vi.stubGlobal("sessionStorage", { setItem: vi.fn() });
     setAuthToken("current-token");
 
-    expect(withAuthToken("http://172.19.79.11:8848/ui/?token=expired&view=1")).toBe(
-      "http://172.19.79.11:8848/ui/?token=current-token&view=1",
+    expect(withAuthToken("/api/v1/events/stream")).toBe("/api/v1/events/stream");
+    expect(withAuthToken("http://172.19.79.11:8848/ui/?view=1")).toBe(
+      "http://172.19.79.11:8848/ui/?view=1",
     );
   });
 
-  it("only refreshes arbitrary page URLs that already carry a CCCC token", () => {
+  it("never injects the owner token into a cross-origin URL", () => {
     vi.stubGlobal("window", {
       location: { origin: "http://localhost:5555", href: "http://localhost:5555/ui/", search: "" },
     });
@@ -125,8 +126,30 @@ describe("authenticated URLs", () => {
     setAuthToken("current-token");
 
     expect(refreshAuthTokenInUrl("https://example.com/page")).toBe("https://example.com/page");
-    expect(refreshAuthTokenInUrl("http://127.0.0.1:8848/ui/?token=expired")).toBe(
-      "http://127.0.0.1:8848/ui/?token=current-token",
+    expect(refreshAuthTokenInUrl("https://evil.example/page?token=1")).toBe(
+      "https://evil.example/page?token=1",
+    );
+    expect(refreshAuthTokenInUrl("//evil.example/page?token=1")).toBe(
+      "//evil.example/page?token=1",
+    );
+    expect(refreshAuthTokenInUrl("http://localhost:5556/page?token=1")).toBe(
+      "http://localhost:5556/page?token=1",
+    );
+    expect(refreshAuthTokenInUrl("https://localhost:5555/page?token=1")).toBe(
+      "https://localhost:5555/page?token=1",
+    );
+  });
+
+  it("strips stale query tokens from same-origin presentation URLs", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost:5555", href: "http://localhost:5555/ui/", search: "" },
+    });
+    vi.stubGlobal("sessionStorage", { setItem: vi.fn() });
+    setAuthToken("current-token");
+
+    expect(refreshAuthTokenInUrl("/preview?token=expired&view=1")).toBe("/preview?view=1");
+    expect(refreshAuthTokenInUrl("http://localhost:5555/preview?token=expired")).toBe(
+      "http://localhost:5555/preview",
     );
   });
 

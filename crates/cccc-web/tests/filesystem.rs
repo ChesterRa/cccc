@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_core::HomeLayout;
@@ -43,7 +44,7 @@ async fn filesystem_routes_require_admin_and_return_frontend_shapes() {
         "/api/v1/fs/list?path={}",
         utf8_percent_encode(&empty.to_string_lossy(), NON_ALPHANUMERIC)
     );
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let (status, _) = get(app.clone(), &url, Some(&member.token)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -80,7 +81,7 @@ async fn filesystem_routes_require_admin_and_return_frontend_shapes() {
 async fn filesystem_list_expands_home_and_reports_path_errors() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let (status, payload) = get(app.clone(), "/api/v1/fs/list?path=~", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -116,7 +117,12 @@ async fn filesystem_list_expands_home_and_reports_path_errors() {
 async fn filesystem_recent_returns_existing_directory_suggestions() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let (status, payload) = get(cccc_web::app(home), "/api/v1/fs/recent", None).await;
+    let (status, payload) = get(
+        auth_support::authenticated_app(home),
+        "/api/v1/fs/recent",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let suggestions = payload["result"]["suggestions"]
         .as_array()
@@ -134,7 +140,7 @@ async fn filesystem_recent_returns_existing_directory_suggestions() {
 async fn create_group_rejects_present_but_invalid_path_values() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     for path in [serde_json::Value::Null, json!(42), json!("  ")] {
         let response = app
             .clone()

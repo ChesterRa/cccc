@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cccc_core::GroupStore;
@@ -23,7 +24,7 @@ async fn scope_root_resolves_git_root_and_returns_complete_receipt() {
     );
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
-    let response = cccc_web::app(home)
+    let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::get(format!(
                 "/api/v1/fs/scope_root?path={}",
@@ -72,7 +73,7 @@ async fn native_voice_runtime_reports_real_non_removable_effects() {
         .expect("store")
         .create("voice runtime", "")
         .expect("group");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     let install = app
         .clone()
         .oneshot(

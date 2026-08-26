@@ -345,12 +345,12 @@ For accessing the Web UI from outside localhost:
 - **LAN / private network** — bind Web on all local interfaces: `CCCC_WEB_HOST=0.0.0.0 cccc`
 - **Cloudflare Tunnel** (recommended) — `cloudflared tunnel --url http://127.0.0.1:8848`
 - **Tailscale** — bind to your tailnet IP: `CCCC_WEB_HOST=$TAILSCALE_IP cccc`
-- Before any non-local exposure, create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
+- Before any non-local exposure, create an **Admin Access Token** in **Settings > Web Access**. When no administrator exists, protected APIs are locked; read the one-time code from `~/.cccc/web_bootstrap_token` on the host and enter it when creating the first administrator token.
 - In **Settings > Web Access**, `127.0.0.1` means local-only, while `0.0.0.0` means localhost plus your LAN IP on a normal local host. If CCCC is running inside WSL2's default NAT networking, `0.0.0.0` only exposes Web inside WSL; for LAN devices, use WSL mirrored networking or a Windows portproxy/firewall rule.
 - Rust launch uses `--host` / `--port` overrides first, then the saved Web Access binding (including legacy Python `settings.yaml`), then `CCCC_WEB_HOST` / `CCCC_WEB_PORT`.
 - `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.
 - `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
-- Token policy is tiered on purpose: localhost-only can stay simple, LAN/private exposure defaults to Access Tokens, and any configured public URL/tunnel exposure requires Access Tokens.
+- Token policy is fail-closed: protected APIs always require an Access Token, including localhost. Plain HTTP LAN exposure additionally requires the explicit `CCCC_REMOTE_ALLOW_INSECURE=1` override; public exposure must terminate HTTPS through a trusted tunnel or reverse proxy.
 
 Optional membership **Reach** is a managed public-HTTPS path for Linux and macOS preview users. Local CCCC remains fully usable without an account. First create an Admin Access Token in **Settings > Web Access**, then open the global **Account** page, link this installation, and approve its device code on the account site. Return to **Web Access** to turn Reach on. The equivalent CLI flow remains available:
 
@@ -361,7 +361,7 @@ cccc reach status
 cccc reach off
 ```
 
-Reach installs a pinned `cloudflared` helper under `CCCC_HOME`; it does not upload your ledger or repository. Windows helper installation is not bundled in this release, so Reach is currently unavailable on Windows.
+Reach installs a pinned `cloudflared` helper under `CCCC_HOME`; it does not upload your ledger or repository. Rust Reach admin links contain a 120-second, one-time, origin-bound exchange code instead of a long-lived Access Token. Windows helper installation is not bundled in this release, so Reach is currently unavailable on Windows.
 
 ## IM Bridges
 

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 
 class TestRegistryReconcileAndAutoWake(unittest.TestCase):
-    def test_send_to_disabled_actor_persists_without_attempting_auto_wake(self) -> None:
+    def test_user_send_to_disabled_actor_persists_wake_intent(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon import server as daemon_server
         from cccc.daemon.server import handle_request
@@ -69,7 +69,7 @@ class TestRegistryReconcileAndAutoWake(unittest.TestCase):
                 )
                 self.assertTrue(disable_resp.ok, getattr(disable_resp, "error", None))
 
-                # Explicit stop is lifecycle intent, not a runtime failure to repair.
+                # A direct user message is an explicit request to wake this actor.
                 with patch.object(
                     daemon_server,
                     "_start_actor_process",
@@ -90,7 +90,10 @@ class TestRegistryReconcileAndAutoWake(unittest.TestCase):
                         )
                     )
                 self.assertTrue(send_resp.ok, getattr(send_resp, "error", None))
-                start_actor.assert_not_called()
+                deadline = time.monotonic() + 1.0
+                while start_actor.call_count == 0 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                start_actor.assert_called_once()
                 self.assertEqual(
                     (send_resp.result or {}).get("event", {}).get("data", {}).get("text"),
                     "hi",
@@ -100,17 +103,17 @@ class TestRegistryReconcileAndAutoWake(unittest.TestCase):
                 self.assertIsNotNone(g)
                 actor = find_actor(g, "peer1") if g is not None else None
                 self.assertIsNotNone(actor)
-                self.assertFalse(bool(actor.get("enabled", True)))
+                self.assertTrue(bool(actor.get("enabled", False)))
                 deadline = time.monotonic() + 1.0
                 while time.monotonic() < deadline:
                     g = load_group(gid)
                     actor = find_actor(g, "peer1") if g is not None else None
-                    if actor is not None and not bool(actor.get("enabled", True)):
+                    if actor is not None and bool(actor.get("enabled", False)):
                         break
                     time.sleep(0.01)
                 actor = find_actor(load_group(gid), "peer1")  # type: ignore[arg-type]
                 self.assertIsNotNone(actor)
-                self.assertFalse(bool((actor or {}).get("enabled", True)))
+                self.assertTrue(bool((actor or {}).get("enabled", False)))
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

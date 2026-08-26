@@ -130,14 +130,7 @@ function getAuthToken(): string | null {
   const urlParams = new URLSearchParams(window.location.search);
   const urlToken = urlParams.get("token");
   if (urlToken) {
-    cachedToken = urlToken;
-    try {
-      sessionStorage.setItem("cccc_dev_token", urlToken);
-    } catch {
-      void 0;
-    }
     removeAuthTokenFromUrl();
-    return urlToken;
   }
 
   try {
@@ -160,24 +153,17 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export function withAuthToken(url: string): string {
-  const token = getAuthToken();
-  if (!token) return url;
-  try {
-    const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
-    const parsed = new URL(url, window.location.origin);
-    parsed.searchParams.set("token", token);
-    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    const sep = url.includes("?") ? "&" : "?";
-    return `${url}${sep}token=${encodeURIComponent(token)}`;
-  }
+  return url;
 }
 
 export function refreshAuthTokenInUrl(url: string): string {
   try {
     const parsed = new URL(url, window.location.href);
     if (!parsed.searchParams.has("token")) return url;
-    return withAuthToken(url);
+    if (parsed.origin !== window.location.origin) return url;
+    parsed.searchParams.delete("token");
+    const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return url;
   }

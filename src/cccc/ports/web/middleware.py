@@ -3,17 +3,20 @@ from __future__ import annotations
 import logging
 import os
 from typing import Callable
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+
 StateGetter = Callable[[Scope, str, object], object]
 TokenPartsGetter = Callable[[Request], tuple[str, str]]
 PublicPathChecker = Callable[[Request], bool]
 PrincipalResolver = Callable[[Request], object]
 TokensActiveGetter = Callable[[], bool]
+AdminTokensActiveGetter = Callable[[], bool]
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +46,30 @@ def _scope_state_get(scope: Scope, key: str, default: object = None) -> object:
 
 def _actual_request_scheme(request: Request) -> str:
     force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
-    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").strip().lower()
+    forwarded_proto = _forwarded_value(dict(request.headers), "proto")
     return "https" if force_secure else (
         forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower()
     )
+
+
+def served_request_origin(request: Request) -> str:
+    headers = dict(request.headers)
+    host = _forwarded_value(headers, "host") or str(request.headers.get("host") or "").strip()
+    scheme = _actual_request_scheme(request)
+    if scheme not in {"http", "https"} or not host:
+        return ""
+    try:
+        parsed = urlsplit(f"{scheme}://{host}")
+        hostname = str(parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return ""
+    if not hostname or parsed.username is not None or parsed.password is not None:
+        return ""
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = 443 if scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{scheme}://{display_host}{suffix}"
 
 
 def set_access_token_cookie(response: Response, request: Request, token: str) -> None:
@@ -55,7 +78,7 @@ def set_access_token_cookie(response: Response, request: Request, token: str) ->
         key="cccc_access_token",
         value=token,
         httponly=True,
-        samesite="none" if actual_scheme == "https" else "lax",
+        samesite="lax",
         secure=actual_scheme == "https",
         path="/",
     )
@@ -71,6 +94,7 @@ class AuthMiddleware:
         is_public_path: PublicPathChecker,
         resolve_principal: PrincipalResolver,
         tokens_active: TokensActiveGetter,
+        admin_tokens_active: AdminTokensActiveGetter,
         state_getter: StateGetter = _scope_state_get,
     ):
         self.app = app
@@ -79,6 +103,7 @@ class AuthMiddleware:
         self._is_public_path = is_public_path
         self._resolve_principal = resolve_principal
         self._tokens_active = tokens_active
+        self._admin_tokens_active = admin_tokens_active
         self._state_getter = state_getter
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -98,6 +123,7 @@ class AuthMiddleware:
             if logout_marker and stale_cookie:
                 principal = type(principal)(kind="anonymous")
             tokens_active = bool(self._tokens_active())
+            admin_tokens_active = bool(self._admin_tokens_active())
         except Exception:
             logger.exception("failed to read CCCC access token store")
             resp = JSONResponse(
@@ -114,23 +140,42 @@ class AuthMiddleware:
             await resp(scope, receive, send)
             return
 
-        if not self._is_public_path(request) and provided_token and principal.kind != "user":
-            if token_source in ("header", "query") or tokens_active:
-                resp = JSONResponse(
-                    status_code=401,
-                    content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
-                )
-                await resp(scope, receive, send)
-                return
-            if token_source == "cookie":
-                stale_cookie = True
+        path = str(request.url.path or "")
+        first_admin_bootstrap = (
+            str(request.method or "").upper() == "POST"
+            and path == "/api/v1/access-tokens"
+            and not admin_tokens_active
+        )
 
-        if not self._is_public_path(request) and not provided_token and tokens_active and principal.kind != "user":
-            path = str(request.url.path or "")
+        if not self._is_public_path(request) and provided_token and principal.kind != "user":
+            resp = JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
+            )
+            await resp(scope, receive, send)
+            return
+
+        if (
+            not self._is_public_path(request)
+            and not first_admin_bootstrap
+            and not provided_token
+            and principal.kind != "user"
+        ):
             if path.startswith("/api/"):
                 resp = JSONResponse(
                     status_code=401,
-                    content={"ok": False, "error": {"code": "unauthorized", "message": "authentication required", "details": {}}},
+                    content={
+                        "ok": False,
+                        "error": {
+                            "code": "auth_required" if tokens_active else "bootstrap_required",
+                            "message": (
+                                "authentication required"
+                                if tokens_active
+                                else "create the first administrator access token with the local Web bootstrap code"
+                            ),
+                            "details": {},
+                        },
+                    },
                 )
                 await resp(scope, receive, send)
                 return
@@ -151,7 +196,9 @@ class AuthMiddleware:
                     temp.delete_cookie(key=self._signed_out_cookie, path="/")
                     cookie_headers.extend(temp.raw_headers)
 
-                skip_cookie_refresh = bool(self._state_getter(scope, "skip_token_cookie_refresh", False))
+                skip_cookie_refresh = first_admin_bootstrap or bool(
+                    self._state_getter(scope, "skip_token_cookie_refresh", False)
+                )
                 if (
                     not skip_cookie_refresh
                     and principal.kind == "user"
@@ -170,6 +217,79 @@ class AuthMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_auth)
+
+
+class WebSocketOriginMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "websocket" or _websocket_origin_allowed(scope):
+            await self.app(scope, receive, send)
+            return
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1").strip()
+            for key, value in (scope.get("headers") or [])
+        }
+        logger.warning(
+            "rejected WebSocket origin origin=%r served_origin=%r path=%r",
+            headers.get("origin", ""),
+            _websocket_served_origin(scope, headers),
+            scope.get("path", ""),
+        )
+        await send({"type": "websocket.close", "code": 1008, "reason": "origin_not_allowed"})
+
+
+def _forwarded_parameter(value: str, name: str) -> str:
+    first = str(value or "").split(",", 1)[0]
+    for part in first.split(";"):
+        key, separator, raw_value = part.partition("=")
+        if separator and key.strip().lower() == name:
+            return raw_value.strip().strip('"').strip()
+    return ""
+
+
+def _forwarded_value(headers: dict[str, str], name: str) -> str:
+    legacy = str(headers.get(f"x-forwarded-{name}") or "").split(",", 1)[0].strip()
+    value = legacy or _forwarded_parameter(headers.get("forwarded", ""), name)
+    return value.lower() if name == "proto" else value
+
+
+def _websocket_served_origin(scope: Scope, headers: dict[str, str]) -> str:
+    host = _forwarded_value(headers, "host") or headers.get("host", "").strip()
+    if not host:
+        return ""
+    forwarded_proto = _forwarded_value(headers, "proto")
+    scope_scheme = str(scope.get("scheme") or "").strip().lower()
+    direct_scheme = "https" if scope_scheme in {"https", "wss"} else "http"
+    force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    scheme = "https" if force_secure else (
+        forwarded_proto if forwarded_proto in {"http", "https"} else direct_scheme
+    )
+    return f"{scheme}://{host}"
+
+
+def _websocket_origin_allowed(scope: Scope) -> bool:
+    headers = {
+        key.decode("latin-1").lower(): value.decode("latin-1").strip()
+        for key, value in (scope.get("headers") or [])
+    }
+    origin = headers.get("origin", "").strip()
+    if not origin:
+        return True
+    served_origin = _websocket_served_origin(scope, headers)
+    if served_origin and origin.lower() == served_origin.lower():
+        return True
+    allowed = {
+        item.strip().lower()
+        for item in str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").split(",")
+        if item.strip() and item.strip() != "*"
+    }
+    return origin.lower() in allowed
 
 
 class ReadOnlyGuardMiddleware:

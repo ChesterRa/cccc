@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -31,7 +32,7 @@ async fn presentation_http_routes_cover_url_upload_workspace_asset_and_clear() {
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_address(&home).await;
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let url = request_json(
         &app,
@@ -188,7 +189,7 @@ async fn presentation_upload_routes_enforce_size_group_and_slot_boundaries() {
     let group = groups
         .create("presentation upload boundaries", "")
         .expect("group");
-    let app = cccc_web::app(home.clone());
+    let app = auth_support::authenticated_app(home.clone());
 
     let accepted = app
         .clone()

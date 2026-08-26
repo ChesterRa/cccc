@@ -487,6 +487,7 @@ class TestMessageObligation(unittest.TestCase):
 
     def test_manual_delivery_is_blocked_without_a_claim_while_paused(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_message_deliver
+        from cccc.kernel.group import get_group_state, load_group
         from cccc.kernel.inbox import iter_events
 
         cleanup = self._with_home()
@@ -496,20 +497,25 @@ class TestMessageObligation(unittest.TestCase):
             group.doc["state"] = "paused"
             group.save()
 
-            response = handle_message_deliver(
-                {
-                    "group_id": group.group_id,
-                    "source_event_id": source["id"],
-                    "actor_ids": ["peer1"],
-                    "by": "user",
-                },
-                coerce_bool=bool,
-                effective_runner_kind=lambda _runtime: "pty",
-                auto_wake_recipients=lambda _group, _actors, _by: [],
-            )
+            with patch("cccc.daemon.messaging.chat_ops.run_group_chat_post_commit"):
+                response = handle_message_deliver(
+                    {
+                        "group_id": group.group_id,
+                        "source_event_id": source["id"],
+                        "actor_ids": ["peer1"],
+                        "by": "user",
+                    },
+                    coerce_bool=bool,
+                    effective_runner_kind=lambda _runtime: "pty",
+                    auto_wake_recipients=lambda _group, _actors, _by: [],
+                )
 
             self.assertFalse(response.ok)
             self.assertEqual(getattr(response.error, "code", ""), "delivery_blocked")
+            reloaded = load_group(group.group_id)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(get_group_state(reloaded), "paused")
             self.assertNotIn(
                 "runtime.delivery",
                 {str(event.get("kind") or "") for event in iter_events(group.ledger_path)},

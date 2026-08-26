@@ -54,7 +54,7 @@ fn remote_access_requires_secure_configuration_and_token() {
     ok(
         &home,
         "remote_access_configure",
-        json!({"provider":"manual","web_host":"0.0.0.0","web_port":9000,"require_access_token":true,"by":"user"}),
+        json!({"provider":"manual","web_public_url":"https://public.example","web_port":9000,"require_access_token":true,"by":"user"}),
     );
     let missing = raw(&home, "remote_access_start", json!({"by":"user"}));
     assert_eq!(
@@ -78,7 +78,7 @@ fn remote_access_requires_secure_configuration_and_token() {
     assert_eq!(started.result["remote_access"]["status"], "running");
     assert_eq!(
         started.result["remote_access"]["endpoint"],
-        "http://0.0.0.0:9000"
+        "https://public.example"
     );
     let stopped = ok(&home, "remote_access_stop", json!({"by":"user"}));
     assert_eq!(stopped.result["remote_access"]["enabled"], false);

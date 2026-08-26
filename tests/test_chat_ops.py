@@ -363,6 +363,63 @@ class TestChatOps(unittest.TestCase):
         self.assertIs(out, fake_group)
         set_state.assert_called_once_with(fake_group, state="active")
 
+    def test_wake_group_on_user_message_reactivates_stopped_agent_target(self) -> None:
+        from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
+
+        fake_group = type("G", (), {"group_id": "g1"})()
+        with patch("cccc.daemon.messaging.chat_ops.get_group_state", return_value="stopped"), patch(
+            "cccc.daemon.messaging.chat_ops.find_actor", return_value=None
+        ), patch("cccc.daemon.messaging.chat_ops.set_group_state", return_value=fake_group) as set_state:
+            out = _wake_group_on_human_message(
+                fake_group,
+                by="user",
+                targets_agent=True,
+                state_at_accept="stopped",
+                automation_on_resume=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+            )
+
+        self.assertIs(out, fake_group)
+        set_state.assert_called_once_with(fake_group, state="active")
+
+    def test_wake_group_on_user_message_reactivates_paused_agent_target(self) -> None:
+        from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
+
+        fake_group = type("G", (), {"group_id": "g1"})()
+        with patch("cccc.daemon.messaging.chat_ops.get_group_state", return_value="paused"), patch(
+            "cccc.daemon.messaging.chat_ops.find_actor", return_value=None
+        ), patch("cccc.daemon.messaging.chat_ops.set_group_state", return_value=fake_group) as set_state:
+            out = _wake_group_on_human_message(
+                fake_group,
+                by="user",
+                targets_agent=True,
+                state_at_accept="paused",
+                automation_on_resume=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+            )
+
+        self.assertIs(out, fake_group)
+        set_state.assert_called_once_with(fake_group, state="active")
+
+    def test_wake_group_on_user_message_keeps_stopped_user_only_target(self) -> None:
+        from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
+
+        fake_group = type("G", (), {"group_id": "g1"})()
+        with patch("cccc.daemon.messaging.chat_ops.get_group_state", return_value="stopped"), patch(
+            "cccc.daemon.messaging.chat_ops.find_actor", return_value=None
+        ), patch("cccc.daemon.messaging.chat_ops.set_group_state") as set_state:
+            out = _wake_group_on_human_message(
+                fake_group,
+                by="user",
+                targets_agent=False,
+                state_at_accept="stopped",
+                automation_on_resume=lambda _group: None,
+                clear_pending_system_notifies=lambda _group_id, _kinds: None,
+            )
+
+        self.assertIs(out, fake_group)
+        set_state.assert_not_called()
+
     def test_request_reply_is_closed_by_a_concrete_reply_without_generic_ack(self) -> None:
         from cccc.kernel.group import load_group
         from cccc.kernel.inbox import find_event, get_obligation_status_batch
@@ -2063,8 +2120,8 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_user_default_to_stopped_foreman_stays_pending_without_waking_or_rerouting(self) -> None:
-        """Default @foreman routing keeps the target but respects explicit actor stop."""
+    def test_user_default_to_stopped_foreman_keeps_target_while_requesting_wake(self) -> None:
+        """Default @foreman routing keeps its target while the wake path runs."""
         from cccc.daemon.messaging.chat_ops import handle_send
         from cccc.kernel.group import load_group
         from cccc.util.conv import coerce_bool
@@ -2169,7 +2226,7 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_reply_to_stopped_headless_actor_stays_pending_without_wake(self) -> None:
+    def test_reply_to_stopped_headless_actor_keeps_target_when_wake_is_unavailable(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_reply
         from cccc.kernel.group import load_group
         from cccc.util.conv import coerce_bool
@@ -2259,7 +2316,7 @@ class TestChatOps(unittest.TestCase):
             group,
             ["peer1"],
             by="user",
-            enabled_recipient_actor_ids=lambda _group, _to: ["peer1"],
+            recipient_actor_ids=lambda _group, _to: ["peer1"],
             find_actor=lambda _group, _actor_id: {
                 "id": "peer1",
                 "enabled": True,
@@ -2278,6 +2335,37 @@ class TestChatOps(unittest.TestCase):
         self.assertEqual(result, ["peer1"])
         self.assertEqual(start_calls, [])
         self.assertEqual(in_progress, {("g1", "peer1")})
+
+    def test_auto_wake_user_message_starts_a_disabled_recipient(self) -> None:
+        from cccc.daemon.messaging.chat_support_ops import auto_wake_recipients
+
+        group = type("G", (), {"group_id": "g1"})()
+        lock = threading.Lock()
+        in_progress: set[tuple[str, str]] = set()
+        started = threading.Event()
+
+        result = auto_wake_recipients(
+            group,
+            ["peer1"],
+            by="user",
+            recipient_actor_ids=lambda _group, _to: ["peer1"],
+            find_actor=lambda _group, _actor_id: {
+                "id": "peer1",
+                "enabled": False,
+                "runtime": "codex",
+                "runner": "headless",
+            },
+            is_actor_running=lambda _group, _actor_id: False,
+            start_actor_process=lambda *_args, **_kwargs: (started.set() or {"success": True}),
+            runner_stop_actor=lambda *_args, **_kwargs: None,
+            request_flush_pending_messages=lambda *_args, **_kwargs: True,
+            logger=logging.getLogger("test"),
+            auto_wake_lock=lock,
+            auto_wake_in_progress=in_progress,
+        )
+
+        self.assertEqual(result, ["peer1"])
+        self.assertTrue(started.wait(timeout=1.0))
 
     def test_post_wake_callbacks_settle_the_actor_that_scheduled_them(self) -> None:
         from types import SimpleNamespace

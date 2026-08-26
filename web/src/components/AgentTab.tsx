@@ -526,24 +526,30 @@ export function AgentTab({
     fitTerminalToContainer(fitAddonRef.current, termRef.current);
   }, []);
 
-  const { connectionStatus, terminalReady, terminalWritable, requestReconnect, sendInterrupt } =
-    useAgentTerminalConnection({
-      activated,
-      isRunning,
-      isHeadless,
-      groupId,
-      actorId: actor.id,
-      actorRuntime: actor.runtime,
-      canControl,
-      termEpoch,
-      reconnectTrigger,
-      terminalRef,
-      fitBeforeAttach: fitTerminalBeforeAttach,
-      onStatusChange,
-      setTerminalSignal,
-      clearTerminalSignal,
-      setReconnectTrigger,
-    });
+  const {
+    connectionStatus,
+    connectionFailed,
+    terminalReady,
+    terminalWritable,
+    requestReconnect,
+    sendInterrupt,
+  } = useAgentTerminalConnection({
+    activated,
+    isRunning,
+    isHeadless,
+    groupId,
+    actorId: actor.id,
+    actorRuntime: actor.runtime,
+    canControl,
+    termEpoch,
+    reconnectTrigger,
+    terminalRef,
+    fitBeforeAttach: fitTerminalBeforeAttach,
+    onStatusChange,
+    setTerminalSignal,
+    clearTerminalSignal,
+    setReconnectTrigger,
+  });
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
@@ -857,6 +863,11 @@ export function AgentTab({
                 <div className="text-sm text-center max-w-md mb-4">
                   {t("connectionLostDescription")}
                 </div>
+                {connectionFailed ? (
+                  <div className="mb-4 max-w-md text-center text-xs text-amber-700 dark:text-amber-300">
+                    {t("connectionRejectedHint")}
+                  </div>
+                ) : null}
                 {canControl && (
                   <button
                     onClick={requestReconnect}

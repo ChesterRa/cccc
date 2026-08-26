@@ -1154,6 +1154,7 @@ export type WebAccessSession = {
   allowed_groups?: string[];
   access_token_count?: number;
   can_access_global_settings?: boolean;
+  bootstrap_required?: boolean;
   runtime_visibility?: {
     peer_runtime?: "hidden" | "visible" | string;
     assistant_runtime?: "hidden" | "visible" | string;

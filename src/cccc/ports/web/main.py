@@ -38,10 +38,20 @@ def _print_web_banner(host: str, port: int) -> None:
 
 
 def _run_web_child(*, host: str, port: int, mode: str, reload: bool, log_level: str) -> int:
-    auth_error = web_listener_auth_error(home=ensure_home(), host=str(host))
+    home = ensure_home()
+    auth_error = web_listener_auth_error(home=home, host=str(host))
     if auth_error:
         print(f"error: {auth_error}", file=sys.stderr)
         return 1
+    from ...kernel.web_bootstrap import ensure_web_bootstrap_token
+
+    bootstrap_path = ensure_web_bootstrap_token(home)
+    if bootstrap_path is not None:
+        print(
+            "[cccc] Web access is locked until the first administrator token is "
+            f"created with the code in {bootstrap_path}",
+            file=sys.stderr,
+        )
     os.environ["CCCC_WEB_MODE"] = str(mode or "normal")
     config = uvicorn.Config(
         "cccc.ports.web.app:create_app",
@@ -51,6 +61,7 @@ def _run_web_child(*, host: str, port: int, mode: str, reload: bool, log_level: 
         log_level=str(log_level),
         reload=bool(reload),
         timeout_graceful_shutdown=0.2,
+        access_log=False,
     )
     server = uvicorn.Server(config)
     try:

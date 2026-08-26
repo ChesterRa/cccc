@@ -53,6 +53,47 @@ class TestSelfEvolutionCapability(unittest.TestCase):
         self.assertIn("Five targets", record["capsule_text"])
         self.assertIn(SELF_EVOLUTION_CAPABILITY_ID, record["capsule_text"])
 
+    def test_optimizer_suppresses_covered_candidates_and_escalates_failed_rules(
+        self,
+    ) -> None:
+        from cccc.kernel.capabilities import BUILTIN_CAPSULE_SKILLS
+        from cccc.kernel.self_evolution_capability import SELF_EVOLUTION_CAPABILITY_ID
+
+        capsule = BUILTIN_CAPSULE_SKILLS[SELF_EVOLUTION_CAPABILITY_ID]["capsule_text"]
+        self.assertIn("Suppress a candidate", capsule)
+        self.assertIn("later behavior confirms it works", capsule)
+        self.assertIn("do not duplicate the instruction", capsule)
+        self.assertIn("target the semantic owner", capsule)
+        self.assertIn("which mechanisms were checked", capsule)
+
+    def test_optimizer_uses_incremental_checkpoint_with_full_scan_fallback(
+        self,
+    ) -> None:
+        from cccc.kernel.capabilities import BUILTIN_CAPSULE_SKILLS
+        from cccc.kernel.self_evolution_capability import SELF_EVOLUTION_CAPABILITY_ID
+
+        capsule = BUILTIN_CAPSULE_SKILLS[SELF_EVOLUTION_CAPABILITY_ID]["capsule_text"]
+        first_run = capsule.index("A first trusted run reads all visible group history")
+        incremental = capsule.index("page from the newest message backward")
+        fallback = capsule.index("fall back to a full scan through `has_more=false`")
+        self.assertLess(first_run, incremental)
+        self.assertLess(incremental, fallback)
+        self.assertIn("the cursor cannot be found", capsule)
+        self.assertIn("another Actor generation", capsule)
+        self.assertIn("Never call a partial sample or an untrusted checkpoint", capsule)
+
+    def test_optimizer_checkpoint_has_no_authority_and_tracks_outcomes(self) -> None:
+        from cccc.kernel.capabilities import BUILTIN_CAPSULE_SKILLS
+        from cccc.kernel.self_evolution_capability import SELF_EVOLUTION_CAPABILITY_ID
+
+        capsule = BUILTIN_CAPSULE_SKILLS[SELF_EVOLUTION_CAPABILITY_ID]["capsule_text"]
+        self.assertIn("Never store raw conversation text", capsule)
+        self.assertIn("not permission to apply a proposal", capsule)
+        self.assertIn("a checkpoint", capsule)
+        self.assertIn("later recurrence of the same user correction", capsule)
+        self.assertIn('absence of a recurrence is only "no negative evidence"', capsule)
+        self.assertIn("disabling the capability stops all checkpoint reads and writes", capsule)
+
     def test_default_enable_is_seeded_once_and_manual_disable_persists(self) -> None:
         from cccc.kernel.self_evolution_capability import SELF_EVOLUTION_CAPABILITY_ID
 

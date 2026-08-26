@@ -4,6 +4,7 @@ use cccc_core::HomeLayout;
 use cccc_core::fs::write_json;
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
+use std::net::IpAddr;
 use std::path::Path;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -73,7 +74,8 @@ async fn serve_tcp(
     dispatch_locks: DispatchLocks,
     restore: RuntimeRestoreSpawner,
 ) -> Result<()> {
-    let host = std::env::var("CCCC_DAEMON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let host =
+        daemon_tcp_host(&std::env::var("CCCC_DAEMON_HOST").unwrap_or_else(|_| "127.0.0.1".into()))?;
     let port = std::env::var("CCCC_DAEMON_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -118,6 +120,24 @@ async fn serve_tcp(
     automation.finish().await;
     connections.finish().await;
     Ok(())
+}
+
+fn daemon_tcp_host(value: &str) -> Result<String> {
+    let value = value.trim();
+    let normalized = if value.is_empty() || value.eq_ignore_ascii_case("localhost") {
+        "127.0.0.1"
+    } else {
+        value.trim_matches(['[', ']'])
+    };
+    let address = normalized.parse::<IpAddr>().with_context(|| {
+        format!("CCCC_DAEMON_HOST must be a loopback IP address, got {value:?}")
+    })?;
+    if !address.is_loopback() {
+        bail!(
+            "refusing unauthenticated daemon IPC binding on non-loopback address {address}; use a Unix socket or a loopback TCP address"
+        );
+    }
+    Ok(address.to_string())
 }
 
 #[cfg(unix)]
@@ -298,6 +318,19 @@ mod tests {
         assert!(path.exists());
         drop(lock);
         acquire_daemon_lock(&path).expect("reclaim released lock");
+    }
+
+    #[test]
+    fn daemon_tcp_binding_is_loopback_only() {
+        assert_eq!(daemon_tcp_host("").expect("default"), "127.0.0.1");
+        assert_eq!(
+            daemon_tcp_host("localhost").expect("localhost"),
+            "127.0.0.1"
+        );
+        assert_eq!(daemon_tcp_host("::1").expect("IPv6 loopback"), "::1");
+        for host in ["0.0.0.0", "192.168.1.10", "::", "daemon.internal"] {
+            assert!(daemon_tcp_host(host).is_err(), "{host} must be rejected");
+        }
     }
 
     #[test]

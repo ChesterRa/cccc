@@ -131,9 +131,9 @@ impl AccessTokenStore {
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("acc_{}", Uuid::new_v4().simple()));
-            if token.chars().any(char::is_control) {
+            if !valid_bearer_token(&token) {
                 return Err(io::Error::other(
-                    "access token cannot contain control characters",
+                    "access token must use HTTP bearer-token characters only",
                 ));
             }
             if document.tokens.contains_key(&token) {
@@ -214,7 +214,6 @@ impl AccessTokenStore {
             };
             let token = &document.tokens[&raw];
             if token.is_admin
-                && document.tokens.len() > 1
                 && document
                     .tokens
                     .values()
@@ -223,7 +222,7 @@ impl AccessTokenStore {
                     <= 1
             {
                 return Err(last_admin_error(
-                    "cannot delete the last administrator while scoped tokens remain",
+                    "cannot delete the last administrator access token",
                 ));
             }
             Ok(document.tokens.remove(&raw))
@@ -295,6 +294,28 @@ fn normalize_groups(groups: Vec<String>) -> Vec<String> {
         .map(|group| group.trim().to_owned())
         .filter(|group| !group.is_empty() && seen.insert(group.clone()))
         .collect()
+}
+
+fn valid_bearer_token(value: &str) -> bool {
+    let mut saw_base = false;
+    let mut saw_padding = false;
+    for byte in value.bytes() {
+        if byte == b'=' {
+            if !saw_base {
+                return false;
+            }
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding
+            || !(byte.is_ascii_alphanumeric()
+                || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/'))
+        {
+            return false;
+        }
+        saw_base = true;
+    }
+    saw_base
 }
 
 #[cfg(unix)]
@@ -381,5 +402,19 @@ mod tests {
                 .create("admin", Vec::new(), true, Some("unsafe\ntoken"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn cannot_delete_the_only_administrator() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = AccessTokenStore::new(home).expect("store");
+        let admin = store
+            .create("admin", Vec::new(), true, None)
+            .expect("admin");
+        let error = store
+            .delete(&admin.token_id())
+            .expect_err("last admin must remain");
+        assert!(is_last_admin_required(&error));
     }
 }

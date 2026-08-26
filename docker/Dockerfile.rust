@@ -64,6 +64,6 @@ ENV CCCC_WEB_HOST=0.0.0.0
 ENV CCCC_WEB_PORT=8848
 ENV http_proxy="" https_proxy=""
 
-EXPOSE 8848 9765
+EXPOSE 8848
 VOLUME ["/data", "/workspace"]
 CMD ["cccc"]

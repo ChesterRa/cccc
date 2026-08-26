@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { MicrophoneIcon } from "../../components/Icons";
 import { classNames } from "../../utils/classNames";
@@ -50,39 +50,25 @@ export type { VoiceSecretaryCaptureMode };
 
 export function LazyVoiceSecretaryComposerControl(props: VoiceSecretaryComposerControlProps) {
   const { t } = useTranslation("chat");
-  const [activated, setActivated] = useState(false);
   const assistantRow = props.variant === "assistantRow";
-  if (!activated) {
-    const label = t("voiceSecretaryOpen", { defaultValue: "Open Voice Secretary" });
-    return (
-      <button
-        type="button"
-        className={classNames(
-          "glass-btn inline-flex items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-          assistantRow ? "h-11 w-24 gap-1.5 text-[11px] font-semibold sm:h-9" : "h-11 w-11",
-        )}
-        disabled={props.disabled}
-        aria-label={label}
-        title={label}
-        onPointerEnter={() => void loadVoiceSecretaryComposerControl()}
-        onFocus={() => void loadVoiceSecretaryComposerControl()}
-        onClick={() => setActivated(true)}
-      >
-        <MicrophoneIcon size={15} aria-hidden="true" />
-        {assistantRow ? t("voiceSecretaryOpenShort", { defaultValue: "Open" }) : null}
-      </button>
-    );
-  }
   return (
     <Suspense
       fallback={
-        <div
-          aria-hidden="true"
-          className={assistantRow ? "h-11 w-24 sm:h-9" : "h-11 w-11 sm:h-9 sm:w-9"}
-        />
+        <button
+          type="button"
+          disabled
+          aria-label={t("voiceSecretaryInitializing", { defaultValue: "Initializing voice" })}
+          className={classNames(
+            "glass-btn inline-flex items-center justify-center rounded-lg text-[var(--color-text-secondary)] opacity-60",
+            assistantRow ? "h-11 w-24 gap-1.5 text-[11px] font-semibold sm:h-9" : "h-11 w-11",
+          )}
+        >
+          <MicrophoneIcon size={15} aria-hidden="true" />
+          {assistantRow ? t("voiceSecretaryInitializingShort", { defaultValue: "Loading" }) : null}
+        </button>
       }
     >
-      <VoiceSecretaryComposerControl {...props} initiallyOpen />
+      <VoiceSecretaryComposerControl {...props} />
     </Suspense>
   );
 }

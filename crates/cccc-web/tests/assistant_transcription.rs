@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_contracts::DaemonRequest;
@@ -16,7 +17,7 @@ async fn transcription_accepts_binary_bodies_above_axum_default_limit() {
     home.initialize().expect("initialize");
     let audio = vec![0_u8; 3 * 1024 * 1024];
 
-    let response = cccc_web::app(home)
+    let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::post("/api/v1/groups/missing/assistants/voice_secretary/transcriptions")
                 .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -35,7 +36,7 @@ async fn transcription_rejects_declared_audio_above_the_recording_limit() {
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
 
-    let response = cccc_web::app(home)
+    let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::post("/api/v1/groups/missing/assistants/voice_secretary/transcriptions")
                 .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -75,7 +76,7 @@ async fn assistant_readiness_requires_an_installed_streaming_model() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
 
-    let response = cccc_web::app(home.clone())
+    let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::get(format!(
                 "/api/v1/groups/{}/assistants/voice_secretary",
@@ -141,7 +142,9 @@ async fn websocket_failure_releases_its_owned_recording_lease() {
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
     let client = reqwest::Client::new();
     let lease_url = format!(
         "http://{address}/api/v1/groups/{}/assistants/voice_secretary/recording_lease",
@@ -378,7 +381,9 @@ async fn websocket_backend_rejection_releases_its_owned_recording_lease() {
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
     let client = reqwest::Client::new();
     let lease_url = format!(
         "http://{address}/api/v1/groups/{}/assistants/voice_secretary/recording_lease",

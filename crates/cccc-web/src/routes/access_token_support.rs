@@ -45,7 +45,7 @@ pub fn valid_id(id: &str) -> bool {
 
 pub fn cookie(token: &str, secure: bool) -> String {
     let policy = if secure {
-        "SameSite=None; Secure"
+        "SameSite=Lax; Secure"
     } else {
         "SameSite=Lax"
     };

@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_core::{GroupStore, HomeLayout};
@@ -11,7 +12,7 @@ async fn group_prompt_routes_follow_the_web_contract() {
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("prompt routes", "").expect("group");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     let base = format!("/api/v1/groups/{}/prompts", group.group_id);
 
     let (status, initial) = request_json(
@@ -131,7 +132,7 @@ async fn group_prompt_routes_reject_unknown_kinds_and_reset_blank_content() {
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("prompt validation", "").expect("group");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     let base = format!("/api/v1/groups/{}/prompts", group.group_id);
 
     let (status, unsupported) = request_json(

@@ -24,7 +24,12 @@ export function membershipAdminWebUrl(membership: MembershipState | null | undef
   const value = String(membership.web_url || "").trim();
   try {
     const url = new URL(value);
-    return /^https?:$/.test(url.protocol) && !url.username && !url.password ? value : "";
+    return /^https?:$/.test(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      hostnameLooksTokenless(value)
+      ? value
+      : "";
   } catch {
     return "";
   }

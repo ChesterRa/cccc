@@ -101,6 +101,7 @@ class TestRemoteAccessOps(unittest.TestCase):
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             create_access_token("admin-user", is_admin=True)
             cfg, _ = self._call(
@@ -127,12 +128,13 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(str(remote_stopped.get("status") or ""), "stopped")
             self.assertEqual(bool(remote_stopped.get("enabled")), False)
         finally:
+            cleanup_allow()
             cleanup()
 
-    def test_remote_access_configure_allows_insecure_private_binding_by_default(self) -> None:
+    def test_remote_access_configure_blocks_plain_private_binding_by_default(self) -> None:
         _, cleanup = self._with_home()
         try:
-            allowed, _ = self._call(
+            blocked, _ = self._call(
                 "remote_access_configure",
                 {
                     "by": "user",
@@ -141,23 +143,30 @@ class TestRemoteAccessOps(unittest.TestCase):
                     "web_host": "192.168.68.52",
                 },
             )
-            self.assertTrue(allowed.ok, getattr(allowed, "error", None))
-            remote = (allowed.result or {}).get("remote_access") if isinstance(allowed.result, dict) else {}
-            self.assertEqual(bool(remote.get("require_access_token")), False)
+            self.assertFalse(blocked.ok)
+            self.assertEqual(str(getattr(blocked, "error", None).code), "remote_access_invalid_config")
         finally:
             cleanup()
 
-    def test_remote_access_configure_allows_insecure_with_override(self) -> None:
+    def test_remote_access_configure_allows_plain_private_binding_with_override_and_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
         _, cleanup = self._with_home()
         cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
+            create_access_token("admin", is_admin=True)
             allowed, _ = self._call(
                 "remote_access_configure",
-                {"by": "user", "provider": "manual", "require_access_token": False},
+                {
+                    "by": "user",
+                    "provider": "manual",
+                    "require_access_token": True,
+                    "web_host": "192.168.68.52",
+                },
             )
             self.assertTrue(allowed.ok, getattr(allowed, "error", None))
             remote = (allowed.result or {}).get("remote_access") if isinstance(allowed.result, dict) else {}
-            self.assertEqual(bool(remote.get("require_access_token")), False)
+            self.assertEqual(bool(remote.get("require_access_token")), True)
         finally:
             cleanup_allow()
             cleanup()
@@ -188,6 +197,7 @@ class TestRemoteAccessOps(unittest.TestCase):
 
     def test_remote_access_configure_marks_restart_required_when_binding_changes(self) -> None:
         _, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             cfg, _ = self._call(
                 "remote_access_configure",
@@ -202,6 +212,7 @@ class TestRemoteAccessOps(unittest.TestCase):
             remote = (cfg.result or {}).get("remote_access") if isinstance(cfg.result, dict) else {}
             self.assertEqual(bool(remote.get("restart_required")), True)
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_configure_blocks_insecure_public_url_even_with_override(self) -> None:
@@ -293,6 +304,7 @@ class TestRemoteAccessOps(unittest.TestCase):
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             create_access_token(
                 "scoped-user",
@@ -329,12 +341,14 @@ class TestRemoteAccessOps(unittest.TestCase):
                 "remote_access_admin_token_required",
             )
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_state_uses_remote_placeholder_endpoint_for_wildcard_host(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             create_access_token("admin-user", is_admin=True)
             cfg, _ = self._call(
@@ -351,11 +365,16 @@ class TestRemoteAccessOps(unittest.TestCase):
             remote = (cfg.result or {}).get("remote_access") if isinstance(cfg.result, dict) else {}
             self.assertEqual(str(remote.get("endpoint") or ""), "http://<your-lan-ip>:8848/ui/")
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_state_mentions_wsl_private_network_requirement(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
         _, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
+            create_access_token("admin-user", is_admin=True)
             with patch("cccc.daemon.ops.remote_access_ops._running_in_wsl", return_value=True):
                 cfg, _ = self._call(
                     "remote_access_configure",
@@ -364,7 +383,7 @@ class TestRemoteAccessOps(unittest.TestCase):
                         "provider": "manual",
                         "enabled": True,
                         "web_host": "0.0.0.0",
-                        "require_access_token": False,
+                        "require_access_token": True,
                     },
                 )
             self.assertTrue(cfg.ok, getattr(cfg, "error", None))
@@ -374,6 +393,7 @@ class TestRemoteAccessOps(unittest.TestCase):
             next_steps = remote.get("next_steps") if isinstance(remote.get("next_steps"), list) else []
             self.assertTrue(any("WSL2" in step and "mirrored networking" in step for step in next_steps))
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_state_surfaces_supervised_live_runtime_mismatch(self) -> None:
@@ -381,6 +401,7 @@ class TestRemoteAccessOps(unittest.TestCase):
         from cccc.ports.web.runtime_control import write_web_runtime_state
 
         home, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             create_access_token("admin-user", is_admin=True)
             cfg, _ = self._call(
@@ -415,6 +436,7 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(int(diagnostics.get("live_runtime_port") or 0), 8848)
             self.assertEqual(bool(diagnostics.get("live_runtime_matches_binding")), False)
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_state_surfaces_unsupervised_live_runtime_mismatch(self) -> None:
@@ -422,6 +444,7 @@ class TestRemoteAccessOps(unittest.TestCase):
         from cccc.ports.web.runtime_control import write_web_runtime_state
 
         home, cleanup = self._with_home()
+        cleanup_allow = self._with_env("CCCC_REMOTE_ALLOW_INSECURE", "1")
         try:
             create_access_token("admin-user", is_admin=True)
             cfg, _ = self._call(
@@ -456,6 +479,7 @@ class TestRemoteAccessOps(unittest.TestCase):
             next_steps = remote.get("next_steps") if isinstance(remote.get("next_steps"), list) else []
             self.assertTrue(any("Restart the running CCCC Web service" in step for step in next_steps))
         finally:
+            cleanup_allow()
             cleanup()
 
     def test_remote_access_start_tailscale_reports_not_installed(self) -> None:

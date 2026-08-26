@@ -80,9 +80,8 @@ RUN mkdir -p /home/cccc/.local/bin \
 # Configuration
 ENV CCCC_HOME=/data
 
-# Daemon IPC - TCP mode for SDK access
+# Daemon IPC - unauthenticated and loopback-only
 # K8s sidecar: 127.0.0.1 (same Pod shares network namespace)
-# Local dev:   override with -e CCCC_DAEMON_HOST=0.0.0.0 -e CCCC_DAEMON_ALLOW_REMOTE=1
 ENV CCCC_DAEMON_TRANSPORT=tcp
 ENV CCCC_DAEMON_HOST=127.0.0.1
 ENV CCCC_DAEMON_PORT=9765
@@ -91,7 +90,7 @@ ENV CCCC_DAEMON_PORT=9765
 ENV CCCC_WEB_HOST=0.0.0.0
 ENV CCCC_WEB_PORT=8848
 
-EXPOSE 8848 9765
+EXPOSE 8848
 VOLUME ["/data", "/workspace"]
 
 # cccc (without args) starts both daemon and web server

@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use cccc_contracts::{Actor, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, actors};
@@ -58,7 +59,9 @@ async fn websocket_attach_streams_full_replay_and_keeps_legacy_clients_compatibl
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=viewer&output_flow=ack_v1",
         group.group_id
@@ -201,7 +204,9 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let web_home = home.clone();
-    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, auth_support::authenticated_app(web_home)).await
+    });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=control&output_flow=ack_v1",
         group.group_id

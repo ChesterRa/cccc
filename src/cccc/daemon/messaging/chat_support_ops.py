@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
+from ...util.conv import coerce_bool
+
 
 _HEADLESS_POST_WAKE_LOCK = threading.Lock()
 _HEADLESS_POST_WAKE_IN_FLIGHT: set[tuple[str, str, str]] = set()
@@ -29,7 +31,7 @@ def auto_wake_recipients(
     to: list[str],
     *,
     by: str,
-    enabled_recipient_actor_ids: Callable[[Any, list[str]], list[str]],
+    recipient_actor_ids: Callable[[Any, list[str]], list[str]],
     find_actor: Callable[[Any, str], Any],
     is_actor_running: Callable[[Any, str], bool],
     start_actor_process: Callable[..., Dict[str, Any]],
@@ -38,8 +40,12 @@ def auto_wake_recipients(
     logger: logging.Logger,
     auto_wake_lock: threading.Lock,
     auto_wake_in_progress: set[tuple[str, str]],
+    enable_recipient: Optional[Callable[[Any, str], Dict[str, Any]]] = None,
 ) -> list[str]:
-    """Best-effort background recovery for enabled recipients whose runtime is down.
+    """Best-effort background recovery for recipients whose runtime is down.
+
+    A user-authored direct message also treats a disabled recipient as an
+    explicit wake request. Agent-authored messages retain the enabled-only gate.
 
     Returns the actor IDs accepted for wake-up scheduling. If a wake for the
     same actor is already in progress, return that actor ID again so callers can
@@ -50,7 +56,7 @@ def auto_wake_recipients(
     candidate_ids: list[str] = []
     seen_candidates: set[str] = set()
 
-    for actor_id in enabled_recipient_actor_ids(group, to):
+    for actor_id in recipient_actor_ids(group, to):
         aid = str(actor_id or "").strip()
         if not aid or aid == str(by or "").strip() or aid in seen_candidates:
             continue
@@ -73,6 +79,23 @@ def auto_wake_recipients(
             with auto_wake_lock:
                 auto_wake_in_progress.discard(key)
             continue
+        actor_enabled = coerce_bool(actor.get("enabled"), default=True)
+        if str(by or "").strip() != "user" and not actor_enabled:
+            with auto_wake_lock:
+                auto_wake_in_progress.discard(key)
+            continue
+        if not actor_enabled and callable(enable_recipient):
+            try:
+                actor = enable_recipient(group, actor_id)
+            except Exception:
+                with auto_wake_lock:
+                    auto_wake_in_progress.discard(key)
+                logger.exception(
+                    "[auto-wake] failed to enable actor=%s group=%s",
+                    actor_id,
+                    group.group_id,
+                )
+                continue
         if is_actor_running(group, actor_id):
             with auto_wake_lock:
                 auto_wake_in_progress.discard(key)

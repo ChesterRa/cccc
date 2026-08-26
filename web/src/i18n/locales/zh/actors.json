@@ -202,6 +202,7 @@
   "linkedSecretsHint": "密钥由已关联的 runtime profile 管理，请到设置 > Actor Profiles 中编辑。",
   "connectionLost": "连接已断开",
   "connectionLostDescription": "终端连接失败。智能体进程可能已停止或服务器不可达。",
+  "connectionRejectedHint": "如果持续重连失败，请检查 Web 登录会话以及反向代理的 Origin 转发头。",
   "reconnect": "重新连接",
   "actorNotes": "Actor Notes",
   "actorNotesHint": "这个 actor 的稳定行为说明。",

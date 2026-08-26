@@ -1,4 +1,4 @@
-use cccc_contracts::{DaemonRequest, Event, GroupState};
+use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::fs;
@@ -10,6 +10,7 @@ use crate::ops::{actor_delivery, messaging_inbox};
 mod delegation;
 pub(crate) mod install_command;
 mod message_validation;
+mod message_wake;
 mod slash_skill;
 mod stream;
 mod tracked_send;
@@ -380,7 +381,7 @@ fn send_with_audience_policy(
             allow_sender_only_audience,
         )?;
         if data.get("message_mode").and_then(Value::as_str) != Some("mail") {
-            group = wake_idle_group(home, group, &by)?;
+            group = message_wake::wake_message_targets(home, group, &by, &data)?;
         }
     } else if kind == "system.notify" {
         if data.contains_key("requires_ack") {
@@ -631,25 +632,6 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     Ok(response)
 }
 
-fn wake_idle_group(home: &HomeLayout, group: GroupDoc, by: &str) -> Result<GroupDoc, OpError> {
-    if group.state != GroupState::Idle
-        || by.is_empty()
-        || by == "system"
-        || group.actors.iter().any(|actor| actor.id == by)
-    {
-        return Ok(group);
-    }
-    let store = store(home)?;
-    store
-        .mutate(&group.group_id, |current| {
-            if current.state == GroupState::Idle {
-                current.state = GroupState::Active;
-            }
-            Ok(current.clone())
-        })
-        .map_err(OpError::io)
-}
-
 fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let source_event_id = required_arg(request, "source_event_id")?;
@@ -706,13 +688,7 @@ fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 }
 
 fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group = load(home, request)?;
-    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
-        return Err(OpError::new(
-            "delivery_blocked",
-            "message delivery is disabled while the group is paused or stopped",
-        ));
-    }
+    let mut group = load(home, request)?;
     let source_event_id = required_arg(request, "source_event_id")?;
     let source = find_event(home, &group.group_id, &source_event_id)?;
     if source.kind != "chat.message" {
@@ -800,6 +776,7 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .map(|actor| actor.id.clone())
         .collect::<Vec<_>>();
+    group = message_wake::activate_message_targets(home, group, &actor_ids)?;
     let delivery_claims = requested
         .iter()
         .map(|actor| {

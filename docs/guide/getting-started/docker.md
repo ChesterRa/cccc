@@ -168,22 +168,12 @@ Always mount `/data` to a named volume or host path to persist state across cont
 
 ## Advanced Usage
 
-### Expose Daemon IPC for SDK Access
+### Daemon IPC Stays Local
 
-If you need to access the daemon IPC from outside the container (e.g. for SDK integration):
-
-```bash
-docker run -d \
-  --init \
-  -p 127.0.0.1:8848:8848 \
-  -p 127.0.0.1:9765:9765 \
-  -v cccc-data:/data \
-  -v /path/to/projects:/workspace \
-  -e CCCC_DAEMON_HOST=0.0.0.0 \
-  -e CCCC_DAEMON_ALLOW_REMOTE=1 \
-  --name cccc \
-  cccc
-```
+Do not publish the daemon IPC port. It has no authentication, and the Rust
+daemon rejects `CCCC_DAEMON_HOST=0.0.0.0` and every other non-loopback address.
+Remote integrations must use the authenticated Web API; container-local
+diagnostics can use `docker exec`.
 
 Projected browser sessions now default to a headed browser for better site compatibility. In server/container environments without a native display, CCCC uses its own `Xvfb` display automatically. The image also includes `x11vnc` so embedded browser panels can use the VNC-backed viewer when the browser is running on that CCCC-owned display, while delivery and automation still use the daemon-owned CDP session. CCCC does not attach VNC to an inherited host desktop display; those sessions use the CDP screencast fallback instead. The VNC endpoint is localhost-only inside the container and is intended for trusted single-user deployments; browser access from CCCC Web is proxied through the authenticated WebSocket route. If you use projected browser features heavily and see Chromium renderer crashes inside the container, add `--ipc=host` to the `docker run` command. Playwright's Docker guidance recommends a larger shared-memory budget for Chromium workloads.
 

@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod auth_support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -131,7 +132,7 @@ fn actor<'a>(payload: &'a Value, id: &str) -> Option<&'a Value> {
 async fn get(home: &HomeLayout, path: String) -> Value {
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        cccc_web::app(home.clone())
+        auth_support::authenticated_app(home.clone())
             .oneshot(Request::get(&path).body(Body::empty()).expect("request")),
     )
     .await

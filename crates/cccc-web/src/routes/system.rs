@@ -1,10 +1,11 @@
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::{ApiResult, call, object, success};
+use crate::auth::Principal;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -28,7 +29,11 @@ struct PingQuery {
     include_home: bool,
 }
 
-async fn ping(State(state): State<AppState>, Query(query): Query<PingQuery>) -> ApiResult {
+async fn ping(
+    State(state): State<AppState>,
+    Query(query): Query<PingQuery>,
+    principal: Option<Extension<Principal>>,
+) -> ApiResult {
     let response = call(&state, "ping", Default::default()).await?;
     let daemon = response.0["result"].clone();
     let mut result = json!({
@@ -39,7 +44,7 @@ async fn ping(State(state): State<AppState>, Query(query): Query<PingQuery>) -> 
             "read_only": state.web_mode.is_read_only()
         }
     });
-    if query.include_home {
+    if query.include_home && principal.is_some_and(|value| value.is_admin) {
         result["home"] = json!(state.home.root().to_string_lossy());
     }
     Ok(success(result))

@@ -30,7 +30,9 @@ function render(
       onPollAccount={noop}
       onOpenAccount={noop}
       onCreateAdminToken={noop}
-      onOpenWeb={noop}
+      onCreateWebLogin={async () =>
+        "https://reach.example.test/api/v1/web_access/exchange?code=wlg_test"
+      }
       onReachOn={noop}
       onReachOff={noop}
       onCopied={noop}
@@ -71,7 +73,7 @@ describe("ReachMembershipSection", () => {
       {
         logged_in: true,
         hostname: "https://d-one.example",
-        web_url: "https://d-one.example/ui/?token=admin-secret",
+        web_url: "https://d-one.example/ui/",
         online: true,
       },
       { hasAdminToken: true },

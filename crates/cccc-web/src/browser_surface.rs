@@ -8,8 +8,6 @@ mod proxy;
 mod system_browser;
 
 pub use interaction::{serve_socket, serve_vnc_socket};
-#[cfg(test)]
-pub(crate) use prompt_submission::SUBMISSION_EVIDENCE_TIMEOUT;
 pub(crate) use prompt_submission::{
     BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, conversation_target_matches,
     conversation_url_for_target, is_chatgpt_url, normalized_chatgpt_conversation_url,

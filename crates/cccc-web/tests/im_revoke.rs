@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, header};
 use cccc_core::access_tokens::AccessTokenStore;
@@ -33,7 +34,7 @@ async fn revoked_legacy_chat_stays_revoked_after_refresh() {
         .expect("tokens")
         .create("admin", Vec::new(), true, None)
         .expect("admin token");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let imported = request(
         app.clone(),

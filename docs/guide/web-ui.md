@@ -239,7 +239,7 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 ### Security
 
-Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**.
+Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, CCCC serves the UI shell and health/session guidance but keeps protected APIs and business WebSockets locked. Read the one-time bootstrap code from `~/.cccc/web_bootstrap_token` on the CCCC host and enter it only when creating the first administrator token; the file is mode `0600` on Unix and is deleted after successful use.
 
 The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. Python and Rust also enforce the same rule at remote start, apply, and listener boundaries, so direct API calls and stale saved settings cannot bypass the panel. Group-scoped tokens do not satisfy this administrator recovery requirement. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
 
@@ -253,23 +253,50 @@ For the default local app flow, prefer restarting from the owning `cccc` session
 
 CCCC keeps the token policy simple:
 
-- localhost-only: no remote-exposure token prerequisite
+- localhost-only: the UI shell remains reachable, but protected APIs require an Access Token after first-admin bootstrap
 - LAN/private network and public URL/tunnel/reverse proxy: an Admin Access Token is mandatory before exposure
 
-`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is an explicit unsafe listener override for deployments that already enforce a trusted network boundary outside CCCC. It is intentionally not offered as a Web UI toggle.
+`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure also requires `CCCC_REMOTE_ALLOW_INSECURE=1`; prefer an HTTPS reverse proxy, tunnel, or encrypted overlay. Neither override is offered as a Web UI toggle.
 
-Then authenticate once to bootstrap the session cookie:
+Enter the Access Token in the Web sign-in form. CCCC validates it through the
+`Authorization` header and establishes an HttpOnly, `SameSite=Lax` session
+cookie. Access tokens are not accepted in ordinary API, SSE, or WebSocket query
+strings and should never be placed in shared URLs.
 
-- Open `http://YOUR_HOST:8848/?token=<access-token>` (or `.../ui/?token=...`) using an Access Token created in Web Access.
+Reach follows the same rule. Its status payload exposes only a tokenless public
+address. Clicking **Open Web** or **Copy Admin Link** asks the local authenticated
+Rust Web session for a 120-second, one-time exchange code bound to that Reach
+origin. The public endpoint consumes the code once, establishes the HttpOnly
+cookie, and redirects to a clean `/ui/` URL.
 
-After that, you can use the Web UI normally without `?token=...`.
+Cookie-authenticated Rust Web writes require an exact allowed `Origin`, with a
+same-origin `Referer` accepted only as a fallback. This check is independent of
+CORS and blocks same-site sibling domains from submitting state-changing forms.
 
-An explicit query token represents the link being opened and replaces any
-older `cccc_access_token` cookie after successful validation. An invalid query
-token fails authentication rather than silently falling back to a stale cookie.
+#### Reverse proxy headers
 
-The query token is only a session-bootstrap transport; it does not widen the
-token's permissions. A token scoped to selected Groups receives global stream
+When a reverse proxy terminates HTTPS or exposes CCCC under another host, it
+must overwrite the browser-facing host and protocol headers. These values are
+used by every browser WebSocket (terminal, Voice Secretary, projected browser)
+and by Cookie-authenticated write protection:
+
+```nginx
+proxy_http_version 1.1;
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+```
+
+Do not pass through client-supplied `X-Forwarded-*` values. The trusted proxy
+must overwrite them. CCCC also accepts RFC 7239 `Forwarded` with `host` and
+`proto`, and handles comma-separated multi-proxy `X-Forwarded-*` chains by
+using the first browser-facing value. A mismatch is rejected with
+`origin_not_allowed` for WebSockets or `csrf_origin_invalid` for Cookie writes;
+the server log records both the received and reconstructed origins.
+
+A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message
 content. Full event content remains on the per-Group stream and is subject to
 the same scope check. Administrative capability changes require an Admin token.

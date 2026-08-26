@@ -1,3 +1,4 @@
+mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cccc_core::HomeLayout;
@@ -40,7 +41,7 @@ async fn create_directory_requires_admin_and_creates_one_child() {
     let parent = temp.path().join("projects");
     std::fs::create_dir(&parent).expect("parent");
     let body = json!({"parent": parent, "name": "demo"});
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
 
     let (status, _) = post(app.clone(), Some(&member.token), body.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -68,7 +69,7 @@ async fn create_directory_rejects_nested_names() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let (status, payload) = post(
-        cccc_web::app(home),
+        auth_support::authenticated_app(home),
         None,
         json!({"parent": temp.path(), "name": "nested/path"}),
     )
@@ -82,7 +83,7 @@ async fn create_directory_rejects_nested_names() {
 async fn create_directory_rejects_implicit_process_cwd() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let app = cccc_web::app(home);
+    let app = auth_support::authenticated_app(home);
     for parent in ["", ".", "relative"] {
         let (status, payload) = post(
             app.clone(),

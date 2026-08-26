@@ -124,7 +124,9 @@ export default defineConfig({
     strictPort: true,
     hmr: { host: "127.0.0.1", protocol: "ws", clientPort: 5555 },
     proxy: {
-      "/api": { target: backendTarget, changeOrigin: true, ws: true },
+      // Preserve the browser-facing Host so backend WebSocket Origin checks see
+      // the same origin as the page instead of Vite's internal target origin.
+      "/api": { target: backendTarget, changeOrigin: false, ws: true, xfwd: true },
       "/ui/manifest.webmanifest": { target: backendTarget, changeOrigin: true },
     },
   },

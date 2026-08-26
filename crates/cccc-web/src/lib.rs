@@ -6,6 +6,7 @@ mod ledger_event_hub;
 mod network;
 mod notebooklm_auth;
 mod readonly;
+mod request_origin;
 mod routes;
 mod shutdown;
 mod web_banner;
@@ -14,7 +15,7 @@ mod web_runtime_state;
 use anyhow::Result;
 use axum::Router;
 use axum::body::Body;
-use axum::http::{StatusCode, Uri, header};
+use axum::http::{Request, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -27,7 +28,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
@@ -168,11 +169,18 @@ fn app_with_shutdown(
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
     let app_state = state.clone();
-    let app = routes::router()
+    let mut app = routes::router()
         .fallback(static_asset)
         .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    path = %request.uri().path()
+                )
+            }),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             readonly::guard,
@@ -180,8 +188,11 @@ fn app_with_shutdown(
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::authorize,
-        ))
-        .with_state(state);
+        ));
+    if let Some(cors) = configured_cors_layer() {
+        app = app.layer(cors);
+    }
+    let app = app.with_state(state);
     (app, im_workers, browser_surfaces, app_state)
 }
 
@@ -370,6 +381,12 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     home.initialize()?;
+    if let Some(path) = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&home)? {
+        tracing::warn!(
+            path = %path.display(),
+            "Web access is locked until the first administrator token is created with the local bootstrap code"
+        );
+    }
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
     ensure_listener_auth(&home, address)?;
@@ -458,6 +475,23 @@ fn environment_flag(name: &str) -> bool {
     })
 }
 
+fn configured_cors_layer() -> Option<CorsLayer> {
+    let origins = std::env::var("CCCC_WEB_CORS_ORIGINS")
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty() && *origin != "*")
+        .filter_map(|origin| origin.parse().ok())
+        .collect::<Vec<_>>();
+    (!origins.is_empty()).then(|| {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_credentials(true)
+    })
+}
+
 fn ensure_listener_auth(home: &HomeLayout, address: SocketAddr) -> Result<()> {
     let explicitly_allowed = environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED");
     if !address.ip().is_loopback()
@@ -517,7 +551,6 @@ mod static_asset_tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
-
         let response = app_with_mode(home, WebMode::Normal)
             .oneshot(
                 Request::builder()
@@ -579,6 +612,10 @@ mod lifecycle_tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
+        let token = AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", Vec::new(), true, None)
+            .expect("admin token");
         let (shutdown, _) = broadcast::channel(1);
         let response = app_with_shutdown(
             home,
@@ -591,6 +628,7 @@ mod lifecycle_tests {
         .oneshot(
             axum::http::Request::builder()
                 .uri("/api/v1/events/stream")
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -615,6 +653,10 @@ mod lifecycle_tests {
     async fn shutdown_closes_headless_sse_response() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let token = AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", Vec::new(), true, None)
+            .expect("admin token");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
         let group = store.create("headless shutdown", "").expect("group");
         let events = store
@@ -638,6 +680,7 @@ mod lifecycle_tests {
                     "/api/v1/groups/{}/headless/stream?replay=false",
                     group.group_id
                 ))
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
                 .body(Body::empty())
                 .expect("request"),
         )
