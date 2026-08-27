@@ -128,6 +128,9 @@ export default defineConfig({
       // the same origin as the page instead of Vite's internal target origin.
       "/api": { target: backendTarget, changeOrigin: false, ws: true, xfwd: true },
       "/ui/manifest.webmanifest": { target: backendTarget, changeOrigin: true },
+      "/pwa-icon.svg": { target: backendTarget, changeOrigin: true },
+      "/pwa-icon-maskable.svg": { target: backendTarget, changeOrigin: true },
+      "/apple-touch-icon.png": { target: backendTarget, changeOrigin: true },
     },
   },
 });

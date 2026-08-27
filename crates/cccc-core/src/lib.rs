@@ -9,6 +9,7 @@ mod automation_render;
 mod automation_schedule;
 pub mod blobs;
 pub mod branding;
+pub mod branding_icon;
 pub mod capabilities;
 mod capability_builtin;
 pub mod capability_legacy;

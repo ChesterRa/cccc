@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use crate::HomeLayout;
 use crate::fs::atomic_write;
 
+pub use crate::branding_icon::{apple_touch_icon_url, pwa_icon_svg};
+
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -131,11 +133,21 @@ pub fn payload(raw: &Map<String, Value>) -> Payload {
 pub fn web_app_manifest(raw: &Map<String, Value>) -> Value {
     let branding = payload(raw);
     let icons = if branding.has_custom_logo_icon {
-        vec![json!({
-            "src": branding.logo_icon_url,
-            "sizes": "any",
-            "purpose": "any"
-        })]
+        let version = branding.updated_at.as_deref().unwrap_or("default");
+        vec![
+            json!({
+                "src": format!("/pwa-icon.svg?v={version}"),
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any"
+            }),
+            json!({
+                "src": format!("/pwa-icon-maskable.svg?v={version}"),
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "maskable"
+            }),
+        ]
     } else {
         vec![
             json!({
@@ -260,9 +272,10 @@ mod tests {
         assert_eq!(manifest["short_name"], "Acme Console");
         assert_eq!(
             manifest["icons"][0]["src"],
-            "/api/v1/branding/assets/logo_icon?v=2026-08-10T12:00:00Z"
+            "/pwa-icon.svg?v=2026-08-10T12:00:00Z"
         );
         assert_eq!(manifest["icons"][0]["sizes"], "any");
-        assert_eq!(manifest["icons"].as_array().map(Vec::len), Some(1));
+        assert_eq!(manifest["icons"][1]["purpose"], "maskable");
+        assert_eq!(manifest["icons"].as_array().map(Vec::len), Some(2));
     }
 }

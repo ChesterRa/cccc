@@ -6,6 +6,7 @@ export const DEFAULT_DARK_LOGO_ICON_URL = "/ui/logo-dark.svg";
 export const DEFAULT_FAVICON_URL = "/ui/logo.svg";
 export const DEFAULT_DOCUMENT_TITLE = "CCCC - AI Agent Collaboration";
 export const WEB_APP_MANIFEST_URL = "/ui/manifest.webmanifest";
+export const APPLE_TOUCH_ICON_URL = "/apple-touch-icon.png";
 
 export const DEFAULT_WEB_BRANDING: WebBranding = {
   product_name: DEFAULT_PRODUCT_NAME,
@@ -84,19 +85,15 @@ export function applyBrandingToDocument(
   const isDark = Boolean(document.documentElement?.classList?.contains("dark"));
   const iconHref = resolveThemeAwareFaviconUrl(branding.favicon_url, isDark);
   ensureLink("icon").href = iconHref;
-  ensureLink("apple-touch-icon").href = iconHref;
+  ensureLink("apple-touch-icon").href = APPLE_TOUCH_ICON_URL;
   ensureLink("manifest").href = resolveWebAppManifestUrl(branding.updated_at);
   return branding;
 }
 
 export function syncDocumentBrandingTheme(): void {
   const icon = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
-  const apple = document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null;
   const isDark = Boolean(document.documentElement?.classList?.contains("dark"));
   if (icon) {
     icon.href = resolveThemeAwareFaviconUrl(icon.getAttribute("href"), isDark);
-  }
-  if (apple) {
-    apple.href = resolveThemeAwareFaviconUrl(apple.getAttribute("href"), isDark);
   }
 }

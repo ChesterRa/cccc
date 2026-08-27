@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyBrandingToDocument,
+  APPLE_TOUCH_ICON_URL,
   DEFAULT_DOCUMENT_TITLE,
   DEFAULT_WEB_BRANDING,
   resolveDocumentTitle,
   resolveWebAppManifestUrl,
+  syncDocumentBrandingTheme,
 } from "../../src/utils/branding";
 
-type FakeLink = { rel: string; href: string };
+type FakeLink = { rel: string; href: string; getAttribute: (name: string) => string | null };
 
 describe("branding utils", () => {
   const links = new Map<string, FakeLink>();
@@ -30,7 +32,14 @@ describe("branding utils", () => {
         return links.get(match[1]) || null;
       },
       createElement(_tag: string) {
-        return { rel: "", href: "" };
+        const link: FakeLink = {
+          rel: "",
+          href: "",
+          getAttribute(name: string) {
+            return name === "href" ? link.href : null;
+          },
+        };
+        return link;
       },
     };
     vi.stubGlobal("document", documentStub);
@@ -59,7 +68,7 @@ describe("branding utils", () => {
     );
     expect(
       (document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null)?.href,
-    ).toContain("/api/v1/branding/assets/favicon?v=test");
+    ).toBe(APPLE_TOUCH_ICON_URL);
     expect(
       (document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null)?.href,
     ).toContain("/ui/manifest.webmanifest?v=2026-08-10T12%3A00%3A00Z");
@@ -67,5 +76,18 @@ describe("branding utils", () => {
 
   it("keeps a stable manifest URL until branding has a version", () => {
     expect(resolveWebAppManifestUrl(null)).toBe("/ui/manifest.webmanifest");
+  });
+
+  it("keeps the Apple icon endpoint stable when the color theme changes", () => {
+    applyBrandingToDocument({
+      ...DEFAULT_WEB_BRANDING,
+      favicon_url: "/api/v1/branding/assets/favicon?v=test",
+    });
+
+    syncDocumentBrandingTheme();
+
+    expect(
+      (document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null)?.href,
+    ).toBe(APPLE_TOUCH_ICON_URL);
   });
 });

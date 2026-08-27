@@ -39,6 +39,8 @@ from .middleware import (
     UiCacheControlMiddleware,
     WebSocketOriginMiddleware,
 )
+from .public_paths import is_public_path as _is_public_path
+from .public_paths import is_public_ui_path as _is_public_ui_path
 from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
@@ -142,38 +144,6 @@ def _resolve_web_dist_dir() -> Optional[Path]:
     except Exception:
         pass
     return None
-
-
-_PUBLIC_API_PATHS = frozenset({
-    "/api/v1/ping",
-    "/api/v1/health",
-    "/api/v1/ready",
-    "/api/v1/branding",
-    "/api/v1/web_access/session",
-    "/api/v1/web_access/exchange",
-    "/api/group-bridge/pairing/requests/remote",
-    "/api/group-bridge/pairing/requests/remote/status",
-    "/api/group-bridge/session/ws",
-    "/api/group-bridge/session/send",
-})
-
-
-def _is_public_ui_path(request: Request) -> bool:
-    path = str(request.url.path or "")
-    return path.startswith("/ui/") or path == "/ui"
-
-
-def _is_public_path(request: Request) -> bool:
-    """Routes that bypass token authentication (UI assets + health check)."""
-    path = str(request.url.path or "")
-    return (
-        _is_public_ui_path(request)
-        or path in _PUBLIC_API_PATHS
-        or path.startswith("/api/v1/branding/assets/")
-        or path.startswith("/mcp/web-model/")
-        or path.startswith("/mcp/group-bridge")
-        or path.startswith("/nomcp/s/")
-    )
 
 
 def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "cookie", "query"]]:
@@ -510,6 +480,7 @@ def create_app() -> FastAPI:
     app.add_middleware(UiCacheControlMiddleware)
 
     from .routes.base import register_base_routes
+    from .routes.branding_icons import create_router as create_branding_icon_router
     from .routes.space import create_routers as create_space_routers
     from .routes.groups import register_group_routes
     from .routes.messaging import create_routers as create_messaging_routers
@@ -536,6 +507,7 @@ def create_app() -> FastAPI:
     )
 
     register_base_routes(app, ctx=route_ctx)
+    app.include_router(create_branding_icon_router())
     for router in create_space_routers(route_ctx):
         app.include_router(router)
     register_group_routes(app, ctx=route_ctx)

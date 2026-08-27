@@ -9,4 +9,4 @@ def test_web_shell_assets_use_the_registered_ui_base_path() -> None:
 
     assert 'href="%BASE_URL%logo.svg"' in source
     assert 'href="%BASE_URL%manifest.webmanifest"' in source
-    assert 'href="%BASE_URL%logo.png"' in source
+    assert 'href="/apple-touch-icon.png"' in source

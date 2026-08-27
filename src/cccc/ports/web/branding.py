@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import mimetypes
 from pathlib import Path
@@ -137,12 +138,20 @@ def build_branding_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
 def build_web_app_manifest(raw: Dict[str, Any]) -> Dict[str, Any]:
     branding = build_branding_payload(raw)
     if branding["has_custom_logo_icon"]:
+        version = str(branding.get("updated_at") or "default")
         icons = [
             {
-                "src": branding["logo_icon_url"],
+                "src": f"/pwa-icon.svg?v={version}",
                 "sizes": "any",
+                "type": "image/svg+xml",
                 "purpose": "any",
-            }
+            },
+            {
+                "src": f"/pwa-icon-maskable.svg?v={version}",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "maskable",
+            },
         ]
     else:
         icons = [
@@ -171,3 +180,29 @@ def build_web_app_manifest(raw: Dict[str, Any]) -> Dict[str, Any]:
         "start_url": "/ui/",
         "icons": icons,
     }
+
+
+def build_pwa_icon_svg(raw: Dict[str, Any], *, maskable: bool) -> bytes:
+    relative = str(raw.get("logo_icon_asset_path") or raw.get("favicon_asset_path") or "").strip()
+    if not relative:
+        raise FileNotFoundError("custom PWA icon not found")
+    path = resolve_branding_asset_path(relative)
+    data = path.read_bytes()
+    mime_type = str(mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+    if not mime_type.startswith("image/"):
+        raise ValueError("custom PWA icon is not an image")
+    encoded = base64.b64encode(data).decode("ascii")
+    if maskable:
+        background = '<rect width="1024" height="1024" fill="#0f172a"/>'
+        position = "128"
+        size = "768"
+    else:
+        background = ""
+        position = "0"
+        size = "1024"
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" '
+        f'viewBox="0 0 1024 1024">{background}<image '
+        f'href="data:{mime_type};base64,{encoded}" x="{position}" y="{position}" '
+        f'width="{size}" height="{size}" preserveAspectRatio="xMidYMid meet"/></svg>'
+    ).encode("utf-8")

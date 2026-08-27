@@ -109,10 +109,42 @@ async fn branding_is_public_to_read_and_admin_only_to_mutate() {
         .expect("manifest");
     let custom_manifest = json(custom_manifest).await;
     assert_eq!(custom_manifest["icons"][0]["sizes"], "any");
+    assert_eq!(custom_manifest["icons"][0]["type"], "image/svg+xml");
+    assert_eq!(custom_manifest["icons"][0]["purpose"], "any");
     assert!(
         custom_manifest["icons"][0]["src"]
             .as_str()
-            .is_some_and(|value| value.starts_with("/api/v1/branding/assets/logo_icon?v="))
+            .is_some_and(|value| value.starts_with("/pwa-icon.svg?v="))
+    );
+    assert_eq!(custom_manifest["icons"][1]["purpose"], "maskable");
+
+    for path in ["/pwa-icon.svg", "/pwa-icon-maskable.svg"] {
+        let icon = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+            .await
+            .expect("PWA icon");
+        assert_eq!(icon.status(), StatusCode::OK);
+        assert_eq!(icon.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        let body = icon.into_body().collect().await.expect("body").to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("data:image/png;base64,cG5nLWJ5dGVz"));
+    }
+
+    let apple = app
+        .clone()
+        .oneshot(
+            Request::get("/apple-touch-icon.png")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("Apple icon");
+    assert_eq!(apple.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert!(
+        apple.headers()[header::LOCATION]
+            .to_str()
+            .expect("location")
+            .starts_with("/api/v1/branding/assets/logo_icon?v=")
     );
 
     let asset = app
