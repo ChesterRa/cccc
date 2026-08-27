@@ -200,6 +200,73 @@ try {
   $testUserPath = if ($originalUserPath) { "$olderCommandDir;$originalUserPath" } else { $olderCommandDir }
   [Environment]::SetEnvironmentVariable("Path", $testUserPath, "User")
 
+  $versionShapedSource = Join-Path $tempRoot "version-shaped-foreign.rs"
+  $versionShapedBinary = Join-Path $tempRoot "version-shaped-foreign.exe"
+  Set-Content -LiteralPath $versionShapedSource -Encoding Ascii -Value @'
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() == 1 && args[0] == "--version" {
+        println!("cccc 1.2.3");
+        return;
+    }
+    if args.len() == 1 && args[0] == "version" {
+        println!("1.2.3");
+        return;
+    }
+    std::process::exit(1);
+}
+'@
+  & rustc $versionShapedSource -O -o $versionShapedBinary
+  if ($LASTEXITCODE -ne 0) { throw "failed to build version-shaped foreign fixture" }
+  $versionShapedInstallDir = Join-Path $tempRoot "version-shaped-foreign-installed"
+  New-Item -ItemType Directory -Force -Path $versionShapedInstallDir | Out-Null
+  $versionShapedCli = Join-Path $versionShapedInstallDir "cccc.exe"
+  Copy-Item -LiteralPath $versionShapedBinary -Destination $versionShapedCli
+  $versionShapedHash = (Get-FileHash -LiteralPath $versionShapedCli).Hash
+  $failed = $false
+  try {
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $versionShapedInstallDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*managed by another installation; refusing to replace it*"
+  }
+  if (-not $failed) { throw "installer inferred ownership from generic version output" }
+  if ((Get-FileHash -LiteralPath $versionShapedCli).Hash -ne $versionShapedHash) {
+    throw "installer modified a version-shaped foreign command"
+  }
+  $allowReplaceBeforeVersionShaped = $env:CCCC_ALLOW_REPLACE_EXISTING
+  try {
+    $env:CCCC_ALLOW_REPLACE_EXISTING = "1"
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $versionShapedInstallDir -NoModifyPath
+  } finally {
+    if ($null -eq $allowReplaceBeforeVersionShaped) {
+      Remove-Item Env:CCCC_ALLOW_REPLACE_EXISTING -ErrorAction SilentlyContinue
+    } else {
+      $env:CCCC_ALLOW_REPLACE_EXISTING = $allowReplaceBeforeVersionShaped
+    }
+  }
+  if ((& $versionShapedCli --version | Out-String).Trim() -ne "cccc $realVersion") {
+    throw "explicit markerless replacement did not install CCCC"
+  }
+  if ((Get-Content -LiteralPath (Join-Path $versionShapedInstallDir ".cccc-standalone") -Raw).Trim() -ne "standalone-v1") {
+    throw "explicit markerless replacement did not write the ownership marker"
+  }
+
+  $markerlessForeignInstallDir = Join-Path $tempRoot "markerless-foreign-installed"
+  New-Item -ItemType Directory -Force -Path $markerlessForeignInstallDir | Out-Null
+  $markerlessForeignCli = Join-Path $markerlessForeignInstallDir "cccc.exe"
+  Set-Content -LiteralPath $markerlessForeignCli -Value "foreign binary" -Encoding Ascii
+  $markerlessForeignHash = (Get-FileHash -LiteralPath $markerlessForeignCli).Hash
+  $failed = $false
+  try {
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $markerlessForeignInstallDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*managed by another installation; refusing to replace it*"
+  }
+  if (-not $failed) { throw "installer replaced an unrecognized markerless command" }
+  if ((Get-FileHash -LiteralPath $markerlessForeignCli).Hash -ne $markerlessForeignHash) {
+    throw "installer modified an unrecognized markerless command"
+  }
+
   $foreignInstallDir = Join-Path $tempRoot "foreign-installed"
   New-Item -ItemType Directory -Force -Path $foreignInstallDir | Out-Null
   $foreignCli = Join-Path $foreignInstallDir "cccc.exe"

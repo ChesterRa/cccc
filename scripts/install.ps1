@@ -25,6 +25,7 @@ $releaseBaseUrl = if ($env:CCCC_RELEASE_BASE_URL) {
 }
 $NoModifyPath = $NoModifyPath -or $env:CCCC_NO_MODIFY_PATH -eq "1"
 $allowReplaceExisting = $env:CCCC_ALLOW_REPLACE_EXISTING -eq "1"
+$trustedExistingCli = $env:CCCC_TRUSTED_EXISTING_CLI
 $installMarker = ".cccc-standalone"
 $installMarkerVersion = "standalone-v1"
 if (-not $InstallDir) {
@@ -367,7 +368,9 @@ try {
 
   $existingCli = Join-Path $InstallDir "cccc.exe"
   $ownedByStandaloneInstaller = $false
+  $markerPresent = $false
   if (Test-Path -LiteralPath $markerPath) {
+    $markerPresent = $true
     $markerItem = Get-Item -LiteralPath $markerPath -Force
     $markerIsRegularFile = -not $markerItem.PSIsContainer -and
       ($markerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
@@ -381,9 +384,21 @@ try {
       $ownedByStandaloneInstaller = $false
     }
   }
+  $trustedExisting = $false
+  if (-not $markerPresent -and $trustedExistingCli -and
+      (Test-Path -LiteralPath $existingCli -PathType Leaf)) {
+    $existingItem = Get-Item -LiteralPath $existingCli -Force
+    if (($existingItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+      $trustedExisting = Test-SameCommandPath $trustedExistingCli $existingCli
+    }
+  }
   if ((Test-Path -LiteralPath $existingCli) -and
-      -not $ownedByStandaloneInstaller -and -not $allowReplaceExisting) {
+      -not $ownedByStandaloneInstaller -and -not $trustedExisting -and
+      -not $allowReplaceExisting) {
     throw "Existing $existingCli is managed by another installation; refusing to replace it. Remove it, choose a different CCCC_INSTALL_DIR, or set CCCC_ALLOW_REPLACE_EXISTING=1 to replace it deliberately"
+  }
+  if (-not $ownedByStandaloneInstaller -and $trustedExisting) {
+    Write-Host "Adopting existing CCCC command at $existingCli into the standalone installation."
   }
 
   foreach ($binary in $binaries) {

@@ -28,7 +28,7 @@ export function useVirtualScrollState(messages: LedgerEvent[], viewKey: string) 
   const lastScrollTopRef = useRef(0);
   const previousContentSizeRef = useRef(0);
   const isContainerResizingRef = useRef(false);
-  const forceStickToBottomUntilRef = useRef(0);
+  const forceStickToBottomRef = useRef(false);
   const prevResetKeyRef = useRef<string | undefined>(undefined);
   const latestSnapshotRef = useRef<ChatScrollSnapshot | null>(null);
   const getEstimatedSize = useCallback(
@@ -61,7 +61,7 @@ export function useVirtualScrollState(messages: LedgerEvent[], viewKey: string) 
     lastScrollTopRef,
     previousContentSizeRef,
     isContainerResizingRef,
-    forceStickToBottomUntilRef,
+    forceStickToBottomRef,
     prevResetKeyRef,
     latestSnapshotRef,
     getEstimatedSize,

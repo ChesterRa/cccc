@@ -17,14 +17,22 @@ export function getScrollRestorationRequestKey(input: {
   return `anchor:${anchorId}:${offsetPx}`;
 }
 
-export function useScrollAnchorRestoration(applyAnchor: (anchor: RestoredScrollAnchor) => boolean) {
+export function useScrollAnchorRestoration(
+  applyAnchor: (anchor: RestoredScrollAnchor) => boolean,
+  onBeforeBegin?: () => void,
+) {
   const applyAnchorRef = useRef(applyAnchor);
+  const onBeforeBeginRef = useRef(onBeforeBegin);
   const activeRef = useRef<(RestoredScrollAnchor & { expiresAt: number }) | null>(null);
   const correctionRafRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     applyAnchorRef.current = applyAnchor;
   }, [applyAnchor]);
+
+  useLayoutEffect(() => {
+    onBeforeBeginRef.current = onBeforeBegin;
+  }, [onBeforeBegin]);
 
   const cancel = useCallback(() => {
     activeRef.current = null;
@@ -62,6 +70,7 @@ export function useScrollAnchorRestoration(applyAnchor: (anchor: RestoredScrollA
         cancel();
         return false;
       }
+      onBeforeBeginRef.current?.();
       activeRef.current = {
         anchorId,
         offsetPx: Number(anchor.offsetPx) || 0,

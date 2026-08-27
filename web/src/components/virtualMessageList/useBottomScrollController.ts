@@ -13,6 +13,7 @@ export type ScrollToBottomOptions = {
   behavior?: ScrollBehavior;
   sendRequest?: ChatSendScrollRequest;
 };
+export type ScrollToBottom = (options?: ScrollToBottomOptions) => void;
 
 export function useBottomScrollController(args: {
   parentRef: MutableRefObject<HTMLDivElement | null>;
@@ -22,7 +23,7 @@ export function useBottomScrollController(args: {
   requestTokenRef: MutableRefObject<number>;
   followModeRef: MutableRefObject<ChatFollowMode>;
   isAtBottomRef: MutableRefObject<boolean>;
-  forceStickToBottomUntilRef: MutableRefObject<number>;
+  forceStickToBottomRef: MutableRefObject<boolean>;
 }) {
   const activeRequestRef = useRef<ChatSendScrollRequest | null>(null);
   const scrollToBottom = useCallback(
@@ -54,7 +55,7 @@ export function useBottomScrollController(args: {
           !shouldRunScheduledBottomScroll({
             followMode: args.followModeRef.current,
             isAtBottom: args.isAtBottomRef.current,
-            forceStickToBottom: args.forceStickToBottomUntilRef.current > performance.now(),
+            forceStickToBottom: args.forceStickToBottomRef.current,
             explicitForce: !!options?.force,
           })
         ) {

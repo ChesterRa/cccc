@@ -205,9 +205,20 @@ pub(crate) fn configure_mcp_only(
 }
 
 pub(crate) fn hook_command_for(executable: &Path, action: &str) -> String {
+    hook_command_for_platform(executable, action, cfg!(windows))
+}
+
+fn hook_command_for_platform(executable: &Path, action: &str, windows: bool) -> String {
     let path = executable.to_string_lossy();
-    if cfg!(windows) {
-        format!("\"{path}\" hook {action}")
+    if windows {
+        let needs_quotes = path
+            .chars()
+            .any(|ch| ch.is_whitespace() || matches!(ch, '&' | '|' | '<' | '>' | '^' | '(' | ')'));
+        if needs_quotes {
+            format!("\"{path}\" hook {action}")
+        } else {
+            format!("{path} hook {action}")
+        }
     } else {
         format!("'{}' hook {action}", path.replace('\'', "'\"'\"'"))
     }

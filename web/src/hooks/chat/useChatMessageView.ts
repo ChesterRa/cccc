@@ -21,6 +21,7 @@ import {
   dedupeStreamingEvents,
   dropOrphanQueuedPlaceholders,
 } from "./chatStreamingProjection";
+import { resolveChatListHistoryState } from "./chatListHistoryState";
 
 type ChatEmptyState = "ready" | "hydrating" | "business_empty";
 
@@ -129,14 +130,19 @@ export function useChatMessageView(input: {
   );
   const restoreSnapshot =
     !inChatWindow && shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot);
-  const effectiveIsLoadingHistory = inChatWindow
-    ? input.isChatWindowLoading
-    : input.isLoadingHistory;
-  const effectiveHasMoreHistory = !input.selectedGroupId
-    ? false
-    : inChatWindow
-      ? false
-      : !input.hasLoadedTail || input.hasMoreHistory;
+  const historyState = resolveChatListHistoryState({
+    selectedGroupId: input.selectedGroupId,
+    chatFilter: input.chatFilter,
+    filteredMessageCount: chatMessages.length,
+    hasAnyChatMessages,
+    inChatWindow,
+    hasLoadedTail: input.hasLoadedTail,
+    hasMoreHistory: input.hasMoreHistory,
+    isLoadingHistory: input.isLoadingHistory,
+    isChatWindowLoading: input.isChatWindowLoading,
+  });
+  const effectiveIsLoadingHistory = historyState.isLoadingHistory;
+  const effectiveHasMoreHistory = historyState.hasMoreHistory;
   const hydratedDoc =
     !!input.groupDoc &&
     input.groupDoc.group_id === input.selectedGroupId &&

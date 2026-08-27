@@ -9,6 +9,7 @@ VERSION="${CCCC_VERSION:-}"
 INSTALL_DIR="${CCCC_INSTALL_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CCCC_NO_MODIFY_PATH:-0}"
 ALLOW_REPLACE_EXISTING="${CCCC_ALLOW_REPLACE_EXISTING:-0}"
+TRUSTED_EXISTING_CLI="${CCCC_TRUSTED_EXISTING_CLI:-}"
 BINARIES="cccc"
 INSTALL_MARKER=".cccc-standalone"
 INSTALL_MARKER_VERSION="standalone-v1"
@@ -265,8 +266,10 @@ lock_acquired=1
 printf '%s\n' "$$" > "$install_lock/pid"
 existing_cli="$INSTALL_DIR/cccc"
 marker_owned=0
+marker_present=0
 marker_path="$INSTALL_DIR/$INSTALL_MARKER"
 if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
+  marker_present=1
   [ -f "$marker_path" ] && [ ! -L "$marker_path" ] ||
     fail "existing standalone ownership marker is not a regular file: $marker_path"
   marker_value=
@@ -275,9 +278,20 @@ if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
     marker_owned=1
   fi
 fi
+trusted_existing=0
+if [ "$marker_present" -eq 0 ] && [ -n "$TRUSTED_EXISTING_CLI" ] &&
+  [ -f "$existing_cli" ] && [ ! -L "$existing_cli" ]; then
+  trusted_path=$(canonical_command_path "$TRUSTED_EXISTING_CLI")
+  existing_path=$(canonical_command_path "$existing_cli")
+  [ "$trusted_path" = "$existing_path" ] && trusted_existing=1
+fi
 if { [ -e "$existing_cli" ] || [ -L "$existing_cli" ]; } &&
-  [ "$marker_owned" -ne 1 ] && [ "$ALLOW_REPLACE_EXISTING" != "1" ]; then
+  [ "$marker_owned" -ne 1 ] && [ "$trusted_existing" -ne 1 ] &&
+  [ "$ALLOW_REPLACE_EXISTING" != "1" ]; then
   fail "existing $existing_cli is managed by another installation; refusing to replace it. Remove it, choose a different CCCC_INSTALL_DIR, or set CCCC_ALLOW_REPLACE_EXISTING=1 to replace it deliberately"
+fi
+if [ "$marker_owned" -ne 1 ] && [ "$trusted_existing" -eq 1 ]; then
+  printf 'Adopting existing CCCC command at %s into the standalone installation.\n' "$existing_cli"
 fi
 for binary in $BINARIES; do
   if [ -e "$INSTALL_DIR/$binary" ]; then

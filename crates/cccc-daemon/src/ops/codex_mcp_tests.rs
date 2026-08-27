@@ -1,8 +1,8 @@
 use super::launcher::{prepend_executable_dir, resolve_on_path, valid_public_launcher};
 use super::overrides::{append_overrides, hook_hash};
 use super::{
-    CodexLaunch, begin_hook_launch, configure_with_executable, is_direct_codex_command,
-    record_launch_issue,
+    CodexLaunch, begin_hook_launch, configure_with_executable, hook_command_for_platform,
+    is_direct_codex_command, record_launch_issue,
 };
 use cccc_core::HomeLayout;
 use std::collections::BTreeMap;
@@ -90,6 +90,46 @@ fn hook_hash_matches_codex_normalized_identity() {
     assert_eq!(
         hook_hash("user_prompt_submit", "/usr/bin/true"),
         "sha256:6990bafd84f554a7905347cfff30dc8ac278a24b17f343073271fc9737efd49f"
+    );
+}
+
+#[test]
+fn windows_hook_command_leaves_a_shell_safe_path_unquoted() {
+    assert_eq!(
+        hook_command_for_platform(
+            Path::new(r"C:\project\cccc\target\release\cccc.exe"),
+            "codex-state",
+            true,
+        ),
+        r"C:\project\cccc\target\release\cccc.exe hook codex-state"
+    );
+}
+
+#[test]
+fn windows_hook_command_quotes_spaces_and_cmd_metacharacters() {
+    assert_eq!(
+        hook_command_for_platform(
+            Path::new(r"C:\Program Files\CCCC\cccc.exe"),
+            "codex-state",
+            true,
+        ),
+        r#""C:\Program Files\CCCC\cccc.exe" hook codex-state"#
+    );
+    assert_eq!(
+        hook_command_for_platform(
+            Path::new(r"C:\project&tools\cccc.exe"),
+            "claude-state",
+            true,
+        ),
+        r#""C:\project&tools\cccc.exe" hook claude-state"#
+    );
+}
+
+#[test]
+fn unix_hook_command_keeps_single_quote_escaping() {
+    assert_eq!(
+        hook_command_for_platform(Path::new("/tmp/cccc's bin/cccc"), "codex-state", false),
+        r#"'/tmp/cccc'"'"'s bin/cccc' hook codex-state"#
     );
 }
 

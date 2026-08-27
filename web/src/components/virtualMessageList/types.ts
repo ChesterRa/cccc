@@ -22,6 +22,7 @@ export interface VirtualMessageListProps {
   groupLabelById: Record<string, string>;
   webModelDeliveryStatusByEventId?: Record<string, WebModelDeliveryStatus>;
   viewKey?: string;
+  followOnViewChangeKey?: string;
   initialScrollTargetId?: string;
   initialScrollAnchorId?: string;
   initialScrollAnchorOffsetPx?: number;

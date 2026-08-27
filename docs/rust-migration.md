@@ -58,12 +58,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
-and install into a user-owned directory. They refuse to overwrite a public
-`cccc` executable not carrying the standalone ownership marker; uninstall that
-command deliberately, choose another
-`CCCC_INSTALL_DIR`, or set `CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement
-is intentional. The hosted scripts are rendered with the current documentation
-release; callers can override that concrete pin through `CCCC_VERSION`.
+and install into a user-owned directory. Rust self-updates identify their exact
+current executable to the installer and enter the existing transactional backup
+and rollback flow. Version output is never treated as proof of ownership: every
+other markerless command, symlink, or foreign ownership marker is protected by
+default. Remove that command, choose another `CCCC_INSTALL_DIR`, or set
+`CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement is intentional. The hosted
+scripts are rendered with the current documentation release; callers can
+override that concrete pin through `CCCC_VERSION`.
 
 In either distribution, inspect or apply updates with:
 

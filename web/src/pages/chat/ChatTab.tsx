@@ -910,6 +910,7 @@ export function ChatTab({
                   groupLabelById={messageGroupLabelById}
                   webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
                   viewKey={chatViewKey}
+                  followOnViewChangeKey={chatFilter}
                   initialScrollTargetId={chatInitialScrollTargetId}
                   initialScrollAnchorId={chatInitialScrollAnchorId}
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}

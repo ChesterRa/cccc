@@ -63,6 +63,125 @@ make_release() {
 version=0.0.0-test
 make_release "$version"
 
+version_shaped_install="$TMP_ROOT/version-shaped-foreign-installed"
+mkdir -p "$version_shaped_install"
+cat > "$version_shaped_install/cccc" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = --version ]; then
+  printf 'cccc 1.2.3\n'
+  exit 0
+fi
+if [ "${1:-}" = version ]; then
+  printf '1.2.3\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$version_shaped_install/cccc"
+version_shaped_hash=$(checksum "$version_shaped_install/cccc")
+if HOME="$TMP_ROOT/version-shaped-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$version_shaped_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/version-shaped-error"; then
+  echo "installer inferred ownership from generic version output" >&2
+  exit 1
+fi
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/version-shaped-error"
+[[ "$(checksum "$version_shaped_install/cccc")" == "$version_shaped_hash" ]]
+test ! -e "$version_shaped_install/.cccc-standalone"
+
+blocking_install="$TMP_ROOT/blocking-markerless-installed"
+mkdir -p "$blocking_install"
+cat > "$blocking_install/cccc" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = --version ] || [ "${1:-}" = version ]; then
+  : > "$CCCC_TEST_PROBE_MARKER"
+  sleep 7
+  printf 'cccc 1.2.3\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$blocking_install/cccc"
+blocking_hash=$(checksum "$blocking_install/cccc")
+blocking_started=$SECONDS
+if HOME="$TMP_ROOT/blocking-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$blocking_install" \
+  CCCC_TEST_PROBE_MARKER="$TMP_ROOT/blocking-probe-invoked" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/blocking-error"; then
+  echo "installer replaced a blocking markerless command" >&2
+  exit 1
+fi
+(( SECONDS - blocking_started < 5 ))
+test ! -e "$TMP_ROOT/blocking-probe-invoked"
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/blocking-error"
+[[ "$(checksum "$blocking_install/cccc")" == "$blocking_hash" ]]
+
+HOME="$TMP_ROOT/version-shaped-home" \
+CCCC_VERSION="$version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+CCCC_INSTALL_DIR="$version_shaped_install" \
+CCCC_NO_MODIFY_PATH=1 \
+CCCC_ALLOW_REPLACE_EXISTING=1 \
+sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$version_shaped_install/cccc" --version)" == "cccc $version" ]]
+grep -Fxq 'standalone-v1' "$version_shaped_install/.cccc-standalone"
+
+markerless_foreign_install="$TMP_ROOT/markerless-foreign-installed"
+mkdir -p "$markerless_foreign_install"
+cat > "$markerless_foreign_install/cccc" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = --version ] || [ "${1:-}" = version ]; then
+  printf 'not CCCC\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$markerless_foreign_install/cccc"
+markerless_foreign_hash=$(checksum "$markerless_foreign_install/cccc")
+if HOME="$TMP_ROOT/markerless-foreign-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$markerless_foreign_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/markerless-foreign-error"; then
+  echo "installer replaced an unrecognized markerless command" >&2
+  exit 1
+fi
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/markerless-foreign-error"
+[[ "$(checksum "$markerless_foreign_install/cccc")" == "$markerless_foreign_hash" ]]
+if HOME="$TMP_ROOT/markerless-foreign-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$markerless_foreign_install" \
+  CCCC_TRUSTED_EXISTING_CLI="$TMP_ROOT/not-the-install-target/cccc" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/trusted-mismatch-error"; then
+  echo "installer trusted a self-update path that did not match the install target" >&2
+  exit 1
+fi
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/trusted-mismatch-error"
+[[ "$(checksum "$markerless_foreign_install/cccc")" == "$markerless_foreign_hash" ]]
+
+trusted_install="$TMP_ROOT/trusted-self-update"
+mkdir -p "$trusted_install"
+cp "$markerless_foreign_install/cccc" "$trusted_install/cccc"
+trusted_output=$(HOME="$TMP_ROOT/trusted-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$trusted_install" \
+  CCCC_TRUSTED_EXISTING_CLI="$trusted_install/cccc" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh")
+printf '%s\n' "$trusted_output" | grep -Fq "Adopting existing CCCC command at $trusted_install/cccc"
+[[ "$("$trusted_install/cccc" --version)" == "cccc $version" ]]
+grep -Fxq 'standalone-v1' "$trusted_install/.cccc-standalone"
+
 foreign_install="$TMP_ROOT/foreign-installed"
 mkdir -p "$foreign_install"
 cat > "$foreign_install/cccc" <<'EOF'

@@ -651,6 +651,27 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     assert "@CCCC_" not in powershell_installer
 
 
+def test_standalone_installers_do_not_probe_markerless_version_for_ownership() -> None:
+    subprocess.run(["node", "scripts/prepare_docs_installers.mjs"], cwd=ROOT, check=True)
+    shell_installers = [
+        (ROOT / "scripts/install.sh").read_text(encoding="utf-8"),
+        (ROOT / "docs/public/install.sh").read_text(encoding="utf-8"),
+    ]
+    powershell_installers = [
+        (ROOT / "scripts/install.ps1").read_text(encoding="utf-8"),
+        (ROOT / "docs/public/install.ps1").read_text(encoding="utf-8"),
+    ]
+
+    for installer in shell_installers:
+        assert "CCCC_TRUSTED_EXISTING_CLI" in installer
+        assert "is_existing_cccc_command" not in installer
+        assert "is_cccc_version_output" not in installer
+    for installer in powershell_installers:
+        assert "CCCC_TRUSTED_EXISTING_CLI" in installer
+        assert "Test-ExistingCcccCommand" not in installer
+        assert "Test-CcccVersionOutput" not in installer
+
+
 def test_windows_install_command_supports_cmd_and_legacy_powershell_tls() -> None:
     command = (
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \""
@@ -688,6 +709,7 @@ def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:
     assert "https://chesterra.github.io/cccc/install.sh" in rust_update
     assert ".cccc-standalone" in rust_update
     assert "managed by another installation" in rust_update
+    assert "CCCC_TRUSTED_EXISTING_CLI" in rust_update
     tls_bootstrap = "[Net.SecurityProtocolType]::Tls12"
     assert tls_bootstrap in rust_update
     assert rust_update.index(tls_bootstrap) < rust_update.index("Invoke-RestMethod")

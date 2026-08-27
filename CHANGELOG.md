@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Web Model automated tests and their visible browser prompt fixtures were removed.** Product implementation remains available, while the default Rust/frontend test run no longer opens local `Send` fixture pages in Chrome.
 
 ### Fixed
+- **Standalone Rust self-updates now adopt their exact markerless executable safely.** The CLI passes its canonical current path into the transactional installer, while every other markerless command—including legacy launchers and version-shaped foreign programs—requires explicit replacement and remains protected by default.
 - **Remote-control boundaries now fail closed across Python and Rust.** Unauthenticated daemon IPC rejects every non-loopback TCP bind; Reach admin links use short-lived, one-time, origin-bound exchanges instead of long-lived tokens; Reach verifies the exact local CCCC Web instance before opening a tunnel; and cookie-authenticated writes require an exact allowed Origin or same-origin Referer.
 - **The Vite development proxy now preserves the browser-facing Host for terminal WebSockets.** Rust Web Origin validation no longer rejects legitimate `127.0.0.1:5555` runtime-inspector connections and leaves the xterm surface blank.
 - **Stale Vite dependency chunks no longer collapse the Web composer during development.** Dynamic-import failures trigger one bounded page reload and then degrade only the Voice Secretary launcher, while base-relative manifest and icon paths avoid duplicate `/ui/ui/` requests.
