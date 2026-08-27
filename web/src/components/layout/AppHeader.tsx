@@ -221,16 +221,7 @@ export function AppHeader({
                 title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
               />
             )}
-            {selectedStatus && (
-              <>
-                <GroupStatusIndicator status={selectedStatus} className="sm:hidden" />
-                <GroupStatusIndicator
-                  status={selectedStatus}
-                  variant="badge"
-                  className="hidden sm:inline-flex"
-                />
-              </>
-            )}
+            {selectedStatus && <GroupStatusIndicator status={selectedStatus} variant="badge" />}
           </div>
 
           {selectedGroupId && !webReadOnly && onOpenGroupEdit && (

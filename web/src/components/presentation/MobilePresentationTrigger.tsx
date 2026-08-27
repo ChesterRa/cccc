@@ -36,7 +36,7 @@ export function MobilePresentationTrigger({
       type="button"
       onClick={onOpen}
       className={classNames(
-        "pointer-events-auto relative flex h-11 max-w-[min(13rem,55vw)] flex-shrink-0 items-center gap-2 rounded-full border px-3 backdrop-blur-xl transition-all duration-200",
+        "pointer-events-auto relative flex h-11 flex-shrink-0 items-center gap-1.5 rounded-full border px-3 backdrop-blur-xl transition-all duration-200",
         isDark
           ? "border-white/10 bg-slate-950/74 text-slate-100 shadow-lg shadow-black/20"
           : "border-black/10 bg-white/88 text-gray-900 shadow-sm",
@@ -50,9 +50,7 @@ export function MobilePresentationTrigger({
       data-mobile-presentation-trigger="true"
     >
       <BookmarkIcon size={17} className="shrink-0" aria-hidden="true" />
-      <span className="truncate text-xs font-semibold">
-        {t("presentationTitle", { defaultValue: "Presentation" })}
-      </span>
+      <span className="sr-only">{t("presentationTitle", { defaultValue: "Presentation" })}</span>
       {highlightedSlot ? (
         <span
           className={classNames(
