@@ -20,8 +20,10 @@ async fn get_asset(
     State(state): State<AppState>,
     Path(kind): Path<String>,
 ) -> Result<Response<axum::body::Body>, crate::api::ApiError> {
-    let global = cccc_core::settings::load(&state.home)
-        .map_err(|error| crate::api::ApiError::bad(error.to_string()))?;
+    let global = cccc_core::settings::load(&state.home).map_err(|error| {
+        tracing::warn!(%error, "failed to load settings for public branding asset");
+        crate::api::ApiError::not_found("custom branding asset not found")
+    })?;
     let relative = cccc_core::branding::asset_relative(&global.branding, &kind)
         .map_err(|error| crate::api::ApiError::bad(error.to_string()))?;
     if relative.is_empty() {
@@ -29,14 +31,19 @@ async fn get_asset(
             "custom branding asset not found",
         ));
     }
-    let path = cccc_core::branding::resolve(&state.home, &relative)
-        .map_err(|error| crate::api::ApiError::not_found(error.to_string()))?;
+    let path = cccc_core::branding::resolve(&state.home, &relative).map_err(|error| {
+        tracing::warn!(%error, asset_kind = %kind, "failed to resolve public branding asset");
+        crate::api::ApiError::not_found("custom branding asset not found")
+    })?;
     let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
     super::file_response::stream(&path, &mime, Some("no-cache"), None)
         .await
-        .map_err(|error| crate::api::ApiError::not_found(error.to_string()))
+        .map_err(|error| {
+            tracing::warn!(%error, asset_kind = %kind, "failed to stream public branding asset");
+            crate::api::ApiError::not_found("custom branding asset not found")
+        })
 }
 
 async fn upload_asset(

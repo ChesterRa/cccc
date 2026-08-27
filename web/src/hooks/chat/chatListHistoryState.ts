@@ -10,20 +10,25 @@ export function resolveChatListHistoryState(input: {
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
   isChatWindowLoading: boolean;
-}): { isLoadingHistory: boolean; hasMoreHistory: boolean } {
+}): { isLoadingHistory: boolean; hasMoreHistory: boolean; isFilteredEmpty: boolean } {
   if (!input.selectedGroupId) {
-    return { isLoadingHistory: false, hasMoreHistory: false };
+    return { isLoadingHistory: false, hasMoreHistory: false, isFilteredEmpty: false };
   }
   if (input.inChatWindow) {
-    return { isLoadingHistory: input.isChatWindowLoading, hasMoreHistory: false };
+    return {
+      isLoadingHistory: input.isChatWindowLoading,
+      hasMoreHistory: false,
+      isFilteredEmpty: false,
+    };
   }
-  const filteredEmpty =
-    input.chatFilter !== "all" && input.filteredMessageCount <= 0 && input.hasAnyChatMessages;
-  if (filteredEmpty) {
-    return { isLoadingHistory: false, hasMoreHistory: false };
-  }
+  const isFilteredEmpty =
+    input.hasLoadedTail &&
+    input.chatFilter !== "all" &&
+    input.filteredMessageCount <= 0 &&
+    input.hasAnyChatMessages;
   return {
     isLoadingHistory: input.isLoadingHistory,
     hasMoreHistory: !input.hasLoadedTail || input.hasMoreHistory,
+    isFilteredEmpty,
   };
 }

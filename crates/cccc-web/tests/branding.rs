@@ -162,6 +162,28 @@ async fn branding_is_public_to_read_and_admin_only_to_mutate() {
         "png-bytes"
     );
 
+    let asset_head = app
+        .clone()
+        .oneshot(
+            Request::head("/api/v1/branding/assets/logo_icon")
+                .header(header::AUTHORIZATION, "Bearer invalid-token")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("asset HEAD");
+    assert_eq!(asset_head.status(), StatusCode::OK);
+    assert_eq!(asset_head.headers()[header::CONTENT_LENGTH], "9");
+    assert!(
+        asset_head
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes()
+            .is_empty()
+    );
+
     let deleted = app
         .clone()
         .oneshot(
@@ -186,6 +208,42 @@ async fn branding_is_public_to_read_and_admin_only_to_mutate() {
         })
         .await;
     daemon.await.expect("daemon task").expect("daemon");
+}
+
+#[tokio::test]
+async fn public_branding_errors_do_not_expose_home_paths() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("private-rust-home")).expect("home");
+    home.initialize().expect("home");
+    let mut settings = cccc_core::settings::GlobalSettings::default();
+    settings.branding.insert(
+        "logo_icon_asset_path".into(),
+        Value::String("state/web_branding/private-logo.png".into()),
+    );
+    cccc_core::settings::save(&home, &settings).expect("settings");
+    let app = cccc_web::app(home.clone());
+
+    for (path, message) in [
+        ("/pwa-icon.svg", "branding icon unavailable"),
+        (
+            "/api/v1/branding/assets/logo_icon",
+            "custom branding asset not found",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+            .await
+            .expect("branding response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = json(response).await;
+        assert_eq!(body["error"]["message"], message);
+        assert!(
+            !body
+                .to_string()
+                .contains(&home.root().to_string_lossy()[..])
+        );
+    }
 }
 
 async fn json(response: axum::response::Response) -> Value {

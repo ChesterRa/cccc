@@ -15,26 +15,38 @@ const base = {
 };
 
 describe("resolveChatListHistoryState", () => {
-  it("renders an empty filtered view without inheriting group pagination", () => {
+  it("keeps older history reachable from an empty filtered tail", () => {
     expect(
       resolveChatListHistoryState({ ...base, chatFilter: "mail", hasAnyChatMessages: true }),
-    ).toEqual({ isLoadingHistory: false, hasMoreHistory: false });
+    ).toEqual({ isLoadingHistory: false, hasMoreHistory: true, isFilteredEmpty: true });
   });
 
-  it("keeps real initial history loading when no base messages are available", () => {
+  it("keeps real initial history loading even if live events arrive first", () => {
     expect(
       resolveChatListHistoryState({
         ...base,
         chatFilter: "mail",
+        hasAnyChatMessages: true,
         hasLoadedTail: false,
         isLoadingHistory: true,
       }),
-    ).toEqual({ isLoadingHistory: true, hasMoreHistory: true });
+    ).toEqual({ isLoadingHistory: true, hasMoreHistory: true, isFilteredEmpty: false });
   });
 
   it("keeps centered chat windows bounded to their own loading state", () => {
     expect(
       resolveChatListHistoryState({ ...base, inChatWindow: true, isChatWindowLoading: true }),
-    ).toEqual({ isLoadingHistory: true, hasMoreHistory: false });
+    ).toEqual({ isLoadingHistory: true, hasMoreHistory: false, isFilteredEmpty: false });
+  });
+
+  it("settles an exhausted filtered history as a real empty result", () => {
+    expect(
+      resolveChatListHistoryState({
+        ...base,
+        chatFilter: "request_reply",
+        hasAnyChatMessages: true,
+        hasMoreHistory: false,
+      }),
+    ).toEqual({ isLoadingHistory: false, hasMoreHistory: false, isFilteredEmpty: true });
   });
 });

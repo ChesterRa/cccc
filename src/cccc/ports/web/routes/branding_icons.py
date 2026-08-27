@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
@@ -8,6 +9,9 @@ from fastapi.responses import RedirectResponse, Response
 
 from ....kernel.settings import get_web_branding_settings
 from ..branding import build_pwa_icon_svg, resolve_branding_asset_path
+
+
+logger = logging.getLogger("cccc.web.branding")
 
 
 def apple_touch_icon_url(raw: Dict[str, Any]) -> str:
@@ -31,15 +35,17 @@ def apple_touch_icon_url(raw: Dict[str, Any]) -> str:
 def create_router() -> APIRouter:
     router = APIRouter()
 
-    @router.get("/pwa-icon.svg", include_in_schema=False)
+    @router.api_route("/pwa-icon.svg", methods=["GET", "HEAD"], include_in_schema=False)
     async def pwa_icon() -> Response:
         return _pwa_icon_response(maskable=False)
 
-    @router.get("/pwa-icon-maskable.svg", include_in_schema=False)
+    @router.api_route(
+        "/pwa-icon-maskable.svg", methods=["GET", "HEAD"], include_in_schema=False
+    )
     async def pwa_icon_maskable() -> Response:
         return _pwa_icon_response(maskable=True)
 
-    @router.get("/apple-touch-icon.png", include_in_schema=False)
+    @router.api_route("/apple-touch-icon.png", methods=["GET", "HEAD"], include_in_schema=False)
     async def apple_touch_icon() -> RedirectResponse:
         target = apple_touch_icon_url(get_web_branding_settings())
         return RedirectResponse(url=target, status_code=307, headers={"Cache-Control": "no-cache"})
@@ -50,6 +56,14 @@ def create_router() -> APIRouter:
 def _pwa_icon_response(*, maskable: bool) -> Response:
     try:
         content = build_pwa_icon_svg(get_web_branding_settings(), maskable=maskable)
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        logger.warning("failed to render public branding icon", exc_info=True)
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "branding_icon_unavailable",
+                "message": "branding icon unavailable",
+                "details": {},
+            },
+        ) from exc
     return Response(content=content, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})

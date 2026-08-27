@@ -185,7 +185,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raw = get_web_branding_settings()
         return {"ok": True, "result": {"branding": build_branding_payload(raw)}}
 
-    @global_router.get("/api/v1/branding/assets/{asset_kind}")
+    @global_router.api_route(
+        "/api/v1/branding/assets/{asset_kind}", methods=["GET", "HEAD"]
+    )
     async def branding_asset_get(asset_kind: str) -> FileResponse:
         try:
             normalized_kind = normalize_branding_asset_kind(asset_kind)

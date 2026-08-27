@@ -378,6 +378,7 @@ export function ChatTab({
 
   const isHydratingEmptyState = chatMessages.length === 0 && chatEmptyState === "hydrating";
   const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
+  const isFilteredEmptyState = chatMessages.length === 0 && chatEmptyState === "filtered_empty";
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const liveWorkCards = useRuntimeDockWorkCards({
@@ -935,6 +936,7 @@ export function ChatTab({
                   onScrollSnapshot={handleScrollSnapshot}
                   isLoadingHistory={listIsLoadingHistory}
                   hasMoreHistory={listHasMoreHistory}
+                  isFilteredEmpty={isFilteredEmptyState}
                   onLoadMore={loadMoreHistory}
                 />
               )}

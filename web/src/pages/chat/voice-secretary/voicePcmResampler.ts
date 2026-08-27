@@ -1,11 +1,11 @@
 export class Pcm16Resampler {
-  private readonly ratio: number;
-  private carry = new Float32Array(0);
-  private gain = 1.8;
+  private static readonly outputSampleRate = 16_000;
+  private readonly inputSampleRate: number;
+  private carry: Float32Array<ArrayBufferLike> = new Float32Array(0);
+  private phaseTicks = 0;
 
   constructor(inputSampleRate: number) {
-    const sourceRate = Math.max(1, Number(inputSampleRate) || 48000);
-    this.ratio = sourceRate / 16000;
+    this.inputSampleRate = Math.max(1, Math.round(Number(inputSampleRate) || 48_000));
   }
 
   push(input: Float32Array): Uint8Array {
@@ -15,22 +15,25 @@ export class Pcm16Resampler {
       samples.set(this.carry, 0);
       samples.set(input, this.carry.length);
     }
-    const outputLength = Math.max(0, Math.floor(samples.length / this.ratio));
-    const consumedSamples = Math.min(samples.length, Math.floor(outputLength * this.ratio));
-    this.carry =
-      consumedSamples < samples.length ? samples.slice(consumedSamples) : new Float32Array(0);
-    if (outputLength <= 0) return new Uint8Array(0);
+    // Use an integer clock so 44.1 kHz keeps its exact phase across browser callbacks.
+    const sampleTicks = Pcm16Resampler.outputSampleRate;
+    const availableTicks = samples.length * sampleTicks - this.phaseTicks;
+    const outputLength = Math.max(0, Math.floor(availableTicks / this.inputSampleRate));
+    if (outputLength <= 0) {
+      this.carry = samples;
+      return new Uint8Array(0);
+    }
     const output = new Int16Array(outputLength);
     for (let index = 0; index < outputLength; index += 1) {
-      const start = index * this.ratio;
-      const end = Math.min(samples.length, (index + 1) * this.ratio);
-      const startIndex = Math.floor(start);
-      const endIndex = Math.max(startIndex + 1, Math.ceil(end));
+      const start = this.phaseTicks + index * this.inputSampleRate;
+      const end = start + this.inputSampleRate;
+      const startIndex = Math.floor(start / sampleTicks);
+      const endIndex = Math.max(startIndex + 1, Math.ceil(end / sampleTicks));
       let total = 0;
       let totalWeight = 0;
       for (let sourceIndex = startIndex; sourceIndex < endIndex; sourceIndex += 1) {
-        const sampleStart = Math.max(start, sourceIndex);
-        const sampleEnd = Math.min(end, sourceIndex + 1);
+        const sampleStart = Math.max(start, sourceIndex * sampleTicks);
+        const sampleEnd = Math.min(end, (sourceIndex + 1) * sampleTicks);
         const weight = Math.max(0, sampleEnd - sampleStart);
         if (weight > 0) {
           total += (samples[sourceIndex] || 0) * weight;
@@ -38,9 +41,15 @@ export class Pcm16Resampler {
         }
       }
       const averaged = totalWeight > 0 ? total / totalWeight : 0;
-      const sample = Math.max(-1, Math.min(1, averaged * this.gain));
+      // Browser capture may already apply AGC; encode at unity gain to avoid double amplification.
+      const sample = Math.max(-1, Math.min(1, averaged));
       output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
     }
+    const nextStart = this.phaseTicks + outputLength * this.inputSampleRate;
+    const consumedSamples = Math.min(samples.length, Math.floor(nextStart / sampleTicks));
+    this.phaseTicks = nextStart - consumedSamples * sampleTicks;
+    this.carry =
+      consumedSamples < samples.length ? samples.slice(consumedSamples) : new Float32Array(0);
     return new Uint8Array(output.buffer);
   }
 }

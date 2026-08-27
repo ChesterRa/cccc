@@ -23,7 +23,7 @@ import {
 } from "./chatStreamingProjection";
 import { resolveChatListHistoryState } from "./chatListHistoryState";
 
-type ChatEmptyState = "ready" | "hydrating" | "business_empty";
+type ChatEmptyState = "ready" | "hydrating" | "business_empty" | "filtered_empty";
 
 export function useChatMessageView(input: {
   selectedGroupId: string;
@@ -156,12 +156,14 @@ export function useChatMessageView(input: {
       ? "ready"
       : !input.selectedGroupId
         ? "business_empty"
-        : effectiveIsLoadingHistory ||
-            effectiveHasMoreHistory ||
-            !hydratedDoc ||
-            (input.needsActors && !settledActors)
-          ? "hydrating"
-          : "business_empty";
+        : historyState.isFilteredEmpty
+          ? "filtered_empty"
+          : effectiveIsLoadingHistory ||
+              effectiveHasMoreHistory ||
+              !hydratedDoc ||
+              (input.needsActors && !settledActors)
+            ? "hydrating"
+            : "business_empty";
 
   const centerEventId = inChatWindow ? input.chatWindow?.centerEventId : undefined;
   return {

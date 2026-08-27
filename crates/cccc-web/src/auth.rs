@@ -245,8 +245,9 @@ fn is_public(method: &Method, path: &str) -> bool {
             | "/api/group-bridge/pairing/requests/remote/claim"
             | "/api/group-bridge/session/send"
             | "/api/group-bridge/session/ws"
-    ) || *method == Method::GET
-        && (path == "/api/v1/branding" || path.starts_with("/api/v1/branding/assets/"))
+    ) || (*method == Method::GET && path == "/api/v1/branding")
+        || (matches!(*method, Method::GET | Method::HEAD)
+            && path.starts_with("/api/v1/branding/assets/"))
         || !path.starts_with("/api/")
 }
 

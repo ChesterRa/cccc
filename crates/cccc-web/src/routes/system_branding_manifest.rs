@@ -40,10 +40,15 @@ async fn pwa_icon_maskable(
 }
 
 fn pwa_icon_response(state: &AppState, maskable: bool) -> Result<Response, crate::api::ApiError> {
-    let settings = cccc_core::settings::load(&state.home)
-        .map_err(|error| crate::api::ApiError::bad(error.to_string()))?;
+    let settings = cccc_core::settings::load(&state.home).map_err(|error| {
+        tracing::warn!(%error, maskable, "failed to load settings for public branding icon");
+        crate::api::ApiError::not_found("branding icon unavailable")
+    })?;
     let bytes = cccc_core::branding::pwa_icon_svg(&state.home, &settings.branding, maskable)
-        .map_err(|error| crate::api::ApiError::not_found(error.to_string()))?;
+        .map_err(|error| {
+            tracing::warn!(%error, maskable, "failed to render public branding icon");
+            crate::api::ApiError::not_found("branding icon unavailable")
+        })?;
     Ok((
         [
             (header::CONTENT_TYPE, "image/svg+xml"),

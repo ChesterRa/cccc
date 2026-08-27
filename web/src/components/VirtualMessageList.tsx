@@ -1,7 +1,7 @@
 import { memo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
+import { ArrowDownIcon } from "./Icons";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../utils/chatAutoFollow";
 import {
   CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
@@ -46,6 +46,7 @@ import {
   useForcedBottomFollowKeyboardCancel as useBottomFollowKeyCancel,
 } from "./virtualMessageList/useForcedBottomFollow";
 import { useViewChangeAutoFollow } from "./virtualMessageList/useViewChangeAutoFollow";
+import { VirtualMessageListEmptyState } from "./virtualMessageList/VirtualMessageListEmptyState";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
@@ -88,6 +89,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onSendScrollRequestConsumed,
   isLoadingHistory = false,
   hasMoreHistory = true,
+  isFilteredEmpty = false,
   onLoadMore,
   resetKey,
 }: VirtualMessageListInnerProps) {
@@ -865,43 +867,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         aria-label="Chat messages"
       >
         {displayMessages.length === 0 ? (
-          isLoadingHistory || hasMoreHistory ? (
-            <div className="flex flex-col items-center justify-center h-full text-center pb-20">
-              <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-1.5 text-[var(--color-text-secondary)] shadow-md">
-                <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
-                <span className="text-xs">
-                  {t("loadingHistory", { defaultValue: "Loading..." })}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center pb-20">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]">
-                <MessageSquareTextIcon size={28} />
-              </div>
-              <p className="text-sm font-medium text-[var(--color-text-secondary)]">
-                {t("emptyStateTitle")}
-              </p>
-              <p className="text-xs mt-1 text-[var(--color-text-tertiary)]">
-                {t("emptyStateSubtitle")}
-              </p>
-              <div className="mt-4 w-full max-w-sm space-y-2 text-left text-xs text-[var(--color-text-tertiary)]">
-                {[
-                  [t("emptyStateQuickNoteTitle"), t("emptyStateQuickNoteBody")],
-                  [t("emptyStateAskForemanTitle"), t("emptyStateAskForemanBody")],
-                  [t("emptyStateDurableTitle"), t("emptyStateDurableBody")],
-                ].map(([title, body]) => (
-                  <div
-                    key={title}
-                    className="flex gap-2 border-t border-[var(--glass-border-subtle)] pt-2"
-                  >
-                    <span className="text-[var(--color-text-secondary)]">{title}</span>
-                    <span>{body}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
+          <VirtualMessageListEmptyState
+            isLoadingHistory={isLoadingHistory}
+            hasMoreHistory={hasMoreHistory}
+            isFilteredEmpty={isFilteredEmpty}
+            onLoadMore={onLoadMore}
+          />
         ) : (
           <>
             {showHistoryStatus && (

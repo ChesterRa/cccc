@@ -48,5 +48,6 @@ export interface VirtualMessageListProps {
   onSendScrollRequestConsumed?: (requestId: number) => void;
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
+  isFilteredEmpty?: boolean;
   onLoadMore?: () => void;
 }

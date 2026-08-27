@@ -54,7 +54,7 @@ def test_apple_icon_prefers_a_png_favicon_when_the_custom_logo_is_not_png(
 ) -> None:
     from cccc.ports.web import app as web_app
     from cccc.ports.web.branding import store_branding_asset
-    from cccc.ports.web.routes import branding_icons
+    from cccc.ports.web.routes import base, branding_icons
     from cccc.ports.web.routes.branding_icons import apple_touch_icon_url
 
     monkeypatch.setenv("CCCC_HOME", str(tmp_path))
@@ -78,11 +78,63 @@ def test_apple_icon_prefers_a_png_favicon_when_the_custom_logo_is_not_png(
 
     assert apple_touch_icon_url(raw) == "/api/v1/branding/assets/favicon?v=v1"
     monkeypatch.setattr(branding_icons, "get_web_branding_settings", lambda: raw)
-    response = TestClient(web_app.create_app()).get(
+    monkeypatch.setattr(base, "get_web_branding_settings", lambda: raw)
+    client = TestClient(web_app.create_app())
+    response = client.get(
         "/apple-touch-icon.png", follow_redirects=False
     )
     assert response.status_code == 307
     assert response.headers["location"] == "/api/v1/branding/assets/favicon?v=v1"
+
+    response = client.head(
+        "/apple-touch-icon.png",
+        headers={"Authorization": "Bearer invalid-token"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "3"
+    assert response.content == b""
+
+
+def test_public_pwa_icon_error_does_not_expose_the_branding_path(
+    tmp_path, monkeypatch
+) -> None:
+    from cccc.ports.web.app import create_app
+    from cccc.ports.web.routes import branding_icons
+
+    monkeypatch.setenv("CCCC_HOME", str(tmp_path))
+    private_path = tmp_path / "state" / "web_branding" / "private-logo.png"
+    monkeypatch.setattr(
+        branding_icons,
+        "get_web_branding_settings",
+        lambda: {"logo_icon_asset_path": "state/web_branding/private-logo.png"},
+    )
+
+    response = TestClient(create_app()).get("/pwa-icon.svg")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "code": "branding_icon_unavailable",
+        "message": "branding icon unavailable",
+        "details": {},
+    }
+    assert str(private_path) not in response.text
+
+
+def test_public_pwa_icon_normalizes_related_os_errors(monkeypatch) -> None:
+    from cccc.ports.web.app import create_app
+    from cccc.ports.web.routes import branding_icons
+
+    def fail_to_read_icon(*_args, **_kwargs):
+        raise PermissionError("/private/cccc-home/branding.png")
+
+    monkeypatch.setattr(branding_icons, "build_pwa_icon_svg", fail_to_read_icon)
+
+    response = TestClient(create_app()).get("/pwa-icon.svg")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "branding_icon_unavailable"
+    assert "/private/cccc-home" not in response.text
 
 
 def test_dynamic_icon_routes_remain_public_with_invalid_credentials(tmp_path, monkeypatch) -> None:
@@ -96,16 +148,24 @@ def test_dynamic_icon_routes_remain_public_with_invalid_credentials(tmp_path, mo
         "/pwa-icon.svg": 404,
     }
 
-    for credentials in ("header", "cookie"):
-        client.cookies.clear()
-        headers = {}
-        if credentials == "header":
-            headers["Authorization"] = "Bearer invalid-token"
-        else:
-            client.cookies.set("cccc_access_token", "invalid-token")
-        for path, status_code in expected_statuses.items():
-            response = client.get(path, headers=headers, follow_redirects=False)
-            assert response.status_code == status_code, (credentials, path, response.text)
+    for method in ("GET", "HEAD"):
+        for credentials in ("header", "cookie"):
+            client.cookies.clear()
+            headers = {}
+            if credentials == "header":
+                headers["Authorization"] = "Bearer invalid-token"
+            else:
+                client.cookies.set("cccc_access_token", "invalid-token")
+            for path, status_code in expected_statuses.items():
+                response = client.request(
+                    method, path, headers=headers, follow_redirects=False
+                )
+                assert response.status_code == status_code, (
+                    method,
+                    credentials,
+                    path,
+                    response.text,
+                )
 
 
 def test_vite_proxies_dynamic_branding_icons_to_the_web_backend() -> None:
