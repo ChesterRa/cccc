@@ -439,8 +439,8 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 | 如果你在用 | 它的强项 | CCCC 补上的 |
 |---|---|---|
 | **原生 agent 团队**（如 Claude Code subagents/teams） | 单厂商、单会话内体验最顺滑 | 跨厂商混编（Claude + Codex + Grok + Kimi…）、重启不丢的持久状态、手机/IM 远程运维、完整审计 ledger |
-| **并行任务执行器**（worktree/任务板类工具） | 隔离的并行任务执行 | 一个协调层：agent 之间对话、交接、ACK、被催办 —— 外加 7×24 daemon 运维 |
-| **IM 助理网关** | 住在聊天软件里的个人助理 | 面向真实工作的投递语义：tracked task、已读/ACK 回执、多 agent 协作组、持久审计链 |
+| **并行任务执行器**（worktree/任务板类工具） | 隔离的并行任务执行 | 一个协调层：agent 之间对话、交接、选择打扰级别并接收有界提醒 —— 外加 7×24 daemon 运维 |
+| **IM 助理网关** | 住在聊天软件里的个人助理 | 面向真实工作的投递语义：tracked task、投递/已读/回复事实、多 agent 协作组、持久审计链 |
 
 CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层。更完整的讨论见 [FAQ — CCCC 与其他方案的对比](https://chesterra.github.io/cccc/guide/faq#how-does-cccc-compare-to-native-agent-teams-and-other-tools)。
 

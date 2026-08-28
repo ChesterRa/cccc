@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "cccc"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "anyhow",
  "cccc-pair-client",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-client"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-contracts"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "chrono",
  "serde",
@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-core"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "aws-lc-rs",
  "base64",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-daemon"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "anyhow",
  "base64",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-mcp"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "anyhow",
  "axum",
@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-notebooklm"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "cookie",
  "regex",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-runtime"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "cccc-pair-contracts",
  "nix",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-web"
-version = "0.4.35-rc1"
+version = "0.4.35"
 dependencies = [
  "aes",
  "anyhow",

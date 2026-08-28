@@ -458,8 +458,8 @@ CCCC is a **collaboration kernel** — it owns the coordination layer and stays 
 | If you already use | It is great at | What CCCC adds |
 |---|---|---|
 | **Native agent teams** (e.g. Claude Code subagents/teams) | The smoothest single-vendor teamwork inside one session | Cross-vendor groups (Claude + Codex + Grok + Kimi…), state that survives restarts, phone/IM operations, and a full audit ledger |
-| **Parallel task runners** (worktree/task-board tools) | Isolated, parallel task execution | A coordination layer: agents that talk, hand off, ack, and get nudged — plus 24/7 daemon-owned operations |
-| **IM assistant gateways** | A personal assistant living in your chat app | Delivery-grade work semantics: tracked tasks, read/ack receipts, multi-agent groups, and a durable audit trail |
+| **Parallel task runners** (worktree/task-board tools) | Isolated, parallel task execution | A coordination layer: agents that talk, hand off, choose interruption levels, and get bounded reminders — plus 24/7 daemon-owned operations |
+| **IM assistant gateways** | A personal assistant living in your chat app | Delivery-grade work semantics: tracked tasks, delivery/read/reply facts, multi-agent groups, and a durable audit trail |
 
 CCCC does not replace your agents — it is the layer that makes them a team. Longer discussion: [FAQ — How does CCCC compare?](https://chesterra.github.io/cccc/guide/faq#how-does-cccc-compare-to-native-agent-teams-and-other-tools)
 
@@ -537,8 +537,8 @@ any remaining duplicates. Open a new terminal and run `cccc doctor`; its
 `Installation` section reports the invoked executable, the command selected by
 PATH, and every conflicting command.
 
-The hosted native installer currently selects the experimental `v0.4.35-rc1`
-standalone release. Stable users should use the pip distribution above.
+The hosted native installer selects the experimental `v0.4.35` standalone
+release. The complete pip distribution above remains the recommended path.
 
 ### pip (RC from TestPyPI)
 

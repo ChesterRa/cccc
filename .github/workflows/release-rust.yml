@@ -238,17 +238,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="docs/release/v${version}_release_notes.md"
+          test -f "${notes_file}"
           prerelease=()
           case "${GITHUB_REF_NAME}" in
             *-alpha*|*-beta*|*-rc*) prerelease=(--prerelease) ;;
           esac
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" artifacts/* --clobber
+            gh release edit "${GITHUB_REF_NAME}" --notes-file "${notes_file}"
           else
             gh release create "${GITHUB_REF_NAME}" artifacts/* \
               --verify-tag \
               --title "CCCC ${GITHUB_REF_NAME#v} (experimental standalone Rust preview)" \
-              --notes "Experimental Rust-only preview. The recommended stable distribution remains cccc-pair from PyPI; this build has no Python fallback or implementation switching." \
-              --generate-notes \
+              --notes-file "${notes_file}" \
               "${prerelease[@]}"
           fi

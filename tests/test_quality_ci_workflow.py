@@ -563,9 +563,12 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     assert "scripts/check_release_versions.py --tag" in publish_runs
     assert "gh release create" in publish_runs
     assert "gh release upload" in publish_runs
+    assert "gh release edit" in publish_runs
     assert "--prerelease" in publish_runs
     assert "experimental standalone Rust preview" in publish_runs
-    assert "recommended stable distribution remains cccc-pair from PyPI" in publish_runs
+    assert 'notes_file="docs/release/v${version}_release_notes.md"' in publish_runs
+    assert '--notes-file "${notes_file}"' in publish_runs
+    assert "--generate-notes" not in publish_runs
 
 
 def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:

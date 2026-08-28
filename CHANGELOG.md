@@ -6,20 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.35] — 2026-08-28
+
 ### Added
-- **CCCC Self-Evolution is now a built-in, default-enabled Skill.** New and existing Groups receive the packaged `skill:cccc:self-evolution` capability once, while an explicit disable remains durable across restarts and upgrades; former group bindings for the local self-proposed Skill migrate without activating duplicate copies.
+- **Messaging now has three explicit delivery modes: Send, Send + Reply, and Mail.** Immediate runtime handoff, reply obligations, and non-interrupting Inbox delivery are separate durable facts; Mail has its own consuming cursor and bounded, content-free reminder.
+- **DeepSeek Harness is a first-class managed headless runtime.** CCCC owns the tested ACP package composition under `CCCC_HOME`, isolates sessions by actor, and projects structured turns through the same durable runtime contract as other headless providers.
+- **CCCC Account and Reach add optional managed remote access.** The Web UI can link an installation through device authorization, while Linux and macOS users can explicitly publish Web through a supervised, checksum-pinned Cloudflare tunnel without uploading local ledgers or repositories.
+- **CCCC Self-Evolution is now a built-in, default-enabled Skill.** New and existing Groups receive the packaged capability once, while explicit disablement remains durable across restarts and upgrades.
+- **The Web workspace adds paged task/context views, directory creation in the project picker, and a full-screen mobile Presentation surface.**
 
 ### Changed
+- **Python remains the stable default and Rust remains an experimental implementation of the same product.** Both engines use the same version, Web UI, daemon contract, and `CCCC_HOME`, with stronger parity around delivery, Reach, capabilities, runtime restoration, and shared state.
+- **Context and Task Board reads are paged and version-consistent.** Large Groups no longer require one oversized snapshot, and stale responses cannot overwrite the active Group view.
+- **Account and Reach setup now use a first-class Account surface and a shorter guided Web flow.** Local CCCC remains fully usable without an account.
 - **Per-push CI now focuses on source correctness instead of repeating release verification.** Python tests use two balanced shards, Linux Rust checks share one workspace, and slow native installers plus intermediate Python compatibility run nightly or on demand while release workflows retain exact artifact gates.
 - **Web Model automated tests and their visible browser prompt fixtures were removed.** Product implementation remains available, while the default Rust/frontend test run no longer opens local `Send` fixture pages in Chrome.
 
 ### Fixed
+- **Delivery and recovery no longer conflate runtime handoff, Inbox read state, or replies.** Claims are settled durably, Mail never wakes an actor, reply requests can be cancelled, remote Group Bridge sends preserve their source identity, and interrupted work remains recoverable without silently duplicating committed turns.
+- **DeepSeek failures now have bounded, durable recovery behavior.** Missing credentials and context overflow require an explicit restart, large histories use indexed recovery, and daemon restarts cannot turn permanent provider failures into retry loops.
 - **Standalone Rust self-updates now adopt their exact markerless executable safely.** The CLI passes its canonical current path into the transactional installer, while every other markerless command—including legacy launchers and version-shaped foreign programs—requires explicit replacement and remains protected by default.
 - **Remote-control boundaries now fail closed across Python and Rust.** Unauthenticated daemon IPC rejects every non-loopback TCP bind; Reach admin links use short-lived, one-time, origin-bound exchanges instead of long-lived tokens; Reach verifies the exact local CCCC Web instance before opening a tunnel; and cookie-authenticated writes require an exact allowed Origin or same-origin Referer.
 - **The Vite development proxy now preserves the browser-facing Host for terminal WebSockets.** Rust Web Origin validation no longer rejects legitimate `127.0.0.1:5555` runtime-inspector connections and leaves the xterm surface blank.
 - **Stale Vite dependency chunks no longer collapse the Web composer during development.** Dynamic-import failures trigger one bounded page reload and then degrade only the Voice Secretary launcher, while base-relative manifest and icon paths avoid duplicate `/ui/ui/` requests.
 - **Provider exits and user-directed delivery now share one lifecycle contract across Python and Rust.** A natural provider exit records durable stop evidence without disabling the actor or Group; Send and Request Reply reactivate targeted recipients, manual delivery resumes a paused or stopped Group only after reserving new work, and Mail remains non-waking.
 - **Cross-Group Voice Secretary work and mobile Presentation controls stay in their visible scope.** A pending prompt refinement remains bound to its originating Group while navigation continues, and the full-screen mobile Presentation dialog keeps keyboard focus inside the active surface.
+- **Chat history, runtime activity, branding, and voice capture survive more browser edge cases.** Filtered views retain their scroll anchors, empty histories can page older events, installed PWA icons follow custom branding, and microphone resampling preserves buffered audio across input-rate changes.
 - **Windows combined-launcher cleanup now owns the exact process object instead of trusting a reusable PID.** Graceful shutdown is fenced to that daemon identity and receives the full lifecycle deadline before bounded fallback cleanup, so normal dispatch contention cannot trigger an early kill and descriptor handoff cannot stop a replacement daemon.
 - **Python release retries now verify immutable artifact hashes from one package-index snapshot.** Matching files remain idempotent, while a same-name rebuild fails instead of mixing distributions from different builds under one version.
 
