@@ -83,12 +83,7 @@ impl Client {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| Error::drift("artifact.generate", "missing artifact id"))?
             .to_owned();
-        let status = match row.get(4).and_then(Value::as_i64) {
-            Some(1) => "in_progress",
-            Some(3) => "completed",
-            Some(4) => "failed",
-            _ => "pending",
-        };
+        let status = artifact_status(row.get(4).and_then(Value::as_i64));
         Ok(ArtifactGeneration {
             artifact_id,
             kind: normalize_kind(kind)?.into(),
@@ -475,13 +470,7 @@ fn parse_artifact(value: &Value) -> Option<Artifact> {
         (9, _) => "data_table",
         _ => "unknown",
     };
-    let status = match row.get(4).and_then(Value::as_i64).unwrap_or(0) {
-        1 => "in_progress",
-        2 => "pending",
-        3 => "completed",
-        4 => "failed",
-        _ => "unknown",
-    };
+    let status = artifact_status(row.get(4).and_then(Value::as_i64));
     Some(Artifact {
         id,
         title: row.get(1).and_then(Value::as_str).unwrap_or("").into(),
@@ -492,6 +481,18 @@ fn parse_artifact(value: &Value) -> Option<Artifact> {
         content: artifact_content(row, type_code),
         raw: value.clone(),
     })
+}
+
+fn artifact_status(code: Option<i64>) -> &'static str {
+    match code.unwrap_or(0) {
+        1 => "pending",
+        2 => "in_progress",
+        3 => "completed",
+        4 => "failed",
+        5 => "suggested",
+        6 => "pending_review",
+        _ => "unknown",
+    }
 }
 
 fn artifact_content(row: &[Value], type_code: i64) -> Option<String> {
@@ -605,6 +606,19 @@ mod tests {
         assert_eq!(artifact.id, "artifact-1");
         assert_eq!(artifact.kind, "quiz");
         assert_eq!(artifact.status, "completed");
+    }
+
+    #[test]
+    fn artifact_status_matches_the_v081_backend_enum() {
+        assert_eq!(artifact_status(Some(0)), "unknown");
+        assert_eq!(artifact_status(Some(1)), "pending");
+        assert_eq!(artifact_status(Some(2)), "in_progress");
+        assert_eq!(artifact_status(Some(3)), "completed");
+        assert_eq!(artifact_status(Some(4)), "failed");
+        assert_eq!(artifact_status(Some(5)), "suggested");
+        assert_eq!(artifact_status(Some(6)), "pending_review");
+        assert_eq!(artifact_status(Some(99)), "unknown");
+        assert_eq!(artifact_status(None), "unknown");
     }
 
     #[test]

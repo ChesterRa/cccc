@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.resources import files
+from pathlib import Path
 
 
 SELF_EVOLUTION_CAPABILITY_ID = "skill:cccc:self-evolution"
@@ -11,12 +12,10 @@ DEFAULT_GROUP_CAPABILITY_SEED_VERSION = 2
 
 
 def _capsule_text() -> str:
-    return (
-        files("cccc.resources")
-        .joinpath("cccc-self-evolution.md")
-        .read_text(encoding="utf-8")
-        .strip()
-    )
+    path = Path(__file__).resolve().parents[3] / "resources/cccc-self-evolution.md"
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return files("cccc.resources").joinpath("cccc-self-evolution.md").read_text(encoding="utf-8").strip()
 
 
 SELF_EVOLUTION_CAPABILITY_RECORD = {

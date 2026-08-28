@@ -67,6 +67,15 @@ where
                 continue;
             }
         };
+        if request.op == "events_stream" {
+            return crate::server_events_stream::handle(
+                stream,
+                home,
+                request,
+                shutdown.subscribe(),
+            )
+            .await;
+        }
         if request.op == "term_attach" {
             return crate::server_terminal_attach::handle(
                 stream,
@@ -119,7 +128,10 @@ where
 mod tests {
     use super::handle;
     use crate::dispatch_concurrency::DispatchLocks;
-    use cccc_core::HomeLayout;
+    use cccc_contracts::Event;
+    use cccc_core::{GroupStore, HomeLayout, ledger};
+    use serde_json::{Value, json};
+    use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::watch;
 
@@ -168,6 +180,64 @@ mod tests {
         drop(reader);
         client.shutdown().await.expect("shutdown");
         assert!(task.await.expect("join").is_ok());
+    }
+
+    #[tokio::test]
+    async fn connection_upgrades_to_the_events_stream() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("events stream", "").expect("group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let (mut client, server) = tokio::io::duplex(16 * 1024);
+        let (shutdown, _) = watch::channel(false);
+        let lock = DispatchLocks::default();
+        let task = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move { handle(server, home, &shutdown, &lock).await }
+        });
+        client
+            .write_all(
+                format!(
+                    "{{\"v\":1,\"op\":\"events_stream\",\"args\":{{\"group_id\":\"{}\"}}}}\n",
+                    group.group_id
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write stream request");
+        let mut reader = BufReader::new(&mut client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("handshake");
+        let handshake: cccc_contracts::DaemonResponse =
+            serde_json::from_str(&line).expect("handshake JSON");
+        assert!(handshake.ok, "{:?}", handshake.error);
+
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"text":"live","message_mode":"send","to":["@all"]})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(&ledger_path, &event).expect("append live event");
+        line.clear();
+        tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut line))
+            .await
+            .expect("stream item timeout")
+            .expect("stream item");
+        let item: Value = serde_json::from_str(&line).expect("stream item JSON");
+        assert_eq!(item["t"], "event");
+        assert_eq!(item["event"]["id"], event.id);
+
+        drop(reader);
+        client.shutdown().await.expect("client shutdown");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .expect("closed stream retires promptly")
+                .expect("join")
+                .is_ok()
+        );
     }
 
     #[tokio::test]

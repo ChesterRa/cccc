@@ -33,7 +33,7 @@ fn ping_exposes_truthful_sdk_contract() {
     assert_eq!(response.result["implementation"], json!("rust"));
     assert_eq!(
         response.result["capabilities"]["events_stream"],
-        json!(false)
+        json!(true)
     );
     assert_eq!(
         response.result["capabilities"]["remote_access"],

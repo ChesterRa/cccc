@@ -7,7 +7,7 @@ use crate::{GroupStore, fs};
 pub const PREAMBLE_FILENAME: &str = "CCCC_PREAMBLE.md";
 pub const HELP_FILENAME: &str = "CCCC_HELP.md";
 pub const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
-pub const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../src/cccc/resources/cccc-help.md");
+pub const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../resources/cccc-help.md");
 pub const MAX_PROMPT_BYTES: usize = 512 * 1024;
 pub const CANONICAL_MESSAGE_DELIVERY_HEADING: &str = "Canonical Message Delivery";
 

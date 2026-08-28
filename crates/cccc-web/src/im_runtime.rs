@@ -218,12 +218,6 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
     ) -> Result<(), String> {
-        if config.get("skip_pending_on_start").and_then(Value::as_bool) == Some(false) {
-            return Err(
-                "Rust IM worker does not support skip_pending_on_start=false; use the Python engine for backlog replay or set it to true"
-                    .into(),
-            );
-        }
         let (generation, previous) = self.begin_start(group_id).await;
         if let Some(previous) = previous {
             previous.shutdown().await;
@@ -916,31 +910,6 @@ mod tests {
         let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         assert!(state.get("last_error").is_none_or(Value::is_null));
         assert!(!registry.is_running(&group.group_id));
-    }
-
-    #[tokio::test]
-    async fn rust_worker_rejects_the_python_only_backlog_replay_policy() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let registry =
-            ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home.clone()));
-        let error = registry
-            .start(
-                home.clone(),
-                DaemonClient::new(home),
-                "g_policy",
-                json!({
-                    "platform":"telegram",
-                    "skip_pending_on_start":false
-                })
-                .as_object()
-                .expect("config"),
-            )
-            .await
-            .expect_err("Rust must not silently skip requested backlog replay");
-
-        assert!(error.contains("skip_pending_on_start=false"));
-        assert!(error.contains("Python"));
     }
 
     #[test]

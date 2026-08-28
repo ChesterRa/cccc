@@ -1,0 +1,6 @@
+web_branding:
+  name: Python 0.4.35 Fixture
+remote_access:
+  enabled: false
+  provider: 'off'
+  updated_at: '2026-08-28T00:00:08Z'

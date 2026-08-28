@@ -57,11 +57,45 @@ make_release() {
     [[ "$fixture_name.$fixture_ext" == "$package.tar.gz" ]] && fixture_checksum=$checksum_value
     printf '%s  %s.%s\n' "$fixture_checksum" "$fixture_name" "$fixture_ext" >> "$release_dir/SHA256SUMS"
   done
+  local wheel_version=$version
+  case "$wheel_version" in
+    *-alpha[0-9]*) wheel_version=${wheel_version/-alpha/a} ;;
+    *-beta[0-9]*) wheel_version=${wheel_version/-beta/b} ;;
+    *-rc[0-9]*) wheel_version=${wheel_version/-rc/rc} ;;
+    *) wheel_version=${wheel_version//-/} ;;
+  esac
+  for platform_tag in manylinux_2_28_x86_64 macosx_11_0_x86_64 macosx_11_0_arm64 win_amd64; do
+    printf '%s  cccc_pair-%s-py3-none-%s.whl\n' "$(printf '0%.0s' {1..64})" "$wheel_version" "$platform_tag" >> "$release_dir/SHA256SUMS"
+  done
   rm -rf "$TMP_ROOT/package"
 }
 
 version=0.0.0-test
 make_release "$version"
+
+# The docs site continues to render the current installer for the final
+# dual-engine release until 0.4.36 is published. Keep that exact four-archive
+# manifest installable while the new release set adds four native wheels.
+legacy_manifest_version=0.0.12-test
+make_release "$legacy_manifest_version"
+legacy_manifest="$TMP_ROOT/releases/download/v${legacy_manifest_version}/SHA256SUMS"
+grep -v 'cccc_pair-' "$legacy_manifest" > "$legacy_manifest.legacy"
+mv "$legacy_manifest.legacy" "$legacy_manifest"
+HOME="$TMP_ROOT/legacy-manifest-home" \
+  CCCC_VERSION="$legacy_manifest_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$TMP_ROOT/legacy-manifest-home/.local/bin/cccc" --version)" == "cccc $legacy_manifest_version" ]]
+
+prerelease_version=0.0.13-rc1
+make_release "$prerelease_version"
+HOME="$TMP_ROOT/prerelease-home" \
+  CCCC_VERSION="$prerelease_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$TMP_ROOT/prerelease-home/.local/bin/cccc" --version)" == "cccc $prerelease_version" ]]
 
 version_shaped_install="$TMP_ROOT/version-shaped-foreign-installed"
 mkdir -p "$version_shaped_install"

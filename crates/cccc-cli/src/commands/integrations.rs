@@ -248,16 +248,6 @@ pub async fn space(
             "group_space_bind",
             json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"remote_space_id":"","action":"unbind","by":by}),
         ),
-        SpaceAction::Sync {
-            group_id,
-            lane,
-            provider,
-            force,
-            by,
-        } => (
-            "group_space_sync",
-            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"action":"run","force":force,"by":by}),
-        ),
         SpaceAction::Ingest {
             group_id,
             lane,

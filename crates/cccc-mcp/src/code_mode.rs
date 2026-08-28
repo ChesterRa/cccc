@@ -28,8 +28,8 @@ const MAX_SOURCE_CHARS: usize = 500_000;
 const MAX_CELLS: usize = 16;
 const CELL_TTL: Duration = Duration::from_secs(30 * 60);
 const PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
-const NODE_RUNTIME: &str = include_str!("../../../src/cccc/resources/code_mode_runtime.js");
-const METADATA: &str = include_str!("../../../src/cccc/resources/code_mode_metadata.json");
+const NODE_RUNTIME: &str = include_str!("../../../resources/code_mode_runtime.js");
+const METADATA: &str = include_str!("../../../resources/code_mode_metadata.json");
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Owner {

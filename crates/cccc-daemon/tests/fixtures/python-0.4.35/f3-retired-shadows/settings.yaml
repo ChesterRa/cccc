@@ -1,0 +1,42 @@
+web_branding:
+  name: Python 0.4.35 Fixture
+remote_access:
+  enabled: false
+  provider: 'off'
+  updated_at: '2026-08-28T00:00:08Z'
+web_model_connectors:
+  wmc_fixture:
+    connector_id: wmc_fixture
+    group_id: g_python0435
+    actor_id: web1
+    provider: chatgpt
+    secret_hash: a00101e3c841ed1451e57604b18aeeec2cd4d5f5e3fe84197dcf5aa65345ed90
+    revoked: false
+    created_at: '2026-08-28T00:00:06Z'
+    updated_at: '2026-08-28T00:00:32Z'
+  wmc_fixture_alias:
+    connector_id: wmc_fixture_alias
+    group_id: g_python0435
+    actor_id: web1
+    provider: chatgpt
+    secret_hash: a00101e3c841ed1451e57604b18aeeec2cd4d5f5e3fe84197dcf5aa65345ed90
+    revoked: false
+    created_at: '2026-08-28T00:00:32Z'
+    updated_at: '2026-08-28T00:00:32Z'
+group_bridge:
+  trusts:
+  - trust_id: trust_fixture
+    registration_id: reg_fixture
+    group_id: g_python0435
+    remote_group_id: g_remote_fixture
+    remote_peer_id: remote-foreman
+    remote_endpoint: https://remote.example.test
+    transport: https
+    status: active
+  registrations:
+  - registration_id: reg_fixture
+    group_id: g_python0435
+    remote_group_id: g_remote_fixture
+    remote_peer_id: remote-foreman
+    credential: stale-legacy-token
+    status: active

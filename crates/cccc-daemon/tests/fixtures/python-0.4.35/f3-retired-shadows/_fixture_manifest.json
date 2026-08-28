@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "wave": "F3",
+  "producer": "CCCC Python",
+  "product_version": "0.4.35",
+  "source_commit": "4a5c5efa973a6a2b91471466edb5cce7834a284f",
+  "captured_at": "2026-08-28",
+  "sanitized": true,
+  "base_fixture": "../",
+  "domains": [
+    "deleted actor profile and cleared actor private environment",
+    "revoked Web Model connector and retired browser target",
+    "revoked Group Bridge trust and removed credential",
+    "retired IM configuration, authorization, and subscriptions",
+    "revoked No-MCP session",
+    "cleared NotebookLM credential and unbound notebooks",
+    "retired capability controls"
+  ],
+  "note": "Terminal records follow the v0.4.35 Python writers. Synthetic former Rust shadows are retained only where the completed migration marker is the tombstone; Rust must consume or ignore them without resurrecting authority."
+}

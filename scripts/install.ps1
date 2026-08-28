@@ -258,6 +258,11 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*
 $target = "x86_64-pc-windows-msvc"
 $package = "cccc-v$Version-$target"
 $archive = "$package.zip"
+$wheelVersion = $Version `
+  -replace '-alpha([0-9]+)$', 'a$1' `
+  -replace '-beta([0-9]+)$', 'b$1' `
+  -replace '-rc([0-9]+)$', 'rc$1' `
+  -replace '-', ''
 $downloadUrl = "$releaseBaseUrl/download/$releaseTagPrefix$Version"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("cccc-install-" + [Guid]::NewGuid().ToString("N"))
 $binaries = @("cccc.exe")
@@ -292,20 +297,31 @@ try {
     "cccc-v$Version-aarch64-apple-darwin.tar.gz",
     "cccc-v$Version-x86_64-pc-windows-msvc.zip"
   )
+  $expectedWheels = @(
+    "cccc_pair-$wheelVersion-py3-none-manylinux_2_28_x86_64.whl",
+    "cccc_pair-$wheelVersion-py3-none-macosx_11_0_x86_64.whl",
+    "cccc_pair-$wheelVersion-py3-none-macosx_11_0_arm64.whl",
+    "cccc_pair-$wheelVersion-py3-none-win_amd64.whl"
+  )
+  $expectedPayloads = @($expectedArchives) + @($expectedWheels)
   $checksumEntries = @{}
   foreach ($line in Get-Content -LiteralPath $checksumsPath) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     if ($line -notmatch '^([0-9A-Fa-f]{64})[ \t]+\*?([^/\\]+)$') {
-      throw "SHA256SUMS must contain four unique, well-formed archive entries"
+      throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
     }
     $name = $Matches[2]
-    if ($expectedArchives -notcontains $name -or $checksumEntries.ContainsKey($name)) {
-      throw "SHA256SUMS must contain four unique, well-formed archive entries"
+    if ($expectedPayloads -notcontains $name -or $checksumEntries.ContainsKey($name)) {
+      throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
     }
     $checksumEntries[$name] = $Matches[1].ToLowerInvariant()
   }
-  if ($checksumEntries.Count -ne 4 -or -not $checksumEntries.ContainsKey($archive)) {
-    throw "SHA256SUMS must contain exactly one entry for $archive and four entries total"
+  $hasAllArchives = @($expectedArchives.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 4
+  $hasAllWheels = @($expectedWheels.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 4
+  if (-not $hasAllArchives -or
+      ($checksumEntries.Count -ne 4 -and $checksumEntries.Count -ne 8) -or
+      ($checksumEntries.Count -eq 8 -and -not $hasAllWheels)) {
+    throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
   }
 
   Receive-File "$downloadUrl/$archive" $archivePath

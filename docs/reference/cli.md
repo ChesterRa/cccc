@@ -284,10 +284,10 @@ cccc space health
 
 cccc space bind [remote_space_id]    # omit to auto-create NotebookLM notebook
 cccc space unbind
-cccc space sync --force
 
 cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
-cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
+cccc space ingest --kind resource_ingest --payload '{"source_type":"file","file_path":"space/spec.md","title":"Spec"}' --idempotency-key ingest-file-1
+cccc space ingest --kind resource_ingest --payload '{"source_type":"web_page","url":"https://example.com/spec"}' --idempotency-key ingest-url-1
 
 cccc space query "What is the latest shared plan?"
 cccc space query "Summarize risks from these sources" --options '{"source_ids":["src_1","src_2"]}'
@@ -306,20 +306,21 @@ Notes:
 - `language` / `lang` are not valid query options (put language requirement in query text).
 - Provider credentials are write-only; CLI/Web only return masked metadata.
 - `cccc space health` validates credential format and adapter compatibility.
-- The Python implementation vendors `notebooklm-py` v0.8.0. The experimental
-  Rust implementation uses a native protocol client and currently supports
-  direct `resource_ingest` only for `pasted_text`; use `cccc space sync` for
-  local `.md`/`.txt` files, or select Python for direct file/URL/YouTube/Drive
-  ingestion.
+- Python 0.4.35 vendors `notebooklm-py` v0.8.0. The native Rust client follows
+  the v0.8.1 protocol baseline and supports attached-scope local files, pasted
+  text, Web URL, YouTube, and Google Drive Docs/Slides/Sheets ingestion.
+- Explicit ingest persists its job before one provider attempt. Failed jobs are
+  retried only with `cccc space jobs retry`; there is no hidden background
+  ingest retry loop.
+- Automatic two-way repo and daily-memory mirroring is retired for 0.4.36.
+  Use explicit ingest/source operations; Rust still reads legacy 0.4.35 sync
+  metadata in status views without resuming remote mutations.
 - Artifact generation is asynchronous and does not save locally by default.
   Request wait/save explicitly when a local artifact is required. Native Rust
   download currently supports media, report/study-guide, infographic, and
   slide-deck outputs; interactive quiz/flashcard/mind-map and data-table
-  downloads remain Python-only.
-- When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
-- `cccc space sync` performs two-way reconcile for Group Space:
-  - local `repo/space/` files -> provider sources,
-  - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
+  downloads are intentionally unavailable; generate/list still work and the
+  capability matrix reports the boundary.
 
 ## Implementation Selection
 

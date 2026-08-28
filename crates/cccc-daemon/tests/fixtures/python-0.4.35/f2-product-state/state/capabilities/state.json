@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "created_at": "2026-08-28T00:00:19Z",
+  "updated_at": "2026-08-28T00:00:20Z",
+  "group_enabled": {
+    "g_python0435": ["skill:cccc:self-evolution"]
+  },
+  "actor_enabled": {
+    "g_python0435": {
+      "peer1": ["skill:cccc:self-evolution", "skill:fixture:enabled"]
+    }
+  },
+  "session_enabled": {},
+  "global_blocked": {},
+  "group_blocked": {
+    "g_python0435": {
+      "skill:fixture:blocked": {
+        "reason": "Frozen fixture",
+        "by": "user",
+        "blocked_at": "2026-08-28T00:00:20Z",
+        "expires_at": ""
+      }
+    }
+  },
+  "default_group_capability_seed_versions": {
+    "g_python0435": 2
+  }
+}

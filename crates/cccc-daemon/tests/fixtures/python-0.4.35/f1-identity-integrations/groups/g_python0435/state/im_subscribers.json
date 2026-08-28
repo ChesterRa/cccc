@@ -1,0 +1,11 @@
+{
+  "C-fixture:1710000000.100": {
+    "chat_id": "C-fixture",
+    "thread_id": "1710000000.100",
+    "platform": "slack",
+    "chat_title": "Fixture channel",
+    "subscribed": true,
+    "verbose": false,
+    "paused": false
+  }
+}

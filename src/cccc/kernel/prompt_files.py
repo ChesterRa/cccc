@@ -22,18 +22,16 @@ DEFAULT_PREAMBLE_BODY = """Startup:
 
 
 def load_builtin_help_markdown() -> str:
-    """Load the built-in CCCC help markdown bundled in the package."""
+    """Load the implementation-neutral built-in CCCC help markdown."""
     try:
-        import importlib.resources
+        path = Path(__file__).resolve().parents[3] / "resources/cccc-help.md"
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+        from importlib.resources import files
 
-        files = importlib.resources.files("cccc.resources")
-        return (files / "cccc-help.md").read_text(encoding="utf-8")
+        return files("cccc.resources").joinpath("cccc-help.md").read_text(encoding="utf-8")
     except Exception:
-        try:
-            p = Path(__file__).resolve().parents[1] / "resources" / "cccc-help.md"
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            return ""
+        return ""
 
 
 @dataclass(frozen=True)

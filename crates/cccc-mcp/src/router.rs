@@ -568,7 +568,7 @@ async fn group_help(client: &DaemonClient, arguments: Map<String, Value>) -> Res
     if !arguments.contains_key("group_id") {
         return Ok(tool_result(json!({
             "markdown": help_markdown(),
-            "source": "cccc.resources/cccc-help.md",
+            "source": "resources/cccc-help.md",
         })));
     }
     let result = daemon(client, "group_help_get", arguments).await?;
@@ -579,7 +579,7 @@ async fn group_help(client: &DaemonClient, arguments: Map<String, Value>) -> Res
     let source = result
         .get("source_path")
         .and_then(Value::as_str)
-        .unwrap_or("cccc.resources/cccc-help.md");
+        .unwrap_or("resources/cccc-help.md");
     Ok(tool_result(json!({
         "markdown": append_peer_insight_runtime_help(base),
         "source": source,

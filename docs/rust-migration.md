@@ -58,11 +58,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
-and install into a user-owned directory. Rust self-updates identify their exact
-current executable to the installer and enter the existing transactional backup
-and rollback flow. Version output is never treated as proof of ownership: every
-other markerless command, symlink, or foreign ownership marker is protected by
-default. Remove that command, choose another `CCCC_INSTALL_DIR`, or set
+and install into a user-owned directory. Rust self-updates require the complete
+`.cccc-standalone` ownership marker, then identify their exact current executable
+to the installer and enter the existing transactional backup and rollback flow.
+Version output and executable naming are never treated as proof of ownership:
+every markerless command, symlink, or foreign ownership marker is protected by
+default. Package-manager installs must be updated through their package manager.
+Remove a conflicting command, choose another `CCCC_INSTALL_DIR`, or set
 `CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement is intentional. The hosted
 scripts are rendered with the current documentation release; callers can
 override that concrete pin through `CCCC_VERSION`.
@@ -146,19 +148,16 @@ Uninstall does not remove `CCCC_HOME`. Groups, ledgers, credentials, browser
 profiles, and settings therefore survive reinstall. Back up and erase that
 recorded directory separately only when permanent data deletion is intended.
 
-The Python release builds one source distribution and portable fallback wheel,
-then builds native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
-Windows x86-64 in parallel. Linux targets the manylinux 2.28 baseline and is
-repaired with `auditwheel`; macOS and Windows dependencies are checked and
-repaired with `delocate` and `delvewheel`. Publication begins only after the
-portable wheel passes its installed Python launcher/MCP/daemon smoke and the
-exact six-file set passes metadata and platform-payload checks. Every native
-wheel is then installed and must pass Python/Rust launcher selection, MCP,
-daemon lifecycle, and engine-switch smoke. Unsupported platforms receive the
-portable wheel and report Rust as unavailable. The standalone workflow builds
-native archives for the same four targets, reuses one Web bundle, executes every
-binary, and verifies every final Linux, Intel macOS, Apple Silicon macOS, and
-Windows installer candidate before publish.
+The released 0.4.35 line uses the six-file dual-engine PyPI set described above.
+For the approved 0.4.36 Rust-only consolidation, the canonical release workflow
+has already been reduced to one build per supported platform. It wraps the exact
+same self-contained executable bytes in one standalone archive and one native
+wheel, producing four archives and four wheels with no source distribution or
+portable fallback wheel. The compatibility wheel installs `cccc` through the
+wheel scripts scheme and contains no importable CCCC Python package or Python
+runtime dependencies. Its installed smoke covers 0.4.35-layout cleanup, PATH
+ownership, version, MCP discovery, daemon lifecycle, Web health, package-manager
+update refusal, reinstall, and uninstall without deleting `CCCC_HOME`.
 
 The standalone Linux x86-64 artifact is built against the same manylinux 2.28
 ABI baseline as the native wheel and statically carries the OpenSSL used by its
@@ -172,14 +171,16 @@ not a promise that every optional external browser, microphone, GPU, or provider
 integration is available on every host.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
-Every pushed `v*` product tag automatically builds and verifies all four
-standalone archives, then publishes those preview archives, checksums, and
-versioned installers to GitHub Releases with an explicit experimental notice;
-prerelease tags are marked as such in GitHub Releases. The documentation site
-pins its hosted installers to the newest published release that has the complete
-asset set, so a prepared but unpublished version cannot break installation.
-Operators can still rerun the workflow deliberately with
-`gh workflow run release-rust.yml --ref v<version>`.
+Every pushed `v*` product tag runs the one canonical release workflow. It
+publishes only after the four archive/wheel pairs have identical executable
+hashes, the complete checksum manifest passes, and all four final installer
+candidates succeed. PyPI receives only the four wheels; GitHub Releases receives
+the wheels, archives, checksums, and versioned installers. Prerelease tags are
+marked as such in both channels. The documentation site pins its hosted
+installers to the newest published release that has the complete asset set, so a
+prepared but unpublished version cannot break installation. Operators can rerun
+the workflow deliberately with
+`gh workflow run release.yml --ref v<version>`.
 
 ## Data compatibility
 
@@ -239,11 +240,11 @@ writes remain daemon-owned. Group documents and global settings use shared
 cross-process transaction locks so daemon operations and Web-owned integration
 lifecycle updates cannot overwrite each other.
 
-The optional daemon IPC `events_stream` upgrade is not implemented by the
-experimental Rust daemon, which therefore reports `events_stream=false` in
-`ping.capabilities`. Clients must use that capability or probe the operation and
-reconcile through inbox/ledger reads; Python continues to provide the optional
-NDJSON stream.
+The Rust daemon implements the optional daemon IPC `events_stream` upgrade and
+reports `events_stream=true` in `ping.capabilities`. The stream follows the
+bounded, best-effort resume and heartbeat contract; clients must still tolerate
+disconnects or gaps and reconcile through Inbox/ledger reads. The native daemon
+owns the NDJSON stream directly.
 
 Projected-browser process ownership is also intentionally internal rather than
 mechanically identical. Python hosts the Presentation, NotebookLM-auth, and Web
@@ -324,18 +325,24 @@ live remote delivery remain part of the wider experimental Rust journey; the
 authorization and receipt store no longer require staying on one engine.
 
 The Rust NotebookLM adapter owns notebook sources and Studio artifact
-create/list/download operations. Source refresh invokes NotebookLM's refresh
-RPC, and synchronous artifact generation can wait for completion and save into
-the attached scope's `space/artifacts/`. Native Rust reads the canonical work
-sync state and memory manifest written by Python, but remote work/memory sync is
-currently unavailable: `group_space_sync action=run` fails before provider-side
-mutation instead of maintaining a second or incomplete manifest.
+create/list/download operations. Its wire baseline now follows
+`notebooklm-py` v0.8.1: the current `notebook.google.com` personal-app host,
+correct artifact lifecycle values, `.m4a` audio output, and current source-add
+payloads. Source refresh invokes NotebookLM's refresh RPC, and synchronous
+artifact generation can wait for completion and save into the attached scope's
+`space/artifacts/`.
 
-Native Rust `resource_ingest` currently accepts `pasted_text` only. File, URL,
-YouTube, and Drive resource ingestion fail with `capability_unavailable`
-instead of being silently converted to pasted text. Use the Python engine for
-local file synchronization and query `group_space_capabilities` before using
-implementation-specific source types.
+Native Rust `resource_ingest` supports attached-scope local files,
+`pasted_text`, Web URLs, YouTube, and Google Drive Docs/Slides/Sheets. It
+validates file scope/format/size, URL kind, and Drive type before a provider
+mutation; callers must still query `group_space_capabilities` instead of
+assuming every source type exists.
+
+Native Rust reads the canonical work-sync state and memory manifest written by
+Python 0.4.35, but automatic remote work/memory mirroring is retired for
+0.4.36. The old run action fails before provider-side mutation; CLI, Web, and
+MCP no longer advertise it. Explicit ingestion replaces the mutation path
+without retaining a hidden Python fallback or a second manifest implementation.
 Artifact generation defaults to `wait=false` and `save_to_space=false`. Rust
 does not yet run Python's background auto-save worker; list or download the
 completed remote artifact later, or explicitly request synchronous wait and

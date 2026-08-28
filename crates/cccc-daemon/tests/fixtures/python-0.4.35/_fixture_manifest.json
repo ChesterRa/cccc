@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "producer": "CCCC Python",
+  "product_version": "0.4.35",
+  "source_commit": "4a5c5efa973a6a2b91471466edb5cce7834a284f",
+  "captured_at": "2026-08-28",
+  "sanitized": true,
+  "domains": [
+    "home adoption",
+    "registry and active group",
+    "group, scope, and actor",
+    "ledger messages",
+    "Mail unread projection",
+    "global settings",
+    "access tokens",
+    "membership and Reach credentials"
+  ],
+  "note": "Synthetic values were written through the v0.4.35 Python implementation and normalized for a deterministic, secret-free upgrade fixture."
+}

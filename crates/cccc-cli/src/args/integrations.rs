@@ -145,18 +145,6 @@ pub enum SpaceAction {
         #[arg(long, default_value = "user")]
         by: String,
     },
-    Sync {
-        #[arg(long = "group")]
-        group_id: Option<String>,
-        #[arg(long)]
-        lane: String,
-        #[arg(long, default_value = "notebooklm")]
-        provider: String,
-        #[arg(long)]
-        force: bool,
-        #[arg(long, default_value = "user")]
-        by: String,
-    },
     Ingest {
         #[arg(long = "group")]
         group_id: Option<String>,

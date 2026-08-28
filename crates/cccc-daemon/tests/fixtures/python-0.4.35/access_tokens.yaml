@@ -1,0 +1,7 @@
+tokens:
+  acc_python_0435_fixture:
+    user_id: fixture-admin
+    allowed_groups: []
+    is_admin: true
+    created_at: '2026-08-28T00:00:07Z'
+    updated_at: '2026-08-28T00:00:07Z'

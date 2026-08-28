@@ -10,9 +10,14 @@ The Web UI is intentionally minimal:
 
 Actual NotebookLM operations such as query, ingest, source management, artifacts, and job handling are handled by agents through MCP / CLI surfaces, not by the normal user settings page.
 
-## 1. Enable Real Provider Path
+## 1. Provider Activation
 
-Start CCCC with the real NotebookLM adapter enabled:
+Connecting Google in CCCC Web stores the provider credential and activates the
+real NotebookLM path. The native Rust implementation does not require an
+environment toggle.
+
+`CCCC_NOTEBOOKLM_REAL=1` remains a legacy Python/developer override for 0.4.35;
+it is not part of the 0.4.36 Rust-only product contract:
 
 ```bash
 export CCCC_NOTEBOOKLM_REAL=1
@@ -106,22 +111,23 @@ NotebookLM usage still exists through agent-facing surfaces:
 
 The Web page is now only for account connection and notebook binding.
 
-## 9. Quick Rollback
+## 9. Disconnect
 
-If NotebookLM is unstable in your environment:
+Use **Disconnect Google** in the Notebook settings when this machine should no
+longer use the stored NotebookLM credential. Unsetting
+`CCCC_NOTEBOOKLM_REAL` alone is not a rollback after Web has persisted the
+provider state.
 
-```bash
-unset CCCC_NOTEBOOKLM_REAL
-cccc daemon restart
-```
+## 10. Explicit source ingestion and legacy sync state
 
-## 10. Repo Space Sync Notes
-
-When a group has a local scope attached, CCCC still uses repo-local `space/` as the work-lane resource source of truth:
+For 0.4.36, files are added explicitly from the attached project scope. For
+example, a caller can ingest `<scope_root>/space/spec.md`; CCCC validates the
+resolved path and uploads it without turning the entire directory into an
+automatic mirror.
 
 `<scope_root>/space/`
 
-Relevant metadata files remain:
+Homes upgraded from Python 0.4.35 may still contain these legacy status files:
 
 - `<scope_root>/space/.space-index.json`
 - `<scope_root>/space/.space-sync-state.json`
@@ -129,8 +135,20 @@ Relevant metadata files remain:
 - `<scope_root>/space/.sync/remote-sources/*.json`
 - `<scope_root>/space/artifacts/notebooklm/...`
 
-The stable Python engine currently owns work- and memory-lane synchronization.
-The experimental Rust engine reads these same metadata files so status survives
-an engine switch, but rejects sync runs before making remote changes.
+The native Rust adapter follows the `notebooklm-py` v0.8.1 protocol baseline for
+the current personal-app host, source requests, artifact status values, and
+audio output format. It supports attached-scope local files, pasted text, Web
+URL, YouTube, and Google Drive Docs/Slides/Sheets ingestion.
+
+Each explicit ingest is recorded before the provider write. A normal request
+makes one provider attempt and settles the job; failed jobs are retried only by
+an explicit `space jobs retry`, not by a hidden background loop. A job left
+`running` after a process interruption represents an uncertain provider result
+and can be inspected or canceled before retrying.
+
+Automatic work- and memory-lane mirroring is retired in 0.4.36. Rust reads the
+same canonical metadata so existing status survives an upgrade, but it never
+resumes the old remote mutation loop. The CLI, Web API, and MCP surface no
+longer advertise a sync action.
 
 These implementation details matter for agent/developer workflows, but they are not part of the normal user-facing binding flow.

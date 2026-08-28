@@ -1,0 +1,95 @@
+v: 1
+group_id: g_python0435
+title: Python 0.4.35 upgrade fixture
+topic: Frozen Rust migration evidence
+created_at: '2026-08-28T00:00:00Z'
+running: false
+state: active
+active_scope_key: s_python0435
+scopes:
+- scope_key: s_python0435
+  url: __FIXTURE_HOME__/workspace
+  label: fixture-workspace
+  git_remote: ''
+actors:
+- v: 1
+  id: peer1
+  title: Fixture Peer
+  command: [sh, -c, exit 0]
+  env: {}
+  default_scope_key: s_python0435
+  submit: enter
+  capability_autoload: []
+  capability_hidden: []
+  enabled: true
+  runner: pty
+  runtime: custom
+  runtime_state_source: terminal
+  avatar_asset_path: ''
+  profile_id: ''
+  profile_scope: global
+  profile_owner: ''
+  profile_revision_applied: 0
+  created_at: '2026-08-28T00:00:03Z'
+  updated_at: '2026-08-28T00:00:03Z'
+- v: 1
+  id: voice-secretary
+  title: Voice Secretary
+  command: [sh, -c, exit 0]
+  env: {}
+  default_scope_key: s_python0435
+  submit: enter
+  capability_autoload: []
+  capability_hidden: []
+  enabled: true
+  runner: headless
+  runtime: custom
+  runtime_state_source: terminal
+  internal_kind: voice_secretary
+  avatar_asset_path: ''
+  profile_id: ''
+  profile_scope: global
+  profile_owner: ''
+  profile_revision_applied: 0
+  created_at: '2026-08-28T00:00:04Z'
+  updated_at: '2026-08-28T00:00:04Z'
+automation:
+  version: 2
+  rules:
+  - id: fixture-reminder
+    enabled: true
+    scope: group
+    to: [peer1]
+    trigger:
+      kind: interval
+      every_seconds: 3600
+    action:
+      kind: notify
+      title: ''
+      message: Review the frozen fixture.
+      priority: normal
+  snippets:
+    fixture: Frozen snippet
+  snippet_overrides: {}
+delivery:
+  min_interval_seconds: 0
+  mail_notice_after_seconds: 1800
+  reply_notice_after_seconds: 900
+web_model_browser_targets: {}
+assistants:
+  voice_secretary:
+    enabled: true
+    config:
+      capture_mode: service
+      recognition_backend: assistant_service_local_asr
+      recognition_language: en-US
+      retention_ttl_seconds: 120
+      auto_document_enabled: true
+      document_default_dir: docs/voice-secretary
+      auto_document_quiet_ms: 5000
+      auto_document_min_chars: 700
+      auto_document_max_window_seconds: 300
+      service_model_id: ''
+      service_diarization_model_id: ''
+      tts_enabled: false
+updated_at: '2026-08-28T00:00:20Z'

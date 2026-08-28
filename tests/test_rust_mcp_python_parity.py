@@ -11,17 +11,33 @@ from cccc.ports.mcp.toolspecs import MCP_TOOLS
 class TestRustMcpPythonParity(unittest.TestCase):
     def test_python_and_rust_use_the_same_language_neutral_contract(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        contract_path = root / "src/cccc/resources/mcp_tools.json"
+        contract_path = root / "resources/mcp_tools.json"
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
         rust = (root / "crates/cccc-mcp/src/tools.rs").read_text(encoding="utf-8")
         rust_help = (root / "crates/cccc-core/src/group_prompts.rs").read_text(encoding="utf-8")
 
         self.assertEqual(MCP_TOOLS, contract)
-        self.assertIn('include_str!("../../../src/cccc/resources/mcp_tools.json")', rust)
-        self.assertIn('include_str!("../../../src/cccc/resources/cccc-help.md")', rust_help)
+        self.assertIn('include_str!("../../../resources/mcp_tools.json")', rust)
+        self.assertIn('include_str!("../../../resources/cccc-help.md")', rust_help)
         self.assertFalse((root / "crates/cccc-mcp/resources/cccc-help.md").exists())
         self.assertFalse((root / "crates/cccc-web/resources/cccc-help.md").exists())
         self.assertFalse((root / "crates/cccc-mcp/src/schemas.rs").exists())
+
+    def test_transitional_python_package_resources_match_the_canonical_files(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        names = [
+            "cccc-help.md",
+            "cccc-self-evolution.md",
+            "code_mode_metadata.json",
+            "code_mode_runtime.js",
+            "mcp_tools.json",
+        ]
+        for name in names:
+            self.assertEqual(
+                (root / "src/cccc/resources" / name).read_bytes(),
+                (root / "resources" / name).read_bytes(),
+                name,
+            )
 
     def test_python_and_rust_web_model_fixed_surfaces_match(self) -> None:
         from cccc.kernel.capabilities import WEB_MODEL_CORE_TOOLS

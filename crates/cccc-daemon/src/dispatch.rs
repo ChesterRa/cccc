@@ -29,7 +29,7 @@ fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "ts": cccc_contracts::utc_now(),
             "ipc_v": 1,
             "capabilities": {
-                "events_stream": false,
+                "events_stream": true,
                 "remote_access": true,
                 "presentation_browser_attach": false,
                 "presentation_browser_vnc_attach": false,

@@ -598,6 +598,7 @@ name = "cccc-pair-notebooklm"
 version = "0.4.35"
 dependencies = [
  "cookie",
+ "mime_guess",
  "regex",
  "reqwest 0.12.28",
  "serde",

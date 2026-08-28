@@ -203,7 +203,7 @@ fn preserve_config_policy(
     config: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
 ) {
-    for key in ["files", "skip_pending_on_start"] {
+    for key in ["files"] {
         if !config.contains_key(key)
             && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
         {
@@ -693,7 +693,7 @@ mod tests {
         assert_eq!(config["feishu_app_id_env"], "FEISHU_APP_ID");
         assert_eq!(config["feishu_app_secret"], "raw-secret");
         assert_eq!(config["files"]["max_mb"], 7);
-        assert_eq!(config["skip_pending_on_start"], false);
+        assert!(config.get("skip_pending_on_start").is_none());
         assert!(!config.contains_key("app_key_env"));
     }
 

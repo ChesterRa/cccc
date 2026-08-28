@@ -1,0 +1,69 @@
+v: 1
+group_id: g_python0435
+title: Python 0.4.35 upgrade fixture
+topic: Frozen Rust migration evidence
+created_at: '2026-08-28T00:00:00Z'
+running: false
+state: active
+active_scope_key: s_python0435
+scopes:
+- scope_key: s_python0435
+  url: /legacy/python-0.4.35/scope
+  label: fixture-scope
+  git_remote: ''
+actors:
+- v: 1
+  id: peer1
+  title: Fixture Peer
+  command: [sh, -c, exit 0]
+  env: {}
+  default_scope_key: ''
+  submit: enter
+  capability_autoload: []
+  capability_hidden: []
+  enabled: true
+  runner: pty
+  runtime: custom
+  runtime_state_source: terminal
+  avatar_asset_path: ''
+  profile_id: ''
+  profile_scope: global
+  profile_owner: ''
+  profile_revision_applied: 0
+  created_at: '2026-08-28T00:00:03Z'
+  updated_at: '2026-08-28T00:00:03Z'
+- v: 1
+  id: web1
+  title: Fixture Web Model
+  command: []
+  env: {}
+  default_scope_key: ''
+  submit: enter
+  capability_autoload: []
+  capability_hidden: []
+  enabled: true
+  runner: headless
+  runtime: web_model
+  runtime_state_source: terminal
+  avatar_asset_path: ''
+  profile_id: ''
+  profile_scope: global
+  profile_owner: ''
+  profile_revision_applied: 0
+  created_at: '2026-08-28T00:00:04Z'
+  updated_at: '2026-08-28T00:00:30Z'
+automation:
+  version: 1
+  rules: []
+  snippets: {}
+  snippet_overrides: {}
+delivery:
+  min_interval_seconds: 0
+  mail_notice_after_seconds: 1800
+  reply_notice_after_seconds: 900
+web_model_browser_targets: {}
+web_model_delivery_preferences: {}
+im_bridge:
+  running: false
+  last_error: ''
+updated_at: '2026-08-28T00:00:32Z'

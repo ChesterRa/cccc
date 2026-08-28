@@ -718,10 +718,13 @@ impl CapabilityStore {
             } else {
                 json!({"v":1,"created_at":utc_now()})
             };
+            let original = raw.clone();
             let result = change(&mut raw)?;
             raw["v"] = json!(1);
-            raw["updated_at"] = json!(utc_now());
-            write_json(&path, &raw)?;
+            if raw != original {
+                raw["updated_at"] = json!(utc_now());
+                write_json(&path, &raw)?;
+            }
             Ok(result)
         })
     }
@@ -1190,6 +1193,28 @@ mod tests {
         assert_eq!(
             store.removed_for_group("g_one").expect("removed ids"),
             BTreeSet::from(["skill:test".to_owned()])
+        );
+    }
+
+    #[test]
+    fn repeated_default_seed_does_not_rewrite_state() {
+        let (_temp, store) = store();
+        assert!(
+            store
+                .seed_default_group_capabilities("g_test")
+                .expect("first seed")
+        );
+        let before = std::fs::read(store.path()).expect("state before repeated seed");
+
+        assert!(
+            !store
+                .seed_default_group_capabilities("g_test")
+                .expect("repeated seed")
+        );
+
+        assert_eq!(
+            std::fs::read(store.path()).expect("state after repeated seed"),
+            before
         );
     }
 }

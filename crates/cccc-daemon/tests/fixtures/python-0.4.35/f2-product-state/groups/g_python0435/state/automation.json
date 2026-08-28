@@ -1,0 +1,23 @@
+{
+  "v": 5,
+  "actors": {
+    "peer1": {
+      "last_idle_notify_at": "2026-08-28T00:00:16Z",
+      "keepalive_count": 0,
+      "last_keepalive_at": "2026-08-28T00:00:16Z",
+      "help_last_nudge_at": "2026-08-28T00:00:16Z",
+      "help_msg_count_since": 0,
+      "help_session_key": ""
+    }
+  },
+  "rules": {
+    "fixture-reminder": {
+      "last_fired_at": "2026-08-28T00:00:17Z"
+    }
+  },
+  "resume_at": "2026-08-28T00:00:16Z",
+  "last_silence_notify_at": "2026-08-28T00:00:16Z",
+  "consecutive_silence_count": 0,
+  "help_ledger_pos": 5,
+  "updated_at": "2026-08-28T00:00:17Z"
+}

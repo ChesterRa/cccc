@@ -1,0 +1,15 @@
+invites: {}
+requests: {}
+trusts:
+  trust_fixture:
+    trust_id: trust_fixture
+    registration_id: reg_fixture
+    group_id: g_python0435
+    remote_group_id: g_remote_fixture
+    remote_peer_id: remote-foreman
+    remote_endpoint: https://remote.example.test
+    transport: https
+    status: active
+    created_at: '2026-08-28T00:00:08Z'
+    updated_at: '2026-08-28T00:00:08Z'
+outbounds: {}

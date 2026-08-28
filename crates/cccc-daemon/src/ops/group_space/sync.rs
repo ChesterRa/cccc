@@ -16,7 +16,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     Err(OpError::new(
         "capability_unavailable",
-        "Native Rust Group Space sync is not available; use the Python engine for work or memory sync",
+        "Automatic Group Space sync is retired; use explicit group_space_ingest and source operations",
     ))
 }
 

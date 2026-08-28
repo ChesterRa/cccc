@@ -285,7 +285,7 @@ fn help_source(home: &HomeLayout, group_id: &str) -> Result<HelpSource, OpError>
         source_path: if overridden {
             path.clone()
         } else {
-            "cccc.resources/cccc-help.md".into()
+            "resources/cccc-help.md".into()
         },
         path,
         overridden,

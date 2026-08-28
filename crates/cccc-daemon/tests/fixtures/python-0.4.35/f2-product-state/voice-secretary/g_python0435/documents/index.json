@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "group_id": "g_python0435",
+  "active_document_id": "voice-doc-fixture",
+  "documents": {
+    "voice-doc-fixture": {
+      "schema": 1,
+      "document_id": "voice-doc-fixture",
+      "assistant_id": "voice_secretary",
+      "title": "Fixture Voice Notes",
+      "status": "active",
+      "storage_kind": "workspace",
+      "workspace_path": "docs/voice-secretary/fixture-voice-notes.md",
+      "created_at": "2026-08-28T00:00:13Z",
+      "updated_at": "2026-08-28T00:00:14Z",
+      "created_by": "assistant:voice_secretary",
+      "revision_count": 1,
+      "source_segment_count": 1,
+      "last_source_segment_id": "fixture-segment",
+      "content_sha256": "a510c91e55a1aa918ddb499e5d15ce90285ef98cc1c14eea2b2af53f7e861a5b",
+      "content_chars": 45
+    }
+  }
+}

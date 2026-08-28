@@ -408,7 +408,7 @@ fn preserve_config_policy(
     config: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
 ) {
-    for key in ["files", "skip_pending_on_start"] {
+    for key in ["files"] {
         if !config.contains_key(key)
             && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
         {
@@ -551,7 +551,7 @@ mod tests {
             .expect("config");
         preserve_config_policy("discord", &mut config, previous.as_object());
         assert_eq!(config["files"]["max_mb"], 7);
-        assert_eq!(config["skip_pending_on_start"], false);
+        assert!(config.get("skip_pending_on_start").is_none());
 
         let mut fresh = json!({"platform":"discord"})
             .as_object()

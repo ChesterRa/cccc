@@ -144,7 +144,27 @@ Windows native-wheel and standalone build/verification runners are pinned to
 Server 2022. These checks make the advertised platform floor a property of the
 artifact rather than the moving `*-latest` runner labels.
 
-The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`. Python releases install and smoke one portable wheel plus a source distribution, build and install-smoke four native Rust wheels in parallel, and publish only after the exact version-matched set passes metadata, payload, MCP, daemon-lifecycle, and engine-switch checks. Standalone releases build the shared Web bundle once, execute each of the four native binaries once, and run the final Linux, Intel macOS, Apple Silicon macOS, and Windows installer verifiers in parallel before publication. These bounded release gates do not repeat the full Rust/Python suites, Web tests, or cross-language interoperability tests owned by normal CI. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
+The full Windows Rust workspace job is intentionally retired because it did not
+complete reliably on hosted runners. Windows keeps focused PTY compatibility
+coverage in `windows-smoke`. The canonical release workflow builds the shared
+Web bundle once, then compiles one self-contained Rust executable on each of the
+four supported targets. Each target job wraps those exact bytes in both a
+standalone archive and a dependency-free native wheel; it does not rebuild or
+repair a second pip payload. The final gate requires four wheels, four archives,
+matching platform-executable hashes, exact Rust-only wheel layouts, complete
+checksums, version-bound installers, release notes before registry mutation,
+installed wheel CLI/MCP/daemon/Web/uninstall smoke, and the Linux, Intel macOS,
+Apple Silicon macOS, and Windows installer verifiers before either PyPI or
+GitHub publication. The Linux job also requires Auditwheel itself to classify
+the payload as `manylinux_2_28_x86_64`; printing a newer compatibility result
+does not pass.
+These bounded release gates do not repeat the full Rust/Python suites, Web
+tests, or cross-language interoperability tests owned by normal CI. The Web job
+uploads its bundle and all target jobs consume that same artifact. During the
+0.4.36 transition, source-level Python behavior remains covered by its normal
+and nightly suites, but CI no longer builds the retired Python wheel or sdist.
+The package job exercises only the deterministic Rust-only wheel/archive tools;
+the release workflow owns testing the real platform artifacts.
 
 ## Stable Python Shards
 
@@ -160,4 +180,8 @@ uv run python scripts/quality/pytest_shards.py --total 2 --index 0
 
 ## Nightly Serial Coverage
 
-The scheduled `nightly-serial` job runs the complete source-level `tests/` suite in one pytest process, excluding only the artifact-dependent `packaged_web_dist` contract owned by the package job. Pull requests use two file shards for lower wall-clock time; nightly preserves a simple reference run that can expose shared-state or order sensitivity across files. The lightweight compatibility matrix covers Python 3.12 and 3.13 without repeating the full suite on every push.
+The scheduled `nightly-serial` job runs the complete source-level `tests/` suite
+in one pytest process. Pull requests use two file shards for lower wall-clock
+time; nightly preserves a simple reference run that can expose shared-state or
+order sensitivity across files. The lightweight compatibility matrix covers
+Python 3.12 and 3.13 without repeating the full suite on every push.

@@ -1,0 +1,29 @@
+{
+  "v": 2,
+  "created_at": "2026-08-28T00:00:21Z",
+  "updated_at": "2026-08-28T00:00:22Z",
+  "bindings": {
+    "g_python0435": {
+      "notebooklm": {
+        "work": {
+          "group_id": "g_python0435",
+          "provider": "notebooklm",
+          "lane": "work",
+          "remote_space_id": "nb-fixture-work",
+          "bound_by": "user",
+          "bound_at": "2026-08-28T00:00:21Z",
+          "status": "bound"
+        },
+        "memory": {
+          "group_id": "g_python0435",
+          "provider": "notebooklm",
+          "lane": "memory",
+          "remote_space_id": "nb-fixture-memory",
+          "bound_by": "user",
+          "bound_at": "2026-08-28T00:00:22Z",
+          "status": "bound"
+        }
+      }
+    }
+  }
+}

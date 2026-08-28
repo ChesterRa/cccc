@@ -1,0 +1,12 @@
+registrations:
+  reg_fixture:
+    registration_id: reg_fixture
+    group_id: g_python0435
+    url: https://remote.example.test
+    transport: https
+    remote_group_id: g_remote_fixture
+    remote_peer_id: remote-foreman
+    credential_ref: fsec_pairing_fixture
+    status: active
+    created_at: '2026-08-28T00:00:08Z'
+    updated_at: '2026-08-28T00:00:08Z'

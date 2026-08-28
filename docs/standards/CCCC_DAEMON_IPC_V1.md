@@ -5366,8 +5366,12 @@ Result:
 
 #### `group_space_ingest`
 
-Create (or dedupe) a work-lane ingest job and execute it with bounded retry policy.
-`lane="memory"` MUST be rejected.
+Create (or dedupe) a durable work-lane ingest job and execute one provider
+attempt. `lane="memory"` MUST be rejected. The job MUST be persisted before the
+provider mutation, then settled to `succeeded` or `failed`; a process exit may
+leave it `running` to represent an uncertain outcome. 0.4.36 has no background
+ingest retry worker: retry after a terminal failure is an explicit
+`group_space_jobs action=retry` operation.
 
 Args:
 ```ts
@@ -5388,7 +5392,8 @@ Result:
   group_id: string
   lane: "work"
   job_id: string
-  accepted: true
+  accepted: boolean
+  completed: boolean
   deduped: boolean
   job: Record<string, unknown>
   ingest_result?: Record<string, unknown>
@@ -5398,6 +5403,10 @@ Result:
   provider_mode: "disabled" | "active" | "degraded"
 }
 ```
+
+`accepted=true, completed=false` means durable work remains in progress.
+Terminal `succeeded`, `failed`, or `canceled` jobs report
+`accepted=false, completed=true`.
 
 #### `group_space_query`
 
@@ -5580,9 +5589,10 @@ Args:
 
 #### `group_space_sync`
 
-Run/read synchronization state for one lane.
-- `lane="work"`: repo `space/` reconciliation.
-- `lane="memory"`: async daily memory notebook sync manifest / enqueue scan.
+Read legacy Python 0.4.35 synchronization state for one lane during a native
+upgrade. This compatibility operation is not advertised by the 0.4.36 CLI,
+Web API, or MCP surface. Automatic repo/memory mirroring is retired; callers
+use explicit `group_space_ingest` and source operations instead.
 
 Args:
 ```ts
@@ -5590,17 +5600,16 @@ Args:
   group_id: string
   provider?: "notebooklm"
   lane: "work" | "memory"
-  action?: "status" | "run"
-  force?: boolean
+  action?: "status"
   by?: string
 }
 ```
 
-Result (`action=status|run`) returns the targeted lane state in `sync`, and `sync_result` for `action=run`.
-Implementations that list `sync.work` or `sync.memory` in
-`unavailable_capabilities` MUST still expose canonical read-only status after an
-engine switch, but MUST reject `action=run` with `capability_unavailable` before
-performing provider-side mutations.
+Result returns the targeted lane state in `sync`. Implementations that list
+`sync.work` or `sync.memory` in `unavailable_capabilities` MUST still expose
+canonical read-only status after an engine switch. A legacy client that sends
+`action=run` MUST receive `capability_unavailable` before any provider-side
+mutation.
 
 #### `group_space_provider_credential_status`
 

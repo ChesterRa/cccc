@@ -309,30 +309,6 @@ export async function actionGroupSpaceJob(args: {
   });
 }
 
-export async function syncGroupSpace(args: {
-  groupId: string;
-  provider?: string;
-  lane: "work" | "memory";
-  action?: "status" | "run";
-  force?: boolean;
-}) {
-  return apiJson<{
-    group_id: string;
-    provider: string;
-    sync?: Record<string, unknown>;
-    sync_result?: Record<string, unknown>;
-  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/sync`, {
-    method: "POST",
-    body: JSON.stringify({
-      by: "user",
-      provider: args.provider || "notebooklm",
-      lane: args.lane,
-      action: args.action || "run",
-      force: Boolean(args.force),
-    }),
-  });
-}
-
 export async function fetchGroupSpaceProviderCredential(provider: string = "notebooklm") {
   return apiJson<{ provider: string; credential: GroupSpaceProviderCredentialStatus }>(
     `/api/v1/space/providers/${encodeURIComponent(provider)}/credential?by=user`,

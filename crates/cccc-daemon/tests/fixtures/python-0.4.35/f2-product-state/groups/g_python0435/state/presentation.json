@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "updated_at": "2026-08-28T00:00:18Z",
+  "highlight_slot_id": "slot-2",
+  "slots": [
+    {"slot_id": "slot-1", "index": 1},
+    {
+      "slot_id": "slot-2",
+      "index": 2,
+      "card": {
+        "slot_id": "slot-2",
+        "title": "fixture",
+        "card_type": "web_preview",
+        "published_by": "user",
+        "published_at": "2026-08-28T00:00:18Z",
+        "source_label": "",
+        "source_ref": "https://example.test/fixture",
+        "summary": "Frozen presentation",
+        "content": {"mode": "reference", "url": "https://example.test/fixture"}
+      }
+    },
+    {"slot_id": "slot-3", "index": 3},
+    {"slot_id": "slot-4", "index": 4}
+  ]
+}

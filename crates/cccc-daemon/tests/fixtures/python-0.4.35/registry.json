@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "created_at": "2026-08-28T00:00:00Z",
+  "groups": {
+    "g_python0435": {
+      "group_id": "g_python0435",
+      "title": "Python 0.4.35 upgrade fixture",
+      "topic": "Frozen Rust migration evidence",
+      "path": "/legacy/cccc-home/groups/g_python0435",
+      "default_scope_key": "s_python0435",
+      "created_at": "2026-08-28T00:00:00Z",
+      "updated_at": "2026-08-28T00:00:02Z"
+    }
+  },
+  "defaults": {
+    "s_python0435": "g_python0435"
+  },
+  "updated_at": "2026-08-28T00:00:02Z"
+}

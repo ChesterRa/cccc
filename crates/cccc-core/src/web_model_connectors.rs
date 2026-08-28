@@ -40,8 +40,8 @@ fn secret_preview(secret: &str) -> String {
 fn normalized_entry(connector_id: &str, raw: &Value) -> Option<Value> {
     let connector_id = connector_id.trim();
     let mut item = raw.as_object()?.clone();
-    let group_id = item.get("group_id")?.as_str()?.trim();
-    let actor_id = item.get("actor_id")?.as_str()?.trim();
+    let group_id = item.get("group_id")?.as_str()?.trim().to_owned();
+    let actor_id = item.get("actor_id")?.as_str()?.trim().to_owned();
     if connector_id.is_empty() || group_id.is_empty() || actor_id.is_empty() {
         return None;
     }
@@ -61,6 +61,8 @@ fn normalized_entry(connector_id: &str, raw: &Value) -> Option<Value> {
         return None;
     }
     item.insert("connector_id".into(), json!(connector_id));
+    item.insert("group_id".into(), json!(group_id));
+    item.insert("actor_id".into(), json!(actor_id));
     item.entry("kind")
         .or_insert_with(|| json!("web_model_connector"));
     if secret_hash.is_empty() {
@@ -85,7 +87,11 @@ fn connector_map(raw: &Value) -> Map<String, Value> {
         for item in items {
             let id = item["connector_id"].as_str().unwrap_or("");
             if let Some(item) = normalized_entry(id, item) {
-                result.insert(id.to_owned(), item);
+                let id = item["connector_id"]
+                    .as_str()
+                    .expect("normalized connector id")
+                    .to_owned();
+                result.insert(id, item);
             }
         }
         return collapse_active_duplicates(result);
@@ -99,7 +105,8 @@ fn connector_map(raw: &Value) -> Map<String, Value> {
         .unwrap_or(root);
     for (id, item) in items {
         if let Some(item) = normalized_entry(id, item) {
-            result.insert(id.clone(), item);
+            let id = item["connector_id"].as_str().unwrap_or(id).to_owned();
+            result.insert(id, item);
         }
     }
     collapse_active_duplicates(result)
@@ -157,25 +164,39 @@ fn merge_maps(
     mut canonical: Map<String, Value>,
     imported: Map<String, Value>,
 ) -> Map<String, Value> {
+    let retired_routes = canonical
+        .values()
+        .filter(|item| item["revoked"].as_bool().unwrap_or(false))
+        .filter_map(|item| {
+            let group_id = item["group_id"].as_str()?.trim();
+            let actor_id = item["actor_id"].as_str()?.trim();
+            (!group_id.is_empty() && !actor_id.is_empty())
+                .then(|| (group_id.to_owned(), actor_id.to_owned()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     for (connector_id, incoming) in imported {
+        let route = (
+            incoming["group_id"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_owned(),
+            incoming["actor_id"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_owned(),
+        );
         let Some(existing) = canonical.get(&connector_id) else {
+            if !incoming["revoked"].as_bool().unwrap_or(false) && retired_routes.contains(&route) {
+                continue;
+            }
             canonical.insert(connector_id, incoming);
             continue;
         };
-        let mut merged =
-            if entry_rank(&incoming, &connector_id) > entry_rank(existing, &connector_id) {
-                existing.as_object().cloned().unwrap_or_default()
-            } else {
-                incoming.as_object().cloned().unwrap_or_default()
-            };
-        let preferred =
-            if entry_rank(&incoming, &connector_id) > entry_rank(existing, &connector_id) {
-                incoming.as_object()
-            } else {
-                existing.as_object()
-            };
-        if let Some(preferred) = preferred {
-            merged.extend(preferred.clone());
+        let mut merged = incoming.as_object().cloned().unwrap_or_default();
+        if let Some(existing) = existing.as_object() {
+            merged.extend(existing.clone());
         }
         canonical.insert(connector_id, Value::Object(merged));
     }
@@ -194,6 +215,12 @@ fn write_unlocked(path: &Path, connectors: &Map<String, Value>) -> io::Result<()
 }
 
 fn migrate_settings_store(home: &HomeLayout) -> io::Result<()> {
+    if !settings::load(home)?
+        .extra
+        .contains_key(LEGACY_SETTINGS_KEY)
+    {
+        return Ok(());
+    }
     settings::update(home, |global| {
         let Some(legacy) = global.extra.get(LEGACY_SETTINGS_KEY).cloned() else {
             return Ok(());
@@ -235,6 +262,12 @@ pub fn load(home: &HomeLayout) -> io::Result<Vec<Value>> {
 
 pub fn replace_active(home: &HomeLayout, connector: &Value) -> io::Result<Vec<String>> {
     update(home, |items| {
+        let id = connector["connector_id"].as_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "connector_id is required")
+        })?;
+        let connector = normalized_entry(id, connector).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid web-model connector")
+        })?;
         let mut replaced = Vec::new();
         let now = cccc_contracts::utc_now();
         for item in items.values_mut() {
@@ -250,13 +283,11 @@ pub fn replace_active(home: &HomeLayout, connector: &Value) -> io::Result<Vec<St
             item["revoked"] = Value::Bool(true);
             item["updated_at"] = json!(now);
         }
-        let id = connector["connector_id"].as_str().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "connector_id is required")
-        })?;
-        let connector = normalized_entry(id, connector).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "invalid web-model connector")
-        })?;
-        items.insert(id.to_owned(), connector);
+        let id = connector["connector_id"]
+            .as_str()
+            .expect("normalized connector id")
+            .to_owned();
+        items.insert(id, connector);
         Ok(replaced)
     })
 }
@@ -342,4 +373,70 @@ pub fn update_connector(
 pub fn secret_matches(item: &Value, supplied: &str) -> bool {
     item["secret"].as_str() == Some(supplied)
         || item["secret_hash"].as_str() == Some(hash_secret(supplied).as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_revocation_wins_over_a_newer_legacy_settings_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let connector = |revoked: bool, updated_at: &str| {
+            json!({
+                "connector_id":"wmc_retired",
+                "group_id":"g_test",
+                "actor_id":"web1",
+                "provider":"chatgpt",
+                "secret_hash":hash_secret("fixture-secret"),
+                "revoked":revoked,
+                "created_at":"2026-08-28T00:00:00Z",
+                "updated_at":updated_at,
+            })
+        };
+        write_unlocked(
+            &store_path(&home),
+            &Map::from_iter([(
+                "wmc_retired".into(),
+                connector(true, "2026-08-28T00:00:01Z"),
+            )]),
+        )
+        .expect("canonical connector");
+        settings::update(&home, |global| {
+            global.extra.insert(
+                LEGACY_SETTINGS_KEY.into(),
+                json!({
+                    "wmc_retired":connector(false, "2026-08-28T00:00:02Z"),
+                    "wmc_retired_alias":{
+                        "connector_id":" wmc_retired_alias ",
+                        "group_id":" g_test ",
+                        "actor_id":"web1 ",
+                        "provider":"chatgpt",
+                        "secret_hash":hash_secret("legacy-alias-secret"),
+                        "revoked":false,
+                        "created_at":"2026-08-28T00:00:02Z",
+                        "updated_at":"2026-08-28T00:00:02Z",
+                    }
+                }),
+            );
+            Ok(())
+        })
+        .expect("legacy settings connector");
+
+        let connectors = load(&home).expect("migrated connectors");
+        let connector = connectors
+            .iter()
+            .find(|item| item["connector_id"] == "wmc_retired")
+            .expect("retired connector");
+        assert_eq!(connector["revoked"], true);
+        assert_eq!(connectors.len(), 1);
+        assert!(
+            !settings::load(&home)
+                .expect("settings")
+                .extra
+                .contains_key(LEGACY_SETTINGS_KEY)
+        );
+    }
 }

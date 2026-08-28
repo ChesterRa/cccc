@@ -71,13 +71,6 @@ pub fn canonicalize_config(platform: &str, raw: &Map<String, Value>) -> Option<M
     if let Some(files) = raw.get("files").and_then(Value::as_object) {
         output.insert("files".into(), Value::Object(files.clone()));
     }
-    if let Some(value) = raw.get("skip_pending_on_start") {
-        output.insert(
-            "skip_pending_on_start".into(),
-            Value::Bool(coerce_bool(value, true)),
-        );
-    }
-
     match platform.as_str() {
         "telegram" | "discord" | "slack" => {
             set_secret_ref(
@@ -726,6 +719,7 @@ mod tests {
             "domain":"lark",
             "enabled":"yes",
             "files":{"enabled":false,"max_mb":7},
+            "skip_pending_on_start":false,
             "extension":{"future":true},
             "token_env":"must-not-leak"
         });
@@ -737,6 +731,7 @@ mod tests {
         assert_eq!(config["feishu_domain"], "https://open.larkoffice.com");
         assert_eq!(config["enabled"], true);
         assert_eq!(config["extension"]["future"], true);
+        assert!(!config.contains_key("skip_pending_on_start"));
         assert!(!config.contains_key("app_key_env"));
         assert!(!config.contains_key("app_secret_env"));
         assert!(!config.contains_key("token_env"));

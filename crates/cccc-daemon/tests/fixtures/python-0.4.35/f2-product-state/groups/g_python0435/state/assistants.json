@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "group_id": "g_python0435",
+  "assistants": {
+    "voice_secretary": {
+      "lifecycle": "working",
+      "updated_at": "2026-08-28T00:00:14Z",
+      "health": {
+        "status": "listening",
+        "last_transcript_segment_id": "fixture-segment",
+        "last_transcript_session_id": "fixture-session",
+        "last_transcript_at": "2026-08-28T00:00:14Z"
+      }
+    }
+  },
+  "voice_sessions": {
+    "fixture-session": {
+      "schema": 1,
+      "group_id": "g_python0435",
+      "session_id": "fixture-session",
+      "capture_mode": "document",
+      "created_at": "2026-08-28T00:00:14Z",
+      "updated_at": "2026-08-28T00:00:15Z",
+      "status": "closed",
+      "language": "en-US",
+      "document_id": "voice-doc-fixture",
+      "document_path": "docs/voice-secretary/fixture-voice-notes.md",
+      "segment_count": 1,
+      "last_segment_id": "fixture-segment",
+      "last_segment_path": "__FIXTURE_HOME__/voice-secretary/g_python0435/fixture-session/transcripts/segments.jsonl",
+      "segments": [{
+        "schema": 1,
+        "segment_id": "fixture-segment",
+        "session_id": "fixture-session",
+        "group_id": "g_python0435",
+        "assistant_id": "voice_secretary",
+        "created_at": "2026-08-28T00:00:14Z",
+        "updated_at": "2026-08-28T00:00:14Z",
+        "text": "Shared Python voice transcript.",
+        "language": "en-US",
+        "document_id": "voice-doc-fixture",
+        "document_path": "docs/voice-secretary/fixture-voice-notes.md",
+        "intent_hint": "memo",
+        "is_final": true,
+        "source": "assistant_service_local_asr",
+        "trigger": {
+          "mode": "meeting",
+          "trigger_kind": "meeting_window",
+          "capture_mode": "service",
+          "recognition_backend": "assistant_service_local_asr"
+        },
+        "by": "user"
+      }],
+      "transcript": "Shared Python voice transcript.",
+      "diarization": {
+        "model_id": "fixture-diarization",
+        "speaker_transcript_model_id": "fixture-transcript",
+        "speaker_transcript_segments": [{
+          "text": "Shared Python voice transcript.",
+          "speaker_label": "Speaker 1"
+        }]
+      },
+      "diarization_ready": true
+    }
+  },
+  "voice_prompt_drafts": {},
+  "voice_prompt_requests": {},
+  "voice_ask_requests": {},
+  "rust_state": {}
+}

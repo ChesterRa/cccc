@@ -111,7 +111,7 @@ jobs:
         run: |
           mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 2 --index "${{ matrix.shard }}")
           test "${#TEST_FILES[@]}" -gt 0
-          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
   python-compat:
     runs-on: ubuntu-latest
@@ -160,18 +160,12 @@ jobs:
           PY
 
   package:
-    needs: [quality, web, python-tests, python-compat, interop]
+    needs: [quality, python-tests, python-compat, interop]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Download Web bundle
-        uses: actions/download-artifact@v8
-        with:
-          name: bundled-web
-          path: src/cccc/ports/web/dist
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -180,52 +174,37 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Build and check package
+      - name: Verify Rust-only release packaging tools
         run: |
-          python -m pip install -U pip build twine pytest
-          python -W error::SyntaxWarning -m compileall -q src/cccc
-          python -m build
-          python -m twine check dist/*
-
-      - name: Smoke test wheel
-        run: |
-          python -m pip install --force-reinstall dist/*.whl
-          cccc version
-          python - <<'PY'
-          import importlib.resources as ir
-
-          web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
-          help_md = ir.files("cccc.resources").joinpath("cccc-help.md")
-
-          assert web_index.is_file(), f"missing bundled web UI: {web_index}"
-          assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
-          print("OK: bundled web UI + help playbook")
-          PY
-
-      - name: Verify packaged Web bundle contract
-        run: python -m pytest -q -m packaged_web_dist tests/test_web_manifest_static.py
-
-      - name: Verify native wheel staging stays platform-scoped
-        run: |
-          mkdir -p native-wheel-smoke pure-after-native
-          CCCC_BUILD_RUST_BINARY=/bin/true \
-            CCCC_BUILD_WHEEL_TAG=linux_x86_64 \
-            python -m build --wheel --outdir native-wheel-smoke
+          python -m pip install -U pip twine pytest pyyaml
+          python -m pytest -q \
+            tests/test_build_native_wheel.py \
+            tests/test_build_standalone_archive.py \
+            tests/test_verify_release_set.py \
+            tests/test_smoke_wheel_frontdoor.py
+          mkdir -p native-wheel-smoke
+          python scripts/build_native_wheel.py \
+            /bin/true \
+            --platform-tag linux_x86_64 \
+            --output-dir native-wheel-smoke
           native_wheel="$(find native-wheel-smoke -maxdepth 1 -name '*.whl' -print -quit)"
-          python scripts/verify_native_wheel.py "$native_wheel" --platform-tag linux_x86_64
-          python -m build --wheel --outdir pure-after-native
+          python scripts/verify_native_wheel.py \
+            "$native_wheel" \
+            --platform-tag linux_x86_64 \
+            --binary /bin/true
+          python -m twine check "$native_wheel"
           python - <<'PY'
           from pathlib import Path
           import zipfile
 
-          wheel = next(Path("pure-after-native").glob("*.whl"))
-          assert wheel.name.endswith("-py3-none-any.whl"), wheel
+          wheel = next(Path("native-wheel-smoke").glob("*.whl"))
+          assert "-py3-none-linux_x86_64.whl" in wheel.name, wheel
           with zipfile.ZipFile(wheel) as archive:
-              assert not any(
-                  name.endswith(("cccc-rust", "cccc-rust.exe"))
-                  for name in archive.namelist()
-              )
-          print("OK: native wheel does not contaminate a later universal build")
+              names = set(archive.namelist())
+              assert not any(name.endswith((".py", ".pyc")) for name in names)
+              assert not any(name.startswith("cccc/") for name in names)
+              assert any(name.endswith(".data/scripts/cccc") for name in names)
+          print("OK: CI exercises only the Rust-only release wheel shape")
           PY
 
   windows-smoke:

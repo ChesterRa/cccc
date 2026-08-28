@@ -1,5 +1,6 @@
 use cccc_core::{HomeLayout, space_credentials};
 use cccc_notebooklm::{Artifact, ArtifactGeneration, Client, Error, Notebook, QueryResult, Source};
+use std::path::Path;
 use std::time::Duration;
 
 use crate::dispatch::OpError;
@@ -46,6 +47,40 @@ pub(super) fn add_text(
 ) -> Result<Source, OpError> {
     run(home, |client| {
         client.add_text_source(notebook_id, title, content)
+    })
+}
+
+pub(super) fn add_url(
+    home: &HomeLayout,
+    notebook_id: &str,
+    url: &str,
+    title: Option<&str>,
+) -> Result<Source, OpError> {
+    run(home, |client| {
+        client.add_url_source(notebook_id, url, title)
+    })
+}
+
+pub(super) fn add_drive(
+    home: &HomeLayout,
+    notebook_id: &str,
+    file_id: &str,
+    title: &str,
+    mime_type: &str,
+) -> Result<Source, OpError> {
+    run(home, |client| {
+        client.add_drive_source(notebook_id, file_id, title, mime_type)
+    })
+}
+
+pub(super) fn add_file(
+    home: &HomeLayout,
+    notebook_id: &str,
+    file_path: &Path,
+    title: Option<&str>,
+) -> Result<Source, OpError> {
+    run(home, |client| {
+        client.add_file_source(notebook_id, file_path, title)
     })
 }
 
@@ -178,7 +213,7 @@ fn map_error(error: Error) -> OpError {
         Error::InvalidCredential(_) | Error::Authentication => "space_provider_auth_invalid",
         Error::RateLimited(_) => "space_provider_rate_limited",
         Error::Timeout(_) => "space_provider_timeout",
-        Error::Refused(_) | Error::Transport(_) | Error::Rpc { .. } => {
+        Error::Refused(_) | Error::Unresolved(_) | Error::Transport(_) | Error::Rpc { .. } => {
             "space_provider_upstream_error"
         }
         Error::SchemaDrift { .. } => "space_provider_compat_mismatch",

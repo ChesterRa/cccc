@@ -14,133 +14,99 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24.19.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
-
-      - name: Build Web UI
-        run: |
-          npm ci --prefix web
-          npm -C web run build
-          rm -rf src/cccc/ports/web/dist
-          mkdir -p src/cccc/ports/web/dist
-          cp -R web/dist/. src/cccc/ports/web/dist/
-          test -f src/cccc/ports/web/dist/index.html
-
       - name: Verify shared release identity
+        shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            python scripts/check_release_versions.py --tag "$GITHUB_REF_NAME"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
           else
             python scripts/check_release_versions.py
           fi
-
-      - name: Build Python compatibility distribution
-        run: |
-          python -m pip install -U pip build twine
-          python -W error::SyntaxWarning -m compileall -q src/cccc
-          python -m build
-          python -m twine check dist/*
-
-      - name: Smoke installed portable Python wheel
-        timeout-minutes: 5
-        shell: bash
-        run: python scripts/tests/smoke_wheel_frontdoor.py dist/*.whl --expect-rust unavailable
-
-      - name: Upload shared Web bundle
-        uses: actions/upload-artifact@v7
+      - name: Build shared Web UI once
+        run: node scripts/prepare_rust_web_assets.mjs --install-deps
+      - uses: actions/upload-artifact@v7
         with:
           name: release-web-bundle
-          path: |
-            web/dist
-            src/cccc/ports/web/dist
+          path: web/dist
           if-no-files-found: error
 
-      - name: Upload Python compatibility distribution
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-dist-universal
-          path: dist/*
-          if-no-files-found: error
-
-  native-linux-x64:
-    needs: build
+  build-linux:
+    needs: web
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     container: quay.io/pypa/manylinux_2_28_x86_64:latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore Web bundle
-        uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-web-bundle
-          path: .
-
+          path: web/dist
       - name: Install native build dependencies
-        run: dnf install -y cmake openssl-devel perl-core pkgconf-pkg-config
-
+        run: dnf install -y cmake perl-core
       - name: Select Python 3.14
         run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build Rust implementation against manylinux 2.28
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu-release
+      - name: Build the release executable once
         run: |
           touch web/dist/index.html
-          cargo build --release --locked -p cccc --bin cccc
+          cargo build --release --locked --features standalone -p cccc --bin cccc
           strip target/release/cccc
           python scripts/check_release_versions.py --rust-binary target/release/cccc
-
-      - name: Build and repair Linux native wheel
+          python scripts/verify_standalone_binary.py --platform linux target/release/cccc
+      - name: Wrap the same executable for standalone and pip
         run: |
-          python -m pip install -U pip build "auditwheel==6.7.0"
-          mkdir -p wheelhouse/raw wheelhouse/final
-          CCCC_BUILD_RUST_BINARY="$PWD/target/release/cccc" \
-            CCCC_BUILD_WHEEL_TAG=linux_x86_64 \
-            python -m build --wheel --outdir wheelhouse/raw
-          auditwheel repair \
-            --plat manylinux_2_28_x86_64 \
-            --wheel-dir wheelhouse/final \
-            wheelhouse/raw/*.whl
-          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
-          python scripts/verify_native_wheel.py "$wheel_path" --platform-tag manylinux_2_28_x86_64
-          auditwheel show "$wheel_path"
-
-      - name: Smoke installed Linux dual-engine wheel
+          python -m pip install -U pip "auditwheel==6.7.0" twine
+          python scripts/build_standalone_archive.py \
+            target/release/cccc \
+            --target x86_64-unknown-linux-gnu \
+            --output-dir dist
+          python scripts/build_native_wheel.py \
+            target/release/cccc \
+            --platform-tag manylinux_2_28_x86_64 \
+            --output-dir dist
+          wheel_path="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          python scripts/verify_native_wheel.py \
+            "$wheel_path" \
+            --platform-tag manylinux_2_28_x86_64 \
+            --binary target/release/cccc
+          auditwheel_output="$(auditwheel show "$wheel_path")"
+          printf '%s\n' "$auditwheel_output"
+          printf '%s\n' "$auditwheel_output" | \
+            grep -Fq 'platform tag: "manylinux_2_28_x86_64"'
+          python -m twine check "$wheel_path"
+      - name: Smoke the installed Rust-only wheel
         timeout-minutes: 5
-        run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
-
-      - name: Upload Linux native wheel
-        uses: actions/upload-artifact@v7
+        run: |
+          python scripts/tests/smoke_wheel_frontdoor.py \
+            dist/*.whl \
+            --binary target/release/cccc
+      - uses: actions/upload-artifact@v7
         with:
-          name: release-dist-linux-x64
-          path: wheelhouse/final/*.whl
+          name: release-target-x86_64-unknown-linux-gnu
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
           if-no-files-found: error
 
-  native-desktop:
-    needs: build
-    timeout-minutes: 30
+  build-desktop:
+    needs: web
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -149,187 +115,220 @@ jobs:
             target: x86_64-apple-darwin
             binary: target/x86_64-apple-darwin/release/cccc
             platform_tag: macosx_11_0_x86_64
-            repair: delocate
-            arch: x86_64
-            artifact: macos-x64
           - os: macos-14
             target: aarch64-apple-darwin
             binary: target/aarch64-apple-darwin/release/cccc
             platform_tag: macosx_11_0_arm64
-            repair: delocate
-            arch: arm64
-            artifact: macos-arm64
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/cccc.exe
             platform_tag: win_amd64
-            repair: delvewheel
-            arch: AMD64
-            artifact: windows-x64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore Web bundle
-        uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-web-bundle
-          path: .
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+          path: web/dist
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
-
-      - name: Build Rust implementation
+          key: ${{ matrix.target }}-release
+      - name: Build the release executable once
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           touch web/dist/index.html
-          cargo build --release --locked --target "${{ matrix.target }}" -p cccc --bin cccc
+          cargo build --release --locked --features standalone \
+            --target "${{ matrix.target }}" \
+            -p cccc --bin cccc
           python scripts/check_release_versions.py --rust-binary "${{ matrix.binary }}"
-
-      - name: Strip macOS binary
-        if: matrix.repair == 'delocate'
-        run: strip "${{ matrix.binary }}"
-
-      - name: Build raw platform wheel
-        env:
-          CCCC_BUILD_RUST_BINARY: ${{ matrix.binary }}
-          CCCC_BUILD_WHEEL_TAG: ${{ matrix.platform_tag }}
+      - name: Strip and verify macOS executable
+        if: runner.os == 'macOS'
         run: |
-          python -m pip install -U pip build
-          mkdir -p wheelhouse/raw wheelhouse/final
-          python -m build --wheel --outdir wheelhouse/raw
-
-      - name: Repair macOS wheel dependencies
-        if: matrix.repair == 'delocate'
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          strip "${{ matrix.binary }}"
+          python scripts/verify_standalone_binary.py \
+            --platform macos \
+            "${{ matrix.binary }}"
+      - name: Smoke native executable
+        run: '"${{ matrix.binary }}" --version'
+      - name: Wrap the same executable for standalone and pip
         run: |
-          python -m pip install "delocate==0.13.0"
-          delocate-wheel \
-            --require-archs "${{ matrix.arch }}" \
-            --wheel-dir wheelhouse/final \
-            --verbose \
-            wheelhouse/raw/*.whl
-
-      - name: Repair Windows wheel dependencies
-        if: matrix.repair == 'delvewheel'
+          python -m pip install -U pip twine
+          python scripts/build_standalone_archive.py \
+            "${{ matrix.binary }}" \
+            --target "${{ matrix.target }}" \
+            --output-dir dist
+          python scripts/build_native_wheel.py \
+            "${{ matrix.binary }}" \
+            --platform-tag "${{ matrix.platform_tag }}" \
+            --output-dir dist
+          wheel_path="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          python scripts/verify_native_wheel.py \
+            "$wheel_path" \
+            --platform-tag "${{ matrix.platform_tag }}" \
+            --binary "${{ matrix.binary }}"
+          python -m twine check "$wheel_path"
+      - name: Inspect Windows runtime dependencies
+        if: runner.os == 'Windows'
         run: |
           python -m pip install "delvewheel==1.13.0"
-          delvewheel show --analyze-existing-exes wheelhouse/raw/*.whl
-          delvewheel repair --analyze-existing-exes --wheel-dir wheelhouse/final wheelhouse/raw/*.whl
-
-      - name: Verify native wheel structure
-        run: |
-          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
-          python scripts/verify_native_wheel.py "$wheel_path" --platform-tag "${{ matrix.platform_tag }}"
-
-      - name: Smoke installed dual-engine wheel
+          delvewheel show --analyze-existing-exes dist/*.whl
+      - name: Smoke the installed Rust-only wheel
         timeout-minutes: 5
-        run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
-
-      - name: Upload native wheel
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-dist-${{ matrix.artifact }}
-          path: wheelhouse/final/*.whl
-          if-no-files-found: error
-
-  collect:
-    needs:
-      - build
-      - native-linux-x64
-      - native-desktop
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Download every release distribution
-        uses: actions/download-artifact@v8
-        with:
-          pattern: release-dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Verify complete distribution set
         run: |
-          python -m pip install -U twine
-          python -m twine check dist/*
-          python scripts/verify_python_release_set.py dist
-
-      - name: Upload verified release set
-        uses: actions/upload-artifact@v7
+          python scripts/tests/smoke_wheel_frontdoor.py \
+            dist/*.whl \
+            --binary "${{ matrix.binary }}"
+      - uses: actions/upload-artifact@v7
         with:
-          name: release-dist
-          path: dist/*
+          name: release-target-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.whl
           if-no-files-found: error
 
-  publish:
-    if: github.event_name == 'push'
-    needs: collect
+  prepare:
+    needs:
+      - build-linux
+      - build-desktop
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-
-      - name: Download verified release set
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8
         with:
-          name: release-dist
-          path: dist
+          pattern: release-target-*
+          path: artifacts
+          merge-multiple: true
+      - name: Prepare and verify the atomic release set
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          scripts/package_release_assets.sh artifacts "$version"
+          python scripts/verify_release_set.py artifacts
+          python -m pip install -U twine
+          python -m twine check artifacts/*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cccc-release-candidate
+          path: artifacts/*
+          if-no-files-found: error
 
-      - name: Install publish dependencies
-        run: python -m pip install -U pip twine
+  verify:
+    needs: prepare
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            verifier: unix
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            verifier: unix
+          - os: macos-14
+            target: aarch64-apple-darwin
+            verifier: unix
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            verifier: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Verify Unix release candidate
+        if: matrix.verifier == 'unix'
+        shell: bash
+        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
+      - name: Verify Windows release candidate
+        if: matrix.verifier == 'windows'
+        shell: pwsh
+        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
 
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: actions/download-artifact@v8
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Verify final release identity
+        shell: bash
+        run: |
+          python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
+          python scripts/verify_release_set.py artifacts
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="docs/release/v${version}_release_notes.md"
+          test -s "${notes_file}"
       - name: Classify release channel
         id: channel
+        shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]+|(a|b|rc)[0-9]+)$ ]]; then
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload prerelease distribution to TestPyPI
+          case "${GITHUB_REF_NAME}" in
+            *-alpha*|*-beta*|*-rc*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Upload prerelease wheels to TestPyPI
         if: steps.channel.outputs.prerelease == 'true'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: python scripts/upload_python_release.py --repository testpypi dist/*
-
-      - name: Upload stable distribution to PyPI
+        run: |
+          python -m pip install -U twine
+          python scripts/upload_python_release.py --repository testpypi artifacts/*.whl
+      - name: Upload stable wheels to PyPI
         if: steps.channel.outputs.prerelease == 'false'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python scripts/upload_python_release.py --repository pypi dist/*
+        run: |
+          python -m pip install -U twine
+          python scripts/upload_python_release.py --repository pypi artifacts/*.whl
+      - name: Publish GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="docs/release/v${version}_release_notes.md"
+          test -f "${notes_file}"
+          prerelease=()
+          case "${GITHUB_REF_NAME}" in
+            *-alpha*|*-beta*|*-rc*) prerelease=(--prerelease) ;;
+          esac
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" artifacts/* --clobber
+            gh release edit "${GITHUB_REF_NAME}" --notes-file "${notes_file}"
+          else
+            gh release create "${GITHUB_REF_NAME}" artifacts/* \
+              --verify-tag \
+              --title "CCCC ${version}" \
+              --notes-file "${notes_file}" \
+              "${prerelease[@]}"
+          fi

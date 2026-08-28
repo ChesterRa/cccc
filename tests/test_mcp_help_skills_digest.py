@@ -25,7 +25,7 @@ def _server_help_daemon(*, context_payload: dict | None = None):
                     role="peer",
                     actor_id=str(args.get("actor_id") or ""),
                 ),
-                "source_path": "cccc.resources/cccc-help.md",
+                "source_path": "resources/cccc-help.md",
             }
         if op == "context_get":
             return dict(context_payload or {})

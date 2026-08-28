@@ -40,7 +40,6 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/space/jobs",
             get(list_jobs).post(job_action),
         )
-        .route("/api/v1/groups/{group_id}/space/sync", post(sync))
 }
 
 async fn status(
@@ -129,14 +128,6 @@ async fn job_action(
     Json(body): Json<Value>,
 ) -> ApiResult {
     daemon_body(&state, "group_space_jobs", group_id, body).await
-}
-
-async fn sync(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    daemon_body(&state, "group_space_sync", group_id, body).await
 }
 
 async fn daemon_get(

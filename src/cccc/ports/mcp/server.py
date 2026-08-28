@@ -371,7 +371,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     group_id=gid,
                     actor_id=aid,
                 ),
-                "source": str(daemon_help.get("source_path") or "cccc.resources/cccc-help.md"),
+                "source": str(daemon_help.get("source_path") or "resources/cccc-help.md"),
             }
         else:
             help_result = {
@@ -380,7 +380,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     group_id=gid,
                     actor_id=aid,
                 ),
-                "source": "cccc.resources/cccc-help.md",
+                "source": "resources/cccc-help.md",
             }
         if gid and aid:
             try:

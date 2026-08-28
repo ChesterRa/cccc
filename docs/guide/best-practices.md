@@ -36,7 +36,7 @@ The help protocol reference is the group-specific CCCC collaboration contract. Y
 
 CCCC composes help from two layers:
 
-1. **Built-in contract**: the canonical message-delivery section always comes from `cccc.resources/cccc-help.md`.
+1. **Built-in contract**: the canonical message-delivery section always comes from `resources/cccc-help.md`.
 2. **Group overlay (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` adds common, role, and actor guidance without replacing that canonical section.
 
 To customize local guidance, edit the group overlay (recommended: Web UI → Settings → Guidance).
@@ -88,7 +88,7 @@ The on-demand help payload is returned as:
 ```json
 {
   "markdown": "<filtered content based on role/actor>",
-  "source": "CCCC_HOME/.../prompts/CCCC_HELP.md or cccc.resources/cccc-help.md"
+  "source": "CCCC_HOME/.../prompts/CCCC_HELP.md or resources/cccc-help.md"
 }
 ```
 

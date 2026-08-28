@@ -512,7 +512,7 @@ pub(super) fn require_notebooklm(provider: &str) -> Result<(), OpError> {
 pub(super) fn provider_unavailable() -> OpError {
     OpError::new(
         "provider_unavailable",
-        "unsupported provider; Python and Rust support provider=notebooklm",
+        "unsupported provider; expected provider=notebooklm",
     )
 }
 

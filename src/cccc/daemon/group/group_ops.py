@@ -191,7 +191,7 @@ def _help_document(group: Group) -> Dict[str, Any]:
         ),
         "source": "home" if overridden else "builtin",
         "path": str(prompt_file.path or ""),
-        "source_path": str(prompt_file.path or "") if overridden else "cccc.resources/cccc-help.md",
+        "source_path": str(prompt_file.path or "") if overridden else "resources/cccc-help.md",
         "overridden": overridden,
     }
 

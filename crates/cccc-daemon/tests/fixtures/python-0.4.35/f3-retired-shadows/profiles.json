@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "retired-profile": {
+      "id": "retired-profile",
+      "name": "Retired legacy profile",
+      "runtime": "codex",
+      "runner": "pty",
+      "command": [],
+      "submit": "enter",
+      "env": {
+        "STALE_PROFILE_TOKEN": "must-not-return"
+      },
+      "revision": 1
+    }
+  }
+}

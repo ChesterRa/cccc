@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASSET_DIR=${1:?usage: package_release_assets.sh ASSET_DIR VERSION}
-VERSION=${2:?usage: package_release_assets.sh ASSET_DIR VERSION}
+ASSET_DIR=${1:?usage: package_release_assets.sh ASSET_DIR VERSION [WHEEL_VERSION]}
+VERSION=${2:?usage: package_release_assets.sh ASSET_DIR VERSION [WHEEL_VERSION]}
+WHEEL_VERSION=${3:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/pyproject.toml" | head -1)}
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
   echo "invalid semantic version: $VERSION" >&2
@@ -21,11 +22,17 @@ printf '%s\n' \
   "cccc-v${VERSION}-aarch64-apple-darwin.tar.gz" \
   "cccc-v${VERSION}-x86_64-apple-darwin.tar.gz" \
   "cccc-v${VERSION}-x86_64-pc-windows-msvc.zip" \
-  "cccc-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" > "$expected"
+  "cccc-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+  "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_arm64.whl" \
+  "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_x86_64.whl" \
+  "cccc_pair-${WHEEL_VERSION}-py3-none-manylinux_2_28_x86_64.whl" \
+  "cccc_pair-${WHEEL_VERSION}-py3-none-win_amd64.whl" > "$expected"
 
-find "$ASSET_DIR" -maxdepth 1 -type f -name 'cccc-v*' -exec basename {} \; | LC_ALL=C sort > "$actual"
+find "$ASSET_DIR" -maxdepth 1 -type f \
+  \( -name 'cccc-v*.tar.gz' -o -name 'cccc-v*.zip' -o -name 'cccc_pair-*.whl' \) \
+  -exec basename {} \; | LC_ALL=C sort > "$actual"
 if ! diff -u "$expected" "$actual"; then
-  echo "release archive set does not match the four supported targets" >&2
+  echo "release payload set does not match the four supported targets" >&2
   exit 1
 fi
 
@@ -49,4 +56,4 @@ for installer in install.sh install.ps1; do
 done
 chmod 755 "$ASSET_DIR/install.sh"
 
-echo "OK: prepared four archives, SHA256SUMS, and versioned installers for v$VERSION"
+echo "OK: prepared four archives, four Rust-only wheels, SHA256SUMS, and versioned installers for v$VERSION"

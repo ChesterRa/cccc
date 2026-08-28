@@ -50,6 +50,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             json!({"group_id":group_id,"provider":provider,"lane":lane,"action":"list","kind":kind,"artifacts":artifacts,"list_result":{"cached":false,"artifacts":artifacts}}),
         );
     }
+    require_write_permission(home, &group_id, request)?;
     let kind = normalize_kind(&required_arg(request, "kind")?)?;
     if action == "download" {
         let artifact_id = required_arg(request, "artifact_id")?;
@@ -261,7 +262,7 @@ fn validate_native_download(kind: &str, output_format: &str) -> Result<(), OpErr
         "quiz" | "flashcards" | "mind_map" | "data_table" => Err(OpError::new(
             "capability_unavailable",
             format!(
-                "native Rust artifact download is not yet available for kind={kind}; generate with save_to_space=false or use the Python implementation"
+                "native artifact download is not available for kind={kind}; generate with save_to_space=false and use the provider's interactive export"
             ),
         )),
         _ => Err(OpError::new(
@@ -332,7 +333,8 @@ fn output_path(
 
 fn artifact_extension(kind: &str, output_format: Option<&str>) -> &'static str {
     match (kind, output_format.unwrap_or("")) {
-        ("audio" | "video", _) => "mp4",
+        ("audio", _) => "m4a",
+        ("video", _) => "mp4",
         ("infographic", _) => "png",
         ("slide_deck", "pptx") => "pptx",
         ("slide_deck", _) => "pdf",
@@ -345,7 +347,7 @@ fn artifact_extension(kind: &str, output_format: Option<&str>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_kind, validate_native_download};
+    use super::{artifact_extension, provider_kind, validate_native_download};
 
     #[test]
     fn native_download_capabilities_fail_before_provider_side_effects() {
@@ -365,5 +367,11 @@ mod tests {
             "invalid_args"
         );
         assert_eq!(provider_kind("study_guide"), "report");
+    }
+
+    #[test]
+    fn audio_uses_the_v081_aac_mp4_extension() {
+        assert_eq!(artifact_extension("audio", None), "m4a");
+        assert_eq!(artifact_extension("video", None), "mp4");
     }
 }

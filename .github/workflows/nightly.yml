@@ -35,7 +35,7 @@ jobs:
       - name: Run full Python suite serially
         timeout-minutes: 30
         run: >-
-          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q --timeout=120 --timeout-method=thread --durations=20
 
   python-compat:
     runs-on: ubuntu-latest

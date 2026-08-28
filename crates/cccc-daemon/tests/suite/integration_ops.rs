@@ -831,12 +831,20 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     );
     assert_eq!(
         capabilities.result["ingest"]["resource_ingest"]["source_types"],
-        json!(["pasted_text"])
+        json!([
+            "file",
+            "pasted_text",
+            "web_page",
+            "youtube",
+            "google_docs",
+            "google_slides",
+            "google_spreadsheet"
+        ])
     );
     assert!(
         capabilities.result["unavailable_capabilities"]
             .as_array()
-            .is_some_and(|items| items.contains(&json!("resource_ingest.web_page")))
+            .is_some_and(|items| !items.contains(&json!("resource_ingest.file")))
     );
     let unsupported_resource = raw_call(
         &home,
@@ -845,12 +853,29 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
             "group_id":group_id,
             "lane":"work",
             "kind":"resource_ingest",
-            "payload":{"source_type":"web_page","url":"https://example.test"}
+            "payload":{"source_type":"file","file_path":"notes.md"}
         }),
     );
     assert_eq!(
-        unsupported_resource.error.expect("capability error").code,
-        "capability_unavailable"
+        unsupported_resource
+            .error
+            .expect("attached-scope preflight error")
+            .code,
+        "scope_required"
+    );
+    let invalid_url = raw_call(
+        &home,
+        "group_space_ingest",
+        json!({
+            "group_id":group_id,
+            "lane":"work",
+            "kind":"resource_ingest",
+            "payload":{"source_type":"web_page","url":"file:///tmp/secret"}
+        }),
+    );
+    assert_eq!(
+        invalid_url.error.expect("URL preflight error").code,
+        "invalid_args"
     );
     let unavailable = raw_call(
         &home,

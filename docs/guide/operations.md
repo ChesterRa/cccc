@@ -156,7 +156,12 @@ If an issue repeats:
 
 ## 10) Group Space (NotebookLM) Runbook
 
-### Enable real adapter path (opt-in)
+### Activate the provider
+
+Connect Google from the Notebook settings in CCCC Web. That flow stores the
+credential and provider state used by the daemon. Native Rust needs no feature
+toggle. The environment variable below is only a legacy Python/developer
+override for 0.4.35:
 
 ```bash
 export CCCC_NOTEBOOKLM_REAL=1
@@ -180,22 +185,25 @@ cccc space jobs list --state pending
 
 Expected: a `kind=context_sync` job appears for bound groups.
 
-### Validate repo `space/` reconciliation
+### Validate explicit local-file ingestion
+
+Create a supported file under the attached scope and ingest it explicitly.
+The native daemon rejects paths outside that scope before any provider write.
 
 ```bash
-cccc space sync --force
+cccc space ingest --kind resource_ingest \
+  --payload '{"source_type":"file","file_path":"space/spec.md","title":"Spec"}'
 ```
 
-Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
+Expected: the result contains the created NotebookLM `source_id`.
 
-### Safe rollback (core workflows keep running)
+### Disconnect safely (core workflows keep running)
 
-```bash
-unset CCCC_NOTEBOOKLM_REAL
-cccc daemon restart
-```
+Use **Disconnect Google** in the Notebook settings to remove this machine's
+stored credential. Merely unsetting `CCCC_NOTEBOOKLM_REAL` does not disable a
+provider that Web has already persisted.
 
-Expected after rollback:
+Expected after disconnect:
 
 - Group Space operations may return degraded/disabled provider results.
 - Core CCCC chat/task/actor workflows continue normally.

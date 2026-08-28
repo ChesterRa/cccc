@@ -12,6 +12,8 @@ pub enum Error {
     RateLimited(String),
     #[error("NotebookLM operation timed out: {0}")]
     Timeout(String),
+    #[error("NotebookLM operation has an unresolved remote outcome: {0}")]
+    Unresolved(String),
     #[error("NotebookLM transport failed: {0}")]
     Transport(#[from] reqwest::Error),
     #[error("NotebookLM RPC {rpc_id} failed: {message}")]

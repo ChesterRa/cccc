@@ -6,6 +6,7 @@ pub(crate) const LIST_NOTEBOOKS: &str = "wXbhsf";
 pub(crate) const CREATE_NOTEBOOK: &str = "CCqFvf";
 pub(crate) const GET_NOTEBOOK: &str = "rLM1Ne";
 pub(crate) const ADD_SOURCE: &str = "izAoDd";
+pub(crate) const ADD_SOURCE_FILE: &str = "o4cbdc";
 pub(crate) const DELETE_SOURCE: &str = "tGMBJ";
 pub(crate) const REFRESH_SOURCE: &str = "FLmJqe";
 pub(crate) const UPDATE_SOURCE: &str = "b7Wfje";

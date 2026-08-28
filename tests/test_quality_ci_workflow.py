@@ -20,13 +20,6 @@ def _release_workflow() -> dict:
     return yaml.load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def _rust_release_workflow() -> dict:
-    return yaml.load(
-        (ROOT / ".github/workflows/release-rust.yml").read_text(encoding="utf-8"),
-        Loader=yaml.BaseLoader,
-    )
-
-
 def _nightly_workflow() -> dict:
     return yaml.load(
         (ROOT / ".github/workflows/nightly.yml").read_text(encoding="utf-8"),
@@ -75,12 +68,12 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     assert "windows-installer" not in jobs
     assert set(jobs["ci-required"]["needs"]) == set(jobs) - {"ci-required"}
     assert jobs["ci-required"]["if"] == "always()"
-    assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat", "interop"}
+    assert set(jobs["package"]["needs"]) == {"quality", "python-tests", "python-compat", "interop"}
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
     assert any(step.get("uses", "").startswith("actions/upload-artifact") for step in jobs["web"]["steps"])
-    assert any(step.get("uses", "").startswith("actions/download-artifact") for step in jobs["package"]["steps"])
+    assert not any(step.get("uses", "").startswith("actions/download-artifact") for step in jobs["package"]["steps"])
 
     for name in (
         "quality",
@@ -239,22 +232,13 @@ def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance(
 def test_pr_python_matrix_uses_two_stable_file_shards_without_xdist() -> None:
     job = _workflow()["jobs"]["python-tests"]
     runs = _runs(job)
-    web_bundle = next(
-        step
-        for step in job["steps"]
-        if step.get("uses", "").startswith("actions/download-artifact")
-    )
 
     assert job["needs"] == "web"
-    assert web_bundle["with"] == {
-        "name": "bundled-web",
-        "path": "src/cccc/ports/web/dist",
-    }
     assert job["strategy"]["matrix"]["shard"] == ["0", "1"]
     assert "scripts/quality/pytest_shards.py" in runs
     assert "--total 2" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest" in runs
-    assert '-m "not packaged_web_dist"' in runs
+    assert "packaged_web_dist" not in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
 
@@ -284,14 +268,17 @@ def test_ci_and_nightly_split_supported_python_compatibility() -> None:
     assert '"method": "initialize"' in nightly_runs
 
 
-def test_package_job_owns_the_built_web_bundle_contract() -> None:
+def test_package_job_exercises_only_the_rust_only_release_shape() -> None:
     package = _workflow()["jobs"]["package"]
     runs = _runs(package)
 
-    assert any(step.get("uses", "").startswith("actions/download-artifact") for step in package["steps"])
-    assert "-m packaged_web_dist tests/test_web_manifest_static.py" in runs
+    assert not any(step.get("uses", "").startswith("actions/download-artifact") for step in package["steps"])
+    assert "python -m build" not in runs
+    assert "packaged_web_dist" not in runs
+    assert "scripts/build_native_wheel.py" in runs
     assert "scripts/verify_native_wheel.py" in runs
-    assert "pure-after-native" in runs
+    assert "tests/test_build_native_wheel.py" in runs
+    assert ".data/scripts/cccc" in runs
 
 
 def test_interop_job_runs_the_cross_language_tests_skipped_by_the_python_free_rust_job() -> None:
@@ -333,7 +320,7 @@ def test_nightly_workflow_runs_serial_full_python_suite_at_the_oldest_endpoint()
     assert setup["with"]["python-version"] == "3.11"
     assert "python -m pytest tests/" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/" in runs
-    assert '-m "not packaged_web_dist"' in runs
+    assert "packaged_web_dist" not in runs
     assert "pytest_shards.py" not in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
@@ -397,32 +384,33 @@ def test_workflows_use_node24_actions_and_schedule_action_updates() -> None:
     } == {"dtolnay/rust-toolchain"}
 
 
-def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
+def test_release_builds_one_atomic_rust_only_set() -> None:
     workflow = _release_workflow()
     jobs = workflow["jobs"]
 
-    build_setup = next(
-        step for step in jobs["build"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    web_setup = next(
+        step for step in jobs["web"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
     publish_setup = next(
         step for step in jobs["publish"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
-    assert set(jobs) == {"build", "native-linux-x64", "native-desktop", "collect", "publish"}
+    assert set(jobs) == {"web", "build-linux", "build-desktop", "prepare", "verify", "publish"}
     assert workflow["concurrency"] == {
         "group": "release-${{ github.ref }}",
         "cancel-in-progress": "false",
     }
     assert jobs["publish"]["timeout-minutes"] == "10"
-    assert build_setup["with"]["python-version"] == "3.14"
+    assert web_setup["with"]["python-version"] == "3.14"
     assert publish_setup["with"]["python-version"] == "3.14"
-    assert jobs["native-linux-x64"]["needs"] == "build"
-    assert jobs["native-desktop"]["needs"] == "build"
-    assert set(jobs["collect"]["needs"]) == {"build", "native-linux-x64", "native-desktop"}
-    assert jobs["publish"]["needs"] == "collect"
+    assert jobs["build-linux"]["needs"] == "web"
+    assert jobs["build-desktop"]["needs"] == "web"
+    assert set(jobs["prepare"]["needs"]) == {"build-linux", "build-desktop"}
+    assert jobs["verify"]["needs"] == "prepare"
+    assert jobs["publish"]["needs"] == "verify"
     assert any(
-        step.get("uses", "").startswith("actions/checkout") for step in jobs["collect"]["steps"]
+        step.get("uses", "").startswith("actions/checkout") for step in jobs["prepare"]["steps"]
     )
-    desktop_matrix = jobs["native-desktop"]["strategy"]["matrix"]["include"]
+    desktop_matrix = jobs["build-desktop"]["strategy"]["matrix"]["include"]
     assert {item["target"] for item in desktop_matrix} == {
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
@@ -437,26 +425,29 @@ def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
         "windows-2022"
     )
 
-    build_runs = _runs(jobs["build"])
     release_runs = "\n".join(_runs(job) for job in jobs.values()).lower()
-    collect_runs = _runs(jobs["collect"])
-    assert "python -m build" in build_runs
-    assert "python -m twine check" in build_runs
-    assert "scripts/tests/smoke_wheel_frontdoor.py dist/*.whl --expect-rust unavailable" in build_runs
-    assert "cargo build --release --locked" in release_runs
+    assert "+            " not in release_runs
+    prepare_runs = _runs(jobs["prepare"])
+    assert "python -m build" not in release_runs
+    assert "cargo build --release --locked --features standalone" in release_runs
     assert "scripts/check_release_versions.py --rust-binary" in release_runs
+    assert "scripts/build_standalone_archive.py" in release_runs
+    assert "scripts/build_native_wheel.py" in release_runs
     assert "scripts/verify_native_wheel.py" in release_runs
-    for native_job in ("native-linux-x64", "native-desktop"):
-        assert (
-            "scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available"
-            in _runs(jobs[native_job])
-        )
+    assert release_runs.count("scripts/tests/smoke_wheel_frontdoor.py") == 2
+    assert release_runs.count("--binary") >= 4
     assert "auditwheel==6.7.0" in release_runs
-    assert "delocate==0.13.0" in release_runs
+    assert 'platform tag: "manylinux_2_28_x86_64"' in release_runs
     assert "delvewheel==1.13.0" in release_runs
-    assert "scripts/verify_python_release_set.py dist" in collect_runs
+    assert "auditwheel repair" not in release_runs
+    assert "delocate-wheel" not in release_runs
+    assert "delvewheel repair" not in release_runs
+    assert "scripts/package_release_assets.sh" in prepare_runs
+    assert "scripts/verify_release_set.py artifacts" in prepare_runs
     assert "scripts/upload_python_release.py" in _runs(jobs["publish"])
     assert "cccc rust" not in release_runs
+    assert not (ROOT / ".github/workflows/release-rust.yml").exists()
+    assert not (ROOT / "setup.py").exists()
     for source_test in ("cargo test", "pytest", "context_python_interop", "python_storage_interop"):
         assert source_test not in release_runs
 
@@ -468,28 +459,24 @@ def test_windows_rust_binaries_use_the_static_crt() -> None:
     assert 'target-feature=+crt-static' in cargo_config
 
 
-def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
+def test_product_tag_publishes_one_verified_pypi_and_github_release() -> None:
     release = _release_workflow()
-    rust_candidate = _rust_release_workflow()
 
     assert release["on"]["push"]["tags"] == ["v*"]
-    assert release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert release["jobs"]["publish"]["needs"] == "collect"
+    assert set(release["on"]) == {"push", "workflow_dispatch"}
+    assert release["jobs"]["publish"]["if"] == "startsWith(github.ref, 'refs/tags/v')"
+    assert release["jobs"]["publish"]["needs"] == "verify"
     release_runs = "\n".join(_runs(job) for job in release["jobs"].values())
     assert "manylinux_2_28_x86_64" in release_runs
-    assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
     assert "scripts/upload_python_release.py" in _runs(release["jobs"]["publish"])
 
-    assert set(rust_candidate["on"]) == {"push", "workflow_dispatch"}
-    assert rust_candidate["on"]["push"]["tags"] == ["v*"]
-    assert rust_candidate["concurrency"] == {
-        "group": "rust-preview-${{ github.ref }}",
+    assert release["concurrency"] == {
+        "group": "release-${{ github.ref }}",
         "cancel-in-progress": "false",
     }
-    assert rust_candidate["jobs"]["publish"]["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    assert set(rust_candidate["jobs"]) == {
+    assert set(release["jobs"]) == {
         "web",
         "build-linux",
         "build-desktop",
@@ -498,7 +485,7 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
         "publish",
     }
     assert {
-        name: job.get("timeout-minutes") for name, job in rust_candidate["jobs"].items()
+        name: job.get("timeout-minutes") for name, job in release["jobs"].items()
     } == {
         "web": "15",
         "build-linux": "45",
@@ -507,15 +494,15 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
         "verify": "10",
         "publish": "10",
     }
-    assert rust_candidate["jobs"]["build-linux"]["needs"] == "web"
-    assert rust_candidate["jobs"]["build-linux"]["container"] == (
+    assert release["jobs"]["build-linux"]["needs"] == "web"
+    assert release["jobs"]["build-linux"]["container"] == (
         "quay.io/pypa/manylinux_2_28_x86_64:latest"
     )
-    linux_runs = _runs(rust_candidate["jobs"]["build-linux"])
+    linux_runs = _runs(release["jobs"]["build-linux"])
     assert "cargo build --release --locked --features standalone" in linux_runs
     assert "scripts/verify_standalone_binary.py" in linux_runs
 
-    desktop = rust_candidate["jobs"]["build-desktop"]
+    desktop = release["jobs"]["build-desktop"]
     assert desktop["needs"] == "web"
     assert {item["target"] for item in desktop["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
@@ -525,24 +512,26 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     assert next(item for item in desktop["strategy"]["matrix"]["include"] if "windows" in item["target"])[
         "os"
     ] == "windows-2022"
-    desktop_build = next(step for step in desktop["steps"] if step.get("name") == "Build Rust distribution")
+    desktop_build = next(
+        step for step in desktop["steps"] if step.get("name") == "Build the release executable once"
+    )
     assert desktop_build["env"]["MACOSX_DEPLOYMENT_TARGET"] == "11.0"
     assert "scripts/verify_standalone_binary.py" in _runs(desktop)
-    assert set(rust_candidate["jobs"]["prepare"]["needs"]) == {"build-linux", "build-desktop"}
-    web_runs = _runs(rust_candidate["jobs"]["web"])
+    assert set(release["jobs"]["prepare"]["needs"]) == {"build-linux", "build-desktop"}
+    web_runs = _runs(release["jobs"]["web"])
     assert "prepare_rust_web_assets.mjs --install-deps" in web_runs
     build_uses = {
         step.get("uses", "") for step in desktop["steps"]
     }
-    assert not any(item.startswith("actions/setup-python") for item in build_uses)
+    assert any(item.startswith("actions/setup-python") for item in build_uses)
     assert not any(item.startswith("actions/setup-node") for item in build_uses)
-    rust_release_runs = "\n".join(_runs(job) for job in rust_candidate["jobs"].values())
-    assert "Smoke native Rust binary" in {
+    release_runs = "\n".join(_runs(job) for job in release["jobs"].values())
+    assert "Smoke native executable" in {
         step.get("name", "")
-        for job in rust_candidate["jobs"].values()
+        for job in release["jobs"].values()
         for step in job.get("steps", [])
     }
-    verify = rust_candidate["jobs"]["verify"]
+    verify = release["jobs"]["verify"]
     assert verify["needs"] == "prepare"
     assert verify["timeout-minutes"] == "10"
     assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
@@ -554,19 +543,22 @@ def test_product_tag_publishes_pypi_and_standalone_preview() -> None:
     assert next(item for item in verify["strategy"]["matrix"]["include"] if "windows" in item["target"])[
         "os"
     ] == "windows-2022"
-    assert "scripts/tests/verify_release_unix.sh" in rust_release_runs
-    assert "scripts/tests/verify_release_windows.ps1" in rust_release_runs
+    assert "scripts/tests/verify_release_unix.sh" in release_runs
+    assert "scripts/tests/verify_release_windows.ps1" in release_runs
     for source_test in ("cargo test", "pytest", "context_python_interop", "python_storage_interop"):
-        assert source_test not in rust_release_runs
-    assert rust_candidate["jobs"]["publish"]["needs"] == "verify"
-    publish_runs = _runs(rust_candidate["jobs"]["publish"])
+        assert source_test not in release_runs
+    publish_runs = _runs(release["jobs"]["publish"])
     assert "scripts/check_release_versions.py --tag" in publish_runs
+    assert "scripts/verify_release_set.py artifacts" in publish_runs
     assert "gh release create" in publish_runs
     assert "gh release upload" in publish_runs
     assert "gh release edit" in publish_runs
     assert "--prerelease" in publish_runs
-    assert "experimental standalone Rust preview" in publish_runs
+    assert "experimental standalone Rust preview" not in publish_runs
     assert 'notes_file="docs/release/v${version}_release_notes.md"' in publish_runs
+    assert publish_runs.index('test -s "${notes_file}"') < publish_runs.index(
+        "scripts/upload_python_release.py"
+    )
     assert '--notes-file "${notes_file}"' in publish_runs
     assert "--generate-notes" not in publish_runs
 
@@ -590,10 +582,7 @@ def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
         "${{ secrets.TEST_PYPI_API_TOKEN }}",
         "${{ secrets.PYPI_API_TOKEN }}",
     }
-    assert {step["run"] for step in uploads} == {
-        "python scripts/upload_python_release.py --repository testpypi dist/*",
-        "python scripts/upload_python_release.py --repository pypi dist/*",
-    }
+    assert all("artifacts/*.whl" in step["run"] for step in uploads)
     assert all("steps.channel.outputs.token" not in str(step) for step in publish["steps"])
 
 

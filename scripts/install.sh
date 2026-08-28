@@ -32,6 +32,7 @@ need tar
 need awk
 need grep
 need mktemp
+need sed
 
 canonical_command_path() {
   command_path=$1
@@ -130,6 +131,11 @@ fi
 
 package="cccc-v${VERSION}-${target}"
 archive="${package}.tar.gz"
+wheel_version=$(printf '%s\n' "$VERSION" | sed \
+  -e 's/-alpha\([0-9][0-9]*\)$/a\1/' \
+  -e 's/-beta\([0-9][0-9]*\)$/b\1/' \
+  -e 's/-rc\([0-9][0-9]*\)$/rc\1/' \
+  -e 's/-//g')
 download_url="$RELEASE_BASE_URL/download/${RELEASE_TAG_PREFIX}${VERSION}"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cccc-install.XXXXXX")
 stage_suffix=".cccc-install.$$"
@@ -195,12 +201,16 @@ trap 'exit 143' TERM
 
 printf 'Downloading CCCC v%s for %s...\n' "$VERSION" "$target"
 download "$download_url/SHA256SUMS" "$tmp_dir/SHA256SUMS"
-if ! awk -v version="$VERSION" '
+if ! awk -v version="$VERSION" -v wheel_version="$wheel_version" '
   BEGIN {
-    valid["cccc-v" version "-x86_64-unknown-linux-gnu.tar.gz"] = 1
-    valid["cccc-v" version "-x86_64-apple-darwin.tar.gz"] = 1
-    valid["cccc-v" version "-aarch64-apple-darwin.tar.gz"] = 1
-    valid["cccc-v" version "-x86_64-pc-windows-msvc.zip"] = 1
+    valid["cccc-v" version "-x86_64-unknown-linux-gnu.tar.gz"] = "archive"
+    valid["cccc-v" version "-x86_64-apple-darwin.tar.gz"] = "archive"
+    valid["cccc-v" version "-aarch64-apple-darwin.tar.gz"] = "archive"
+    valid["cccc-v" version "-x86_64-pc-windows-msvc.zip"] = "archive"
+    valid["cccc_pair-" wheel_version "-py3-none-manylinux_2_28_x86_64.whl"] = "wheel"
+    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_x86_64.whl"] = "wheel"
+    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_arm64.whl"] = "wheel"
+    valid["cccc_pair-" wheel_version "-py3-none-win_amd64.whl"] = "wheel"
   }
   NF == 0 { next }
   NF != 2 || length($1) != 64 || $1 ~ /[^0-9A-Fa-f]/ { exit 1 }
@@ -210,9 +220,15 @@ if ! awk -v version="$VERSION" '
     if (!(name in valid) || seen[name]++) { exit 1 }
     count++
   }
-  END { if (count != 4) exit 1 }
+  END {
+    if (count != 4 && count != 8) exit 1
+    for (name in valid) {
+      if (valid[name] == "archive" && !seen[name]) exit 1
+      if (count == 8 && !seen[name]) exit 1
+    }
+  }
 ' "$tmp_dir/SHA256SUMS"; then
-  fail "SHA256SUMS must contain four unique, well-formed archive entries"
+  fail "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
 fi
 
 expected=$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1 }' "$tmp_dir/SHA256SUMS")

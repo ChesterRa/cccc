@@ -5,8 +5,7 @@ pub const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str =
     "skill:agent_self_proposed:cccc-self-evolution";
 pub const DEFAULT_GROUP_CAPABILITY_SEED_VERSION: u64 = 2;
 
-const SELF_EVOLUTION_CAPSULE: &str =
-    include_str!("../../../src/cccc/resources/cccc-self-evolution.md");
+const SELF_EVOLUTION_CAPSULE: &str = include_str!("../../../resources/cccc-self-evolution.md");
 
 pub const WEB_MODEL_CORE_TOOL_NAMES: &[&str] = &[
     "cccc_help",

@@ -88,7 +88,6 @@ pub fn space(value: &str) -> Option<&'static str> {
         "sources" => "group_space_sources",
         "artifact" => "group_space_artifact",
         "jobs" => "group_space_jobs",
-        "sync" => "group_space_sync",
         "provider_auth" | "auth" => "group_space_provider_auth",
         "provider_credential_status" => "group_space_provider_credential_status",
         "provider_credential_update" => "group_space_provider_credential_update",

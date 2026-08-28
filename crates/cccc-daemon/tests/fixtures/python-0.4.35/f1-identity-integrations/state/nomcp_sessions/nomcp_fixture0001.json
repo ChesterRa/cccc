@@ -1,0 +1,19 @@
+{
+  "schema": "cccc.nomcp.session.v1",
+  "sid": "nomcp_fixture0001",
+  "group_id": "g_python0435",
+  "title": "Frozen advisory",
+  "brief": "Inspect the frozen migration fixture.",
+  "reply_to_event_id": "00000000000000000000000000000004",
+  "recipient": "peer1",
+  "scope_key": "s_python0435",
+  "allowed_paths": ["docs"],
+  "created_at": "2026-08-28T00:00:12Z",
+  "updated_at": "2026-08-28T00:00:13Z",
+  "expires_at": "2036-08-28T00:00:00Z",
+  "token_hash": "5898caa336bf881d729d60b2daf7e15cec4352a31f4cddb6bb13e28fd56e79e2",
+  "token_preview": "nomcps...cret",
+  "repo_root": "/legacy/python-0.4.35/scope",
+  "revoked_at": "",
+  "sent_message_ids": ["fixture-advisory"]
+}

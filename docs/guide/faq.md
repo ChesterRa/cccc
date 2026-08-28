@@ -65,9 +65,10 @@ CCCC does not delete commands owned by another Python environment or installer.
 Run `cccc doctor` and inspect the `Installation` section. It shows the current
 launcher, the first command selected by PATH, and every duplicate. The standalone
 installer never infers ownership from version output. Rust self-update identifies
-its exact current executable; other markerless commands and foreign ownership
+its exact current executable only when the containing directory has the complete
+`.cccc-standalone` ownership marker. Markerless commands and foreign ownership
 markers remain untouched unless `CCCC_ALLOW_REPLACE_EXISTING=1` explicitly
-authorizes migration. It puts its default directory first for new terminals; an
+authorizes migration through the installer. It puts its default directory first for new terminals; an
 existing terminal must be reopened (or its PATH refreshed). Custom install directories and
 `CCCC_NO_MODIFY_PATH=1` require you to move that directory to the front manually.
 When PATH still selects the old command, run the newly installed executable by

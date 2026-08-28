@@ -1,0 +1,9 @@
+receipts:
+  reg_fixture::fixture-delivery:
+    registration_id: reg_fixture
+    idempotency_key: fixture-delivery
+    status: sent
+    source_event_id: fixture-source
+    remote_event_id: fixture-remote
+    created_at: '2026-08-28T00:00:09Z'
+    updated_at: '2026-08-28T00:00:09Z'

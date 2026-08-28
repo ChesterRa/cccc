@@ -120,18 +120,14 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
     let install_dir = executable
         .parent()
         .context("CCCC executable has no parent directory")?;
-    let install_target = install_dir.join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
     let marker = install_dir.join(INSTALL_MARKER);
     match std::fs::read_to_string(&marker) {
         Ok(value) if value.trim() == INSTALL_MARKER_VERSION => {}
         Ok(_) => bail!(
             "this Rust executable is managed by another installation or has an unrecognized owner; update it through that installer"
         ),
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound && executable == install_target => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
-            "markerless self-update requires the running executable to be {}",
-            install_target.display()
+            "this CCCC executable is not an owned standalone installation; update it through its package manager (for pip: python -m pip install --upgrade cccc-pair)"
         ),
         Err(error) => return Err(error).context(format!("could not read {}", marker.display())),
     }
@@ -203,19 +199,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standalone_self_update_accepts_a_missing_marker_but_rejects_a_foreign_marker() {
+    fn standalone_self_update_requires_the_complete_ownership_marker() {
         let temp = tempfile::tempdir().expect("tempdir");
         let executable = temp
             .path()
             .join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
         std::fs::write(&executable, b"binary").expect("binary");
-        assert_eq!(
-            standalone_install_dir(&executable).expect("markerless self-update"),
-            temp.path()
+        let missing = standalone_install_dir(&executable).expect_err("missing marker");
+        assert!(
+            missing
+                .to_string()
+                .contains("python -m pip install --upgrade cccc-pair")
         );
-        let renamed = temp.path().join("cccc-rust");
-        std::fs::write(&renamed, b"binary").expect("renamed binary");
-        assert!(standalone_install_dir(&renamed).is_err());
 
         std::fs::write(temp.path().join(INSTALL_MARKER), b"foreign-v1\n").expect("foreign marker");
         assert!(standalone_install_dir(&executable).is_err());

@@ -12,6 +12,7 @@ import threading
 import time
 from contextvars import ContextVar
 from importlib.resources import files
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from ..common import MCPError, _runtime_context
@@ -619,11 +620,12 @@ def code_wait_tool(
     )
 
 def _load_shared_code_mode_resources() -> tuple[str, Dict[str, Any]]:
-    resources = files("cccc.resources")
-    runtime = resources.joinpath("code_mode_runtime.js").read_text(encoding="utf-8")
-    metadata = json.loads(resources.joinpath("code_mode_metadata.json").read_text(encoding="utf-8"))
+    resources = Path(__file__).resolve().parents[5] / "resources"
+    source = resources if resources.is_dir() else files("cccc.resources")
+    runtime = source.joinpath("code_mode_runtime.js").read_text(encoding="utf-8")
+    metadata = json.loads(source.joinpath("code_mode_metadata.json").read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
-        raise RuntimeError("cccc.resources/code_mode_metadata.json must contain a JSON object")
+        raise RuntimeError("resources/code_mode_metadata.json must contain a JSON object")
     return runtime, metadata
 
 

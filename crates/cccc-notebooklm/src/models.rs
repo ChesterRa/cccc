@@ -52,6 +52,7 @@ pub struct Source {
     pub kind: String,
     pub status: String,
     pub url: Option<String>,
+    pub drive_document_id: Option<String>,
 }
 
 impl Source {
@@ -74,24 +75,27 @@ impl Source {
         let mime = metadata.and_then(|value| source_mime(value));
         let url = metadata
             .and_then(|value| nested_string(value.get(7)).or_else(|| nested_string(value.get(5))));
+        let drive_document_id = metadata
+            .and_then(|value| nested_string(value.first()).or_else(|| nested_string(value.get(9))));
         let status_code = row
             .get(3)
             .and_then(Value::as_array)
             .and_then(|value| value.get(1))
-            .and_then(Value::as_i64)
-            .unwrap_or(2);
+            .and_then(Value::as_i64);
         Ok(Self {
             id,
             title,
             kind: source_kind(type_code, mime).into(),
             status: match status_code {
-                1 => "processing",
-                3 => "error",
-                5 => "preparing",
-                _ => "ready",
+                Some(1) => "processing",
+                Some(2) => "ready",
+                Some(3) => "error",
+                Some(5) => "preparing",
+                _ => "unknown",
             }
             .into(),
             url,
+            drive_document_id,
         })
     }
 
@@ -230,6 +234,23 @@ mod tests {
         assert_eq!(source.id, "s1");
         assert_eq!(source.status, "ready");
         assert_eq!(source.url.as_deref(), Some("https://example.test"));
+        assert_eq!(source.drive_document_id, None);
+    }
+
+    #[test]
+    fn exposes_drive_document_identity_for_safe_create_recovery() {
+        let mut metadata = vec![Value::Null; 10];
+        metadata[0] = json!(["drive-doc-1"]);
+        metadata[4] = json!(1);
+        let source = Source::parse_entry(&json!([
+            [null, true, ["source-1"]],
+            "Drive doc",
+            metadata,
+            [null, 2]
+        ]))
+        .expect("Drive source");
+        assert_eq!(source.drive_document_id.as_deref(), Some("drive-doc-1"));
+        assert_eq!(source.url, None);
     }
 
     #[test]
@@ -247,5 +268,64 @@ mod tests {
         let sheet = Source::parse_entry(&json!([["sheet-1"], "Sheet", sheet_metadata, [null, 2]]))
             .expect("sheet");
         assert_eq!(sheet.kind, "google_spreadsheet");
+    }
+
+    #[test]
+    fn unknown_source_status_does_not_masquerade_as_ready() {
+        for status in [Value::Null, json!([null, 99])] {
+            let source = Source::parse_entry(&json!([
+                ["source-1"],
+                "Unknown status",
+                [null, null, null, null, 4],
+                status
+            ]))
+            .expect("source");
+            assert_eq!(source.status, "unknown");
+        }
+    }
+
+    #[test]
+    fn parses_v081_add_source_response_envelopes() {
+        let web = Source::parse_unknown(&json!([[[
+            ["web-source"],
+            "Article",
+            [
+                null,
+                31537,
+                [1768312225, 274170000],
+                ["owner", [1768312224, 923625000]],
+                5,
+                null,
+                1,
+                ["https://example.test/article"],
+                64632
+            ],
+            [null, 2]
+        ]]]))
+        .expect("v0.8.1 URL source response");
+        assert_eq!(web.id, "web-source");
+        assert_eq!(web.kind, "web_page");
+        assert_eq!(web.url.as_deref(), Some("https://example.test/article"));
+
+        let drive = Source::parse_unknown(&json!([[[
+            ["drive-source"],
+            "Design doc",
+            [
+                ["drive-file", "opaque", 17],
+                3737,
+                [1769198541, 320332000],
+                ["owner", [1769198540, 885478000]],
+                1,
+                null,
+                1,
+                null,
+                7610
+            ],
+            [null, 2]
+        ]]]))
+        .expect("v0.8.1 Drive source response");
+        assert_eq!(drive.id, "drive-source");
+        assert_eq!(drive.kind, "google_docs");
+        assert_eq!(drive.status, "ready");
     }
 }
