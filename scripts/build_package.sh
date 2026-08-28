@@ -2,12 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+BINARY="$ROOT_DIR/target/release/cccc"
 
-"$ROOT_DIR/scripts/build_web.sh"
+node "$ROOT_DIR/scripts/prepare_rust_web_assets.mjs" --install-deps
+cargo build \
+  --manifest-path "$ROOT_DIR/Cargo.toml" \
+  --release \
+  --locked \
+  --features standalone \
+  -p cccc \
+  --bin cccc
+python3 "$ROOT_DIR/scripts/build_standalone_archive.py" \
+  "$BINARY" \
+  --target "$TARGET" \
+  --output-dir "$ROOT_DIR/dist"
 
-python3 -m pip install -U pip build twine
-python3 -m compileall -q "$ROOT_DIR/src/cccc"
-python3 -m build "$ROOT_DIR"
-python3 -m twine check "$ROOT_DIR"/dist/*
-
-echo "OK: built dist/* with bundled Web UI"
+echo "OK: built the native CCCC archive in dist/"

@@ -77,7 +77,6 @@ jobs:
           if-no-files-found: error
 
   python-tests:
-    needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -87,12 +86,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Download Web bundle
-        uses: actions/download-artifact@v8
-        with:
-          name: bundled-web
-          path: src/cccc/ports/web/dist
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -106,61 +99,15 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e . pytest pytest-timeout
 
-      - name: Run stable Python test shard
+      - name: Run transitional Python source-test shard
         shell: bash
         run: |
           mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 2 --index "${{ matrix.shard }}")
           test "${#TEST_FILES[@]}" -gt 0
           env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
-  python-compat:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up oldest supported Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install CCCC
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e .
-
-      - name: Verify supported Python runtime
-        run: |
-          python -W error::SyntaxWarning -m compileall -q src/cccc
-          cccc version
-          python - <<'PY'
-          import json
-          import subprocess
-
-          proc = subprocess.Popen(
-              ["cccc", "mcp"],
-              stdin=subprocess.PIPE,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE,
-              text=True,
-          )
-          assert proc.stdin is not None
-          assert proc.stdout is not None
-
-          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
-          proc.stdin.flush()
-          response = json.loads(proc.stdout.readline().strip())
-          assert response.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
-          proc.terminate()
-          proc.wait(timeout=5)
-          print("OK: CCCC import, CLI, and MCP handshake")
-          PY
-
   package:
-    needs: [quality, python-tests, python-compat, interop]
+    needs: [quality, python-tests, interop]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -238,7 +185,6 @@ jobs:
         run: >-
           python -m pytest -q --timeout=90 --timeout-method=thread
           tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
-          tests/test_installation_diagnostics.py tests/test_system_cmds_doctor.py
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.88.0
@@ -327,12 +273,12 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Python implementation
+      - name: Install transitional Python source fixtures
         run: |
           python -m pip install -U pip
           python -m pip install -e .
 
-      - name: Test shared Python and Rust persisted contracts
+      - name: Test frozen cross-language persisted contracts
         run: |
           touch web/dist/index.html
           cargo test -p cccc-pair-core --test context_python_interop --locked
@@ -349,7 +295,6 @@ jobs:
       - quality
       - web
       - python-tests
-      - python-compat
       - package
       - windows-smoke
       - rust-linux

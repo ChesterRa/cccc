@@ -73,8 +73,9 @@ try {
 
   $env:CCCC_HOME = $ccccHome
   $offlineStatus = (& $installed status | Out-String)
-  if ($LASTEXITCODE -ne 0 -or -not $offlineStatus.Contains("Selected:    rust") -or
-      -not $offlineStatus.Contains("Daemon:      stopped")) {
+  if ($LASTEXITCODE -ne 0 -or -not $offlineStatus.Contains("Daemon:      stopped") -or
+      $offlineStatus.Contains("Selected:") -or $offlineStatus.Contains("Python:") -or
+      $offlineStatus.Contains("Rust:")) {
     throw "offline Rust status smoke failed"
   }
   $mcpInput = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'

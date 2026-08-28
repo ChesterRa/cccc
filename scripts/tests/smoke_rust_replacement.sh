@@ -19,8 +19,10 @@ trap cleanup EXIT
 export CCCC_HOME="$SMOKE_ROOT/home"
 
 offline_status="$($BINARY status)"
-grep -Fq 'Selected:    rust' <<<"$offline_status"
 grep -Fq 'Daemon:      stopped' <<<"$offline_status"
+! grep -Fq 'Selected:' <<<"$offline_status"
+! grep -Fq 'Python:' <<<"$offline_status"
+! grep -Fq 'Rust:' <<<"$offline_status"
 
 "$BINARY" daemon start >/dev/null
 mkdir -p "$SMOKE_ROOT/project"

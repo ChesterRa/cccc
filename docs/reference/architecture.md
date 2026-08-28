@@ -38,7 +38,7 @@ Default: `CCCC_HOME=~/.cccc`
 └── groups/<group_id>/
     ├── group.yaml               # Metadata
     ├── ledger.jsonl             # Event stream (append-only)
-    ├── context/                 # Shared Python/Rust coordination store
+    ├── context/                 # Durable coordination store
     │   ├── context.yaml         # Brief, decisions, handoffs, metadata
     │   ├── tasks/T*.yaml        # One durable task per file
     │   ├── agents.yaml          # Per-actor hot/warm context
@@ -47,11 +47,11 @@ Default: `CCCC_HOME=~/.cccc`
         └── blobs/               # Large text/attachments (referenced in ledger)
 ```
 
-Python and Rust use the same `context/` files as one authoritative store. Older Rust
-`state/context.json` files are imported once without deleting the source; new context
-writes must never create a second runtime-specific task store.
+The `context/` files are the one authoritative coordination store. Older preview
+`state/context.json` files are imported once without deleting the source; new
+writes never create a second implementation-specific task store.
 
-The replacement Rust daemon also uses the Python control-plane paths and schemas:
+The native daemon retains the final 0.4.35 control-plane paths and schemas:
 
 | State | Authoritative path |
 |---|---|
@@ -66,10 +66,10 @@ The replacement Rust daemon also uses the Python control-plane paths and schemas
 | Group Space providers, bindings, and jobs | `state/space/providers.json`, `bindings.json`, `jobs.json` |
 | Group Space credentials | `state/secrets/space_providers/*.json` |
 
-Files from the earlier Rust-only layout are migration inputs, not parallel runtime
+Files from the earlier preview layout are migration inputs, not parallel runtime
 stores. Canonical data wins on conflicts, migration is idempotent, and subsequent
-writes go only to the Python path. Rust/Python interoperability tests exercise both
-write directions, including group-copy packages.
+writes go only to the canonical path. Frozen 0.4.35 homes and native tests cover
+the supported migration boundary, including group-copy packages.
 
 ## Architecture Layers
 
@@ -78,7 +78,7 @@ write directions, including group-copy packages.
 │                      Ports (Entry)                       │
 │   Web UI (React)  │  CLI  │  IM Bridge  │  MCP Server   │
 ├─────────────────────────────────────────────────────────┤
-│                    Daemon (ccccd)                        │
+│                    Native Daemon                         │
 │   IPC Server  │  Delivery  │  Automation  │  Runners    │
 │               │            │              │  Browser    │
 ├─────────────────────────────────────────────────────────┤
@@ -92,8 +92,8 @@ write directions, including group-copy packages.
 
 ### Contracts Layer
 
-- Pydantic models define all data structures
-- Versioned: `src/cccc/contracts/v1/`
+- Rust contract types define wire structures
+- Versioned standards: `docs/standards/`; implementation: `crates/cccc-contracts/`
 - Stable boundary, no business implementation
 
 ### Kernel
@@ -252,22 +252,20 @@ The surface is best understood as capability groups instead of a fixed namespace
 
 | Layer | Technology |
 |-------|------------|
-| Kernel/Daemon | Python + Pydantic |
-| Web Port | FastAPI + Uvicorn |
+| Kernel/Daemon | Rust |
+| Web Port | Rust + Axum |
 | Web UI | React + TypeScript + Vite + Tailwind + xterm.js |
 | MCP | stdio mode, JSON-RPC |
 
 ## Source Structure
 
 ```
-src/cccc/
-├── contracts/v1/          # Contracts layer
-├── kernel/                # Kernel
-├── daemon/                # Daemon process
-├── runners/               # PTY/Headless runner
-├── ports/
-│   ├── web/              # Web port
-│   ├── im/               # IM Bridge
-│   └── mcp/              # MCP Server
-└── resources/            # Built-in resources
+crates/
+├── cccc-contracts/        # Versioned wire types
+├── cccc-core/             # Durable state and kernel
+├── cccc-daemon/           # Single-writer daemon and delivery
+├── cccc-runtime/          # PTY/headless provider runtimes
+├── cccc-web/              # Native Web API and embedded UI
+├── cccc-mcp/              # MCP server
+└── cccc-cli/              # Public cccc executable
 ```

@@ -7,7 +7,7 @@ CCCC projects verified Codex and Claude PTY hook events into the Web runtime tic
 1. A CCCC-injected provider hook submits a lifecycle event to `cccc hook`.
 2. The CLI first applies the existing launch, session, turn, and operation fences.
 3. Accepted events are normalized into a small structured activity record.
-4. The Rust or Python Web backend serves the same snapshot and SSE contract.
+4. Native Web serves the snapshot and SSE contract.
 5. The browser keeps activity in an independent, group-scoped store and projects it into the existing `RuntimeDockTicker`.
 
 Codex events retain exact turn and operation fencing. Claude tool events retain the verified session

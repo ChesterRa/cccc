@@ -14,7 +14,6 @@ Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作
 一条安装命令，无需 Rust 工具链或额外基础设施。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Python](https://img.shields.io/pypi/pyversions/cccc-pair?color=232425)](https://pypi.org/project/cccc-pair/)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
@@ -65,7 +64,13 @@ CCCC 只需一条安装命令，不需要数据库、不需要消息队列、不
 ### 安装
 
 ```bash
-# 稳定的完整产品发行版（推荐；要求 Python 3.11+）
+# macOS / Linux（推荐）
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows CMD 或 PowerShell（推荐）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+
+# 兼容 pip 的原生平台 wheel
 python -m pip install -U cccc-pair
 
 # RC 通道（TestPyPI）
@@ -75,12 +80,10 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> PyPI 包是当前稳定且推荐的 CCCC 发行方式，Python 是其中稳定的默认实现。在
-> Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，对应平台 wheel
-> 还会包含一个私有且版本严格匹配的**实验性 Rust 实现**，可通过 `cccc rust`
-> 显式选择并评估性能。其功能与集成细节仍在持续对齐；可靠性敏感的工作请使用
-> `cccc python`。如果要专门测试无 Python 的 Rust-only 部署，可选用下文的
-> [实验性独立 Rust 预览版](#实验性独立-rust-预览版)。
+> CCCC 0.4.36 只有一个产品实现：Rust。推荐使用官网安装脚本；pip 命令用于
+> 包管理器兼容，安装的是同一个原生可执行文件，不包含 Python daemon、启动器或
+> 回退实现。支持 Linux x86-64（glibc 2.28+）、Intel/Apple Silicon macOS 11+
+> 和 Windows x86-64。
 
 ### 升级
 
@@ -88,9 +91,9 @@ python -m pip install -U --pre \
 cccc update
 ```
 
-如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。推荐的 pip
-安装会从检测到的 PyPI 通道更新完整的 `cccc-pair` 产品；实验性独立安装则通过
-GitHub Pages 安装器更新。两种路径都会先停止当前 Web/daemon 进程对，再替换文件。
+如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。官网安装
+通过同一安装器升级，pip 所有的安装通过 pip 升级；两条渠道替换的是同一个原生
+产品，并都会在替换文件前停止当前 Web/daemon 进程对。
 
 ### 启动
 
@@ -100,22 +103,15 @@ cccc
 
 打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
 
-在推荐的 pip 发行版中，Python 是稳定的初始默认实现；Rust 是用于性能评估的
-实验性显式选项。可以持久切换，也可以在切换后立即执行命令：
-
 ```bash
-cccc status            # 查看已选、正在运行和可用的实现
-cccc rust              # 选择实验性 Rust，然后启动 CCCC
-cccc python            # 选择稳定 Python，然后启动 CCCC
-cccc rust doctor        # 选择实验性 Rust，然后执行 doctor
+cccc status            # 查看产品、daemon、group、actor 和 agent runtime
+cccc doctor            # 检查安装与运行环境
+cccc daemon status     # 显式查看 daemon 生命周期状态
 ```
 
-切换属于显式生命周期操作：CCCC 会先校验目标载荷，再停止当前 Web/daemon，
-且绝不会悄悄回退到另一实现。各 agent runtime 的 MCP 配置始终指向公开的
-`cccc` 启动器，因此之后切换实现时无需逐个重配。
-任何时候都可以运行 `cccc python` 回到稳定实现。
-
-实验性独立发行版只包含 Rust，因此其中不会提供 `cccc python` 或实现切换。
+`cccc python`、`cccc rust` 和原来的 `ccccd` 别名均已退役。已有自动化应改用
+`cccc daemon ...`；daemon 状态文件名保持兼容，因此可以在没有 Python runtime
+的情况下直接接管 0.4.35 的 home。
 
 ### 建立多智能体协作组
 
@@ -480,19 +476,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 
 ## 安装选项
 
-### pip（稳定、推荐）
-
-```bash
-python -m pip install -U cccc-pair
-```
-
-这是完整且受支持的产品发行版，其中 Python 是稳定且推荐的实现。在 Linux
-x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，pip 会选择还包含一个
-私有、版本严格匹配的实验性 Rust 可执行文件的平台 wheel，用于显式的性能评估。
-其他平台使用通用 Python wheel；`cccc status` 会明确显示 Rust 不可用，而不会
-假装切换成功。
-
-### 实验性独立 Rust 预览版
+### 官网安装脚本（推荐）
 
 ```bash
 # macOS / Linux
@@ -502,16 +486,24 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-这个可选通道只适合在无 Python 的 Rust-only 部署中评估实验性 Rust 实现。它会
-从 GitHub Releases 下载并校验二进制，也可通过同一安装器执行 `cccc update`，
-但不具备 Python 回退或实现切换能力，不作为稳定 pip/Python 路径的推荐替代品。
+安装器会从 GitHub Releases 下载并校验原生产品，也可通过同一安装器执行
+`cccc update`。
 安装器不会覆盖不属于它的
 现有 `cccc` 命令；请先有意卸载原命令，或改用其它 `CCCC_INSTALL_DIR`。
 其它目录中的同名命令会原样保留。使用默认安装目录时，安装器会把新命令放到用户
 PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其
 `Installation` 部分会显示本次入口、PATH 实际命中的命令以及全部冲突路径。
 
-当前托管的原生安装器固定安装 `v0.4.34` 正式版。
+安装器默认选择当前已发布的正式版本；也可以显式指定版本或 RC 通道。
+
+### pip 兼容安装
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+Pip 会安装包含同一个 `cccc` 可执行文件的平台 wheel。0.4.36 不再提供 sdist、
+通用 wheel、可导入的 CCCC Python 包或回退实现；不支持的平台会明确失败。
 
 ### pip（RC 版，TestPyPI）
 
@@ -529,22 +521,17 @@ Cargo 安装仅保留给工作区开发使用，不作为受支持的终端用�
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-pip install -e .
-```
-
-### uv（快速，Windows 推荐）
-
-```bash
-uv venv -p 3.14 .venv
-uv pip install -e .
-uv run cccc --help
+npm ci --prefix web
+npm -C web run build
+cargo build --release --locked --features standalone -p cccc --bin cccc
+./target/release/cccc --help
 ```
 
 ### Windows 原生运行
 
-- 推荐直接使用仓库根目录的 `start.ps1` 启动开发环境。
-- 如果 `cccc doctor` 显示 `Windows PTY: NOT READY`，先执行 `python -m pip install pywinpty`，或重新执行 `uv pip install -e .`。
-- Web 打包可用 `scripts/build_web.ps1`，完整打包可用 `scripts/build_package.ps1`。
+- 编译原生可执行文件前先构建 Web bundle。
+- 使用 `x86_64-pc-windows-msvc` Rust 工具链，构建后运行 `cccc doctor`。
+- 可使用 `scripts/build_web.ps1` 便捷地构建 Web bundle。
 
 ### Docker
 

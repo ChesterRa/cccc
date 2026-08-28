@@ -41,8 +41,6 @@ def test_stale_headless_marker_never_overrides_deepseek_supervisor_truth(tmp_pat
     from cccc.daemon.actors import actor_ops
     from cccc.daemon.context import context_ops
     from cccc.daemon.ops import diagnostics_ops
-    from cccc.ports.web.routes import actors as web_actors
-    from cccc.ports.web.routes import groups as web_groups
 
     group = _group(tmp_path)
     actor = _actor()
@@ -78,22 +76,6 @@ def test_stale_headless_marker_never_overrides_deepseek_supervisor_truth(tmp_pat
         )
     assert context["running"] is False
 
-    with patch.object(web_groups.deepseek_runtime, "running", return_value=False):
-        assert web_groups._actor_running_local(group.group_id, actor) is False
-
-    with (
-        patch.object(web_actors, "load_group", return_value=group),
-        patch.object(web_actors, "get_actor_list_projection", return_value=[dict(actor)]),
-        patch.object(web_actors, "ContextStorage", _Storage),
-        patch.object(web_actors.deepseek_runtime, "running", return_value=False),
-        patch.object(web_actors, "derive_effective_working_state", return_value={}),
-        patch.object(web_actors, "runtime_hook_working_projection", return_value=None),
-        patch.object(web_actors, "current_session_capability", return_value=None),
-    ):
-        web_list = web_actors._read_actor_list_local(group.group_id, include_unread=False)
-    assert web_list["ok"] is True
-    assert web_list["result"]["actors"][0]["running"] is False
-
     with (
         patch.object(diagnostics_ops, "load_group", return_value=group),
         patch.object(diagnostics_ops, "list_actors", return_value=[dict(actor)]),
@@ -114,11 +96,8 @@ def test_stale_headless_marker_never_overrides_deepseek_supervisor_truth(tmp_pat
 
 def test_deepseek_projection_turns_running_only_for_live_supervisor(tmp_path) -> None:
     from cccc.daemon.context import context_ops
-    from cccc.ports.web.routes import groups as web_groups
 
     actor = _actor()
-    with patch.object(web_groups.deepseek_runtime, "running", return_value=True):
-        assert web_groups._actor_running_local("g-deepseek", actor) is True
     with (
         patch.object(context_ops.deepseek_runtime, "running", return_value=True),
         patch.object(context_ops, "derive_effective_working_state", return_value={}),

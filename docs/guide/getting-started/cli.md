@@ -2,22 +2,6 @@
 
 Get started with CCCC using the command line.
 
-## Optional: Select the product implementation
-
-Python is the stable initial default while no implementation choice has been
-saved. A supported platform wheel can explicitly opt into its bundled
-experimental Rust implementation for performance evaluation before the normal
-workflow:
-
-```bash
-cccc status
-cccc rust       # experimental Rust; use cccc python to return to stable Python
-```
-
-The choice persists for later CLI and MCP invocations. Complete feature and
-integration parity is not promised; Rust is a bounded evaluation surface for
-measured native benefits, so use Python for reliability-critical workflows.
-
 ## Step 1: Navigate to Your Project
 
 ```bash

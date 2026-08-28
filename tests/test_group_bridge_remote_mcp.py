@@ -5,8 +5,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
 
 class TestGroupBridgeRemoteMcp(unittest.TestCase):
     def _with_home(self):
@@ -305,118 +303,6 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
             self.assertEqual(payload["remote_group_id"], group.group_id)
             self.assertEqual(payload["remote_group_title"], "Remote Product")
             self.assertEqual(payload["access_level"], "read")
-        finally:
-            cleanup()
-
-    def test_web_group_bridge_endpoint_uses_group_bridge_token_and_access_update(self) -> None:
-        from cccc.kernel.access_tokens import create_access_token
-        from cccc.kernel.group_bridge.pairing import (
-            approve_pairing_request,
-            create_pairing_invite,
-            create_pairing_request,
-            get_pairing_request_public_status,
-            list_trusts,
-            revoke_trust,
-        )
-        from cccc.ports.web.app import create_app
-
-        home, cleanup = self._with_home()
-        try:
-            group, _root = self._create_group_with_scope(home)
-            invite = create_pairing_invite(group_id=group.group_id, ttl_seconds=600)
-            pairing_request = create_pairing_request(
-                invite["pairing_code"],
-                requester_group_id="g_remote",
-                requester_group_title="Remote",
-                requester_peer_id="peer_remote",
-                requester_endpoint="http://remote.example:8848",
-            )
-            approve_pairing_request(pairing_request["request_id"], approver_user_id="user-a")
-            public_status = get_pairing_request_public_status(pairing_request["request_id"], invite_id=invite["invite_id"])
-            token = str((public_status or {}).get("remote_send_token") or "")
-            self.assertTrue(token.startswith("frs_"))
-
-            client = TestClient(create_app())
-            bad = client.post(
-                "/mcp/group-bridge",
-                headers={"Authorization": f"Bearer {create_access_token('web', is_admin=True)['token']}"},
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-            )
-            self.assertEqual(bad.status_code, 401)
-            query_token = client.post(
-                f"/mcp/group-bridge?token={token}",
-                json={"jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": {}},
-            )
-            self.assertEqual(query_token.status_code, 401)
-            path_token = client.post(
-                f"/mcp/group-bridge/token/{token}",
-                json={"jsonrpc": "2.0", "id": 11, "method": "tools/list", "params": {}},
-            )
-            self.assertEqual(path_token.status_code, 404)
-
-            listed = client.post(
-                "/mcp/group-bridge",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            )
-            self.assertEqual(listed.status_code, 200, listed.text)
-            listed_names = [item["name"] for item in listed.json()["result"]["tools"]]
-            self.assertIn("cccc_remote_access", listed_names)
-            self.assertIn("cccc_remote_repo", listed_names)
-            self.assertIn("cccc_remote_shell", listed_names)
-
-            read_denied = client.post(
-                "/mcp/group-bridge",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 20,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "cccc_remote_repo",
-                        "arguments": {"remote_group_id": group.group_id, "action": "read", "path": "README.md"},
-                    },
-                },
-            )
-            self.assertEqual(read_denied.status_code, 200, read_denied.text)
-            denied_payload = self._tool_payload(read_denied.json())
-            self.assertEqual(denied_payload["error"]["code"], "bridge_read_not_granted")
-
-            trust = list_trusts(group_id=group.group_id)[0]
-            admin = create_access_token("admin", is_admin=True)["token"]
-            updated = client.post(
-                f"/api/group-bridge/pairing/trusts/{trust['trust_id']}/access",
-                headers={"Authorization": f"Bearer {admin}"},
-                json={"access_level": "read", "updated_by": "user-a"},
-            )
-            self.assertEqual(updated.status_code, 200, updated.text)
-            self.assertEqual(updated.json()["result"]["trust"]["access_level"], "read")
-
-            read = client.post(
-                "/mcp/group-bridge",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "cccc_remote_repo",
-                        "arguments": {"remote_group_id": group.group_id, "action": "read", "path": "README.md"},
-                    },
-                },
-            )
-            self.assertEqual(read.status_code, 200, read.text)
-            payload = self._tool_payload(read.json())
-            self.assertEqual(payload["path"], "README.md")
-            self.assertIn("project alpha", payload["content"])
-
-            revoke_trust(trust["trust_id"], revoked_by="user-a")
-            revoked = client.post(
-                "/mcp/group-bridge",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}},
-            )
-            self.assertEqual(revoked.status_code, 401)
         finally:
             cleanup()
 

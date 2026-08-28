@@ -142,7 +142,7 @@ The actor runtime panel provides two durable delivery modes:
 - **Standard** (default): text-only browser delivery. This is the recommended stable path.
 - **GPT Pro (experimental compatibility mode)**: CCCC attaches one deterministic 32×32 blank PNG to each delivered batch before invoking Send. The image is transport-only and contributes no task context. CCCC uses the browser file input directly, never the OS clipboard, and treats attachment plus submission as one transaction. A pre-submit upload failure records a retryable failed delivery; a post-click ambiguous result is never automatically duplicated.
 
-The setting is stored per group and actor and applies from the next accepted delivery, including after daemon restarts or Python/Rust engine switches. It does not select Pro, change the active ChatGPT model, or guarantee that ChatGPT exposes the connector. Select the desired model in ChatGPT itself.
+The setting is stored per group and actor and applies from the next accepted delivery, including after daemon restarts. It does not select Pro, change the active ChatGPT model, or guarantee that ChatGPT exposes the connector. Select the desired model in ChatGPT itself.
 
 On native Linux, projected headed browsers require `Xvfb`. CCCC starts a private virtual display, removes inherited Wayland display markers, and forces Chrome/Edge onto X11 so the physical desktop never receives the browser window. Missing `Xvfb` is a startup error even when the host has a usable `DISPLAY`; CCCC does not silently expose the projected browser on the host desktop. Install `xvfb` with the distribution package manager, then restart the ChatGPT browser session. `cccc doctor` reports the system browser, required Xvfb isolation, and optional x11vnc viewer separately.
 

@@ -17,8 +17,8 @@ For a control connection that explicitly takes ownership, the browser includes i
 `terminal_replay` is an active-session operation: it never stitches an older
 durable transcript into a new interactive terminal. Memory-only absolute
 cursors remain continuous across replacement sessions while the same daemon
-process owns the actor. A daemon restart or Python/Rust engine switch does not
-transfer that live PTY, its input mode, or its hot output ring. The actor is
+process owns the actor. A daemon restart does not transfer that live PTY, its
+input mode, or its hot output ring. The actor is
 started again; provider-level session resume, where supported, is a separate
 runtime feature.
 

@@ -322,46 +322,25 @@ Notes:
   downloads are intentionally unavailable; generate/list still work and the
   capability matrix reports the boundary.
 
-## Implementation Selection
+## Product Implementation
 
-### `cccc python [command ...]` / `cccc rust [command ...]`
+### Rust-only 0.4.36
 
-Select the product implementation persistently, then optionally execute a
-command with that implementation. Python is the stable and recommended default;
-Rust is an experimental opt-in and bounded evaluation surface for measured
-native benefits; complete feature and integration parity is not promised.
+`cccc` directly runs the native product executable. Product-engine selectors
+are retired: `cccc python` and `cccc rust` are no longer commands, and an old
+`CCCC_HOME/implementation.json` file is ignored rather than migrated or used as
+a runtime choice. Use ordinary commands directly:
 
 ```bash
-cccc status             # Show selected, running, and available implementations
-cccc rust               # Select experimental Rust and launch daemon + Web
-cccc rust doctor        # Select experimental Rust and run doctor
-cccc python             # Select stable Python and launch daemon + Web
-cccc python daemon start
+cccc                 # launch daemon + Web
+cccc status          # show product, daemon, groups, actors, and agent runtimes
+cccc doctor          # inspect the native installation and environment
+cccc daemon start    # explicit daemon lifecycle
 ```
 
-The selector must be the first argument. It is intentionally not a one-shot
-override: agent runtimes and later terminal invocations all follow the same
-selection in `CCCC_HOME`. Switching validates the target first and then stops
-the active Web/daemon pair. If Rust is absent or has a different product version,
-the command fails without changing the selection or falling back to Python.
-If the selection file is corrupt, ordinary commands fail visibly; an explicit
-`cccc python` selector replaces it and restores the safe default.
-
-Python is the stable initial default only while no implementation choice has
-been stored. After `cccc rust` or `cccc python`, a bare `cccc` follows that
-persisted choice; the Web startup banner prints the implementation that actually
-started. Use `cccc python` to return to the stable implementation at any time.
-
-`status`, `version`, and `update` are stable launcher commands. `status` shows
-the selected implementation, the implementation reported by a live daemon, and
-whether the bundled Rust payload is usable. `version` is the shared product
-version. `update` follows the installer that owns the public executable: the
-website installer for an experimental standalone Rust preview, or pip for the
-recommended complete `cccc-pair` distribution.
-
-The legacy `ccccd start|stop|status|run` command remains as a compatibility
-alias, but now passes through the same implementation launcher. New automation
-should prefer `cccc daemon ...`.
+The former `ccccd` executable is also retired. Scripts should use
+`cccc daemon start|stop|status|run`. Compatible daemon state filenames such as
+`ccccd.addr.json` remain unchanged so a 0.4.35 home can be adopted safely.
 
 ## Setup Commands
 
@@ -401,14 +380,13 @@ cccc update --channel rc           # Force the TestPyPI RC channel
 
 Notes:
 - The default channel follows the detected install metadata when possible, then falls back to `stable`.
-- Experimental standalone Rust installations reuse the GitHub Pages installer,
-  preserve their current install directory, and contain no Python fallback or
-  implementation switching.
+- Website-installer installations reuse the GitHub Pages installer and preserve
+  their current install directory.
 - Editable and local-path installs are reported but not updated automatically.
-- The recommended platform wheel updates the public launcher, stable Python
-  implementation, and experimental private Rust payload together.
-- A pip update stops the older Web/daemon pair; the next command starts the
-  selected implementation from the new product version. A standalone update
+- A pip update replaces the same native executable distributed by the website
+  installer; it does not install a Python runtime or fallback.
+- A pip update stops the older Web/daemon pair; the next command starts the new
+  product version. A standalone update
   restarts the daemon when it was running, while the old combined Web process
   remains stopped; the next bare `cccc` starts the updated Web process.
 - On Windows, standalone self-update continues in a separate PowerShell process

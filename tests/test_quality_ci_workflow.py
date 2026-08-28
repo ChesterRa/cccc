@@ -50,14 +50,13 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
     assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0"
 
 
-def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
+def test_pr_jobs_keep_full_quality_web_transitional_python_and_package_boundaries() -> None:
     jobs = _workflow()["jobs"]
 
     assert {
         "quality",
         "web",
         "python-tests",
-        "python-compat",
         "package",
         "windows-smoke",
         "interop",
@@ -68,7 +67,7 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     assert "windows-installer" not in jobs
     assert set(jobs["ci-required"]["needs"]) == set(jobs) - {"ci-required"}
     assert jobs["ci-required"]["if"] == "always()"
-    assert set(jobs["package"]["needs"]) == {"quality", "python-tests", "python-compat", "interop"}
+    assert set(jobs["package"]["needs"]) == {"quality", "python-tests", "interop"}
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
@@ -78,7 +77,6 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     for name in (
         "quality",
         "python-tests",
-        "python-compat",
         "package",
         "windows-smoke",
         "interop",
@@ -103,7 +101,7 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     assert "npm -C web run lint" not in runs
 
 
-def test_windows_smoke_keeps_product_pty_and_process_tree_checks_without_web_migration_setup() -> None:
+def test_windows_smoke_keeps_transitional_pty_and_native_process_tree_checks() -> None:
     windows = _workflow()["jobs"]["windows-smoke"]
     runs = _runs(windows)
     uses = {step.get("uses", "") for step in windows["steps"]}
@@ -111,8 +109,8 @@ def test_windows_smoke_keeps_product_pty_and_process_tree_checks_without_web_mig
     assert windows["needs"] == "web"
     assert "tests/test_socket_special_ops.py" in runs
     assert "tests/test_windows_pty_backend.py" in runs
-    assert "tests/test_installation_diagnostics.py" in runs
-    assert "tests/test_system_cmds_doctor.py" in runs
+    assert "tests/test_installation_diagnostics.py" not in runs
+    assert "tests/test_system_cmds_doctor.py" not in runs
     assert "cargo build" not in runs
     assert "install_windows.ps1" not in runs
     assert any(item.startswith("actions/download-artifact") for item in uses)
@@ -233,7 +231,7 @@ def test_pr_python_matrix_uses_two_stable_file_shards_without_xdist() -> None:
     job = _workflow()["jobs"]["python-tests"]
     runs = _runs(job)
 
-    assert job["needs"] == "web"
+    assert "needs" not in job
     assert job["strategy"]["matrix"]["shard"] == ["0", "1"]
     assert "scripts/quality/pytest_shards.py" in runs
     assert "--total 2" in runs
@@ -243,29 +241,17 @@ def test_pr_python_matrix_uses_two_stable_file_shards_without_xdist() -> None:
     assert " -n " not in runs
 
 
-def test_ci_and_nightly_split_supported_python_compatibility() -> None:
+def test_ci_keeps_python_only_as_transitional_source_test_tooling() -> None:
     jobs = _workflow()["jobs"]
 
     for name in ("quality", "python-tests", "package", "windows-smoke"):
         setup = next(step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/setup-python"))
         assert setup["with"]["python-version"] == "3.14"
 
-    compat = jobs["python-compat"]
-    compat_setup = next(
-        step for step in compat["steps"] if step.get("uses", "").startswith("actions/setup-python")
-    )
-    assert "strategy" not in compat
-    assert compat_setup["with"]["python-version"] == "3.11"
-    compat_runs = _runs(compat)
-    assert "python -W error::SyntaxWarning -m compileall -q src/cccc" in compat_runs
-    assert "cccc version" in compat_runs
-    assert '"method": "initialize"' in compat_runs
-
-    nightly_compat = _nightly_workflow()["jobs"]["python-compat"]
-    assert nightly_compat["strategy"]["matrix"]["python-version"] == ["3.12", "3.13"]
-    nightly_runs = _runs(nightly_compat)
-    assert "python -W error::SyntaxWarning -m compileall -q src/cccc" in nightly_runs
-    assert '"method": "initialize"' in nightly_runs
+    assert "python-compat" not in jobs
+    assert "python-compat" not in _nightly_workflow()["jobs"]
+    assert "python-compat" not in jobs["package"]["needs"]
+    assert "python-compat" not in jobs["ci-required"]["needs"]
 
 
 def test_package_job_exercises_only_the_rust_only_release_shape() -> None:
@@ -338,7 +324,6 @@ def test_nightly_workflow_owns_slow_native_verification() -> None:
     }
     assert {
         "nightly-serial",
-        "python-compat",
         "web-bundle",
         "rust-dist",
         "windows-installer",
@@ -605,7 +590,7 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
         "scripts/resolve_docs_installer_version.mjs",
     } <= paths
     assert docs_workflow["on"]["workflow_run"] == {
-        "workflows": ["Experimental standalone Rust preview"],
+        "workflows": ["Release CCCC"],
         "types": ["completed"],
     }
     assert "workflow_run.conclusion == 'success'" in docs_workflow["jobs"]["build"]["if"]
@@ -641,6 +626,23 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     assert powershell_installer.index(tls_bootstrap) < powershell_installer.index("Invoke-WebRequest")
     assert "@CCCC_" not in shell_installer
     assert "@CCCC_" not in powershell_installer
+
+
+def test_source_helpers_use_one_native_product_path() -> None:
+    start = (ROOT / "start.ps1").read_text(encoding="utf-8-sig")
+    package_unix = (ROOT / "scripts/build_package.sh").read_text(encoding="utf-8")
+    package_windows = (ROOT / "scripts/build_package.ps1").read_text(encoding="utf-8-sig")
+
+    assert "cargo build --locked -p cccc --bin cccc" in start
+    assert "uv pip" not in start
+    assert "cccc.daemon_main" not in start
+    for script in (package_unix, package_windows):
+        assert "build_standalone_archive.py" in script
+        assert "--features standalone" in script
+        assert "python -m build" not in script
+    assert not (ROOT / "start_rust.ps1").exists()
+    assert not (ROOT / "scripts/build_package_rust.sh").exists()
+    assert not (ROOT / "scripts/build_package_rust.ps1").exists()
 
 
 def test_standalone_installers_do_not_probe_markerless_version_for_ownership() -> None:

@@ -29,7 +29,7 @@ mod context_projection;
 mod deepseek_runtime;
 mod diagnostics;
 mod group_bridge;
-pub(crate) use group_bridge::schedule_pending_route_retry;
+pub(crate) use group_bridge::{schedule_due_retries, schedule_pending_route_retry};
 mod group_copy;
 mod group_create_rollback;
 mod group_creation;

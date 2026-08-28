@@ -14,7 +14,6 @@ Run multiple coding agents as a **persistent, coordinated team** across runtimes
 One install command. No Rust toolchain or infrastructure required.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Python](https://img.shields.io/pypi/pyversions/cccc-pair?color=232425)](https://pypi.org/project/cccc-pair/)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
@@ -66,7 +65,13 @@ CCCC installs with one command and needs no database, message broker, or Docker.
 ### Install
 
 ```bash
-# Stable product distribution (recommended; Python 3.11+)
+# macOS / Linux (recommended)
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows CMD or PowerShell (recommended)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+
+# pip-compatible native platform wheel
 python -m pip install -U cccc-pair
 
 # RC channel (TestPyPI)
@@ -76,15 +81,11 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> The PyPI package is the stable, recommended CCCC distribution, with Python as
-> its stable default implementation. On Linux x86-64, Intel/Apple Silicon macOS,
-> and Windows x86-64, its platform wheel also includes a private, version-matched
-> **experimental Rust implementation** for opt-in performance evaluation with
-> `cccc rust`. Complete feature and integration parity is not promised; Rust is
-> retained only as a bounded evaluation surface for measured native benefits.
-> Use `cccc python` for reliability-critical workflows. An optional
-> [experimental standalone Rust preview](#experimental-standalone-rust-preview)
-> is available for Rust-only deployment testing.
+> CCCC 0.4.36 has one product implementation: Rust. The website installer is
+> recommended. The pip command installs the same native executable in a
+> platform wheel for package-manager compatibility; it does not install a
+> Python daemon, launcher, or fallback. Supported targets are Linux x86-64
+> (glibc 2.28+), Intel/Apple Silicon macOS 11+, and Windows x86-64.
 
 ### Upgrade
 
@@ -93,9 +94,9 @@ cccc update
 ```
 
 Use `cccc update --check` to inspect the detected installation and update source.
-The recommended pip install updates the complete `cccc-pair` product from its
-detected PyPI channel. Experimental standalone installs update through the GitHub
-Pages installer. Both paths stop the active Web/daemon pair before replacing files.
+Website-installer deployments update through the same installer; pip-owned
+deployments update through pip. Both channels replace the same native product
+and stop the active Web/daemon pair before replacing files.
 
 ### Launch
 
@@ -105,26 +106,15 @@ cccc
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
 
-In the recommended pip distribution, Python is the stable initial default until
-an implementation choice is saved. Rust is an experimental, explicit opt-in for
-performance evaluation. A bare `cccc` follows the persisted choice. Switch
-persistently, or switch and run a command in one step:
-
 ```bash
-cccc status            # selected, running, and available implementations
-cccc rust              # select experimental Rust, then launch CCCC
-cccc python            # select stable Python, then launch CCCC
-cccc rust doctor        # select experimental Rust, then run doctor
+cccc status            # product, daemon, groups, actors, and agent runtimes
+cccc doctor            # installation and environment diagnostics
+cccc daemon status     # explicit daemon lifecycle status
 ```
 
-Switching is an explicit lifecycle operation: CCCC validates the target payload,
-stops the active Web/daemon pair, and never silently falls back to the other
-implementation. Agent runtime MCP configurations keep pointing at the stable
-public `cccc` launcher, so they follow later switches automatically.
-Use `cccc python` to return to the stable implementation at any time.
-
-The experimental standalone distribution contains Rust only, so `cccc python`
-and implementation switching are intentionally unavailable there.
+`cccc python`, `cccc rust`, and the former `ccccd` alias are retired. Existing
+automation should use `cccc daemon ...`; compatible daemon state filenames are
+retained so 0.4.35 homes can be adopted without a Python runtime.
 
 ### Create a multi-agent group
 
@@ -499,20 +489,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Installation Options
 
-### pip (stable, recommended)
-
-```bash
-python -m pip install -U cccc-pair
-```
-
-This is the complete supported product distribution, with Python as its stable
-and recommended implementation. On Linux x86-64, Intel/Apple Silicon macOS, and
-Windows x86-64, pip selects a platform wheel that also contains a private,
-version-matched experimental Rust executable for opt-in performance evaluation.
-Other platforms receive the universal Python wheel; `cccc status` reports Rust
-as unavailable instead of pretending to switch.
-
-### Experimental standalone Rust preview
+### Website installer (recommended)
 
 ```bash
 # macOS / Linux
@@ -522,12 +499,9 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-Use this optional channel only when evaluating the experimental Rust
-implementation in a Rust-only deployment without Python. It downloads a
-checksum-verified binary from GitHub Releases and updates through the same
-installer, but it has no Python fallback or implementation switching and is not
-the recommended replacement for the stable pip/Python path. The current preview
-targets glibc 2.28+ Linux x86-64 without a system OpenSSL dependency, macOS 11+
+This installs the checksum-verified native product from GitHub Releases and
+updates through the same installer. It targets glibc 2.28+ Linux x86-64 without
+a system OpenSSL dependency, macOS 11+
 on Intel or Apple Silicon, and Windows x86-64. The
 installer refuses to overwrite an existing `cccc` command that it does not own;
 uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
@@ -537,8 +511,18 @@ any remaining duplicates. Open a new terminal and run `cccc doctor`; its
 `Installation` section reports the invoked executable, the command selected by
 PATH, and every conflicting command.
 
-The hosted native installer selects the experimental `v0.4.35` standalone
-release. The complete pip distribution above remains the recommended path.
+The installer selects the current published stable release unless an explicit
+version or RC channel is requested.
+
+### pip compatibility
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+Pip installs a platform-specific wheel containing the same `cccc` executable.
+There is no sdist, universal wheel, importable CCCC Python package, or fallback
+implementation. Unsupported platforms fail explicitly.
 
 ### pip (RC from TestPyPI)
 
@@ -557,22 +541,17 @@ end-user distribution.
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-pip install -e .
-```
-
-### uv (fast, recommended on Windows)
-
-```bash
-uv venv -p 3.14 .venv
-uv pip install -e .
-uv run cccc --help
+npm ci --prefix web
+npm -C web run build
+cargo build --release --locked --features standalone -p cccc --bin cccc
+./target/release/cccc --help
 ```
 
 ### Native Windows Notes
 
-- For local development on Windows, prefer the repo-root `start.ps1`.
-- If `cccc doctor` reports `Windows PTY: NOT READY`, run `python -m pip install pywinpty` or reinstall with `uv pip install -e .`.
-- Use `scripts/build_web.ps1` for the bundled UI and `scripts/build_package.ps1` for a full package build.
+- Build the Web bundle before compiling the native executable.
+- Use the `x86_64-pc-windows-msvc` Rust toolchain and run `cccc doctor` after building.
+- `scripts/build_web.ps1` is available as a convenience wrapper for the Web build.
 
 ### Docker
 

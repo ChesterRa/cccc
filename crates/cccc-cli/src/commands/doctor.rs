@@ -65,7 +65,6 @@ fn report(
         runtimes.retain(|runtime| runtime.name != "custom");
     }
     json!({
-        "implementation":"rust",
         "version":product_version,
         "home":home.root(),
         "installation":installation::report(),

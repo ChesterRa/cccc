@@ -28,10 +28,10 @@ pub struct WebArgs {
     pub mode: Option<WebModeArg>,
     #[arg(long, conflicts_with = "mode")]
     pub exhibit: bool,
-    /// Accepted for Python CLI compatibility; the standalone server is not a source reloader.
+    /// Accepted for legacy CLI compatibility; the native server does not use a source reloader.
     #[arg(long)]
     pub reload: bool,
-    /// Accepted for Python CLI compatibility.
+    /// Accepted for legacy CLI compatibility.
     #[arg(long, default_value = "info")]
     pub log_level: String,
 }
@@ -270,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_python_compatible_prompt_tail_and_runtime_flags() {
+    fn parses_legacy_prompt_tail_and_runtime_flags() {
         let cli = Cli::try_parse_from(["cccc", "prompt", "--actor-id", "peer"]).expect("prompt");
         assert!(matches!(
             cli.command,
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_python_compatible_space_subcommands() {
+    fn parses_legacy_space_subcommands() {
         let cli = Cli::try_parse_from([
             "cccc", "space", "jobs", "list", "--lane", "work", "--state", "failed", "--limit", "25",
         ])

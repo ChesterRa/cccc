@@ -1,16 +1,18 @@
-# Stage 1: Build WebUI
 FROM node:24-bookworm-slim AS web-builder
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
-WORKDIR /web
+WORKDIR /src/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: Final image
-FROM python:3.14-slim-bookworm
+FROM rust:1.88-bookworm AS rust-builder
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+COPY --from=web-builder /src/web/dist ./crates/cccc-web/assets/web-dist
+RUN cargo build --release --locked -p cccc --bin cccc
+
+FROM debian:bookworm-slim
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
@@ -18,11 +20,11 @@ ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
 ENV CCCC_BROWSER_TOOLS="xvfb x11vnc fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-scalable fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf"
 ENV CCCC_BROWSER_DEPS="libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2"
 
-# Install OS dependencies plus minimal Chromium shared libraries for projected browser/runtime auth.
+# Install the native browser and display helpers used by projected surfaces.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      curl ca-certificates git bash libstdc++6 \
+      curl ca-certificates git bash chromium libstdc++6 \
       ${CCCC_BROWSER_TOOLS} \
       ${CCCC_BROWSER_DEPS}; \
     rm -rf /var/lib/apt/lists/*
@@ -46,19 +48,10 @@ RUN npm install -g \
     @openai/codex \
     @factory/cli
 
-# Install CCCC
-WORKDIR /app
-COPY pyproject.toml MANIFEST.in LICENSE README.md README.zh-CN.md README.ja.md ./
-COPY src/ ./src/
-
-# Copy built WebUI (vite outputs to ../src/cccc/ports/web/dist)
-COPY --from=web-builder /src/cccc/ports/web/dist ./src/cccc/ports/web/dist
-
-RUN pip install --no-cache-dir .
+COPY --from=rust-builder /src/target/release/cccc /usr/local/bin/cccc
 
 # Workspace for project files (mount volumes here)
 WORKDIR /workspace
-RUN rm -rf /app
 
 # Clear build-time proxy
 ENV http_proxy="" https_proxy=""
@@ -75,7 +68,7 @@ ENV PATH="/home/cccc/.local/bin:${PATH}"
 # Set up Claude CLI for non-root user
 RUN mkdir -p /home/cccc/.local/bin \
     && ln -s /usr/local/bin/claude /home/cccc/.local/bin/claude \
-     && echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > /home/cccc/.claude.json
+    && echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > /home/cccc/.claude.json
 
 # Configuration
 ENV CCCC_HOME=/data
@@ -89,6 +82,9 @@ ENV CCCC_DAEMON_PORT=9765
 # Web server - bind all interfaces inside container; host publishing should stay loopback by default
 ENV CCCC_WEB_HOST=0.0.0.0
 ENV CCCC_WEB_PORT=8848
+# The container interface is not loopback. Protected APIs still require the
+# first administrator bootstrap; publish the host port on loopback until then.
+ENV CCCC_WEB_ALLOW_UNAUTHENTICATED=1
 
 EXPOSE 8848
 VOLUME ["/data", "/workspace"]

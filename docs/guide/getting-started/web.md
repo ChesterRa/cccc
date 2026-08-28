@@ -162,8 +162,8 @@ one compensated operation. Each committed file is read back against the exact va
 written before the next step starts. A failure restores the previous visible state or
 returns an explicit `rollback_failed` error. This is committed-state detection, not a
 claim of stronger filesystem durability than the host platform provides.
-The same single-request contract is used by both the Python and Rust Web backends;
-omitting `path` keeps the legacy group-only creation behavior.
+The same single-request contract is used by the native Web and CLI surfaces;
+omitting `path` keeps the group-only creation behavior.
 For a request that includes `path`, CCCC publishes `group.created` only after the
 group, scope, ledger event, and active-group selection have all committed. A failed
 transaction removes its internal group without publishing a matching create or

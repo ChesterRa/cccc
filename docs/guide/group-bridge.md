@@ -71,11 +71,15 @@ Group Bridge pairing is managed in the Web UI.
 
 After the first bridge setup, restart already-running actor runtimes once if you want them to see newly available remote read/full MCP tools.
 
-### Python/Rust Upgrade Compatibility
+### 0.4.35 Upgrade Compatibility
 
-The Rust service reads the legacy `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so switching branches does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
+Native CCCC reads the 0.4.35 `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so rollback does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
 
-Pairing and message delivery also support mixed Python/Rust peers. Rust accepts both pairing response shapes used by the two implementations and shares Python's Ed25519 signing identity file. The Rust daemon scans active session trusts, opens the same signed WebSocket used by Python, keeps it alive with heartbeats, and reconnects with bounded exponential backoff. Message delivery prefers this live route and falls back to authenticated HTTP and then the authorized remote MCP route.
+Pairing and message delivery retain the 0.4.35 wire shapes so an upgrade does not
+invalidate existing trusts. The daemon reuses the established Ed25519 identity,
+scans active session trusts, maintains signed WebSockets with heartbeats and
+bounded exponential backoff, and prefers the live route before authenticated
+HTTP and authorized remote MCP fallback.
 
 An active pairing is authorization, not proof of reachability. A healthy Rust trust reports `session_connected=true`; `session_connected_at`, `session_last_error`, and `session_last_error_at` provide connection diagnostics. The remote endpoint must still be a non-empty HTTP(S) address reachable from the dialing peer.
 
@@ -95,7 +99,7 @@ For agent-driven messaging, use the normal CCCC message tools. Discover remote t
 cccc_remote_access(action="list")
 ```
 
-Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message. Session-backed Rust deliveries resume when the signed route reconnects. Python Web also sweeps due receipts in the background; a direct HTTP/MCP retry on Rust is caller-driven and must reuse the same key.
+Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message. The daemon owns bounded retry of accepted outbox items, and a signed-session reconnect can accelerate recovery.
 
 Attachments can be sent through Group Bridge when the target is a trusted remote group. Use attachments for evidence, logs, screenshots, or small artifacts that should be visible in the remote conversation.
 

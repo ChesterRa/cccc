@@ -50,10 +50,15 @@ Once authorized, these commands work across platforms:
 ::: tip Implicit Send
 On platforms that support group chats, @mentioning the bot, or sending a direct message with plain text, is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.
 
-A recognized CCCC slash command is itself an explicit bot address and may be sent without an @mention on group providers that deliver it. Ordinary group text and attachments still require an explicit @mention. This rule is shared by the Rust and Python workers, including Feishu; it avoids a provider-specific command policy.
+A recognized CCCC slash command is itself an explicit bot address and may be sent without an @mention on group providers that deliver it. Ordinary group text and attachments still require an explicit @mention. The native worker applies this rule consistently, including for Feishu, to avoid a provider-specific command policy.
 :::
 
-The Python compatibility worker also retains the legacy `/context`, `/launch`, and `/quit` commands. They are not part of the portable IM command contract; use Web or the CCCC CLI for lifecycle control when a workflow must survive an engine switch. The low-level `skip_pending_on_start=false` backlog-replay policy is likewise outside the portable contract and is retired by the Rust implementation. A legacy value is normalized away and the native worker starts at the current ledger boundary, so an old setting cannot prevent IM startup after upgrading.
+The legacy `/context`, `/launch`, and `/quit` commands are retired; use Web or
+the CCCC CLI for lifecycle control. The low-level
+`skip_pending_on_start=false` backlog-replay policy is also outside the product
+contract. A legacy value is normalized away and the native worker starts at the
+current ledger boundary, so an old setting cannot prevent IM startup after
+upgrading.
 
 Weixin currently supports direct bot chats only. Confirming the QR login immediately authorizes the scanning account; it can send plain text as soon as the bridge is running, with no `/subscribe`, binding key, or manual approval step. Worker startup and login-status recovery repair this authorization automatically. The Rust SDK callback does not expose a stable group-chat ID, so Weixin group messages are intentionally outside the supported bridge contract.
 
@@ -63,10 +68,20 @@ On platforms using explicit chat authorization, plain text is not forwarded befo
 
 Telegram topics, Slack threads, Feishu reply threads, and Discord thread channels retain their native target when a subscription is approved. `system.notify` is fail-closed: it never leaves the group unless its producer explicitly sets `im_visibility: "public"`, and actor-targeted notifications remain internal regardless of that flag.
 
-Progressive output is an optimization, not the durability boundary. The Rust and Python workers follow the same fallback contract: if a provider cannot start or finalize an editable message, CCCC sends the completed response normally. If the completed response exceeds the provider's single-message limit, the final fallback is split on Unicode-safe boundaries and every chunk is delivered; a truncated progressive preview never suppresses that fallback. Python batches rapid intermediate snapshots to stay within provider edit limits while always sending the final frame.
+Progressive output is an optimization, not the durability boundary. If a
+provider cannot start or finalize an editable message, CCCC sends the completed
+response normally. If the completed response exceeds the provider's
+single-message limit, the final fallback is split on Unicode-safe boundaries
+and every chunk is delivered; a truncated progressive preview never suppresses
+that fallback. Intermediate snapshots are batched to stay within provider edit
+limits while the final frame is always sent.
 
 ::: warning One active worker per bot credential
-Do not run legacy Python and Rust IM workers, or multiple CCCC groups, with the same bot credential at the same time. Providers may distribute callbacks between those workers, so a command can be answered by one group while the next plain-text message reaches another. If the reply names the wrong group, stop the stale worker or correct the credential assignment before approving access.
+Do not leave a 0.4.35 worker running during an upgrade, or assign the same bot
+credential to multiple CCCC groups. Providers may distribute callbacks between
+those workers, so a command can be answered by one group while the next
+plain-text message reaches another. If the reply names the wrong group, stop the
+stale worker or correct the credential assignment before approving access.
 :::
 
 Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific actor target for routine coordination.

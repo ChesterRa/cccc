@@ -39,9 +39,9 @@ CCCC offers two ways to get started:
 
 ## Prerequisites
 
-Both approaches require:
+The website installer does not require Python or a Rust toolchain. You need a
+supported 64-bit platform and at least one AI agent CLI:
 
-- **Python 3.11+** installed
 - At least one AI agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)
@@ -97,27 +97,7 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
 :::
 
-### From PyPI (recommended)
-
-```bash
-python -m pip install -U cccc-pair
-```
-
-PyPI is the stable CCCC product distribution, with Python as its stable and
-recommended implementation. Supported platform wheels also contain a private,
-version-matched **experimental Rust implementation** for opt-in performance
-evaluation with `cccc rust`. Complete feature and integration parity is not
-promised; Rust is a bounded evaluation surface for measured native benefits.
-Use `cccc python` for reliability-critical workflows. Other platforms receive
-the universal Python wheel.
-
-### Experimental standalone Rust preview
-
-::: warning Rust-only preview
-Use this optional channel only to evaluate deployment without Python. It has no
-Python fallback or implementation switching and is not yet the recommended
-replacement for the complete pip product.
-:::
+### Website installer (recommended)
 
 macOS or Linux:
 
@@ -131,27 +111,18 @@ Windows CMD or PowerShell:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-The installer downloads a checksum-verified GitHub Release binary. It does not
-require a Rust or Python toolchain and refuses to overwrite an existing `cccc`
-command it does not own. Uninstall that command deliberately or choose another
-`CCCC_INSTALL_DIR` first. The hosted installer selects the experimental
-`v0.4.35` standalone release. You can select any fully published version
-explicitly with `CCCC_VERSION`:
+The installer downloads a checksum-verified native executable and refuses to
+overwrite a command it does not own.
 
-Commands in other directories are never removed. The default installer puts its
-directory first in the user PATH and reports every remaining `cccc` command. Open
-a new terminal after installation and run `cccc doctor` to verify that PATH
-resolves to the executable you just installed.
+### From PyPI (package-manager compatibility)
 
 ```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.35 sh
+python -m pip install -U cccc-pair
 ```
 
-```powershell
-$env:CCCC_VERSION = "0.4.35"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
-Remove-Item Env:CCCC_VERSION
-```
+The native platform wheel installs the same Rust `cccc` executable through pip.
+It contains no Python daemon, product package, launcher, or fallback. Unsupported
+platforms fail explicitly rather than receiving a portable Python wheel.
 
 ### From TestPyPI (for explicit RC testing)
 
@@ -167,7 +138,10 @@ python -m pip install -U --pre \
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-pip install -e .
+npm ci --prefix web
+npm -C web run build
+cargo build --release --locked --features standalone -p cccc --bin cccc
+./target/release/cccc --help
 ```
 
 ## Verify Installation
@@ -177,13 +151,10 @@ cccc status
 cccc doctor
 ```
 
-`status` shows the selected, running, and available product implementations.
-Python is the stable initial default while no implementation choice has been
-saved. On a supported platform wheel, use `cccc rust` to opt into the bundled
-experimental Rust implementation or `cccc python` to return to stable Python;
-later bare invocations follow that persisted choice. `doctor` checks Python,
-agent runtimes, system configuration, the invoked CCCC executable, PATH
-resolution, and duplicate `cccc` commands.
+`status` shows the native product, daemon, groups, actors, and detected agent
+runtimes. `doctor` checks the installation, agent runtimes, system
+configuration, invoked CCCC executable, PATH resolution, and duplicate `cccc`
+commands.
 
 ## Next Steps
 

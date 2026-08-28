@@ -341,16 +341,16 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
         }
         DaemonAction::Status => {
             if ping(client).await {
-                println!("ccccd: running");
+                println!("CCCC daemon: running");
                 Ok(())
             } else {
-                bail!("ccccd: not running")
+                bail!("CCCC daemon: not running")
             }
         }
         DaemonAction::Start => {
             replace_incompatible_daemon(&home, client).await?;
             if ping(client).await {
-                println!("ccccd: already running");
+                println!("CCCC daemon: already running");
                 return Ok(());
             }
             let executable = std::env::current_exe()?;
@@ -358,8 +358,8 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 .start(&home)
                 .await?
             {
-                StartOutcome::AlreadyRunning => println!("ccccd: already running"),
-                StartOutcome::Started(pid) => println!("ccccd: started pid={pid}"),
+                StartOutcome::AlreadyRunning => println!("CCCC daemon: already running"),
+                StartOutcome::Started(pid) => println!("CCCC daemon: started pid={pid}"),
             }
             Ok(())
         }
@@ -550,7 +550,7 @@ async fn replace_incompatible_daemon(home: &HomeLayout, client: &DaemonClient) -
     if is_compatible_daemon(&response) {
         return Ok(());
     }
-    eprintln!("Switching CCCC daemon from legacy or incompatible implementation to Rust...");
+    eprintln!("Replacing a legacy or incompatible CCCC daemon...");
     let shutdown = stop_daemon(client, home).await?;
     if !shutdown.ok {
         bail!("failed to stop incompatible CCCC daemon");

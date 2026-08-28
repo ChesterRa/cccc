@@ -25,6 +25,11 @@ use state::{
     bridge_state, dispatch_message, find_delivery, items, nonempty, route, store_delivery,
 };
 
+type RetryKey = (String, String, String, String);
+
+static ACTIVE_RETRIES: OnceLock<Mutex<HashSet<RetryKey>>> = OnceLock::new();
+const SENDING_STALE_SECONDS: i64 = 120;
+
 pub(super) fn route_ready(home: &HomeLayout, trust: &Value) -> bool {
     session_runtime::route_ready(home, trust)
 }
@@ -137,15 +142,63 @@ pub(crate) fn schedule_pending_route_retry(
     remote_group_id: String,
     remote_peer_id: String,
 ) {
-    type RetryKey = (String, String, String, String);
-    static ACTIVE: OnceLock<Mutex<HashSet<RetryKey>>> = OnceLock::new();
+    schedule_route_retry(home, group_id, remote_group_id, remote_peer_id, false);
+}
+
+pub(crate) fn schedule_due_retries(home: HomeLayout) {
+    let Ok(state) = bridge_state(&home) else {
+        return;
+    };
+    let now = chrono::Utc::now();
+    let due_registrations = items(&state, "deliveries")
+        .iter()
+        .filter(|receipt| receipt_retry_due(receipt, now, true))
+        .filter_map(|receipt| nonempty(receipt, &["registration_id"]))
+        .collect::<HashSet<_>>();
+    if due_registrations.is_empty() {
+        return;
+    }
+    let routes = ["outbounds", "trusts", "registrations"]
+        .into_iter()
+        .flat_map(|section| items(&state, section))
+        .filter(|trust| trust["status"] == "active")
+        .filter(|trust| {
+            nonempty(trust, &["registration_id", "trust_id"])
+                .is_some_and(|id| due_registrations.contains(&id))
+        })
+        .filter_map(|trust| {
+            Some((
+                nonempty(trust, &["group_id"])?,
+                nonempty(trust, &["remote_group_id"])?,
+                nonempty(trust, &["remote_peer_id"])?,
+            ))
+        })
+        .collect::<HashSet<_>>();
+    for (group_id, remote_group_id, remote_peer_id) in routes {
+        schedule_route_retry(
+            home.clone(),
+            group_id,
+            remote_group_id,
+            remote_peer_id,
+            true,
+        );
+    }
+}
+
+fn schedule_route_retry(
+    home: HomeLayout,
+    group_id: String,
+    remote_group_id: String,
+    remote_peer_id: String,
+    due_only: bool,
+) {
     let key = (
         home.root().to_string_lossy().into_owned(),
         group_id.clone(),
         remote_group_id.clone(),
         remote_peer_id.clone(),
     );
-    let active = ACTIVE.get_or_init(|| Mutex::new(HashSet::new()));
+    let active = ACTIVE_RETRIES.get_or_init(|| Mutex::new(HashSet::new()));
     if !active
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -154,8 +207,14 @@ pub(crate) fn schedule_pending_route_retry(
         return;
     }
     std::thread::spawn(move || {
-        retry_pending_for_route(&home, &group_id, &remote_group_id, &remote_peer_id);
-        ACTIVE
+        retry_pending_for_route(
+            &home,
+            &group_id,
+            &remote_group_id,
+            &remote_peer_id,
+            due_only,
+        );
+        ACTIVE_RETRIES
             .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -168,12 +227,15 @@ fn retry_pending_for_route(
     group_id: &str,
     remote_group_id: &str,
     remote_peer_id: &str,
+    due_only: bool,
 ) {
     let Ok(state) = bridge_state(home) else {
         return;
     };
-    let route_ids = items(&state, "trusts")
-        .iter()
+    let now = chrono::Utc::now();
+    let route_ids = ["outbounds", "trusts", "registrations"]
+        .into_iter()
+        .flat_map(|section| items(&state, section))
         .filter(|trust| {
             trust["status"] == "active"
                 && trust["group_id"] == group_id
@@ -188,12 +250,10 @@ fn retry_pending_for_route(
     let mut pending = items(&state, "deliveries")
         .iter()
         .filter(|receipt| {
-            receipt["status"] == "retrying"
-                && receipt["registration_id"]
-                    .as_str()
-                    .is_some_and(|id| route_ids.contains(id))
-                && receipt["attempt"].as_u64().unwrap_or(0)
-                    < receipt["max_attempts"].as_u64().unwrap_or(5)
+            receipt["registration_id"]
+                .as_str()
+                .is_some_and(|id| route_ids.contains(id))
+                && receipt_retry_due(receipt, now, due_only)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -237,6 +297,38 @@ fn retry_pending_for_route(
             },
         );
     }
+}
+
+fn receipt_retry_due(receipt: &Value, now: chrono::DateTime<chrono::Utc>, due_only: bool) -> bool {
+    let attempt = receipt["attempt"].as_u64().unwrap_or(0);
+    if attempt >= receipt["max_attempts"].as_u64().unwrap_or(5) {
+        return false;
+    }
+    match receipt["status"].as_str().unwrap_or("") {
+        "queued" | "retrying" if !due_only => true,
+        "queued" | "retrying" => {
+            timestamp(receipt, "next_attempt_at").is_none_or(|next_attempt| next_attempt <= now)
+        }
+        "sending" => timestamp(receipt, "last_attempt_at")
+            .is_none_or(|last_attempt| (now - last_attempt).num_seconds() >= SENDING_STALE_SECONDS),
+        _ => false,
+    }
+}
+
+fn timestamp(receipt: &Value, field: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(receipt[field].as_str()?.trim())
+        .ok()
+        .map(|value| value.with_timezone(&chrono::Utc))
+}
+
+fn next_retry_at(attempt: u64, attempted_at: &str) -> String {
+    const BACKOFF_SECONDS: [i64; 5] = [2, 5, 15, 30, 60];
+    let base = chrono::DateTime::parse_from_rfc3339(attempted_at)
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now());
+    let index = attempt.saturating_sub(1) as usize;
+    let seconds = BACKOFF_SECONDS[index.min(BACKOFF_SECONDS.len() - 1)];
+    (base + chrono::Duration::seconds(seconds)).to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
 pub(super) fn prepare_reply(
@@ -413,6 +505,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     if let Some(source_event_id) = source_event_id.as_ref() {
         body.insert("src_event_id".into(), json!(source_event_id));
     }
+    let attempted_at = utc_now();
     let mut sending_receipt = json!({
         "operation":"remote_send","ok":false,"status":"sending",
         "registration_id":registration_id,
@@ -420,7 +513,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         "src_group_id":group_id,"dst_group_id":remote_group_id,
         "transport":"group_bridge_session","attempt":attempt,"max_attempts":5,
         "payload":body,"source_record_payload":record_payload,
-        "last_attempt_at":utc_now(),"error":null
+        "last_attempt_at":attempted_at,"next_attempt_at":"","error":null
     });
     if let Some(source_event_id) = source_event_id.as_ref() {
         sending_receipt["source_event_id"] = json!(source_event_id);
@@ -481,6 +574,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         Ok(remote) => remote,
         Err(error) => {
             let terminal = attempt >= 5;
+            let failed_at = utc_now();
             let mut receipt = json!({
                 "operation":"remote_send",
                 "ok":false,"status":if terminal{"failed"}else{"retrying"},
@@ -489,7 +583,8 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
                 "dst_group_id":remote_group_id,"transport":"group_bridge_session",
                 "attempt":attempt,"max_attempts":5,"payload":body,
                 "source_record_payload":record_payload,
-                "updated_at":utc_now(),
+                "last_attempt_at":failed_at,"updated_at":failed_at,
+                "next_attempt_at":if terminal { String::new() } else { next_retry_at(attempt, &failed_at) },
                 "error":{"code":error.code,"message":error.message,
                     "retriable":!terminal,"transport":"group_bridge_session"}
             });
@@ -531,6 +626,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         .unwrap_or(Value::Null);
     let mut receipt = sending_receipt;
     receipt["status"] = json!("sent");
+    receipt["next_attempt_at"] = json!("");
     receipt["remote_event_id"] = remote_event_id;
     if let Some(transport) = peer_receipt["transport"]
         .as_str()

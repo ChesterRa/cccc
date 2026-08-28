@@ -128,7 +128,7 @@ im:
 Notes:
 - Confirming a Weixin QR login immediately authorizes the scanning account. The bridge repairs that authorization when restoring stored credentials, so no binding key, manual approval, or `/subscribe` step is required.
 - In direct chats, and on group-capable platforms where the bot is @mentioned, plain text is treated as implicit send to the default recipient policy (default: foreman). Weixin currently supports direct bot chats only.
-- A recognized CCCC slash command counts as an explicit bot address and may be used without @mention in group chats; ordinary group text and files still require @mention. Rust and Python use the same rule, including Feishu.
+- A recognized CCCC slash command counts as an explicit bot address and may be used without @mention in group chats; ordinary group text and files still require @mention. The native worker applies the same rule across providers, including Feishu.
 - Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints.
 - In channels (Slack/Discord), @mention the bot for plain text; a recognized CCCC slash command can address it directly.
 - You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.

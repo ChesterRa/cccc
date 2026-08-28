@@ -7,10 +7,11 @@ DOCKERFILE = ROOT / "docker" / "Dockerfile"
 
 def test_final_image_reuses_web_builder_node_runtime() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
-    final_stage = text.split("# Stage 2: Final image", 1)[1]
+    final_stage = text.split("FROM debian:bookworm-slim", 1)[1]
 
     assert "FROM node:24-bookworm-slim AS web-builder" in text
-    assert "FROM python:3.14-slim-bookworm" in text
+    assert "FROM rust:1.88-bookworm AS rust-builder" in text
+    assert "FROM debian:bookworm-slim" in text
     assert "CCCC_BROWSER_DEPS_DEBIAN13" not in text
     assert "deb.nodesource.com" not in final_stage
     assert "setup_20.x" not in final_stage

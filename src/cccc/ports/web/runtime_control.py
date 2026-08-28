@@ -4,8 +4,6 @@ import http.client
 import json
 import os
 import secrets
-import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -15,12 +13,7 @@ from typing import Any, Dict, Optional
 from ...kernel.access_tokens import list_access_tokens
 from ...paths import ensure_home
 from ...util.fs import atomic_write_json, read_json
-from ...util.process import resolve_background_python_argv, supervised_process_popen_kwargs, terminate_pid
 from ...util.time import utc_now_iso
-
-WEB_RUNTIME_RESTART_EXIT_CODE = 75
-DEFAULT_WEB_READY_TIMEOUT_SECONDS = 10.0
-
 
 def _home_dir(home: Optional[Path] = None) -> Path:
     return Path(home).resolve() if home is not None else ensure_home()
@@ -193,89 +186,6 @@ def local_display_url(host: str, port: int) -> str:
 def web_runtime_log_path(home: Optional[Path] = None) -> Path:
     return _home_dir(home) / "daemon" / "cccc-web.log"
 
-
-def spawn_web_child(
-    *,
-    home: Path,
-    host: str,
-    port: int,
-    mode: str,
-    log_level: str,
-    reload: bool,
-    launch_source: str,
-) -> subprocess.Popen[str]:
-    argv = [
-        sys.executable,
-        "-m",
-        "cccc.ports.web.main",
-        "--serve-child",
-        "--host",
-        str(host),
-        "--port",
-        str(int(port)),
-        "--mode",
-        str(mode or "normal"),
-        "--log-level",
-        str(log_level or "info"),
-    ]
-    if reload:
-        argv.append("--reload")
-
-    env = os.environ.copy()
-    env["CCCC_HOME"] = str(home)
-    env["CCCC_WEB_MODE"] = str(mode or "normal")
-    env["CCCC_WEB_SUPERVISED"] = "1"
-    env["CCCC_WEB_EFFECTIVE_HOST"] = str(host)
-    env["CCCC_WEB_EFFECTIVE_PORT"] = str(int(port))
-    env["CCCC_WEB_EFFECTIVE_MODE"] = str(mode or "normal")
-    env["CCCC_WEB_SUPERVISOR_PID"] = str(os.getpid())
-    env["CCCC_WEB_LAUNCH_SOURCE"] = str(launch_source or "unknown")
-
-    popen_kwargs: Dict[str, Any] = {
-        "env": env,
-        "stdin": subprocess.DEVNULL,
-        "cwd": str(home),
-        **supervised_process_popen_kwargs(),
-    }
-    if os.name == "nt":
-        log_path = web_runtime_log_path(home)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = log_path.open("a", encoding="utf-8")
-        try:
-            return subprocess.Popen(
-                resolve_background_python_argv(argv),
-                stdout=log_file,
-                stderr=log_file,
-                **popen_kwargs,
-            )
-        finally:
-            try:
-                log_file.close()
-            except Exception:
-                pass
-    return subprocess.Popen(
-        resolve_background_python_argv(argv),
-        **popen_kwargs,
-    )
-
-
-def stop_web_child(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -> bool:
-    return terminate_pid(int(getattr(proc, "pid", 0) or 0), timeout_s=timeout_s, include_group=True, force=True)
-
-
-def wait_for_child_exit_interruptibly(
-    proc: subprocess.Popen[str],
-    *,
-    poll_interval_s: float = 0.2,
-) -> int:
-    interval = max(float(poll_interval_s or 0.0), 0.05)
-    while True:
-        ret = proc.poll()
-        if ret is not None:
-            return int(ret or 0)
-        time.sleep(interval)
-
-
 def wait_for_web_ready(
     *,
     host: str,
@@ -305,117 +215,3 @@ def wait_for_web_ready(
             pass
         time.sleep(0.1)
     return False
-
-
-def web_ready_timeout_seconds() -> float:
-    raw = str(os.environ.get("CCCC_WEB_READY_TIMEOUT_SECONDS") or "").strip()
-    if raw:
-        try:
-            value = float(raw)
-            if value > 0:
-                return value
-        except Exception:
-            pass
-    return DEFAULT_WEB_READY_TIMEOUT_SECONDS
-
-
-def start_supervised_web_child(
-    *,
-    home: Path,
-    host: str,
-    port: int,
-    mode: str,
-    reload: bool,
-    log_level: str,
-    launch_source: str,
-) -> tuple[Optional[subprocess.Popen[str]], Optional[str]]:
-    auth_error = web_listener_auth_error(home=home, host=str(host))
-    if auth_error:
-        return None, auth_error
-    try:
-        from .bind_preflight import ensure_tcp_port_bindable
-
-        ensure_tcp_port_bindable(host=str(host), port=int(port))
-    except RuntimeError as e:
-        return None, str(e)
-
-    proc = spawn_web_child(
-        home=home,
-        host=str(host),
-        port=int(port),
-        mode=str(mode or "normal"),
-        log_level=str(log_level or "info"),
-        reload=bool(reload),
-        launch_source=launch_source,
-    )
-    runtime_pid = int(getattr(proc, "pid", 0) or 0)
-    ready_timeout_s = web_ready_timeout_seconds()
-    try:
-        if not wait_for_web_ready(host=str(host), port=int(port), timeout_s=ready_timeout_s):
-            ret = proc.poll()
-            if ret is None:
-                stop_web_child(proc, timeout_s=1.0)
-            clear_web_runtime_state(home=home, pid=runtime_pid if runtime_pid > 0 else None)
-            return None, f"web server failed to become ready on {host}:{int(port)} within {ready_timeout_s:g}s"
-    except BaseException:
-        try:
-            if proc.poll() is None:
-                stop_web_child(proc, timeout_s=1.0)
-        finally:
-            clear_web_runtime_state(home=home, pid=runtime_pid if runtime_pid > 0 else None)
-        raise
-    update_web_runtime_state({"last_apply_error": None}, home=home, pid=int(getattr(proc, "pid", 0) or 0))
-    return proc, None
-
-
-def restart_supervised_web_child_with_fallback(
-    *,
-    home: Path,
-    previous_host: str,
-    previous_port: int,
-    mode: str,
-    reload: bool,
-    log_level: str,
-    launch_source: str,
-    resolve_binding,
-    log,
-) -> tuple[Optional[subprocess.Popen[str]], str, int]:
-    desired_host, desired_port = resolve_binding()
-    desired_proc, desired_error = start_supervised_web_child(
-        home=home,
-        host=desired_host,
-        port=desired_port,
-        mode=mode,
-        reload=reload,
-        log_level=log_level,
-        launch_source=launch_source,
-    )
-    if desired_proc is not None:
-        return desired_proc, desired_host, desired_port
-
-    error_text = str(desired_error or f"failed to apply {desired_host}:{int(desired_port)}").strip()
-    if desired_host == previous_host and int(desired_port) == int(previous_port):
-        log(f"Error: {error_text}")
-        return None, desired_host, desired_port
-
-    log(f"Warning: failed to apply new Web binding: {error_text}")
-    log("Restoring previous Web binding...")
-    fallback_proc, fallback_error = start_supervised_web_child(
-        home=home,
-        host=previous_host,
-        port=previous_port,
-        mode=mode,
-        reload=reload,
-        log_level=log_level,
-        launch_source=launch_source,
-    )
-    if fallback_proc is not None:
-        update_web_runtime_state(
-            {"last_apply_error": error_text},
-            home=home,
-            pid=int(getattr(fallback_proc, "pid", 0) or 0),
-        )
-        return fallback_proc, previous_host, int(previous_port)
-
-    log(f"Error: failed to restore previous Web binding after apply failure ({fallback_error or 'unknown error'})")
-    return None, previous_host, int(previous_port)

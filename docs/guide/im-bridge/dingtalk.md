@@ -177,7 +177,7 @@ DingTalk supports these message types through the Rust worker:
 - **Image/File**: Outbound attachments uploaded through DingTalk OpenAPI
 - **AI Card Streaming**: User-facing agent responses are created as one card per authorized chat and updated progressively with a typewriter effect
 
-The Rust and Python workers consume `chat.stream` start/update/end frames, throttle intermediate full-snapshot writes, and always send the final frame. A chat suppresses the matching completed Markdown message only after its card finalization succeeds with the exact complete content; otherwise the completed message remains the fallback, so one failed, normalized, or overlong target does not affect other subscribed chats. Long final replies are delivered in lossless 4,096-character / 64-line chunks.
+The native worker consumes `chat.stream` start/update/end frames, throttles intermediate full-snapshot writes, and always sends the final frame. A chat suppresses the matching completed Markdown message only after its card finalization succeeds with the exact complete content; otherwise the completed message remains the fallback, so one failed, normalized, or overlong target does not affect other subscribed chats. Long final replies are delivered in lossless 4,096-character / 64-line chunks.
 
 ### File Sharing
 

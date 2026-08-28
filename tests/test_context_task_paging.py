@@ -3,8 +3,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
 
 class TestContextTaskPaging(unittest.TestCase):
     def setUp(self) -> None:
@@ -101,62 +99,6 @@ class TestContextTaskPaging(unittest.TestCase):
         self.assertEqual(
             [task["id"] for task in batch.result["tasks"]], ["T003", "T001"]
         )
-
-    def test_python_web_forwards_overview_and_the_full_task_query(self) -> None:
-        group_id = self.create_group()
-        calls: list[dict] = []
-
-        def fake_daemon(request: dict):
-            calls.append(request)
-            return {
-                "ok": True,
-                "result": {
-                    "version": "ctxv:1",
-                    "tasks_version": "tasksv:1",
-                    "coordination": {"brief": {}},
-                    "pages": {},
-                },
-            }
-
-        from cccc.ports.web.app import create_app
-
-        with patch("cccc.ports.web.app.call_daemon", side_effect=fake_daemon):
-            with TestClient(create_app()) as client:
-                overview = client.get(
-                    f"/api/v1/groups/{group_id}/context?detail=overview"
-                )
-                tasks = client.get(
-                    f"/api/v1/groups/{group_id}/tasks",
-                    params={
-                        "statuses": "planned,active,done",
-                        "query": "needle",
-                        "assignee": "peer",
-                        "attention": "blocked",
-                        "offset": "0",
-                        "limit": "30",
-                        "include_index": "true",
-                    },
-                )
-
-        self.assertEqual(overview.status_code, 200)
-        self.assertEqual(tasks.status_code, 200)
-        context_call = next(call for call in calls if call.get("op") == "context_get")
-        task_call = next(call for call in calls if call.get("op") == "task_list")
-        self.assertEqual(context_call["args"]["detail"], "overview")
-        self.assertEqual(
-            task_call["args"],
-            {
-                "group_id": group_id,
-                "statuses": "planned,active,done",
-                "query": "needle",
-                "assignee": "peer",
-                "attention": "blocked",
-                "offset": "0",
-                "limit": "30",
-                "include_index": "true",
-            },
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

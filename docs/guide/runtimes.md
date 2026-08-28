@@ -121,13 +121,26 @@ per-event receipt. Recovery excludes `system.notify` records at or before the
 furthest valid watermark, plus later notices that reference an event in that
 read prefix, so an upgrade cannot replay old unread nudges into a new provider
 session. Runtime handoff never advances the Inbox cursor.
-Switching engines does not transfer a live PTY process, its input mode,
-preamble memory, or hot terminal ring; both engines share the same ledger, Mail
-cursor, reply obligation, and runtime-delivery evidence.
+Restarting a provider process does not transfer its input mode, preamble memory,
+or hot terminal ring; durable ledger, Mail cursor, reply-obligation, and
+runtime-delivery facts remain the recovery authority.
 
 ### Codex and Claude PTY Hook State
 
-The Rust and Python daemons do not parse PTY output to infer activity for eligible provider sessions. Codex PTY activity comes from lifecycle hooks injected only into processes that CCCC starts: prompt and tool events report `working`, permission requests report `waiting`, and verified stop/session events report `idle` or `stopped`. CCCC registers only events in the current [Codex Hooks contract](https://developers.openai.com/codex/hooks); non-zero tool commands still complete through `PostToolUse`, and Codex does not currently expose separate `PostToolUseFailure` or `StopFailure` events. Every injected hook process carries a per-launch fence, and Codex turn-scoped events must identify the active provider turn or its bound tool operation. Tool operations are observed serially: a second operation cannot start before the active one closes, and operation-specific events must carry the exact active operation ID. Late events from an older launch, session, turn, or operation cannot overwrite current state.
+The daemon does not parse PTY output to infer activity for eligible provider
+sessions. Codex PTY activity comes from lifecycle hooks injected only into
+processes that CCCC starts: prompt and tool events report `working`, permission
+requests report `waiting`, and verified stop/session events report `idle` or
+`stopped`. CCCC registers only events in the current
+[Codex Hooks contract](https://developers.openai.com/codex/hooks); non-zero tool
+commands still complete through `PostToolUse`, and Codex does not currently
+expose separate `PostToolUseFailure` or `StopFailure` events. Every injected
+hook process carries a per-launch fence, and Codex turn-scoped events must
+identify the active provider turn or its bound tool operation. Tool operations
+are observed serially: a second operation cannot start before the active one
+closes, and operation-specific events must carry the exact active operation ID.
+Late events from an older launch, session, turn, or operation cannot overwrite
+current state.
 
 Turn and per-turn operation identity histories have a hard 4096-entry safety bound and never evict entries. Reaching a bound fails closed instead of making an old identity reusable: turn exhaustion revokes the active turn for the rest of that session, while operation exhaustion revokes operation writes for the current turn. The corresponding working-state reasons are `codex_hook_turn_fence_exhausted` and `codex_hook_operation_fence_exhausted`.
 
@@ -135,19 +148,54 @@ Claude PTY hooks do not provide one stable turn identifier across prompt, tool, 
 
 Both integrations are session-only. CCCC generates a new launch fence for every actual provider process, including a direct `codex resume`, and passes it only through that process environment. An already-running actor keeps its existing fence. Before a new process is started, the launch transaction invalidates the prior capability and writes the new token's pending or unavailable baseline under the same state lock; a late event can therefore finish before that transaction and be overwritten, or arrive afterward and fail its token fence. Codex receives command-line hook overrides plus exact per-hook trust hashes for only the CCCC commands injected through session flags. Project, plugin, and user hooks keep their own Codex trust decisions, and CCCC does not use the global hook-trust bypass flag. CCCC first validates the session Hook configuration with a bounded local Codex config probe; an unsupported, failed, or timed-out probe records `HookUnavailableSettings` and launches the original Codex command without Hook injection. For a direct Claude Code command, CCCC reads Claude's effective final `--settings` value, preserves its fields and existing hooks, and replaces duplicate CLI settings arguments with one merged inline document. Relative settings paths resolve from the actor working directory; the source file is never modified. Wrapper and alternate commands are not mutated. CCCC does not write `~/.codex`, `~/.claude`, or project settings files, and sessions launched outside CCCC do not run the CCCC status hook. Version 2 hook-state files remain readable for diagnostics but are reported as `legacy_unfenced`; configuring a new launch replaces them with a fenced version 3 pending state, and tokenless legacy events cannot unlock it.
 
-For a direct Codex PTY actor on the Rust backend, the same fenced `SessionStart` event is also the primary source of durable provider session identity. CCCC persists its UUID only after the launch token and process PID still match the running actor, then uses `codex resume <session_id>` on the next compatible start. The terminal `/status` parser remains a delayed compatibility fallback for older or hook-unavailable Codex versions; current Codex releases no longer need to expose session identity in human-readable status output.
+For a direct Codex PTY actor, the same fenced `SessionStart` event is also the
+primary source of durable provider session identity. CCCC persists its UUID
+only after the launch token and process PID still match the running actor, then
+uses `codex resume <session_id>` on the next compatible start. The terminal
+`/status` parser remains a delayed compatibility fallback for older or
+hook-unavailable Codex versions; current Codex releases no longer need to expose
+session identity in human-readable status output.
 
 Claude PTY hook state requires Claude Code 2.1.141 or newer, confirmed by a successful `--version` probe. Wrapper commands, alternate commands, failed probes, and older Claude versions remain on the prior PTY state source and are not mutated; their newly written unavailable baseline prevents a stale hook file from being treated as current. For an otherwise eligible direct command, a settings merge, hook executable, or spawn failure records a specific `HookUnavailable…` launch reason and fails closed instead of silently falling back to terminal-text inference. Enterprise policy, `disableAllHooks`, and safe/bare modes can still prevent a valid injected hook from running; that remains visible as a pending hook reason.
 
-The Rust and Python backends share the same version 3 hook-state and version 1 runtime-activity disk schemas, paths, advisory locks, and committed-write protocol: flush and sync the temporary file, atomically replace the destination, then sync the parent directory where the platform supports it. Independent-process tests exercise bidirectional state/activity reads and cross-language lock exclusion. The same contract test is enabled for Windows CI; this change was locally exercised on macOS, not on a Windows host. Switching backends is supported by stopping the old daemon, starting the new daemon, and restarting the actor; running two daemons against the same `CCCC_HOME` is not supported.
+Version 3 hook state and version 1 runtime activity use the canonical
+0.4.35-compatible paths, advisory locks, and committed-write protocol: flush
+and sync the temporary file, atomically replace the destination, then sync the
+parent directory where the platform supports it. Frozen-home migration tests
+cover the retained state boundary. Never run two daemons against the same
+`CCCC_HOME`.
 
 The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each PTY actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each PTY actor is already a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained `.pty` history.
 
 Verified PTY hook events also feed the Web runtime activity ticker. This is a separate, short-lived observability channel rather than chat history: it carries only structured lifecycle fields, replays briefly after reconnects, and detects long-running turn or tool activity. See [PTY Runtime Activity](/guide/runtime-activity) for the event contract, retention, and privacy boundaries.
 
-In the Rust backend, `runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport, Claude uses bidirectional stream-json, and DeepSeek uses ACP NDJSON through CCCC's fixed composition. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
+`runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed
+provider process. Codex uses its app-server JSON-RPC transport, Claude uses
+bidirectional stream-json, and DeepSeek uses ACP NDJSON through CCCC's fixed
+composition. Messages are delivered automatically, provider health determines
+the actor's `running` value, and stopping the actor or group terminates the
+provider process. Headless state comes from these structured provider protocols
+rather than the PTY hooks.
 
-DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are projected to `headless.message.delta` and `headless.message.completed`; turn boundaries use `headless.turn.started` plus `headless.turn.completed` or `headless.turn.failed`. This is the same durable event contract used by Web SSE and reconnect snapshots. Both daemons inherit the daemon process environment, then overlay actor/profile values, but force the managed `DSH_HOME` into CCCC's versioned runtime directory. ACP session data is isolated per actor at `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the attached project. Installation and provider turns each have a 300-second bound. A timed-out turn is cancelled and recorded as failed only after its terminal response; if confirmation cannot be obtained, the supervisor is stopped before the source message remains eligible for retry. Missing credentials and context-window overflow stop the current runtime and require a lifecycle start/restart, preventing a permanently invalid request from entering a provider retry loop. That gate is durable across daemon restarts and Python/Rust engine switches; daemon restore and message-triggered auto-wake leave it closed, while a successfully initialized lifecycle start opens it for the replacement provider process. Existing large Codex/Claude headless logs receive a one-time streaming dedupe-index migration when DeepSeek first writes to them, without loading the full log into memory.
+DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are
+projected to `headless.message.delta` and `headless.message.completed`; turn
+boundaries use `headless.turn.started` plus `headless.turn.completed` or
+`headless.turn.failed`. This is the same durable event contract used by Web SSE
+and reconnect snapshots. The daemon inherits its process environment, then
+overlays actor/profile values, but forces the managed `DSH_HOME` into CCCC's
+versioned runtime directory. ACP session data is isolated per actor at
+`CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the
+attached project. Installation and provider turns each have a 300-second bound.
+A timed-out turn is cancelled and recorded as failed only after its terminal
+response; if confirmation cannot be obtained, the supervisor is stopped before
+the source message remains eligible for retry. Missing credentials and
+context-window overflow stop the current runtime and require a lifecycle
+start/restart, preventing a permanently invalid request from entering a provider
+retry loop. That gate is durable across daemon restarts; daemon restore and
+message-triggered auto-wake leave it closed, while a successfully initialized
+lifecycle start opens it for the replacement provider process. Existing large
+Codex/Claude headless logs receive a one-time streaming dedupe-index migration
+when DeepSeek first writes to them, without loading the full log into memory.
 
 For daemon-managed Codex headless turns, a provider status of `failed`, `error`,
 or `cancelled`, or an explicit provider error, is persisted as
@@ -163,8 +211,7 @@ of hanging the turn or approving it implicitly. Use the PTY runner when the
 provider workflow requires interactive approval or input.
 
 Daemon-managed Codex headless actors persist the app-server thread in the
-shared runtime-session state. An ordinary actor stop/start, including a switch
-between the Python and experimental Rust backends, resumes that exact thread
+runtime-session state. An ordinary actor stop/start resumes that exact thread
 after validating the runtime, workspace, command, model, and saved-state
 status. If the provider rejects the resume, CCCC records the failure and starts
 a fresh thread. `actor_new_session` deliberately clears the saved thread first,
@@ -172,8 +219,8 @@ and `CCCC_RUNTIME_RESUME=0` disables this reuse globally.
 
 Daemon-managed Claude headless actors use the same shared state boundary for
 their explicit provider session. A fresh direct `claude` command receives a
-CCCC-owned `--session-id`; a compatible ordinary stop/start or Python/Rust
-backend switch uses `--resume` with that same id after validating the runtime,
+CCCC-owned `--session-id`; a compatible ordinary stop/start uses `--resume`
+with that same id after validating the runtime,
 workspace, stable command, model, and saved-state status. Wrapper commands and
 commands that already contain Claude session-control flags remain user-owned
 and are not rewritten. `actor_new_session` clears the saved session, and
@@ -185,7 +232,12 @@ and stops that provider session. The next start creates a fresh session rather
 than retrying the dead id; CCCC does not hide either failure behind an automatic
 retry.
 
-`web_model` keeps the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. The experimental Rust backend also exposes this generic pull contract to programmatically configured `custom+headless` actors; the stable Python backend and standard Web actor editor do not currently expose that combination. These actors do not claim to have a local provider process.
+`web_model` keeps the pull-consumer contract: an external executor calls
+`cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. The daemon also
+exposes this generic pull contract to programmatically configured
+`custom+headless` actors; the standard Web actor editor does not currently
+expose that combination. These actors do not claim to have a local provider
+process.
 
 CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
 

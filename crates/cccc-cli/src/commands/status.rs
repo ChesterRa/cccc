@@ -8,12 +8,12 @@ use cccc_core::{GroupStore, HomeLayout, active};
 use serde_json::Map;
 
 pub async fn run(home: &HomeLayout, product_version: &str) -> Result<()> {
-    let daemon = daemon_implementation(home).await;
-    print!("{}", render(home, product_version, daemon.as_deref())?);
+    let daemon_running = daemon_running(home).await;
+    print!("{}", render(home, product_version, daemon_running)?);
     Ok(())
 }
 
-async fn daemon_implementation(home: &HomeLayout) -> Option<String> {
+async fn daemon_running(home: &HomeLayout) -> bool {
     let response = DaemonClient::new(home.clone())
         .with_timeout(Duration::from_millis(750))
         .call(&DaemonRequest {
@@ -21,19 +21,11 @@ async fn daemon_implementation(home: &HomeLayout) -> Option<String> {
             op: "ping".into(),
             args: Map::new(),
         })
-        .await
-        .ok()?;
-    response.ok.then(|| {
-        response
-            .result
-            .get("implementation")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown")
-            .to_owned()
-    })
+        .await;
+    response.is_ok_and(|response| response.ok)
 }
 
-fn render(home: &HomeLayout, product_version: &str, daemon: Option<&str>) -> Result<String> {
+fn render(home: &HomeLayout, product_version: &str, daemon_running: bool) -> Result<String> {
     let active_group_id = active::get(home)?.unwrap_or_default();
     let store = GroupStore::new(home.clone())?;
     let groups = store
@@ -52,13 +44,11 @@ fn render(home: &HomeLayout, product_version: &str, daemon: Option<&str>) -> Res
     writeln!(output, "===========")?;
     writeln!(output, "Version:     {product_version}")?;
     writeln!(output, "Home:        {}", home.root().display())?;
-    writeln!(output, "Selected:    rust")?;
-    match daemon {
-        Some(implementation) => writeln!(output, "Daemon:      running ({implementation})")?,
-        None => writeln!(output, "Daemon:      stopped")?,
-    }
-    writeln!(output, "Python:      unavailable (standalone Rust install)")?;
-    writeln!(output, "Rust:        available ({product_version})")?;
+    writeln!(
+        output,
+        "Daemon:      {}",
+        if daemon_running { "running" } else { "stopped" }
+    )?;
     writeln!(
         output,
         "Runtimes:    {}",
@@ -117,14 +107,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn offline_status_is_successful_and_identifies_standalone_rust() {
+    fn offline_status_is_successful_without_retired_engine_selection() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let output = render(&home, "0.4.34-rc2", None).expect("status");
+        let output = render(&home, "0.4.34-rc2", false).expect("status");
 
-        assert!(output.contains("Selected:    rust"));
         assert!(output.contains("Daemon:      stopped"));
-        assert!(output.contains("Python:      unavailable"));
+        assert!(!output.contains("Selected:"));
+        assert!(!output.contains("Python:"));
+        assert!(!output.contains("Rust:"));
         assert!(output.contains("Groups:      (none)"));
     }
 }

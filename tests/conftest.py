@@ -6,16 +6,6 @@ from pathlib import Path
 import pytest
 
 
-_AUTH_BEHAVIOR_TEST_FILES = {
-    "test_access_token_routes.py",
-    "test_web_access_auth.py",
-    "test_web_bootstrap.py",
-    "test_web_principal_guards.py",
-    "test_web_remote_access_apply.py",
-    "test_runtime_activity.py",
-}
-
-
 @pytest.fixture(autouse=True)
 def _isolate_cccc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     test_home = (tmp_path / "cccc-home").resolve()
@@ -54,33 +44,6 @@ def _disable_real_codex_app_sessions_in_unit_tests(monkeypatch):
         "cccc.daemon.codex_app_sessions._codex_cli_available",
         lambda _env: False,
     )
-
-
-@pytest.fixture(autouse=True)
-def _authenticate_non_auth_web_test_clients(request, monkeypatch):
-    if Path(str(request.node.fspath)).name in _AUTH_BEHAVIOR_TEST_FILES:
-        yield
-        return
-
-    from fastapi.testclient import TestClient
-
-    original_init = TestClient.__init__
-
-    def authenticated_init(instance, *args, **kwargs):
-        from cccc.kernel.access_tokens import create_access_token, lookup_access_token
-
-        token = "acc_pytest_web_admin"
-        if lookup_access_token(token) is None:
-            create_access_token(
-                "pytest-web-admin",
-                is_admin=True,
-                custom_token=token,
-            )
-        original_init(instance, *args, **kwargs)
-        instance.headers["Authorization"] = f"Bearer {token}"
-
-    monkeypatch.setattr(TestClient, "__init__", authenticated_init)
-    yield
 
 
 @pytest.fixture(autouse=True)

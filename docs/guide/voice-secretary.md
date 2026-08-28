@@ -164,44 +164,37 @@ is not treated as a delivered reply. A report updates the Ask item, emits an
 idempotent.
 
 When Voice Secretary is disabled, microphone input remains available as direct
-dictation. Both Rust and Python local ASR paths accept the explicit `composer`
-dispatch target, but the browser appends the transcript straight to the composer
+dictation. Local ASR accepts the explicit `composer` dispatch target, but the
+browser appends the transcript straight to the composer
 without creating a secretary input, running prompt refinement, updating a
 document, persisting a secretary session, or starting speaker diarization.
 Composer acquisition and heartbeats remain valid while Voice Secretary is
 disabled; a heartbeat that omits its dispatch target inherits `composer` from
 the matching active lease.
 
-An active Rust local-ASR audio stream renews its recording lease. The browser's
+An active local-ASR audio stream renews its recording lease. The browser's
 HTTP heartbeat remains a cross-tab status signal, but transient heartbeat
-failures do not stop or orphan an otherwise healthy recording WebSocket. This
-matches the Python runtime's recording-liveness behavior while retaining Rust's
-explicit single-recorder lease validation.
+failures do not stop or orphan an otherwise healthy recording WebSocket. The
+explicit single-recorder lease remains authoritative.
 
 Documents use the active workspace under `docs/voice-secretary/`. Groups without
 an active workspace store the Markdown fallback under CCCC_HOME. Removing a
 model, disabling the assistant, or restarting CCCC does not delete documents or
 raw transcript sidecars.
 
-Python and Rust share one durable authority for Voice Secretary lifecycle,
-durable health, sessions, prompt drafts/requests, and ask requests:
+Voice Secretary has one durable authority for lifecycle, durable health,
+sessions, prompt drafts/requests, and ask requests:
 `groups/<group_id>/state/assistants.json`. Assistant enablement and configuration
 remain in `group.yaml`; process-local PID, port, service, and socket observations
-are rebuilt after startup. Rust-only input/document projection fields are
+are rebuilt after startup. Former preview input/document projection fields are
 preserved under `rust_state` rather than being mistaken for common workflow
-records. The global recording lease also uses the same file and token semantics
-in both implementations. Every mutation and expiry-capable read is serialized
+records. Every recording-lease mutation and expiry-capable read is serialized
 through `~/.cccc/state/voice_secretary_recording_lease.json.lock`, so concurrent
-Python/Rust processes and an engine switch cannot silently create a second
-recorder. Repository Markdown, transcript/input sidecars, the shared document
-index, and native model caches retain their specialized stores. Shared state
-and engine switching are contractual; native model availability and
-implementation maturity are still allowed to differ explicitly.
+clients cannot silently create a second recorder. Repository Markdown,
+transcript/input sidecars, the shared document index, and native model caches
+retain their specialized stores.
 
-Native Rust model installation is still an experimental Web-owned boundary:
-the Rust Web UI manages the bundled sherpa-onnx model cache, while Rust reports
-`assistant_voice_model_install=false` in daemon capabilities. Python continues
-to implement the standardized daemon operation. Callers must inspect that
-capability instead of assuming the Rust SDK path is available; moving model
-management into a shared daemon/runtime layer remains a separate product and
-binary-size decision.
+Native model installation is a Web-owned boundary: the Web UI manages the
+bundled sherpa-onnx model cache, while the daemon reports
+`assistant_voice_model_install=false` in daemon capabilities. Callers must
+inspect that capability instead of assuming a daemon operation is available.

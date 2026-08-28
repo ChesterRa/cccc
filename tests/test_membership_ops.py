@@ -708,15 +708,6 @@ class TestMembershipOps(unittest.TestCase):
         self.assertFalse(resp.ok)
         self.assertEqual(resp.error.code, "membership_not_in_reach")
 
-    def test_cli_parser_exposes_membership_verbs(self) -> None:
-        from cccc.cli.main import build_parser
-
-        parser = build_parser()
-        self.assertEqual(parser.parse_args(["login"]).func.__name__, "cmd_login")
-        self.assertEqual(parser.parse_args(["logout"]).func.__name__, "cmd_logout")
-        self.assertEqual(parser.parse_args(["reach", "on"]).action, "on")
-        self.assertEqual(parser.parse_args(["reach", "install"]).action, "install")
-
     def test_logout_clears_identity_and_warns(self) -> None:
         account = FakeAccount()
         set_account_transport_for_tests(account)

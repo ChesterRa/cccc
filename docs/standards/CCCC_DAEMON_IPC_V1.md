@@ -5089,6 +5089,11 @@ Implementations MUST persist delivery receipts and MUST NOT create duplicate
 events when the same registration and idempotency key are retried.
 The canonical receipt lifecycle is `queued`, `sending`, `retrying`, `sent`, or
 `failed`; `sent` and `failed` are terminal.
+The daemon owns bounded recovery of non-terminal receipts. It periodically
+retries due `queued`/`retrying` receipts, recovers stale `sending` receipts, and
+honors a persisted `next_attempt_at` when present. A live reverse-session
+reconnect MAY accelerate recovery. Web process lifetime and caller activity
+MUST NOT be required for an accepted outbox item to make progress.
 
 For a new outbound message, the source-group `chat.message` MUST be appended
 idempotently before any remote transport side effect. Its event ID MUST be sent

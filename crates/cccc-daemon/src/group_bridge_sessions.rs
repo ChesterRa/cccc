@@ -76,6 +76,7 @@ async fn run_manager(home: HomeLayout, mut stop: watch::Receiver<bool>) {
         if *stop.borrow() {
             break;
         }
+        crate::ops::schedule_due_retries(home.clone());
         let desired = load_routes(&home);
         workers.retain(|id, (config, task)| {
             let keep = desired.get(id) == Some(config) && !task.is_finished();

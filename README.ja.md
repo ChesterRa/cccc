@@ -14,7 +14,6 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 インストールコマンドひとつ。Rust ツールチェーンも追加インフラも不要です。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Python](https://img.shields.io/pypi/pyversions/cccc-pair?color=232425)](https://pypi.org/project/cccc-pair/)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
@@ -65,7 +64,13 @@ CCCC はコマンド一つで導入でき、データベース、メッセージ
 ### インストール
 
 ```bash
-# 安定した製品ディストリビューション（推奨、Python 3.11+）
+# macOS / Linux（推奨）
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows CMD または PowerShell（推奨）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+
+# pip 互換のネイティブ platform wheel
 python -m pip install -U cccc-pair
 
 # RC チャネル（TestPyPI）
@@ -75,13 +80,11 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> PyPI パッケージが、現在の安定した推奨 CCCC ディストリビューションであり、
-> Python が安定版のデフォルト実装です。Linux x86-64、Intel/Apple Silicon macOS、
-> Windows x86-64 の platform wheel には、`cccc rust` で明示的に選択して性能を
-> 評価するための、Python と同じバージョンの private な**実験的 Rust 実装**も
-> 含まれます。機能とインテグレーションの parity は現在も整備中です。信頼性を
-> 重視するワークフローでは `cccc python` を使用してください。Python なしの
-> Rust-only 配備を試す場合に限り、下記の実験的スタンドアロン版を利用できます。
+> CCCC 0.4.36 の製品実装は Rust の 1 つだけです。Web サイトのインストーラーを
+> 推奨します。pip はパッケージマネージャー互換用で、同じネイティブ実行ファイルを
+> platform wheel として導入します。Python daemon、launcher、fallback は含みません。
+> 対応対象は Linux x86-64（glibc 2.28+）、Intel/Apple Silicon macOS 11+、
+> Windows x86-64 です。
 
 ### アップグレード
 
@@ -90,9 +93,9 @@ cccc update
 ```
 
 インストール種別と更新元を事前確認するには `cccc update --check` を使用してください。
-推奨の pip 版は、検出した PyPI チャネルから `cccc-pair` 製品全体を更新します。
-実験的スタンドアロン版は GitHub Pages インストーラーから更新します。どちらも
-ファイルを置き換える前に稼働中の Web/daemon ペアを停止します。
+Web サイト経由の導入は同じインストーラーで、pip 所有の導入は pip で更新します。
+どちらも同じネイティブ製品を置き換え、ファイル更新前に稼働中の Web/daemon
+ペアを停止します。
 
 ### 起動
 
@@ -102,24 +105,15 @@ cccc
 
 **http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
 
-推奨の pip ディストリビューションでは、Python が安定版の初期デフォルト実装です。
-Rust は性能評価向けの実験的な明示選択です。永続的に切り替えるか、切り替えと
-コマンド実行を 1 ステップで行えます。
-
 ```bash
-cccc status            # 選択中・実行中・利用可能な実装を表示
-cccc rust              # 実験的 Rust を選択して CCCC を起動
-cccc python             # 安定版 Python を選択して CCCC を起動
-cccc rust doctor        # 実験的 Rust を選択して doctor を実行
+cccc status            # 製品、daemon、group、actor、agent runtime を表示
+cccc doctor            # インストールと実行環境を診断
+cccc daemon status     # daemon のライフサイクル状態を明示的に確認
 ```
 
-切り替えは明示的なライフサイクル操作です。CCCC は対象 payload を検証してから現在の
-Web/daemon を停止し、別実装へ暗黙にフォールバックしません。Agent runtime の MCP 設定は
-安定した公開 `cccc` launcher を参照するため、後の切り替えでも再設定は不要です。
-いつでも `cccc python` で安定版の実装へ戻せます。
-
-実験的スタンドアロン版には Rust だけが含まれるため、`cccc python` と実装切り替えは
-利用できません。
+`cccc python`、`cccc rust`、旧 `ccccd` alias は廃止されました。既存の自動化は
+`cccc daemon ...` を使用してください。daemon の状態ファイル名は互換性のため維持し、
+Python runtime なしで 0.4.35 home を引き継げます。
 
 ### マルチエージェントグループの作成
 
@@ -482,19 +476,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 
 ## インストールオプション
 
-### pip（安定版・推奨）
-
-```bash
-python -m pip install -U cccc-pair
-```
-
-これは完全にサポートされる製品ディストリビューションで、Python が安定版の
-推奨実装です。Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 では、
-性能評価向けに Python と同じバージョンの private な実験的 Rust 実行ファイルも
-含む platform wheel が選択されます。それ以外では universal Python wheel を使い、
-`cccc status` が Rust を利用不可と明示します。
-
-### 実験的スタンドアロン Rust プレビュー
+### Web サイトインストーラー（推奨）
 
 ```bash
 # macOS / Linux
@@ -504,10 +486,8 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-このオプションは、Python なしの Rust-only 配備で実験的 Rust 実装を評価する場合に
-限って利用してください。GitHub Releases からチェックサム検証済みバイナリを取得し、
-同じインストーラーで `cccc update` できますが、Python fallback と実装切り替えは
-ありません。安定版の pip/Python 経路の推奨代替ではありません。インストーラーは
+GitHub Releases からチェックサム検証済みのネイティブ製品を取得し、同じ
+インストーラーで `cccc update` できます。インストーラーは
 自身が所有しない既存の `cccc`
 コマンドを上書きしないため、意図的にアンインストールするか、別の
 `CCCC_INSTALL_DIR` を指定してください。
@@ -516,7 +496,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 新しいターミナルで `cccc doctor` を実行すると、`Installation` セクションに
 実行中の入口、PATH が選ぶコマンド、競合するすべてのパスが表示されます。
 
-現在のネイティブインストーラーは安定版 `v0.4.34` を固定してインストールします。
+インストーラーは、バージョンまたは RC チャネルを明示しない限り、現在公開中の
+安定版を選択します。
+
+### pip 互換インストール
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+Pip は同じ `cccc` 実行ファイルを含む platform wheel を導入します。0.4.36 では
+sdist、universal wheel、import 可能な CCCC Python package、fallback 実装を
+提供しません。未対応 platform は明示的に失敗します。
 
 ### pip（RC 版、TestPyPI）
 
@@ -535,22 +526,17 @@ Cargo インストールは workspace 開発用にのみ残し、サポート対
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-pip install -e .
-```
-
-### uv（高速、Windows 推奨）
-
-```bash
-uv venv -p 3.14 .venv
-uv pip install -e .
-uv run cccc --help
+npm ci --prefix web
+npm -C web run build
+cargo build --release --locked --features standalone -p cccc --bin cccc
+./target/release/cccc --help
 ```
 
 ### Windows ネイティブ
 
-- ローカル開発には、リポジトリルートの `start.ps1` を推奨します。
-- `cccc doctor` が `Windows PTY: NOT READY` を表示した場合は、先に `python -m pip install pywinpty` を実行するか、`uv pip install -e .` で再インストールしてください。
-- Web バンドルには `scripts/build_web.ps1`、完全パッケージビルドには `scripts/build_package.ps1` を使用してください。
+- ネイティブ実行ファイルをコンパイルする前に Web bundle をビルドしてください。
+- `x86_64-pc-windows-msvc` Rust toolchain を使用し、ビルド後に `cccc doctor` を実行してください。
+- `scripts/build_web.ps1` を Web bundle の簡易ビルドラッパーとして利用できます。
 
 ### Docker
 

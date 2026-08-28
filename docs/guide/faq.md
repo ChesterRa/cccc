@@ -27,7 +27,10 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 ### How do I install CCCC?
 
 ```bash
-# Stable product distribution from PyPI (recommended)
+# Recommended native installer (macOS / Linux)
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Package-manager-compatible native wheel
 python -m pip install -U cccc-pair
 
 # From TestPyPI (explicit RC testing)
@@ -39,25 +42,19 @@ python -m pip install -U --pre \
 # From source
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-pip install -e .
+npm ci --prefix web
+npm -C web run build
+cargo build --release --locked --features standalone -p cccc --bin cccc
 ```
 
-Supported PyPI platform wheels include stable Python plus a private,
-version-matched experimental Rust implementation for opt-in performance
-evaluation. An experimental Rust-only standalone preview is also available for
-deployment testing:
+Windows CMD or PowerShell uses the native installer:
 
 ```bash
-# macOS / Linux
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Windows CMD or PowerShell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-The preview has no Python fallback or implementation switching and is not the
-recommended replacement for the pip product. The hosted installer selects the
-experimental `v0.4.35` standalone release.
+Both installation channels provide the same Rust executable. The pip wheel has
+no importable CCCC Python package or fallback implementation.
 
 ### Why does `cccc` still start an older installation after an upgrade?
 
@@ -77,13 +74,13 @@ the absolute path printed by the installer to get the current diagnostic report.
 ### How do I uninstall CCCC without losing my groups?
 
 Run `cccc home` first and stop the running product. Pip installations should be
-removed with `python -m pip uninstall cccc-pair`. For a standalone preview,
+removed with `python -m pip uninstall cccc-pair`. For a website-script install,
 verify the complete `.cccc-standalone` ownership marker and remove only the
 owned executable and marker; do not delete a shared command directory. CCCC
 intentionally retains `CCCC_HOME`, so groups, ledgers, settings, credentials,
 and browser profiles remain available after reinstall. Exact macOS/Linux and
 Windows standalone steps are in the
-[dual-engine distribution guide](../rust-migration.md#uninstall-without-removing-user-data).
+[distribution and migration guide](../rust-migration.md#uninstall-without-removing-user-data).
 
 ### How do I upgrade from an older version (0.3.x)?
 
@@ -104,31 +101,17 @@ Then install the new version. Note that 0.4.x has a completely different command
 
 ### What are the system requirements?
 
-- Python 3.11+ on macOS, Linux, or Windows for the recommended PyPI distribution
+- A supported 64-bit Linux, macOS, or Windows target
 - At least one supported agent runtime CLI
 
-The experimental standalone Rust preview does not require Python or a Rust
-toolchain, but supports fewer platforms and contains only the Rust implementation.
+Normal installation requires neither Python nor a Rust toolchain. The MCP
+JavaScript code mode additionally requires Node.js on the CCCC host.
 
 ### How do I choose the Python or Rust implementation?
 
-```bash
-cccc status
-cccc rust              # persist experimental Rust and launch CCCC
-cccc python            # persist stable Python and launch CCCC
-cccc rust doctor       # persist experimental Rust, then run one command
-```
-
-These selectors belong to the recommended pip distribution. Python is the stable
-default; `cccc rust` explicitly opts into the experimental Rust implementation,
-whose complete feature and integration parity is not promised. Rust is retained
-as a bounded evaluation surface for measured native benefits; use `cccc python`
-for reliability-critical workflows or to switch back. Supported PyPI platform
-wheels contain Rust privately; other platforms receive the universal Python
-wheel and report Rust as unavailable. The selector validates the payload and
-stops the active Web/daemon pair. It never installs a second command or silently
-falls back. The standalone preview contains Rust only and therefore does not
-expose implementation switching.
+You do not. CCCC 0.4.36 has one Rust product implementation. The 0.4.35
+`cccc python` / `cccc rust` selectors and persisted implementation preference
+are retired.
 
 ### How do I check if CCCC is working?
 
@@ -137,8 +120,8 @@ cccc status
 cccc doctor
 ```
 
-These show implementation availability, Python version, agent runtimes, and
-daemon status.
+These show native product and daemon status, agent runtimes, installation
+ownership, and environment diagnostics.
 
 ### Does a leftover `cccc-web.lock` mean CCCC is still running?
 

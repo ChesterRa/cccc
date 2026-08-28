@@ -154,6 +154,12 @@ fn attempt(
         }
         let mut deferred = existing;
         deferred["status"] = json!("retrying");
+        let deferred_at = utc_now();
+        deferred["updated_at"] = json!(deferred_at);
+        deferred["next_attempt_at"] = json!(super::next_retry_at(
+            deferred["attempt"].as_u64().unwrap_or(0),
+            &deferred_at,
+        ));
         deferred["error"] = json!({
             "code":"source_delivery_pending",
             "message":"source message delivery has not produced a remote event yet",
@@ -237,8 +243,14 @@ fn attempt(
         Err(error) => {
             let terminal = attempt >= max_attempts;
             let mut failed = sending;
+            let failed_at = utc_now();
             failed["status"] = json!(if terminal { "failed" } else { "retrying" });
-            failed["updated_at"] = json!(utc_now());
+            failed["updated_at"] = json!(failed_at);
+            failed["next_attempt_at"] = json!(if terminal {
+                String::new()
+            } else {
+                super::next_retry_at(attempt, &failed_at)
+            });
             failed["error"] = json!({
                 "code":error.code,"message":error.message,
                 "retriable":!terminal,"transport":"group_bridge_session"
@@ -256,6 +268,7 @@ fn attempt(
     let mut receipt = sending;
     receipt["ok"] = json!(true);
     receipt["status"] = json!("sent");
+    receipt["next_attempt_at"] = json!("");
     receipt["remote_event_id"] = remote_event_id;
     receipt["updated_at"] = json!(utc_now());
     store_delivery(home, receipt.clone())?;

@@ -195,14 +195,14 @@ class InstalledWheelSmoke:
     def expect_status(self, daemon: str) -> None:
         output = self.cccc("status").stdout
         expected = [
-            "Selected:    rust",
             f"Daemon:      {daemon}",
-            "Python:      unavailable",
-            "Rust:        available",
         ]
         missing = [line for line in expected if line not in output]
         if missing:
             raise RuntimeError(f"status omitted {missing!r}:\n{output}")
+        retired = [line for line in ("Selected:", "Python:", "Rust:") if line in output]
+        if retired:
+            raise RuntimeError(f"status retained engine rows {retired!r}:\n{output}")
 
     def expect_mcp(self) -> None:
         output = self.cccc("mcp", input_text=MCP_REQUESTS, timeout=20.0).stdout

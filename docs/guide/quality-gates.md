@@ -60,12 +60,10 @@ npm ci --prefix web
 npm -C web run check
 ```
 
-In a source checkout, both implementations use `web/dist`, so
-`npm -C web run build` is sufficient before restarting the local Web process.
-Use `scripts/build_web.sh` when preparing a Python package: it builds the same
-frontend and also refreshes the packaged copy under
-`src/cccc/ports/web/dist` that is embedded in wheels. `CCCC_WEB_DIST` remains
-the explicit override for testing a different bundle.
+The native product embeds the bundle from `web/dist`; `npm -C web run build`
+is sufficient before rebuilding the Rust executable. `scripts/build_web.sh`
+and `scripts/build_web.ps1` are convenience wrappers for that same output.
+`CCCC_WEB_DIST` remains the explicit override for testing a different bundle.
 
 CI pins Node 24.19.0 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported non-EOL local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
 
@@ -89,9 +87,8 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | --- | --- |
 | `quality` | Ruff and quality-tool/workflow contract tests |
 | `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
-| `python-tests` | Source-level Python tests distributed across two deterministic matrix shards on Python 3.14 |
-| `python-compat` | Import, CLI, and MCP handshake coverage on the oldest supported Python, 3.11 |
-| `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
+| `python-tests` | Transitional source-level Python regression tests distributed across two deterministic matrix shards on Python 3.14; removed domain by domain during the 0.4.36 consolidation |
+| `package` | Deterministic Rust-only wheel/archive tooling and exact native-wheel layout checks |
 | `rust-linux` | Rust formatting, workspace Clippy, Python-free tests, installer/release source contracts, and serial combined-process lifecycle coverage in one reused workspace |
 | `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
 | `windows-smoke` | Windows PTY compatibility, combined Web startup-failure cleanup, and forced daemon Job Object process-tree cleanup |
@@ -115,7 +112,6 @@ release workflows independently verify the exact artifacts they publish.
 | Job | Responsibility |
 | --- | --- |
 | `nightly-serial` | Complete source-level Python suite in one process on Python 3.11 |
-| `python-compat` | Import, CLI, and MCP handshake coverage on Python 3.12 and 3.13 |
 | `web-bundle` | Build the exact frontend embedded by native artifacts |
 | `rust-dist` | Release-build the Rust workspace and run Unix installation/replacement smoke |
 | `windows-installer` | Build the native Windows CLI and verify installer ownership and PATH handling |
@@ -158,11 +154,13 @@ Apple Silicon macOS, and Windows installer verifiers before either PyPI or
 GitHub publication. The Linux job also requires Auditwheel itself to classify
 the payload as `manylinux_2_28_x86_64`; printing a newer compatibility result
 does not pass.
-These bounded release gates do not repeat the full Rust/Python suites, Web
+These bounded release gates do not repeat the full Rust or transitional Python suites, Web
 tests, or cross-language interoperability tests owned by normal CI. The Web job
 uploads its bundle and all target jobs consume that same artifact. During the
-0.4.36 transition, source-level Python behavior remains covered by its normal
-and nightly suites, but CI no longer builds the retired Python wheel or sdist.
+0.4.36 transition, source-level Python behavior remains covered only while its
+domain is still present; the retired product launcher and multi-version Python
+compatibility matrix are not kept alive. CI no longer builds a Python wheel or
+sdist.
 The package job exercises only the deterministic Rust-only wheel/archive tools;
 the release workflow owns testing the real platform artifacts.
 
@@ -180,8 +178,8 @@ uv run python scripts/quality/pytest_shards.py --total 2 --index 0
 
 ## Nightly Serial Coverage
 
-The scheduled `nightly-serial` job runs the complete source-level `tests/` suite
+The scheduled `nightly-serial` job runs the remaining source-level `tests/` suite
 in one pytest process. Pull requests use two file shards for lower wall-clock
 time; nightly preserves a simple reference run that can expose shared-state or
-order sensitivity across files. The lightweight compatibility matrix covers
-Python 3.12 and 3.13 without repeating the full suite on every push.
+order sensitivity across files. It is a temporary deletion safety net, not a
+supported Python product-runtime matrix.

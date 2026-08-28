@@ -11,7 +11,7 @@ on:
       - 'scripts/resolve_docs_installer_version.mjs'
       - '.github/workflows/docs.yml'
   workflow_run:
-    workflows: ['Experimental standalone Rust preview']
+    workflows: ['Release CCCC']
     types: [completed]
   workflow_dispatch:
 

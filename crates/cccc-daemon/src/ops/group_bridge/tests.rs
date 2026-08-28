@@ -5,7 +5,8 @@ use std::thread;
 use tempfile::tempdir;
 
 use super::{
-    delivery_status, normalize_outbound_payload, session_runtime, validate_remote_payload,
+    delivery_status, normalize_outbound_payload, receipt_retry_due, schedule_due_retries,
+    session_runtime, validate_remote_payload,
 };
 
 fn request(op: &str, value: serde_json::Value) -> DaemonRequest {
@@ -390,6 +391,118 @@ fn rust_retry_reuses_a_python_source_event_without_appending_a_duplicate() {
         "retry must reuse the Python source event"
     );
     assert_eq!(messages[0].id, source.id);
+}
+
+#[test]
+fn periodic_retry_respects_due_and_stale_boundaries() {
+    let now = chrono::Utc::now();
+    let future = (now + chrono::Duration::seconds(30)).to_rfc3339();
+    let past = (now - chrono::Duration::seconds(30)).to_rfc3339();
+    assert!(!receipt_retry_due(
+        &json!({"status":"retrying","attempt":1,"max_attempts":5,"next_attempt_at":future}),
+        now,
+        true,
+    ));
+    assert!(receipt_retry_due(
+        &json!({"status":"retrying","attempt":1,"max_attempts":5,"next_attempt_at":past}),
+        now,
+        true,
+    ));
+    assert!(!receipt_retry_due(
+        &json!({"status":"sending","attempt":1,"max_attempts":5,"last_attempt_at":now.to_rfc3339()}),
+        now,
+        true,
+    ));
+    assert!(receipt_retry_due(
+        &json!({"status":"sending","attempt":1,"max_attempts":5,"last_attempt_at":(
+            now - chrono::Duration::seconds(121)
+        ).to_rfc3339()}),
+        now,
+        true,
+    ));
+    assert!(!receipt_retry_due(
+        &json!({"status":"retrying","attempt":5,"max_attempts":5}),
+        now,
+        false,
+    ));
+}
+
+#[test]
+fn due_receipt_is_retried_without_web_or_caller_activity() {
+    let temp = tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("sender", "").expect("group");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+    let mut source = Event::new("chat.message", &group.group_id);
+    source.by = "user".into();
+    source.data = json!({
+        "text":"retry in daemon","to":["user"],"message_mode":"send",
+        "dst_group_id":"g_remote","dst_to":["@foreman"],
+        "dst_message_mode":"mail","client_id":"daemon-outbox-source"
+    })
+    .as_object()
+    .cloned()
+    .expect("source data");
+    ledger::append(&ledger_path, &source).expect("append source");
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_due","registration_id":"registration_due",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
+        state.insert(
+            "deliveries".into(),
+            json!([{
+                "operation":"remote_send","ok":false,"status":"retrying",
+                "registration_id":"registration_due","idempotency_key":"daemon-retry",
+                "src_group_id":group.group_id,"dst_group_id":"g_remote",
+                "source_event_id":source.id,"attempt":1,"max_attempts":5,
+                "next_attempt_at":"2000-01-01T00:00:00Z",
+                "payload":{
+                    "text":"retry in daemon","to":["@foreman"],"source_by":"user",
+                    "message_mode":"mail","refs":[],"attachments":[]
+                },
+                "source_record_payload":{
+                    "text":"retry in daemon","to":["@foreman"],"source_by":"user",
+                    "message_mode":"mail","refs":[],"attachments":[]
+                }
+            }]),
+        );
+        Ok(())
+    })
+    .expect("bridge state");
+
+    schedule_due_retries(home.clone());
+    let mut retried = None;
+    for _ in 0..100 {
+        let state = group_bridge_legacy::load(&home).expect("receipt state");
+        retried = state["deliveries"]
+            .as_array()
+            .and_then(|receipts| receipts.first())
+            .cloned();
+        if retried
+            .as_ref()
+            .is_some_and(|receipt| receipt["attempt"] == 2 && receipt["status"] == "retrying")
+        {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let retried = retried.expect("receipt");
+    assert_eq!(retried["attempt"], 2, "{retried}");
+    assert_eq!(retried["status"], "retrying");
+    assert!(
+        retried["next_attempt_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "{retried}"
+    );
 }
 
 #[test]

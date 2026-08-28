@@ -2,16 +2,9 @@
 
 Run CCCC in a Docker container — ideal for servers, teams, and reproducible environments.
 
-The default `docker/Dockerfile` and `docker/docker-compose.yml` use the stable
-Python implementation. To evaluate the experimental Rust implementation instead,
-use the explicit Rust files:
-
-```bash
-docker compose -f docker/docker-compose.rust.yml up --build
-```
-
-The two Compose projects use separate image, container, and volume names. Stop one implementation
-before pointing the other at the same `CCCC_HOME` data.
+The default `docker/Dockerfile` and `docker/docker-compose.yml` build the same
+Rust-only product exposed by the website installer and native pip wheel. There
+is no parallel Python image or engine selector.
 
 ## AI-Assisted Deployment
 
@@ -24,8 +17,9 @@ You are a deployment assistant for CCCC (Multi-Agent Collaboration Kernel).
 Guide the user step-by-step through Docker deployment. Ask questions interactively, don't dump all steps at once.
 
 ## What you're deploying
-CCCC is a multi-agent collaboration hub. The Docker image includes Python 3.14, Node.js 24,
-and pre-installed AI agent CLIs (Claude Code, Codex CLI, Factory CLI).
+CCCC is a multi-agent collaboration hub. The Docker image includes the native
+CCCC executable, Node.js 24, and pre-installed AI agent CLIs (Claude Code,
+Codex CLI, Factory CLI).
 
 ## Step 1: Get the source code
 Ask: "Do you already have the CCCC repo cloned? If yes, what's the path?"
@@ -34,8 +28,8 @@ If no:
 
 ## Step 2: Build the image
   docker build -f docker/Dockerfile -t cccc .
-Note: multi-stage build — first compiles Web UI (Node.js), then packages Python daemon.
-If build fails, check: Docker version >= 20.10, sufficient disk space, network access to npm/PyPI.
+Note: multi-stage build — first compiles Web UI (Node.js), then the native Rust product.
+If build fails, check: Docker version >= 20.10, sufficient disk space, network access to npm/crates.io.
 
 ## Step 3: Collect user config
 Ask each one individually:
@@ -108,7 +102,9 @@ docker build -f docker/Dockerfile -t cccc .
 ```
 
 ::: tip Build Context
-The build uses a multi-stage approach: first compiles the Web UI (Node.js), then packages the Python daemon with pre-installed AI agent CLIs (Claude Code, Codex CLI).
+The build uses a multi-stage approach: first it compiles the Web UI with Node.js,
+then it embeds that bundle in the native Rust executable. The final image does
+not contain the CCCC Python product.
 :::
 
 ### 2. Run the Container
@@ -126,7 +122,12 @@ docker run -d \
 
 Open `http://localhost:8848` in your browser. The sample command binds the host port to `127.0.0.1` on purpose, so you can safely create an **Admin Access Token** in **Settings > Web Access** before any broader exposure.
 
-The image now includes the minimal shared libraries plus `Xvfb` needed for projected browser surfaces such as NotebookLM sign-in and Presentation browser sessions. Playwright and Chromium binaries are still installed lazily on first use instead of being pre-baked into the image.
+The image includes Chromium, the required shared libraries, and `Xvfb` for
+projected browser surfaces such as NotebookLM sign-in and Presentation browser
+sessions. `x11vnc` enables the VNC-backed Browser view. The container permits
+the non-loopback internal listener needed for port publishing, but protected
+APIs still require first-admin bootstrap; keep the host port bound to
+`127.0.0.1` until an Admin Access Token exists.
 
 ### 3. Verify
 
@@ -170,8 +171,8 @@ Always mount `/data` to a named volume or host path to persist state across cont
 
 ### Daemon IPC Stays Local
 
-Do not publish the daemon IPC port. It has no authentication, and both daemon
-implementations reject `CCCC_DAEMON_HOST=0.0.0.0` and every other non-loopback address.
+Do not publish the daemon IPC port. It has no authentication, and the daemon
+rejects `CCCC_DAEMON_HOST=0.0.0.0` and every other non-loopback address.
 Remote integrations must use the authenticated Web API; container-local
 diagnostics can use `docker exec`.
 
@@ -229,7 +230,9 @@ The `.env` file controls ports, volumes, API keys, and build-time proxy. See `do
 The bundled Compose file already enables `init: true`, which helps reap short-lived browser helper processes cleanly.
 
 ::: tip Build Behind a Proxy
-Set `HTTP_PROXY` and `HTTPS_PROXY` in `.env` to pass proxy settings during `docker compose build`. Both build stages (Node.js and Python) will use the proxy for `curl`, `npm`, and `pip`.
+Set `HTTP_PROXY` and `HTTPS_PROXY` in `.env` to pass proxy settings during
+`docker compose build`. Build-time downloads include npm packages, Rust crates,
+OS packages, and the bundled agent CLIs.
 :::
 
 #### Daily Operations
@@ -266,7 +269,7 @@ If you previously ran the container as root and then switched to the non-root us
 
 ```bash
 # Fix permissions on the data volume
-docker run --rm -v cccc-data:/data python:3.14-slim \
+docker run --rm -v cccc-data:/data debian:bookworm-slim \
   chown -R 1000:1000 /data
 ```
 
@@ -299,7 +302,7 @@ The Docker image includes:
 
 | Tool | Purpose |
 |------|---------|
-| Python 3.14 | CCCC daemon runtime |
+| Native CCCC | Daemon, Web, CLI, MCP, and runtime management |
 | Node.js 24 | Agent CLI runtime (npm-based tools) |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic's AI coding agent |
 | [Codex CLI](https://github.com/openai/codex) | OpenAI's AI coding agent |
