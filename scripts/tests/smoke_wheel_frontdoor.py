@@ -100,6 +100,13 @@ def _wait_for_exit(pid: int, *, timeout: float = 15.0) -> None:
     raise RuntimeError(f"CCCC process {pid} did not exit")
 
 
+def _wait_for_child_exit(process: subprocess.Popen[str], *, timeout: float = 15.0) -> None:
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"CCCC process {process.pid} did not exit") from error
+
+
 def _wait_for_removal(path: Path, *, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -224,7 +231,7 @@ class InstalledWheelSmoke:
         if not any(tool.get("name") == "cccc_help" for tool in tools if isinstance(tool, dict)):
             raise RuntimeError(f"MCP read-only tools/list omitted cccc_help:\n{output}")
 
-    def start_web_and_expect_health(self) -> int:
+    def start_web_and_expect_health(self) -> subprocess.Popen[str]:
         self.web_output = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
         self.web_process = subprocess.Popen(
             [str(self.launcher), "--port", "0"],
@@ -247,7 +254,7 @@ class InstalledWheelSmoke:
                 with opener.open(f"http://127.0.0.1:{port}/api/v1/health", timeout=1.0) as response:
                     payload = json.load(response)
                 if response.status == 200 and payload.get("result", {}).get("status") == "ok":
-                    return int(self.web_process.pid)
+                    return self.web_process
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                 last_error = str(error)
             time.sleep(0.1)
@@ -300,14 +307,12 @@ class InstalledWheelSmoke:
         _wait_for_removal(self.address_path)
         self.expect_status("stopped")
 
-        web_pid = self.start_web_and_expect_health()
+        web_process = self.start_web_and_expect_health()
         self.expect_status("running")
         self.cccc("daemon", "stop")
-        _wait_for_exit(web_pid)
+        _wait_for_child_exit(web_process)
         _wait_for_removal(self.address_path)
         _wait_for_removal(self.web_runtime_path)
-        if self.web_process is not None:
-            self.web_process.wait(timeout=1.0)
         self.expect_status("stopped")
 
 
