@@ -70,16 +70,21 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 # Windows CMD 或 PowerShell（推荐）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
-# 兼容 pip 的原生平台 wheel
+# v0.4.36 在 PyPI 发布后：兼容 pip 的原生平台 wheel
 python -m pip install -U "cccc-pair>=0.4.36"
 
-# RC 通道（TestPyPI）
+# v0.4.36 预发布版发布后：RC 通道（TestPyPI）
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   "cccc-pair>=0.4.36rc0"
 ```
 
+> **发布状态：** 当前仓库正在准备 v0.4.36，但 PyPI 正式通道仍是 v0.4.35。
+> 官网安装脚本目前同样安装 v0.4.35。需要已发布产品时请使用官网安装脚本；需要
+> 体验待发布的纯 Rust 产品时请从本仓源码构建。上面的两条 pip 命令有意保持到
+> v0.4.36 发布后才可用。
+>
 > CCCC 0.4.36 只有一个产品实现：Rust。推荐使用官网安装脚本；pip 命令用于
 > 包管理器兼容，安装的是同一个原生可执行文件，不包含 Python daemon、启动器或
 > 回退实现。支持 Linux x86-64（glibc 2.28+）、Intel/Apple Silicon macOS 11+
@@ -88,12 +93,18 @@ python -m pip install -U --pre \
 ### 升级
 
 ```bash
+# 官网安装脚本所有的安装
 cccc update
+
+# 由 pip 管理的安装（v0.4.36 发布后）
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。官网安装
-通过同一安装器升级，pip 所有的安装通过 pip 升级；两条渠道替换的是同一个原生
-产品，并都会在替换文件前停止当前 Web/daemon 进程对。
+官网安装脚本部署可先运行 `cccc update --check` 查看升级来源。由 pip 管理的命令会
+明确拒绝 standalone 自更新并提示包管理器命令。两条渠道安装的是同一个原生产品，
+但文件始终由最初创建它们的安装器管理。使用 pip 升级前请运行
+`cccc daemon stop` 并关闭前台 CCCC 进程，确保包管理器可以替换可执行文件，
+Windows 尤其如此。
 
 ### 启动
 
@@ -495,21 +506,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其
 `Installation` 部分会显示本次入口、PATH 实际命中的命令以及全部冲突路径。
 
-安装器默认选择当前已发布的正式版本；也可以显式指定版本或 RC 通道。
+安装器默认选择当前已发布的正式版本；也可以通过 `CCCC_VERSION` 显式指定版本。
 
-### pip 兼容安装
+### pip 兼容安装（从 v0.4.36 起可用）
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
+该命令会在 v0.4.36 发布到 PyPI 后生效。在此之前，请使用官网安装脚本获取当前
+正式产品，或从源码构建待发布的纯 Rust 产品。删除最低版本约束会在只有 v0.4.35
+的平台上重新安装历史 Python 产品。
+
 Pip 会安装包含同一个 `cccc` 可执行文件的 0.4.36 或更高版本平台 wheel。最低
 版本约束可避免 pip 在当前平台没有 0.4.36 wheel 时静默选择历史 Python 版本。
 0.4.36 不再提供 sdist、通用 wheel、可导入的 CCCC Python 包或回退实现；因此
 不支持的平台会解析失败。通用的 `pip install .` 源码构建也会直接拒绝，而不是
-安装一个空包。
+安装一个空包；`pip install -e .` 也不再是开发入口，请使用下方的源码构建命令。
 
-### pip（RC 版，TestPyPI）
+### pip（RC 版，候选版本发布到 TestPyPI 后可用）
 
 ```bash
 python -m pip install -U --pre \
@@ -522,20 +537,29 @@ Cargo 安装仅保留给工作区开发使用，不作为受支持的终端用�
 
 ### 从源码安装
 
+源码打包需要 Rust 1.88+、带 npm 的 Node.js 24，以及仅供归档脚本使用的
+Python 3.11+；构建出的 CCCC 产品本身不包含 Python。
+
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-npm ci --prefix web
-npm -C web run build
-cargo build --release --locked --features standalone -p cccc --bin cccc
-./target/release/cccc --help
+./scripts/build_package.sh
+./target/release/cccc --version
+./target/release/cccc
 ```
+
+如需迭代调试，请使用
+`cargo run --locked --features standalone -p cccc --bin cccc -- --port 0`。
+Windows 用户应运行
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`，
+然后启动 `.\target\release\cccc.exe`。
 
 ### Windows 原生运行
 
-- 编译原生可执行文件前先构建 Web bundle。
-- 使用 `x86_64-pc-windows-msvc` Rust 工具链，构建后运行 `cccc doctor`。
-- 可使用 `scripts/build_web.ps1` 便捷地构建 Web bundle。
+- `scripts/build_package.ps1` 会安装锁定的 Web 依赖、嵌入 Web bundle、编译原生
+  可执行文件并创建归档。
+- 使用 `x86_64-pc-windows-msvc` Rust 工具链，构建后运行新生成的
+  `cccc.exe doctor`。
 
 ### Docker
 

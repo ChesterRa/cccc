@@ -71,16 +71,22 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 # Windows CMD or PowerShell (recommended)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
-# pip-compatible native platform wheel
+# After v0.4.36 is published on PyPI: native platform wheel
 python -m pip install -U "cccc-pair>=0.4.36"
 
-# RC channel (TestPyPI)
+# After a v0.4.36 prerelease is published: RC channel (TestPyPI)
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   "cccc-pair>=0.4.36rc0"
 ```
 
+> **Release status:** the repository is preparing v0.4.36, but stable PyPI is
+> still on v0.4.35, as is the website installer. Use that installer for the
+> current released product, or build this repository from source to evaluate
+> the pending Rust-only product. The two pip commands above are intentionally
+> release-gated until v0.4.36 is published.
+>
 > CCCC 0.4.36 has one product implementation: Rust. The website installer is
 > recommended. The pip command installs the same native executable in a
 > platform wheel for package-manager compatibility; it does not install a
@@ -90,13 +96,19 @@ python -m pip install -U --pre \
 ### Upgrade
 
 ```bash
+# Website-installer ownership
 cccc update
+
+# pip ownership, after v0.4.36 is published
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Use `cccc update --check` to inspect the detected installation and update source.
-Website-installer deployments update through the same installer; pip-owned
-deployments update through pip. Both channels replace the same native product
-and stop the active Web/daemon pair before replacing files.
+Use `cccc update --check` to inspect a website-installer deployment before
+updating it. A pip-owned command deliberately refuses standalone self-update
+and prints the package-manager command instead. Both channels install the same
+native product, but each remains owned by the installer that created it. Before
+a pip upgrade, run `cccc daemon stop` and close any foreground CCCC process so
+the package manager can replace the executable, especially on Windows.
 
 ### Launch
 
@@ -513,23 +525,29 @@ any remaining duplicates. Open a new terminal and run `cccc doctor`; its
 PATH, and every conflicting command.
 
 The installer selects the current published stable release unless an explicit
-version or RC channel is requested.
+`CCCC_VERSION` is requested.
 
-### pip compatibility
+### pip compatibility (available with v0.4.36)
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
+
+This command becomes active when v0.4.36 is published on PyPI. Before then,
+use the website installer for the current stable product or build from source
+to evaluate the pending Rust-only product. Removing the lower bound would
+silently reinstall the historical Python product on platforms where only
+v0.4.35 is available.
 
 Pip installs a 0.4.36-or-newer platform wheel containing the same `cccc`
 executable. The lower bound prevents pip from silently selecting a historical
 Python-only wheel when 0.4.36 has no wheel for the current platform. There is no
 0.4.36 sdist, universal wheel, importable CCCC Python package, or fallback
 implementation; unsupported platforms therefore fail resolution. Generic
-`pip install .` source builds are also rejected instead of installing an empty
-package.
+`pip install .` and `pip install -e .` source builds are also rejected instead
+of installing an empty package; use the source build commands below.
 
-### pip (RC from TestPyPI)
+### pip (RC from TestPyPI, after a candidate is published)
 
 ```bash
 python -m pip install -U --pre \
@@ -543,19 +561,29 @@ end-user distribution.
 
 ### From source
 
+Source packaging requires Rust 1.88+, Node.js 24 with npm, and Python 3.11+
+for the archive helper only. Python is not part of the built CCCC product.
+
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-npm ci --prefix web
-npm -C web run build
-cargo build --release --locked --features standalone -p cccc --bin cccc
-./target/release/cccc --help
+./scripts/build_package.sh
+./target/release/cccc --version
+./target/release/cccc
 ```
+
+For an iterative debug build, use
+`cargo run --locked --features standalone -p cccc --bin cccc -- --port 0`.
+On Windows, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`
+and then `.\target\release\cccc.exe`.
 
 ### Native Windows Notes
 
-- Build the Web bundle before compiling the native executable.
-- Use the `x86_64-pc-windows-msvc` Rust toolchain and run `cccc doctor` after building.
+- `scripts/build_package.ps1` installs the locked Web dependencies, embeds the
+  Web bundle, compiles the native executable, and creates the archive.
+- Use the `x86_64-pc-windows-msvc` Rust toolchain and run the newly built
+  `cccc.exe doctor` after building.
 - `scripts/build_web.ps1` is available as a convenience wrapper for the Web build.
 
 ### Docker

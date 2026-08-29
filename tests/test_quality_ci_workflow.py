@@ -191,7 +191,10 @@ def test_nightly_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> Non
     windows_installer = (ROOT / "scripts/install.ps1").read_text(encoding="utf-8")
 
     assert dist["needs"] == "web-bundle"
-    assert "cargo build --workspace --release --locked" in runs
+    assert (
+        "cargo build --workspace --release --locked --features cccc/standalone"
+        in runs
+    )
     assert "scripts/tests/smoke_rust_replacement.sh target/release/cccc" in runs
     assert "smoke_rust_replacement.sh" in unix_verifier
     assert '"method":"initialize"' in windows_verifier
@@ -571,8 +574,13 @@ def test_source_helpers_use_one_native_product_path() -> None:
     assert "cccc.daemon_main" not in start
     for script in (package_unix, package_windows):
         assert "build_standalone_archive.py" in script
+        assert "--install-deps" in script
         assert "--features standalone" in script
+        assert "--version" in script
+        assert "Run:" in script
         assert "python -m build" not in script
+        for prerequisite in ("node", "npm", "cargo", "rustc", "python"):
+            assert prerequisite in script
     assert not (ROOT / "start_rust.ps1").exists()
     assert not (ROOT / "scripts/build_package_rust.sh").exists()
     assert not (ROOT / "scripts/build_package_rust.ps1").exists()

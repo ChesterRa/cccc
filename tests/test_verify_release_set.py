@@ -55,10 +55,14 @@ def _complete_set(directory: Path) -> None:
 name = "cccc-pair"
 version = "{WHEEL_VERSION}"
 description = "release fixture"
+readme = {{ file = "README.md", content-type = "text/markdown" }}
 ''',
         encoding="utf-8",
     )
     directory.joinpath("LICENSE").write_text("fixture\n", encoding="utf-8")
+    directory.joinpath("README.md").write_text(
+        "# Release fixture\n", encoding="utf-8"
+    )
     payloads: list[Path] = []
     for index, (platform, target) in enumerate(WHEEL_TARGETS.items()):
         executable = "cccc.exe" if platform == "win_amd64" else "cccc"
@@ -92,6 +96,7 @@ description = "release fixture"
     )
     directory.joinpath("pyproject.toml").unlink()
     directory.joinpath("LICENSE").unlink()
+    directory.joinpath("README.md").unlink()
 
 
 def test_accepts_four_wheels_and_four_byte_identical_archives(tmp_path: Path) -> None:

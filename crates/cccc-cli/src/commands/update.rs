@@ -127,7 +127,7 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
             "this Rust executable is managed by another installation or has an unrecognized owner; update it through that installer"
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
-            "this CCCC executable is not an owned standalone installation; update it through its package manager (for pip: python -m pip install --upgrade cccc-pair)"
+            "this CCCC executable is not an owned standalone installation; update it through its package manager (for pip: python -m pip install --upgrade \"cccc-pair>=0.4.36\")"
         ),
         Err(error) => return Err(error).context(format!("could not read {}", marker.display())),
     }
@@ -209,7 +209,7 @@ mod tests {
         assert!(
             missing
                 .to_string()
-                .contains("python -m pip install --upgrade cccc-pair")
+                .contains("python -m pip install --upgrade \"cccc-pair>=0.4.36\"")
         );
 
         std::fs::write(temp.path().join(INSTALL_MARKER), b"foreign-v1\n").expect("foreign marker");

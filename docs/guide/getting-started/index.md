@@ -114,21 +114,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 The installer downloads a checksum-verified native executable and refuses to
 overwrite a command it does not own.
 
-### From PyPI (package-manager compatibility)
+### From PyPI (available with v0.4.36)
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
+
+Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
+prepared. Use the installer for the current released product, or the source
+workflow below to evaluate the pending Rust-only product. This pip command is
+shown now so the final release contract can be reviewed without making it
+appear currently available. Do not remove the lower bound.
 
 The native platform wheel installs the same Rust `cccc` executable through pip.
 The lower bound prevents pip from silently selecting a historical Python-only
 release when 0.4.36 has no wheel for the current platform. It contains no Python
 daemon, product package, launcher, or fallback. Unsupported platforms therefore
 fail resolution rather than receiving a portable Python wheel. Generic
-`pip install .` source builds are rejected instead of installing an empty
-package.
+`pip install .` and editable `pip install -e .` source builds are rejected
+instead of installing an empty package; use the source workflow below.
 
-### From TestPyPI (for explicit RC testing)
+### From TestPyPI (after an explicit v0.4.36 candidate is published)
 
 ```bash
 python -m pip install -U --pre \
@@ -139,14 +145,21 @@ python -m pip install -U --pre \
 
 ### From Source
 
+Source packaging requires Rust 1.88+, Node.js 24 with npm, and Python 3.11+
+only for the archive helper. Python is not included in the built product.
+
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-npm ci --prefix web
-npm -C web run build
-cargo build --release --locked --features standalone -p cccc --bin cccc
-./target/release/cccc --help
+./scripts/build_package.sh
+./target/release/cccc --version
+./target/release/cccc
 ```
+
+Use `cargo run --locked --features standalone -p cccc --bin cccc -- --port 0`
+for an iterative debug build. On Windows, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`
+and then `.\target\release\cccc.exe`.
 
 ## Verify Installation
 

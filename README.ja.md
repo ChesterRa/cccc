@@ -70,16 +70,21 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 # Windows CMD または PowerShell（推奨）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
-# pip 互換のネイティブ platform wheel
+# v0.4.36 の PyPI 公開後：pip 互換のネイティブ platform wheel
 python -m pip install -U "cccc-pair>=0.4.36"
 
-# RC チャネル（TestPyPI）
+# v0.4.36 prerelease 公開後：RC チャネル（TestPyPI）
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   "cccc-pair>=0.4.36rc0"
 ```
 
+> **リリース状況：** このリポジトリは v0.4.36 を準備中ですが、安定版 PyPI は
+> まだ v0.4.35 で、Web サイトインストーラーも同じ正式版を導入します。公開済み
+> product にはその installer を使い、準備中の Rust-only product の評価には source
+> build を使ってください。上記 2 つの pip コマンドは v0.4.36 公開後のみ有効です。
+>
 > CCCC 0.4.36 の製品実装は Rust の 1 つだけです。Web サイトのインストーラーを
 > 推奨します。pip はパッケージマネージャー互換用で、同じネイティブ実行ファイルを
 > platform wheel として導入します。Python daemon、launcher、fallback は含みません。
@@ -89,13 +94,19 @@ python -m pip install -U --pre \
 ### アップグレード
 
 ```bash
+# Web サイトインストーラーが所有する場合
 cccc update
+
+# pip が管理する場合（v0.4.36 公開後）
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-インストール種別と更新元を事前確認するには `cccc update --check` を使用してください。
-Web サイト経由の導入は同じインストーラーで、pip 所有の導入は pip で更新します。
-どちらも同じネイティブ製品を置き換え、ファイル更新前に稼働中の Web/daemon
-ペアを停止します。
+Web サイトインストーラーによる導入では、`cccc update --check` で更新元を確認
+できます。pip 管理下のコマンドは standalone 自己更新を明示的に拒否し、代わりに
+パッケージマネージャーのコマンドを表示します。どちらも同じネイティブ製品を
+導入しますが、ファイルは作成元のインストーラーが管理し続けます。pip で更新する
+前に `cccc daemon stop` を実行し、foreground の CCCC process も終了してください。
+特に Windows では executable の置換に必要です。
 
 ### 起動
 
@@ -497,23 +508,29 @@ GitHub Releases からチェックサム検証済みのネイティブ製品を�
 新しいターミナルで `cccc doctor` を実行すると、`Installation` セクションに
 実行中の入口、PATH が選ぶコマンド、競合するすべてのパスが表示されます。
 
-インストーラーは、バージョンまたは RC チャネルを明示しない限り、現在公開中の
-安定版を選択します。
+インストーラーは、`CCCC_VERSION` を明示しない限り、現在公開中の安定版を
+選択します。
 
-### pip 互換インストール
+### pip 互換インストール（v0.4.36 から利用可能）
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
+
+このコマンドは v0.4.36 が PyPI に公開された後に有効になります。それまでは Web
+サイトインストーラーで現行正式版を導入するか、準備中の Rust-only product を
+source から build してください。下限を外すと、v0.4.35 しかない platform で過去の
+Python 製品が再導入されます。
 
 Pip は同じ `cccc` 実行ファイルを含む 0.4.36 以降の platform wheel を導入します。
 最低 version 制約により、現在の platform に 0.4.36 wheel がない場合に過去の
 Python 版が暗黙に選ばれることを防ぎます。0.4.36 では sdist、universal wheel、
 import 可能な CCCC Python package、fallback 実装を提供しないため、未対応
 platform は解決に失敗します。汎用の `pip install .` source build も空 package を
-導入せず明示的に拒否されます。
+導入せず明示的に拒否されます。`pip install -e .` も開発入口ではないため、下記の
+source build コマンドを使用してください。
 
-### pip（RC 版、TestPyPI）
+### pip（RC 版、candidate の TestPyPI 公開後に利用可能）
 
 ```bash
 python -m pip install -U --pre \
@@ -527,20 +544,29 @@ Cargo インストールは workspace 開発用にのみ残し、サポート対
 
 ### ソースから
 
+source package の作成には Rust 1.88+、npm 付き Node.js 24、および archive helper
+専用の Python 3.11+ が必要です。build 済み CCCC product に Python は含まれません。
+
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-npm ci --prefix web
-npm -C web run build
-cargo build --release --locked --features standalone -p cccc --bin cccc
-./target/release/cccc --help
+./scripts/build_package.sh
+./target/release/cccc --version
+./target/release/cccc
 ```
+
+反復的なデバッグには
+`cargo run --locked --features standalone -p cccc --bin cccc -- --port 0` を使用します。
+Windows では
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`
+を実行し、その後 `.\target\release\cccc.exe` を起動します。
 
 ### Windows ネイティブ
 
-- ネイティブ実行ファイルをコンパイルする前に Web bundle をビルドしてください。
-- `x86_64-pc-windows-msvc` Rust toolchain を使用し、ビルド後に `cccc doctor` を実行してください。
-- `scripts/build_web.ps1` を Web bundle の簡易ビルドラッパーとして利用できます。
+- `scripts/build_package.ps1` は lock 済み Web 依存関係を導入し、Web bundle を
+  埋め込み、ネイティブ実行ファイルと archive を作成します。
+- `x86_64-pc-windows-msvc` Rust toolchain を使用し、ビルド後に生成された
+  `cccc.exe doctor` を実行してください。
 
 ### Docker
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 
@@ -23,6 +24,7 @@ def _release(version: str, *, complete: bool) -> dict[str, object]:
     return {
         "tag_name": f"v{version}",
         "draft": False,
+        "prerelease": "-" in version,
         "assets": [
             {"name": name, "state": "uploaded"}
             for name in (names if complete else names[:-1])
@@ -57,20 +59,30 @@ def test_docs_installer_renderer_accepts_a_released_version_override() -> None:
         subprocess.run(["node", "scripts/prepare_docs_installers.mjs"], cwd=ROOT, check=True)
 
 
-def test_docs_installer_resolver_skips_a_newer_incomplete_release(tmp_path: Path) -> None:
+def test_docs_installer_resolver_skips_prerelease_and_newer_incomplete_release(
+    tmp_path: Path,
+) -> None:
     metadata = tmp_path / "releases.json"
     metadata.write_text(
-        json.dumps([_release("0.4.34-rc4", complete=False), _release("0.4.34-rc3", complete=True)]),
+        json.dumps(
+            [
+                _release("0.4.35", complete=False),
+                _release("0.4.34-rc3", complete=True),
+                _release("0.4.33", complete=True),
+            ]
+        ),
         encoding="utf-8",
     )
 
     resolved = _resolve(metadata)
 
     assert resolved.returncode == 0
-    assert resolved.stdout.strip() == "0.4.34-rc3"
+    assert resolved.stdout.strip() == "0.4.33"
 
 
-def test_docs_installer_resolver_sorts_complete_releases_by_semver(tmp_path: Path) -> None:
+def test_docs_installer_resolver_sorts_complete_stable_releases_by_semver(
+    tmp_path: Path,
+) -> None:
     metadata = tmp_path / "releases.json"
     metadata.write_text(
         json.dumps(
@@ -87,7 +99,7 @@ def test_docs_installer_resolver_sorts_complete_releases_by_semver(tmp_path: Pat
     resolved = _resolve(metadata)
 
     assert resolved.returncode == 0
-    assert resolved.stdout.strip() == "0.4.34-rc10"
+    assert resolved.stdout.strip() == "0.4.33"
 
 
 def test_docs_installer_resolver_prefers_a_stable_release_over_its_prerelease(tmp_path: Path) -> None:
@@ -108,16 +120,31 @@ def test_docs_installer_resolver_prefers_a_stable_release_over_its_prerelease(tm
     assert resolved.stdout.strip() == "0.4.34"
 
 
-def test_docs_installer_resolver_rejects_an_incomplete_release_set(tmp_path: Path) -> None:
+def test_docs_installer_resolver_rejects_only_prereleases(tmp_path: Path) -> None:
     metadata = tmp_path / "releases.json"
     metadata.write_text(
-        json.dumps([_release("0.4.34-rc4", complete=False)]),
+        json.dumps([_release("0.4.36-rc1", complete=True)]),
         encoding="utf-8",
     )
 
     resolved = _resolve(metadata)
 
     assert resolved.returncode != 0
+    assert "published stable GitHub Release" in resolved.stderr
+    assert "complete installer asset set" in resolved.stderr
+
+
+def test_docs_installer_resolver_rejects_an_incomplete_release_set(tmp_path: Path) -> None:
+    metadata = tmp_path / "releases.json"
+    metadata.write_text(
+        json.dumps([_release("0.4.34", complete=False)]),
+        encoding="utf-8",
+    )
+
+    resolved = _resolve(metadata)
+
+    assert resolved.returncode != 0
+    assert "published stable GitHub Release" in resolved.stderr
     assert "complete installer asset set" in resolved.stderr
 
 
@@ -148,3 +175,26 @@ def test_rust_only_pip_guidance_cannot_fall_back_to_a_python_release() -> None:
     ):
         contents = (ROOT / relative_path).read_text(encoding="utf-8")
         assert '"cccc-pair>=0.4.36rc0"' in contents, relative_path
+
+
+def test_prepublication_notice_cannot_survive_the_stable_0_4_36_bump() -> None:
+    with (ROOT / "pyproject.toml").open("rb") as stream:
+        version = str(tomllib.load(stream)["project"]["version"])
+    markers = {
+        "README.md": "repository is preparing v0.4.36",
+        "README.zh-CN.md": "当前仓库正在准备 v0.4.36",
+        "README.ja.md": "このリポジトリは v0.4.36 を準備中",
+        "docs/guide/faq.md": "v0.4.36 is being",
+        "docs/guide/getting-started/index.md": "v0.4.36 is being",
+        "docs/guide/operations.md": "v0.4.36 is being",
+    }
+    preparing_0_4_36 = version == "0.4.35" or version.startswith(
+        ("0.4.36a", "0.4.36b", "0.4.36rc")
+    )
+
+    for relative_path, marker in markers.items():
+        contents = (ROOT / relative_path).read_text(encoding="utf-8")
+        if preparing_0_4_36:
+            assert marker in contents, relative_path
+        else:
+            assert marker not in contents, relative_path

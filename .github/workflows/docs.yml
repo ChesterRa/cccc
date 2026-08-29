@@ -54,7 +54,7 @@ jobs:
         run: npm ci
         working-directory: docs
 
-      - name: Resolve latest complete installer release
+      - name: Resolve latest complete stable installer release
         id: installer-release
         env:
           GITHUB_TOKEN: ${{ github.token }}

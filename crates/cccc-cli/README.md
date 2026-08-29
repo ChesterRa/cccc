@@ -11,7 +11,8 @@ Use the website installer for the normal end-user path:
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-Or install the same native executable through pip:
+After v0.4.36 is published on PyPI, install the same native executable through
+pip:
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
@@ -21,16 +22,19 @@ Windows CMD or PowerShell uses `powershell.exe -NoProfile -ExecutionPolicy Bypas
 The website installers download a checksum-verified GitHub Release binary and
 require neither Rust nor Python. The pip channel requires pip for installation,
 but its native wheel contains the same executable and no CCCC Python runtime.
-Do not install this crate with Cargo for normal product use. Upgrade either
-supported distribution with:
+Do not install this crate with Cargo for normal product use. Upgrade a
+website-installer distribution with:
 
 ```bash
 cccc update
 ```
 
-Use `cccc update --check` to inspect the detected installation and update source.
-The installer refuses to overwrite an existing public `cccc` command without its
-standalone ownership marker. Pip-owned installations remain updated through pip.
+Use `cccc update --check` to inspect the standalone installation and update
+source. Pip-owned installations remain owned by pip and must be upgraded with
+`python -m pip install --upgrade "cccc-pair>=0.4.36"`; `cccc update` refuses to
+replace them through the standalone installer. The installer refuses to
+overwrite an existing public `cccc` command without its standalone ownership
+marker.
 Commands in other directories are preserved. The default installer moves its
 directory to the front of the user PATH and reports remaining duplicates; verify
 the selected command in a new terminal with `cccc doctor`.
@@ -41,8 +45,8 @@ CCCC requires Rust 1.88 or newer. From the repository, run and test this
 implementation directly with:
 
 ```bash
-cargo run -p cccc -- --version
-cargo test -p cccc --locked
+cargo run --locked --features standalone -p cccc --bin cccc -- --version
+cargo test --locked --features standalone -p cccc
 ```
 
 Web Model and NotebookLM browser projection require a locally installed Chrome,

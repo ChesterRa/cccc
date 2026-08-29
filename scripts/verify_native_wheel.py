@@ -67,6 +67,11 @@ def verify(wheel: Path, *, platform_tag: str, binary: Path | None = None) -> byt
             raise ValueError("wheel project name must remain cccc-pair")
         if f"Version: {version}\n" not in rendered_core:
             raise ValueError("wheel metadata version does not match its filename")
+        headers, separator, description = rendered_core.partition("\n\n")
+        if "Description-Content-Type: text/markdown\n" not in f"{headers}\n":
+            raise ValueError("wheel metadata must declare its Markdown description")
+        if not separator or not description.strip():
+            raise ValueError("wheel metadata must include a non-empty description")
         if "Requires-Dist:" in rendered_core:
             raise ValueError(
                 "Rust-only wheel must not declare Python runtime dependencies"

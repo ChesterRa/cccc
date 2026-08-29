@@ -30,10 +30,10 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 # Recommended native installer (macOS / Linux)
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Package-manager-compatible native wheel
+# After v0.4.36 is published: package-manager-compatible native wheel
 python -m pip install -U "cccc-pair>=0.4.36"
 
-# From TestPyPI (explicit RC testing)
+# After a candidate is published: explicit RC testing from TestPyPI
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
@@ -42,10 +42,18 @@ python -m pip install -U --pre \
 # From source
 git clone https://github.com/ChesterRa/cccc
 cd cccc
-npm ci --prefix web
-npm -C web run build
-cargo build --release --locked --features standalone -p cccc --bin cccc
+./scripts/build_package.sh
+./target/release/cccc --version
 ```
+
+The source package helper requires Rust 1.88+, Node.js 24 with npm, and Python
+3.11+ for archive assembly only; the resulting CCCC executable has no Python
+runtime dependency.
+
+Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
+prepared. Use the installer for the current released product, or build from
+source to evaluate the pending Rust-only product. Do not remove the v0.4.36
+lower bound and accidentally select the historical Python product.
 
 Windows CMD or PowerShell uses the native installer:
 

@@ -99,8 +99,18 @@ Do not:
 ### Upgrade
 
 ```bash
+# Website-installer ownership
+cccc update
+
+# Pip ownership, after v0.4.36 is published
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
+
+Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
+prepared. Use the installer for the current released product, or build from
+source to evaluate the pending Rust-only product. Do not remove the v0.4.36
+lower bound. Before a pip upgrade, run `cccc daemon stop` and close any
+foreground CCCC process so the executable is replaceable on every platform.
 
 ### After upgrade
 

@@ -21,15 +21,30 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 _WHEEL_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._!+]*$")
 
 
-def _project(root: Path) -> tuple[str, str, str]:
+def _project(root: Path) -> tuple[str, str, str, str, str]:
     with root.joinpath("pyproject.toml").open("rb") as stream:
         project = tomllib.load(stream)["project"]
     name = str(project["name"])
     version = str(project["version"])
     summary = str(project["description"])
+    readme = project.get("readme")
+    if isinstance(readme, dict):
+        readme_path = root.joinpath(str(readme["file"]))
+        readme_content_type = str(readme.get("content-type") or "text/markdown")
+    elif isinstance(readme, str):
+        readme_path = root.joinpath(readme)
+        readme_content_type = "text/markdown"
+    else:
+        raise ValueError("project readme must name the release description file")
     if not _WHEEL_COMPONENT_RE.fullmatch(version):
         raise ValueError(f"project version is not wheel-safe PEP 440: {version!r}")
-    return name, version, summary
+    return (
+        name,
+        version,
+        summary,
+        readme_content_type,
+        readme_path.read_text(encoding="utf-8"),
+    )
 
 
 def _wheel_name_component(value: str) -> str:
@@ -56,12 +71,19 @@ def _zip_info(name: str, *, executable: bool = False) -> zipfile.ZipInfo:
     return info
 
 
-def _metadata(name: str, version: str, summary: str) -> bytes:
+def _metadata(
+    name: str,
+    version: str,
+    summary: str,
+    readme_content_type: str,
+    readme: str,
+) -> bytes:
     return (
         "Metadata-Version: 2.4\n"
         f"Name: {name}\n"
         f"Version: {version}\n"
         f"Summary: {summary}\n"
+        f"Description-Content-Type: {readme_content_type}\n"
         "License-Expression: Apache-2.0\n"
         "Project-URL: Homepage, https://github.com/ChesterRa/cccc\n"
         "Project-URL: Repository, https://github.com/ChesterRa/cccc\n"
@@ -72,6 +94,7 @@ def _metadata(name: str, version: str, summary: str) -> bytes:
         "Classifier: Operating System :: MacOS\n"
         "Classifier: Operating System :: Microsoft :: Windows\n"
         "\n"
+        f"{readme.rstrip()}\n"
     ).encode("utf-8")
 
 
@@ -82,7 +105,7 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
     if _TAG_RE.fullmatch(platform_tag) is None or platform_tag.lower() == "any":
         raise ValueError(f"invalid native wheel platform tag: {platform_tag!r}")
 
-    name, version, summary = _project(root.resolve())
+    name, version, summary, readme_content_type, readme = _project(root.resolve())
     distribution = _wheel_name_component(name)
     version_component = version
     stem = f"{distribution}-{version_component}"
@@ -97,7 +120,13 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
 
     entries = {
         script: binary.read_bytes(),
-        metadata: _metadata(name, version, summary),
+        metadata: _metadata(
+            name,
+            version,
+            summary,
+            readme_content_type,
+            readme,
+        ),
         wheel: (
             "Wheel-Version: 1.0\n"
             "Generator: cccc-native-wheel 1\n"

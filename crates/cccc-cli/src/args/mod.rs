@@ -48,7 +48,7 @@ pub struct SetupArgs {
 pub struct UpdateArgs {
     #[arg(long, value_enum)]
     pub channel: Option<ReleaseChannelArg>,
-    /// Show the detected installation and update source without changing files.
+    /// Show the standalone installation and release channel without changing files.
     #[arg(long)]
     pub check: bool,
 }

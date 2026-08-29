@@ -19,10 +19,14 @@ def _project(root: Path) -> None:
 name = "cccc-pair"
 version = "0.4.36rc1"
 description = "Rust-only CCCC fixture"
+readme = { file = "README.md", content-type = "text/markdown" }
 """,
         encoding="utf-8",
     )
     root.joinpath("LICENSE").write_text("fixture license\n", encoding="utf-8")
+    root.joinpath("README.md").write_text(
+        "# CCCC fixture\n\nNative product description.\n", encoding="utf-8"
+    )
 
 
 @pytest.mark.parametrize(
@@ -53,6 +57,8 @@ def test_builds_dependency_free_rust_only_wheel(
         metadata = archive.read("cccc_pair-0.4.36rc1.dist-info/METADATA").decode()
     assert "Requires-Dist:" not in metadata
     assert "Programming Language :: Rust" in metadata
+    assert "Description-Content-Type: text/markdown" in metadata
+    assert "# CCCC fixture" in metadata
 
 
 def test_wheel_is_reproducible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,10 +91,13 @@ def test_rejects_a_universal_platform_tag(tmp_path: Path) -> None:
 
 def test_source_pep517_build_fails_instead_of_installing_an_empty_wheel() -> None:
     assert native_wheel_backend.get_requires_for_build_wheel() == []
-    with pytest.raises(RuntimeError, match="does not build a wheel or sdist from source"):
+    assert native_wheel_backend.get_requires_for_build_editable() == []
+    with pytest.raises(RuntimeError, match="does not build a wheel, editable install"):
         native_wheel_backend.build_wheel("unused")
-    with pytest.raises(RuntimeError, match="does not build a wheel or sdist from source"):
+    with pytest.raises(RuntimeError, match="does not build a wheel, editable install"):
         native_wheel_backend.build_sdist("unused")
+    with pytest.raises(RuntimeError, match="scripts/build_package.sh"):
+        native_wheel_backend.build_editable("unused")
 
 
 def test_rejects_an_extra_fully_recorded_wheel_member(tmp_path: Path) -> None:

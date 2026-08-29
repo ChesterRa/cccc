@@ -62,7 +62,7 @@ jobs:
 
       - name: Build and verify Rust distribution
         run: |
-          cargo build --workspace --release --locked
+          cargo build --workspace --release --locked --features cccc/standalone
           scripts/tests/install_real_unix.sh target/release/cccc
           target/release/cccc --version
           bash scripts/tests/smoke_rust_replacement.sh target/release/cccc

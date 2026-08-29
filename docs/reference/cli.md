@@ -367,28 +367,27 @@ reported without aborting the remaining setup work.
 
 ### `cccc update`
 
-Upgrade CCCC through the detected installation channel.
+Upgrade a website-installer-owned CCCC executable.
 
 ```bash
-cccc update                        # Upgrade using the detected channel
-cccc update --check                # Show install detection + planned command
-
-# pip distribution only
-cccc update --channel stable       # Force the stable PyPI channel
-cccc update --channel rc           # Force the TestPyPI RC channel
+cccc update                        # Upgrade from stable GitHub Releases
+cccc update --check                # Show the standalone install and channel
+cccc update --channel stable       # Force the stable GitHub Release channel
+cccc update --channel rc           # Force the prerelease GitHub Release channel
 ```
 
 Notes:
-- The default channel follows the detected install metadata when possible, then falls back to `stable`.
+- A stable build defaults to `stable`; a prerelease build defaults to `rc`.
 - Website-installer installations reuse the GitHub Pages installer and preserve
   their current install directory.
-- Editable and local-path installs are reported but not updated automatically.
-- A pip update replaces the same native executable distributed by the website
-  installer; it does not install a Python runtime or fallback.
-- A pip update stops the older Web/daemon pair; the next command starts the new
-  product version. A standalone update
-  restarts the daemon when it was running, while the old combined Web process
-  remains stopped; the next bare `cccc` starts the updated Web process.
+- Pip-owned, source-tree, and other markerless executables are not updated by
+  this command. Pip users run
+  `python -m pip install -U "cccc-pair>=0.4.36"`; the wheel contains the same
+  native executable and no Python runtime or fallback. Run `cccc daemon stop`
+  and close foreground CCCC processes before asking pip to replace it.
+- A standalone update restarts the daemon when it was running, while the old
+  combined Web process remains stopped; the next bare `cccc` starts the updated
+  Web process.
 - On Windows, standalone self-update continues in a separate PowerShell process
   after the original executable exits so the binary can be replaced safely.
 

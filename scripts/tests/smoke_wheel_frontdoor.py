@@ -256,7 +256,7 @@ class InstalledWheelSmoke:
         result = self.cccc("update", "--check", check=False)
         if result.returncode == 0:
             raise RuntimeError("pip-owned CCCC unexpectedly accepted standalone self-update")
-        if "python -m pip install --upgrade cccc-pair" not in result.stdout:
+        if 'python -m pip install --upgrade "cccc-pair>=0.4.36"' not in result.stdout:
             raise RuntimeError(f"self-update refusal omitted the pip ownership remedy:\n{result.stdout}")
 
     def verify_installed_binary(self) -> None:

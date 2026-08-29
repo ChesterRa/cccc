@@ -48,7 +48,7 @@ Remove a conflicting command, choose another `CCCC_INSTALL_DIR`, or set
 scripts are rendered with the current documentation release; callers can
 override that concrete pin through `CCCC_VERSION`.
 
-In either distribution, inspect or apply updates with:
+For a website-installer distribution, inspect or apply updates with:
 
 ```bash
 cccc update
@@ -57,9 +57,10 @@ cccc update --check
 
 Website-script installations update through the GitHub Pages installer and
 support `--channel stable|rc`; the updater resolves and pins a concrete release
-version before invoking the installer. Pip installations update `cccc-pair`
-through pip. Both channels install the same Rust implementation and expose the
-same public `cccc` command.
+version before invoking the installer. Pip installations stay owned by pip and
+must be updated explicitly with
+`python -m pip install -U "cccc-pair>=0.4.36"`. Both channels install the same
+Rust implementation and expose the same public `cccc` command.
 
 The 0.4.35 selectors `cccc python` and `cccc rust` are retired. A legacy
 `CCCC_HOME/implementation.json` is ignored: it is neither a product preference
@@ -67,10 +68,11 @@ nor an authority for runtime startup in 0.4.36. `cccc status` reports the one
 installed product, daemon state, groups, and detected agent runtimes without
 implementation availability rows.
 
-Inside a pip installation, `cccc update` delegates replacement to pip so
-Windows can replace the package-manager-owned executable safely. A pip-owned
-binary cannot overwrite itself through the website installer; standalone
-ownership is proven only by the complete marker beside that exact executable.
+Inside a pip installation, `cccc update` refuses replacement and prints the pip
+command. This keeps Windows and virtual-environment files under their package
+manager instead of attempting to infer an interpreter or overwrite a running
+executable. Standalone ownership is proven only by the complete marker beside
+that exact executable.
 
 ### Uninstall without removing user data
 
@@ -136,8 +138,9 @@ hashes, the complete checksum manifest passes, and all four final installer
 candidates succeed. PyPI receives only the four wheels; GitHub Releases receives
 the wheels, archives, checksums, and versioned installers. Prerelease tags are
 marked as such in both channels. The documentation site pins its hosted
-installers to the newest published release that has the complete asset set, so a
-prepared but unpublished version cannot break installation. Operators can rerun
+installers to the newest stable published release that has the complete asset
+set, so a prerelease or prepared but unpublished version cannot replace the
+default installer. Operators can rerun
 the workflow deliberately with
 `gh workflow run release.yml --ref v<version>`.
 
