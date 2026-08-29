@@ -30,14 +30,8 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 # Recommended native installer (macOS / Linux)
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# After v0.4.36 is published: package-manager-compatible native wheel
+# Package-manager-compatible native wheel
 python -m pip install -U "cccc-pair>=0.4.36"
-
-# After a candidate is published: explicit RC testing from TestPyPI
-python -m pip install -U --pre \
-  --index-url https://test.pypi.org/simple \
-  --extra-index-url https://pypi.org/simple \
-  "cccc-pair>=0.4.36rc0"
 
 # From source
 git clone https://github.com/ChesterRa/cccc
@@ -50,10 +44,8 @@ The source package helper requires Rust 1.88+, Node.js 24 with npm, and Python
 3.11+ for archive assembly only; the resulting CCCC executable has no Python
 runtime dependency.
 
-Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
-prepared. Use the installer for the current released product, or build from
-source to evaluate the pending Rust-only product. Do not remove the v0.4.36
-lower bound and accidentally select the historical Python product.
+Keep the v0.4.36 lower bound so an unsupported platform fails clearly instead
+of selecting the historical Python product.
 
 Windows CMD or PowerShell uses the native installer:
 
@@ -78,6 +70,10 @@ existing terminal must be reopened (or its PATH refreshed). Custom install direc
 `CCCC_NO_MODIFY_PATH=1` require you to move that directory to the front manually.
 When PATH still selects the old command, run the newly installed executable by
 the absolute path printed by the installer to get the current diagnostic report.
+The native pip wheel uses the same marker path with value `pip-v1`, so a pip
+install cannot inherit stale standalone self-update authority. To move that
+command directory to the website installer, uninstall `cccc-pair` with pip
+first; the explicit replacement flag does not override pip ownership.
 
 ### How do I uninstall CCCC without losing my groups?
 

@@ -71,23 +71,11 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 # Windows CMD or PowerShell (recommended)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
-# After v0.4.36 is published on PyPI: native platform wheel
+# Native platform wheel (pip compatibility)
 python -m pip install -U "cccc-pair>=0.4.36"
-
-# After a v0.4.36 prerelease is published: RC channel (TestPyPI)
-python -m pip install -U --pre \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  "cccc-pair>=0.4.36rc0"
 ```
 
-> **Release status:** the repository is preparing v0.4.36, but stable PyPI is
-> still on v0.4.35, as is the website installer. Use that installer for the
-> current released product, or build this repository from source to evaluate
-> the pending Rust-only product. The two pip commands above are intentionally
-> release-gated until v0.4.36 is published.
->
-> CCCC 0.4.36 has one product implementation: Rust. The website installer is
+> **CCCC 0.4.36 has one product implementation: Rust.** The website installer is
 > recommended. The pip command installs the same native executable in a
 > platform wheel for package-manager compatibility; it does not install a
 > Python daemon, launcher, or fallback. Supported targets are Linux x86-64
@@ -99,7 +87,7 @@ python -m pip install -U --pre \
 # Website-installer ownership
 cccc update
 
-# pip ownership, after v0.4.36 is published
+# pip ownership
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
@@ -108,7 +96,11 @@ updating it. A pip-owned command deliberately refuses standalone self-update
 and prints the package-manager command instead. Both channels install the same
 native product, but each remains owned by the installer that created it. Before
 a pip upgrade, run `cccc daemon stop` and close any foreground CCCC process so
-the package manager can replace the executable, especially on Windows.
+the package manager can replace the executable, especially on Windows. To
+switch from pip to the website installer in the same command directory, first
+run `python -m pip uninstall cccc-pair`; the standalone installer deliberately
+refuses to overwrite pip-owned files, even with
+`CCCC_ALLOW_REPLACE_EXISTING=1`.
 
 ### Launch
 
@@ -527,17 +519,11 @@ PATH, and every conflicting command.
 The installer selects the current published stable release unless an explicit
 `CCCC_VERSION` is requested.
 
-### pip compatibility (available with v0.4.36)
+### pip compatibility (v0.4.36+)
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
-
-This command becomes active when v0.4.36 is published on PyPI. Before then,
-use the website installer for the current stable product or build from source
-to evaluate the pending Rust-only product. Removing the lower bound would
-silently reinstall the historical Python product on platforms where only
-v0.4.35 is available.
 
 Pip installs a 0.4.36-or-newer platform wheel containing the same `cccc`
 executable. The lower bound prevents pip from silently selecting a historical
@@ -546,15 +532,6 @@ Python-only wheel when 0.4.36 has no wheel for the current platform. There is no
 implementation; unsupported platforms therefore fail resolution. Generic
 `pip install .` and `pip install -e .` source builds are also rejected instead
 of installing an empty package; use the source build commands below.
-
-### pip (RC from TestPyPI, after a candidate is published)
-
-```bash
-python -m pip install -U --pre \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  "cccc-pair>=0.4.36rc0"
-```
 
 Cargo installation is retained for workspace development, not as a supported
 end-user distribution.

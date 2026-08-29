@@ -11,8 +11,7 @@ Use the website installer for the normal end-user path:
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-After v0.4.36 is published on PyPI, install the same native executable through
-pip:
+Install the same native executable through pip on supported platforms:
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
@@ -34,7 +33,9 @@ source. Pip-owned installations remain owned by pip and must be upgraded with
 `python -m pip install --upgrade "cccc-pair>=0.4.36"`; `cccc update` refuses to
 replace them through the standalone installer. The installer refuses to
 overwrite an existing public `cccc` command without its standalone ownership
-marker.
+marker. A `pip-v1` marker is never overridden, even with
+`CCCC_ALLOW_REPLACE_EXISTING=1`; uninstall `cccc-pair` with pip before changing
+that command directory to the website installer.
 Commands in other directories are preserved. The default installer moves its
 directory to the front of the user PATH and reports remaining duplicates; verify
 the selected command in a new terminal with `cccc doctor`.

@@ -5371,9 +5371,11 @@ Result:
 
 Create (or dedupe) a durable work-lane ingest job and execute one provider
 attempt. `lane="memory"` MUST be rejected. The job MUST be persisted before the
-provider mutation, then settled to `succeeded` or `failed`; a process exit may
-leave it `running` to represent an uncertain outcome. 0.4.36 has no background
-ingest retry worker: retry after a terminal failure is an explicit
+provider mutation, then settled to `succeeded` or `failed`. A process exit or a
+provider response whose remote commit cannot be determined MUST leave the job
+`running` to represent an uncertain outcome. Reissuing the same idempotency key
+MUST return that job instead of creating another source. 0.4.36 has no
+background ingest retry worker: retry after a terminal failure is an explicit
 `group_space_jobs action=retry` operation.
 
 Args:
@@ -5570,11 +5572,19 @@ Common provider error semantics:
 - `space_provider_compat_mismatch`: provider response schema cannot be decoded; non-transient and degrades the provider until compatibility is restored.
 - `space_provider_timeout`: request or provider-side wait timed out; transient and does not by itself degrade the provider.
 - `space_provider_rate_limited`: provider refused work because of quota/rate limits; transient and does not by itself degrade the provider.
+- `space_provider_outcome_unresolved`: the provider may have committed the mutation, but CCCC cannot prove its result; the durable job remains `running` and MUST NOT be retried until a user inspects/reconciles or cancels it.
 - `space_provider_upstream_error`: another provider transport/RPC failure occurred; retryability depends on the operation and provider response.
 
 #### `group_space_jobs`
 
 List/retry/cancel Group Space jobs for one lane.
+
+`retry` accepts only terminal `failed`/`canceled` jobs (and legacy `pending`
+jobs). It MUST reject an uncertain `running` job. Before a retry performs any
+provider mutation, the job's saved `remote_space_id` MUST equal the lane's
+current binding; otherwise it fails with `binding_changed` and leaves the job
+unchanged. This prevents an old job from writing into a notebook the Group has
+since left.
 
 Args:
 ```ts

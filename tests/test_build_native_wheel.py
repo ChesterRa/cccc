@@ -54,6 +54,12 @@ def test_builds_dependency_free_rust_only_wheel(
         assert any(
             name.endswith(f".data/scripts/{executable}") for name in archive.namelist()
         )
+        pip_marker = next(
+            name
+            for name in archive.namelist()
+            if name.endswith(".data/scripts/.cccc-standalone")
+        )
+        assert archive.read(pip_marker) == b"pip-v1\n"
         metadata = archive.read("cccc_pair-0.4.36rc1.dist-info/METADATA").decode()
     assert "Requires-Dist:" not in metadata
     assert "Programming Language :: Rust" in metadata

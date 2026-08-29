@@ -166,6 +166,11 @@ def test_rust_only_pip_guidance_cannot_fall_back_to_a_python_release() -> None:
         assert stable_command in contents, relative_path
         assert "python -m pip install -U cccc-pair" not in contents, relative_path
 
+    with (ROOT / "pyproject.toml").open("rb") as stream:
+        version = str(tomllib.load(stream)["project"]["version"])
+    preparing_0_4_36 = version == "0.4.35" or version.startswith(
+        ("0.4.36a", "0.4.36b", "0.4.36rc")
+    )
     for relative_path in (
         "README.md",
         "README.zh-CN.md",
@@ -174,7 +179,10 @@ def test_rust_only_pip_guidance_cannot_fall_back_to_a_python_release() -> None:
         "docs/guide/getting-started/index.md",
     ):
         contents = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert '"cccc-pair>=0.4.36rc0"' in contents, relative_path
+        if preparing_0_4_36:
+            assert '"cccc-pair>=0.4.36rc0"' in contents, relative_path
+        else:
+            assert '"cccc-pair>=0.4.36rc0"' not in contents, relative_path
 
 
 def test_prepublication_notice_cannot_survive_the_stable_0_4_36_bump() -> None:

@@ -151,6 +151,7 @@ class InstalledWheelSmoke:
         self.scripts = self.venv / ("Scripts" if os.name == "nt" else "bin")
         self.python = self.scripts / ("python.exe" if os.name == "nt" else "python")
         self.launcher = self.scripts / ("cccc.exe" if os.name == "nt" else "cccc")
+        self.install_marker = self.scripts / ".cccc-standalone"
         self.source_binary = source_binary
         self.web_process: subprocess.Popen[str] | None = None
         self.web_output = None
@@ -355,10 +356,13 @@ def main() -> int:
                 raise RuntimeError("legacy upgrade fixture did not install cccc")
             if not any(smoke.scripts.glob("ccccd*")):
                 raise RuntimeError("legacy upgrade fixture did not install ccccd")
+            smoke.install_marker.write_text("standalone-v1\n", encoding="utf-8")
 
             _pip(smoke.python, smoke.env, "install", "--quiet", "--upgrade", str(wheel))
             if any(smoke.scripts.glob("ccccd*")):
                 raise RuntimeError("Rust-only wheel upgrade left the retired ccccd command")
+            if smoke.install_marker.read_text(encoding="utf-8") != "pip-v1\n":
+                raise RuntimeError("pip install did not replace standalone ownership")
             _assert_python_product_absent(smoke.python, smoke.env)
             smoke.run()
 
@@ -366,9 +370,13 @@ def main() -> int:
             sentinel.write_text("preserve\n", encoding="utf-8")
             _pip(smoke.python, smoke.env, "install", "--quiet", "--force-reinstall", str(wheel))
             smoke.verify_installed_binary()
+            if smoke.install_marker.read_text(encoding="utf-8") != "pip-v1\n":
+                raise RuntimeError("pip reinstall lost package-manager ownership")
             _pip(smoke.python, smoke.env, "uninstall", "--yes", "--quiet", "cccc-pair")
             if smoke.launcher.exists():
                 raise RuntimeError("pip uninstall left the CCCC command behind")
+            if smoke.install_marker.exists():
+                raise RuntimeError("pip uninstall left its ownership marker behind")
             if not sentinel.is_file():
                 raise RuntimeError("pip uninstall removed user-owned CCCC_HOME state")
             _assert_python_product_absent(smoke.python, smoke.env)

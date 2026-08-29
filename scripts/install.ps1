@@ -28,6 +28,7 @@ $allowReplaceExisting = $env:CCCC_ALLOW_REPLACE_EXISTING -eq "1"
 $trustedExistingCli = $env:CCCC_TRUSTED_EXISTING_CLI
 $installMarker = ".cccc-standalone"
 $installMarkerVersion = "standalone-v1"
+$pipInstallMarkerVersion = "pip-v1"
 if (-not $InstallDir) {
   $InstallDir = Join-Path $env:LOCALAPPDATA "CCCC\bin"
 }
@@ -394,11 +395,14 @@ try {
       throw "Existing standalone ownership marker is not a regular file: $markerPath"
     }
     try {
-      $ownedByStandaloneInstaller =
-        (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop).Trim() -eq $installMarkerVersion
+      $markerValue = (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop).Trim()
     } catch {
-      $ownedByStandaloneInstaller = $false
+      $markerValue = ""
     }
+    if ($markerValue -eq $pipInstallMarkerVersion) {
+      throw "Existing $existingCli is managed by pip; run python -m pip uninstall cccc-pair before installing the standalone release"
+    }
+    $ownedByStandaloneInstaller = $markerValue -eq $installMarkerVersion
   }
   $trustedExisting = $false
   if (-not $markerPresent -and $trustedExistingCli -and

@@ -14,6 +14,7 @@ const UNIX_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.sh";
 const WINDOWS_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.ps1";
 const INSTALL_MARKER: &str = ".cccc-standalone";
 const INSTALL_MARKER_VERSION: &str = "standalone-v1";
+const PIP_INSTALL_MARKER_VERSION: &str = "pip-v1";
 #[cfg(any(windows, test))]
 const WINDOWS_INSTALL_COMMAND: &str = concat!(
     "Wait-Process -Id $env:CCCC_UPDATE_PARENT_PID -ErrorAction SilentlyContinue; ",
@@ -123,6 +124,9 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
     let marker = install_dir.join(INSTALL_MARKER);
     match std::fs::read_to_string(&marker) {
         Ok(value) if value.trim() == INSTALL_MARKER_VERSION => {}
+        Ok(value) if value.trim() == PIP_INSTALL_MARKER_VERSION => bail!(
+            "this CCCC executable is managed by pip; update it with python -m pip install --upgrade \"cccc-pair>=0.4.36\""
+        ),
         Ok(_) => bail!(
             "this Rust executable is managed by another installation or has an unrecognized owner; update it through that installer"
         ),
@@ -224,6 +228,11 @@ mod tests {
             standalone_install_dir(&executable).expect("standalone install"),
             temp.path()
         );
+
+        std::fs::write(temp.path().join(INSTALL_MARKER), b"pip-v1\n").expect("pip marker");
+        let pip_owned = standalone_install_dir(&executable)
+            .expect_err("pip ownership must override a stale standalone marker");
+        assert!(pip_owned.to_string().contains("managed by pip"));
     }
 
     #[test]

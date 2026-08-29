@@ -13,6 +13,7 @@ TRUSTED_EXISTING_CLI="${CCCC_TRUSTED_EXISTING_CLI:-}"
 BINARIES="cccc"
 INSTALL_MARKER=".cccc-standalone"
 INSTALL_MARKER_VERSION="standalone-v1"
+PIP_INSTALL_MARKER_VERSION="pip-v1"
 
 case "$RELEASE_TAG_PREFIX" in
   @*) RELEASE_TAG_PREFIX=v ;;
@@ -292,6 +293,8 @@ if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
   if marker_value=$(cat "$marker_path" 2>/dev/null) &&
     [ "$marker_value" = "$INSTALL_MARKER_VERSION" ]; then
     marker_owned=1
+  elif [ "$marker_value" = "$PIP_INSTALL_MARKER_VERSION" ]; then
+    fail "existing $existing_cli is managed by pip; run python -m pip uninstall cccc-pair before installing the standalone release"
   fi
 fi
 trusted_existing=0

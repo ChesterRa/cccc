@@ -114,17 +114,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 The installer downloads a checksum-verified native executable and refuses to
 overwrite a command it does not own.
 
-### From PyPI (available with v0.4.36)
+### From PyPI (v0.4.36+)
 
 ```bash
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
-
-Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
-prepared. Use the installer for the current released product, or the source
-workflow below to evaluate the pending Rust-only product. This pip command is
-shown now so the final release contract can be reviewed without making it
-appear currently available. Do not remove the lower bound.
 
 The native platform wheel installs the same Rust `cccc` executable through pip.
 The lower bound prevents pip from silently selecting a historical Python-only
@@ -134,14 +128,10 @@ fail resolution rather than receiving a portable Python wheel. Generic
 `pip install .` and editable `pip install -e .` source builds are rejected
 instead of installing an empty package; use the source workflow below.
 
-### From TestPyPI (after an explicit v0.4.36 candidate is published)
-
-```bash
-python -m pip install -U --pre \
-  --index-url https://test.pypi.org/simple \
-  --extra-index-url https://pypi.org/simple \
-  "cccc-pair>=0.4.36rc0"
-```
+The pip wheel and website installer record distinct ownership beside the
+executable. To switch a command directory from pip to the website installer,
+first run `python -m pip uninstall cccc-pair`; the installer will not overwrite
+pip-owned files, even when `CCCC_ALLOW_REPLACE_EXISTING=1` is set.
 
 ### From Source
 

@@ -30,7 +30,8 @@ python -m pip install -U "cccc-pair>=0.4.36"
 
 PyPI publishes four native platform wheels: Linux x86-64, Intel/Apple Silicon
 macOS, and Windows x86-64. Each wheel contains only the native `cccc`
-executable, license, and package metadata. The minimum-version constraint keeps
+executable, its package-manager ownership marker, license, and package metadata.
+The minimum-version constraint keeps
 pip from silently selecting a historical Python-only release on an unsupported
 platform. There is no 0.4.36 source distribution, portable wheel, importable
 CCCC Python package, or fallback implementation.
@@ -38,13 +39,18 @@ CCCC Python package, or fallback implementation.
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
 and install into a user-owned directory. Rust self-updates require the complete
-`.cccc-standalone` ownership marker, then identify their exact current executable
-to the installer and enter the existing transactional backup and rollback flow.
+`.cccc-standalone` ownership marker with the exact value `standalone-v1`, then
+identify their exact current executable to the installer and enter the existing
+transactional backup and rollback flow. Native pip wheels own the same marker
+path with the value `pip-v1`; this replaces stale standalone ownership when pip
+uses the same scripts directory and is removed with the wheel on uninstall.
 Version output and executable naming are never treated as proof of ownership:
 every markerless command, symlink, or foreign ownership marker is protected by
 default. Package-manager installs must be updated through their package manager.
 Remove a conflicting command, choose another `CCCC_INSTALL_DIR`, or set
-`CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement is intentional. The hosted
+`CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement is intentional. It never
+overrides `pip-v1`: uninstall the pip package before switching that directory to
+the website installer. The hosted
 scripts are rendered with the current documentation release; callers can
 override that concrete pin through `CCCC_VERSION`.
 

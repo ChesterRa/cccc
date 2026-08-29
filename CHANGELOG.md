@@ -6,12 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.36] — 2026-08-30
+
+### Added
+- **The native daemon now owns the public `events_stream` control path.** SDK clients retain capability discovery, bounded resume, routing, heartbeat, and slow-reader behavior without a Python daemon owner.
+- **The native NotebookLM adapter supports explicit URL, YouTube, Drive, text, and project-scoped file ingestion against the upstream v0.8.1 protocol baseline.**
+
 ### Changed
 - **CCCC now ships one native Rust product implementation.** The public `cccc` command owns the CLI, daemon, MCP server, and Web UI; 0.4.35 homes remain readable through explicit migration compatibility.
 - **The website installer and pip platform wheels distribute the same native executable.** Generic source builds are rejected, and unsupported pip platforms fail resolution instead of falling back to an older Python-only release.
+- **The default Docker image now builds and runs the same native product.** The separate Rust Dockerfile/Compose variant is retired while the existing data-volume contract remains intact.
+- **Browser projection, runtime recovery, background Group Bridge retry, shared agent resources, and Voice Secretary ASR readiness now have one native owner.** Retired Python attach, sidecar, and lifecycle paths no longer compete with the shipped product.
+- **NotebookLM source changes are explicit.** Automatic work/memory mirroring is retired, while legacy 0.4.35 sync metadata remains readable for upgrade status.
+
+### Fixed
+- **Pip and website installations cannot silently inherit or overwrite each other's update authority.** Their ownership markers are mutually exclusive, and switching channels requires uninstalling the current owner first.
+- **NotebookLM uncertain creates and stale retries no longer become duplicate or misdirected writes.** Unconfirmed provider outcomes remain unresolved, and retry verifies the Group's current notebook binding before mutating remote state.
+- **Supported 0.4.35 durable state remains available without a Python runtime.** Frozen upgrade coverage includes core state, identities and integrations, product state, and retired shadows that must not be resurrected.
 
 ### Removed
 - **The Python product implementation and engine-selection layer are retired.** The Python daemon, Web server, launcher, importable `cccc` package, `cccc python` / `cccc rust` selectors, public `ccccd` alias, source distribution, and universal wheel are no longer shipped.
+- **Python-only NotebookLM mirroring and legacy IM lifecycle controls are retired.** Explicit NotebookLM ingestion replaces hidden sync writes, while Web and the native CLI replace the old IM `/context`, `/launch`, and `/quit` commands.
 
 ## [0.4.35] — 2026-08-28
 

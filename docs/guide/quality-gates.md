@@ -114,7 +114,10 @@ artifacts must satisfy the manylinux 2.28 dependency boundary; macOS artifacts
 declare macOS 11.0; Windows builds target Server 2022. Publication requires four
 native wheels, four standalone archives, matching executable hashes, checksums,
 version-bound installers, release notes, installed CLI/MCP/daemon/Web smoke, and
-platform installer verification.
+platform installer verification. Each wheel must also carry `pip-v1` in the
+shared ownership marker path, replace any stale standalone marker on install,
+refuse standalone self-update, and remove both its executable and marker on pip
+uninstall.
 
 The release workflow packages the same native executable bytes into standalone
 archives and dependency-free platform wheels. It does not build an sdist,

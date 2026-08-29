@@ -9,7 +9,7 @@ description = "Process and terminal runtime management for CCCC"
 publish = false
 
 [dependencies]
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.35", path = "../cccc-contracts" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.36", path = "../cccc-contracts" }
 portable-pty.workspace = true
 retach.workspace = true
 serde.workspace = true

@@ -113,6 +113,7 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
     dist_info = f"{stem}.dist-info"
     executable_name = "cccc.exe" if platform_tag == "win_amd64" else "cccc"
     script = f"{stem}.data/scripts/{executable_name}"
+    install_marker = f"{stem}.data/scripts/.cccc-standalone"
     wheel = f"{dist_info}/WHEEL"
     metadata = f"{dist_info}/METADATA"
     license_path = f"{dist_info}/licenses/LICENSE"
@@ -120,6 +121,7 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
 
     entries = {
         script: binary.read_bytes(),
+        install_marker: b"pip-v1\n",
         metadata: _metadata(
             name,
             version,

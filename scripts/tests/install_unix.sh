@@ -73,9 +73,9 @@ make_release() {
 version=0.0.0-test
 make_release "$version"
 
-# The docs site continues to render the current installer for the final
-# dual-engine release until 0.4.36 is published. Keep that exact four-archive
-# manifest installable while the new release set adds four native wheels.
+# Older complete releases used a four-archive manifest without native wheels.
+# Keep that published shape installable while current release sets add four
+# native wheels to the same checksum manifest.
 legacy_manifest_version=0.0.12-test
 make_release "$legacy_manifest_version"
 legacy_manifest="$TMP_ROOT/releases/download/v${legacy_manifest_version}/SHA256SUMS"
@@ -215,6 +215,29 @@ trusted_output=$(HOME="$TMP_ROOT/trusted-home" \
 printf '%s\n' "$trusted_output" | grep -Fq "Adopting existing CCCC command at $trusted_install/cccc"
 [[ "$("$trusted_install/cccc" --version)" == "cccc $version" ]]
 grep -Fxq 'standalone-v1' "$trusted_install/.cccc-standalone"
+
+pip_install="$TMP_ROOT/pip-owned-installed"
+mkdir -p "$pip_install"
+cat > "$pip_install/cccc" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+chmod 755 "$pip_install/cccc"
+printf 'pip-v1\n' > "$pip_install/.cccc-standalone"
+pip_hash=$(checksum "$pip_install/cccc")
+if HOME="$TMP_ROOT/pip-owned-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$pip_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  CCCC_ALLOW_REPLACE_EXISTING=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/pip-owned-error"; then
+  echo "installer replaced a pip-owned command" >&2
+  exit 1
+fi
+grep -Fq 'managed by pip; run python -m pip uninstall cccc-pair' "$TMP_ROOT/pip-owned-error"
+[[ "$(checksum "$pip_install/cccc")" == "$pip_hash" ]]
+grep -Fxq 'pip-v1' "$pip_install/.cccc-standalone"
 
 foreign_install="$TMP_ROOT/foreign-installed"
 mkdir -p "$foreign_install"

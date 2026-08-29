@@ -213,7 +213,8 @@ fn map_error(error: Error) -> OpError {
         Error::InvalidCredential(_) | Error::Authentication => "space_provider_auth_invalid",
         Error::RateLimited(_) => "space_provider_rate_limited",
         Error::Timeout(_) => "space_provider_timeout",
-        Error::Refused(_) | Error::Unresolved(_) | Error::Transport(_) | Error::Rpc { .. } => {
+        Error::Unresolved(_) => "space_provider_outcome_unresolved",
+        Error::Refused(_) | Error::Transport(_) | Error::Rpc { .. } => {
             "space_provider_upstream_error"
         }
         Error::SchemaDrift { .. } => "space_provider_compat_mismatch",
@@ -239,6 +240,10 @@ mod tests {
         assert_eq!(
             map_error(Error::Timeout("wait".into())).code,
             "space_provider_timeout"
+        );
+        assert_eq!(
+            map_error(Error::Unresolved("remote outcome is unknown".into())).code,
+            "space_provider_outcome_unresolved"
         );
         assert_eq!(
             map_error(Error::SchemaDrift {

@@ -196,7 +196,11 @@ fn settle_ingest_failure(
             .iter_mut()
             .find(|item| item["job_id"] == job_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "job not found"))?;
-        item["state"] = json!("failed");
+        item["state"] = json!(if error.code == "space_provider_outcome_unresolved" {
+            "running"
+        } else {
+            "failed"
+        });
         item["result"] = json!({});
         item["next_run_at"] = Value::Null;
         item["updated_at"] = json!(utc_now());
@@ -377,13 +381,28 @@ fn retry_job(home: &HomeLayout, group_id: &str, provider_name: &str, id: &str) -
             "legacy memory-sync jobs are read-only after automatic synchronization retirement",
         ));
     }
+    let current_remote_space_id = binding_id(&value, lane_name)?;
     let remote_space_id = match job["remote_space_id"]
         .as_str()
         .filter(|value| !value.is_empty())
     {
         Some(remote_space_id) => remote_space_id.to_owned(),
-        None => binding_id(&value, lane_name)?,
+        None => current_remote_space_id.clone(),
     };
+    if remote_space_id != current_remote_space_id {
+        let mut error = OpError::new(
+            "binding_changed",
+            "job target no longer matches the current work binding; submit a new ingest for the current binding",
+        );
+        error
+            .details
+            .insert("job_remote_space_id".into(), json!(remote_space_id));
+        error.details.insert(
+            "current_remote_space_id".into(),
+            json!(current_remote_space_id),
+        );
+        return Err(error);
+    }
     let input = resolve_ingest_input(home, group_id, ingest_input(kind, &payload)?)?;
     update(home, group_id, |value| {
         let item = array_mut(root(value), "jobs")
@@ -959,6 +978,47 @@ mod tests {
         assert_eq!(running["state"], "running");
         assert_eq!(running["attempt"], 1);
 
+        let unresolved = settle_ingest_failure(
+            &home,
+            &group.group_id,
+            running["job_id"].as_str().expect("job id"),
+            &OpError::new(
+                "space_provider_outcome_unresolved",
+                "provider may have created the source",
+            ),
+        )
+        .expect("record unresolved job");
+        assert_eq!(unresolved["state"], "running");
+        assert_eq!(
+            unresolved["last_error"]["code"],
+            "space_provider_outcome_unresolved"
+        );
+
+        let (same_job, unresolved_deduped) = begin_ingest_job(
+            &home,
+            &group.group_id,
+            "notebooklm",
+            "work",
+            "notebook-fixture",
+            "context_sync",
+            payload,
+            digest,
+            18,
+            &key,
+        )
+        .expect("dedupe unresolved ingest");
+        assert!(unresolved_deduped);
+        assert_eq!(same_job["job_id"], running["job_id"]);
+
+        let blocked = retry_job(
+            &home,
+            &group.group_id,
+            "notebooklm",
+            running["job_id"].as_str().expect("job id"),
+        )
+        .expect_err("unresolved work must not be retried directly");
+        assert_eq!(blocked.code, "invalid_state");
+
         let failed = settle_ingest_failure(
             &home,
             &group.group_id,
@@ -1003,6 +1063,48 @@ mod tests {
         .expect("settle successful job");
         assert_eq!(succeeded["state"], "succeeded");
         assert_eq!(succeeded["result"]["source_id"], "source-fixture");
+    }
+
+    #[test]
+    fn retry_rejects_a_job_for_a_previous_work_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .expect("group store")
+            .create("rebound work notebook", "")
+            .expect("group");
+        update(&home, &group.group_id, |value| {
+            value["bindings"]["work"]["remote_space_id"] = json!("notebook-current");
+            value["bindings"]["work"]["status"] = json!("bound");
+            array_mut(root(value), "jobs").push(json!({
+                "job_id":"spj_previous_binding",
+                "group_id":group.group_id,
+                "provider":"notebooklm",
+                "lane":"work",
+                "remote_space_id":"notebook-previous",
+                "kind":"context_sync",
+                "payload":{"content":"must not reach the previous notebook"},
+                "state":"failed",
+                "attempt":1,
+                "last_error":{"code":"space_provider_timeout","message":"timeout"}
+            }));
+            Ok(())
+        })
+        .expect("stale job fixture");
+
+        let error = retry_job(&home, &group.group_id, "notebooklm", "spj_previous_binding")
+            .expect_err("retry must not write to a previous notebook binding");
+        assert_eq!(error.code, "binding_changed");
+        assert_eq!(error.details["job_remote_space_id"], "notebook-previous");
+        assert_eq!(error.details["current_remote_space_id"], "notebook-current");
+
+        let stored = load(&home, &group.group_id).expect("stored jobs");
+        let job = array(&stored, "jobs")
+            .iter()
+            .find(|job| job["job_id"] == "spj_previous_binding")
+            .expect("stale job remains inspectable");
+        assert_eq!(job["state"], "failed");
+        assert_eq!(job["attempt"], 1);
     }
 
     #[test]

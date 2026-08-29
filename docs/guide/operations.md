@@ -102,15 +102,17 @@ Do not:
 # Website-installer ownership
 cccc update
 
-# Pip ownership, after v0.4.36 is published
+# Pip ownership
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Stable PyPI and the website installer remain on v0.4.35 while v0.4.36 is being
-prepared. Use the installer for the current released product, or build from
-source to evaluate the pending Rust-only product. Do not remove the v0.4.36
-lower bound. Before a pip upgrade, run `cccc daemon stop` and close any
+Do not remove the v0.4.36 lower bound. Before a pip upgrade, run
+`cccc daemon stop` and close any
 foreground CCCC process so the executable is replaceable on every platform.
+Do not layer the website installer over a pip-owned command. To switch
+installation channels in the same directory, uninstall `cccc-pair` with pip
+first; the installer refuses `pip-v1` ownership even when
+`CCCC_ALLOW_REPLACE_EXISTING=1` is set.
 
 ### After upgrade
 

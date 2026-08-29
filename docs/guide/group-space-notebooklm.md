@@ -133,8 +133,12 @@ URL, YouTube, and Google Drive Docs/Slides/Sheets ingestion.
 Each explicit ingest is recorded before the provider write. A normal request
 makes one provider attempt and settles the job; failed jobs are retried only by
 an explicit `space jobs retry`, not by a hidden background loop. A job left
-`running` after a process interruption represents an uncertain provider result
-and can be inspected or canceled before retrying.
+`running` after a process interruption or an ambiguous provider response
+represents an uncertain provider result. Repeating the same ingest is deduped
+to that durable job, and direct retry is blocked until the user inspects and
+reconciles the remote notebook or cancels the job. Retrying a terminal old job
+is also refused if the Group's current work binding no longer matches the
+notebook saved on that job.
 
 Automatic work- and memory-lane mirroring is retired in 0.4.36. Rust reads the
 same canonical metadata so existing status survives an upgrade, but it never

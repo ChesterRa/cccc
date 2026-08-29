@@ -276,6 +276,35 @@ fn main() {
     throw "installer modified an unrecognized markerless command"
   }
 
+  $pipInstallDir = Join-Path $tempRoot "pip-owned-installed"
+  New-Item -ItemType Directory -Force -Path $pipInstallDir | Out-Null
+  $pipCli = Join-Path $pipInstallDir "cccc.exe"
+  Set-Content -LiteralPath $pipCli -Value "pip binary" -Encoding Ascii
+  $pipMarker = Join-Path $pipInstallDir ".cccc-standalone"
+  Set-Content -LiteralPath $pipMarker -Value "pip-v1" -Encoding Ascii
+  $pipHash = (Get-FileHash -LiteralPath $pipCli).Hash
+  $allowReplaceBeforePip = $env:CCCC_ALLOW_REPLACE_EXISTING
+  $failed = $false
+  try {
+    $env:CCCC_ALLOW_REPLACE_EXISTING = "1"
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $pipInstallDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*managed by pip; run python -m pip uninstall cccc-pair*"
+  } finally {
+    if ($null -eq $allowReplaceBeforePip) {
+      Remove-Item Env:CCCC_ALLOW_REPLACE_EXISTING -ErrorAction SilentlyContinue
+    } else {
+      $env:CCCC_ALLOW_REPLACE_EXISTING = $allowReplaceBeforePip
+    }
+  }
+  if (-not $failed) { throw "installer replaced a pip-owned command" }
+  if ((Get-FileHash -LiteralPath $pipCli).Hash -ne $pipHash) {
+    throw "installer modified a pip-owned command"
+  }
+  if ((Get-Content -LiteralPath $pipMarker -Raw).Trim() -ne "pip-v1") {
+    throw "installer modified pip ownership"
+  }
+
   $foreignInstallDir = Join-Path $tempRoot "foreign-installed"
   New-Item -ItemType Directory -Force -Path $foreignInstallDir | Out-Null
   $foreignCli = Join-Path $foreignInstallDir "cccc.exe"

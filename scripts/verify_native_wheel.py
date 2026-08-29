@@ -40,11 +40,19 @@ def verify(wheel: Path, *, platform_tag: str, binary: Path | None = None) -> byt
             raise ValueError("wheel contains an unsafe archive member")
         executable_name = "cccc.exe" if platform_tag == "win_amd64" else "cccc"
         payload = f"{stem}.data/scripts/{executable_name}"
+        install_marker = f"{stem}.data/scripts/.cccc-standalone"
         wheel_metadata = f"{dist_info}/WHEEL"
         core_metadata = f"{dist_info}/METADATA"
         license_path = f"{dist_info}/licenses/LICENSE"
         record = f"{dist_info}/RECORD"
-        expected_names = {payload, wheel_metadata, core_metadata, license_path, record}
+        expected_names = {
+            payload,
+            install_marker,
+            wheel_metadata,
+            core_metadata,
+            license_path,
+            record,
+        }
         if set(names) != expected_names:
             raise ValueError(
                 "wheel has an invalid Rust-only layout: "
@@ -96,6 +104,12 @@ def verify(wheel: Path, *, platform_tag: str, binary: Path | None = None) -> byt
                 raise ValueError(
                     "Unix Rust payload is not executable in the wheel archive"
                 )
+        marker_info = archive.getinfo(install_marker)
+        marker_mode = (marker_info.external_attr >> 16) & 0o777
+        if marker_mode & 0o111:
+            raise ValueError("wheel ownership marker must not be executable")
+        if archive.read(install_marker) != b"pip-v1\n":
+            raise ValueError("wheel ownership marker is invalid")
         payload_bytes = archive.read(payload)
         if binary is not None and payload_bytes != binary.read_bytes():
             raise ValueError("wheel executable bytes differ from the release binary")
