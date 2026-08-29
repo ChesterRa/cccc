@@ -117,12 +117,16 @@ overwrite a command it does not own.
 ### From PyPI (package-manager compatibility)
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
 The native platform wheel installs the same Rust `cccc` executable through pip.
-It contains no Python daemon, product package, launcher, or fallback. Unsupported
-platforms fail explicitly rather than receiving a portable Python wheel.
+The lower bound prevents pip from silently selecting a historical Python-only
+release when 0.4.36 has no wheel for the current platform. It contains no Python
+daemon, product package, launcher, or fallback. Unsupported platforms therefore
+fail resolution rather than receiving a portable Python wheel. Generic
+`pip install .` source builds are rejected instead of installing an empty
+package.
 
 ### From TestPyPI (for explicit RC testing)
 
@@ -130,7 +134,7 @@ platforms fail explicitly rather than receiving a portable Python wheel.
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 ### From Source

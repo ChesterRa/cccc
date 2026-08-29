@@ -72,13 +72,13 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
 # pip-compatible native platform wheel
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 
 # RC channel (TestPyPI)
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 > CCCC 0.4.36 has one product implementation: Rust. The website installer is
@@ -143,6 +143,7 @@ Use the official SDK when you need to integrate CCCC into external applications 
 ```bash
 pip install -U cccc-sdk
 npm install cccc-sdk
+cargo add cccc-sdk
 ```
 
 The SDK does not include a daemon. It connects to a running `cccc` core instance.
@@ -481,7 +482,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | Frequently asked questions |
 | [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) | Recovery, troubleshooting, maintenance |
 | [CLI Reference](https://chesterra.github.io/cccc/reference/cli) | Complete command reference |
-| [SDK (Python/TypeScript)](https://github.com/ChesterRa/cccc-sdk) | Integrate apps/services with official daemon clients |
+| [SDK (Python/TypeScript/Rust)](https://github.com/ChesterRa/cccc-sdk) | Integrate apps/services with official daemon clients |
 | [Architecture](https://chesterra.github.io/cccc/reference/architecture) | Design decisions and system model |
 | [Features Deep Dive](https://chesterra.github.io/cccc/reference/features) | Messaging, automation, runtimes in detail |
 | [CCCS Standard](docs/standards/CCCS_V1.md) | Collaboration protocol specification |
@@ -517,12 +518,16 @@ version or RC channel is requested.
 ### pip compatibility
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Pip installs a platform-specific wheel containing the same `cccc` executable.
-There is no sdist, universal wheel, importable CCCC Python package, or fallback
-implementation. Unsupported platforms fail explicitly.
+Pip installs a 0.4.36-or-newer platform wheel containing the same `cccc`
+executable. The lower bound prevents pip from silently selecting a historical
+Python-only wheel when 0.4.36 has no wheel for the current platform. There is no
+0.4.36 sdist, universal wheel, importable CCCC Python package, or fallback
+implementation; unsupported platforms therefore fail resolution. Generic
+`pip install .` source builds are also rejected instead of installing an empty
+package.
 
 ### pip (RC from TestPyPI)
 
@@ -530,7 +535,7 @@ implementation. Unsupported platforms fail explicitly.
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 Cargo installation is retained for workspace development, not as a supported

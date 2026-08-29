@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
         Some(CommandKind::Version) => {
-            println!("cccc {PRODUCT_VERSION} (rust)");
+            println!("cccc {PRODUCT_VERSION}");
             Ok(())
         }
         Some(CommandKind::Home) => {

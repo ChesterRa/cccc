@@ -122,10 +122,10 @@ fn snapshot(home: &HomeLayout) -> Result<Value, OpError> {
         "overlay":overlay,
         "effective":effective,
         "revision":revision(&default,&overlay),
-        "default_source":"builtin:cccc.resources/capability-allowlist.default.yaml",
+        "default_source":"builtin:capability-allowlist.default.yaml",
         "overlay_source":if overlay_path(home).exists(){overlay_path(home).to_string_lossy().into_owned()}else{String::new()},
         "overlay_error":"",
-        "policy_source":"python-compatible-rust",
+        "policy_source":"native",
         "policy_error":"",
         "external_capability_safety_mode":safety_mode(&effective),
     }))

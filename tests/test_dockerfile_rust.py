@@ -12,11 +12,24 @@ def test_rust_builder_places_web_bundle_in_the_packaged_asset_directory() -> Non
     text = DOCKERFILE.read_text(encoding="utf-8")
 
     assert "FROM node:24-bookworm-slim AS web-builder" in text
+    assert "COPY resources/ ./resources/" in text
     assert (
         "COPY --from=web-builder /src/web/dist "
         "./crates/cccc-web/assets/web-dist"
     ) in text
     assert "cargo build --release --locked -p cccc --bin cccc" in text
+    assert text.index("COPY resources/ ./resources/") < text.index(
+        "cargo build --release --locked -p cccc --bin cccc"
+    )
+
+    for resource in (
+        "cccc-help.md",
+        "cccc-self-evolution.md",
+        "code_mode_metadata.json",
+        "code_mode_runtime.js",
+        "mcp_tools.json",
+    ):
+        assert (ROOT / "resources" / resource).is_file()
 
 
 def test_default_image_contains_only_the_native_cccc_product() -> None:

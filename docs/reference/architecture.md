@@ -172,28 +172,38 @@ the supported migration boundary, including group-copy packages.
 | `presentation.publish` | Publish a presentation rail card |
 | `presentation.clear` | Clear presentation rail card(s) |
 
-### chat.message Data
+### `chat.message` Data
 
-```python
-class ChatMessageData:
-    text: str
-    format: "plain" | "markdown"
-    to: list[str]           # Recipients (empty = broadcast)
-    reply_to: str | None    # Reply to which message
-    quote_text: str | None  # Quoted text
-    attachments: list[dict] # Attachment metadata (content stored in CCCC_HOME blobs)
+```ts
+data: {
+  text: string
+  format?: "plain" | "markdown"
+  insight?: string | null
+  message_mode: "send" | "request_reply" | "mail"
+  to?: string[]
+  reply_to?: string | null
+  quote_text?: string | null
+  attachments?: AttachmentRefV1[]
+  refs?: ReferenceV1[]
+}
 ```
 
-### Recipient Semantics (to field)
+The authoritative shape and validation rules live in
+[CCCS v1](../standards/CCCS_V1.md#61-chatmessage).
+
+### Recipient Semantics (`to` field)
 
 | Token | Semantics |
 |-------|-----------|
-| `[]` (empty) | Broadcast |
-| `user` | The user |
+| omitted / `[]` | Materialize the group's `default_send_to` as `@foreman` or `@all` before append |
+| `user` / `@user` | The human user |
 | `@all` | All actors |
 | `@peers` | All peers |
 | `@foreman` | Foreman |
 | `<actor_id>` | Specific actor |
+
+A message addresses either the human user or one or more actors, never both.
+`request_reply` requires concrete actor recipients, and `mail` is actor-only.
 
 ## Files and Attachments
 

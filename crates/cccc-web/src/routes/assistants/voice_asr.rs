@@ -180,16 +180,12 @@ fn default_min_duration_off() -> f32 {
 pub fn runtime_status() -> Value {
     json!({
         "runtime_id": RUNTIME_ID,
-        "title": "sherpa-onnx native Rust ASR",
+        "title": "sherpa-onnx ASR",
         "installed": true,
         "available": true,
         "status": "ready",
-        "managed": true,
-        "implementation": "rust",
-        "removable": false,
-        "primary_package": "sherpa-onnx",
         "installed_version": "1.13.4",
-        "reason": "sherpa-onnx is linked into the CCCC Rust binary"
+        "reason": "sherpa-onnx is included in the CCCC executable"
     })
 }
 

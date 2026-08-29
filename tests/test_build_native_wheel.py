@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts.build_native_wheel import build
+from scripts import native_wheel_backend
 from scripts.verify_native_wheel import verify
 
 
@@ -80,6 +81,14 @@ def test_rejects_a_universal_platform_tag(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid native wheel platform tag"):
         build(binary, tmp_path / "dist", platform_tag="any", root=tmp_path)
+
+
+def test_source_pep517_build_fails_instead_of_installing_an_empty_wheel() -> None:
+    assert native_wheel_backend.get_requires_for_build_wheel() == []
+    with pytest.raises(RuntimeError, match="does not build a wheel or sdist from source"):
+        native_wheel_backend.build_wheel("unused")
+    with pytest.raises(RuntimeError, match="does not build a wheel or sdist from source"):
+        native_wheel_backend.build_sdist("unused")
 
 
 def test_rejects_an_extra_fully_recorded_wheel_member(tmp_path: Path) -> None:

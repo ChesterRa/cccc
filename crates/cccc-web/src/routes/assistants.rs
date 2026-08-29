@@ -20,7 +20,6 @@ mod voice_diarization;
 mod voice_final_asr;
 mod voice_inference;
 mod voice_pcm_recording;
-mod voice_runtime;
 mod voice_segment_analysis;
 mod voice_segmented_recording;
 mod voice_speaker_transcript;
@@ -86,14 +85,6 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/models/remove",
             post(model_remove).delete(model_remove),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/assistants/voice_secretary/runtime/install",
-            post(voice_runtime::install),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/assistants/voice_secretary/runtime/remove",
-            post(voice_runtime::remove),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
@@ -260,7 +251,7 @@ async fn model_install(
     let model_id = required(&body, "model_id")?;
     let model = voice_asr::begin_install(state.home.clone(), model_id).map_err(voice_error)?;
     Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model,"service_runtime":voice_asr::runtime_status()}),
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model}),
     ))
 }
 async fn model_remove(
@@ -271,7 +262,7 @@ async fn model_remove(
     let model_id = required(&body, "model_id")?;
     let model = voice_asr::remove_model(&state.home, &model_id).map_err(voice_error)?;
     Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model,"service_runtime":voice_asr::runtime_status()}),
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model}),
     ))
 }
 
@@ -464,24 +455,23 @@ fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
     if asr_mock_configured {
         streaming_backend = json!({"ready":true,"status":"ready","model_id":"mock"});
     }
-    let asr_command_configured = streaming_backend["ready"].as_bool().unwrap_or(false);
-    let managed_model = streaming_backend["model_id"]
+    let service_ready = streaming_backend["ready"].as_bool().unwrap_or(false);
+    let selected_model = streaming_backend["model_id"]
         .as_str()
         .and_then(|model_id| models_by_id.get(model_id))
         .cloned()
         .unwrap_or_else(|| json!({}));
     assistant["health"]["service"] = json!({
-        "status":if asr_command_configured {"ready"} else {"unavailable"},
+        "status":if service_ready {"ready"} else {"unavailable"},
         "alive":true,
-        "asr_command_configured":asr_command_configured,
-        "asr_mock_configured":asr_mock_configured,
+        "ready":service_ready,
+        "mock":asr_mock_configured,
         "selected_model_id":streaming_backend["model_id"],
         "streaming_backend":streaming_backend,
-        "managed_model":managed_model,
-        "implementation":"rust",
+        "model":selected_model,
         "runtime":runtime
     });
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
 }
 
 async fn runtime_state(state: &AppState, group_id: &str) -> Result<Value, ApiError> {

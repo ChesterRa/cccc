@@ -29,7 +29,6 @@ uv.lock
 **/node_modules/
 /web/.vite/
 /web/dist/
-/src/cccc/ports/web/dist/
 /crates/cccc-web/assets/web-dist/
 /space
 

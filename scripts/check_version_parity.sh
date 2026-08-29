@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-python_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/pyproject.toml" | head -1)"
+package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/pyproject.toml" | head -1)"
 rust_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
 
-if [[ -z "$python_version" || -z "$rust_version" ]]; then
+if [[ -z "$package_version" || -z "$rust_version" ]]; then
   echo "failed to read CCCC versions from pyproject.toml and Cargo.toml" >&2
   exit 1
 fi
@@ -19,7 +19,7 @@ else
   exit 1
 fi
 "$version_python" "$ROOT_DIR/scripts/check_release_versions.py" \
-  --python-version "$python_version" \
+  --package-version "$package_version" \
   --rust-version "$rust_version" >/dev/null
 
 for manifest in "$ROOT_DIR"/crates/cccc-*/Cargo.toml; do

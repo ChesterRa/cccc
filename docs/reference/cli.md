@@ -21,8 +21,8 @@ Check your environment and diagnose issues.
 cccc doctor             # Full environment check
 ```
 
-Python browser readiness uses the same Chrome/Edge discovery as its projected Web runtime on
-Linux, macOS, and Windows. The standalone Rust report may additionally recognize system Chromium.
+Browser readiness uses the same Chrome/Edge discovery as the projected Web runtime on
+Linux, macOS, and Windows, and may additionally recognize system Chromium.
 On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
 isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
 isolation; CCCC falls back to its CDP screencast viewer.
@@ -156,8 +156,8 @@ cccc actor update <actor_id> --scope /path/to/project
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
 
-Actor scope arguments are project paths at the CLI boundary. Rust resolves them to the attached
-scope key before persistence, keeping the stored group document compatible with the Python backend.
+Actor scope arguments are project paths at the CLI boundary. CCCC resolves them
+to the attached scope key before persistence.
 
 ## Message Commands
 
@@ -306,9 +306,9 @@ Notes:
 - `language` / `lang` are not valid query options (put language requirement in query text).
 - Provider credentials are write-only; CLI/Web only return masked metadata.
 - `cccc space health` validates credential format and adapter compatibility.
-- Python 0.4.35 vendors `notebooklm-py` v0.8.0. The native Rust client follows
-  the v0.8.1 protocol baseline and supports attached-scope local files, pasted
-  text, Web URL, YouTube, and Google Drive Docs/Slides/Sheets ingestion.
+- The native client follows the `notebooklm-py` v0.8.1 protocol baseline and
+  supports attached-scope local files, pasted text, Web URL, YouTube, and
+  Google Drive Docs/Slides/Sheets ingestion.
 - Explicit ingest persists its job before one provider attempt. Failed jobs are
   retried only with `cccc space jobs retry`; there is no hidden background
   ingest retry loop.

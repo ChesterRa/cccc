@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+- **CCCC now ships one native Rust product implementation.** The public `cccc` command owns the CLI, daemon, MCP server, and Web UI; 0.4.35 homes remain readable through explicit migration compatibility.
+- **The website installer and pip platform wheels distribute the same native executable.** Generic source builds are rejected, and unsupported pip platforms fail resolution instead of falling back to an older Python-only release.
+
+### Removed
+- **The Python product implementation and engine-selection layer are retired.** The Python daemon, Web server, launcher, importable `cccc` package, `cccc python` / `cccc rust` selectors, public `ccccd` alias, source distribution, and universal wheel are no longer shipped.
+
 ## [0.4.35] — 2026-08-28
 
 ### Added

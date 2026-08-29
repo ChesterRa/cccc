@@ -6,7 +6,7 @@ Most questions are answered by these resources:
 
 | Resource | What it covers |
 |----------|---------------|
-| `cccc doctor` | Environment check — verifies Python, runtimes, daemon status |
+| `cccc doctor` | Environment check — verifies the installation, runtimes, and daemon status |
 | `cccc --help` | Complete CLI command reference |
 | [Online docs](https://chesterra.github.io/cccc/) | Getting started, use cases, operations runbook, architecture |
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | Common questions and troubleshooting |
@@ -16,7 +16,7 @@ Most questions are answered by these resources:
 Open a [GitHub Issue](https://github.com/ChesterRa/cccc/issues) and include:
 
 - **Version**: output of `cccc version`
-- **OS and Python version**: e.g., macOS 14.2, Python 3.11.7
+- **OS and CCCC version**: e.g., macOS 14.2 and the output of `cccc version`
 - **Runtime**: which agent runtime(s) you're using (claude, codex, etc.)
 - **Exact command**: the full command you ran
 - **Actual output**: copy-paste the error or unexpected behavior

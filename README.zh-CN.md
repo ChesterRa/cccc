@@ -71,13 +71,13 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
 # 兼容 pip 的原生平台 wheel
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 
 # RC 通道（TestPyPI）
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 > CCCC 0.4.36 只有一个产品实现：Rust。推荐使用官网安装脚本；pip 命令用于
@@ -140,6 +140,7 @@ cccc tracked-send "请接手第一个具体任务，并回复验证证据。" \
 ```bash
 pip install -U cccc-sdk
 npm install cccc-sdk
+cargo add cccc-sdk
 ```
 
 SDK 不包含 daemon，需要连接已运行的 `cccc` 本体实例。
@@ -468,7 +469,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 | [常见问题](https://chesterra.github.io/cccc/guide/faq) | FAQ |
 | [运维手册](https://chesterra.github.io/cccc/guide/operations) | 恢复、排障、维护 |
 | [CLI 参考](https://chesterra.github.io/cccc/reference/cli) | 完整命令参考 |
-| [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 用官方客户端将 CCCC 接入应用与服务 |
+| [SDK（Python/TypeScript/Rust）](https://github.com/ChesterRa/cccc-sdk) | 用官方客户端将 CCCC 接入应用与服务 |
 | [架构](https://chesterra.github.io/cccc/reference/architecture) | 设计决策与系统模型 |
 | [功能详解](https://chesterra.github.io/cccc/reference/features) | 消息、自动化、运行时深度解读 |
 | [CCCS 标准](docs/standards/CCCS_V1.md) | 协作协议规范 |
@@ -499,11 +500,14 @@ PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行
 ### pip 兼容安装
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Pip 会安装包含同一个 `cccc` 可执行文件的平台 wheel。0.4.36 不再提供 sdist、
-通用 wheel、可导入的 CCCC Python 包或回退实现；不支持的平台会明确失败。
+Pip 会安装包含同一个 `cccc` 可执行文件的 0.4.36 或更高版本平台 wheel。最低
+版本约束可避免 pip 在当前平台没有 0.4.36 wheel 时静默选择历史 Python 版本。
+0.4.36 不再提供 sdist、通用 wheel、可导入的 CCCC Python 包或回退实现；因此
+不支持的平台会解析失败。通用的 `pip install .` 源码构建也会直接拒绝，而不是
+安装一个空包。
 
 ### pip（RC 版，TestPyPI）
 
@@ -511,7 +515,7 @@ Pip 会安装包含同一个 `cccc` 可执行文件的平台 wheel。0.4.36 不�
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 Cargo 安装仅保留给工作区开发使用，不作为受支持的终端用户发行方式。

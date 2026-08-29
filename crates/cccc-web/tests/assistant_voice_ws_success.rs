@@ -118,8 +118,8 @@ async fn assert_mock_readiness(
         .await
         .expect("assistant readiness response");
     let service = &response["result"]["assistant"]["health"]["service"];
-    assert_eq!(service["asr_command_configured"], true, "{service}");
-    assert_eq!(service["asr_mock_configured"], true, "{service}");
+    assert_eq!(service["ready"], true, "{service}");
+    assert_eq!(service["mock"], true, "{service}");
     assert_eq!(service["streaming_backend"]["ready"], true, "{service}");
     assert_eq!(
         service["streaming_backend"]["model_id"], "mock",

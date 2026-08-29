@@ -2,7 +2,7 @@
 
 Native PTY actors always keep terminal output in two bounded memory layers, with an optional durable third layer:
 
-- A configurable in-memory hot buffer serves live WebSocket output, cursor reconnects, history queries, and raw-replay fallback. It defaults to 10 MiB per actor, matching Python.
+- A configurable in-memory hot buffer serves live WebSocket output, cursor reconnects, history queries, and raw-replay fallback. It defaults to 10 MiB per actor.
 - A completed-session cache keeps up to 256 KiB per stopped actor and 8 MiB total queryable without reopening files.
 - When durable persistence is enabled, an append-oriented rolling transcript under `CCCC_HOME/groups/<group_id>/state/terminal/<actor_id>/` preserves raw PTY bytes across actor and daemon restarts.
 
@@ -30,7 +30,7 @@ therefore not be treated as a durable resume token.
 
 ## Retention
 
-Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`, matching the Python implementation's memory-only default. `per_actor_bytes` controls both the memory ring and, when enabled, durable retention. It defaults to 10 MiB; zero selects that default, and larger values are capped at 50,000,000 bytes like Python.
+Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`. `per_actor_bytes` controls both the memory ring and, when enabled, durable retention. It defaults to 10 MiB; zero selects that default, and larger values are capped at 50,000,000 bytes.
 
 ```yaml
 # CCCC_HOME/settings.yaml

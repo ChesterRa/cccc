@@ -989,7 +989,7 @@ mod tests {
                 "tasks": [{
                     "id": "T1",
                     "title": "Verify bootstrap semantics",
-                    "outcome": "Both engines expose one useful packet.",
+                    "outcome": "The native engine exposes one useful packet.",
                     "status": "active",
                     "assignee": "peer1"
                 }],

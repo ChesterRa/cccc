@@ -89,7 +89,7 @@ Daemon endpoint selection is controlled by environment variables:
 - `CCCC_DAEMON_HOST`: bind host for TCP (default: `127.0.0.1`)
 - `CCCC_DAEMON_PORT`: bind port for TCP (default: `0` meaning “choose a free port”)
 
-Both daemon implementations reject every non-loopback TCP host before binding. Daemon IPC
+The native daemon rejects every non-loopback TCP host before binding. Daemon IPC
 has no authentication and cannot be exposed with `0.0.0.0`, a LAN address, or a
 public address. Use the authenticated Web API for remote access.
 
@@ -244,7 +244,7 @@ Rules:
 
 ## 5. Request/Response Envelope (Normative)
 
-Daemon IPC v1 uses the envelope defined in `src/cccc/contracts/v1/ipc.py`.
+Daemon IPC v1 uses the envelope defined in `crates/cccc-contracts/src/ipc.rs`.
 
 ### 5.1 Request
 
@@ -311,7 +311,8 @@ Many operations accept:
 - `actor_id`: target actor identifier (string)
 - `by`: principal string indicating who is acting (default varies by op)
 
-Authorization is enforced by the daemon (see implementation in `src/cccc/kernel/permissions.py`).
+Authorization is enforced by the daemon (see `crates/cccc-core/src/permissions.rs`
+and the operation-level checks in `crates/cccc-daemon/src/ops/`).
 Daemon IPC v1 has **no authentication**. The practical trust boundary is OS-level access control to the local socket / localhost port.
 
 Local-trust model (CCCC v0.4.x behavior):
@@ -324,7 +325,9 @@ Security note:
 
 ### 7.2 Event Objects
 
-Many operations return or include ledger events. Event envelopes follow the CCCC/CCCS v1 shape (see `src/cccc/contracts/v1/event.py` and `docs/standards/CCCS_V1.md`).
+Many operations return or include ledger events. Event envelopes follow the
+CCCC/CCCS v1 shape (see `crates/cccc-contracts/src/event.rs` and
+`docs/standards/CCCS_V1.md`).
 
 ## 8. Operation Catalog (Normative for v1)
 
@@ -343,7 +346,7 @@ Result:
 ```ts
 {
   version: string;
-  implementation: "python" | "rust";
+  implementation: "rust";
   pid: number;
   ts: string;
   ipc_v: 1;
@@ -354,9 +357,11 @@ Result:
 
 Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
-- SDK-compatible daemons MUST identify their active implementation as `python` or `rust`.
+- The bundled daemon MUST identify its implementation as `rust`.
 - `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
-- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream`, `remote_access`, optional browser-attach operations, and optional terminal-attach extensions here.
+- SDK-compatible daemons MUST return a `capabilities` feature map. The native
+  daemon advertises supported `events_stream`, `remote_access`, optional
+  browser-attach operations, and optional terminal-attach extensions here.
 - Each optional browser stream is advertised under its exact operation name (`presentation_browser_attach`, `presentation_browser_vnc_attach`, `space_provider_auth_browser_attach`, `space_provider_auth_browser_vnc_attach`, `web_model_browser_attach`, or `web_model_browser_vnc_attach`). `true` means the daemon recognizes that streaming upgrade; `false` means callers MUST use another product surface or treat the operation as unavailable.
 - A product implementation MAY serve an equivalent ephemeral browser surface directly through its local Web port. That does not make the daemon IPC upgrade supported: the exact daemon capability MUST remain `false` unless that daemon recognizes and serves the operation itself.
 - `term_attachment_status=true` means `term_attach` returns a positive
@@ -959,7 +964,7 @@ Operational notes:
    - `CCCC_CAPABILITY_CLAWSKILLS_DATA_URL` (default `https://clawskills.co/skills-data.js`)
 7. Allowlist override env/path compatibility (`CCCC_CAPABILITY_ALLOWLIST_PATH` and
    `CCCC_HOME/config/capability-allowlist.yaml`) is removed. Policy now always uses:
-   - packaged default: `cccc.resources/capability-allowlist.default.yaml`
+   - packaged default: `crates/cccc-daemon/resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
 
@@ -1660,8 +1665,7 @@ binding. The native runtime is linked into the CCCC binary; model weights remain
 explicit, checksummed downloads under `CCCC_HOME/cache/voice-models`.
 
 Voice Secretary configuration (`enabled` and `config`) remains in
-`group.yaml:assistants.voice_secretary`. Durable workflow records shared by the
-Python and Rust implementations live in
+`group.yaml:assistants.voice_secretary`. Durable workflow records live in
 `groups/<group_id>/state/assistants.json`: lifecycle, durable health, sessions,
 prompt drafts/requests, and ask requests. Process observations such as PID,
 port, live service/socket state, and actor handles MUST NOT be persisted there.
@@ -1682,8 +1686,8 @@ Args:
 }
 ```
 
-`view="voice_session"` is the common Python/Rust session projection used by
-the Web meeting view. With `session_id`, it returns that document-capture
+`view="voice_session"` is the canonical session projection used by the Web
+meeting view. With `session_id`, it returns that document-capture
 session. Without `session_id`, `document_path` first resolves the durable
 cross-session transcript at
 `$CCCC_HOME/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`;
@@ -1728,19 +1732,15 @@ Result:
   capture_target_document_id?: string            // daemon sidecar/internal compatibility only
   new_input_available?: boolean
   service_runtime?: Record<string, unknown>
-  service_runtimes_by_id?: Record<string, unknown>
   service_models?: Array<Record<string, unknown>>
   service_models_by_id?: Record<string, unknown>
 }
 ```
 
-Voice service runtime records may include `primary_package`, `package_versions`,
-`installed_version`, `latest_version`, `latest_checked_at`,
-`latest_check_error`, and `update_available` so local ASR settings can show the
-linked sherpa-onnx version. Rust reports the stable runtime ID
-`sherpa_onnx_streaming` for Web/API compatibility and `implementation="rust"`;
-runtime install/remove calls are idempotent compatibility operations because the
-linked runtime cannot be removed independently. Voice model records may include `installed_manifest_sha256`,
+`service_runtime` is read-only engine metadata with the stable runtime ID
+`sherpa_onnx_streaming`, readiness, and the linked sherpa-onnx version. The
+engine ships inside the CCCC executable and has no independent install/remove
+lifecycle; only voice models are downloaded or removed. Voice model records may include `installed_manifest_sha256`,
 `update_available`, `last_update_error`, and artifact source fields (`url`,
 `sha256`, `archive`) so model updates remain explicit and inspectable.
 
@@ -1788,8 +1788,8 @@ Args:
 browser-device-local model execution. `assistant_service_local_asr` means ASR
 runs on the daemon host through native Rust and uses an installed local ASR
 model. The returned assistant health may include `health.service` with
-`status`, `alive`, `asr_command_configured`, `asr_mock_configured`,
-`selected_model_id`, `managed_model`, and `last_error` so Web can show whether
+`status`, `alive`, `ready`, `selected_model_id`, `model`, `runtime`, and
+`streaming_backend` so Web can show whether
 service-local ASR is actually usable. `service_model_id` is optional and
 selects a daemon-managed local ASR model for on-demand install/use.
 `recognition_language="auto"` means the browser/client chooses the best language
@@ -1821,7 +1821,7 @@ resolved under that workspace; otherwise the daemon falls back to CCCC_HOME.
 Raw transcript/source/input sidecars stay in CCCC_HOME.
 `external_provider_asr` must remain explicit opt-in.
 
-The cross-engine semantic input authority is
+The semantic input authority is
 `$CCCC_HOME/voice-secretary/<group_id>/input_events.jsonl`; its daemon-owned
 read/delivery cursor and retry timing live in the sibling `input_state.json`.
 Implementations MUST NOT maintain an engine-private sequence or cursor. The
@@ -1875,8 +1875,7 @@ Result:
 #### HTTP Voice Secretary transcription
 
 Transcribe a push-to-talk audio payload through the daemon-managed first-party
-Voice Secretary runtime. Python is the default distribution and Rust implements
-the same HTTP contract. This endpoint only returns transcript text and service
+Voice Secretary runtime. This endpoint only returns transcript text and service
 health; it does not create a chat message, proposal, or working document by
 itself. Call `assistant_voice_transcript_append` after transcription so the
 daemon can append stable transcript source material and update the current
@@ -1898,8 +1897,7 @@ Preconditions:
   a supported sherpa-onnx model configuration. HTTP transcription accepts mono
   PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are
   streamed to auto-deleted temporary files; browser service capture sends binary
-  PCM16 WebSocket frames. Python also accepts the former JSON/Base64 HTTP body
-  for compatibility, but clients should send the binary form above.
+  PCM16 WebSocket frames.
 
 Result:
 ```ts
@@ -1957,12 +1955,7 @@ the recording is long or the native inference worker is occupied, WebSocket stop
 MUST complete promptly with `final_asr_status.status` set to
 `deferred_to_speaker_analysis`, retain the durable live transcript, and queue
 speaker analysis; temporary worker occupancy MUST NOT permanently skip speaker
-analysis or retain the recording lease. The Python backend defers whenever
-speaker analysis is available (regardless of duration) and reports
-`reason="speaker_analysis_available"`; its `final_asr_text` event carries one
-`segments` entry per transcribed VAD segment with
-`recording_segment_index=1`, because it persists a single PCM16 buffer per
-recording session. A final ASR path that cannot defer but
+analysis or retain the recording lease. A final ASR path that cannot defer but
 finds the native inference worker occupied MUST bound its wait well below the
 recording lease TTL and complete stop with an `asr_busy` `final_asr_text` error
 if the worker stays occupied, so a queued stop never outlives its lease.
@@ -2046,11 +2039,11 @@ field preserves the value from the active lease. The transcription WebSocket
 binds its start frame to the lease's `capture_mode`, `recognition_backend`, and
 `dispatch_target`; changing capture scope requires a new lease.
 
-All implementations MUST serialize lease mutations and every read that may
+The daemon MUST serialize lease mutations and every read that may
 expire and clear the lease through
 `$CCCC_HOME/state/voice_secretary_recording_lease.json.lock`. A process-local
-lock alone is insufficient because Python and Rust Web/daemon processes may use
-the same home. `acquire` and `heartbeat` MAY operate while Voice Secretary is
+lock alone is insufficient because daemon and Web processes may use the same
+home. `acquire` and `heartbeat` MAY operate while Voice Secretary is
 disabled only when the effective `dispatch_target` is `composer`; an omitted
 heartbeat target inherits the active lease target. This direct-dictation path
 MUST NOT create Voice Secretary input, session, document, or diarization state.
@@ -2094,8 +2087,8 @@ repository-relative markdown path. `document_id` may exist in daemon sidecar
 state as an implementation detail, but runtime actors and Web clients should
 route by `document_path`.
 
-Repository markdown is the document-content authority. The cross-engine
-document registry and active selection live at
+Repository markdown is the document-content authority. The canonical document
+registry and active selection live at
 `$CCCC_HOME/voice-secretary/<group_id>/documents/index.json`; implementations
 serialize mutations with the sibling `index.json.lock`. The former Rust
 `groups/<group_id>/state/assistants.json:rust_state.documents/active_document_*`
@@ -2164,7 +2157,7 @@ Result:
 #### `assistant_voice_session_update`
 
 Persist a Web-owned completion projection (currently speaker diarization) into
-the shared Python/Rust session authority before publishing its completion
+the canonical session authority before publishing its completion
 event. This is an internal daemon boundary used by browser capture; callers do
 not replace transcript segments through this operation.
 
@@ -2883,9 +2876,9 @@ Notes:
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
-- A `deepseek` actor MUST use the headless runner. Both daemon implementations MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
-- The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `src/cccc/contracts/v1/deepseek.py` / `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
-- Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a Python/Rust-shared manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon or engine restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
+- A `deepseek` actor MUST use the headless runner. The daemon MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
+- The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
+- Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
 - The managed `dsh-llm-deepseek` profile MUST set `maxTokens` to the shared `DEEPSEEK_MAX_OUTPUT_TOKENS` contract value (currently 65,536), preserving input/tool headroom instead of inheriting the upstream 256k output reservation. Credential absence and provider context-window overflow are permanent for the current runtime session: both MUST be normalized to stable, secret-free failed-turn errors and MUST stop automatic retries until a lifecycle start/restart successfully initializes the actor again.
 
 #### `actor_new_session`
@@ -3205,7 +3198,7 @@ Args (core):
   group_id: string
   text: string
   by?: string
-  to?: string[]                 // recipient tokens (empty = broadcast)
+  to?: string[]                 // empty/omitted materializes group default_send_to
   message_mode: "send" | "request_reply" | "mail"
   path?: string                 // optional filesystem path to attribute scope_key
   attachments?: unknown[]       // attachment refs (implementation-defined)
@@ -4159,7 +4152,7 @@ Args:
 
 Result:
 ```ts
-{ state: Record<string, unknown> } // see src/cccc/contracts/v1/actor.py HeadlessState
+{ state: Record<string, unknown> }
 ```
 
 #### `headless_set_status`
@@ -4725,7 +4718,7 @@ The former Rust `group.yaml:im_bridge` durable fields (`config`, `enabled`,
 `authorized`, `pending`, and `subscribers`) are a one-way migration source.
 Canonical classes win when present, and imported fields MUST be retired after
 canonical commit. An explicit IM unset MUST clear the canonical target files
-and consume those legacy durable fields so a later engine switch cannot restore
+and consume those legacy durable fields so a later native load cannot restore
 configuration or delivery authority. Non-durable runtime diagnostics in
 `im_bridge` MAY remain.
 
@@ -4965,7 +4958,9 @@ Result:
 
 ### 8.17.1 Membership reach
 
-Optional extension for third-party deployments. The bundled Python and Rust implementations both implement the complete operation set below; neither engine may advertise only a non-functional placeholder. Deployments without membership MAY return `unknown_op`.
+Optional extension for third-party deployments. The bundled native
+implementation implements the complete operation set below. Deployments without
+membership MAY return `unknown_op`.
 
 Stable error classes:
 
@@ -5070,11 +5065,15 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 
 The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 
-Python and Rust share `CCCC_HOME/secrets/membership.json` and serialize every read-modify-write mutation with `CCCC_HOME/secrets/membership.json.lock`. Every writer MUST preserve the full v1 shape, including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and `pending_login`, so an engine switch cannot silently discard credentials, their issuer, or an in-progress login.
+Membership state lives in `CCCC_HOME/secrets/membership.json`. Every
+read-modify-write mutation MUST hold
+`CCCC_HOME/secrets/membership.json.lock` and preserve the full v1 shape,
+including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and
+`pending_login`.
 
 ### 8.17.2 Group Bridge delivery compatibility
 
-The daemon accepts the Python-compatible Group Bridge operations:
+The daemon accepts these Group Bridge operations:
 
 - `remote_send`: send a payload through an active registration or trust. It
   requires `group_id`, `registration_id`, `idempotency_key`, and an explicit
@@ -5112,8 +5111,7 @@ The receipt field `projected` is local bookkeeping only. Implementations MUST
 ignore a peer-supplied `projected` value and establish projection from trusted
 local receipt state or the source ledger.
 
-The cross-engine persistence authority is the Python-compatible set of
-purpose-specific files in `CCCC_HOME`:
+The persistence authority is this set of purpose-specific files in `CCCC_HOME`:
 
 - `group_bridge_identity.yaml`
 - `group_bridge_pairing.yaml` for invites, requests, trusts, and outbounds
@@ -5612,7 +5610,7 @@ Args:
 
 Result returns the targeted lane state in `sync`. Implementations that list
 `sync.work` or `sync.memory` in `unavailable_capabilities` MUST still expose
-canonical read-only status after an engine switch. A legacy client that sends
+canonical read-only status after the upgrade. A legacy client that sends
 `action=run` MUST receive `capability_unavailable` before any provider-side
 mutation.
 
@@ -5862,7 +5860,9 @@ Result:
 }
 ```
 
-Missing or invalid stored state MUST resolve to `standard` without mutating the group. The preference is scoped to `(group_id, actor_id)` and MUST survive browser-target changes, daemon restarts, and Python/Rust implementation switches.
+Missing or invalid stored state MUST resolve to `standard` without mutating the
+group. The preference is scoped to `(group_id, actor_id)` and MUST survive
+browser-target changes and daemon restarts.
 
 #### `web_model_delivery_preferences_update`
 
@@ -6019,8 +6019,8 @@ or completion state.
 #### `web_model_browser_delivery_record` (internal)
 
 Append a browser-delivery observation for a claimed Web Model turn. The browser
-owner uses this operation to expose the same message status in Python and Rust
-Web surfaces and to settle the runtime handoff; it does not complete the turn or
+owner uses this operation to expose the canonical message status in the Web
+surface and to settle the runtime handoff; it does not complete the turn or
 advance the actor cursor.
 
 Args:
@@ -6278,7 +6278,7 @@ Request line:
 
 Response line:
 ```json
-{"v":1,"ok":true,"result":{"version":"0.4.x","implementation":"python","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true,"remote_access":true}},"error":null}
+{"v":1,"ok":true,"result":{"version":"0.4.x","implementation":"rust","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true,"remote_access":true}},"error":null}
 ```
 
 ### 9.2 Error

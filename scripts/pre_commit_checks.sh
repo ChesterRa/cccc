@@ -109,71 +109,20 @@ print_check_plan() {
     echo "rust_scope=skip"
   fi
   echo "web=$([[ "$needs_web" == "1" ]] && echo check || echo skip)"
-  echo "python=$([[ "$needs_python" == "1" ]] && echo check || echo skip)"
+  echo "tooling=$([[ "$needs_tooling" == "1" ]] && echo check || echo skip)"
 }
 
-run_full_python_tests() {
-  local pytest_common=("-x" "-q" "--durations=20" "--timeout=120" "--timeout-method=thread")
-
-  echo "Checking Python syntax and SyntaxWarnings..."
-  uv run python -W error::SyntaxWarning -m compileall -q src/cccc scripts tests
-  echo "✓ Python syntax check passed"
+run_tooling_checks() {
+  echo "Checking release-tool syntax and SyntaxWarnings..."
+  uv run --no-project --with pytest --with pyyaml \
+    python -W error::SyntaxWarning -m compileall -q scripts tests
+  echo "✓ Release-tool syntax check passed"
   echo ""
 
-  echo "Running the full Python suite serially..."
-  env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID uv run --with pytest-timeout python -m pytest tests/ "${pytest_common[@]}"
-  echo "✓ Full Python tests passed"
-  echo ""
-}
-
-python_sources=()
-
-append_unique_python_source() {
-  local candidate="$1"
-  [[ -f "$candidate" ]] || return 0
-  local existing
-  if [[ ${#python_sources[@]} -gt 0 ]]; then
-    for existing in "${python_sources[@]}"; do
-      [[ "$existing" == "$candidate" ]] && return 0
-    done
-  fi
-  python_sources+=("$candidate")
-}
-
-append_unique_test() {
-  local candidate="$1"
-  [[ -f "$candidate" ]] || return 0
-  local existing
-  if [[ ${#python_tests[@]} -gt 0 ]]; then
-    for existing in "${python_tests[@]}"; do
-      [[ "$existing" == "$candidate" ]] && return 0
-    done
-  fi
-  python_tests+=("$candidate")
-}
-
-run_python_syntax_check() {
-  if [[ ${#python_sources[@]} -eq 0 ]]; then
-    return
-  fi
-
-  echo "Checking changed Python syntax..."
-  uv run python -W error::SyntaxWarning -m compileall -q "${python_sources[@]}"
-  echo "✓ Python syntax check passed"
-  echo ""
-}
-
-run_targeted_python_tests() {
-  if [[ ${#python_tests[@]} -eq 0 ]]; then
-    echo "Skipping Python tests; no impacted test files found. Run scripts/pre_commit_checks.sh --full for full coverage."
-    echo ""
-    return
-  fi
-
-  echo "Running impacted Python tests:"
-  printf '  %s\n' "${python_tests[@]}"
-  env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID uv run --with pytest-timeout python -m pytest -q --durations=20 --timeout=120 --timeout-method=thread "${python_tests[@]}"
-  echo "✓ Impacted Python tests passed"
+  echo "Running release-tool and repository contract tests..."
+  env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID \
+    uv run --no-project --with pytest --with pyyaml python -m pytest -q
+  echo "✓ Tooling tests passed"
   echo ""
 }
 
@@ -183,9 +132,8 @@ if [[ ${#changed_files[@]} -eq 0 && "$full" != "1" ]]; then
 fi
 
 needs_web=0
-needs_python=0
+needs_tooling=0
 needs_rust=0
-python_tests=()
 rust_files=()
 
 if [[ ${#changed_files[@]} -gt 0 ]]; then
@@ -197,33 +145,8 @@ if [[ ${#changed_files[@]} -gt 0 ]]; then
       package.json|package-lock.json|npm-shrinkwrap.json)
         needs_web=1
         ;;
-      tests/*.py)
-        needs_python=1
-        append_unique_python_source "$file"
-        append_unique_test "$file"
-        ;;
-      src/cccc/daemon/codex_app_sessions.py|src/cccc/daemon/claude_app_sessions.py)
-        needs_python=1
-        append_unique_python_source "$file"
-        append_unique_test "tests/test_codex_app_flow.py"
-        ;;
-      src/cccc/daemon/space/*|src/cccc/providers/notebooklm/*)
-        needs_python=1
-        append_unique_python_source "$file"
-        append_unique_test "tests/test_group_space_ops.py"
-        ;;
-      src/cccc/daemon/assistants/voice_*|src/cccc/daemon/assistants/local_*asr*.py|src/cccc/daemon/assistants/sherpa_*.py)
-        needs_python=1
-        append_unique_python_source "$file"
-        append_unique_test "tests/test_assistant_ops.py"
-        ;;
-      src/cccc/**/*.py|src/cccc/*.py|pyproject.toml|uv.lock)
-        needs_python=1
-        append_unique_python_source "$file"
-        ;;
-      *.py)
-        needs_python=1
-        append_unique_python_source "$file"
+      .github/*|scripts/*|tests/*|docs/*|docker/*|pyproject.toml|Dockerfile*|README*.md|SUPPORT.md|.gitignore|.dockerignore)
+        needs_tooling=1
         ;;
       Cargo.toml|Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|*.rs)
         needs_rust=1
@@ -235,7 +158,7 @@ fi
 
 if [[ "$full" == "1" ]]; then
   needs_web=1
-  needs_python=1
+  needs_tooling=1
   needs_rust=1
 fi
 
@@ -251,7 +174,7 @@ if [[ "$full" == "1" ]]; then
   run_frontend_checks
   npm -C web test
   npm -C web run build
-  run_full_python_tests
+  run_tooling_checks
   run_rust_checks
   echo "All checks passed."
   exit 0
@@ -275,11 +198,10 @@ else
   echo ""
 fi
 
-if [[ "$needs_python" == "1" ]]; then
-  run_python_syntax_check
-  run_targeted_python_tests
+if [[ "$needs_tooling" == "1" ]]; then
+  run_tooling_checks
 else
-  echo "Skipping Python tests; no Python files changed."
+  echo "Skipping release-tool tests; no tooling or contract files changed."
   echo ""
 fi
 

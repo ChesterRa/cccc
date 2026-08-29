@@ -13,16 +13,7 @@ Actual NotebookLM operations such as query, ingest, source management, artifacts
 ## 1. Provider Activation
 
 Connecting Google in CCCC Web stores the provider credential and activates the
-real NotebookLM path. The native Rust implementation does not require an
-environment toggle.
-
-`CCCC_NOTEBOOKLM_REAL=1` remains a legacy Python/developer override for 0.4.35;
-it is not part of the 0.4.36 Rust-only product contract:
-
-```bash
-export CCCC_NOTEBOOKLM_REAL=1
-cccc
-```
+real NotebookLM path. CCCC does not require an environment toggle.
 
 If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
@@ -46,7 +37,8 @@ Notes:
 - The default Web page does not expose manual credential editing anymore.
 - The Web flow uses a projected sign-in browser so Docker / remote deployments do not need a local desktop browser on the daemon host.
 - The projected sign-in browser now runs in headed mode for better Google compatibility. In server/container environments without a native display, CCCC uses `Xvfb` automatically.
-- The Docker image includes the minimal Chromium shared libraries needed for the projected sign-in browser. Playwright / Chromium binaries themselves are still installed lazily on first use.
+- The Docker image installs system Chromium and its display dependencies during
+  the image build; projected sign-in does not perform a lazy browser download.
 
 ## 4. Bind the Work Notebook
 
@@ -114,9 +106,7 @@ The Web page is now only for account connection and notebook binding.
 ## 9. Disconnect
 
 Use **Disconnect Google** in the Notebook settings when this machine should no
-longer use the stored NotebookLM credential. Unsetting
-`CCCC_NOTEBOOKLM_REAL` alone is not a rollback after Web has persisted the
-provider state.
+longer use the stored NotebookLM credential.
 
 ## 10. Explicit source ingestion and legacy sync state
 

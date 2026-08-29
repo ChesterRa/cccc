@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use super::model::ContextDoc;
-use super::python_storage::{self, PythonContextPaths};
+use super::yaml_storage::{self, ContextPaths};
 use crate::fs::{read_json, write_json};
 
-pub(super) fn migrate_legacy_json(paths: &PythonContextPaths) -> io::Result<()> {
+pub(super) fn migrate_legacy_json(paths: &ContextPaths) -> io::Result<()> {
     if paths.migration_file.is_file() || !paths.legacy_file.is_file() {
         return Ok(());
     }
@@ -15,10 +15,10 @@ pub(super) fn migrate_legacy_json(paths: &PythonContextPaths) -> io::Result<()> 
         Ok(document) => document,
         Err(_) => return Ok(()),
     };
-    let before = python_storage::load(paths)?;
+    let before = yaml_storage::load(paths)?;
     let (mut merged, mappings) = merge(before.clone(), legacy);
-    python_storage::touch_updated_at(&mut merged);
-    python_storage::persist_diff(paths, &before, &merged)?;
+    yaml_storage::touch_updated_at(&mut merged);
+    yaml_storage::persist_diff(paths, &before, &merged)?;
     write_json(
         &paths.migration_file,
         &json!({
@@ -60,7 +60,7 @@ fn merge(mut canonical: ContextDoc, legacy: ContextDoc) -> (ContextDoc, BTreeMap
             }
             continue;
         }
-        let new_id = if python_storage::is_python_task_id(old_id) && !reserved.contains(old_id) {
+        let new_id = if yaml_storage::is_canonical_task_id(old_id) && !reserved.contains(old_id) {
             old_id.to_owned()
         } else {
             loop {

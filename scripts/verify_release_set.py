@@ -124,12 +124,12 @@ def _verify_installers(directory: Path, *, cargo_version: str) -> None:
         raise ValueError("install.ps1 is not bound to the release version")
 
 
-def verify(directory: Path, *, cargo_version: str, python_version: str) -> None:
+def verify(directory: Path, *, cargo_version: str, wheel_version: str) -> None:
     if not directory.is_dir():
         raise ValueError(f"release directory not found: {directory}")
 
     wheels = {
-        platform: f"cccc_pair-{python_version}-py3-none-{platform}.whl"
+        platform: f"cccc_pair-{wheel_version}-py3-none-{platform}.whl"
         for platform in WHEEL_TARGETS
     }
     archives = {
@@ -189,8 +189,8 @@ def _versions(root: Path) -> tuple[str, str]:
     with root.joinpath("Cargo.toml").open("rb") as stream:
         cargo_version = str(tomllib.load(stream)["workspace"]["package"]["version"])
     with root.joinpath("pyproject.toml").open("rb") as stream:
-        python_version = str(tomllib.load(stream)["project"]["version"])
-    return cargo_version, python_version
+        wheel_version = str(tomllib.load(stream)["project"]["version"])
+    return cargo_version, wheel_version
 
 
 def main() -> int:
@@ -200,12 +200,12 @@ def main() -> int:
         "--root", type=Path, default=Path(__file__).resolve().parents[1]
     )
     args = parser.parse_args()
-    cargo_version, python_version = _versions(args.root.resolve())
+    cargo_version, wheel_version = _versions(args.root.resolve())
     try:
         verify(
             args.directory.resolve(),
             cargo_version=cargo_version,
-            python_version=python_version,
+            wheel_version=wheel_version,
         )
     except (
         OSError,

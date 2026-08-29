@@ -1,6 +1,5 @@
-//! Strict ACP NDJSON/session contract.  The Python runner consumes the same
-//! vectors in tests; neither implementation delegates parsing to DSH's loose
-//! stream helper.
+//! Strict ACP NDJSON/session contract. Parsing stays independent from DSH's
+//! loose stream helper so malformed frames fail explicitly.
 use cccc_contracts::DEEPSEEK_PROTOCOL_VERSION;
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;

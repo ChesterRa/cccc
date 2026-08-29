@@ -242,7 +242,7 @@ Enable Message Content Intent:
 
 ### "Gateway READY timed out" Error
 
-The Discord Gateway uses a WebSocket connection. If Discord is only reachable through a proxy, set the proxy before starting CCCC. The Rust implementation supports HTTP CONNECT and SOCKS5 proxy URLs and respects `NO_PROXY`.
+The Discord Gateway uses a WebSocket connection. If Discord is only reachable through a proxy, set the proxy before starting CCCC. CCCC supports HTTP CONNECT and SOCKS5 proxy URLs and respects `NO_PROXY`.
 
 macOS/Linux:
 

@@ -9,6 +9,7 @@ FROM rust:1.88-bookworm AS rust-builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY resources/ ./resources/
 COPY --from=web-builder /src/web/dist ./crates/cccc-web/assets/web-dist
 RUN cargo build --release --locked -p cccc --bin cccc
 

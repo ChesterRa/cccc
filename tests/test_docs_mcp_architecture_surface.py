@@ -13,6 +13,9 @@ class TestDocsMcpArchitectureSurface(unittest.TestCase):
         self.assertIn("cccc_automation_manage", text)
         self.assertIn("cccc_terminal_tail", text)
         self.assertIn("cccc_debug_*", text)
+        self.assertIn("message_mode", text)
+        self.assertIn("default_send_to", text)
+        self.assertNotIn("empty = broadcast", text)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
-//! Canonical cross-engine durable state for built-in assistants.
+//! Canonical durable state for built-in assistants.
 //!
 //! User configuration remains in `group.yaml:assistants`. Recoverable workflow
-//! state lives in Python's original `state/assistants.json` contract. Older Rust
-//! builds mixed both classes under `group.yaml:assistants`; that shape is
-//! imported once and then reduced to configuration-only data.
+//! state lives in the stable `state/assistants.json` contract inherited from
+//! 0.4.35. Older native builds mixed both classes under
+//! `group.yaml:assistants`; that shape is imported once and then reduced to
+//! configuration-only data.
 
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -27,8 +28,8 @@ const COMMON_FLAT_KEYS: &[&str] = &[
     "ask_requests",
 ];
 
-/// Load the shared assistant state as the flat view expected by the native
-/// daemon. Common fields are projected from the Python-compatible schema.
+/// Load assistant state as the flat view expected by the native daemon.
+/// Common fields are projected from the canonical 0.4.35 schema.
 pub fn load(home: &HomeLayout, group_id: &str) -> io::Result<Value> {
     migrate_legacy_group_state(home, group_id)?;
     let store = GroupStore::new(home.clone())?;

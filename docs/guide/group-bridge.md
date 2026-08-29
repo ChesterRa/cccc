@@ -153,7 +153,7 @@ Runtime state, credentials, and browser sessions remain local to each CCCC insta
 | Symptom | Check |
 |---------|-------|
 | Pairing request cannot be submitted | The requester must paste the full JSON pairing invitation, and the issuer endpoint must be reachable from the requester. |
-| Pairing fails with `timeout`, `dns`, `tls`, `proxy`, or `connect` | Use the reported category to check the requester network path. Current clients allow 5 seconds to connect and 15 seconds for the complete Rust request; Python uses a 15-second socket timeout. Generate a fresh invitation after correcting the route because invitations are short-lived. |
+| Pairing fails with `timeout`, `dns`, `tls`, `proxy`, or `connect` | Use the reported category to check the requester network path. The native client allows 5 seconds to connect and 15 seconds for the complete request. Generate a fresh invitation after correcting the route because invitations are short-lived. |
 | Pairing code is invalid or expired | Generate a fresh pairing invitation from the issuer group. Raw codes are mainly for same-instance diagnostics. |
 | Outbound remains `submitted` after approval | Refresh or sync the outbound record. Do not delete legacy YAML files; current Rust builds normalize older pairing responses and retain the existing request. |
 | Pairing is active but `session_connected=false` | Verify that `remote_endpoint` is non-empty and reachable. Inspect `session_last_error`; the daemon retries automatically with exponential backoff. |

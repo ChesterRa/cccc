@@ -125,7 +125,7 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
             ApiError {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 code: "daemon_unavailable".into(),
-                message: "ccccd unavailable".into(),
+                message: "CCCC daemon unavailable".into(),
                 details: json!({}),
             }
         })?;

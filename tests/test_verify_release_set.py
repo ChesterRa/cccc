@@ -20,7 +20,7 @@ from scripts.verify_release_set import (
 
 
 CARGO_VERSION = "0.4.36-rc1"
-PYTHON_VERSION = "0.4.36rc1"
+WHEEL_VERSION = "0.4.36rc1"
 
 
 def _archive(path: Path, *, package: str, binary: bytes, windows: bool) -> None:
@@ -53,7 +53,7 @@ def _complete_set(directory: Path) -> None:
     directory.joinpath("pyproject.toml").write_text(
         f'''[project]
 name = "cccc-pair"
-version = "{PYTHON_VERSION}"
+version = "{WHEEL_VERSION}"
 description = "release fixture"
 ''',
         encoding="utf-8",
@@ -96,15 +96,15 @@ description = "release fixture"
 
 def test_accepts_four_wheels_and_four_byte_identical_archives(tmp_path: Path) -> None:
     _complete_set(tmp_path)
-    verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+    verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_an_incomplete_distribution_set(tmp_path: Path) -> None:
     _complete_set(tmp_path)
-    tmp_path.joinpath(f"cccc_pair-{PYTHON_VERSION}-py3-none-win_amd64.whl").unlink()
+    tmp_path.joinpath(f"cccc_pair-{WHEEL_VERSION}-py3-none-win_amd64.whl").unlink()
 
     with pytest.raises(ValueError, match="exactly four wheels"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_different_wheel_and_archive_binaries(tmp_path: Path) -> None:
@@ -121,18 +121,20 @@ def test_rejects_different_wheel_and_archive_binaries(tmp_path: Path) -> None:
     (tmp_path / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="different CCCC executable bytes"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_a_checksum_mismatch(tmp_path: Path) -> None:
     _complete_set(tmp_path)
     checksum = tmp_path / "SHA256SUMS"
-    checksum.write_text(
-        checksum.read_text(encoding="utf-8").replace("a", "b", 1), encoding="utf-8"
-    )
+    lines = checksum.read_text(encoding="utf-8").splitlines()
+    digest, filename = lines[0].split("  ", 1)
+    replacement = "0" if digest[0] != "0" else "1"
+    lines[0] = f"{replacement}{digest[1:]}  {filename}"
+    checksum.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="SHA256SUMS mismatch"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_an_archive_with_an_unexpected_member(tmp_path: Path) -> None:
@@ -150,7 +152,7 @@ def test_rejects_an_archive_with_an_unexpected_member(tmp_path: Path) -> None:
     (tmp_path / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="invalid archive layout"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_a_windows_archive_symlink_member(tmp_path: Path) -> None:
@@ -177,17 +179,17 @@ def test_rejects_a_windows_archive_symlink_member(tmp_path: Path) -> None:
     (tmp_path / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="is not a regular file"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_an_oversized_wheel_before_opening_it(tmp_path: Path) -> None:
     _complete_set(tmp_path)
-    wheel = tmp_path / f"cccc_pair-{PYTHON_VERSION}-py3-none-win_amd64.whl"
+    wheel = tmp_path / f"cccc_pair-{WHEEL_VERSION}-py3-none-win_amd64.whl"
     with wheel.open("ab") as stream:
         stream.truncate(MAX_WHEEL_BYTES)
 
     with pytest.raises(ValueError, match="PyPI"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_rejects_an_installer_bound_to_another_release(tmp_path: Path) -> None:
@@ -199,7 +201,7 @@ def test_rejects_an_installer_bound_to_another_release(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="install.sh is not bound"):
-        verify(tmp_path, cargo_version=CARGO_VERSION, python_version=PYTHON_VERSION)
+        verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 
 def test_support_file_contract_is_explicit() -> None:

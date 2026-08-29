@@ -6,7 +6,6 @@ import type {
   AssistantVoiceAskFeedback,
   AssistantVoiceDocument,
   AssistantVoicePromptDraft,
-  AssistantServiceRuntime,
   AssistantVoiceTranscriptSegmentResult,
   BuiltinAssistant,
   VoiceDocumentMessageRef,
@@ -269,7 +268,6 @@ const VOICE_DOCUMENT_METADATA_POLL_MS = 30_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 60_000;
 const VOICE_ACTIVITY_FEED_LIMIT = 10;
 const VOICE_SERVICE_READINESS_RECHECK_MS = 30_000;
-const STREAMING_ASR_RUNTIME_ID = "sherpa_onnx_streaming";
 const TWO_LINE_STATUS_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -538,9 +536,6 @@ export function VoiceSecretaryComposerControl({
   const [actionBusy, setActionBusy] = useState<VoiceSecretaryAction>("");
   const [recognitionLanguageSaving, setRecognitionLanguageSaving] = useState(false);
   const [assistant, setAssistant] = useState<BuiltinAssistant | null>(null);
-  const [serviceRuntimesById, setServiceRuntimesById] = useState<
-    Record<string, AssistantServiceRuntime>
-  >({});
   const [documents, setDocuments] = useState<AssistantVoiceDocument[]>([]);
   const documentsRef = useRef<AssistantVoiceDocument[]>([]);
   const [viewedDocumentPath, setViewedDocumentPath] = useState("");
@@ -844,11 +839,7 @@ export function VoiceSecretaryComposerControl({
     );
   }, [assistant?.config?.auto_document_max_window_seconds]);
   const browserSpeechReady = recognitionBackend === "browser_asr";
-  const serviceReadiness = resolveVoiceServiceReadiness({
-    assistant,
-    serviceRuntimesById,
-    streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
-  });
+  const serviceReadiness = resolveVoiceServiceReadiness({ assistant });
   const serviceAsrReady = serviceReadiness.serviceAsrReady;
   const browserSpeechSupportIssue = browserSpeechReady ? getBrowserSpeechSupportIssue() : "";
   const serviceAudioSupportIssue = serviceAsrReady ? getBrowserAudioSupportIssue() : "";
@@ -1192,7 +1183,6 @@ export function VoiceSecretaryComposerControl({
           return;
         }
         setAssistant(resp.result.assistant || null);
-        setServiceRuntimesById(resp.result.service_runtimes_by_id || {});
         serviceReadinessCheckedAtRef.current = Date.now();
         const promptDraft = resp.result.prompt_draft || null;
         if (
@@ -3188,11 +3178,7 @@ export function VoiceSecretaryComposerControl({
     const runId = beginRecordingRun();
     if (!runId) return;
     const failStart = () => finishRecordingStart(runId);
-    let latestReadiness = resolveVoiceServiceReadiness({
-      assistant,
-      serviceRuntimesById,
-      streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
-    });
+    let latestReadiness = resolveVoiceServiceReadiness({ assistant });
     const shouldBlockForReadiness =
       gid && (!latestReadiness.serviceAsrReady || !latestReadiness.serviceAsrConfigured);
     const shouldRefreshReadiness =
@@ -3207,11 +3193,8 @@ export function VoiceSecretaryComposerControl({
       if (resp.ok) {
         serviceReadinessCheckedAtRef.current = Date.now();
         setAssistant(resp.result.assistant || null);
-        setServiceRuntimesById(resp.result.service_runtimes_by_id || {});
         latestReadiness = resolveVoiceServiceReadiness({
           assistant: resp.result.assistant || null,
-          serviceRuntimesById: resp.result.service_runtimes_by_id || {},
-          streamingRuntimeId: STREAMING_ASR_RUNTIME_ID,
         });
       }
     } else if (shouldRefreshReadiness) {
@@ -3231,15 +3214,10 @@ export function VoiceSecretaryComposerControl({
     if (!latestReadiness.serviceAsrConfigured) {
       failStart();
       showError(
-        latestReadiness.streamingRuntimeReady
-          ? t("voiceSecretaryStreamingRuntimeNotConnected", {
-              defaultValue:
-                "Streaming ASR runtime is installed, but the live streaming transcription backend is not connected yet. Use Browser ASR until the streaming backend is enabled.",
-            })
-          : t("voiceSecretaryServiceAsrNeedsRuntime", {
-              defaultValue:
-                "Browser microphone capture is available, but assistant service local ASR runtime is not ready yet. Install the streaming ASR runtime in Settings > Assistants, or switch back to Browser ASR.",
-            }),
+        t("voiceSecretaryLocalAsrModelsNotReady", {
+          defaultValue:
+            "The local ASR models are not ready. Install or repair Local ASR in Settings > Assistants, or switch to Browser ASR.",
+        }),
       );
       return;
     }
@@ -3724,7 +3702,6 @@ export function VoiceSecretaryComposerControl({
     selectedGroupId,
     assistant,
     captureTargetDocumentTitle,
-    serviceRuntimesById,
     effectiveCaptureTargetDocumentPath,
     finalizeLiveTranscriptPreview,
     showError,

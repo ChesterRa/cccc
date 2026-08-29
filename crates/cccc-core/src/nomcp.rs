@@ -368,7 +368,7 @@ mod tests {
             .write(true)
             .open(lock_path)
             .expect("lock file");
-        lock.lock_exclusive().expect("hold Python-compatible lock");
+        lock.lock_exclusive().expect("hold canonical lock");
         let sid = created.session.sid;
         let writer = store.clone();
         let (tx, rx) = mpsc::channel();

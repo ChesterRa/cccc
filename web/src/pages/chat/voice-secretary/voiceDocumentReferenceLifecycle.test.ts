@@ -23,8 +23,8 @@ describe("voice document reference lifecycle", () => {
     expect(removed.map((document) => document.document_id)).toEqual(["doc-b"]);
   });
 
-  it("projects Python and Rust archive events back to the pre-archive identity", () => {
-    const pythonEvent = {
+  it("projects legacy and canonical archive events back to the pre-archive identity", () => {
+    const legacyEvent = {
       kind: "assistant.voice.document",
       group_id: "group-a",
       data: {
@@ -34,7 +34,7 @@ describe("voice document reference lifecycle", () => {
         archived_from_document_path: "docs/voice-secretary/a.md",
       },
     } as LedgerEvent;
-    const rustEvent = {
+    const canonicalEvent = {
       kind: "assistant.voice.document",
       group_id: "group-a",
       data: {
@@ -47,17 +47,17 @@ describe("voice document reference lifecycle", () => {
       },
     } as LedgerEvent;
 
-    expect(archivedVoiceDocumentFromEvent(pythonEvent)).toMatchObject({
+    expect(archivedVoiceDocumentFromEvent(legacyEvent)).toMatchObject({
       document_id: "doc-a",
       document_path: "docs/voice-secretary/a.md",
     });
-    expect(archivedVoiceDocumentFromEvent(rustEvent)).toMatchObject({
+    expect(archivedVoiceDocumentFromEvent(canonicalEvent)).toMatchObject({
       document_id: "doc-b",
       document_path: "docs/voice-secretary/b.md",
     });
 
     const clearReferences = vi.fn();
-    clearArchivedVoiceDocumentReference(clearReferences, pythonEvent, "fallback-group");
+    clearArchivedVoiceDocumentReference(clearReferences, legacyEvent, "fallback-group");
     expect(clearReferences).toHaveBeenCalledWith(
       "group-a",
       expect.objectContaining({ document_id: "doc-a" }),

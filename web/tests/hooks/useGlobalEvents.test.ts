@@ -25,7 +25,7 @@ describe("useGlobalEvents open refresh policy", () => {
     expect(shouldRefreshCapabilitiesAfterGlobalEventsOpen(true)).toBe(true);
   });
 
-  it("refreshes groups for Python and Rust lifecycle event names", () => {
+  it("refreshes groups for every supported lifecycle event name", () => {
     for (const kind of [
       "group.created",
       "group.updated",

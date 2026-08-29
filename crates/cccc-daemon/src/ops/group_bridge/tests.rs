@@ -264,7 +264,7 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     );
     assert_eq!(
         response.result["group_bridge_reply"]["receipt"]["status"], "sent",
-        "new Rust receipts must use the shared Python/Rust success status"
+        "new receipts must use the canonical success status"
     );
 
     let events = ledger::read_all(&ledger_path).expect("read ledger");

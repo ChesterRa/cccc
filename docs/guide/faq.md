@@ -31,13 +31,13 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 # Package-manager-compatible native wheel
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 
 # From TestPyPI (explicit RC testing)
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 
 # From source
 git clone https://github.com/ChesterRa/cccc
@@ -107,7 +107,7 @@ Then install the new version. Note that 0.4.x has a completely different command
 Normal installation requires neither Python nor a Rust toolchain. The MCP
 JavaScript code mode additionally requires Node.js on the CCCC host.
 
-### How do I choose the Python or Rust implementation?
+### Can I choose a different product implementation?
 
 You do not. CCCC 0.4.36 has one Rust product implementation. The 0.4.35
 `cccc python` / `cccc rust` selectors and persisted implementation preference
@@ -231,7 +231,7 @@ Use Cloudflare Access or Tailscale for additional security.
 
 ### How much resources does CCCC use?
 
-- Daemon: Minimal (Python async)
+- Daemon: Minimal native background service
 - Web UI: Standard React app
 - Agents: Depends on the runtime
 

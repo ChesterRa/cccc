@@ -268,56 +268,12 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
   if (!record) return undefined;
   const runtimeId = asString(record.runtime_id).trim();
   if (!runtimeId && !asString(record.status).trim()) return undefined;
-  const rawModules = asRecord(record.modules);
-  const modules: Record<string, boolean> = {};
-  if (rawModules) {
-    for (const [key, value] of Object.entries(rawModules)) modules[key] = Boolean(value);
-  }
-  const rawPackageVersions = asRecord(record.package_versions);
-  const packageVersions: Record<string, string> = {};
-  if (rawPackageVersions) {
-    for (const [key, value] of Object.entries(rawPackageVersions)) {
-      const version = asString(value).trim();
-      if (key && version) packageVersions[key] = version;
-    }
-  }
-  const rawLatestVersions = asRecord(record.latest_versions);
-  const latestVersions: Record<string, string> = {};
-  if (rawLatestVersions) {
-    for (const [key, value] of Object.entries(rawLatestVersions)) {
-      const version = asString(value).trim();
-      if (key && version) latestVersions[key] = version;
-    }
-  }
   return {
     runtime_id: runtimeId,
     status: asOptionalString(record.status) || undefined,
     available: typeof record.available === "boolean" ? record.available : undefined,
     installed: typeof record.installed === "boolean" ? record.installed : undefined,
-    managed: typeof record.managed === "boolean" ? record.managed : undefined,
-    removable: typeof record.removable === "boolean" ? record.removable : undefined,
-    implementation: asOptionalString(record.implementation) || undefined,
-    install_dir: asOptionalString(record.install_dir) || undefined,
-    python: asOptionalString(record.python) || undefined,
-    packages: Array.isArray(record.packages)
-      ? record.packages.map((item) => String(item || "")).filter(Boolean)
-      : undefined,
-    primary_package: asOptionalString(record.primary_package) || undefined,
-    package_versions: Object.keys(packageVersions).length > 0 ? packageVersions : undefined,
     installed_version: asOptionalString(record.installed_version) || undefined,
-    latest_version: asOptionalString(record.latest_version) || undefined,
-    latest_versions: Object.keys(latestVersions).length > 0 ? latestVersions : undefined,
-    latest_checked_at: asOptionalString(record.latest_checked_at) || undefined,
-    latest_check_error: asRecord(record.latest_check_error) ?? undefined,
-    update_available:
-      typeof record.update_available === "boolean" ? record.update_available : undefined,
-    modules: Object.keys(modules).length > 0 ? modules : undefined,
-    missing_modules: asStringArray(record.missing_modules),
-    installed_at: asOptionalString(record.installed_at) || undefined,
-    updated_at: asOptionalString(record.updated_at) || undefined,
-    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes))
-      ? Number(record.disk_usage_bytes)
-      : undefined,
     error: asRecord(record.error) ?? undefined,
   };
 }
@@ -433,25 +389,7 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
       if (model?.model_id) serviceModelsById[model.model_id] = model;
     }
   }
-  const serviceRuntimes = Array.isArray(record.service_runtimes)
-    ? record.service_runtimes
-        .map((item) => normalizeAssistantServiceRuntime(item))
-        .filter((item): item is AssistantServiceRuntime => !!item)
-    : [];
-  const serviceRuntimesById: Record<string, AssistantServiceRuntime> = {};
-  for (const runtime of serviceRuntimes) {
-    if (runtime.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
-  }
-  const rawServiceRuntimesById = asRecord(record.service_runtimes_by_id);
-  if (rawServiceRuntimesById) {
-    for (const value of Object.values(rawServiceRuntimesById)) {
-      const runtime = normalizeAssistantServiceRuntime(value);
-      if (runtime?.runtime_id) serviceRuntimesById[runtime.runtime_id] = runtime;
-    }
-  }
   const primaryServiceRuntime = normalizeAssistantServiceRuntime(record.service_runtime);
-  if (primaryServiceRuntime?.runtime_id)
-    serviceRuntimesById[primaryServiceRuntime.runtime_id] = primaryServiceRuntime;
   return {
     group_id: asString(record.group_id).trim() || groupId,
     assistants: Object.values(assistantsById).sort((a, b) =>
@@ -490,10 +428,6 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     ],
     service_models_by_id: serviceModelsById,
     service_runtime: primaryServiceRuntime,
-    service_runtimes: Object.values(serviceRuntimesById).sort((a, b) =>
-      a.runtime_id.localeCompare(b.runtime_id),
-    ),
-    service_runtimes_by_id: serviceRuntimesById,
     recording_lease: normalizeAssistantVoiceRecordingLease(record.recording_lease),
   };
 }
@@ -848,14 +782,7 @@ export async function fetchVoiceAssistantMeetingSession(
 export async function installVoiceAssistantModel(
   groupId: string,
   payload: { modelId: string; by?: string; background?: boolean },
-): Promise<
-  ApiResponse<
-    AssistantMutationResult & {
-      model?: AssistantServiceModel;
-      service_runtime?: AssistantServiceRuntime;
-    }
-  >
-> {
+): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel }>> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
   const resp = await apiJson<unknown>(
@@ -871,12 +798,7 @@ export async function installVoiceAssistantModel(
   );
   clearAssistantStateRequest(gid);
   if (!resp.ok)
-    return resp as ApiResponse<
-      AssistantMutationResult & {
-        model?: AssistantServiceModel;
-        service_runtime?: AssistantServiceRuntime;
-      }
-    >;
+    return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel }>;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -884,7 +806,6 @@ export async function installVoiceAssistantModel(
     result: {
       ...normalized,
       model: normalizeAssistantServiceModel(resultRecord.model) || undefined,
-      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
     },
   };
 }
@@ -892,14 +813,7 @@ export async function installVoiceAssistantModel(
 export async function removeVoiceAssistantModel(
   groupId: string,
   payload: { modelId: string; by?: string },
-): Promise<
-  ApiResponse<
-    AssistantMutationResult & {
-      model?: AssistantServiceModel;
-      service_runtime?: AssistantServiceRuntime;
-    }
-  >
-> {
+): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel }>> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
   const resp = await apiJson<unknown>(
@@ -914,12 +828,7 @@ export async function removeVoiceAssistantModel(
   );
   clearAssistantStateRequest(gid);
   if (!resp.ok)
-    return resp as ApiResponse<
-      AssistantMutationResult & {
-        model?: AssistantServiceModel;
-        service_runtime?: AssistantServiceRuntime;
-      }
-    >;
+    return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel }>;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -927,72 +836,6 @@ export async function removeVoiceAssistantModel(
     result: {
       ...normalized,
       model: normalizeAssistantServiceModel(resultRecord.model) || undefined,
-      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
-    },
-  };
-}
-
-export async function installVoiceAssistantRuntime(
-  groupId: string,
-  payload: { runtimeId?: string; by?: string; background?: boolean } = {},
-): Promise<ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>> {
-  const gid = String(groupId || "").trim();
-  clearAssistantStateRequest(gid);
-  const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/runtime/install`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        runtime_id: String(payload.runtimeId || "").trim(),
-        by: String(payload.by || "user").trim() || "user",
-        background: payload.background !== false,
-      }),
-    },
-  );
-  clearAssistantStateRequest(gid);
-  if (!resp.ok)
-    return resp as ApiResponse<
-      AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }
-    >;
-  const normalized = normalizeAssistantMutationResult(gid, resp.result);
-  const resultRecord = asRecord(resp.result) ?? {};
-  return {
-    ok: true,
-    result: {
-      ...normalized,
-      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
-    },
-  };
-}
-
-export async function removeVoiceAssistantRuntime(
-  groupId: string,
-  payload: { runtimeId?: string; by?: string } = {},
-): Promise<ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>> {
-  const gid = String(groupId || "").trim();
-  clearAssistantStateRequest(gid);
-  const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/runtime/remove`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        runtime_id: String(payload.runtimeId || "").trim(),
-        by: String(payload.by || "user").trim() || "user",
-      }),
-    },
-  );
-  clearAssistantStateRequest(gid);
-  if (!resp.ok)
-    return resp as ApiResponse<
-      AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }
-    >;
-  const normalized = normalizeAssistantMutationResult(gid, resp.result);
-  const resultRecord = asRecord(resp.result) ?? {};
-  return {
-    ok: true,
-    result: {
-      ...normalized,
-      service_runtime: normalizeAssistantServiceRuntime(resultRecord.service_runtime),
     },
   };
 }

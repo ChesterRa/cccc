@@ -99,7 +99,7 @@ Do not:
 ### Upgrade
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
 ### After upgrade
@@ -159,14 +159,8 @@ If an issue repeats:
 ### Activate the provider
 
 Connect Google from the Notebook settings in CCCC Web. That flow stores the
-credential and provider state used by the daemon. Native Rust needs no feature
-toggle. The environment variable below is only a legacy Python/developer
-override for 0.4.35:
-
-```bash
-export CCCC_NOTEBOOKLM_REAL=1
-cccc daemon restart
-```
+credential and provider state used by the daemon. No feature toggle or
+environment variable is required.
 
 ### Validate control plane
 
@@ -174,16 +168,6 @@ cccc daemon restart
 cccc space credential status
 cccc space health
 ```
-
-### Validate curated context export path
-
-After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
-
-```bash
-cccc space jobs list --state pending
-```
-
-Expected: a `kind=context_sync` job appears for bound groups.
 
 ### Validate explicit local-file ingestion
 
@@ -200,8 +184,7 @@ Expected: the result contains the created NotebookLM `source_id`.
 ### Disconnect safely (core workflows keep running)
 
 Use **Disconnect Google** in the Notebook settings to remove this machine's
-stored credential. Merely unsetting `CCCC_NOTEBOOKLM_REAL` does not disable a
-provider that Web has already persisted.
+stored credential and disable provider access from this installation.
 
 Expected after disconnect:
 

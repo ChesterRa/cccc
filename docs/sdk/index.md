@@ -7,13 +7,18 @@ Use the official SDK when you need to integrate CCCC with external applications 
 - Repository: [ChesterRa/cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
 - Python package: `cccc-sdk` (import as `cccc_sdk`)
 - TypeScript package: `cccc-sdk`
+- Rust crate: `cccc-sdk` (crate name `cccc_sdk`)
 
 ## Install
 
 ```bash
 pip install -U cccc-sdk
 npm install cccc-sdk
+cargo add cccc-sdk
 ```
+
+For language-specific setup and examples, use the
+[SDK repository](https://github.com/ChesterRa/cccc-sdk).
 
 ## Relationship to CCCC Core
 

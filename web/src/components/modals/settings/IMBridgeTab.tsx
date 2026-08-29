@@ -588,13 +588,6 @@ export function IMBridgeTab({
                     <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                       {t("imBridge.feishuRegionHint")}
                     </p>
-                    <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                      <Trans
-                        i18nKey="imBridge.feishuPackageHint"
-                        ns="settings"
-                        components={[<code key="command" />]}
-                      />
-                    </p>
                   </div>
                   <div>
                     <label className={labelClass()}>{t("imBridge.appId")}</label>
@@ -665,13 +658,6 @@ export function IMBridgeTab({
                     />
                     <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                       {t("imBridge.robotCodeHint")}
-                    </p>
-                    <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                      <Trans
-                        i18nKey="imBridge.dingtalkPackageHint"
-                        ns="settings"
-                        components={[<code key="command" />]}
-                      />
                     </p>
                   </div>
                 </>
@@ -872,9 +858,6 @@ export function IMBridgeTab({
                           {t("imBridge.weixinAccountIdHint")}
                         </p>
                       </div>
-                      <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                        {t("imBridge.weixinPackageHint")}
-                      </p>
                     </div>
                   </details>
                 </>

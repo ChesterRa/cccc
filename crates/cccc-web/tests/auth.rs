@@ -717,7 +717,7 @@ async fn unavailable_daemon_response_does_not_expose_transport_paths() {
         .to_bytes();
     let payload: Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(payload["error"]["code"], "daemon_unavailable");
-    assert_eq!(payload["error"]["message"], "ccccd unavailable");
+    assert_eq!(payload["error"]["message"], "CCCC daemon unavailable");
     assert!(!String::from_utf8_lossy(&body).contains(&home_path));
 }
 

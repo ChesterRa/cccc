@@ -52,9 +52,9 @@ for versions in \
   "0.5.0a1 0.5.0-alpha1 v0.5.0-alpha1" \
   "0.5.0b2 0.5.0-beta2 v0.5.0-beta2" \
   "0.5.0rc3 0.5.0-rc3 v0.5.0-rc3"; do
-  read -r python_version rust_version tag <<< "$versions"
+  read -r package_version rust_version tag <<< "$versions"
   "$VERSION_PYTHON" "$ROOT_DIR/scripts/check_release_versions.py" \
-    --python-version "$python_version" \
+    --package-version "$package_version" \
     --rust-version "$rust_version" \
     --tag "$tag" >/dev/null
 done
@@ -63,9 +63,9 @@ for versions in \
   "0.5.0rc1 0.5.0-rc2 v0.5.0-rc1" \
   "0.5.0rc1 0.5.0-rc1 v0.5.0rc1" \
   "0.5.0-rc1 0.5.0-rc1 v0.5.0-rc1"; do
-  read -r python_version rust_version tag <<< "$versions"
+  read -r package_version rust_version tag <<< "$versions"
   if "$VERSION_PYTHON" "$ROOT_DIR/scripts/check_release_versions.py" \
-    --python-version "$python_version" \
+    --package-version "$package_version" \
     --rust-version "$rust_version" \
     --tag "$tag" >/dev/null 2>&1; then
     echo "release version validation accepted invalid versions: $versions" >&2

@@ -119,3 +119,32 @@ def test_docs_installer_resolver_rejects_an_incomplete_release_set(tmp_path: Pat
 
     assert resolved.returncode != 0
     assert "complete installer asset set" in resolved.stderr
+
+
+def test_rust_only_pip_guidance_cannot_fall_back_to_a_python_release() -> None:
+    stable_command = 'python -m pip install -U "cccc-pair>=0.4.36"'
+    active_guides = [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md",
+        "crates/cccc-cli/README.md",
+        "docs/rust-migration.md",
+        "docs/guide/faq.md",
+        "docs/guide/getting-started/index.md",
+        "docs/guide/operations.md",
+    ]
+
+    for relative_path in active_guides:
+        contents = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert stable_command in contents, relative_path
+        assert "python -m pip install -U cccc-pair" not in contents, relative_path
+
+    for relative_path in (
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md",
+        "docs/guide/faq.md",
+        "docs/guide/getting-started/index.md",
+    ):
+        contents = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert '"cccc-pair>=0.4.36rc0"' in contents, relative_path

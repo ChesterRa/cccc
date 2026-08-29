@@ -223,8 +223,8 @@ pub fn has_required_credentials(platform: &str, config: &Map<String, Value>) -> 
 /// Load the language-neutral IM state as the composite envelope expected by
 /// Rust daemon/Web/runtime code.
 ///
-/// Durable product state remains in the stable Python-compatible layout:
-/// `group.extra.im` plus the three purpose-specific JSON files.  The historical
+/// Durable product state remains in the stable 0.4.35 layout:
+/// `group.extra.im` plus the three purpose-specific JSON files. The historical
 /// `im_bridge` object contributes only runtime diagnostics after a bounded
 /// missing-state import.
 pub fn load(store: &GroupStore, group_id: &str) -> io::Result<Value> {

@@ -4,10 +4,7 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { GroupPromptInfo } from "../../../services/api";
 import type { AssistantServiceModel, AssistantStateResult, BuiltinAssistant } from "../../../types";
-import {
-  DEFAULT_SERVICE_MODEL_ID,
-  STREAMING_ASR_RUNTIME_ID,
-} from "../../../pages/chat/voice-secretary/voiceServiceModelRuntime";
+import { DEFAULT_SERVICE_MODEL_ID } from "../../../pages/chat/voice-secretary/voiceServiceModelRuntime";
 import { parseHelpMarkdown, updateVoiceSecretaryHelpNote } from "../../../utils/helpMarkdown";
 import { GroupCombobox } from "../../GroupCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
@@ -454,7 +451,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
   const [voiceMaxWindowSeconds, setVoiceMaxWindowSeconds] = useState(
     VOICE_RECOMMENDED_MAX_WINDOW_SECONDS,
   );
-  const [serviceRuntimeInstallBusy, setServiceRuntimeInstallBusy] = useState(false);
+  const [localAsrSetupBusy, setLocalAsrSetupBusy] = useState(false);
   const [diarizationModelInstallBusy, setDiarizationModelInstallBusy] = useState(false);
   const [localAsrMaintenanceBusy, setLocalAsrMaintenanceBusy] = useState(false);
 
@@ -502,7 +499,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     visibleLoadCount.current = 0;
     setLoadBusy(false);
     setVoiceSaveBusy(false);
-    setServiceRuntimeInstallBusy(false);
+    setLocalAsrSetupBusy(false);
     setDiarizationModelInstallBusy(false);
     setLocalAsrMaintenanceBusy(false);
     voiceBackendDraftDirtyRef.current = false;
@@ -771,7 +768,6 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
       (recognitionBackend === "assistant_service_local_asr" ? "not_started" : ""),
   ).trim();
   const serviceAlive = Boolean(serviceHealth.alive);
-  const serviceRuntimesById = assistantState?.service_runtimes_by_id || {};
   const rawConfiguredServiceModelId = readStringConfig(
     voiceAssistant,
     "service_model_id",
@@ -787,24 +783,11 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
       serviceModels: assistantState?.service_models || [],
       serviceModelsById,
     });
-  const selectedServiceRuntimeId =
-    String(
-      liveServiceAsrModel?.runtime_id ||
-        finalServiceAsrModel?.runtime_id ||
-        STREAMING_ASR_RUNTIME_ID,
-    ).trim() || STREAMING_ASR_RUNTIME_ID;
-  const streamingRuntime = serviceRuntimesById[selectedServiceRuntimeId];
+  const streamingRuntime = assistantState?.service_runtime;
   const streamingRuntimeStatus =
     String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
-  const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
-  const streamingRuntimeRemovable = streamingRuntime?.removable !== false;
-  const streamingRuntimeUpdateAvailable = Boolean(streamingRuntime?.update_available);
   const streamingRuntimeInstalledVersion = String(streamingRuntime?.installed_version || "").trim();
-  const streamingRuntimeLatestVersion = String(streamingRuntime?.latest_version || "").trim();
-  const streamingRuntimeLatestError = String(
-    streamingRuntime?.latest_check_error?.message || "",
-  ).trim();
   const finalServiceAsrModelId = String(finalServiceAsrModel?.model_id || "").trim();
   const finalServiceAsrModelStatus =
     String(finalServiceAsrModel?.status || "not_installed").trim() || "not_installed";
@@ -834,10 +817,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
   const diarizationModelDiskSize = formatModelSize(diarizationModel?.disk_usage_bytes);
   const diarizationModelArtifact = firstArtifact(diarizationModel);
   const localAsrInstalling =
-    serviceRuntimeInstallBusy ||
-    streamingRuntimeInstalling ||
-    liveServiceAsrModelInstalling ||
-    finalServiceAsrModelInstalling;
+    localAsrSetupBusy || liveServiceAsrModelInstalling || finalServiceAsrModelInstalling;
   const localAsrReady =
     streamingRuntimeReady && liveServiceAsrModelReady && finalServiceAsrModelReady;
   const localAsrFailed =
@@ -845,9 +825,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     liveServiceAsrModelStatus === "failed" ||
     finalServiceAsrModelStatus === "failed";
   const localAsrUpdateAvailable =
-    streamingRuntimeUpdateAvailable ||
-    liveServiceAsrModelUpdateAvailable ||
-    finalServiceAsrModelUpdateAvailable;
+    liveServiceAsrModelUpdateAvailable || finalServiceAsrModelUpdateAvailable;
   const localAsrStatusTone: "on" | "off" | "info" =
     localAsrReady && !localAsrUpdateAvailable ? "on" : localAsrFailed ? "off" : "info";
   const localAsrStatusLabel = localAsrInstalling
@@ -860,37 +838,31 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
           ? t("assistants.localAsrFailed", { defaultValue: "Needs repair" })
           : t("assistants.localAsrSetupNeeded", { defaultValue: "Setup needed" });
   const localAsrDiskUsage = formatModelSize(
-    Number(streamingRuntime?.disk_usage_bytes || 0) +
-      Number(liveServiceAsrModel?.disk_usage_bytes || 0) +
+    Number(liveServiceAsrModel?.disk_usage_bytes || 0) +
       Number(finalServiceAsrModel?.disk_usage_bytes || 0),
   );
   const selectedServiceModelInstalling =
-    serviceRuntimeInstallBusy ||
-    streamingRuntimeInstalling ||
+    localAsrSetupBusy ||
     liveServiceAsrModelInstalling ||
     finalServiceAsrModelInstalling ||
     diarizationModelInstallBusy ||
     diarizationModelInstalling ||
     localAsrMaintenanceBusy;
-  const asrCommandConfigured = Boolean(
-    serviceHealth.asr_command_configured ||
-    serviceHealth.asr_mock_configured ||
-    serviceHealth.managed_asr_command_configured,
-  );
+  const serviceModelReady = Boolean(serviceHealth.ready);
   const serviceLastError = recordFromUnknown(serviceHealth.last_error);
   const serviceLastErrorMessage = String(serviceLastError.message || "").trim();
   const serviceTone: "on" | "off" | "info" =
     recognitionBackend === "assistant_service_local_asr"
       ? serviceAlive
-        ? "on"
-        : asrCommandConfigured
-          ? "info"
+        ? serviceModelReady
+          ? "on"
           : "off"
+        : "info"
       : "info";
   const showServiceAsrDiagnostic =
     backendSelectable(recognitionBackend) &&
     recognitionBackend === "assistant_service_local_asr" &&
-    (!asrCommandConfigured || Boolean(serviceLastErrorMessage));
+    (!serviceModelReady || Boolean(serviceLastErrorMessage));
   const showServiceModelControls =
     backendSelectable(recognitionBackend) && recognitionBackend === "assistant_service_local_asr";
   const localAsrModelIds = Array.from(
@@ -922,7 +894,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
   const installLocalAsrBundle = async () => {
     const gid = String(groupId || "").trim();
     if (!gid || !canManageLocalAsr) return;
-    setServiceRuntimeInstallBusy(true);
+    setLocalAsrSetupBusy(true);
     setError("");
     setNotice("");
     try {
@@ -930,18 +902,6 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
       if (!isCurrentGroup(gid)) return;
       if (!saved) return;
       const updating = localAsrUpdateAvailable;
-      if (!streamingRuntimeReady || streamingRuntimeUpdateAvailable) {
-        const runtimeResp = await api.installVoiceAssistantRuntime(gid, {
-          runtimeId: STREAMING_ASR_RUNTIME_ID,
-          by: "user",
-          background: true,
-        });
-        if (!isCurrentGroup(gid)) return;
-        if (!runtimeResp.ok) {
-          setError(runtimeResp.error?.message || t("assistants.streamingRuntimeInstallFailed"));
-          return;
-        }
-      }
       if (
         (!liveServiceAsrModelReady || liveServiceAsrModelUpdateAvailable) &&
         liveServiceAsrModelId
@@ -968,7 +928,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
         t("assistants.localAsrInstallFailed", { defaultValue: "Failed to install local ASR." }),
       );
     } finally {
-      if (isCurrentGroup(gid)) setServiceRuntimeInstallBusy(false);
+      if (isCurrentGroup(gid)) setLocalAsrSetupBusy(false);
     }
   };
 
@@ -1025,7 +985,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     if (
       !window.confirm(
         t("assistants.localAsrRemoveConfirm", {
-          defaultValue: "Remove the local ASR engine and ASR models from this device?",
+          defaultValue: "Remove the local ASR models from this device?",
         }),
       )
     )
@@ -1040,20 +1000,6 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
         if (!modelResp.ok) {
           setError(
             modelResp.error?.message ||
-              t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }),
-          );
-          return;
-        }
-      }
-      if (streamingRuntimeRemovable) {
-        const runtimeResp = await api.removeVoiceAssistantRuntime(gid, {
-          runtimeId: STREAMING_ASR_RUNTIME_ID,
-          by: "user",
-        });
-        if (!isCurrentGroup(gid)) return;
-        if (!runtimeResp.ok) {
-          setError(
-            runtimeResp.error?.message ||
               t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }),
           );
           return;
@@ -1077,7 +1023,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     if (
       !window.confirm(
         t("assistants.localAsrReinstallConfirm", {
-          defaultValue: "Reinstall the local ASR engine and ASR models?",
+          defaultValue: "Reinstall the local ASR models?",
         }),
       )
     )
@@ -1092,37 +1038,6 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
         if (!modelRemove.ok) {
           setError(
             modelRemove.error?.message ||
-              t("assistants.localAsrReinstallFailed", {
-                defaultValue: "Failed to reinstall local ASR.",
-              }),
-          );
-          return;
-        }
-      }
-      if (streamingRuntimeRemovable) {
-        const runtimeRemove = await api.removeVoiceAssistantRuntime(gid, {
-          runtimeId: STREAMING_ASR_RUNTIME_ID,
-          by: "user",
-        });
-        if (!isCurrentGroup(gid)) return;
-        if (!runtimeRemove.ok) {
-          setError(
-            runtimeRemove.error?.message ||
-              t("assistants.localAsrReinstallFailed", {
-                defaultValue: "Failed to reinstall local ASR.",
-              }),
-          );
-          return;
-        }
-        const runtimeInstall = await api.installVoiceAssistantRuntime(gid, {
-          runtimeId: STREAMING_ASR_RUNTIME_ID,
-          by: "user",
-          background: true,
-        });
-        if (!isCurrentGroup(gid)) return;
-        if (!runtimeInstall.ok) {
-          setError(
-            runtimeInstall.error?.message ||
               t("assistants.localAsrReinstallFailed", {
                 defaultValue: "Failed to reinstall local ASR.",
               }),
@@ -1447,7 +1362,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                             <p className="mt-1 max-w-2xl text-[11px] leading-5 text-[var(--color-text-muted)]">
                               {t("assistants.localAsrHint", {
                                 defaultValue:
-                                  "Install the local speech engine and the default streaming model for private live transcription on this device.",
+                                  "Download the local speech models used for private transcription on this device. The sherpa-onnx engine is built into CCCC.",
                               })}
                             </p>
                           </div>
@@ -1504,32 +1419,18 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                                   defaultValue: "{{status}}",
                                 })}
                               </StatusPill>
-                              {streamingRuntimeUpdateAvailable ? (
-                                <StatusPill tone="info">
-                                  {t("assistants.updateAvailable", {
-                                    defaultValue: "Update available",
-                                  })}
-                                </StatusPill>
-                              ) : null}
                             </div>
                             <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
                               {t("assistants.localAsrEngineHint", {
-                                defaultValue: "sherpa-onnx runtime environment.",
+                                defaultValue: "Built into the CCCC executable.",
                               })}
                             </p>
-                            {streamingRuntimeInstalledVersion || streamingRuntimeLatestVersion ? (
+                            {streamingRuntimeInstalledVersion ? (
                               <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                                {streamingRuntimeInstalledVersion
-                                  ? t("assistants.localAsrEngineInstalledVersion", {
-                                      version: streamingRuntimeInstalledVersion,
-                                      defaultValue: "Installed {{version}}",
-                                    })
-                                  : t("assistants.localAsrEngineVersionUnknown", {
-                                      defaultValue: "Installed version unknown",
-                                    })}
-                                {streamingRuntimeLatestVersion
-                                  ? ` · ${t("assistants.localAsrEngineLatestVersion", { version: streamingRuntimeLatestVersion, defaultValue: "Latest official {{version}}" })}`
-                                  : ""}
+                                {t("assistants.localAsrEngineInstalledVersion", {
+                                  version: streamingRuntimeInstalledVersion,
+                                  defaultValue: "Version {{version}}",
+                                })}
                               </p>
                             ) : null}
                           </div>
@@ -1741,40 +1642,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                                 :{" "}
                               </span>
                               {streamingRuntimeInstalledVersion || "-"}
-                              {streamingRuntimeLatestVersion
-                                ? ` / ${streamingRuntimeLatestVersion}`
-                                : ""}
                             </div>
-                            <div>
-                              <span className="font-semibold text-[var(--color-text-secondary)]">
-                                {t("assistants.localAsrLatestCheckedLabel", {
-                                  defaultValue: "Latest check",
-                                })}
-                                :{" "}
-                              </span>
-                              {streamingRuntime?.latest_checked_at ||
-                                t("assistants.notChecked", { defaultValue: "not checked" })}
-                            </div>
-                            <div className="break-words md:col-span-2">
-                              <span className="font-semibold text-[var(--color-text-secondary)]">
-                                {t("assistants.localAsrRuntimePath", {
-                                  defaultValue: "Runtime path",
-                                })}
-                                :{" "}
-                              </span>
-                              {streamingRuntime?.install_dir || "-"}
-                            </div>
-                            {streamingRuntimeLatestError ? (
-                              <div className="break-words text-amber-700 dark:text-amber-300 md:col-span-2">
-                                <span className="font-semibold">
-                                  {t("assistants.localAsrLatestCheckError", {
-                                    defaultValue: "Latest check failed",
-                                  })}
-                                  :{" "}
-                                </span>
-                                {streamingRuntimeLatestError}
-                              </div>
-                            ) : null}
                             <div className="break-words md:col-span-2">
                               <span className="font-semibold text-[var(--color-text-secondary)]">
                                 {t("assistants.liveAsrModelPath", {
@@ -1837,40 +1705,36 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                             ) : null}
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {streamingRuntimeRemovable ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => void reinstallLocalAsrBundle()}
-                                  disabled={
-                                    busy ||
-                                    voiceSaveBusy ||
-                                    selectedServiceModelInstalling ||
-                                    !canManageLocalAsr
-                                  }
-                                  className={secondaryButtonClass("sm")}
-                                >
-                                  {t("assistants.localAsrReinstall", {
-                                    defaultValue: "Reinstall local ASR",
-                                  })}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void removeLocalAsrBundle()}
-                                  disabled={
-                                    busy ||
-                                    voiceSaveBusy ||
-                                    selectedServiceModelInstalling ||
-                                    !canManageLocalAsr
-                                  }
-                                  className={secondaryButtonClass("sm")}
-                                >
-                                  {t("assistants.localAsrRemove", {
-                                    defaultValue: "Remove local ASR",
-                                  })}
-                                </button>
-                              </>
-                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void reinstallLocalAsrBundle()}
+                              disabled={
+                                busy ||
+                                voiceSaveBusy ||
+                                selectedServiceModelInstalling ||
+                                !canManageLocalAsr
+                              }
+                              className={secondaryButtonClass("sm")}
+                            >
+                              {t("assistants.localAsrReinstall", {
+                                defaultValue: "Reinstall ASR models",
+                              })}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeLocalAsrBundle()}
+                              disabled={
+                                busy ||
+                                voiceSaveBusy ||
+                                selectedServiceModelInstalling ||
+                                !canManageLocalAsr
+                              }
+                              className={secondaryButtonClass("sm")}
+                            >
+                              {t("assistants.localAsrRemove", {
+                                defaultValue: "Remove ASR models",
+                              })}
+                            </button>
                             <button
                               type="button"
                               onClick={() => void reinstallDiarizationModel()}
@@ -1976,13 +1840,12 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                         </StatusPill>
                       </div>
                       <div className="mt-1">
-                        {asrCommandConfigured
-                          ? serviceHealth.managed_asr_command_configured
-                            ? t("assistants.serviceAsrManagedModelReady")
-                            : t("assistants.serviceAsrConfigured")
-                          : streamingRuntimeReady
-                            ? t("assistants.streamingRuntimeNotConnected")
-                            : t("assistants.serviceAsrMissingCommand")}
+                        {serviceModelReady
+                          ? t("assistants.serviceAsrConfigured")
+                          : t("assistants.localAsrModelsNotReady", {
+                              defaultValue:
+                                "The local ASR models are not ready. Install or repair them above, or switch to Browser ASR.",
+                            })}
                       </div>
                       {serviceLastErrorMessage ? (
                         <div className="mt-1 text-rose-700 dark:text-rose-300">

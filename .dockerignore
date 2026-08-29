@@ -10,7 +10,6 @@ target/
 web/node_modules
 web/dist
 web/.vite
-src/cccc/ports/web/dist
 tests/
 docs/
 screenshots/

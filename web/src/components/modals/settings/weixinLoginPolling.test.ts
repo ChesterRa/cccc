@@ -9,13 +9,13 @@ function status(value: string, running = false): WeixinLoginStatus {
 
 describe("Weixin login polling", () => {
   it.each(["waiting_scan", "scanned", "need_verify_code"])(
-    "continues polling the Python QR state %s",
+    "continues polling the intermediate QR state %s",
     (value) => {
       expect(shouldPollWeixinLogin(status(value))).toBe(true);
     },
   );
 
-  it("continues polling while the Rust login worker is running", () => {
+  it("continues polling while the native login worker is running", () => {
     expect(shouldPollWeixinLogin(status("starting", true))).toBe(true);
   });
 

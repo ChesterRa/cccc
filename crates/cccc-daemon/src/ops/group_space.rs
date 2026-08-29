@@ -185,11 +185,11 @@ fn capabilities(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "examples":{"generate_audio":{"action":"generate","kind":"audio","wait":true,"save_to_space":true}}
         },
         "notes":[
-            "Native Rust resource_ingest supports attached-scope local files, pasted text, Web URLs, YouTube, and Google Drive Docs/Slides/Sheets.",
+            "CCCC resource_ingest supports attached-scope local files, pasted text, Web URLs, YouTube, and Google Drive Docs/Slides/Sheets.",
             "Explicit ingest persists one durable job before one provider attempt; failed jobs require an explicit retry.",
-            "Native Rust reads Python-compatible work and memory sync status but does not mutate remote sync state.",
-            "Native Rust wait=false returns after remote generation starts; automatic background save is not yet available.",
-            "Native Rust artifact download currently supports audio, video, report/study guide, infographic, and slide deck outputs.",
+            "Native CCCC reads legacy 0.4.35 work and memory sync status but does not mutate remote sync state.",
+            "wait=false returns after remote generation starts; automatic background save is not yet available.",
+            "Artifact download currently supports audio, video, report/study guide, infographic, and slide deck outputs.",
             "NotebookLM uses an unofficial upstream protocol and may require compatibility updates."
         ],
         "capabilities":json!(["bind","ingest","query","sources","artifact","jobs"]),

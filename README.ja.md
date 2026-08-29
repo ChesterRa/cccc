@@ -71,13 +71,13 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 
 # pip 互換のネイティブ platform wheel
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 
 # RC チャネル（TestPyPI）
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 > CCCC 0.4.36 の製品実装は Rust の 1 つだけです。Web サイトのインストーラーを
@@ -142,6 +142,7 @@ cccc tracked-send "最初の具体タスクを担当し、検証証拠を添え�
 ```bash
 pip install -U cccc-sdk
 npm install cccc-sdk
+cargo add cccc-sdk
 ```
 
 SDK には daemon は含まれません。実行中の `cccc` 本体に接続して利用します。
@@ -468,7 +469,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 | [FAQ](https://chesterra.github.io/cccc/guide/faq) | よくある質問 |
 | [運用ランブック](https://chesterra.github.io/cccc/guide/operations) | 復旧、トラブルシューティング、メンテナンス |
 | [CLI リファレンス](https://chesterra.github.io/cccc/reference/cli) | 完全なコマンドリファレンス |
-| [SDK（Python/TypeScript）](https://github.com/ChesterRa/cccc-sdk) | 公式クライアントでアプリ/サービスから daemon を利用 |
+| [SDK（Python/TypeScript/Rust）](https://github.com/ChesterRa/cccc-sdk) | 公式クライアントでアプリ/サービスから daemon を利用 |
 | [アーキテクチャ](https://chesterra.github.io/cccc/reference/architecture) | 設計決定とシステムモデル |
 | [機能詳細](https://chesterra.github.io/cccc/reference/features) | メッセージング、オートメーション、ランタイムの詳細 |
 | [CCCS 標準](docs/standards/CCCS_V1.md) | 協調プロトコル仕様 |
@@ -502,12 +503,15 @@ GitHub Releases からチェックサム検証済みのネイティブ製品を�
 ### pip 互換インストール
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Pip は同じ `cccc` 実行ファイルを含む platform wheel を導入します。0.4.36 では
-sdist、universal wheel、import 可能な CCCC Python package、fallback 実装を
-提供しません。未対応 platform は明示的に失敗します。
+Pip は同じ `cccc` 実行ファイルを含む 0.4.36 以降の platform wheel を導入します。
+最低 version 制約により、現在の platform に 0.4.36 wheel がない場合に過去の
+Python 版が暗黙に選ばれることを防ぎます。0.4.36 では sdist、universal wheel、
+import 可能な CCCC Python package、fallback 実装を提供しないため、未対応
+platform は解決に失敗します。汎用の `pip install .` source build も空 package を
+導入せず明示的に拒否されます。
 
 ### pip（RC 版、TestPyPI）
 
@@ -515,7 +519,7 @@ sdist、universal wheel、import 可能な CCCC Python package、fallback 実装
 python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  cccc-pair
+  "cccc-pair>=0.4.36rc0"
 ```
 
 Cargo インストールは workspace 開発用にのみ残し、サポート対象のエンドユーザー

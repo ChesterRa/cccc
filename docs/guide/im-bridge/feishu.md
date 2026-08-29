@@ -290,7 +290,7 @@ cccc im start
 CCCC currently supports:
 
 - Outbound messages via REST APIs
-- Inbound messages via persistent connection (Python `lark-oapi`)
+- Inbound messages via the native persistent-connection worker
 
 Webhook callbacks (developer server URL), message cards, and encryption settings are not configured through CCCC at the moment.
 

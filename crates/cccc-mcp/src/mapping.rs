@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn python_memory_actions_map_to_reme_operations() {
+    fn memory_actions_map_to_reme_operations() {
         for (tool, action, expected) in [
             ("cccc_memory", "layout_get", "memory_reme_layout_get"),
             ("cccc_memory", "search", "memory_reme_search"),

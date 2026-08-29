@@ -118,9 +118,11 @@ def _legacy_wheel(root: Path) -> Path:
     """Create the smallest old-layout wheel needed to prove upgrade cleanup."""
     stem = "cccc_pair-0.0.0"
     record = f"{stem}.dist-info/RECORD"
+    executable_suffix = ".exe" if os.name == "nt" else ""
     entries = {
         "cccc/__init__.py": b"LEGACY_CCCC = True\n",
-        f"{stem}.data/scripts/ccccd": b"#!python\nprint('legacy ccccd')\n",
+        f"{stem}.data/scripts/cccc{executable_suffix}": b"legacy cccc",
+        f"{stem}.data/scripts/ccccd{executable_suffix}": b"legacy ccccd",
         f"{stem}.dist-info/METADATA": (
             b"Metadata-Version: 2.1\nName: cccc-pair\nVersion: 0.0.0\n\n"
         ),
@@ -279,23 +281,26 @@ class InstalledWheelSmoke:
 
     def run(self) -> None:
         self.verify_installed_binary()
-        version = self.cccc("--version").stdout.strip()
-        if not version.startswith("cccc "):
-            raise RuntimeError(f"unexpected CCCC version output: {version!r}")
+        for command in (("--version",), ("version",)):
+            version = self.cccc(*command).stdout.strip()
+            if not version.startswith("cccc ") or "(rust)" in version.lower():
+                raise RuntimeError(
+                    f"unexpected CCCC version output for {command!r}: {version!r}"
+                )
         self.expect_status("stopped")
         self.expect_mcp()
         self.expect_update_refusal()
 
         self.cccc("daemon", "start")
         daemon_pid = self.daemon_pid()
-        self.expect_status("running (rust)")
+        self.expect_status("running")
         self.cccc("daemon", "stop")
         _wait_for_exit(daemon_pid)
         _wait_for_removal(self.address_path)
         self.expect_status("stopped")
 
         web_pid = self.start_web_and_expect_health()
-        self.expect_status("running (rust)")
+        self.expect_status("running")
         self.cccc("daemon", "stop")
         _wait_for_exit(web_pid)
         _wait_for_removal(self.address_path)
@@ -346,6 +351,8 @@ def main() -> int:
             _run([sys.executable, "-m", "venv", str(smoke.venv)], env=smoke.env, timeout=60.0)
             legacy = _legacy_wheel(Path(raw_root))
             _pip(smoke.python, smoke.env, "install", "--quiet", str(legacy))
+            if not smoke.launcher.is_file():
+                raise RuntimeError("legacy upgrade fixture did not install cccc")
             if not any(smoke.scripts.glob("ccccd*")):
                 raise RuntimeError("legacy upgrade fixture did not install ccccd")
 

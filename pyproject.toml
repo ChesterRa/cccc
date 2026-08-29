@@ -1,40 +1,22 @@
 [build-system]
-requires = ["setuptools>=70.1", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = []
+build-backend = "scripts.native_wheel_backend"
+backend-path = ["."]
 
 [project]
 name = "cccc-pair"
 version = "0.4.35"
 description = "Global multi-agent delivery kernel with working groups, scopes, and an append-only collaboration ledger"
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.11"
 authors = [
   { name = "ChesterRa", email = "ra@ike.ba" }
 ]
 license = "Apache-2.0"
 keywords = ["orchestrator","ai","rfd","pair","collaboration"]
-dependencies = [
-  "cryptography>=41.0.0,<47.0",
-  "PyYAML>=6.0,<7.0",
-  "dingtalk-stream>=0.24.3",
-  "filelock>=3.13,<4",
-  "httpx[socks]>=0.27,<0.29",
-  "lark-oapi>=1.0.0",
-  "pydantic>=2.0,<3.0",
-  "pywinpty>=2.0,<3.0.4; platform_system == 'Windows'",
-  "wechatbot-sdk>=0.2.0",
-  "websocket-client>=1.8,<2.0",
-]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
   "Environment :: Console",
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS",
@@ -47,28 +29,11 @@ Homepage = "https://github.com/ChesterRa/cccc"
 Repository = "https://github.com/ChesterRa/cccc"
 Issues = "https://github.com/ChesterRa/cccc/issues"
 
-[tool.setuptools]
-include-package-data = true
-package-dir = {"" = "src"}
-
-[tool.setuptools.package-data]
-"cccc.providers.notebooklm._vendor" = ["LICENSE", "VENDORED_FROM.md"]
-"cccc.resources" = ["*.md", "*.yaml", "*.json", "*.js", "*.py"]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["cccc*"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
 
 [tool.ruff]
 target-version = "py311"
-exclude = [
-  "src/cccc/providers/notebooklm/_vendor",
-  "src/cccc/vendor",
-]
 
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]

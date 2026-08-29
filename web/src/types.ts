@@ -812,25 +812,7 @@ export type AssistantServiceRuntime = {
   status?: "not_installed" | "installing" | "ready" | "failed" | string;
   available?: boolean;
   installed?: boolean;
-  managed?: boolean;
-  removable?: boolean;
-  implementation?: string;
-  install_dir?: string;
-  python?: string;
-  packages?: string[];
-  primary_package?: string;
-  package_versions?: Record<string, string>;
   installed_version?: string;
-  latest_version?: string;
-  latest_versions?: Record<string, string>;
-  latest_checked_at?: string;
-  latest_check_error?: Record<string, unknown>;
-  update_available?: boolean;
-  modules?: Record<string, boolean>;
-  missing_modules?: string[];
-  installed_at?: string;
-  updated_at?: string;
-  disk_usage_bytes?: number;
   error?: Record<string, unknown>;
 };
 
@@ -853,8 +835,6 @@ export type AssistantStateResult = {
   service_models?: AssistantServiceModel[];
   service_models_by_id?: Record<string, AssistantServiceModel>;
   service_runtime?: AssistantServiceRuntime;
-  service_runtimes?: AssistantServiceRuntime[];
-  service_runtimes_by_id?: Record<string, AssistantServiceRuntime>;
   recording_lease?: AssistantVoiceRecordingLease;
 };
 

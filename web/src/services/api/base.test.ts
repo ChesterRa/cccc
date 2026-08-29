@@ -18,7 +18,7 @@ describe("apiJson", () => {
     vi.unstubAllGlobals();
   });
 
-  it("recognizes Python and Rust authentication error codes", () => {
+  it("recognizes the supported authentication error codes", () => {
     expect(isAuthRequiredErrorCode("unauthorized")).toBe(true);
     expect(isAuthRequiredErrorCode("auth_required")).toBe(true);
     expect(isAuthRequiredErrorCode("permission_denied")).toBe(false);
@@ -45,7 +45,7 @@ describe("apiJson", () => {
     expect(onRequired).not.toHaveBeenCalled();
   });
 
-  it("notifies the auth gate for Rust auth_required responses", async () => {
+  it("notifies the auth gate for auth_required responses", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const onRequired = vi.fn();
     onAuthRequired(onRequired);

@@ -69,7 +69,7 @@ Delivery format:
 
 ### Streaming Events
 
-The `chat.stream` event type represents real-time streaming content from agents. Both the Rust worker and the Python compatibility worker progressively update Telegram, Slack, Discord, and Feishu messages, DingTalk AI Cards, and WeCom native stream replies. Every stream frame carries an immutable sender-title snapshot when available, and all adapters render the same actor prefix used by the completed `chat.message`, so successful stream deduplication never removes the reply's author identity. Weixin currently uses completed-message delivery because its SDK has no stable editable-message contract. Stream events are **not** delivered to actor inboxes.
+The `chat.stream` event type represents real-time streaming content from agents. The native IM worker progressively updates Telegram, Slack, Discord, and Feishu messages, DingTalk AI Cards, and WeCom native stream replies. Every stream frame carries an immutable sender-title snapshot when available, and all adapters render the same actor prefix used by the completed `chat.message`, so successful stream deduplication never removes the reply's author identity. Weixin currently uses completed-message delivery because its SDK has no stable editable-message contract. Stream events are **not** delivered to actor inboxes.
 
 Progressive rendering is never the durability boundary. Every platform falls back to the completed `chat.message`; replies beyond a provider's single-message limit are split on Unicode-safe boundaries and delivered losslessly. A failed or truncated preview cannot suppress the final fallback.
 

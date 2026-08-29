@@ -1,8 +1,7 @@
-# Voice Secretary (Python Stable, Rust Experimental)
+# Voice Secretary
 
-Python remains the stable default CCCC implementation. Rust is experimental,
-but both engines expose the same Voice Secretary product controls and durable
-workflow authority. Native local-ASR details below apply to Rust where noted.
+Voice Secretary runs in the native CCCC product and uses one durable workflow
+authority. Local ASR is provided by the linked `sherpa-onnx` runtime.
 
 Voice Secretary is a hidden internal actor backed by repository Markdown.
 Enabling it copies the foreman's runtime settings into the dedicated

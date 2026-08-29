@@ -21,7 +21,7 @@ Mental model: the ChatGPT Web Model actor is a normal CCCC agent whose model sur
 
 Connector model: CCCC currently supports one ChatGPT Web Model actor per CCCC instance. That actor owns one active remote MCP URL and one target ChatGPT conversation. Rotating the MCP URL creates a new secret and revokes the previous active URL.
 
-MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT Web Model connector advertises the same fixed default 33-tool built-in schema in both CCCC engines instead of extending that schema with newly discovered capability tools. Explicitly disabling CCCC code mode removes its two code-mode tools; daemon restart timing does not collapse the remaining Web Model schema to the ordinary 15-tool fallback. Calls are still authorized with the connector-bound actor identity. A Web Model actor cannot bypass that surface by naming an unadvertised tool directly. A group foreman can reach an enabled built-in capability-pack tool through `cccc_capability_use`; a peer cannot use that route to acquire foreman management authority.
+MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT Web Model connector advertises a fixed built-in schema instead of extending that schema with newly discovered capability tools. Explicitly disabling CCCC code mode removes its two code-mode tools; daemon restart timing does not collapse the remaining Web Model schema to the smaller ordinary-actor fallback. Calls are still authorized with the connector-bound actor identity. A Web Model actor cannot bypass that surface by naming an unadvertised tool directly. A group foreman can reach an enabled built-in capability-pack tool through `cccc_capability_use`; a peer cannot use that route to acquire foreman management authority.
 
 ## Requirements
 
@@ -233,7 +233,7 @@ curl -s "$CONNECTOR_URL" \
 - `web_model` does not spawn a local PTY or local headless model process.
 - Connector secrets are one-time visible; CCCC stores only a hash.
 - Connector activity is best-effort diagnostic state. `Settings > Global > ChatGPT Web Model` shows the latest remote method/tool, wait status, delivery or turn id, error, and last-seen time after ChatGPT calls the connector.
-- Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; both engines include a machine-readable payload in `structuredContent` and the text content.
+- Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; the native server includes a machine-readable payload in `structuredContent` and the text content.
 - Only tools whose declared operation is read-only are annotated with `readOnlyHint: true`. Mixed-action and mutating tools remain unannotated so a client is not encouraged to bypass approval for a write path.
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Direct calls remain limited to that advertised surface; hidden built-in capability-pack tools must pass through `cccc_capability_use` and its actor-role checks.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.

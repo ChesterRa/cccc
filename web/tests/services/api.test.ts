@@ -43,14 +43,10 @@ describe("api error normalization", () => {
     vi.stubGlobal("sessionStorage", sessionStorageMock);
   });
 
-  it("accepts Python/Rust success envelopes and rejects malformed 200 payloads", async () => {
+  it("accepts the canonical success envelope and rejects malformed 200 payloads", async () => {
     const { normalizeApiResponse } = await import("../../src/services/api/base");
-    for (const fixture of [
-      { backend: "python", payload: { ok: true, result: { value: 1 } } },
-      { backend: "rust", payload: { ok: true, result: { value: 1 } } },
-    ]) {
-      expect(normalizeApiResponse(fixture.payload), fixture.backend).toEqual(fixture.payload);
-    }
+    const payload = { ok: true, result: { value: 1 } };
+    expect(normalizeApiResponse(payload)).toEqual(payload);
     for (const payload of [
       { result: { value: 1 } },
       { ok: "true", result: { value: 1 } },
@@ -77,7 +73,7 @@ describe("api error normalization", () => {
     expect(
       formatApiErrorMessage({
         code: "daemon_unavailable",
-        message: "ccccd unavailable",
+        message: "CCCC daemon unavailable",
         details: {
           transport: "tcp",
           endpoint: { host: "127.0.0.1", port: 9001 },
@@ -85,7 +81,7 @@ describe("api error normalization", () => {
           reason: "os_error",
         },
       }),
-    ).toBe("ccccd unavailable · tcp 127.0.0.1:9001 · connect os error");
+    ).toBe("CCCC daemon unavailable · tcp 127.0.0.1:9001 · connect os error");
   });
 
   it("normalizes daemon_unavailable messages from response bodies", async () => {
@@ -100,7 +96,7 @@ describe("api error normalization", () => {
               ok: false,
               error: {
                 code: "daemon_unavailable",
-                message: "ccccd unavailable",
+                message: "CCCC daemon unavailable",
                 details: {
                   transport: "unix",
                   endpoint: { path: "/tmp/ccccd.sock" },
@@ -121,7 +117,9 @@ describe("api error normalization", () => {
     if (resp.ok) {
       throw new Error("expected error response");
     }
-    expect(resp.error.message).toBe("ccccd unavailable · unix /tmp/ccccd.sock · read timeout");
+    expect(resp.error.message).toBe(
+      "CCCC daemon unavailable · unix /tmp/ccccd.sock · read timeout",
+    );
     expect(resp.error.details).toEqual({
       transport: "unix",
       endpoint: { path: "/tmp/ccccd.sock" },
@@ -716,8 +714,9 @@ describe("api assistant voice model helpers", () => {
               lifecycle: "idle",
               health: {
                 service: {
+                  ready: true,
                   selected_model_id: "mock_asr",
-                  managed_model: { model_id: "mock_asr", status: "ready", command_ready: true },
+                  model: { model_id: "mock_asr", status: "ready", command_ready: true },
                 },
               },
               config: {
@@ -870,7 +869,7 @@ describe("api assistant voice model helpers", () => {
     expect(model?.offline).toEqual({ engine: "sense_voice" });
   });
 
-  it("preserves native runtime lifecycle capabilities in assistant state", async () => {
+  it("preserves built-in ASR readiness and version in assistant state", async () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
@@ -888,9 +887,9 @@ describe("api assistant voice model helpers", () => {
             service_runtime: {
               runtime_id: "sherpa_onnx_streaming",
               status: "ready",
-              managed: true,
-              removable: false,
-              implementation: "rust",
+              available: true,
+              installed: true,
+              installed_version: "1.13.4",
             },
           },
         }),
@@ -902,9 +901,11 @@ describe("api assistant voice model helpers", () => {
     expect(resp.ok).toBe(true);
     if (!resp.ok) throw new Error("expected ok response");
     expect(resp.result.service_runtime).toMatchObject({
-      managed: true,
-      removable: false,
-      implementation: "rust",
+      runtime_id: "sherpa_onnx_streaming",
+      status: "ready",
+      available: true,
+      installed: true,
+      installed_version: "1.13.4",
     });
   });
 });

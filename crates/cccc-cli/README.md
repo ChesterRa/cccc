@@ -14,14 +14,15 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 Or install the same native executable through pip:
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
 Windows CMD or PowerShell uses `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"`.
-These installers download a checksum-verified GitHub Release binary and require
-neither Rust nor Python. The native pip wheel contains the same executable and
-no CCCC Python runtime. Do not install this crate with Cargo for normal product
-use. Upgrade either supported distribution with:
+The website installers download a checksum-verified GitHub Release binary and
+require neither Rust nor Python. The pip channel requires pip for installation,
+but its native wheel contains the same executable and no CCCC Python runtime.
+Do not install this crate with Cargo for normal product use. Upgrade either
+supported distribution with:
 
 ```bash
 cccc update
@@ -50,8 +51,8 @@ do not require a browser.
 
 Internal implementation crates use the `cccc-pair-*` namespace and are not
 intended to be installed directly. Manual standalone workflow runs verify release
-candidates. When explicitly run on a matching release tag, that workflow can also
-attach the verified experimental preview assets to GitHub Releases.
+candidates. A matching release tag publishes the verified native artifacts to
+GitHub Releases and the platform wheels to the configured Python package index.
 
 Project documentation and source: <https://github.com/chesterra/cccc>
 

@@ -87,7 +87,7 @@ second line
     expect(parsed.actorNotes["peer-1"]).toBe("first line\nsecond line");
   });
 
-  it("matches the shared roundtrip fixture used by backend tests", () => {
+  it("matches the frozen 0.4.35 roundtrip fixture", () => {
     const markdown = readFileSync(roundtripFixturePath, "utf8");
     const parsed = parseHelpMarkdown(markdown);
 

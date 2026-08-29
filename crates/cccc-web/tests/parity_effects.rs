@@ -1,7 +1,6 @@
 mod auth_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use cccc_core::GroupStore;
 use cccc_core::HomeLayout;
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -63,59 +62,4 @@ async fn scope_root_resolves_git_root_and_returns_complete_receipt() {
             .is_some_and(|value| !value.is_empty())
     );
     assert!(payload["result"]["git_remote"].is_string());
-}
-
-#[tokio::test]
-async fn native_voice_runtime_reports_real_non_removable_effects() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let group = GroupStore::new(home.clone())
-        .expect("store")
-        .create("voice runtime", "")
-        .expect("group");
-    let app = auth_support::authenticated_app(home);
-    let install = app
-        .clone()
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/groups/{}/assistants/voice_secretary/runtime/install",
-                group.group_id
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"runtime_id":"sherpa_onnx_streaming"}"#))
-            .expect("install request"),
-        )
-        .await
-        .expect("install");
-    assert_eq!(install.status(), StatusCode::OK);
-    let payload: Value = serde_json::from_slice(
-        &install
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes(),
-    )
-    .expect("json");
-    assert_eq!(payload["result"]["effect"]["kind"], "already_installed");
-    assert_eq!(payload["result"]["service_runtime"]["status"], "ready");
-    assert_eq!(payload["result"]["service_runtime"]["removable"], false);
-
-    let remove = app
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/groups/{}/assistants/voice_secretary/runtime/remove",
-                group.group_id
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"runtime_id":"sherpa_onnx_streaming"}"#))
-            .expect("remove request"),
-        )
-        .await
-        .expect("remove");
-    assert_eq!(remove.status(), StatusCode::CONFLICT);
-    let payload: Value =
-        serde_json::from_slice(&remove.into_body().collect().await.expect("body").to_bytes())
-            .expect("json");
-    assert_eq!(payload["error"]["code"], "voice_runtime_not_removable");
 }

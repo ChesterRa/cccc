@@ -7,11 +7,11 @@ cd "$ROOT"
 mode="${1:-fast}"
 case "$mode" in
   fast)
-    uvx ruff check src scripts tests
+    uvx ruff check scripts tests
     scripts/pre_commit_checks.sh
     ;;
   full)
-    uvx ruff check src scripts tests
+    uvx ruff check scripts tests
     scripts/pre_commit_checks.sh --full
     ;;
   *)

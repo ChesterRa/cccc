@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the shared CCCC release identity across Python, Rust, and Git tags."""
+"""Validate the shared CCCC release identity across package metadata, Rust, and Git tags."""
 
 from __future__ import annotations
 
@@ -11,19 +11,19 @@ import tomllib
 from pathlib import Path
 
 
-_PYTHON_VERSION_RE = re.compile(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$")
+_PACKAGE_VERSION_RE = re.compile(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$")
 _RUST_VERSION_RE = re.compile(r"^(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)(\d+))?$")
-_PYTHON_PHASES = {"a": "alpha", "b": "beta", "rc": "rc"}
+_PACKAGE_PHASES = {"a": "alpha", "b": "beta", "rc": "rc"}
 
 
-def _python_identity(version: str) -> tuple[str, str, str]:
-    match = _PYTHON_VERSION_RE.fullmatch(version)
+def _package_identity(version: str) -> tuple[str, str, str]:
+    match = _PACKAGE_VERSION_RE.fullmatch(version)
     if match is None:
         raise ValueError(
-            f"unsupported Python version {version!r}; expected X.Y.Z, X.Y.ZaN, X.Y.ZbN, or X.Y.ZrcN"
+            f"unsupported package version {version!r}; expected X.Y.Z, X.Y.ZaN, X.Y.ZbN, or X.Y.ZrcN"
         )
     base, phase, number = match.groups()
-    return base, _PYTHON_PHASES.get(phase or "", ""), number or ""
+    return base, _PACKAGE_PHASES.get(phase or "", ""), number or ""
 
 
 def _rust_identity(version: str) -> tuple[str, str, str]:
@@ -43,12 +43,12 @@ def _canonical(identity: tuple[str, str, str]) -> str:
 
 def _manifest_versions(root: Path) -> tuple[str, str]:
     with (root / "pyproject.toml").open("rb") as handle:
-        python_version = str(tomllib.load(handle).get("project", {}).get("version", "")).strip()
+        package_version = str(tomllib.load(handle).get("project", {}).get("version", "")).strip()
     with (root / "Cargo.toml").open("rb") as handle:
         rust_version = str(
             tomllib.load(handle).get("workspace", {}).get("package", {}).get("version", "")
         ).strip()
-    return python_version, rust_version
+    return package_version, rust_version
 
 
 def _rust_binary_version(binary: Path) -> str:
@@ -78,31 +78,31 @@ def _rust_binary_version(binary: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
-    parser.add_argument("--python-version", default="")
+    parser.add_argument("--package-version", default="")
     parser.add_argument("--rust-version", default="")
     parser.add_argument("--rust-binary", type=Path)
     parser.add_argument("--tag", default="")
     args = parser.parse_args()
 
-    python_version = str(args.python_version or "").strip()
+    package_version = str(args.package_version or "").strip()
     rust_version = str(args.rust_version or "").strip()
-    if bool(python_version) != bool(rust_version):
-        parser.error("--python-version and --rust-version must be provided together")
-    if not python_version:
-        python_version, rust_version = _manifest_versions(args.root.resolve())
-    if not python_version or not rust_version:
+    if bool(package_version) != bool(rust_version):
+        parser.error("--package-version and --rust-version must be provided together")
+    if not package_version:
+        package_version, rust_version = _manifest_versions(args.root.resolve())
+    if not package_version or not rust_version:
         raise ValueError("failed to read CCCC versions from pyproject.toml and Cargo.toml")
 
-    python_identity = _python_identity(python_version)
+    package_identity = _package_identity(package_version)
     rust_identity = _rust_identity(rust_version)
-    if python_identity != rust_identity:
+    if package_identity != rust_identity:
         raise ValueError(
             "CCCC release identity mismatch: "
-            f"Python={python_version!r} -> {_canonical(python_identity)!r}, "
+            f"Package={package_version!r} -> {_canonical(package_identity)!r}, "
             f"Rust={rust_version!r} -> {_canonical(rust_identity)!r}"
         )
 
-    identity = _canonical(python_identity)
+    identity = _canonical(package_identity)
     tag = str(args.tag or "").strip()
     if tag and tag != f"v{identity}":
         raise ValueError(f"tag/version mismatch: expected 'v{identity}', got {tag!r}")
@@ -117,7 +117,7 @@ def main() -> int:
                 f"manifest={rust_version!r} -> {_canonical(rust_identity)!r}"
             )
 
-    print(f"CCCC release identity: {identity} (Python={python_version}, Rust={rust_version})")
+    print(f"CCCC release identity: {identity} (Package={package_version}, Rust={rust_version})")
     return 0
 
 

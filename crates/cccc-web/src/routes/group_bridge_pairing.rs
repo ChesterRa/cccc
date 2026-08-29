@@ -503,9 +503,8 @@ async fn sync_outbound(
             }
             if let Some(claim) = claim.get("claim") {
                 item["credential"] = claim["credential"].clone();
-                // Outbound is a pairing-flow record: its terminal state is `approved`,
-                // mirroring the Python `pairing_outbound_sync.approve_outbound_from_remote_request`
-                // contract. Routing/session liveness lives on `trust` and `registration`,
+                // Outbound is a pairing-flow record: its canonical terminal state is
+                // `approved`. Routing/session liveness lives on `trust` and `registration`,
                 // which stay `active` below — the outbound's own `status` is never read by
                 // any routing path, and `approved` is what `projectRecentOutbounds` filters
                 // out so completed requests leave the "sent requests" list.

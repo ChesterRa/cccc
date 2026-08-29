@@ -7,6 +7,7 @@ The official SDK for integrating external apps/services with a running CCCC daem
 - Repository: [ChesterRa/cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
 - Python package: `cccc-sdk` (import as `cccc_sdk`)
 - TypeScript package: `cccc-sdk`
+- Rust crate: `cccc-sdk` (crate name `cccc_sdk`)
 
 ## How It Fits with CCCC Core
 
@@ -42,6 +43,9 @@ pip install -U cccc-sdk
 # TypeScript
 npm install cccc-sdk
 ```
+
+For the current Rust crate version and Cargo setup, see the
+[SDK repository](https://github.com/ChesterRa/cccc-sdk#quick-start-rust).
 
 ## Runtime Requirement
 

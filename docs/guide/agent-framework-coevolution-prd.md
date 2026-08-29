@@ -282,7 +282,7 @@ type EvolutionOutcome = {
 
 新增轻量存储模块：
 
-- `src/cccc/kernel/evolution.py`
+- `crates/cccc-core/src/evolution.rs`
 
 职责：
 

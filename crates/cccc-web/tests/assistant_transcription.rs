@@ -99,7 +99,7 @@ async fn assistant_readiness_requires_an_installed_streaming_model() {
     .expect("response JSON");
     let service = &body["result"]["assistant"]["health"]["service"];
     assert_eq!(service["runtime"]["status"], "ready");
-    assert_eq!(service["asr_command_configured"], false);
+    assert_eq!(service["ready"], false);
     assert_eq!(service["streaming_backend"]["ready"], false);
 
     let _ = cccc_client::DaemonClient::new(home)

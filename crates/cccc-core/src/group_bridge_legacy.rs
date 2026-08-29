@@ -1,8 +1,8 @@
-//! Shared Group Bridge persistence plus one-way migration from the old Rust store.
+//! Canonical Group Bridge persistence plus one-way migration from the old store.
 //!
-//! Python has always used the purpose-specific YAML files below. They are
-//! now the cross-engine authority.  `settings.yaml:group_bridge` is read only as
-//! a one-time migration source and is cleared after a successful canonical write.
+//! The purpose-specific YAML files from 0.4.35 remain the durable authority.
+//! `settings.yaml:group_bridge` is read only as a one-time migration source and
+//! is cleared after a successful canonical write.
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -20,7 +20,7 @@ const REGISTRATIONS_FILE: &str = "group_bridge_registrations.yaml";
 const CREDENTIALS_FILE: &str = "group_bridge_credentials.yaml";
 const RECEIPTS_FILE: &str = "group_bridge_receipts.yaml";
 
-/// Load the Python-compatible canonical Group Bridge state.
+/// Load canonical Group Bridge state.
 pub fn load(home: &HomeLayout) -> io::Result<Value> {
     with_exclusive_lock(&home.root().join(LOCK_FILE), || {
         migrate_settings_unlocked(home)?;
@@ -276,7 +276,7 @@ fn persist_inbound_credentials(
     // Older Rust releases stored the inbound bearer directly on a
     // registration and did not always retain a pairing request id. Preserve
     // that credential only while the matching trust remains active, and move
-    // it into the Python-compatible secret store during migration.
+    // it into the canonical secret store during migration.
     for registration in registrations {
         let registration_id = nonempty(registration.get("registration_id")).unwrap_or("");
         let token = nonempty(registration.get("credential"));

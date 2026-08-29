@@ -17,7 +17,6 @@ cccc-core = { package = "cccc-pair-core", version = "=0.4.35", path = "../cccc-c
 cccc-notebooklm = { package = "cccc-pair-notebooklm", version = "=0.4.35", path = "../cccc-notebooklm" }
 cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.35", path = "../cccc-runtime" }
 chrono.workspace = true
-clap.workspace = true
 fs2.workspace = true
 futures-util.workspace = true
 mime_guess.workspace = true
@@ -34,7 +33,6 @@ shell-words.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 unicode-width.workspace = true
 url.workspace = true
 uuid.workspace = true
@@ -50,7 +48,3 @@ workspace = true
 
 [lib]
 name = "cccc_daemon"
-
-[[bin]]
-name = "ccccd"
-path = "src/main.rs"

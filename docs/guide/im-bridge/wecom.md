@@ -155,7 +155,7 @@ Both workers coalesce rapid full-snapshot updates and always finalize the native
 
 The adapter implementation lives in:
 
-- `src/cccc/ports/im/adapters/wecom.py`
+- `crates/cccc-web/src/im_runtime/wecom.rs`
 
 ## Troubleshooting
 

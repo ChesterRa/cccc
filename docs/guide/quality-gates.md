@@ -1,185 +1,129 @@
 # Contributor Quality Gates
 
-CCCC keeps local feedback fast while preserving required source-correctness coverage on every pull request. Compatibility and native-distribution checks that do not need to block each change run nightly and before release. Long-lived gates check current code and deliverables; one-time migrations are reviewed once instead of becoming permanent historical machinery.
+CCCC keeps the product implementation native while using small Python scripts
+only for release packaging and repository-contract checks. Pull requests cover
+source correctness; slower native-distribution checks run nightly and again on
+the exact release artifacts.
 
 ## Local Commands
 
-Run the impacted fast gate while developing:
+Run the impacted gate while developing:
 
 ```bash
 scripts/quality_gate.sh fast
 ```
 
-It runs Ruff error-level rules and whitespace checks, then selects checks from the changed files:
+It selects checks from changed files:
 
-- Rust source changes run workspace formatting plus lib/bin Clippy and unit tests for the directly changed crates.
-- Changed Rust integration-test files run only their owning test binary. Modules under `tests/suite/` map to the crate's `integration` target.
-- Root Cargo configuration, the lockfile, toolchain configuration, or bundled third-party crate changes use workspace lib/bin checks.
-- Web and Python checks run only when their respective files changed.
+- Rust changes run formatting plus focused Clippy/tests for the affected crates.
+- Rust integration-test changes run their owning test binary; modules under
+  `tests/suite/` map to the crate's `integration` target.
+- Web changes run format, lint, and TypeScript checks.
+- Release scripts, repository tests, workflows, and contract documentation run
+  the small Python tooling suite. This suite does not import or launch a CCCC
+  Python product implementation.
 
-Local Cargo checks default to two build jobs to avoid memory pressure from the workspace's large integration-test binaries. Override that bound when the machine has enough memory:
+Local Cargo checks default to two build jobs to reduce memory pressure. Override
+the bound on machines with more memory:
 
 ```bash
 CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast
 ```
 
-Inspect the selection without running checks:
+Inspect selection without running it:
 
 ```bash
 scripts/pre_commit_checks.sh --dry-run
 ```
 
-The impacted gate reports its wall-clock time against a 120-second local feedback budget. Override the reporting threshold with `CCCC_PRECOMMIT_BUDGET_SECONDS`; exceeding it warns but does not hide a successful check. A cold Rust dependency build may exceed the target, while normal warm-cache runs should stay within it.
+The impacted gate reports elapsed time against a 120-second feedback target.
+Override the reporting threshold with `CCCC_PRECOMMIT_BUDGET_SECONDS`. A warning
+does not hide a successful check.
 
-The fast gate does not replace complete pull-request coverage. CI and `scripts/pre_commit_checks.sh --full` still run every Rust integration target.
-
-Before handing off a broad change, run the full local gate:
+Before handing off a broad change, run:
 
 ```bash
 scripts/quality_gate.sh full
 ```
 
-Full mode adds all Web tests and the complete Python suite in one serial process. The serial path is intentionally equivalent to nightly coverage so parallel pull-request jobs do not hide order-dependent failures.
+Full mode adds all Web tests, a production Web build, every release-tool and
+repository-contract test, and the full Rust pre-commit scope.
 
 Individual commands remain available:
 
 ```bash
 npm -C web run check
 npm -C web test
-npm -C web run typecheck
 npm -C web run build
-uvx ruff check src scripts tests
+uvx ruff check scripts tests
+uv run --no-project --with pytest --with pyyaml python -m pytest -q
 ```
 
 ## Web Toolchain
 
-Vite+ is a project-local development dependency. Install the locked Web dependencies, then run commands through npm so they resolve `web/node_modules/.bin/vp` automatically:
+Install the locked Web dependencies and invoke tools through npm so they resolve
+the project-local Vite+ binaries:
 
 ```bash
 npm ci --prefix web
 npm -C web run check
 ```
 
-The native product embeds the bundle from `web/dist`; `npm -C web run build`
-is sufficient before rebuilding the Rust executable. `scripts/build_web.sh`
-and `scripts/build_web.ps1` are convenience wrappers for that same output.
-`CCCC_WEB_DIST` remains the explicit override for testing a different bundle.
+The native product embeds `web/dist`. `npm -C web run build` is sufficient before
+rebuilding the Rust executable; `scripts/build_web.sh` and
+`scripts/build_web.ps1` are convenience wrappers. `CCCC_WEB_DIST` remains the
+explicit test override.
 
-CI pins Node 24.19.0 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported non-EOL local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
-
-Workflow JavaScript actions use their Node 24-compatible major versions.
-Dependabot groups GitHub Actions updates into one weekly maintenance change so
-runner-runtime deprecations do not accumulate as warnings across every job.
-
-`npm run check` runs Vite+ Oxfmt and Oxlint, followed by the independent TypeScript 5.9 `tsc --noEmit` compatibility check. `npm run typecheck` remains available separately for focused diagnosis.
-
-Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enabling both `lint.options.typeAware` and `typeCheck` produced 105 errors and 454 warnings across 439 files, while `tsc --noEmit` passed. Type-aware Vite+ checks remain disabled until their scope and diagnostics match the project; CI keeps the evidence-backed `vp check && npm run typecheck` combination.
-
-## Design Boundary
-
-- Formatting, linting, type checks, tests, and builds validate the current tree on every pull request.
-- A formatter migration may use a temporary verifier during review, but that verifier and its historical manifests do not become permanent product dependencies.
-- File length is a review signal, not a hard CI proxy for architecture quality. Refactor when cohesion, ownership, testing, or change risk provides concrete evidence.
+CI pins Node 24.19.0. `npm run check` runs Vite+ Oxfmt/Oxlint followed by the
+independent TypeScript 5.9 `tsc --noEmit` check. Type-aware Vite+ checks remain
+disabled until their diagnostics and supported scope match this project.
 
 ## Pull-Request Jobs
 
 | Job | Responsibility |
 | --- | --- |
-| `quality` | Ruff and quality-tool/workflow contract tests |
-| `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
-| `python-tests` | Transitional source-level Python regression tests distributed across two deterministic matrix shards on Python 3.14; removed domain by domain during the 0.4.36 consolidation |
-| `package` | Deterministic Rust-only wheel/archive tooling and exact native-wheel layout checks |
-| `rust-linux` | Rust formatting, workspace Clippy, Python-free tests, installer/release source contracts, and serial combined-process lifecycle coverage in one reused workspace |
-| `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
-| `windows-smoke` | Windows PTY compatibility, combined Web startup-failure cleanup, and forced daemon Job Object process-tree cleanup |
-| `ci-required` | Stable aggregate result for branch protection; fails when any required job fails or is skipped |
+| `quality` | Ruff plus release-tool, workflow, documentation, and packaging contract tests |
+| `web` | Vite+ checks, TypeScript, all Web tests, and the production bundle |
+| `package` | Deterministic native wheel/archive tooling and exact Rust-only wheel layout checks |
+| `rust-linux` | Rust formatting, workspace Clippy/tests, Unix installer contracts, and serial combined-process lifecycle coverage |
+| `windows-smoke` | Focused native Windows process-lifecycle checks |
+| `ci-required` | Stable branch-protection aggregate; fails when any required job fails or is skipped |
 
-The `rust-linux` pull-request job is self-contained: it does not install or
-execute the Python backend, and its formatting, linting, tests, and lifecycle
-steps share one checkout, toolchain, and Cargo target directory. Cross-language
-tests that launch `src/cccc` stay excluded from that job so its boundary remains
-honest, but run in the separate mandatory `interop` job instead. CLI tests that
-spawn and stop a combined daemon/Web process run last with one test thread. This
-preserves the process-exit contract without paying for three separate Rust job
-setups or racing the rest of the workspace test binary.
+The Rust job installs no Python product runtime. Its formatting, linting, tests,
+and lifecycle checks reuse one checkout and Cargo target directory. Combined
+daemon/Web process tests run last with one test thread to avoid lifecycle races.
 
-## Nightly Compatibility and Native Verification
+Python in `quality` and `package` is a build/test interpreter only. There is no
+Python daemon job, engine matrix, or cross-engine interoperability job.
 
-Slow compatibility and native-distribution checks run once per day and remain
-manually dispatchable. They do not repeat after every `main` or `rust` push;
-release workflows independently verify the exact artifacts they publish.
+## Nightly Native Verification
 
 | Job | Responsibility |
 | --- | --- |
-| `nightly-serial` | Complete source-level Python suite in one process on Python 3.11 |
 | `web-bundle` | Build the exact frontend embedded by native artifacts |
 | `rust-dist` | Release-build the Rust workspace and run Unix installation/replacement smoke |
 | `windows-installer` | Build the native Windows CLI and verify installer ownership and PATH handling |
 
-`rust-dist` executes `scripts/tests/smoke_rust_replacement.sh` against the
-actual built executable. The smoke uses a fresh `CCCC_HOME`, verifies offline
-`status`, starts the daemon, creates a scoped Web Model actor, performs an MCP
-handshake and a real `cccc_code_exec` cell, then stops the daemon and verifies
-offline status again. The release-candidate verifiers repeat this check for
-each installed Linux and macOS artifact; Windows verifies installed offline
-status, MCP startup, daemon lifecycle, and that the executable is released
-after shutdown.
+`rust-dist` runs `scripts/tests/smoke_rust_replacement.sh` against the built
+executable in a fresh `CCCC_HOME`. It verifies daemon lifecycle, a scoped Web
+Model actor, MCP initialization, a real `cccc_code_exec` cell, and clean stop.
 
-Each final standalone verifier also starts the installed combined Web/daemon
-process and reruns the exact same-version installer in place. Publication is
-blocked unless the old Web process exits, the process lock and executable are
-released, the replacement daemon restarts, and the installed MCP/code-mode
-smoke still succeeds. This is the public lifecycle used by `cccc update`, not a
-source-tree substitute.
+Release verification repeats installation and same-version replacement against
+the exact Linux, Intel macOS, Apple Silicon macOS, and Windows artifacts. Linux
+artifacts must satisfy the manylinux 2.28 dependency boundary; macOS artifacts
+declare macOS 11.0; Windows builds target Server 2022. Publication requires four
+native wheels, four standalone archives, matching executable hashes, checksums,
+version-bound installers, release notes, installed CLI/MCP/daemon/Web smoke, and
+platform installer verification.
 
-Before packaging, Linux standalone builds run in the manylinux 2.28 container
-already used by the native wheel and must pass an ELF dependency/ABI check;
-OpenSSL is statically carried rather than delegated to the target host. macOS
-builds declare and verify a macOS 11.0 minimum plus system-only dylib boundary.
-Windows native-wheel and standalone build/verification runners are pinned to
-Server 2022. These checks make the advertised platform floor a property of the
-artifact rather than the moving `*-latest` runner labels.
+The release workflow packages the same native executable bytes into standalone
+archives and dependency-free platform wheels. It does not build an sdist,
+universal wheel, importable CCCC Python package, fallback engine, or second Rust
+registry distribution.
 
-The full Windows Rust workspace job is intentionally retired because it did not
-complete reliably on hosted runners. Windows keeps focused PTY compatibility
-coverage in `windows-smoke`. The canonical release workflow builds the shared
-Web bundle once, then compiles one self-contained Rust executable on each of the
-four supported targets. Each target job wraps those exact bytes in both a
-standalone archive and a dependency-free native wheel; it does not rebuild or
-repair a second pip payload. The final gate requires four wheels, four archives,
-matching platform-executable hashes, exact Rust-only wheel layouts, complete
-checksums, version-bound installers, release notes before registry mutation,
-installed wheel CLI/MCP/daemon/Web/uninstall smoke, and the Linux, Intel macOS,
-Apple Silicon macOS, and Windows installer verifiers before either PyPI or
-GitHub publication. The Linux job also requires Auditwheel itself to classify
-the payload as `manylinux_2_28_x86_64`; printing a newer compatibility result
-does not pass.
-These bounded release gates do not repeat the full Rust or transitional Python suites, Web
-tests, or cross-language interoperability tests owned by normal CI. The Web job
-uploads its bundle and all target jobs consume that same artifact. During the
-0.4.36 transition, source-level Python behavior remains covered only while its
-domain is still present; the retired product launcher and multi-version Python
-compatibility matrix are not kept alive. CI no longer builds a Python wheel or
-sdist.
-The package job exercises only the deterministic Rust-only wheel/archive tools;
-the release workflow owns testing the real platform artifacts.
+## Design Boundary
 
-## Stable Python Shards
-
-`scripts/quality/pytest_shards.py` discovers every `tests/**/test_*.py` and `tests/**/*_test.py` file. It sorts files by descending line-count weight and assigns each file to the currently lightest shard, with deterministic path and shard-index tie breakers.
-
-This largest-processing-time strategy gives stable assignments for the same checkout, covers every file exactly once, and avoids the large imbalance of a simple hash bucket. It does not use `pytest-xdist`.
-
-Inspect a shard with:
-
-```bash
-uv run python scripts/quality/pytest_shards.py --total 2 --index 0
-```
-
-## Nightly Serial Coverage
-
-The scheduled `nightly-serial` job runs the remaining source-level `tests/` suite
-in one pytest process. Pull requests use two file shards for lower wall-clock
-time; nightly preserves a simple reference run that can expose shared-state or
-order sensitivity across files. It is a temporary deletion safety net, not a
-supported Python product-runtime matrix.
+- Formatting, linting, type checks, tests, and builds validate the current tree.
+- Historical migration verifiers do not become permanent product dependencies.
+- File length is a review signal, not a proxy for architecture quality. Refactor
+  when cohesion, ownership, testing, or change risk provides concrete evidence.

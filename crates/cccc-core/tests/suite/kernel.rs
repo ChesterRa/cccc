@@ -1,7 +1,7 @@
 // Included by the crate-level integration test harness.
 use cccc_contracts::{Actor, ActorRole, Event};
 use cccc_core::actors;
-use cccc_core::context::ContextStore;
+use cccc_core::context::{ContextDoc, ContextStore};
 use cccc_core::inbox;
 use cccc_core::ledger;
 use cccc_core::{GroupStore, HomeLayout};
@@ -93,6 +93,41 @@ fn context_sync_is_atomic_and_dry_run_does_not_persist() {
     let stored = contexts.load(&group_id).expect("stored after rejection");
     assert!(stored.tasks[0].get("notes").is_none());
     assert_eq!(stored.tasks[0]["status"], "planned");
+}
+
+#[test]
+fn legacy_context_json_is_migrated_once_without_deleting_the_source() {
+    let temp = tempfile::tempdir().expect("temp home");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("migration", "").expect("group");
+    let group_dir = groups.group_dir(&group.group_id).expect("group dir");
+    let mut legacy = ContextDoc::default();
+    legacy.tasks.push(
+        json!({"id":"t_legacy","title":"legacy Rust task","status":"done"})
+            .as_object()
+            .cloned()
+            .expect("task"),
+    );
+    std::fs::write(
+        group_dir.join("state/context.json"),
+        serde_json::to_vec_pretty(&legacy).expect("legacy JSON"),
+    )
+    .expect("write legacy");
+
+    let contexts = ContextStore::new(home).expect("contexts");
+    let first = contexts.load(&group.group_id).expect("migrated context");
+    let second = contexts.load(&group.group_id).expect("idempotent context");
+    assert_eq!(first.tasks, second.tasks);
+    assert_eq!(first.tasks.len(), 1);
+    assert_eq!(first.tasks[0]["id"], "T001");
+    assert!(group_dir.join("context/tasks/T001.yaml").is_file());
+    assert!(
+        group_dir
+            .join("context/.rust-state-migrated-v1.json")
+            .is_file()
+    );
+    assert!(group_dir.join("state/context.json").is_file());
 }
 
 #[test]

@@ -11,8 +11,8 @@ use std::time::Duration;
 
 type Key = (String, String);
 
-// Match the Python headless runner: Claude may need time to initialize MCP
-// servers before a startup exit can be observed reliably under load.
+// Claude may need time to initialize MCP servers before a startup exit can be
+// observed reliably under load.
 const CLAUDE_STARTUP_GRACE: Duration = Duration::from_secs(1);
 
 fn sessions() -> &'static RwLock<HashMap<Key, Arc<Session>>> {

@@ -1,9 +1,9 @@
 # Rust-only Product and Python 0.4.35 Migration
 
 CCCC 0.4.36 has one shipped implementation: Rust. The Python daemon, Web
-server, launcher, engine selector, and fallback are retired. Python may remain
-in the repository only as temporary deletion scaffolding or build/release
-tooling; normal CCCC use does not import or start it.
+server, launcher, engine selector, and fallback are retired. Python remains in
+the repository only for small build, release, and repository-contract tools;
+normal CCCC use does not import or start it.
 
 Version 0.4.35 is the final dual-engine release and the supported migration
 boundary. Rust keeps the durable state formats required to adopt a sanitized,
@@ -25,13 +25,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 Or install the same native executable through pip:
 
 ```bash
-python -m pip install -U cccc-pair
+python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
 PyPI publishes four native platform wheels: Linux x86-64, Intel/Apple Silicon
 macOS, and Windows x86-64. Each wheel contains only the native `cccc`
-executable, license, and package metadata. There is no source distribution,
-portable wheel, importable CCCC Python package, or fallback implementation.
+executable, license, and package metadata. The minimum-version constraint keeps
+pip from silently selecting a historical Python-only release on an unsupported
+platform. There is no 0.4.36 source distribution, portable wheel, importable
+CCCC Python package, or fallback implementation.
 
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
@@ -209,10 +211,10 @@ can be reopened after a component restart.
 
 The native MCP server retains the progressive tool surface from 0.4.35.
 `tools/list` is derived from caller role and `capability_state`, includes
-enabled built-in packs and Python-compatible external MCP runtime artifacts,
+enabled built-in packs and 0.4.35-compatible external MCP runtime artifacts,
 and forwards dynamic tool calls through `capability_tool_call`. A frozen
 contract test guards the static 0.4.35-to-native tool catalog. Enabling an external
-capability now performs the Python-compatible package preflight and installation
+capability now performs the 0.4.35-compatible package preflight and installation
 for npm, PyPI, OCI, command, and remote HTTP MCP records before persisting the
 runtime artifact. Static tools and their complete input schemas come from one
 packaged JSON contract. `cccc_code_exec` and
@@ -244,7 +246,7 @@ Linux Web Model projection requires Xvfb and fails with an actionable error when
 it is absent; it no longer silently changes behavior by falling back to a
 headless browser.
 
-The Rust CLI accepts the Python public spellings for `prompt --actor-id`,
+The native CLI accepts the 0.4.35 public spellings for `prompt --actor-id`,
 `tail --lines`, `doctor --all`, `runtime list --all`, `update --channel`, and the
 `space jobs` / `space auth` subcommand trees. Standalone `cccc status` succeeds
 while the daemon is stopped and identifies the Rust-only installation instead of
@@ -255,7 +257,7 @@ Group Bridge compatibility includes daemon-level `remote_send`,
 addition to the Web and MCP routes. Remote delivery requires an explicit
 recipient, validates the active registration or trust route, records idempotent
 receipts, and falls back to the remote Group Bridge MCP endpoint when needed.
-The Rust daemon also owns Python-compatible signed outbound WebSocket sessions:
+The daemon also owns 0.4.35-compatible signed outbound WebSocket sessions:
 it scans active trusts, maintains heartbeats, reconnects with bounded
 exponential backoff, projects connection health onto each trust, and prefers
 the live route for message delivery before HTTP/MCP fallback.
@@ -392,7 +394,7 @@ the canonical daemon boundary. Native CCCC stores the short-lived lease in the
 0.4.35-compatible locked CCCC_HOME document, and Web
 delegates acquire, heartbeat, and release to the daemon while validating the
 token again for the audio stream. Lifecycle, durable health, sessions, pending
-prompt drafts/requests, and ask requests now share the Python-compatible
+prompt drafts/requests, and ask requests now share the 0.4.35-compatible
 `state/assistants.json` authority. Native CCCC imports its former group-embedded
 workflow state once and leaves only `enabled`/`config` in `group.yaml`. Live
 process health is deliberately recomputed rather than persisted. Native Rust

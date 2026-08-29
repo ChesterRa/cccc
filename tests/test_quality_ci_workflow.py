@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -50,37 +49,28 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
     assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0"
 
 
-def test_pr_jobs_keep_full_quality_web_transitional_python_and_package_boundaries() -> None:
+def test_pr_jobs_keep_quality_web_package_and_native_boundaries() -> None:
     jobs = _workflow()["jobs"]
 
-    assert {
+    assert set(jobs) == {
         "quality",
         "web",
-        "python-tests",
         "package",
         "windows-smoke",
-        "interop",
         "rust-linux",
         "ci-required",
-    } <= set(jobs)
-    assert "rust-dist" not in jobs
-    assert "windows-installer" not in jobs
+    }
     assert set(jobs["ci-required"]["needs"]) == set(jobs) - {"ci-required"}
     assert jobs["ci-required"]["if"] == "always()"
-    assert set(jobs["package"]["needs"]) == {"quality", "python-tests", "interop"}
+    assert jobs["package"]["needs"] == "quality"
     assert "ruff check" in _runs(jobs["quality"])
+    assert "python -m pytest -q" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
     assert any(step.get("uses", "").startswith("actions/upload-artifact") for step in jobs["web"]["steps"])
     assert not any(step.get("uses", "").startswith("actions/download-artifact") for step in jobs["package"]["steps"])
 
-    for name in (
-        "quality",
-        "python-tests",
-        "package",
-        "windows-smoke",
-        "interop",
-    ):
+    for name in ("quality", "package"):
         setup = next(
             step
             for step in jobs[name]["steps"]
@@ -101,16 +91,12 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     assert "npm -C web run lint" not in runs
 
 
-def test_windows_smoke_keeps_transitional_pty_and_native_process_tree_checks() -> None:
+def test_windows_smoke_keeps_only_native_process_lifecycle_checks() -> None:
     windows = _workflow()["jobs"]["windows-smoke"]
     runs = _runs(windows)
     uses = {step.get("uses", "") for step in windows["steps"]}
 
     assert windows["needs"] == "web"
-    assert "tests/test_socket_special_ops.py" in runs
-    assert "tests/test_windows_pty_backend.py" in runs
-    assert "tests/test_installation_diagnostics.py" not in runs
-    assert "tests/test_system_cmds_doctor.py" not in runs
     assert "cargo build" not in runs
     assert "install_windows.ps1" not in runs
     assert any(item.startswith("actions/download-artifact") for item in uses)
@@ -120,7 +106,9 @@ def test_windows_smoke_keeps_transitional_pty_and_native_process_tree_checks() -
     assert "process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history" in runs
     assert "-- --test-threads=1" in runs
     assert not any(item.startswith("actions/setup-node") for item in uses)
+    assert not any(item.startswith("actions/setup-python") for item in uses)
     assert "npm " not in runs
+    assert "python " not in runs.lower()
 
 
 def test_windows_installer_job_is_a_nightly_native_fixture() -> None:
@@ -151,13 +139,13 @@ def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
         "cargo test --package cccc-pair-daemon --locked"
         in test_runs
     )
-    assert test_runs.count("--skip python_interop_") == 2
+    assert "python_interop_" not in test_runs
     assert "--skip daemon_self_launch::" in test_runs
     assert "--test integration" in test_runs
     assert "daemon_self_launch::" in test_runs
     assert "--test-threads=1" in test_runs
     assert "cargo fmt --all --check" in test_runs
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in test_runs
+    assert "cargo clippy --workspace --all-targets --locked -- -D warnings" in test_runs
     windows_runs = _runs(jobs["windows-smoke"])
     assert "cargo test --package cccc --test integration --locked" in windows_runs
     assert (
@@ -166,8 +154,8 @@ def test_rust_linux_job_is_python_free_and_reuses_one_workspace() -> None:
     )
 
 
-def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
-    expected_sources = {
+def test_retired_python_product_and_cross_language_suites_are_absent() -> None:
+    retired_sources = {
         "crates/cccc-core/tests/context_python_interop.rs",
         "crates/cccc-core/tests/group_bridge_identity_interop.rs",
         "crates/cccc-core/tests/ledger_python_interop.rs",
@@ -182,17 +170,17 @@ def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
         for path in ROOT.glob("crates/*/tests/*.rs")
         if "CCCC_TEST_PYTHON" in path.read_text(encoding="utf-8")
     }
-    assert actual_sources == expected_sources
+    assert actual_sources == set()
+    assert not (ROOT / "src" / "cccc").exists()
+    assert all(not (ROOT / relative_path).exists() for relative_path in retired_sources)
 
-    pure_rust_tests = {"legacy_rust_json_is_migrated_once_without_deleting_the_source"}
-    for relative_path in expected_sources:
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        test_names = set(re.findall(r"#\[test\]\s*fn\s+(\w+)\s*\(", source))
-        assert test_names
-        assert all(
-            name.startswith("python_interop_") or name in pure_rust_tests
-            for name in test_names
-        ), relative_path
+
+def test_impacted_gate_routes_distribution_and_root_docs_to_tooling_checks() -> None:
+    script = (ROOT / "scripts" / "pre_commit_checks.sh").read_text(encoding="utf-8")
+
+    assert "docker/*" in script
+    assert "README*.md" in script
+    assert "SUPPORT.md" in script
 
 
 def test_nightly_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
@@ -227,31 +215,21 @@ def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance(
     assert "test:quality" not in runs
 
 
-def test_pr_python_matrix_uses_two_stable_file_shards_without_xdist() -> None:
-    job = _workflow()["jobs"]["python-tests"]
-    runs = _runs(job)
-
-    assert "needs" not in job
-    assert job["strategy"]["matrix"]["shard"] == ["0", "1"]
-    assert "scripts/quality/pytest_shards.py" in runs
-    assert "--total 2" in runs
-    assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest" in runs
-    assert "packaged_web_dist" not in runs
-    assert "pytest-xdist" not in runs
-    assert " -n " not in runs
-
-
-def test_ci_keeps_python_only_as_transitional_source_test_tooling() -> None:
+def test_ci_keeps_python_only_for_release_and_repository_tooling() -> None:
     jobs = _workflow()["jobs"]
 
-    for name in ("quality", "python-tests", "package", "windows-smoke"):
+    for name in ("quality", "package"):
         setup = next(step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/setup-python"))
         assert setup["with"]["python-version"] == "3.14"
 
+    assert "python-tests" not in jobs
+    assert "interop" not in jobs
     assert "python-compat" not in jobs
-    assert "python-compat" not in _nightly_workflow()["jobs"]
-    assert "python-compat" not in jobs["package"]["needs"]
-    assert "python-compat" not in jobs["ci-required"]["needs"]
+    assert not any(
+        step.get("uses", "").startswith("actions/setup-python")
+        for name in ("web", "windows-smoke", "rust-linux")
+        for step in jobs[name]["steps"]
+    )
 
 
 def test_package_job_exercises_only_the_rust_only_release_shape() -> None:
@@ -267,51 +245,6 @@ def test_package_job_exercises_only_the_rust_only_release_shape() -> None:
     assert ".data/scripts/cccc" in runs
 
 
-def test_interop_job_runs_the_cross_language_tests_skipped_by_the_python_free_rust_job() -> None:
-    interop = _workflow()["jobs"]["interop"]
-    runs = _runs(interop)
-    uses = {step.get("uses", "") for step in interop["steps"]}
-
-    assert interop["needs"] == "web"
-    assert any(item.startswith("actions/setup-python") for item in uses)
-    assert any(item.startswith("dtolnay/rust-toolchain") for item in uses)
-    for test_binary in (
-        "context_python_interop",
-        "group_bridge_identity_interop",
-        "runtime_hook_interop",
-        "runtime_hook_identity_interop",
-        "ledger_python_interop",
-        "shared_integration_state_interop",
-        "python_storage_interop",
-    ):
-        assert test_binary in runs
-
-
-def test_nightly_workflow_runs_serial_full_python_suite_at_the_oldest_endpoint() -> None:
-    workflow = _nightly_workflow()
-    nightly = workflow["jobs"]["nightly-serial"]
-    runs = _runs(nightly)
-
-    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
-    assert workflow["concurrency"] == {
-        "group": "nightly-${{ github.ref }}",
-        "cancel-in-progress": "false",
-    }
-    assert "if" not in nightly
-    assert nightly["timeout-minutes"] == "45"
-    assert "strategy" not in nightly
-    setup = next(
-        step for step in nightly["steps"] if step.get("uses", "").startswith("actions/setup-python")
-    )
-    assert setup["with"]["python-version"] == "3.11"
-    assert "python -m pytest tests/" in runs
-    assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/" in runs
-    assert "packaged_web_dist" not in runs
-    assert "pytest_shards.py" not in runs
-    assert "pytest-xdist" not in runs
-    assert " -n " not in runs
-
-
 def test_nightly_workflow_owns_slow_native_verification() -> None:
     workflow = _nightly_workflow()
     jobs = workflow["jobs"]
@@ -322,12 +255,12 @@ def test_nightly_workflow_owns_slow_native_verification() -> None:
         "group": "nightly-${{ github.ref }}",
         "cancel-in-progress": "false",
     }
-    assert {
-        "nightly-serial",
-        "web-bundle",
-        "rust-dist",
-        "windows-installer",
-    } <= set(jobs)
+    assert set(jobs) == {"web-bundle", "rust-dist", "windows-installer"}
+    assert not any(
+        step.get("uses", "").startswith("actions/setup-python")
+        for job in jobs.values()
+        for step in job["steps"]
+    )
     assert not (ROOT / ".github/workflows/post-merge.yml").exists()
 
 
@@ -429,7 +362,7 @@ def test_release_builds_one_atomic_rust_only_set() -> None:
     assert "delvewheel repair" not in release_runs
     assert "scripts/package_release_assets.sh" in prepare_runs
     assert "scripts/verify_release_set.py artifacts" in prepare_runs
-    assert "scripts/upload_python_release.py" in _runs(jobs["publish"])
+    assert "scripts/upload_wheel_release.py" in _runs(jobs["publish"])
     assert "cccc rust" not in release_runs
     assert not (ROOT / ".github/workflows/release-rust.yml").exists()
     assert not (ROOT / "setup.py").exists()
@@ -455,7 +388,7 @@ def test_product_tag_publishes_one_verified_pypi_and_github_release() -> None:
     assert "manylinux_2_28_x86_64" in release_runs
     assert "delvewheel==1.13.0" in release_runs
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
-    assert "scripts/upload_python_release.py" in _runs(release["jobs"]["publish"])
+    assert "scripts/upload_wheel_release.py" in _runs(release["jobs"]["publish"])
 
     assert release["concurrency"] == {
         "group": "release-${{ github.ref }}",
@@ -542,19 +475,19 @@ def test_product_tag_publishes_one_verified_pypi_and_github_release() -> None:
     assert "experimental standalone Rust preview" not in publish_runs
     assert 'notes_file="docs/release/v${version}_release_notes.md"' in publish_runs
     assert publish_runs.index('test -s "${notes_file}"') < publish_runs.index(
-        "scripts/upload_python_release.py"
+        "scripts/upload_wheel_release.py"
     )
     assert '--notes-file "${notes_file}"' in publish_runs
     assert "--generate-notes" not in publish_runs
 
 
-def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
+def test_wheel_release_keeps_registry_tokens_out_of_step_outputs() -> None:
     publish = _release_workflow()["jobs"]["publish"]
     classify = next(step for step in publish["steps"] if step.get("id") == "channel")
     uploads = [
         step
         for step in publish["steps"]
-        if "upload_python_release.py" in step.get("run", "")
+        if "upload_wheel_release.py" in step.get("run", "")
     ]
 
     assert "secrets." not in classify["run"]
