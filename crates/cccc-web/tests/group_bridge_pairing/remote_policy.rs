@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "remote_policy/legacy_compatibility.rs"]
+mod legacy_compatibility;
+
 #[tokio::test]
 async fn remote_pairing_uses_one_time_claim_route() {
     let issuer = Router::new()
@@ -113,74 +116,6 @@ async fn remote_pairing_uses_one_time_claim_route() {
     assert_eq!(state["trusts"][0]["registration_id"], "reg_remote");
     assert_eq!(state["trusts"][0]["remote_peer_id"], "12D3KooIssuer");
     assert_eq!(state["trusts"][0]["min_session_protocol"], 2);
-
-    issuer_task.abort();
-}
-
-#[tokio::test]
-async fn remote_pairing_accepts_legacy_direct_token_without_claim_route() {
-    let issuer = Router::new()
-        .route(
-            "/api/group-bridge/pairing/requests/remote",
-            post(|| async {
-                Json(json!({"ok":true,"result":{"request":{
-                    "request_id":"preq_legacy","invite_id":"pinv_legacy","status":"pending"
-                }}}))
-            }),
-        )
-        .route(
-            "/api/group-bridge/pairing/requests/remote/status",
-            get(|| async {
-                Json(json!({"ok":true,"result":{"request":{
-                    "request_id":"preq_legacy","invite_id":"pinv_legacy",
-                    "registration_id":"reg_legacy","status":"approved",
-                    "remote_send_token":"legacy_direct_token","access_level":"messages"
-                }}}))
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener");
-    let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-    let issuer_task = tokio::spawn(async move { axum::serve(listener, issuer).await });
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let group = GroupStore::new(home.clone())
-        .expect("store")
-        .create("legacy-joiner", "")
-        .expect("group");
-    let app = auth_support::authenticated_app(home.clone());
-    let created = call(
-        &app,
-        "/api/group-bridge/pairing/remote-requests",
-        json!({
-            "local_group_id":group.group_id,"local_group_title":"Legacy Joiner",
-            "payload":{
-                "issuer_endpoint":endpoint,"issuer_group_id":"g_legacy_issuer",
-                "issuer_group_title":"Legacy Issuer","issuer_peer_id":"12D3KooLegacyIssuer",
-                "pairing_code":"ABCD-1234","invite_id":"pinv_legacy"
-            }
-        }),
-    )
-    .await;
-    let outbound_id = created["result"]["outbound"]["outbound_id"]
-        .as_str()
-        .expect("outbound id");
-
-    let synced = call(
-        &app,
-        &format!("/api/group-bridge/pairing/outbounds/{outbound_id}/sync"),
-        json!({}),
-    )
-    .await;
-
-    assert_eq!(synced["result"]["outbound"]["status"], "approved");
-    assert!(synced["result"]["outbound"]["remote_request"]["remote_send_token"].is_null());
-    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
-    assert_eq!(state["trusts"][0]["registration_id"], "reg_legacy");
-    assert_eq!(state["trusts"][0]["credential"], "legacy_direct_token");
-    assert_eq!(state["trusts"][0]["status"], "active");
 
     issuer_task.abort();
 }

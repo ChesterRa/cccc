@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 - **Direct localhost Web use is passwordless again without creating a hidden administrator token.** Requests served on a loopback browser origin receive an in-memory local administrator principal, while public Host/Origin and non-local proxy sources remain behind the explicit Access Token boundary.
-- **Group Bridge v2 now proves the complete live handshake and pins both peers.** A fresh client nonce and server-signed ready transcript prevent challenge/ready replay, while the native client persists `min_session_protocol=2` and refuses later v1 fallback.
+- **Group Bridge v2 now proves the complete live handshake and pins both peers.** A fresh client nonce and server-signed ready transcript prevent challenge/ready replay, while the native client persists `min_session_protocol=2` and refuses later v1 fallback. Approved, unclaimed records from before the claim-window upgrade receive one persisted ten-minute compatibility window instead of becoming permanently unclaimable.
 - **Mobile Web sessions survive normal tab reclamation.** Access-token login establishes a rolling 30-day HttpOnly cookie and clears the temporary browser bearer after verification, avoiding repeated token entry without placing credentials in URLs or local storage.
 
 ## [0.4.36] — 2026-08-30

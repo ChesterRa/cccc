@@ -3252,6 +3252,10 @@ that distinction and use the same metadata in PTY, headless, and Web Model
 delivery. The metadata MUST remain in the existing first header line so adding
 it does not turn a one-line message into multiple runtime input lines. It does
 not add or mutate ledger fields, and it is not required for `system.notify`.
+Every delivered batch containing one or more `chat.message` events MUST append
+one concise instruction telling the actor to call `cccc_message_reply` with the
+target message's current `event_id`. The instruction MUST reserve
+`cccc_message_send` for a new message and MUST appear only once per batch.
 
 #### `message_upload_preflight`
 
@@ -5102,6 +5106,10 @@ values are invalid. Approval MAY open a bounded credential-claim window. A POST
 with the same request id, invite id, and pairing code MAY return the same raw
 credential again within that window so transport failures are recoverable; the
 credential MUST NOT appear in status GET responses or after the window expires.
+An approved, unclaimed compatibility record that predates `claim_expires_at`
+MAY receive one persisted bounded migration window. Implementations MUST NOT
+extend that migrated deadline on later status or claim retries, and malformed or
+explicitly expired deadlines MUST remain invalid.
 
 The Rust v2 WebSocket endpoint MUST send a fresh signed per-connection challenge
 before the client hello. The challenge signature covers the v2 protocol id,
@@ -5972,6 +5980,10 @@ For `web_model_pull`, every returned source event MUST already have a durable
 only establishes the browser claim; `web_model_browser_delivery_record` settles
 the claim after the submit boundary. A second wait while the actor owns an active
 turn MUST return `turn_in_progress` and MUST NOT replace that turn.
+`coalesced_text` MUST preserve the complete daemon-rendered batch without a
+secondary character-count truncation. Browser-originated oversized text is
+converted to a `.txt` attachment before daemon delivery; the canonical
+`messages` array remains the source of truth for every structured turn.
 
 #### `runtime_complete_turn`
 

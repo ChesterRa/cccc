@@ -3,6 +3,10 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Value;
 
 mod references;
+mod reply_guidance;
+#[cfg(test)]
+#[path = "actor_delivery_render/reply_guidance_tests.rs"]
+mod reply_guidance_tests;
 mod system_notify;
 
 fn render_message(event: &Event) -> Option<String> {
@@ -39,7 +43,7 @@ pub fn render_batch(events: &[Event]) -> Option<String> {
         .iter()
         .map(render_message)
         .collect::<Option<Vec<_>>>()?;
-    match messages.as_slice() {
+    let rendered = match messages.as_slice() {
         [] => None,
         [message] => Some(message.clone()),
         _ => Some(format!(
@@ -47,7 +51,8 @@ pub fn render_batch(events: &[Event]) -> Option<String> {
             messages.len(),
             messages.join("\n\n")
         )),
-    }
+    }?;
+    Some(reply_guidance::append(events, rendered))
 }
 
 pub fn render_batch_with_mail_context(
@@ -345,75 +350,6 @@ mod tests {
             "REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote group-a/actor-1, group-b/actor-2."
         ));
         assert!(!rendered.contains("omit to in cccc_message_send"));
-    }
-
-    #[test]
-    fn renders_multiple_events_as_one_delivery_batch() {
-        let mut first = Event::new("chat.message", "g_test");
-        first.id = "event-first".into();
-        first.by = "reviewer".into();
-        first.data = json!({"to":["lead"],"text":"first"})
-            .as_object()
-            .cloned()
-            .expect("event data");
-        let mut second = Event::new("chat.message", "g_test");
-        second.id = "event-second".into();
-        second.by = "backend".into();
-        second.data = json!({"to":["lead"],"text":"second"})
-            .as_object()
-            .cloned()
-            .expect("event data");
-
-        let rendered = render_batch(&[first, second]).expect("batch");
-        assert!(rendered.starts_with("[cccc] 2 new messages:"));
-        assert!(
-            rendered
-                .contains("[cccc] reviewer → lead [event_id=event-first message_mode=send]: first")
-        );
-        assert!(
-            rendered.contains(
-                "[cccc] backend → lead [event_id=event-second message_mode=send]: second"
-            )
-        );
-        assert!(!rendered.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
-    }
-
-    #[test]
-    fn does_not_repeat_system_prompt_guidance_in_each_chat_delivery() {
-        let mut event = Event::new("chat.message", "g_test");
-        event.id = "event-plain".into();
-        event.by = "user".into();
-        event.data = json!({"to":["codex-1"], "text":"你好"})
-            .as_object()
-            .cloned()
-            .expect("object");
-
-        let rendered = render_batch(&[event]).expect("rendered");
-        assert_eq!(
-            rendered,
-            "[cccc] user → codex-1 [event_id=event-plain message_mode=send]: 你好"
-        );
-    }
-
-    #[test]
-    fn keeps_current_event_and_parent_reply_id_distinct() {
-        let mut event = Event::new("chat.message", "g_test");
-        event.id = "event-current".into();
-        event.by = "peer2".into();
-        event.data = json!({
-            "to":["peer1"],
-            "text":"follow-up",
-            "message_mode":"send",
-            "reply_to":"event-parent"
-        })
-        .as_object()
-        .cloned()
-        .expect("event data");
-
-        let rendered = render_batch(&[event]).expect("rendered");
-        assert!(rendered.starts_with(
-            "[cccc] peer2 → peer1 (reply:event-pa) [event_id=event-current message_mode=send reply_to=event-parent]: follow-up"
-        ));
     }
 
     #[test]

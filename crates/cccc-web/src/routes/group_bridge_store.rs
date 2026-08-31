@@ -1,5 +1,6 @@
 use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use sha2::Digest;
 use std::io;
@@ -52,6 +53,23 @@ impl<'a> BridgeStore<'a> {
             Ok(())
         })?;
         Ok(())
+    }
+
+    pub fn repair_legacy_claim_windows(&self) -> io::Result<()> {
+        let mut raw = cccc_core::group_bridge_legacy::load(self.home)?;
+        if !raw.is_object() {
+            raw = json!({});
+        }
+        let state = raw.as_object_mut().expect("bridge store initialized");
+        ensure_sections(state);
+        let now = Utc::now();
+        if !migrate_legacy_claim_windows(state, now) {
+            return Ok(());
+        }
+        self.update(|state| {
+            migrate_legacy_claim_windows(state, now);
+            Ok(())
+        })
     }
 
     pub fn identity(&self) -> io::Result<Value> {
@@ -154,6 +172,14 @@ fn normalize_legacy_active_outbounds(state: &mut Map<String, Value>) -> bool {
             outbound["updated_at"] = json!(utc_now());
             changed = true;
         }
+    }
+    changed
+}
+
+fn migrate_legacy_claim_windows(state: &mut Map<String, Value>, now: DateTime<Utc>) -> bool {
+    let mut changed = false;
+    for request in items_mut(state, "requests") {
+        changed |= super::group_bridge_pairing_policy::migrate_legacy_claim_window(request, now);
     }
     changed
 }

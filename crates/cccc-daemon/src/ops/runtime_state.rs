@@ -833,27 +833,6 @@ fn coalesced_text(
     messages: &[Event],
     actor_id: &str,
 ) -> String {
-    let mut output = super::actor_delivery_render::render_batch_with_mail_context(
-        home, group, actor_id, messages,
-    )
-    .unwrap_or_default();
-    if output.chars().count() > 24_000 {
-        const TRUNCATION: &str = "\n\n[cccc] coalesced turn text truncated";
-        const HINT_MARKER: &str = "\n\n[cccc] MAIL PENDING:";
-        let split_index = output.rfind(HINT_MARKER);
-        let suffix = split_index
-            .map(|index| output[index..].to_owned())
-            .unwrap_or_default();
-        let body = split_index.map_or(output.as_str(), |index| &output[..index]);
-        let available = 24_000usize
-            .saturating_sub(TRUNCATION.chars().count())
-            .saturating_sub(suffix.chars().count())
-            .max(1);
-        let truncated = body.chars().take(available).collect::<String>();
-        output = truncated;
-        output.truncate(output.trim_end().len());
-        output.push_str(TRUNCATION);
-        output.push_str(&suffix);
-    }
-    output
+    super::actor_delivery_render::render_batch_with_mail_context(home, group, actor_id, messages)
+        .unwrap_or_default()
 }
