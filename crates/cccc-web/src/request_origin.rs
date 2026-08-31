@@ -1,5 +1,7 @@
 use axum::http::{HeaderMap, header};
 
+use crate::AppState;
+
 fn first_list_value(value: &str) -> Option<String> {
     value
         .split(',')
@@ -9,7 +11,7 @@ fn first_list_value(value: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn forwarded_parameter(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn forwarded_parameter(headers: &HeaderMap, name: &str) -> Option<String> {
     let first = headers
         .get("forwarded")
         .and_then(|value| value.to_str().ok())?
@@ -30,7 +32,10 @@ fn forwarded_parameter(headers: &HeaderMap, name: &str) -> Option<String> {
     })
 }
 
-fn forwarded_host(headers: &HeaderMap) -> Option<String> {
+fn forwarded_host(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    if !trust_proxy {
+        return None;
+    }
     headers
         .get("x-forwarded-host")
         .and_then(|value| value.to_str().ok())
@@ -38,7 +43,10 @@ fn forwarded_host(headers: &HeaderMap) -> Option<String> {
         .or_else(|| forwarded_parameter(headers, "host"))
 }
 
-fn forwarded_scheme(headers: &HeaderMap) -> Option<String> {
+fn forwarded_scheme(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    if !trust_proxy {
+        return None;
+    }
     headers
         .get("x-forwarded-proto")
         .and_then(|value| value.to_str().ok())
@@ -48,8 +56,48 @@ fn forwarded_scheme(headers: &HeaderMap) -> Option<String> {
         .filter(|value| matches!(value.as_str(), "http" | "https"))
 }
 
-pub fn served_origin(headers: &HeaderMap) -> Option<String> {
-    let host = forwarded_host(headers).or_else(|| {
+pub(crate) fn proxy_headers_trusted(state: &AppState) -> bool {
+    proxy_headers_trusted_for(
+        state.restart.is_some(),
+        environment_flag("CCCC_WEB_TRUST_PROXY_HEADERS"),
+        Some(&state.live_binding.host),
+    )
+}
+
+fn proxy_headers_trusted_for(
+    supervised: bool,
+    explicitly_trusted: bool,
+    effective_host: Option<&str>,
+) -> bool {
+    explicitly_trusted || supervised && effective_host.is_some_and(is_loopback_host)
+}
+
+fn environment_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim();
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host)
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+pub fn served_origin(state: &AppState, headers: &HeaderMap) -> Option<String> {
+    served_origin_with_proxy(headers, proxy_headers_trusted(state))
+}
+
+pub(crate) fn served_origin_with_proxy(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    let host = forwarded_host(headers, trust_proxy).or_else(|| {
         headers
             .get(header::HOST)
             .and_then(|value| value.to_str().ok())
@@ -60,8 +108,15 @@ pub fn served_origin(headers: &HeaderMap) -> Option<String> {
     if host.is_empty() {
         return None;
     }
-    let scheme = forwarded_scheme(headers).unwrap_or_else(|| "http".into());
+    let scheme = forwarded_scheme(headers, trust_proxy).unwrap_or_else(|| "http".into());
     cccc_core::web_login_grants::normalize_origin(&format!("{scheme}://{host}"))
+}
+
+pub(crate) fn origin_is_loopback(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    url.host_str().is_some_and(is_loopback_host)
 }
 
 pub fn source_origin(headers: &HeaderMap) -> Option<String> {
@@ -79,22 +134,31 @@ pub fn source_origin(headers: &HeaderMap) -> Option<String> {
         .and_then(cccc_core::web_login_grants::normalize_origin)
 }
 
-pub fn origin_allowed(headers: &HeaderMap, origin: &str) -> bool {
+pub(crate) fn origin_allowed_with_proxy(
+    headers: &HeaderMap,
+    origin: &str,
+    trust_proxy: bool,
+) -> bool {
     let Some(origin) = cccc_core::web_login_grants::normalize_origin(origin) else {
         return false;
     };
-    if served_origin(headers).as_deref() == Some(origin.as_str()) {
+    if served_origin_with_proxy(headers, trust_proxy).as_deref() == Some(origin.as_str()) {
         return true;
     }
     configured_origins().any(|allowed| allowed == origin)
 }
 
-pub fn cookie_csrf_allowed(headers: &HeaderMap) -> bool {
-    source_origin(headers).is_some_and(|origin| origin_allowed(headers, &origin))
+pub fn cookie_csrf_allowed(state: &AppState, headers: &HeaderMap) -> bool {
+    cookie_csrf_allowed_with_proxy(headers, proxy_headers_trusted(state))
 }
 
-pub fn is_https(headers: &HeaderMap) -> bool {
-    served_origin(headers).is_some_and(|origin| origin.starts_with("https://"))
+pub(crate) fn cookie_csrf_allowed_with_proxy(headers: &HeaderMap, trust_proxy: bool) -> bool {
+    source_origin(headers)
+        .is_some_and(|origin| origin_allowed_with_proxy(headers, &origin, trust_proxy))
+}
+
+pub fn is_https(state: &AppState, headers: &HeaderMap) -> bool {
+    served_origin(state, headers).is_some_and(|origin| origin.starts_with("https://"))
 }
 
 fn configured_origins() -> impl Iterator<Item = String> {
@@ -112,98 +176,5 @@ fn configured_origins() -> impl Iterator<Item = String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::HeaderValue;
-
-    fn headers() -> HeaderMap {
-        HeaderMap::from_iter([
-            (header::HOST, HeaderValue::from_static("cccc.example")),
-            (
-                header::HeaderName::from_static("x-forwarded-proto"),
-                HeaderValue::from_static("https"),
-            ),
-        ])
-    }
-
-    #[test]
-    fn cookie_csrf_requires_the_exact_served_origin() {
-        let mut same = headers();
-        same.insert(
-            header::ORIGIN,
-            HeaderValue::from_static("https://cccc.example"),
-        );
-        assert!(cookie_csrf_allowed(&same));
-
-        let mut sibling = headers();
-        sibling.insert(
-            header::ORIGIN,
-            HeaderValue::from_static("https://evil.example"),
-        );
-        assert!(!cookie_csrf_allowed(&sibling));
-        assert!(!cookie_csrf_allowed(&headers()));
-    }
-
-    #[test]
-    fn referer_is_an_allowed_fallback() {
-        let mut request = headers();
-        request.insert(
-            header::REFERER,
-            HeaderValue::from_static("https://cccc.example/ui/settings"),
-        );
-        assert!(cookie_csrf_allowed(&request));
-    }
-
-    #[test]
-    fn forwarded_host_preserves_the_browser_origin_through_a_loopback_proxy() {
-        let mut request = HeaderMap::from_iter([
-            (header::HOST, HeaderValue::from_static("127.0.0.1:8848")),
-            (
-                header::HeaderName::from_static("x-forwarded-host"),
-                HeaderValue::from_static("localhost:5555"),
-            ),
-            (
-                header::HeaderName::from_static("x-forwarded-proto"),
-                HeaderValue::from_static("http"),
-            ),
-        ]);
-        request.insert(
-            header::ORIGIN,
-            HeaderValue::from_static("http://localhost:5555"),
-        );
-        assert!(origin_allowed(&request, "http://localhost:5555"));
-    }
-
-    #[test]
-    fn forwarded_header_is_supported_when_legacy_headers_are_absent() {
-        let request = HeaderMap::from_iter([
-            (header::HOST, HeaderValue::from_static("127.0.0.1:8848")),
-            (
-                header::HeaderName::from_static("forwarded"),
-                HeaderValue::from_static("for=192.0.2.1;proto=https;host=\"cccc.example\""),
-            ),
-        ]);
-        assert_eq!(
-            served_origin(&request).as_deref(),
-            Some("https://cccc.example")
-        );
-    }
-
-    #[test]
-    fn forwarded_proto_chain_uses_the_browser_facing_value() {
-        let request = HeaderMap::from_iter([
-            (
-                header::HeaderName::from_static("x-forwarded-host"),
-                HeaderValue::from_static("cccc.example, 127.0.0.1:8848"),
-            ),
-            (
-                header::HeaderName::from_static("x-forwarded-proto"),
-                HeaderValue::from_static("https, http"),
-            ),
-        ]);
-        assert_eq!(
-            served_origin(&request).as_deref(),
-            Some("https://cccc.example")
-        );
-    }
-}
+#[path = "request_origin_tests.rs"]
+mod tests;

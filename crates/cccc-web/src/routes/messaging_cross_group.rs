@@ -74,7 +74,7 @@ async fn send_upload(
                 .text()
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?;
-            super::messaging::insert_upload_field(&mut args, name, value)?;
+            super::messaging::upload_fields::insert(&mut args, name, value)?;
         }
     }
     let destination = args

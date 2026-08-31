@@ -13,12 +13,14 @@ pub(super) fn write(
     mode: &str,
     supervisor_managed: bool,
     runtime_id: &str,
+    runtime_proof_key: &str,
 ) -> io::Result<()> {
-    fs::write_json(
+    fs::write_secret_json(
         &path(home),
         &json!({
             "pid":std::process::id(),
             "runtime_id":runtime_id,
+            "runtime_proof_key":runtime_proof_key,
             "host":host,
             "port":port,
             "mode":mode,
@@ -30,6 +32,42 @@ pub(super) fn write(
             "last_apply_error":Value::Null,
         }),
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn runtime_proof_key_is_written_in_an_owner_only_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+
+        write(
+            &home,
+            "127.0.0.1",
+            9123,
+            "normal",
+            false,
+            "web-test",
+            "proof-secret",
+        )
+        .expect("write runtime state");
+
+        let runtime_path = path(&home);
+        let runtime: Value = fs::read_json(&runtime_path).expect("runtime state");
+        assert_eq!(runtime["runtime_proof_key"], "proof-secret");
+        assert_eq!(
+            std::fs::metadata(runtime_path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 }
 
 pub(super) fn clear_if_owner(home: &HomeLayout) -> io::Result<()> {

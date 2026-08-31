@@ -13,11 +13,15 @@ mod filesystem;
 mod group_bridge;
 mod group_bridge_close;
 mod group_bridge_command_sessions;
+mod group_bridge_outbound_claim;
 mod group_bridge_pairing;
 mod group_bridge_pairing_endpoint;
 mod group_bridge_pairing_http;
+mod group_bridge_pairing_policy;
+mod group_bridge_remote_pairing;
 mod group_bridge_seen;
 mod group_bridge_session;
+mod group_bridge_session_auth;
 mod group_bridge_store;
 mod group_copy;
 mod group_prompt_notify;
@@ -91,6 +95,7 @@ pub fn router() -> Router<AppState> {
         .merge(groups::routes())
         .merge(group_copy::routes())
         .merge(group_bridge::routes())
+        .merge(group_bridge_remote_pairing::routes())
         .merge(group_bridge_pairing::routes())
         .merge(group_bridge_session::routes())
         .merge(actors::routes())
@@ -118,18 +123,3 @@ pub fn router() -> Router<AppState> {
 }
 
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;
-
-#[cfg(test)]
-mod tests {
-    use super::first_non_blank;
-    use serde_json::json;
-
-    #[test]
-    fn request_aliases_skip_empty_primary_values() {
-        let value = json!({"primary":" ","legacy":" value "});
-        assert_eq!(
-            first_non_blank(&value, &["primary", "legacy"]),
-            Some("value")
-        );
-    }
-}

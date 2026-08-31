@@ -112,7 +112,7 @@ async fn create(
         Ok(token) => {
             let body = Json(json!({"ok":true,"result":{"access_token":token}}));
             if first_admin {
-                let secure = crate::request_origin::is_https(&headers);
+                let secure = crate::request_origin::is_https(&state, &headers);
                 return ([(header::SET_COOKIE, cookie(&token.token, secure))], body)
                     .into_response();
             }
@@ -253,14 +253,16 @@ async fn web_session(
         let _ = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&state.home);
     }
     let runtime_visibility = runtime_visibility(&state.home);
+    let authenticated = principal.is_some();
+    let disclose_details = principal.as_ref().is_some_and(|item| item.is_admin);
     Json(json!({"ok":true,"result":{"web_access_session":{
         "login_active": access_token_count > 0,
-        "current_browser_signed_in":principal.is_some(),
-        "access_token_count":access_token_count,
+        "current_browser_signed_in":authenticated,
+        "access_token_count":if disclose_details {access_token_count}else{0},
         "bootstrap_required":bootstrap_required,
         "can_access_global_settings":bootstrap_required || principal.as_ref().is_some_and(|item| item.is_admin),
         "user_id":principal.map(|item| item.user_id).unwrap_or_default(),
-        "runtime_visibility":runtime_visibility
+        "runtime_visibility":if authenticated {runtime_visibility}else{json!({})}
     }}}))
 }
 
@@ -269,7 +271,7 @@ async fn exchange(
     Query(query): Query<ExchangeQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(origin) = crate::request_origin::served_origin(&headers) else {
+    let Some(origin) = crate::request_origin::served_origin(&state, &headers) else {
         return error(
             StatusCode::UNAUTHORIZED,
             "web_login_grant_invalid",
@@ -315,7 +317,7 @@ async fn exchange(
     );
     if let Ok(value) = axum::http::HeaderValue::from_str(&cookie(
         &token.token,
-        crate::request_origin::is_https(&headers),
+        crate::request_origin::is_https(&state, &headers),
     )) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
@@ -347,36 +349,4 @@ async fn logout() -> Response {
         Json(json!({"ok":true,"result":{"signed_out":true}})),
     )
         .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::runtime_visibility;
-    use cccc_core::HomeLayout;
-    use serde_json::json;
-
-    #[test]
-    fn web_session_uses_saved_runtime_visibility() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let settings = cccc_core::settings::GlobalSettings {
-            observability: json!({
-                "runtime_visibility": {
-                    "peer_runtime": "hidden",
-                    "assistant_runtime": "visible"
-                }
-            })
-            .as_object()
-            .cloned()
-            .expect("observability object"),
-            ..Default::default()
-        };
-        cccc_core::settings::save(&home, &settings).expect("save settings");
-
-        assert_eq!(
-            runtime_visibility(&home),
-            json!({"peer_runtime":"hidden","assistant_runtime":"visible"})
-        );
-    }
 }

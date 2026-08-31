@@ -7,6 +7,9 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
+#[path = "auth/local_passwordless.rs"]
+mod local_passwordless;
+
 #[tokio::test]
 async fn ready_identifies_the_web_instance_without_a_daemon_round_trip() {
     let (_temp, home) = home();
@@ -19,6 +22,12 @@ async fn ready_identifies_the_web_instance_without_a_daemon_round_trip() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "frame-ancestors 'self'"
+    );
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(response.headers()["referrer-policy"], "no-referrer");
     let body = response
         .into_body()
         .collect()
@@ -27,11 +36,7 @@ async fn ready_identifies_the_web_instance_without_a_daemon_round_trip() {
         .to_bytes();
     let payload: Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(payload["result"]["web"], "ready");
-    assert!(
-        payload["result"]["runtime_id"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("web_"))
-    );
+    assert!(payload["result"]["runtime_id"].is_null());
 }
 
 #[tokio::test]
@@ -176,7 +181,6 @@ async fn cookie_authenticated_writes_require_an_allowed_origin() {
     for origin in [None, Some("https://evil.example")] {
         let mut request = Request::post("/api/v1/web_access/logout")
             .header(header::HOST, "cccc.example")
-            .header("x-forwarded-proto", "https")
             .header(header::COOKIE, format!("cccc_access_token={}", token.token));
         if let Some(origin) = origin {
             request = request.header(header::ORIGIN, origin);
@@ -194,8 +198,7 @@ async fn cookie_authenticated_writes_require_an_allowed_origin() {
         .oneshot(
             Request::post("/api/v1/web_access/logout")
                 .header(header::HOST, "cccc.example")
-                .header("x-forwarded-proto", "https")
-                .header(header::ORIGIN, "https://cccc.example")
+                .header(header::ORIGIN, "http://cccc.example")
                 .header(header::COOKIE, format!("cccc_access_token={}", token.token))
                 .body(Body::empty())
                 .expect("request"),
@@ -255,7 +258,7 @@ async fn web_login_exchange_is_origin_bound_and_one_time() {
         .create("admin", Vec::new(), true, None)
         .expect("token");
     let grant =
-        cccc_core::web_login_grants::issue(&home, "https://reach.example", &token.token_id(), 120)
+        cccc_core::web_login_grants::issue(&home, "http://reach.example", &token.token_id(), 120)
             .expect("grant");
     let app = cccc_web::app(home);
     let path = format!("/api/v1/web_access/exchange?code={}", grant.code);
@@ -265,7 +268,6 @@ async fn web_login_exchange_is_origin_bound_and_one_time() {
         .oneshot(
             Request::get(&path)
                 .header(header::HOST, "other.example")
-                .header("x-forwarded-proto", "https")
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -278,7 +280,6 @@ async fn web_login_exchange_is_origin_bound_and_one_time() {
         .oneshot(
             Request::get(&path)
                 .header(header::HOST, "reach.example")
-                .header("x-forwarded-proto", "https")
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -308,7 +309,7 @@ async fn web_login_exchange_is_origin_bound_and_one_time() {
                 value.contains(&token.token)
                     && value.contains("HttpOnly")
                     && value.contains("SameSite=Lax")
-                    && value.contains("Secure")
+                    && !value.contains("Secure")
             })
     );
 
@@ -316,7 +317,6 @@ async fn web_login_exchange_is_origin_bound_and_one_time() {
         .oneshot(
             Request::get(path)
                 .header(header::HOST, "reach.example")
-                .header("x-forwarded-proto", "https")
                 .body(Body::empty())
                 .expect("request"),
         )

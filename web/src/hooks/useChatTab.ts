@@ -65,6 +65,7 @@ import {
   buildOptimisticMessage,
   dispatchPreparedMessage,
 } from "./chat/chatMessageSend";
+import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
 import { useChatMessageView } from "./chat/useChatMessageView";
 import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
@@ -532,11 +533,9 @@ export function useChatTab({
     });
     if (!routingSnapshot.composerGroupSettled) return;
     const originGroupId = routingSnapshot.selectedGroupId;
-
-    const txt = String(composerStateSnapshot.composerText || "").trim();
-    const composerFilesSnapshot = composerStateSnapshot.composerFiles.slice();
-    if (!txt && composerFilesSnapshot.length === 0) return;
-
+    const draftTextSnapshot = String(composerStateSnapshot.composerText || "").trim();
+    const draftFilesSnapshot = composerStateSnapshot.composerFiles.slice();
+    if (!draftTextSnapshot && draftFilesSnapshot.length === 0) return;
     const dstGroup = routingSnapshot.destGroupId;
     const isCrossGroup = routingSnapshot.isCrossGroup;
     const selectedRemoteGroupIdsSnapshot = selectedRemoteGroupIds.slice();
@@ -566,6 +565,11 @@ export function useChatTab({
     });
     const sendsCrossGroup = sendPlanTargets.some((target) => target.isCrossGroup);
     const sendsLocal = sendPlanTargets.some((target) => !target.isCrossGroup);
+    const { text: txt, files: composerFilesSnapshot } = prepareComposerMessage({
+      text: draftTextSnapshot,
+      files: draftFilesSnapshot,
+      targets: sendPlanTargets,
+    });
     const slashGuardSendGroupId = sendsCrossGroup
       ? sendPlanTargets.find((target) => target.isCrossGroup)?.groupId || dstGroup
       : dstGroup;
@@ -614,7 +618,6 @@ export function useChatTab({
         ? resolveAssistantTargets(localToTokensSnapshot)
         : [];
 
-    // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const insertLocalAssistantPlaceholders = () => {
       for (const placeholder of buildAssistantPlaceholders(
@@ -634,8 +637,8 @@ export function useChatTab({
       restoreFailedSendComposerState(
         {
           originGroupId,
-          composerText: txt,
-          composerFiles: composerFilesSnapshot,
+          composerText: draftTextSnapshot,
+          composerFiles: draftFilesSnapshot,
           toText: toTextSnapshot,
           replyTarget: replyTargetSnapshot,
           quotedPresentationRef: quotedPresentationRefSnapshot,
@@ -679,7 +682,6 @@ export function useChatTab({
       }
     };
 
-    // Local validations that must pass before clearing the composer
     if (replyTargetSnapshot && sendsCrossGroup && !remoteReplyDstGroupId) {
       showError("Cross-group send does not support replies.");
       setDestGroupId(selectedGroupId);
@@ -707,13 +709,10 @@ export function useChatTab({
       return;
     }
 
-    // Capture the user's reading intent before optimistic rows or placeholders
-    // can change the list geometry. The token below is therefore a one-send
-    // request, not a streaming-tail subscription.
+    // Preserve reading intent before optimistic rows change the list geometry.
     const shouldLockBottomAfterSend = shouldFollowCurrentSend();
 
-    // Optimistic: enqueue to outbox immediately for same-group sends.
-    // If the request fails, we remove the pending entry and restore the composer.
+    // Failed optimistic sends restore the original composer snapshot.
     if (sendsLocal && !sendsCrossGroup) {
       const optimisticEvent = buildOptimisticMessage({
         localId,

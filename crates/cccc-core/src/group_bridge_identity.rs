@@ -1,7 +1,7 @@
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
 use base64::Engine;
-use cccc_contracts::GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION;
+use cccc_contracts::{GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io;
@@ -10,6 +10,14 @@ use crate::HomeLayout;
 use crate::fs::{read_yaml, with_exclusive_lock, write_secret_yaml};
 
 pub const SESSION_PROTOCOL: &str = "/cccc/group_bridge/session-ws/1.0.0";
+pub const SESSION_PROTOCOL_V2: &str = "/cccc/group_bridge/session-ws/2.0.0";
+
+mod session_v2;
+pub use session_v2::{
+    authenticated_session_challenge_v2_peer_id, authenticated_session_ready_v2_peer_id,
+    authenticated_session_v2_peer_id, session_challenge_v2_material, session_hello_v2_material,
+    session_ready_v2_material,
+};
 
 #[derive(Clone, Debug)]
 pub struct GroupBridgeIdentity {
@@ -64,12 +72,16 @@ impl GroupBridgeIdentity {
             "src_group_id":src_group_id.trim(),
             "remote_peer_id":self.peer_id,
             "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
+            "nonce":uuid::Uuid::new_v4().simple().to_string(),
+            "issued_at":utc_now(),
         });
-        let material = session_hello_material(&hello)?;
+        let legacy_material = session_hello_material(&hello)?;
+        let fresh_material = fresh_session_hello_material(&hello)?;
         let key = Ed25519KeyPair::from_seed_unchecked(&self.private_key)
             .map_err(|error| io::Error::other(error.to_string()))?;
         hello["public_key"] = json!(self.public_key_b64);
-        hello["signature"] = json!(encode(key.sign(&material).as_ref()));
+        hello["signature"] = json!(encode(key.sign(&legacy_material).as_ref()));
+        hello["fresh_signature"] = json!(encode(key.sign(&fresh_material).as_ref()));
         Ok(hello)
     }
 
@@ -96,19 +108,49 @@ pub fn session_hello_material(hello: &Value) -> io::Result<Vec<u8>> {
     .map_err(io::Error::other)
 }
 
+pub fn fresh_session_hello_material(hello: &Value) -> io::Result<Vec<u8>> {
+    serde_json::to_vec(&json!({
+        "protocol":SESSION_PROTOCOL,
+        "message_contract_version":hello["message_contract_version"],
+        "remote_peer_id":hello["remote_peer_id"].as_str().unwrap_or("").trim(),
+        "src_group_id":hello["src_group_id"].as_str().unwrap_or("").trim(),
+        "target_group_id":hello["target_group_id"].as_str().unwrap_or("").trim(),
+        "nonce":hello["nonce"].as_str().unwrap_or("").trim(),
+        "issued_at":hello["issued_at"].as_str().unwrap_or("").trim(),
+    }))
+    .map_err(io::Error::other)
+}
+
+pub fn authenticated_legacy_session_peer_id(hello: &Value) -> Option<String> {
+    authenticated_peer_id_for_material(hello, session_hello_material(hello).ok()?)
+}
+
 pub fn authenticated_session_peer_id(hello: &Value) -> Option<String> {
+    let material = fresh_session_hello_material(hello).ok()?;
+    authenticated_peer_id_for_signature(hello, "fresh_signature", "remote_peer_id", material)
+}
+
+fn authenticated_peer_id_for_material(hello: &Value, material: Vec<u8>) -> Option<String> {
+    authenticated_peer_id_for_signature(hello, "signature", "remote_peer_id", material)
+}
+
+fn authenticated_peer_id_for_signature(
+    hello: &Value,
+    signature_field: &str,
+    peer_id_field: &str,
+    material: Vec<u8>,
+) -> Option<String> {
     let public_key = base64::engine::general_purpose::STANDARD
         .decode(hello["public_key"].as_str()?.trim())
         .ok()?;
     let signature = base64::engine::general_purpose::STANDARD
-        .decode(hello["signature"].as_str()?.trim())
+        .decode(hello[signature_field].as_str()?.trim())
         .ok()?;
-    let expected = hello["remote_peer_id"].as_str()?.trim();
+    let expected = hello[peer_id_field].as_str()?.trim();
     let actual = peer_id(&public_key);
     if actual != expected {
         return None;
     }
-    let material = session_hello_material(hello).ok()?;
     UnparsedPublicKey::new(&ED25519, public_key)
         .verify(&material, &signature)
         .ok()?;
@@ -162,21 +204,5 @@ fn base58(raw: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identity_is_stable_and_builds_signed_python_hello() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let first = GroupBridgeIdentity::load_or_create(&home).expect("identity");
-        let second = GroupBridgeIdentity::load_or_create(&home).expect("identity");
-        assert_eq!(first.peer_id, second.peer_id);
-        assert_eq!(first.public_key_b64, second.public_key_b64);
-        let hello = first
-            .sign_session_hello("g_remote", "g_local")
-            .expect("hello");
-        assert_eq!(hello["remote_peer_id"], first.peer_id);
-        assert!(!hello["signature"].as_str().unwrap_or("").is_empty());
-    }
-}
+#[path = "group_bridge_identity_tests.rs"]
+mod tests;

@@ -7,22 +7,16 @@ use crate::AppState;
 use crate::api::{ApiError, ApiResult, body_object, call, object};
 use crate::auth::Principal;
 
+mod oversized_text;
+pub(super) mod upload_fields;
+
 const MAX_LOCAL_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const MAX_MESSAGE_JSON_BYTES: usize = 12 * 1024 * 1024;
 const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/groups/{group_id}/send", post(send))
-        .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
-        .route(
-            "/api/v1/groups/{group_id}/delegate_contact",
-            post(delegate_contact),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/slash_skill_dispatch",
-            post(slash_skill_dispatch),
-        )
-        .route("/api/v1/groups/{group_id}/reply", post(reply))
+        .merge(json_routes())
         .route(
             "/api/v1/groups/{group_id}/messages/{source_event_id}/deliver",
             post(message_deliver),
@@ -46,6 +40,27 @@ pub fn routes() -> Router<AppState> {
         .merge(upload_routes())
 }
 
+fn json_routes() -> Router<AppState> {
+    Router::new()
+        .merge(large_message_json_routes())
+        .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
+        .route(
+            "/api/v1/groups/{group_id}/delegate_contact",
+            post(delegate_contact),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/slash_skill_dispatch",
+            post(slash_skill_dispatch),
+        )
+}
+
+fn large_message_json_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/groups/{group_id}/send", post(send))
+        .route("/api/v1/groups/{group_id}/reply", post(reply))
+        .layer(DefaultBodyLimit::max(MAX_MESSAGE_JSON_BYTES))
+}
+
 fn upload_routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/send_upload", post(send_upload))
@@ -60,7 +75,8 @@ async fn send(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    daemon_body(&state, "send", group_id, body).await
+    let mut args = body_object(body)?;
+    oversized_text::dispatch(&state, group_id, "send", &mut args).await
 }
 async fn tracked_send(
     State(state): State<AppState>,
@@ -91,7 +107,9 @@ async fn reply(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    daemon_body(&state, "reply", group_id, body).await
+    let mut args = body_object(body)?;
+    args.remove("quote_text");
+    oversized_text::dispatch(&state, group_id, "reply", &mut args).await
 }
 async fn message_deliver(
     State(state): State<AppState>,
@@ -212,7 +230,7 @@ async fn upload(
                 .text()
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?;
-            insert_upload_field(&mut args, name, value)?;
+            upload_fields::insert(&mut args, name, value)?;
         }
     }
     if is_reply {
@@ -265,58 +283,16 @@ async fn upload(
     call(state, if is_reply { "reply" } else { "send" }, args).await
 }
 
-pub(super) fn insert_upload_field(
-    args: &mut serde_json::Map<String, Value>,
-    name: String,
-    value: String,
-) -> Result<(), ApiError> {
-    match name.as_str() {
-        "to_json" => {
-            let recipients = serde_json::from_str::<Value>(&value).map_err(|error| {
-                ApiError::bad_code("invalid_recipient", error.to_string(), json!({}))
-            })?;
-            let recipients = recipients.as_array().ok_or_else(|| {
-                ApiError::bad_code(
-                    "invalid_recipient",
-                    "to_json must be a JSON array",
-                    json!({}),
-                )
-            })?;
-            if recipients.iter().any(|item| !item.is_string()) {
-                return Err(ApiError::bad_code(
-                    "invalid_recipient",
-                    "to_json entries must be strings",
-                    json!({}),
-                ));
-            }
-            args.insert("to".into(), Value::Array(recipients.clone()));
-        }
-        "refs_json" => {
-            let refs = serde_json::from_str::<Value>(&value).map_err(|error| {
-                ApiError::bad_code("invalid_refs", error.to_string(), json!({}))
-            })?;
-            let refs = refs.as_array().ok_or_else(|| {
-                ApiError::bad_code("invalid_refs", "refs_json must be a JSON array", json!({}))
-            })?;
-            args.insert(
-                "refs".into(),
-                Value::Array(
-                    refs.iter()
-                        .filter(|item| item.is_object())
-                        .cloned()
-                        .collect(),
-                ),
-            );
-        }
-        _ => {
-            args.insert(name, Value::String(value));
-        }
-    }
-    Ok(())
+async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {
+    daemon_args(state, op, group_id, body_object(body)?).await
 }
 
-async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {
-    let mut args = body_object(body)?;
+async fn daemon_args(
+    state: &AppState,
+    op: &str,
+    group_id: String,
+    mut args: serde_json::Map<String, Value>,
+) -> ApiResult {
     args.insert("group_id".into(), Value::String(group_id));
     call(state, op, args).await
 }

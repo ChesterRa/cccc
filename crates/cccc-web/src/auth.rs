@@ -22,6 +22,7 @@ enum TokenSource {
     None,
     Bearer,
     Cookie,
+    Local,
 }
 
 impl Principal {
@@ -44,14 +45,14 @@ pub async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !websocket_origin_allowed(&request) {
+    if !websocket_origin_allowed(&state, &request) {
         tracing::warn!(
             origin = request
                 .headers()
                 .get(header::ORIGIN)
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or_default(),
-            served_origin = ?crate::request_origin::served_origin(request.headers()),
+            served_origin = ?crate::request_origin::served_origin(&state, request.headers()),
             path = request.uri().path(),
             "rejected WebSocket origin"
         );
@@ -73,28 +74,40 @@ pub async fn authorize(
     if is_first_admin_bootstrap(request.method(), request.uri().path()) && !has_admin {
         return next.run(request).await;
     }
-    if tokens.is_empty() {
+    let secure_cookie = crate::request_origin::is_https(&state, request.headers());
+    let (raw, mut token_source) = request_token(&request);
+    let mut principal = match store.lookup(&raw) {
+        Ok(Some(token)) => Some(Principal::from_token(token)),
+        Ok(None) => None,
+        Err(error) => return auth_store_failure(error),
+    };
+    if principal.is_none()
+        && accepts_local_principal(request.method(), request.uri().path())
+        && crate::local_browser_auth::allowed(&state, &request)
+    {
+        token_source = TokenSource::Local;
+        principal = Some(Principal {
+            user_id: "local".into(),
+            allowed_groups: Vec::new(),
+            is_admin: true,
+            raw_token: String::new(),
+        });
+    }
+    if tokens.is_empty() && principal.is_none() {
         if is_public(request.method(), request.uri().path()) {
             return next.run(request).await;
         }
         return failure_text(
             StatusCode::UNAUTHORIZED,
             "bootstrap_required",
-            "create the first administrator access token with the local Web bootstrap code",
+            "remote Web access requires an administrator access token",
         );
     }
-    let secure_cookie = crate::request_origin::is_https(request.headers());
-    let (raw, token_source) = request_token(&request);
-    let principal = match store.lookup(&raw) {
-        Ok(Some(token)) => Some(Principal::from_token(token)),
-        Ok(None) => None,
-        Err(error) => return auth_store_failure(error),
-    };
     if principal.is_some()
         && !is_public(request.method(), request.uri().path())
-        && token_source == TokenSource::Cookie
+        && matches!(token_source, TokenSource::Cookie | TokenSource::Local)
         && is_unsafe_method(request.method())
-        && !crate::request_origin::cookie_csrf_allowed(request.headers())
+        && !crate::request_origin::cookie_csrf_allowed(&state, request.headers())
     {
         return failure_text(
             StatusCode::FORBIDDEN,
@@ -155,7 +168,14 @@ pub async fn authorize(
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
 }
 
-fn websocket_origin_allowed(request: &Request) -> bool {
+fn websocket_origin_allowed(state: &AppState, request: &Request) -> bool {
+    websocket_origin_allowed_with_proxy(
+        request,
+        crate::request_origin::proxy_headers_trusted(state),
+    )
+}
+
+fn websocket_origin_allowed_with_proxy(request: &Request, trust_proxy: bool) -> bool {
     let websocket = request
         .headers()
         .get(header::UPGRADE)
@@ -173,7 +193,7 @@ fn websocket_origin_allowed(request: &Request) -> bool {
     else {
         return true;
     };
-    crate::request_origin::origin_allowed(request.headers(), origin)
+    crate::request_origin::origin_allowed_with_proxy(request.headers(), origin, trust_proxy)
 }
 
 fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {
@@ -245,10 +265,17 @@ fn is_public(method: &Method, path: &str) -> bool {
             | "/api/group-bridge/pairing/requests/remote/claim"
             | "/api/group-bridge/session/send"
             | "/api/group-bridge/session/ws"
+            | "/api/group-bridge/session/ws/v2"
     ) || (*method == Method::GET && path == "/api/v1/branding")
         || (matches!(*method, Method::GET | Method::HEAD)
             && path.starts_with("/api/v1/branding/assets/"))
         || !path.starts_with("/api/")
+}
+
+fn accepts_local_principal(method: &Method, path: &str) -> bool {
+    !is_public(method, path)
+        || (matches!(*method, Method::GET | Method::HEAD)
+            && matches!(path, "/api/v1/ping" | "/api/v1/web_access/session"))
 }
 
 fn requires_admin(method: &Method, path: &str) -> bool {
@@ -313,92 +340,5 @@ fn failure_text(status: StatusCode, code: &str, message: &str) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-
-    #[test]
-    fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {
-        assert!(!requires_admin(&Method::GET, "/api/v1/profiles"));
-        assert!(requires_admin(&Method::POST, "/api/v1/actor_profiles"));
-        assert!(requires_admin(
-            &Method::GET,
-            "/api/v1/actor_profiles/ap_one/env_private"
-        ));
-        assert!(requires_admin(
-            &Method::POST,
-            "/api/v1/space/providers/notebooklm/credential"
-        ));
-        assert!(!requires_admin(&Method::GET, "/api/v1/groups/g_one/actors"));
-    }
-
-    #[test]
-    fn websocket_origin_must_match_the_served_origin() {
-        let same_origin = Request::builder()
-            .uri("/api/v1/groups/g_one/actors/a/term")
-            .header(header::UPGRADE, "websocket")
-            .header(header::HOST, "cccc.example")
-            .header(header::ORIGIN, "https://cccc.example")
-            .header("x-forwarded-proto", "https")
-            .body(Body::empty())
-            .expect("request");
-        assert!(websocket_origin_allowed(&same_origin));
-
-        let cross_origin = Request::builder()
-            .uri("/api/v1/groups/g_one/actors/a/term")
-            .header(header::UPGRADE, "websocket")
-            .header(header::HOST, "cccc.example")
-            .header(header::ORIGIN, "https://evil.example")
-            .header("x-forwarded-proto", "https")
-            .body(Body::empty())
-            .expect("request");
-        assert!(!websocket_origin_allowed(&cross_origin));
-    }
-
-    #[test]
-    fn cookie_writes_require_same_origin_or_referer() {
-        let same_origin = Request::builder()
-            .method(Method::POST)
-            .uri("/api/v1/groups/g_one/start")
-            .header(header::HOST, "cccc.example")
-            .header(header::ORIGIN, "https://cccc.example")
-            .header("x-forwarded-proto", "https")
-            .body(Body::empty())
-            .expect("request");
-        assert!(crate::request_origin::cookie_csrf_allowed(
-            same_origin.headers()
-        ));
-
-        let sibling_origin = Request::builder()
-            .method(Method::POST)
-            .uri("/api/v1/groups/g_one/start")
-            .header(header::HOST, "cccc.example")
-            .header(header::ORIGIN, "https://evil.example")
-            .header("x-forwarded-proto", "https")
-            .body(Body::empty())
-            .expect("request");
-        assert!(!crate::request_origin::cookie_csrf_allowed(
-            sibling_origin.headers()
-        ));
-    }
-
-    #[test]
-    fn global_control_plane_routes_require_admin() {
-        for (method, path) in [
-            (Method::GET, "/api/v1/remote_access"),
-            (Method::POST, "/api/v1/remote_access/start"),
-            (Method::GET, "/api/v1/membership"),
-            (Method::POST, "/api/v1/membership/login"),
-            (Method::POST, "/api/v1/membership/login/poll"),
-            (Method::POST, "/api/v1/membership/logout"),
-            (Method::POST, "/api/v1/membership/reach/on"),
-            (Method::GET, "/api/v1/debug/tail_logs"),
-            (Method::POST, "/api/v1/debug/clear_logs"),
-            (Method::GET, "/api/v1/capabilities/allowlist"),
-            (Method::POST, "/api/v1/capabilities/allowlist/validate"),
-            (Method::POST, "/api/v1/capabilities/block"),
-        ] {
-            assert!(requires_admin(&method, path), "{method} {path}");
-        }
-    }
-}
+#[path = "auth_tests.rs"]
+mod tests;

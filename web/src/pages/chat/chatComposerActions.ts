@@ -25,8 +25,9 @@ export function hasConcreteReplyRecipients(
   toTokens: string[],
   hasRemoteGroupSelection = false,
 ): boolean {
-  if (hasRemoteGroupSelection || toTokens.length === 0) return false;
-  const nonConcrete = new Set(["@all", "@peers", "@foreman", "@user", "user"]);
+  if (hasRemoteGroupSelection) return false;
+  if (toTokens.length === 0) return true;
+  const nonConcrete = new Set(["@all", "@peers", "@user", "user"]);
   return toTokens.every((token) => {
     const recipient = String(token || "").trim();
     return recipient.length > 0 && !nonConcrete.has(recipient);

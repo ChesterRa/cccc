@@ -104,6 +104,8 @@ cccc
 ```
 
 打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
+直接通过 `localhost` / `127.0.0.1` 使用时保持免密，也不会自动创建 Access Token。
+只有开启 LAN、Reach、公网 URL 或反向代理访问时才需要显式管理员 Token。
 
 ```bash
 cccc status            # 查看产品、daemon、group、actor 和 agent runtime

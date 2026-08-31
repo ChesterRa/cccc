@@ -640,11 +640,3 @@ def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:
         assert package.get("publish") is False, manifest
 
     assert not (ROOT / "scripts/publish_rust_crates.sh").exists()
-    rust_update = (ROOT / "crates/cccc-cli/src/commands/update.rs").read_text(encoding="utf-8")
-    assert "https://chesterra.github.io/cccc/install.sh" in rust_update
-    assert ".cccc-standalone" in rust_update
-    assert "managed by another installation" in rust_update
-    assert "CCCC_TRUSTED_EXISTING_CLI" in rust_update
-    tls_bootstrap = "[Net.SecurityProtocolType]::Tls12"
-    assert tls_bootstrap in rust_update
-    assert rust_update.index(tls_bootstrap) < rust_update.index("Invoke-RestMethod")

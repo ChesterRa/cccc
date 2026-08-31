@@ -4,6 +4,8 @@ use serde_json::{Map, Value, json};
 
 use crate::dispatch::OpError;
 
+mod request_reply;
+
 pub(super) fn normalize_chat_data(
     group: &GroupDoc,
     by: &str,
@@ -48,23 +50,13 @@ pub(super) fn normalize_chat_preflight(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let raw = request_reply::normalize_targets(group, &message_mode, raw)?;
     let mut recipients = actors::resolve_recipients(group, &raw)
         .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?;
     if recipients.is_empty() && raw.is_empty() {
         recipients.push(default_recipient(group).into());
     }
     validate_message_audience(&recipients, &message_mode)?;
-    if message_mode == "request_reply"
-        && (raw.is_empty()
-            || raw
-                .iter()
-                .any(|recipient| matches!(recipient.trim(), "@all" | "@peers" | "@foreman")))
-    {
-        return Err(OpError::new(
-            "concrete_recipients_required",
-            "request_reply requires one or more explicit concrete recipients",
-        ));
-    }
     if !allow_sender_only_audience {
         reject_sender_only_audience(group, by, &recipients)?;
     }

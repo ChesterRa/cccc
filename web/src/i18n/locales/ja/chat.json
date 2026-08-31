@@ -120,7 +120,7 @@
   "modeSendDesc": "今すぐ配信",
   "modeSendReply": "送信 + 返信",
   "modeSendReplyDesc": "今すぐ配信し、具体的な返信を依頼",
-  "modeSendReplyRequiresConcrete": "先に具体的なエージェントを1人以上選択してください",
+  "modeSendReplyRequiresConcrete": "既定の Foreman を使うか、具体的なエージェントを1人以上選択してください",
   "modeMail": "メール",
   "mailMessageHint": "受信トレイに保存し、相手をすぐには呼び出しません。",
   "modeMailDesc": "今は中断せず受信箱に追加",

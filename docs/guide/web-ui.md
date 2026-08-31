@@ -104,6 +104,12 @@ Recipient chips are one-shot: a successful send clears the selection, and switch
 restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
 drafts.
 
+Messages larger than 64 KiB after UTF-8 encoding are sent as UTF-8 text attachments for
+same-group and remote Group Bridge targets. Local cross-group text remains inline because its two
+local ledgers cannot share one attachment path; the bounded daemon IPC limit covers that JSON route.
+This applies to typed, pasted, dictated, suggested, and restored drafts. Slash commands still require
+inline text and therefore reject an automatically attached oversized body.
+
 With an empty message input, press `Up` to recall your most recent message in the current Group.
 Continue with `Up` / `Down` to browse the already loaded message history. Editing or repositioning
 the cursor leaves history mode. Recall restores message text only; recipients, reply context,
@@ -239,6 +245,12 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 ### Security
 
+Direct browser access through `localhost`, `127.0.0.1`, or `::1` is passwordless and does not
+create an Access Token. CCCC grants that request an in-memory local administrator principal only
+when the reconstructed browser-facing origin is loopback. Unsafe writes and WebSockets must also
+carry the exact same loopback Origin; non-local proxy client addresses are rejected. This local
+principal is never persisted and is not valid through LAN, Reach, a public URL, or a reverse proxy.
+
 Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, CCCC serves the UI shell and health/session guidance but keeps protected APIs and business WebSockets locked. Read the one-time bootstrap code from `~/.cccc/web_bootstrap_token` on the CCCC host and enter it only when creating the first administrator token; the file is mode `0600` on Unix and is deleted after successful use.
 
 The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. The native daemon and Web boundary enforce the same rule at remote start, apply, and listener boundaries, so direct API calls and stale saved settings cannot bypass the panel. Group-scoped tokens do not satisfy this administrator recovery requirement. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
@@ -253,15 +265,20 @@ For the default local app flow, prefer restarting from the owning `cccc` session
 
 CCCC keeps the token policy simple:
 
-- localhost-only: the UI shell remains reachable, but protected APIs require an Access Token after first-admin bootstrap
+- localhost-only: direct loopback browser requests are passwordless and use a non-persistent local administrator principal
 - LAN/private network and public URL/tunnel/reverse proxy: an Admin Access Token is mandatory before exposure
 
 `CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure also requires `CCCC_REMOTE_ALLOW_INSECURE=1`; prefer an HTTPS reverse proxy, tunnel, or encrypted overlay. Neither override is offered as a Web UI toggle.
 
+CCCC adds `frame-ancestors 'self'`, `SAMEORIGIN`, `nosniff`, `no-referrer`, a restrictive permissions policy, and HSTS on HTTPS responses. Supervised CCCC Web processes trust reverse-proxy forwarding headers automatically only while the effective listener is loopback. A supervised LAN/wildcard listener or externally managed reverse proxy must explicitly set `CCCC_WEB_TRUST_PROXY_HEADERS=1` and must overwrite—not append—client-supplied `Forwarded` and `X-Forwarded-*` headers. Direct public listeners should leave this flag unset.
+
 Enter the Access Token in the Web sign-in form. CCCC validates it through the
 `Authorization` header and establishes an HttpOnly, `SameSite=Lax` session
-cookie. Access tokens are not accepted in ordinary API, SSE, or WebSocket query
-strings and should never be placed in shared URLs.
+cookie. The cookie has a rolling 30-day lifetime and is refreshed when the Web
+session is checked, avoiding repeated token entry after mobile browsers reclaim
+a tab. The temporary header token is removed from browser session storage after
+the cookie is established. Access tokens are not accepted in ordinary API, SSE,
+or WebSocket query strings and should never be placed in shared URLs.
 
 Reach follows the same rule. Its status payload exposes only a tokenless public
 address. Clicking **Open Web** or **Copy Admin Link** asks the local authenticated

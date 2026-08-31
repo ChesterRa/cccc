@@ -18,7 +18,6 @@ import type {
 import { getSidebarWidthCssValue, SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
-
 type AppShellProps = {
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
@@ -269,6 +268,7 @@ export function AppShell({
         isCollapsed={sidebarCollapsed}
         sidebarWidth={sidebarWidth}
         isDark={isDark}
+        isSmallScreen={isSmallScreen}
         readOnly={webReadOnly}
         onSelectGroup={onSelectGroup}
         onWarmGroup={onWarmGroup}

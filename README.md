@@ -109,6 +109,9 @@ cccc
 ```
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
+Direct `localhost` / `127.0.0.1` use stays passwordless and does not create an Access Token.
+Explicit Admin Access Tokens are required only when enabling LAN, Reach, public URL, or
+reverse-proxied access.
 
 ```bash
 cccc status            # product, daemon, groups, actors, and agent runtimes
@@ -345,7 +348,9 @@ For accessing the Web UI from outside localhost:
 - Rust launch uses `--host` / `--port` overrides first, then the saved Web Access binding (including legacy Python `settings.yaml`), then `CCCC_WEB_HOST` / `CCCC_WEB_PORT`.
 - `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.
 - `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
-- Token policy is fail-closed: protected APIs always require an Access Token, including localhost. Plain HTTP LAN exposure additionally requires the explicit `CCCC_REMOTE_ALLOW_INSECURE=1` override; public exposure must terminate HTTPS through a trusted tunnel or reverse proxy.
+- Token policy is origin-aware: direct loopback browser requests use the local in-memory administrator principal without writing a token, while LAN/public/proxied requests remain fail-closed. Plain HTTP LAN exposure additionally requires the explicit `CCCC_REMOTE_ALLOW_INSECURE=1` override; public exposure must terminate HTTPS through a trusted tunnel or reverse proxy.
+- Group Bridge pairing is also fail-closed: expired invitations are rejected, credential claim is a ten-minute proof-bound idempotent POST, Rust v2 sessions authenticate a signed challenge/hello/ready transcript and persist downgrade pins on both peers, and public bridge endpoints require HTTPS/WSS.
+- External reverse proxies must overwrite client forwarding headers and set `CCCC_WEB_TRUST_PROXY_HEADERS=1`; supervised CCCC Web processes configure this trust boundary automatically.
 
 Optional membership **Reach** is a managed public-HTTPS path for Linux and macOS preview users. Local CCCC remains fully usable without an account. First create an Admin Access Token in **Settings > Web Access**, then open the global **Account** page, link this installation, and approve its device code on the account site. Return to **Web Access** to turn Reach on. The equivalent CLI flow remains available:
 

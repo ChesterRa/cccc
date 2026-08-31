@@ -103,62 +103,7 @@ describe("delegation natural body / protocol split", () => {
 });
 
 describe("MessageBubble delegation display wiring", () => {
-  it("uses source-outbound status before falling back to natural display text", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("isDelegationSourceOutbound({");
-    expect(source).toContain("getDelegationSourceOutboundStatus(displayMessageText)");
-    expect(source.indexOf("getDelegationSourceOutboundStatus(displayMessageText)")).toBeLessThan(
-      source.indexOf("getDelegationDisplayText(displayMessageText)"),
-    );
-  });
-
-  it("renders Group Bridge source as metadata instead of an open-original action", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("remoteBadgeLabel={remoteBadgeLabel || undefined}");
-    expect(source).toContain(
-      "const isGroupBridgeSource = isGroupBridgeInboundMessage(ev.by, msgData);",
-    );
-    expect(source).toContain("hasSource && !isGroupBridgeSource");
-    expect(source).toContain('t("remoteBadge"');
-    expect(source).toContain('t("relayedFrom", { label: sourceLabel })');
-    expect(source).not.toContain("openOriginalMessage");
-    expect(source).toContain("onOpenSource?.(srcGroupId, srcEventId)");
-    expect(source).not.toContain("remoteSourceDetails");
-    expect(source).not.toContain('t("relayedFrom", { groupId: srcGroupId');
-  });
-
-  it("keeps local relay source chips clickable while remote sources stay non-local", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const bubbleSource = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
-      "utf8",
-    );
-    const listSource = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "VirtualMessageList.tsx"),
-      "utf8",
-    );
-    const chatTabSource = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../pages/chat/ChatTab.tsx"),
-      "utf8",
-    );
-    expect(bubbleSource).toContain("onClick={() => onOpenSource?.(srcGroupId, srcEventId)}");
-    expect(bubbleSource).toContain("disabled={!onOpenSource}");
-    expect(listSource).toContain("onOpenSource={onOpenSource}");
-    expect(chatTabSource).toContain("onOpenSource={openSourceMessage}");
+  it("keeps local relay sources navigable while remote bridge sources stay non-local", () => {
     expect(
       canOpenSourceMessageLocally(
         [

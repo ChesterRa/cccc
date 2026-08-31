@@ -4,11 +4,17 @@ use axum::extract::Query;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout};
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+
+#[path = "group_bridge_pairing/invite_policy.rs"]
+mod invite_policy;
+#[path = "group_bridge_pairing/remote_policy.rs"]
+mod remote_policy;
 
 #[derive(Deserialize)]
 struct StatusQuery {
@@ -20,6 +26,7 @@ struct StatusQuery {
 async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
     let group = GroupStore::new(home.clone())
         .expect("store")
         .create("issuer", "")
@@ -66,6 +73,7 @@ async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() 
 
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
     let group = GroupStore::new(home.clone())
         .expect("store")
         .create("joiner", "")
@@ -95,96 +103,6 @@ async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() 
     let error = outbound["last_error"].as_str().expect("last error");
     assert!(error.contains("remote pairing request failed (connect)"));
     assert!(!error.contains("error sending request for url"));
-}
-
-#[tokio::test]
-async fn python_shaped_remote_pairing_response_becomes_active_without_claim_route() {
-    let issuer = Router::new()
-        .route(
-            "/api/group-bridge/pairing/requests/remote",
-            post(|| async {
-                Json(json!({"ok":true,"result":{"request":{
-                    "request_id":"preq_remote","invite_id":"pinv_remote","status":"pending"
-                }}}))
-            }),
-        )
-        .route(
-            "/api/group-bridge/pairing/requests/remote/status",
-            get(|Query(query): Query<StatusQuery>| async move {
-                assert_eq!(query.request_id, "preq_remote");
-                assert_eq!(query.invite_id, "pinv_remote");
-                Json(json!({"ok":true,"result":{"request":{
-                    "request_id":"preq_remote","invite_id":"pinv_remote",
-                    "registration_id":"reg_remote","status":"approved",
-                    "remote_send_token":"frs_remote_token"
-                }}}))
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener");
-    let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-    let issuer_task = tokio::spawn(async move { axum::serve(listener, issuer).await });
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let group = GroupStore::new(home.clone())
-        .expect("store")
-        .create("joiner", "")
-        .expect("group");
-    let app = auth_support::authenticated_app(home.clone());
-    let created = call(
-        &app,
-        "/api/group-bridge/pairing/remote-requests",
-        json!({
-            "local_group_id":group.group_id,"local_group_title":"Joiner",
-            "payload":{
-                "issuer_endpoint":endpoint,"issuer_group_id":"g_issuer",
-                "issuer_group_title":"Issuer","issuer_peer_id":"12D3KooIssuer",
-                "code":"","pairing_code":"ABCD-1234",
-                "nonce":" ","invite_id":"pinv_remote"
-            }
-        }),
-    )
-    .await;
-    let outbound_id = created["result"]["outbound"]["outbound_id"]
-        .as_str()
-        .expect("outbound id");
-    assert_eq!(
-        created["result"]["outbound"]["remote_request"]["request_id"],
-        "preq_remote"
-    );
-
-    let synced = call(
-        &app,
-        &format!("/api/group-bridge/pairing/outbounds/{outbound_id}/sync"),
-        json!({}),
-    )
-    .await;
-    // Outbound is a pairing-flow record whose terminal state is `approved` (matching the
-    // Python `pairing_outbound_sync` contract). `approved` is exactly what the frontend
-    // `projectRecentOutbounds` filter skips, so a completed request leaves the "sent
-    // requests" list. The `active` liveness contract lives on `trust`/`registration`,
-    // which must remain `active` so message routing is unaffected.
-    assert_eq!(synced["result"]["outbound"]["status"], "approved");
-    assert_eq!(
-        synced["result"]["outbound"]["remote_request"]["request_id"],
-        "preq_remote"
-    );
-    assert!(synced["result"]["outbound"]["remote_request"]["remote_send_token"].is_null());
-    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
-    assert_eq!(state["trusts"][0]["credential"], "frs_remote_token");
-    assert_eq!(
-        state["trusts"][0]["trust_id"].as_str().map(str::len),
-        Some(23)
-    );
-    // Cross-layer contract: outbound terminal state is `approved`, but the routing trust
-    // it produced stays `active` — so the pairing is done AND the session is routable.
-    assert_eq!(state["outbounds"][0]["status"], "approved");
-    assert_eq!(state["trusts"][0]["status"], "active");
-    assert_eq!(state["trusts"][0]["transport"], "group_bridge_session");
-
-    issuer_task.abort();
 }
 
 async fn call(app: &Router, path: &str, body: Value) -> Value {

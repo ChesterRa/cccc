@@ -118,7 +118,7 @@ Baseline behavior:
 ### 4.3 Size Limits
 
 Implementations MUST respect practical line limits to avoid truncation:
-- **Request line limit (daemon receive):** the daemon MAY stop reading after ~2,000,000 bytes without a newline; clients MUST keep request lines comfortably below this bound.
+- **Request line limit (daemon receive):** the native daemon stops reading after 16 MiB without a newline; clients MUST keep request lines below this bound.
 - **Response line limit (typical clients):** the reference client reader MAY cap a response line at ~4,000,000 bytes; daemons SHOULD keep single-response payloads below this bound.
 
 Clients SHOULD treat truncated/invalid JSON as a transport failure. Once any request bytes
@@ -3224,8 +3224,10 @@ Result:
 `send` and `request_reply` preflight the concrete runtime audience, append the
 message, and then attempt prompt delivery. `mail` appends only; it MUST NOT wake,
 steer, queue, open a browser, or write to a runtime input. `request_reply` MUST
-resolve to explicit concrete recipients and rejects broadcast selectors. New
-daemon callers MUST send `message_mode`; missing or old `priority`,
+resolve to explicit concrete recipients and rejects broadcast selectors. In the
+Rust implementation, omitted recipients and `@foreman` resolve to the current
+enabled Foreman actor ID before this validation. New daemon callers MUST send
+`message_mode`; missing or old `priority`,
 `reply_required`, or `requires_ack` fields fail validation.
 After aliases and selectors are normalized, one message MUST address either the
 human user or one or more agents, never both. `mail` is valid only for agent
@@ -5061,7 +5063,7 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier, and the loopback `/api/v1/ready` response MUST return that exact identifier before Reach may start; a live PID or an accepting TCP port alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier and an owner-only proof key. Reach MUST send a fresh random challenge, and the loopback `/api/v1/ready` response MUST return the recorded identifier plus an HMAC-SHA256 proof bound to that challenge before Reach may start. The verifier MUST NOT send the expected identifier or proof key to the listener; a live PID, accepting TCP port, or reflected request value alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
 The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 
@@ -5093,6 +5095,31 @@ retries due `queued`/`retrying` receipts, recovers stale `sending` receipts, and
 honors a persisted `next_attempt_at` when present. A live reverse-session
 reconnect MAY accelerate recovery. Web process lifetime and caller activity
 MUST NOT be required for an accepted outbox item to make progress.
+
+Pairing and session authentication fail closed. A pairing invite
+MUST carry a parseable future `expires_at`; missing, malformed, or expired
+values are invalid. Approval MAY open a bounded credential-claim window. A POST
+with the same request id, invite id, and pairing code MAY return the same raw
+credential again within that window so transport failures are recoverable; the
+credential MUST NOT appear in status GET responses or after the window expires.
+
+The Rust v2 WebSocket endpoint MUST send a fresh signed per-connection challenge
+before the client hello. The challenge signature covers the v2 protocol id,
+message contract version, nonce, issue/expiry times, and server peer id; the
+client MUST verify that peer id against its persisted trust. The hello signature
+covers the v2 protocol id, route identity, message contract version, challenge
+nonce and issue time, plus a fresh client nonce. After accepting the hello, the
+server MUST sign a `ready` confirmation over both signed messages, the route,
+and that client nonce; the client MUST verify this confirmation before routing
+messages. This transcript proof makes a captured challenge or ready unusable on
+another connection. A challenge expires before session readiness.
+Rust clients try v2 first and fall back to v1 only when the endpoint is absent or
+requires legacy authentication. New servers MAY accept a legacy v1 hello for an
+active trust that has never completed v2; a successful v2 handshake MUST persist
+`min_session_protocol=2` on both peers, and every later v1 downgrade for that
+trust MUST fail before opening a v1 WebSocket.
+WebSocket bearer credentials MUST use the Authorization header, never a query
+parameter.
 
 For a new outbound message, the source-group `chat.message` MUST be appended
 idempotently before any remote transport side effect. Its event ID MUST be sent

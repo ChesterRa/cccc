@@ -29,12 +29,21 @@ struct PingQuery {
     include_home: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct ReadyQuery {
+    #[serde(default)]
+    challenge: String,
+}
+
 async fn ping(
     State(state): State<AppState>,
     Query(query): Query<PingQuery>,
     principal: Option<Extension<Principal>>,
 ) -> ApiResult {
     let response = call(&state, "ping", Default::default()).await?;
+    if principal.is_none() {
+        return Ok(success(json!({"status":"ok"})));
+    }
     let daemon = response.0["result"].clone();
     let mut result = json!({
         "daemon": daemon,
@@ -49,8 +58,14 @@ async fn ping(
     }
     Ok(success(result))
 }
-async fn health(State(state): State<AppState>) -> ApiResult {
+async fn health(
+    State(state): State<AppState>,
+    principal: Option<Extension<Principal>>,
+) -> ApiResult {
     let mut response = call(&state, "ping", Default::default()).await?;
+    if principal.is_none() {
+        return Ok(success(json!({"status":"ok"})));
+    }
     response
         .0
         .get_mut("result")
@@ -58,8 +73,19 @@ async fn health(State(state): State<AppState>) -> ApiResult {
         .map(|value| value.insert("status".into(), Value::String("ok".into())));
     Ok(response)
 }
-async fn ready(State(state): State<AppState>) -> Json<Value> {
-    success(json!({"web":"ready","runtime_id":state.runtime_id}))
+async fn ready(
+    State(state): State<AppState>,
+    Query(query): Query<ReadyQuery>,
+    principal: Option<Extension<Principal>>,
+) -> Json<Value> {
+    if principal.is_some() {
+        return success(json!({"web":"ready","runtime_id":state.runtime_id}));
+    }
+    let proof = cccc_core::web_runtime_proof::sign(&state.runtime_proof_key, &query.challenge);
+    success(match proof {
+        Some(proof) => json!({"web":"ready","runtime_id":state.runtime_id,"proof":proof}),
+        None => json!({"web":"ready"}),
+    })
 }
 async fn runtimes() -> Json<Value> {
     let runtimes = cccc_runtime::detect_runtimes();

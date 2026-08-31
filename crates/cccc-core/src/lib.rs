@@ -56,6 +56,7 @@ pub mod voice_recording_lease;
 pub mod web_bootstrap;
 pub mod web_login_grants;
 pub mod web_model_connectors;
+pub mod web_runtime_proof;
 
 pub use capability_builtin::{WEB_MODEL_CORE_TOOL_NAMES, is_builtin_capability_pack_tool};
 pub use group::{GroupDoc, GroupStore, Scope};

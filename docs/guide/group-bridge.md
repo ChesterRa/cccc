@@ -55,7 +55,7 @@ Group Bridge pairing is managed in the Web UI.
 
 2. Make the issuer group's Web UI reachable by the requester for the pairing approval step.
 
-   For local/LAN use, `http://HOST:8848` can be enough. For cross-network use, expose the Web UI through a protected HTTPS URL such as Cloudflare Tunnel, Tailscale Funnel, ngrok, or a reverse proxy.
+   For local/LAN use, plain HTTP is accepted only for loopback or literal private IP addresses. For cross-network use, expose the Web UI through a protected HTTPS URL such as Cloudflare Tunnel, Tailscale Funnel, ngrok, or a reverse proxy. The emergency `CCCC_GROUP_BRIDGE_ALLOW_INSECURE_HTTP=1` override is intentionally not exposed in the UI.
 
 3. In the issuer group, open **Settings > Group Bridge**.
 
@@ -76,12 +76,17 @@ After the first bridge setup, restart already-running actor runtimes once if you
 Native CCCC reads the 0.4.35 `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so rollback does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
 
 Pairing and message delivery retain the 0.4.35 wire shapes so an upgrade does not
-invalidate existing trusts. The daemon reuses the established Ed25519 identity,
-scans active session trusts, maintains signed WebSockets with heartbeats and
-bounded exponential backoff, and prefers the live route before authenticated
-HTTP and authorized remote MCP fallback.
+invalidate existing trusts. Native clients try the challenge-response
+`/api/group-bridge/session/ws/v2` endpoint first and fall back to the legacy v1
+endpoint only when the remote server does not expose v2. Native servers keep v1
+available for 0.4.35 clients until that trust completes one v2 handshake; the
+successful handshake persists `min_session_protocol=2`, after which v1 downgrade
+attempts are rejected. The daemon reuses the established Ed25519 identity, keeps
+the selected WebSocket alive with heartbeats and bounded exponential backoff,
+and prefers the live route before authenticated HTTP and authorized remote MCP
+fallback.
 
-An active pairing is authorization, not proof of reachability. A healthy Rust trust reports `session_connected=true`; `session_connected_at`, `session_last_error`, and `session_last_error_at` provide connection diagnostics. The remote endpoint must still be a non-empty HTTP(S) address reachable from the dialing peer.
+An active pairing is authorization, not proof of reachability. A healthy Rust trust reports `session_connected=true`; `session_connected_at`, `session_last_error`, and `session_last_error_at` provide connection diagnostics. Public endpoints must use HTTPS/WSS. Loopback/private-IP HTTP remains available for controlled LAN setups.
 
 ## Sending Messages
 
@@ -141,10 +146,13 @@ Group Bridge is trust-based:
 
 - Pair only with CCCC instances you control or explicitly trust.
 - Treat a pairing invitation like a short-lived secret until it expires.
+- Expired invitations fail closed. Approval creates a separate ten-minute credential-claim window; the same request/invite/code proof may safely retry POST within that window, while status polling never returns a secret.
+- Rust v2 sessions authenticate a signed challenge, a fresh client nonce in the signed hello, and a server-signed confirmation of the complete transcript. Captured challenges/readies, server impersonation, and downgrades after the first v2 connection are rejected; both peers persist the protocol pin.
 - Do not grant **Read** access to groups that should not inspect local repo files, context, or git state.
 - Do not grant **Full** access unless the remote group may run commands and modify files in the target workspace.
 - Path guardrails keep operations under the target active scope, but they are not a security sandbox.
 - Before exposing Web UI beyond localhost, configure an Admin Access Token in **Settings > Web Access**.
+- Do not place Group Bridge credentials in URLs. WebSocket query tokens are rejected.
 
 Runtime state, credentials, and browser sessions remain local to each CCCC instance. The bridge does not merge ledgers or actor runtimes.
 

@@ -1,22 +1,28 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::Engine;
 use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use cccc_core::{GroupStore, ledger};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use chrono::Utc;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::group_bridge_command_sessions;
+use super::group_bridge_session_auth::{
+    SessionProtocol, authorize_signed_hello, pin_v2, signed_v2_challenge, signed_v2_ready,
+};
 use super::group_bridge_store::{BridgeStore, items};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, call, success};
+
+const MAX_REMOTE_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_REMOTE_SESSION_JSON_BYTES: usize =
+    MAX_REMOTE_ATTACHMENT_BYTES.div_ceil(3) * 4 + 1024 * 1024;
 
 #[derive(Debug, Default, Deserialize)]
 struct SessionQuery {
@@ -28,8 +34,12 @@ struct SessionQuery {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/group-bridge/session/send", post(receive_http))
-        .route("/api/group-bridge/session/ws", get(upgrade))
+        .route(
+            "/api/group-bridge/session/send",
+            post(receive_http).layer(DefaultBodyLimit::max(MAX_REMOTE_SESSION_JSON_BYTES)),
+        )
+        .route("/api/group-bridge/session/ws", get(upgrade_v1))
+        .route("/api/group-bridge/session/ws/v2", get(upgrade_v2))
         .route(
             "/mcp/group-bridge",
             get(mcp_info).post(mcp).options(options),
@@ -176,40 +186,72 @@ async fn options() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn upgrade(
+async fn upgrade_v1(
     State(state): State<AppState>,
     Query(query): Query<SessionQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    let token = if query.token.is_empty() {
-        bearer(&headers).unwrap_or("")
-    } else {
-        &query.token
-    };
+    if !query.token.is_empty() {
+        return Err(ApiError::forbidden(
+            "Group Bridge WebSocket query tokens are not supported",
+        ));
+    }
+    let token = bearer(&headers).unwrap_or("");
     let registration = if token.is_empty() {
         None
     } else {
         if query.message_contract_version != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
             return Err(contract_version_mismatch());
         }
-        Some(authorize(&state, token)?)
+        Some(authorize_v1_session(&state, token)?)
     };
-    Ok(ws.on_upgrade(move |socket| session_socket(state, registration, socket)))
+    Ok(ws
+        .on_upgrade(move |socket| session_socket(state, registration, socket, SessionProtocol::V1)))
+}
+
+async fn upgrade_v2(
+    State(state): State<AppState>,
+    Query(query): Query<SessionQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    if !query.token.is_empty() {
+        return Err(ApiError::forbidden(
+            "Group Bridge WebSocket query tokens are not supported",
+        ));
+    }
+    Ok(ws.on_upgrade(move |socket| session_socket(state, None, socket, SessionProtocol::V2)))
 }
 
 async fn session_socket(
     state: AppState,
     legacy_registration: Option<Value>,
     mut socket: WebSocket,
+    protocol: SessionProtocol,
 ) {
     let legacy = legacy_registration.is_some();
+    let mut v2_transcript = None;
     let registration = if let Some(registration) = legacy_registration {
         if socket.send(Message::Text(json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"],"message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}).to_string().into())).await.is_err() {
             return;
         }
         registration
     } else {
+        let challenge = if protocol == SessionProtocol::V2 {
+            let Some(challenge) = signed_v2_challenge(&state) else {
+                return;
+            };
+            if socket
+                .send(Message::Text(challenge.to_string().into()))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            Some(challenge)
+        } else {
+            None
+        };
         let Some(Ok(Message::Text(text))) = socket.next().await else {
             return;
         };
@@ -219,13 +261,46 @@ async fn session_socket(
             let _ = socket.send(Message::Close(None)).await;
             return;
         }
-        let Some(registration) = authorize_signed_hello(&state, &hello) else {
+        if challenge.as_ref().is_some_and(challenge_expired) {
+            let _ = socket.send(Message::Text(json!({"ok":false,"error":{"code":"challenge_expired","message":"Group Bridge session challenge expired"}}).to_string().into())).await;
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
+        let Some(registration) =
+            authorize_signed_hello(&state, &hello, protocol, challenge.as_ref())
+        else {
             let _ = socket.send(Message::Text(json!({"ok":false,"error":{"code":"unauthorized_peer","message":"remote peer signature is invalid or not trusted for this group"}}).to_string().into())).await;
             let _ = socket.send(Message::Close(None)).await;
             return;
         };
+        if let Some(challenge) = challenge {
+            v2_transcript = Some((hello, challenge));
+        }
         registration
     };
+    let ready = match v2_transcript.as_ref() {
+        Some((hello, challenge)) => {
+            let Some(ready) = signed_v2_ready(&state, hello, challenge) else {
+                return;
+            };
+            ready
+        }
+        None => {
+            json!({"ok":true,"type":"ready","message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION})
+        }
+    };
+    if !legacy
+        && socket
+            .send(Message::Text(ready.to_string().into()))
+            .await
+            .is_err()
+    {
+        return;
+    }
+    if protocol == SessionProtocol::V2 && pin_v2(&state, &registration).is_none() {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     let route_args = json!({
         "group_id":registration["group_id"],"remote_group_id":registration["remote_group_id"],
         "remote_peer_id":registration["remote_peer_id"]
@@ -236,19 +311,6 @@ async fn session_socket(
     let mut close_guard = generation.as_deref().map(|generation| {
         super::group_bridge_close::SessionClose::new(state.clone(), &route_args, generation)
     });
-    if !legacy
-        && socket
-            .send(Message::Text(
-                json!({"ok":true,"type":"ready","message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}).to_string().into(),
-            ))
-            .await
-            .is_err()
-    {
-        if let Some(close) = close_guard.as_mut() {
-            close.close().await;
-        }
-        return;
-    }
     let mut seen = super::group_bridge_seen::SeenEvents::default();
     let mut session_poll = tokio::time::interval(std::time::Duration::from_millis(25));
     session_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -264,7 +326,7 @@ async fn session_socket(
                     Some(Ok(Message::Text(text))) => {
                         let (response, close) = match serde_json::from_str::<Value>(&text) {
                             Ok(value) if value["type"] == "send" => {
-                                match reauthorize_session(&state, &registration, legacy).map(|active| {
+                                match reauthorize_session(&state, &registration, legacy, protocol).map(|active| {
                                     (active, value.get("payload").cloned().unwrap_or_else(||json!({})))
                                 }) {
                                     Ok((active, payload)) => (match receive_delivery(&state,&active,payload).await {
@@ -284,7 +346,7 @@ async fn session_socket(
                                 continue;
                             }
                             Ok(value) if value["type"] == "request" => {
-                                handle_session_request(&state, &registration, legacy, &value).await
+                                handle_session_request(&state, &registration, legacy, protocol, &value).await
                             }
                             Ok(value) if value["type"] == "ping" => (json!({"type":"pong","ts":utc_now()}), false),
                             _ => (json!({"type":"error","message":"unsupported session message"}), false),
@@ -309,7 +371,7 @@ async fn session_socket(
                 }
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                let active = match reauthorize_session(&state, &registration, legacy) {
+                let active = match reauthorize_session(&state, &registration, legacy, protocol) {
                     Ok(active) => active,
                     Err(error) => {
                         let _ = socket.send(Message::Text(
@@ -336,14 +398,22 @@ async fn session_socket(
     }
 }
 
+fn challenge_expired(challenge: &Value) -> bool {
+    challenge["expires_at"]
+        .as_str()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_none_or(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now())
+}
+
 async fn handle_session_request(
     state: &AppState,
     registration: &Value,
     legacy: bool,
+    protocol: SessionProtocol,
     frame: &Value,
 ) -> (Value, bool) {
     let response_to = frame["request_id"].clone();
-    let active = match reauthorize_session(state, registration, legacy) {
+    let active = match reauthorize_session(state, registration, legacy, protocol) {
         Ok(active) => active,
         Err(error) => {
             return (
@@ -438,75 +508,6 @@ async fn daemon_value(state: &AppState, op: &str, args: &Value) -> Option<Value>
     response.ok.then_some(Value::Object(response.result))
 }
 
-fn authorize_signed_hello(state: &AppState, hello: &Value) -> Option<Value> {
-    let target_group_id = hello["target_group_id"].as_str()?.trim();
-    let src_group_id = hello["src_group_id"].as_str()?.trim();
-    let remote_peer_id = hello["remote_peer_id"].as_str()?.trim();
-    if !verify_session_hello(hello, remote_peer_id) {
-        return None;
-    }
-    let bridge = BridgeStore::new(&state.home).load().ok()?;
-    let trust = items(&bridge, "trusts").iter().find(|item| {
-        item["status"] == "active"
-            && item["group_id"] == target_group_id
-            && item["remote_group_id"] == src_group_id
-            && item["remote_peer_id"] == remote_peer_id
-    })?;
-    Some(
-        items(&bridge, "registrations")
-            .iter()
-            .find(|registration| {
-                registration["status"] == "active"
-                    && registration["registration_id"] == trust["registration_id"]
-                    && registration["group_id"] == target_group_id
-                    && registration["remote_group_id"] == src_group_id
-                    && registration["remote_peer_id"] == remote_peer_id
-            })
-            .cloned()
-            .unwrap_or_else(|| trust.clone()),
-    )
-}
-
-fn verify_session_hello(hello: &Value, expected_peer_id: &str) -> bool {
-    let Some(public_b64) = hello["public_key"].as_str() else {
-        return false;
-    };
-    let Some(signature_b64) = hello["signature"].as_str() else {
-        return false;
-    };
-    let Ok(public_bytes) = base64::engine::general_purpose::STANDARD.decode(public_b64) else {
-        return false;
-    };
-    let Ok(public): Result<[u8; 32], _> = public_bytes.try_into() else {
-        return false;
-    };
-    let Ok(signature_bytes) = base64::engine::general_purpose::STANDARD.decode(signature_b64)
-    else {
-        return false;
-    };
-    let Ok(signature_bytes): Result<[u8; 64], _> = signature_bytes.try_into() else {
-        return false;
-    };
-    if peer_id(&public) != expected_peer_id {
-        return false;
-    }
-    let material = json!({
-        "protocol":"/cccc/group_bridge/session-ws/1.0.0",
-        "message_contract_version":hello["message_contract_version"],
-        "remote_peer_id":expected_peer_id,
-        "src_group_id":hello["src_group_id"],
-        "target_group_id":hello["target_group_id"]
-    })
-    .to_string();
-    VerifyingKey::from_bytes(&public).is_ok_and(|key| {
-        key.verify(
-            material.as_bytes(),
-            &Signature::from_bytes(&signature_bytes),
-        )
-        .is_ok()
-    })
-}
-
 fn require_message_contract_version(value: &Value) -> Result<(), ApiError> {
     if value["message_contract_version"].as_u64() == Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
         Ok(())
@@ -521,41 +522,6 @@ fn contract_version_mismatch() -> ApiError {
         "Group Bridge message contract version does not match",
         json!({"expected":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}),
     )
-}
-
-fn peer_id(public: &[u8; 32]) -> String {
-    let mut protobuf = vec![0x08, 0x01, 0x12, 32];
-    protobuf.extend_from_slice(public);
-    let mut multihash = vec![0x00, protobuf.len() as u8];
-    multihash.extend(protobuf);
-    base58(&multihash)
-}
-
-fn base58(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let zeroes = bytes.iter().take_while(|byte| **byte == 0).count();
-    let mut digits = vec![0u8];
-    for byte in bytes {
-        let mut carry = *byte as u32;
-        for digit in &mut digits {
-            let value = (*digit as u32) * 256 + carry;
-            *digit = (value % 58) as u8;
-            carry = value / 58;
-        }
-        while carry > 0 {
-            digits.push((carry % 58) as u8);
-            carry /= 58;
-        }
-    }
-    let mut output = String::new();
-    output.extend(std::iter::repeat_n('1', zeroes));
-    output.extend(
-        digits
-            .iter()
-            .rev()
-            .map(|digit| ALPHABET[*digit as usize] as char),
-    );
-    output
 }
 
 async fn receive_delivery(
@@ -752,12 +718,21 @@ fn authorize(state: &AppState, credential: &str) -> Result<Value, ApiError> {
         .ok_or_else(|| ApiError::forbidden("invalid group bridge credential"))
 }
 
-fn reauthorize(state: &AppState, registration: &Value) -> Result<Value, ApiError> {
+fn authorize_v1_session(state: &AppState, credential: &str) -> Result<Value, ApiError> {
+    let registration = authorize(state, credential)?;
+    reauthorize_session(state, &registration, true, SessionProtocol::V1)
+}
+
+fn reauthorize(
+    state: &AppState,
+    registration: &Value,
+    protocol: SessionProtocol,
+) -> Result<Value, ApiError> {
     let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
     items(&bridge, "registrations")
         .iter()
         .find(|item| item["status"] == "active" && same_registration_snapshot(item, registration))
-        .filter(|item| valid_registration(&bridge, item))
+        .filter(|item| valid_registration_for_protocol(&bridge, item, protocol))
         .cloned()
         .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
 }
@@ -766,9 +741,10 @@ fn reauthorize_session(
     state: &AppState,
     registration: &Value,
     legacy: bool,
+    protocol: SessionProtocol,
 ) -> Result<Value, ApiError> {
     if legacy {
-        return reauthorize(state, registration);
+        return reauthorize(state, registration, protocol);
     }
     let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
     items(&bridge, "trusts")
@@ -776,6 +752,7 @@ fn reauthorize_session(
         .find(|trust| {
             trust["status"] == "active"
                 && trust["transport"] == "group_bridge_session"
+                && session_protocol_allowed(trust, protocol)
                 && [
                     "registration_id",
                     "group_id",
@@ -787,6 +764,27 @@ fn reauthorize_session(
         })
         .cloned()
         .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
+}
+
+fn valid_registration_for_protocol(
+    bridge: &Value,
+    registration: &Value,
+    protocol: SessionProtocol,
+) -> bool {
+    valid_registration(bridge, registration)
+        && items(bridge, "trusts").iter().any(|trust| {
+            trust["status"] == "active"
+                && group_bridge_command_sessions::trust_matches_registration(trust, registration)
+                && session_protocol_allowed(trust, protocol)
+        })
+}
+
+fn session_protocol_allowed(trust: &Value, protocol: SessionProtocol) -> bool {
+    let minimum = trust["min_session_protocol"].as_u64().unwrap_or(1);
+    match protocol {
+        SessionProtocol::V1 => minimum < 2,
+        SessionProtocol::V2 => minimum >= 2,
+    }
 }
 
 fn valid_registration(bridge: &Value, registration: &Value) -> bool {

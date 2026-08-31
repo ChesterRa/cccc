@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Direct localhost Web use is passwordless again without creating a hidden administrator token.** Requests served on a loopback browser origin receive an in-memory local administrator principal, while public Host/Origin and non-local proxy sources remain behind the explicit Access Token boundary.
+- **Group Bridge v2 now proves the complete live handshake and pins both peers.** A fresh client nonce and server-signed ready transcript prevent challenge/ready replay, while the native client persists `min_session_protocol=2` and refuses later v1 fallback.
+- **Mobile Web sessions survive normal tab reclamation.** Access-token login establishes a rolling 30-day HttpOnly cookie and clears the temporary browser bearer after verification, avoiding repeated token entry without placing credentials in URLs or local storage.
+
 ## [0.4.36] — 2026-08-30
 
 ### Added
@@ -47,6 +52,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Fixed
 - **Delivery and recovery no longer conflate runtime handoff, Inbox read state, or replies.** Claims are settled durably, Mail never wakes an actor, reply requests can be cancelled, remote Group Bridge sends preserve their source identity, and interrupted work remains recoverable without silently duplicating committed turns.
 - **DeepSeek failures now have bounded, durable recovery behavior.** Missing credentials and context overflow require an explicit restart, large histories use indexed recovery, and daemon restarts cannot turn permanent provider failures into retry loops.
+- **Oversized Web messages no longer fail with Rust HTTP 413 responses.** Same-group and remote Group Bridge bodies above 64 KiB become UTF-8 text attachments; local cross-group text stays inline and the bounded daemon IPC limit now covers the Web JSON contract.
 - **Standalone Rust self-updates now adopt their exact markerless executable safely.** The CLI passes its canonical current path into the transactional installer, while every other markerless command—including legacy launchers and version-shaped foreign programs—requires explicit replacement and remains protected by default.
 - **Remote-control boundaries now fail closed across Python and Rust.** Unauthenticated daemon IPC rejects every non-loopback TCP bind; Reach admin links use short-lived, one-time, origin-bound exchanges instead of long-lived tokens; Reach verifies the exact local CCCC Web instance before opening a tunnel; and cookie-authenticated writes require an exact allowed Origin or same-origin Referer.
 - **The Vite development proxy now preserves the browser-facing Host for terminal WebSockets.** Rust Web Origin validation no longer rejects legitimate `127.0.0.1:5555` runtime-inspector connections and leaves the xterm surface blank.

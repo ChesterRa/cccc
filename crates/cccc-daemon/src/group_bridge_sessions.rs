@@ -1,37 +1,60 @@
-use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
-use cccc_core::group_bridge_identity::GroupBridgeIdentity;
-use cccc_core::{HomeLayout, group_bridge_legacy};
+use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION};
+use cccc_core::HomeLayout;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
+mod handshake;
+mod route_state;
+
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-type RouteKey = (String, String, String);
-type RouteSender = tokio_mpsc::UnboundedSender<SessionCommand>;
-
-static LIVE_ROUTES: OnceLock<Mutex<HashMap<RouteKey, RouteSender>>> = OnceLock::new();
-
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RouteConfig {
+pub(super) struct RouteConfig {
     trust_id: String,
     registration_id: String,
     local_group_id: String,
     remote_group_id: String,
     remote_peer_id: String,
     endpoint: String,
+    min_session_protocol: u64,
 }
 
-struct SessionCommand {
+impl RouteConfig {
+    fn same_route(&self, other: &Self) -> bool {
+        self.trust_id == other.trust_id
+            && self.registration_id == other.registration_id
+            && self.local_group_id == other.local_group_id
+            && self.remote_group_id == other.remote_group_id
+            && self.remote_peer_id == other.remote_peer_id
+            && self.endpoint == other.endpoint
+    }
+}
+
+pub(super) struct SessionCommand {
     request: Value,
     response: mpsc::Sender<Value>,
+}
+
+struct ManagedWorker {
+    config: RouteConfig,
+    effective_min_protocol: Arc<AtomicU64>,
+    task: JoinHandle<()>,
+}
+
+impl ManagedWorker {
+    fn matches(&self, desired: &RouteConfig) -> bool {
+        self.config.same_route(desired)
+            && desired.min_session_protocol <= self.effective_min_protocol.load(Ordering::Acquire)
+    }
 }
 
 pub(crate) struct SessionManager {
@@ -58,31 +81,37 @@ pub(crate) fn send(
     remote_peer_id: &str,
     request: Value,
 ) -> Option<Value> {
-    let key = route_key(local_group_id, remote_group_id, remote_peer_id);
-    let sender = live_routes().lock().ok()?.get(&key).cloned()?;
-    let (response_tx, response_rx) = mpsc::channel();
-    sender
-        .send(SessionCommand {
-            request,
-            response: response_tx,
-        })
-        .ok()?;
-    response_rx.recv_timeout(REQUEST_TIMEOUT).ok()
+    route_state::send(
+        local_group_id,
+        remote_group_id,
+        remote_peer_id,
+        request,
+        REQUEST_TIMEOUT,
+    )
 }
 
-async fn run_manager(home: HomeLayout, mut stop: watch::Receiver<bool>) {
-    let mut workers: HashMap<String, (RouteConfig, JoinHandle<()>)> = HashMap::new();
+async fn run_manager(home: HomeLayout, stop: watch::Receiver<bool>) {
+    run_manager_with_interval(home, stop, SCAN_INTERVAL).await;
+}
+
+async fn run_manager_with_interval(
+    home: HomeLayout,
+    mut stop: watch::Receiver<bool>,
+    scan_interval: Duration,
+) {
+    let mut workers: HashMap<String, ManagedWorker> = HashMap::new();
     loop {
         if *stop.borrow() {
             break;
         }
         crate::ops::schedule_due_retries(home.clone());
-        let desired = load_routes(&home);
-        workers.retain(|id, (config, task)| {
-            let keep = desired.get(id) == Some(config) && !task.is_finished();
+        let desired = route_state::load_routes(&home);
+        workers.retain(|id, worker| {
+            let keep = desired.get(id).is_some_and(|config| worker.matches(config))
+                && !worker.task.is_finished();
             if !keep {
-                task.abort();
-                unregister(config);
+                worker.task.abort();
+                route_state::unregister(&worker.config);
             }
             keep
         });
@@ -90,30 +119,54 @@ async fn run_manager(home: HomeLayout, mut stop: watch::Receiver<bool>) {
             if workers.contains_key(&id) {
                 continue;
             }
-            let worker = tokio::spawn(run_worker(home.clone(), config.clone(), stop.clone()));
-            workers.insert(id, (config, worker));
+            let effective_min_protocol = Arc::new(AtomicU64::new(config.min_session_protocol));
+            let task = tokio::spawn(run_worker_tracking(
+                home.clone(),
+                config.clone(),
+                stop.clone(),
+                effective_min_protocol.clone(),
+            ));
+            workers.insert(
+                id,
+                ManagedWorker {
+                    config,
+                    effective_min_protocol,
+                    task,
+                },
+            );
         }
         tokio::select! {
             changed = stop.changed() => {
                 if changed.is_err() || *stop.borrow() { break; }
             }
-            () = tokio::time::sleep(SCAN_INTERVAL) => {}
+            () = tokio::time::sleep(scan_interval) => {}
         }
     }
-    for (_, (config, task)) in workers {
-        task.abort();
-        unregister(&config);
+    for (_, worker) in workers {
+        worker.task.abort();
+        route_state::unregister(&worker.config);
     }
 }
 
-async fn run_worker(home: HomeLayout, config: RouteConfig, mut stop: watch::Receiver<bool>) {
+#[cfg(test)]
+async fn run_worker(home: HomeLayout, config: RouteConfig, stop: watch::Receiver<bool>) {
+    let effective_min_protocol = Arc::new(AtomicU64::new(config.min_session_protocol));
+    run_worker_tracking(home, config, stop, effective_min_protocol).await;
+}
+
+async fn run_worker_tracking(
+    home: HomeLayout,
+    config: RouteConfig,
+    mut stop: watch::Receiver<bool>,
+    effective_min_protocol: Arc<AtomicU64>,
+) {
     let mut retry = Duration::from_secs(1);
     while !*stop.borrow() {
-        match connect_once(&home, &config, stop.clone()).await {
+        match connect_once_tracking(&home, &config, stop.clone(), &effective_min_protocol).await {
             Ok(()) if *stop.borrow() => break,
-            Ok(()) => update_status(&home, &config, false, "session closed"),
+            Ok(()) => route_state::update_status(&home, &config, false, "session closed"),
             Err(error) => {
-                update_status(&home, &config, false, &error);
+                route_state::update_status(&home, &config, false, &error);
                 tracing::warn!(
                     trust_id = %config.trust_id,
                     endpoint = %config.endpoint,
@@ -131,53 +184,32 @@ async fn run_worker(home: HomeLayout, config: RouteConfig, mut stop: watch::Rece
         }
         retry = (retry * 2).min(Duration::from_secs(30));
     }
-    unregister(&config);
-    update_status(&home, &config, false, "");
+    route_state::unregister(&config);
+    route_state::update_status(&home, &config, false, "");
 }
 
+#[cfg(test)]
 async fn connect_once(
     home: &HomeLayout,
     config: &RouteConfig,
-    mut stop: watch::Receiver<bool>,
+    stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let identity = GroupBridgeIdentity::load_or_create(home).map_err(|error| error.to_string())?;
-    let url = session_url(&config.endpoint)?;
-    let (socket, _) = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio_tungstenite::connect_async(&url),
-    )
-    .await
-    .map_err(|_| "session connect timed out".to_owned())?
-    .map_err(|error| format!("session connect failed: {error}"))?;
+    let effective_min_protocol = AtomicU64::new(config.min_session_protocol);
+    connect_once_tracking(home, config, stop, &effective_min_protocol).await
+}
+
+async fn connect_once_tracking(
+    home: &HomeLayout,
+    config: &RouteConfig,
+    mut stop: watch::Receiver<bool>,
+    effective_min_protocol: &AtomicU64,
+) -> Result<(), String> {
+    let socket = handshake::connect_tracking(home, config, effective_min_protocol).await?;
     let (mut sink, mut stream) = socket.split();
-    let hello = identity
-        .sign_session_hello(&config.remote_group_id, &config.local_group_id)
-        .map_err(|error| error.to_string())?;
-    sink.send(Message::Text(hello.to_string().into()))
-        .await
-        .map_err(|error| error.to_string())?;
-    let ready = tokio::time::timeout(Duration::from_secs(5), stream.next())
-        .await
-        .map_err(|_| "session handshake timed out".to_owned())?
-        .ok_or_else(|| "session closed during handshake".to_owned())?
-        .map_err(|error| error.to_string())?;
-    let ready = message_json(ready)?;
-    if ready.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(format!(
-            "session rejected: {}",
-            ready
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .unwrap_or("remote rejected Group Bridge session")
-        ));
-    }
-    if ready["message_contract_version"].as_u64() != Some(GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION) {
-        return Err("Group Bridge message contract version does not match".into());
-    }
 
     let (command_tx, mut command_rx) = tokio_mpsc::unbounded_channel();
-    register(config, command_tx);
-    update_status(home, config, true, "");
+    route_state::register(config, command_tx);
+    route_state::update_status(home, config, true, "");
     crate::ops::schedule_pending_route_retry(
         home.clone(),
         config.local_group_id.clone(),
@@ -239,7 +271,7 @@ async fn connect_once(
             }
         }
     };
-    unregister(config);
+    route_state::unregister(config);
     for (_, waiter) in pending {
         let _ = waiter.send(json!({
             "ok":false,
@@ -302,49 +334,6 @@ fn receive_request(home: &HomeLayout, config: &RouteConfig, frame: &Value) -> Va
     }
 }
 
-fn load_routes(home: &HomeLayout) -> HashMap<String, RouteConfig> {
-    let state = group_bridge_legacy::load(home).unwrap_or_else(|_| json!({}));
-    state["trusts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(route_config)
-        .map(|config| (config.trust_id.clone(), config))
-        .collect()
-}
-
-fn route_config(value: &Value) -> Option<RouteConfig> {
-    if value["status"].as_str()? != "active"
-        || value["transport"].as_str()? != "group_bridge_session"
-    {
-        return None;
-    }
-    Some(RouteConfig {
-        trust_id: nonempty(value, "trust_id")?,
-        registration_id: nonempty(value, "registration_id")
-            .unwrap_or_else(|| value["trust_id"].as_str().unwrap_or("").to_owned()),
-        local_group_id: nonempty(value, "group_id")?,
-        remote_group_id: nonempty(value, "remote_group_id")?,
-        remote_peer_id: nonempty(value, "remote_peer_id")?,
-        endpoint: nonempty(value, "remote_endpoint")?,
-    })
-}
-
-fn session_url(endpoint: &str) -> Result<String, String> {
-    let mut url = reqwest::Url::parse(endpoint).map_err(|error| error.to_string())?;
-    let scheme = match url.scheme() {
-        "http" => "ws",
-        "https" => "wss",
-        _ => return Err("Group Bridge endpoint must use http or https".into()),
-    };
-    url.set_scheme(scheme)
-        .map_err(|_| "invalid Group Bridge endpoint scheme".to_owned())?;
-    url.set_path("/api/group-bridge/session/ws");
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.to_string())
-}
-
 fn message_json(message: Message) -> Result<Value, String> {
     match message {
         Message::Text(text) => serde_json::from_str(&text).map_err(|error| error.to_string()),
@@ -353,426 +342,6 @@ fn message_json(message: Message) -> Result<Value, String> {
     }
 }
 
-fn route_key(local: &str, remote: &str, peer: &str) -> RouteKey {
-    (
-        local.trim().into(),
-        remote.trim().into(),
-        peer.trim().into(),
-    )
-}
-
-fn live_routes() -> &'static Mutex<HashMap<RouteKey, RouteSender>> {
-    LIVE_ROUTES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn register(config: &RouteConfig, sender: RouteSender) {
-    if let Ok(mut routes) = live_routes().lock() {
-        routes.insert(
-            route_key(
-                &config.local_group_id,
-                &config.remote_group_id,
-                &config.remote_peer_id,
-            ),
-            sender,
-        );
-    }
-}
-
-fn unregister(config: &RouteConfig) {
-    if let Ok(mut routes) = live_routes().lock() {
-        routes.remove(&route_key(
-            &config.local_group_id,
-            &config.remote_group_id,
-            &config.remote_peer_id,
-        ));
-    }
-}
-
-fn update_status(home: &HomeLayout, config: &RouteConfig, connected: bool, error: &str) {
-    let now = utc_now();
-    let _ = group_bridge_legacy::update(home, |state| {
-        let Some(trusts) = state.get_mut("trusts").and_then(Value::as_array_mut) else {
-            return Ok(());
-        };
-        let Some(trust) = trusts
-            .iter_mut()
-            .find(|trust| trust["trust_id"] == config.trust_id)
-        else {
-            return Ok(());
-        };
-        trust["session_connected"] = json!(connected);
-        trust["session_last_error"] = json!(error);
-        trust["session_updated_at"] = json!(now);
-        if connected {
-            trust["session_connected_at"] = json!(now);
-        } else if !error.is_empty() {
-            trust["session_last_error_at"] = json!(now);
-        }
-        Ok(())
-    });
-}
-
-fn nonempty(value: &Value, field: &str) -> Option<String> {
-    value[field]
-        .as_str()
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use cccc_core::GroupStore;
-    use cccc_core::group_bridge_identity::authenticated_session_peer_id;
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::accept_async;
-
-    #[test]
-    fn python_session_url_is_derived_from_http_endpoint() {
-        assert_eq!(
-            session_url("https://remote.example:9443/base?x=1").expect("url"),
-            "wss://remote.example:9443/api/group-bridge/session/ws"
-        );
-    }
-
-    #[test]
-    fn inactive_or_incomplete_trust_is_not_started() {
-        assert!(route_config(&json!({"status":"revoked"})).is_none());
-        assert!(
-            route_config(&json!({
-                "status":"active","transport":"group_bridge_session",
-                "trust_id":"t","group_id":"g","remote_group_id":"r","remote_peer_id":"p"
-            }))
-            .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn python_signed_session_registers_a_live_request_route() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let identity = GroupBridgeIdentity::load_or_create(&home).expect("identity");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            let mut socket = accept_async(stream).await.expect("websocket");
-            let hello = message_json(socket.next().await.expect("hello").expect("hello frame"))
-                .expect("hello json");
-            assert_eq!(
-                authenticated_session_peer_id(&hello).as_deref(),
-                Some(identity.peer_id.as_str())
-            );
-            assert_eq!(hello["target_group_id"], "g_remote");
-            assert_eq!(hello["src_group_id"], "g_local");
-            socket
-                .send(Message::Text(
-                    json!({
-                        "ok":true,
-                        "type":"ready",
-                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("ready");
-            let request = loop {
-                let frame = message_json(
-                    socket
-                        .next()
-                        .await
-                        .expect("request")
-                        .expect("request frame"),
-                )
-                .expect("request json");
-                if frame["type"] == "ping" {
-                    socket
-                        .send(Message::Text(json!({"type":"pong"}).to_string().into()))
-                        .await
-                        .expect("pong");
-                    continue;
-                }
-                break frame;
-            };
-            assert_eq!(request["type"], "request");
-            assert_eq!(request["op"], "remote_send");
-            socket
-                .send(Message::Text(
-                    json!({
-                        "type":"response",
-                        "response_to":request["request_id"],
-                        "result":{"ok":true,"event_id":"remote-event"}
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("response");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        });
-        let config = RouteConfig {
-            trust_id: "trust_test".into(),
-            registration_id: "registration_test".into(),
-            local_group_id: "g_local".into(),
-            remote_group_id: "g_remote".into(),
-            remote_peer_id: "peer_remote".into(),
-            endpoint,
-        };
-        let (stop_tx, stop_rx) = watch::channel(false);
-        let worker_home = home.clone();
-        let worker_config = config.clone();
-        let worker =
-            tokio::spawn(async move { connect_once(&worker_home, &worker_config, stop_rx).await });
-        for _ in 0..100 {
-            if live_routes()
-                .lock()
-                .expect("routes")
-                .contains_key(&route_key("g_local", "g_remote", "peer_remote"))
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let response = tokio::task::spawn_blocking(|| {
-            send(
-                "g_local",
-                "g_remote",
-                "peer_remote",
-                json!({"op":"remote_send","payload":{"text":"hello"}}),
-            )
-        })
-        .await
-        .expect("send task")
-        .expect("live response");
-        assert_eq!(response["event_id"], "remote-event");
-        let _ = stop_tx.send(true);
-        let _ = worker.await.expect("worker");
-        server.await.expect("server");
-    }
-
-    #[tokio::test]
-    async fn outgoing_session_resumes_a_pending_delivery_when_it_connects() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let group = GroupStore::new(home.clone())
-            .and_then(|store| store.create("local", ""))
-            .expect("group");
-        let identity = GroupBridgeIdentity::load_or_create(&home).expect("identity");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-        let config = RouteConfig {
-            trust_id: "trust_resume".into(),
-            registration_id: "registration_resume".into(),
-            local_group_id: group.group_id.clone(),
-            remote_group_id: "g_remote".into(),
-            remote_peer_id: "peer_remote".into(),
-            endpoint,
-        };
-        group_bridge_legacy::update(&home, |state| {
-            state.insert(
-                "trusts".into(),
-                json!([{
-                    "trust_id":config.trust_id.clone(),
-                    "registration_id":config.registration_id.clone(),
-                    "group_id":config.local_group_id.clone(),
-                    "remote_group_id":config.remote_group_id.clone(),
-                    "remote_peer_id":config.remote_peer_id.clone(),
-                    "remote_endpoint":config.endpoint.clone(),
-                    "transport":"group_bridge_session","status":"active",
-                    "remote_access_level":"messages"
-                }]),
-            );
-            state.insert(
-                "deliveries".into(),
-                json!([{
-                    "operation":"remote_send",
-                    "registration_id":config.registration_id.clone(),
-                    "idempotency_key":"resume-on-connect","status":"retrying",
-                    "attempt":1,"max_attempts":5,
-                    "source_record_payload":{
-                        "text":"resume after reconnect","to":["user"],"source_by":"user",
-                        "message_mode":"send"
-                    },
-                    "payload":{
-                        "text":"resume after reconnect","to":["user"],"source_by":"user",
-                        "format":"plain","message_mode":"send",
-                        "refs":[],"attachments":[]
-                    }
-                }]),
-            );
-            Ok(())
-        })
-        .expect("bridge state");
-
-        let expected_peer_id = identity.peer_id.clone();
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            let mut socket = accept_async(stream).await.expect("websocket");
-            let hello = message_json(socket.next().await.expect("hello").expect("hello frame"))
-                .expect("hello json");
-            assert_eq!(
-                authenticated_session_peer_id(&hello).as_deref(),
-                Some(expected_peer_id.as_str())
-            );
-            socket
-                .send(Message::Text(
-                    json!({
-                        "ok":true,
-                        "type":"ready",
-                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("ready");
-            let request = loop {
-                let frame = message_json(
-                    socket
-                        .next()
-                        .await
-                        .expect("request")
-                        .expect("request frame"),
-                )
-                .expect("request json");
-                if frame["type"] == "ping" {
-                    socket
-                        .send(Message::Text(json!({"type":"pong"}).to_string().into()))
-                        .await
-                        .expect("pong");
-                    continue;
-                }
-                break frame;
-            };
-            assert_eq!(request["op"], "remote_send");
-            assert_eq!(request["idempotency_key"], "resume-on-connect");
-            socket
-                .send(Message::Text(
-                    json!({
-                        "type":"response","response_to":request["request_id"],
-                        "result":{"ok":true,"receipt":{
-                            "status":"sent","event_id":"remote-resumed"
-                        }}
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("response");
-            while socket.next().await.is_some() {}
-        });
-        let (stop_tx, stop_rx) = watch::channel(false);
-        let worker_home = home.clone();
-        let worker_config = config.clone();
-        let worker =
-            tokio::spawn(async move { connect_once(&worker_home, &worker_config, stop_rx).await });
-        let mut resumed = None;
-        for _ in 0..200 {
-            let state = group_bridge_legacy::load(&home).expect("bridge state");
-            resumed = state["deliveries"].as_array().and_then(|receipts| {
-                receipts
-                    .iter()
-                    .find(|receipt| receipt["idempotency_key"] == "resume-on-connect")
-                    .cloned()
-            });
-            if resumed
-                .as_ref()
-                .is_some_and(|receipt| receipt["status"] == "sent")
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let resumed = resumed.expect("pending receipt");
-        assert_eq!(resumed["status"], "sent", "{resumed}");
-        assert_eq!(resumed["remote_event_id"], "remote-resumed");
-        let _ = stop_tx.send(true);
-        worker.await.expect("worker join").expect("worker result");
-        server.await.expect("server");
-    }
-
-    #[tokio::test]
-    async fn worker_reconnects_and_projects_connection_health() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-        let config = RouteConfig {
-            trust_id: "trust_reconnect".into(),
-            registration_id: "registration_reconnect".into(),
-            local_group_id: "g_local".into(),
-            remote_group_id: "g_remote".into(),
-            remote_peer_id: "peer_remote".into(),
-            endpoint,
-        };
-        group_bridge_legacy::update(&home, |state| {
-            state.insert(
-                "trusts".into(),
-                json!([{
-                    "trust_id":config.trust_id.clone(),
-                    "registration_id":config.registration_id.clone(),
-                    "group_id":config.local_group_id.clone(),
-                    "remote_group_id":config.remote_group_id.clone(),
-                    "remote_peer_id":config.remote_peer_id.clone(),
-                    "remote_endpoint":config.endpoint.clone(),
-                    "transport":"group_bridge_session",
-                    "status":"active"
-                }]),
-            );
-            Ok(())
-        })
-        .expect("state");
-        let server = tokio::spawn(async move {
-            let (first, _) = listener.accept().await.expect("first accept");
-            let mut first = accept_async(first).await.expect("first websocket");
-            let _ = first.next().await;
-            first.close(None).await.expect("first close");
-
-            let (second, _) = listener.accept().await.expect("second accept");
-            let mut second = accept_async(second).await.expect("second websocket");
-            let _ = second.next().await.expect("second hello");
-            second
-                .send(Message::Text(
-                    json!({
-                        "ok":true,
-                        "type":"ready",
-                        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .expect("ready");
-            while second.next().await.is_some() {}
-        });
-        let (stop_tx, stop_rx) = watch::channel(false);
-        let worker_home = home.clone();
-        let worker_config = config.clone();
-        let worker = tokio::spawn(async move {
-            run_worker(worker_home, worker_config, stop_rx).await;
-        });
-        let mut connected = false;
-        for _ in 0..250 {
-            let state = group_bridge_legacy::load(&home).expect("bridge state");
-            if state["trusts"][0]["session_connected"] == true {
-                connected = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert!(connected, "worker did not reconnect within the test window");
-        let _ = stop_tx.send(true);
-        worker.await.expect("worker");
-        server.await.expect("server");
-        let state = group_bridge_legacy::load(&home).expect("bridge state");
-        assert_eq!(state["trusts"][0]["session_connected"], false);
-    }
-}
+#[path = "group_bridge_sessions/tests/mod.rs"]
+mod tests;

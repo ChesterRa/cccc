@@ -17,6 +17,7 @@ import { useBrandingStore } from "../../stores";
 import { resolveThemeAwareLogoUrl } from "../../utils/branding";
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
+import { canReorderSidebarGroups, groupSidebarScrollClass } from "./groupSidebarModel";
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
@@ -26,6 +27,7 @@ export interface GroupSidebarProps {
   isCollapsed: boolean;
   sidebarWidth: number;
   isDark: boolean;
+  isSmallScreen: boolean;
   readOnly?: boolean;
   onSelectGroup: (groupId: string) => void;
   onWarmGroup?: (groupId: string) => void;
@@ -46,6 +48,7 @@ export function GroupSidebar({
   isCollapsed,
   sidebarWidth,
   isDark,
+  isSmallScreen,
   readOnly,
   onSelectGroup,
   onWarmGroup,
@@ -154,7 +157,7 @@ export function GroupSidebar({
         onArchiveGroup(gid);
       };
 
-      if (!isCollapsed && !readOnly) {
+      if (canReorderSidebarGroups({ isSmallScreen, isCollapsed, readOnly })) {
         return (
           <GroupSidebarSortableList
             groups={groups}
@@ -202,6 +205,7 @@ export function GroupSidebar({
     [
       isCollapsed,
       isDark,
+      isSmallScreen,
       onArchiveGroup,
       onClose,
       onReorderSection,
@@ -220,7 +224,7 @@ export function GroupSidebar({
         ref={sidebarRef}
         className={classNames(
           "h-full min-h-0 flex flex-col glass-sidebar",
-          "fixed inset-y-0 left-0 md:relative md:inset-auto z-40",
+          "fixed inset-y-0 left-0 z-50 md:relative md:inset-auto md:z-40",
           isResizing ? "transition-none" : "transition-[width,transform] duration-300 ease-out",
           isCollapsed ? "w-[60px]" : "w-[248px] md:w-[var(--sidebar-width)]",
           isOpen ? "translate-x-0" : "-translate-x-full",
@@ -330,12 +334,7 @@ export function GroupSidebar({
         )}
 
         {/* Group list */}
-        <div
-          className={classNames(
-            "min-h-0 flex-1 overflow-auto scrollbar-hide",
-            isCollapsed ? "p-2" : "p-3",
-          )}
-        >
+        <div className={groupSidebarScrollClass(isCollapsed)}>
           {!isCollapsed && (
             <div className="px-2 pb-2">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">

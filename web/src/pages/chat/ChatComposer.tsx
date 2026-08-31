@@ -61,6 +61,7 @@ import {
   readConsumedSuggestedUserMessageIds,
 } from "../../utils/suggestedUserMessage";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
+import { useComposerTextareaAutoResize } from "./useComposerTextareaAutoResize";
 import {
   buildComposerHistoryEntries,
   canStartComposerHistory,
@@ -220,8 +221,6 @@ export function ChatComposer({
   setComposerAgentMentionTokens,
   slashCommands,
 }: ChatComposerProps) {
-  const composerHeightRef = useRef(0);
-  const isUserInputRef = useRef(false);
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -247,22 +246,20 @@ export function ChatComposer({
 
   const [rootFontScale, setRootFontScale] = useState(readRootFontScale);
   const baseComposerHeight = (isSmallScreen ? 44 : 48) * rootFontScale;
-  const maxComposerHeight = 128 * rootFontScale;
+  const desktopComposerHeight = 64 * rootFontScale;
+  const minComposerHeight = isSmallScreen
+    ? Math.max(baseComposerHeight + 6, 52)
+    : desktopComposerHeight;
+  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : desktopComposerHeight;
   const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
 
-  const resizeComposer = useCallback(
-    (node: HTMLTextAreaElement) => {
-      node.style.height = "auto";
-      const nextHeight = Math.min(
-        Math.max(node.scrollHeight, baseComposerHeight),
-        maxComposerHeight,
-      );
-      node.style.height = `${nextHeight}px`;
-      composerHeightRef.current = nextHeight;
-    },
-    [baseComposerHeight, maxComposerHeight],
-  );
+  useComposerTextareaAutoResize({
+    composerRef,
+    value: composerText,
+    minHeight: minComposerHeight,
+    maxHeight: maxComposerHeight,
+  });
 
   const exitComposerHistory = useCallback(() => {
     composerHistoryRef.current = null;
@@ -318,44 +315,14 @@ export function ChatComposer({
     [composerRef, isSmallScreen],
   );
 
-  // Auto-adjust textarea height when composerText changes programmatically
-  // (e.g. mention selection). Skips when handleChange already handled resize.
   useEffect(() => {
-    if (isUserInputRef.current) {
-      isUserInputRef.current = false;
-      return;
-    }
-    const el = composerRef.current;
-    if (!el) return;
-
-    const rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        resizeComposer(el);
-      });
-    });
-
-    return () => cancelAnimationFrame(rafId);
-  }, [composerText, composerRef, resizeComposer]);
-
-  useEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-
-    let rafId = 0;
     const observer = new MutationObserver(() => {
       setRootFontScale(readRootFontScale());
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        resizeComposer(el);
-      });
     });
 
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
-    return () => {
-      cancelAnimationFrame(rafId);
-      observer.disconnect();
-    };
-  }, [composerRef, resizeComposer]);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!showModeMenu) return;
@@ -554,7 +521,6 @@ export function ChatComposer({
     if (showSuggestedUserMessage && val.trim()) {
       markSuggestedUserMessageConsumed();
     }
-    isUserInputRef.current = true;
     setComposerText(val);
     setComposerGroupMentionTokens((tokens) =>
       pruneComposerGroupMentionTokens({ text: val, tokens }),
@@ -562,12 +528,6 @@ export function ChatComposer({
     setComposerAgentMentionTokens((tokens) =>
       pruneComposerAgentMentionTokens({ text: val, tokens }),
     );
-    const target = e.target;
-    // Use requestAnimationFrame to avoid forced reflow during layout.
-    requestAnimationFrame(() => {
-      resizeComposer(target);
-    });
-
     const slashModeActive =
       val === val.trimStart() && val.startsWith("/") && !val.slice(1).includes(" ");
     // A user's `#<group>` token is a local-group agent delegation hint, not a
@@ -1142,7 +1102,7 @@ export function ChatComposer({
               <div
                 className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-none px-4 py-3 text-transparent"
                 style={{
-                  minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,
+                  minHeight: `${minComposerHeight}px`,
                   maxHeight: `${maxComposerHeight}px`,
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
@@ -1163,7 +1123,7 @@ export function ChatComposer({
                 showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
               )}
               style={{
-                minHeight: `${Math.max(baseComposerHeight + 6, 52)}px`,
+                minHeight: `${minComposerHeight}px`,
                 maxHeight: `${maxComposerHeight}px`,
                 fontSize: `${composerFontSize}px`,
                 lineHeight: `${composerLineHeight}px`,

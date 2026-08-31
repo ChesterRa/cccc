@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use crate::dispatch::dispatch;
 use crate::dispatch_concurrency::DispatchLocks;
 
-const MAX_REQUEST_BYTES: usize = 2_000_000;
+const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn spawn_connection<S>(
@@ -51,7 +51,7 @@ where
         if oversized {
             write_response(
                 stream.get_mut(),
-                &DaemonResponse::failure("request_too_large", "request exceeds 2 MB"),
+                &DaemonResponse::failure("request_too_large", "request exceeds 16 MiB"),
             )
             .await?;
             break;

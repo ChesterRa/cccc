@@ -50,8 +50,12 @@ pub fn cookie(token: &str, secure: bool) -> String {
         "SameSite=Lax"
     };
     let encoded = utf8_percent_encode(token, COOKIE_VALUE_ENCODE_SET);
-    format!("cccc_access_token={encoded}; Path=/; HttpOnly; {policy}")
+    format!(
+        "cccc_access_token={encoded}; Path=/; HttpOnly; Max-Age={WEB_SESSION_MAX_AGE_SECONDS}; {policy}"
+    )
 }
+
+const WEB_SESSION_MAX_AGE_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 const COOKIE_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b' ')
@@ -101,5 +105,8 @@ mod tests {
         let value = cookie("token;含 空格", false);
         assert!(value.starts_with("cccc_access_token=token%3B"));
         assert!(!value.contains("含 空格"));
+        assert!(value.contains("HttpOnly"));
+        assert!(value.contains("Max-Age=2592000"));
+        assert!(value.contains("SameSite=Lax"));
     }
 }

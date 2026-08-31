@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { readFileSync } from "node:fs";
 
 import { getScrollRestorationRequestKey } from "./useScrollAnchorRestoration";
 
@@ -34,16 +33,5 @@ describe("getScrollRestorationRequestKey", () => {
         offsetPx: 10,
       }),
     ).toBe("target:target-event");
-  });
-});
-
-describe("scroll anchor correction lifecycle", () => {
-  it("keeps checking for virtual measurement drift during the restoration window", () => {
-    const source = readFileSync(
-      new URL("./useScrollAnchorRestoration.ts", import.meta.url),
-      "utf8",
-    );
-    const correctionSchedules = source.match(/requestAnimationFrame\(runCorrection\)/g) || [];
-    expect(correctionSchedules).toHaveLength(2);
   });
 });

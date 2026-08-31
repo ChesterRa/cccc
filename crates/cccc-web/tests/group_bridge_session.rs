@@ -13,82 +13,19 @@ use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 
 #[path = "group_bridge_session/web_delivery.rs"]
 mod web_delivery;
 use web_delivery::complete_web_delivery_over_session;
 
-#[tokio::test]
-async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let group = GroupStore::new(home.clone())
-        .and_then(|store| store.create("target", ""))
-        .expect("group");
-    seed_foreman(&home, &group.group_id);
-    let signing = SigningKey::from_bytes(&[7; 32]);
-    let public = signing.verifying_key().to_bytes();
-    let peer_id = test_peer_id(&public);
-    integration_state::global_update(&home, "group_bridge", |value| {
-        *value = json!({
-            "registrations":[{"registration_id":"signed-registration","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"credential":"unused","status":"active"}],
-            "trusts":[{"trust_id":"signed-trust","registration_id":"signed-registration","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"status":"active","access_level":"messages"}]
-        });
-        Ok(())
-    }).expect("bridge state");
-    let daemon_home = home.clone();
-    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
-    wait_for_daemon(&home).await;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener");
-    let address = listener.local_addr().expect("address");
-    let web_home = home.clone();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, auth_support::authenticated_app(web_home)).await
-    });
-
-    let mut socket =
-        connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
-    assert_eq!(
-        next_socket_json(&mut socket).await,
-        json!({
-            "ok":true,
-            "type":"ready",
-            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
-        })
-    );
-    assert!(session_ready(&home, &group.group_id, &peer_id).await);
-    complete_client_initiated_delivery(&mut socket).await;
-    complete_web_delivery_over_session(&address, &home, &mut socket, &group.group_id).await;
-    complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "first").await;
-
-    socket.close(None).await.expect("close");
-    for _ in 0..50 {
-        if !session_ready(&home, &group.group_id, &peer_id).await {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(!session_ready(&home, &group.group_id, &peer_id).await);
-
-    let mut socket =
-        connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
-    assert_eq!(
-        next_socket_json(&mut socket).await,
-        json!({
-            "ok":true,
-            "type":"ready",
-            "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION
-        })
-    );
-    assert!(session_ready(&home, &group.group_id, &peer_id).await);
-    complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "second").await;
-    socket.close(None).await.expect("close second");
-    server.abort();
-    daemon.abort();
-}
+#[path = "group_bridge_session/bearer_downgrade.rs"]
+mod bearer_downgrade;
+#[path = "group_bridge_session/session_auth_support.rs"]
+mod session_auth_support;
+#[path = "group_bridge_session/v2_auth.rs"]
+mod v2_auth;
 
 async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
     socket
@@ -156,34 +93,6 @@ async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
     );
 }
 
-async fn connect_signed_socket(
-    address: &str,
-    signing: &SigningKey,
-    peer_id: &str,
-    group_id: &str,
-) -> TestSocket {
-    let (mut socket, _) =
-        tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws"))
-            .await
-            .expect("connect signed");
-    let material = json!({
-        "protocol":"/cccc/group_bridge/session-ws/1.0.0",
-        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
-        "remote_peer_id":peer_id,
-        "src_group_id":"g_sender",
-        "target_group_id":group_id
-    })
-    .to_string();
-    let signature = signing.sign(material.as_bytes());
-    socket.send(WsMessage::Text(json!({
-        "target_group_id":group_id,"src_group_id":"g_sender","remote_peer_id":peer_id,
-        "message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
-        "public_key":base64::engine::general_purpose::STANDARD.encode(signing.verifying_key().to_bytes()),
-        "signature":base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
-    }).to_string().into())).await.expect("hello");
-    socket
-}
-
 async fn session_ready(home: &HomeLayout, group_id: &str, peer_id: &str) -> bool {
     let response = DaemonClient::new(home.clone())
         .call(&daemon_request(
@@ -193,6 +102,16 @@ async fn session_ready(home: &HomeLayout, group_id: &str, peer_id: &str) -> bool
         .await
         .expect("ready call");
     response.ok && response.result["ready"] == true
+}
+
+async fn wait_for_session_ready(home: &HomeLayout, group_id: &str, peer_id: &str, expected: bool) {
+    for _ in 0..100 {
+        if session_ready(home, group_id, peer_id).await == expected {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("session readiness did not become {expected}");
 }
 
 async fn complete_daemon_delivery(
@@ -1069,11 +988,18 @@ async fn connect_bridge_socket(
         tokio::spawn(
             async move { axum::serve(listener, auth_support::authenticated_app(home)).await },
         );
-    let (socket, _) = tokio_tungstenite::connect_async(format!(
-        "ws://{address}/api/group-bridge/session/ws?token=ws-token&message_contract_version={GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}"
-    ))
-    .await
-    .expect("connect");
+    let mut request = format!(
+        "ws://{address}/api/group-bridge/session/ws?message_contract_version={GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION}"
+    )
+    .into_client_request()
+    .expect("websocket request");
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        "Bearer ws-token".parse().expect("authorization"),
+    );
+    let (socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("connect");
     (server, address.to_string(), socket)
 }
 
