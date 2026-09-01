@@ -10,6 +10,7 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use std::time::Duration;
 use uuid::Uuid;
 
 use super::group_bridge_command_sessions;
@@ -23,6 +24,8 @@ use crate::api::{ApiError, ApiResult, call, success};
 const MAX_REMOTE_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_REMOTE_SESSION_JSON_BYTES: usize =
     MAX_REMOTE_ATTACHMENT_BYTES.div_ceil(3) * 4 + 1024 * 1024;
+const SESSION_HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+const SESSION_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Default, Deserialize)]
 struct SessionQuery {
@@ -252,7 +255,10 @@ async fn session_socket(
         } else {
             None
         };
-        let Some(Ok(Message::Text(text))) = socket.next().await else {
+        let Ok(Some(Ok(Message::Text(text)))) =
+            tokio::time::timeout(SESSION_HELLO_TIMEOUT, socket.next()).await
+        else {
+            let _ = socket.send(Message::Close(None)).await;
             return;
         };
         let hello = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
@@ -289,16 +295,16 @@ async fn session_socket(
             json!({"ok":true,"type":"ready","message_contract_version":GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION})
         }
     };
+    if protocol == SessionProtocol::V2 && pin_v2(&state, &registration).is_none() {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     if !legacy
         && socket
             .send(Message::Text(ready.to_string().into()))
             .await
             .is_err()
     {
-        return;
-    }
-    if protocol == SessionProtocol::V2 && pin_v2(&state, &registration).is_none() {
-        let _ = socket.send(Message::Close(None)).await;
         return;
     }
     let route_args = json!({
@@ -314,6 +320,11 @@ async fn session_socket(
     let mut seen = super::group_bridge_seen::SeenEvents::default();
     let mut session_poll = tokio::time::interval(std::time::Duration::from_millis(25));
     session_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut session_refresh = tokio::time::interval_at(
+        tokio::time::Instant::now() + SESSION_REFRESH_INTERVAL,
+        SESSION_REFRESH_INTERVAL,
+    );
+    session_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut shutdown = state.shutdown.subscribe();
     'session: loop {
         tokio::select! {
@@ -370,7 +381,7 @@ async fn session_socket(
                     None => break,
                 }
             }
-            () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+            _ = session_refresh.tick() => {
                 let active = match reauthorize_session(&state, &registration, legacy, protocol) {
                     Ok(active) => active,
                     Err(error) => {

@@ -6,6 +6,7 @@ mod actors;
 mod assistants;
 mod blob_download;
 mod capabilities;
+mod codex_voice;
 mod context;
 mod diagnostics;
 mod file_response;
@@ -112,6 +113,7 @@ pub fn router() -> Router<AppState> {
         .merge(web_model_browser::routes())
         .merge(nomcp::routes())
         .merge(context::routes())
+        .merge(codex_voice::routes())
         .merge(diagnostics::routes())
         .merge(membership::routes())
         .merge(remote_access::routes())

@@ -42,7 +42,7 @@ fn structured_turn_preserves_inline_text_above_the_legacy_24k_limit() {
 
     assert!(coalesced.contains("large-start-"));
     assert!(coalesced.contains("-large-end"));
-    assert!(coalesced.contains("call cccc_message_reply"));
+    assert!(coalesced.contains("To reply, use cccc_message_reply"));
     assert!(!coalesced.contains("coalesced turn text truncated"));
 }
 

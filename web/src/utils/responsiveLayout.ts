@@ -5,8 +5,14 @@ export const MOBILE_APP_HEADER_SAFE_TOP_INSET_PX = MOBILE_APP_HEADER_HEIGHT_PX +
 export const MOBILE_FLOATING_CONTROLS_TOP_INSET_PX = MOBILE_APP_HEADER_HEIGHT_PX + 12;
 export const MOBILE_FLOATING_CONTROLS_MESSAGE_TOP_INSET_PX = MOBILE_APP_HEADER_HEIGHT_PX + 72;
 
-export function getMobileMessageTopInsetPx(hasFloatingControls: boolean): number {
-  return hasFloatingControls
-    ? MOBILE_FLOATING_CONTROLS_MESSAGE_TOP_INSET_PX
-    : MOBILE_APP_HEADER_SAFE_TOP_INSET_PX;
+export function getMobileMessageTopInsetPx(
+  hasFloatingControls: boolean,
+  appHeaderAlreadyReserved = false,
+): number {
+  const headerInset = appHeaderAlreadyReserved ? 0 : MOBILE_APP_HEADER_HEIGHT_PX;
+  return headerInset + (hasFloatingControls ? 72 : 8);
+}
+
+export function getMobileFloatingControlsTopInsetPx(appHeaderAlreadyReserved = false): number {
+  return (appHeaderAlreadyReserved ? 0 : MOBILE_APP_HEADER_HEIGHT_PX) + 12;
 }

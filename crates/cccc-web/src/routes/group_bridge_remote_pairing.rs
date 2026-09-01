@@ -93,7 +93,9 @@ async fn remote_request_status(
         return Err(ApiError::not_found("pairing request not found"));
     }
     let store = BridgeStore::new(&state.home);
-    store.repair_legacy_claim_windows().map_err(io_error)?;
+    store
+        .repair_legacy_claim_window(&query.request_id, &query.invite_id)
+        .map_err(io_error)?;
     let value = store.load().map_err(io_error)?;
     let request = items(&value, "requests")
         .iter()
@@ -111,7 +113,9 @@ async fn remote_claim(
     let invite_id = required(&body, "invite_id")?;
     let pairing_code = required(&body, "pairing_code")?;
     let store = BridgeStore::new(&state.home);
-    store.repair_legacy_claim_windows().map_err(io_error)?;
+    store
+        .repair_legacy_claim_window(&request_id, &invite_id)
+        .map_err(io_error)?;
     let result = store
         .update(|value| {
             let invite = value

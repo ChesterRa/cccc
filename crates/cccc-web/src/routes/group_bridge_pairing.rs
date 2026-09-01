@@ -125,6 +125,8 @@ async fn connection_info(
         &state.home,
         body["issuer_endpoint"].as_str().unwrap_or(""),
         crate::network::detect_lan_ipv4(),
+        &state.live_binding.host,
+        state.live_binding.port,
     )?;
     let identity = store.identity().map_err(io_error)?;
     Ok(success(json!({"payload":{

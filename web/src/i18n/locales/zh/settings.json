@@ -1384,7 +1384,7 @@
       "remoteNeedsAttention": "需要处理",
       "remoteNeedsAttentionHint": "远程访问已经配置，但仍被前置条件或绑定问题阻塞。",
       "open": "需要初始化",
-      "openHint": "当前还没有访问令牌。使用本机 bootstrap 验证码创建首个管理员令牌之前，受保护 API 会保持锁定。",
+      "openHint": "当前还没有访问令牌。本机 localhost 仍可免登录使用；启用局域网或公网访问前，请用本机 bootstrap 验证码创建首个管理员令牌。",
       "protected": "登录已生效",
       "protectedHint": "已配置 {{count}} 个访问令牌。没有令牌的浏览器即使在 localhost 上也必须先登录。"
     },

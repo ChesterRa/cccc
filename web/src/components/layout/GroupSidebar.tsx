@@ -18,6 +18,10 @@ import { resolveThemeAwareLogoUrl } from "../../utils/branding";
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { canReorderSidebarGroups, groupSidebarScrollClass } from "./groupSidebarModel";
+import { CodexVoiceSidebarDock } from "../../features/codexVoice/CodexVoiceShellSurfaces";
+import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
+import { SidebarResizeHandle } from "./SidebarResizeHandle";
+import { SidebarMobileOverlay } from "./SidebarMobileOverlay";
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
@@ -29,6 +33,7 @@ export interface GroupSidebarProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
+  codexVoice: CodexVoiceShellState;
   onSelectGroup: (groupId: string) => void;
   onWarmGroup?: (groupId: string) => void;
   onCreateGroup?: () => void;
@@ -50,6 +55,7 @@ export function GroupSidebar({
   isDark,
   isSmallScreen,
   readOnly,
+  codexVoice,
   onSelectGroup,
   onWarmGroup,
   onCreateGroup,
@@ -403,39 +409,27 @@ export function GroupSidebar({
           )}
         </div>
 
+        {!readOnly ? (
+          <CodexVoiceSidebarDock
+            voice={codexVoice}
+            selectedGroupId={selectedGroupId}
+            collapsed={isCollapsed}
+          />
+        ) : null}
+
         {!isCollapsed && (
-          <div
-            className="absolute inset-y-0 right-0 z-20 hidden w-4 translate-x-1/2 cursor-col-resize items-center justify-center md:flex group/resize-handle"
+          <SidebarResizeHandle
+            width={sidebarWidth}
+            min={SIDEBAR_MIN_WIDTH}
+            max={SIDEBAR_MAX_WIDTH}
+            resizing={isResizing}
+            label={t("resizeSidebar")}
             onPointerDown={handleResizeStart}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("resizeSidebar")}
-            aria-valuemin={SIDEBAR_MIN_WIDTH}
-            aria-valuemax={SIDEBAR_MAX_WIDTH}
-            aria-valuenow={sidebarWidth}
-          >
-            <div
-              className={classNames(
-                "h-14 w-[3px] rounded-full transition-all duration-300 ease-out-expo group-hover/resize-handle:w-[5px] group-hover/resize-handle:h-20",
-                isResizing
-                  ? "bg-[rgb(35,36,37)] w-[5px] h-20 shadow-[0_0_12px_rgba(17,24,39,0.25)] dark:bg-white dark:shadow-[0_0_12px_rgba(255,255,255,0.25)]"
-                  : "bg-black/10 dark:bg-white/10 group-hover/resize-handle:bg-black/30 dark:group-hover/resize-handle:bg-white/30 group-hover/resize-handle:shadow-[0_0_8px_rgba(0,0,0,0.05)] dark:group-hover/resize-handle:shadow-[0_0_8px_rgba(255,255,255,0.05)]",
-              )}
-            />
-          </div>
+          />
         )}
       </aside>
 
-      {/* Sidebar overlay for mobile */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-30 md:hidden glass-overlay animate-fade-in"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget) onClose();
-          }}
-          aria-hidden="true"
-        />
-      )}
+      <SidebarMobileOverlay open={isOpen} onClose={onClose} />
     </>
   );
 }

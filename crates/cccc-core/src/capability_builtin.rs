@@ -43,6 +43,11 @@ pub const WEB_MODEL_CORE_TOOL_NAMES: &[&str] = &[
     "cccc_git",
 ];
 
+/// Local user-authority MCP sessions need the Group control plane without
+/// first mutating capability state. Actor sessions keep the smaller core and
+/// opt into these operations through `pack:group-runtime`.
+pub const USER_CONTROL_TOOL_NAMES: &[&str] = &["cccc_group", "cccc_actor"];
+
 pub fn is_builtin_capability_pack_tool(name: &str) -> bool {
     all()
         .iter()

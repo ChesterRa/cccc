@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::ToolCallError;
 use crate::router::daemon;
 
 const RECOVERY_TOKEN_BUDGET: usize = 1_100;
@@ -16,7 +17,7 @@ pub(crate) async fn build(
     home: &HomeLayout,
     client: &DaemonClient,
     args: Map<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     let group_id = string_value(args.get("group_id"))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "group_id is required".to_owned())?;
@@ -591,7 +592,7 @@ async fn build_memory_recall_gate(
         }
         Ok(Err(error)) => {
             gate["status"] = Value::String("error".into());
-            gate["error"] = Value::String(error);
+            gate["error"] = Value::String(error.to_string());
         }
         Err(_) => {
             gate["status"] = Value::String("error".into());

@@ -106,6 +106,36 @@ async fn signed_session_hello_nonce_cannot_be_replayed() {
 }
 
 #[tokio::test]
+async fn v2_session_closes_when_the_client_never_answers_the_challenge() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server =
+        tokio::spawn(
+            async move { axum::serve(listener, auth_support::authenticated_app(home)).await },
+        );
+
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws/v2"))
+            .await
+            .expect("v2 connect");
+    assert_eq!(next_socket_json(&mut socket).await["type"], "challenge");
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(6), socket.next())
+        .await
+        .expect("server left an unauthenticated websocket open")
+        .transpose()
+        .expect("websocket read");
+    assert!(
+        terminal.is_none() || matches!(terminal, Some(WsMessage::Close(_))),
+        "unexpected frame after handshake timeout: {terminal:?}"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn v2_upgrade_accepts_old_client_then_pins_and_blocks_downgrade() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

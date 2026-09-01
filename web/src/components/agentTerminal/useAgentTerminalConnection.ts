@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Terminal } from "@xterm/xterm";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { fetchTerminalTail, withAuthToken } from "../../services/api";
-import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
+import { withAuthToken } from "../../services/api";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
 import {
   createTerminalOutputController,
@@ -21,6 +19,11 @@ import {
   shouldSuppressTerminalAttachErrorOutput,
   shouldRetryTerminalClose,
 } from "../../utils/terminalConnection";
+import {
+  bootstrapActorTerminalSignal,
+  resolveTerminalConnectionUrl,
+} from "./agentTerminalConnectionBootstrap";
+import type { AgentTerminalConnectionArgs } from "./agentTerminalConnectionTypes";
 
 export type AgentTerminalConnectionStatus =
   | "disconnected"
@@ -34,23 +37,7 @@ const RECONNECT_MAX_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const STARTUP_RACE_RECONNECT_DELAY_MS = 750;
 
-export function useAgentTerminalConnection(args: {
-  activated: boolean;
-  isRunning: boolean;
-  isHeadless: boolean;
-  groupId: string;
-  actorId: string;
-  actorRuntime: string | undefined;
-  canControl: boolean;
-  termEpoch: number;
-  reconnectTrigger: number;
-  terminalRef: RefObject<Terminal | null>;
-  fitBeforeAttach?: () => void;
-  onStatusChange?: () => void;
-  setTerminalSignal: (groupId: string, actorId: string, signal: TerminalSignal) => void;
-  clearTerminalSignal: (groupId: string, actorId: string) => void;
-  setReconnectTrigger: (updater: (value: number) => number) => void;
-}) {
+export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   const {
     activated,
     isRunning,
@@ -67,6 +54,8 @@ export function useAgentTerminalConnection(args: {
     setTerminalSignal,
     clearTerminalSignal,
     setReconnectTrigger,
+    buildCustomWebSocketUrl,
+    inspectActorTail = true,
   } = args;
 
   const [connectionStatus, setConnectionStatus] =
@@ -199,7 +188,7 @@ export function useAgentTerminalConnection(args: {
         if (disposed) return;
         const generation = ++connectionGeneration;
         const fittedTerm = terminalRef.current;
-        const wsUrl = buildTerminalWebSocketUrl({
+        const standardWsUrl = buildTerminalWebSocketUrl({
           protocol: window.location.protocol,
           host: window.location.host,
           groupId,
@@ -212,6 +201,7 @@ export function useAgentTerminalConnection(args: {
           cols: canControlRef.current ? fittedTerm?.cols : undefined,
           rows: canControlRef.current ? fittedTerm?.rows : undefined,
         });
+        const wsUrl = resolveTerminalConnectionUrl(standardWsUrl, buildCustomWebSocketUrl);
 
         const ws = new WebSocket(withAuthToken(wsUrl));
         let serverOwnsTerminalResponses = false;
@@ -238,24 +228,17 @@ export function useAgentTerminalConnection(args: {
             }
           }
 
-          void fetchTerminalTail(groupId, actorId, 4000, true, true)
-            .then((resp) => {
-              if (disposed || !resp.ok) return;
-              const tailText = String(resp.result?.text || "");
-              const signal = getTerminalSignalFromChunk("", tailText, runtimeRef.current);
-              terminalSignalBufferRef.current = signal.nextBuffer;
-              if (signal.signalKind) {
-                setTerminalSignalRef.current(groupId, actorId, {
-                  kind: signal.signalKind,
-                  updatedAt: Date.now(),
-                });
-                return;
-              }
-              clearTerminalSignalRef.current(groupId, actorId);
-            })
-            .catch(() => {
-              if (disposed) return;
+          if (inspectActorTail) {
+            bootstrapActorTerminalSignal({
+              groupId,
+              actorId,
+              actorRuntime: runtimeRef.current,
+              isDisposed: () => disposed,
+              setBuffer: (value) => (terminalSignalBufferRef.current = value),
+              setSignal: (signal) => setTerminalSignalRef.current(groupId, actorId, signal),
+              clearSignal: () => clearTerminalSignalRef.current(groupId, actorId),
             });
+          }
 
           if (canControlRef.current) {
             const term = terminalRef.current;
@@ -489,6 +472,8 @@ export function useAgentTerminalConnection(args: {
     isHeadless,
     isRunning,
     fitBeforeAttach,
+    buildCustomWebSocketUrl,
+    inspectActorTail,
     terminalConnectionKey,
     terminalRef,
   ]);

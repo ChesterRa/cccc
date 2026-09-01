@@ -69,7 +69,7 @@ async fn remote_pairing_accepts_legacy_direct_token_without_claim_route() {
 }
 
 #[tokio::test]
-async fn approved_legacy_claims_receive_one_persisted_upgrade_window() {
+async fn a_legacy_claim_receives_one_window_without_expiring_other_requests() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize home");
@@ -118,12 +118,11 @@ async fn approved_legacy_claims_receive_one_persisted_upgrade_window() {
     assert!(expiry > before);
     assert!(expiry <= before + chrono::Duration::minutes(11));
     assert!(migrated_request["claim_window_migrated_at"].is_string());
-    assert!(
-        requests
-            .iter()
-            .find(|request| request["request_id"] == "preq_other")
-            .is_some_and(|request| request["claim_expires_at"].is_string())
-    );
+    let other_request = requests
+        .iter()
+        .find(|request| request["request_id"] == "preq_other")
+        .expect("unrelated request");
+    assert!(other_request["claim_expires_at"].is_null());
     drop(migrated);
 
     let response = app

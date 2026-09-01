@@ -62,7 +62,7 @@ pub(super) fn deliver_with_timeout(
     };
     if event.kind == "chat.message" {
         payload.push_str("\n\n[cccc] ");
-        payload.push_str(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE);
+        payload.push_str(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE);
     }
     if !holder.running.load(Ordering::Acquire) {
         return false;

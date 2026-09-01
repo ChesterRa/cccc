@@ -107,12 +107,7 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
         .as_str()
         .expect("reply event id");
 
-    wait_for(
-        &client,
-        &group_id,
-        &format!("[event_id={reply_event_id} message_mode=send reply_to={first_event_id}]"),
-    )
-    .await;
+    wait_for(&client, &group_id, &format!("[event_id={reply_event_id}]")).await;
     let tail = daemon_call(
         &client,
         "terminal_tail",
@@ -122,14 +117,14 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
     let text = tail.result["text"].as_str().unwrap_or_default();
     assert!(text.contains("PREAMBLE:[CCCC] You are peer1"));
     assert!(text.contains(&format!(
-        "FIRST:[cccc] user → peer1 [event_id={first_event_id} message_mode=send]: one"
+        "FIRST:[cccc] user → peer1 [event_id={first_event_id}]: one"
     )));
     assert!(text.contains(&format!(
-        "SECOND:[cccc] user → peer1 [event_id={second_event_id} message_mode=send]: two"
+        "SECOND:[cccc] user → peer1 [event_id={second_event_id}]: two"
     )));
     assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
     assert!(text.contains(&format!(
-        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id} message_mode=send reply_to={first_event_id}]",
+        "FOURTH:[cccc] user → peer1 (reply:{}) [event_id={reply_event_id}]",
         &first_event_id[..8]
     )));
     assert!(text.contains("> \"one\": fix it"));

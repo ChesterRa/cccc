@@ -967,6 +967,10 @@ Operational notes:
    - packaged default: `crates/cccc-daemon/resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
+8. The authenticated local user control plane (`actor_id="user"`, `by="user"`) includes
+   `cccc_group` and `cccc_actor` in its baseline visible tools. Actor sessions do not inherit this
+   user-only baseline and continue to require `pack:group-runtime` or their existing role/profile
+   defaults.
 
 #### `capability_visibility`
 
@@ -3239,23 +3243,42 @@ it is not transport evidence. Per-recipient delivery truth is reported only by
 daemon-authored `runtime.delivery` events and the corresponding status queries.
 
 Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
-current ledger identity and canonical mode before the message body:
+current ledger identity before the message body:
 
 ```text
-[cccc] <sender> → <recipients> [event_id=<current_event_id> message_mode=<send|request_reply|mail> reply_to=<parent_event_id_if_present>]: <body>
+[cccc] <sender> → <recipients> [event_id=<current_event_id>]: <body>
+[cccc] <sender> → <recipients> (reply:<short_parent_id>) [event_id=<current_event_id>]: <body>
+[cccc] <sender> → <recipients> [event_id=<current_event_id> reply_required]: <body>
 ```
 
 `event_id` is the target an actor passes to `cccc_message_reply` when answering
-the delivered message. Optional `reply_to` is different: it identifies the
-parent that the current message already answers. Implementations MUST preserve
-that distinction and use the same metadata in PTY, headless, and Web Model
-delivery. The metadata MUST remain in the existing first header line so adding
-it does not turn a one-line message into multiple runtime input lines. It does
-not add or mutate ledger fields, and it is not required for `system.notify`.
+the delivered message. A reply MAY expose its parent as the existing short
+`(reply:<id>)` correlation hint; it MUST NOT repeat the full parent `reply_to`
+in the runtime envelope. The ledger remains authoritative for the full parent
+identity and canonical `message_mode`. Ordinary `send` and delivered `mail`
+messages need no mode label because the label does not change the receiver's
+next action. A `request_reply` message MUST instead add the actionable
+`reply_required` marker in the same metadata block. Implementations MUST use
+the same envelope in PTY, headless, and Web Model delivery. The metadata MUST
+remain in the existing first header line so adding it does not turn a one-line
+message into multiple runtime input lines. It does not add or mutate ledger
+fields, and it is not required for `system.notify`.
 Every delivered batch containing one or more `chat.message` events MUST append
-one concise instruction telling the actor to call `cccc_message_reply` with the
-target message's current `event_id`. The instruction MUST reserve
+one concise instruction telling the actor to call `cccc_message_reply` with its
+`event_id` argument set to the target message's current `event_id`. The
+instruction MUST reserve
 `cccc_message_send` for a new message and MUST appear only once per batch.
+
+Native MCP adapters MUST preserve a failed daemon operation's `error.code`,
+`error.message`, and non-empty `error.details` in the tool result's
+`structuredContent.error`; flattening the daemon error into text is not
+conforming. After a message operation has durable success evidence (an accepted
+event, successful queued/retrying/sent receipt, or equivalent file-send
+wrapper), its MCP result MUST add `post_message_nudge` with
+`kind="whole_situation_reconstruction"`. Partial failures, failed receipts, and
+embedded Group Bridge reply errors MUST NOT claim completion or add that field.
+This private result context is independent of the passive `mail_pending`
+summary, so a successful operation MAY carry both.
 
 #### `message_upload_preflight`
 
@@ -5108,8 +5131,9 @@ credential again within that window so transport failures are recoverable; the
 credential MUST NOT appear in status GET responses or after the window expires.
 An approved, unclaimed compatibility record that predates `claim_expires_at`
 MAY receive one persisted bounded migration window. Implementations MUST NOT
-extend that migrated deadline on later status or claim retries, and malformed or
-explicitly expired deadlines MUST remain invalid.
+start that window when a different record is accessed, MUST NOT extend the
+migrated deadline on later status or claim retries, and malformed or explicitly
+expired deadlines MUST remain invalid.
 
 The Rust v2 WebSocket endpoint MUST send a fresh signed per-connection challenge
 before the client hello. The challenge signature covers the v2 protocol id,
@@ -5125,7 +5149,11 @@ Rust clients try v2 first and fall back to v1 only when the endpoint is absent o
 requires legacy authentication. New servers MAY accept a legacy v1 hello for an
 active trust that has never completed v2; a successful v2 handshake MUST persist
 `min_session_protocol=2` on both peers, and every later v1 downgrade for that
-trust MUST fail before opening a v1 WebSocket.
+trust MUST fail before opening a v1 WebSocket. The server MUST durably persist
+its pin before sending the successful `ready`, and the client MUST durably
+persist its pin before publishing the session as connected. An upgraded socket
+that does not complete the signed hello within a bounded handshake timeout MUST
+be closed without opening a daemon session.
 WebSocket bearer credentials MUST use the Authorization header, never a query
 parameter.
 

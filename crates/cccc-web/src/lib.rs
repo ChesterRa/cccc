@@ -1,6 +1,8 @@
 mod api;
 mod auth;
 mod browser_surface;
+mod codex_voice;
+mod codex_voice_actor_results;
 mod im_runtime;
 mod ledger_event_hub;
 mod local_browser_auth;
@@ -86,6 +88,7 @@ pub(crate) struct AppState {
     client: DaemonClient,
     home: HomeLayout,
     browser_surfaces: Arc<browser_surface::BrowserSurfaces>,
+    codex_voice: Arc<codex_voice::CodexVoiceSessions>,
     notebooklm_auth: Arc<notebooklm_auth::AuthFlowManager>,
     ledger_events: ledger_event_hub::LedgerEventHub,
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
@@ -168,12 +171,14 @@ fn app_with_shutdown(
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
     im_workers.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
     let browser_surfaces = Arc::new(browser_surface::BrowserSurfaces::default());
+    let codex_voice = Arc::new(codex_voice::CodexVoiceSessions::new(ledger_events.clone()));
     let notebooklm_auth = Arc::new(notebooklm_auth::AuthFlowManager::default());
     spawn_notebooklm_auth_shutdown(
         Arc::clone(&notebooklm_auth),
         Arc::clone(&browser_surfaces),
         shutdown.subscribe(),
     );
+    spawn_codex_voice_shutdown(Arc::clone(&codex_voice), shutdown.subscribe());
     spawn_group_resource_reaper(
         home.clone(),
         Arc::clone(&im_workers),
@@ -184,6 +189,7 @@ fn app_with_shutdown(
         client: DaemonClient::new(home.clone()),
         home,
         browser_surfaces: Arc::clone(&browser_surfaces),
+        codex_voice,
         notebooklm_auth,
         ledger_events,
         im_workers: Arc::clone(&im_workers),
@@ -225,6 +231,21 @@ fn app_with_shutdown(
     }
     let app = app.with_state(state);
     (app, im_workers, browser_surfaces, app_state)
+}
+
+fn spawn_codex_voice_shutdown(
+    sessions: Arc<codex_voice::CodexVoiceSessions>,
+    mut shutdown: broadcast::Receiver<()>,
+) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let _ = shutdown.recv().await;
+        if let Err(error) = sessions.shutdown().await {
+            tracing::warn!(%error, "Codex Voice shutdown failed");
+        }
+    });
 }
 
 fn spawn_notebooklm_auth_shutdown(
@@ -415,7 +436,7 @@ where
     if let Some(path) = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&home)? {
         tracing::warn!(
             path = %path.display(),
-            "Web access is locked until the first administrator token is created with the local bootstrap code"
+            "Remote Web access remains locked until the first administrator token is created with the local bootstrap code; direct localhost access stays passwordless"
         );
     }
     let listener = tokio::net::TcpListener::bind((host, port)).await?;

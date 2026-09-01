@@ -20,20 +20,15 @@ fn renders_multiple_events_with_one_reply_instruction() {
 
     let rendered = render_batch(&[first, second]).expect("batch");
     assert!(rendered.starts_with("[cccc] 2 new messages:"));
-    assert!(
-        rendered.contains("[cccc] reviewer → lead [event_id=event-first message_mode=send]: first")
-    );
-    assert!(
-        rendered
-            .contains("[cccc] backend → lead [event_id=event-second message_mode=send]: second")
-    );
+    assert!(rendered.contains("[cccc] reviewer → lead [event_id=event-first]: first"));
+    assert!(rendered.contains("[cccc] backend → lead [event_id=event-second]: second"));
     assert_eq!(
         rendered
             .matches(reply_guidance::DELIVERY_REPLY_GUIDANCE)
             .count(),
         1
     );
-    assert!(!rendered.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
+    assert!(!rendered.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE));
 }
 
 #[test]
@@ -47,12 +42,9 @@ fn ordinary_delivery_restores_a_targeted_reply_instruction() {
         .expect("object");
 
     let rendered = render_batch(&[event]).expect("rendered");
-    assert!(
-        rendered
-            .starts_with("[cccc] user → codex-1 [event_id=event-plain message_mode=send]: 你好")
-    );
+    assert!(rendered.starts_with("[cccc] user → codex-1 [event_id=event-plain]: 你好"));
     assert!(rendered.ends_with(reply_guidance::DELIVERY_REPLY_GUIDANCE));
-    assert!(!rendered.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
+    assert!(!rendered.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE));
 }
 
 #[test]

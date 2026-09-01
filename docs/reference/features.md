@@ -28,7 +28,7 @@ cccc reply <event_id> "Reply text"
 # MCP
 cccc_message_send(text="Hello", to=["@foreman"], mode="send", insight="This direction may still be framed too narrowly.")
 cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
-cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
+cccc_message_reply(event_id="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
@@ -61,9 +61,14 @@ Agent consumes deferred Mail with cccc_inbox_read
 
 Delivery format:
 ```
-[cccc] user → peer-a: Please implement the login feature
-[cccc] user → peer-a (reply to evt_abc): OK, please continue
+[cccc] user → peer-a [event_id=<full event id>]: Please implement the login feature
+[cccc] user → peer-a (reply:evt_abc) [event_id=<full event id>]: OK, please continue
 ```
+
+The full current `event_id` is the value passed to
+`cccc_message_reply(event_id=...)`. The short `reply:` marker only correlates the
+message with its parent; ordinary delivery omits non-actionable storage mode and
+full parent metadata.
 
 ## IM Bridge
 

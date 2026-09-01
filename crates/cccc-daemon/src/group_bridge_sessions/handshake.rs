@@ -93,8 +93,8 @@ pub(super) async fn connect_tracking(
         if ready_peer != config.remote_peer_id {
             return Err("remote Group Bridge v2 ready identity does not match trust".into());
         }
-        effective_min_protocol.fetch_max(2, Ordering::Release);
         pin_v2(home, config)?;
+        effective_min_protocol.fetch_max(2, Ordering::Release);
     }
     Ok(socket)
 }

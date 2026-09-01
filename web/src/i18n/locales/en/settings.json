@@ -1389,7 +1389,7 @@
       "remoteNeedsAttention": "Needs attention",
       "remoteNeedsAttentionHint": "Remote access is configured but still blocked by a prerequisite or binding issue.",
       "open": "Setup required",
-      "openHint": "No Access Tokens exist yet. Protected APIs stay locked until you create the first administrator token with the local bootstrap code.",
+      "openHint": "No Access Tokens exist yet. Localhost stays passwordless; create the first administrator token with the local bootstrap code before enabling LAN or public access.",
       "protected": "Login active",
       "protectedHint": "{{count}} Access Token configured. Browsers without a token must sign in, even on localhost."
     },

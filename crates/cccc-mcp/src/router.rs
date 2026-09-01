@@ -3,15 +3,15 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
-use crate::RequestContext;
 use crate::mapping;
+use crate::{RequestContext, ToolCallError};
 
 pub async fn call(
     home: &HomeLayout,
     client: &DaemonClient,
     name: &str,
     arguments: Map<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     call_with_context(home, client, name, arguments, None, false).await
 }
 
@@ -22,7 +22,7 @@ pub(crate) async fn call_with_context(
     mut arguments: Map<String, Value>,
     context: Option<RequestContext<'_>>,
     via_capability_use: bool,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     add_runtime_context(home, &mut arguments);
     if let Some(context) = context {
         apply_request_context(&mut arguments, context);
@@ -88,7 +88,9 @@ pub(crate) async fn call_with_context(
             });
         }
         name if crate::remote_tools::is_remote_tool(name) => {
-            return crate::remote_tools::call(home, name, arguments).await;
+            return crate::remote_tools::call(home, name, arguments)
+                .await
+                .map_err(ToolCallError::from);
         }
         _ => {
             let (op, args) = match mapping::daemon_call(name, arguments.clone()) {
@@ -110,7 +112,7 @@ pub(crate) async fn call_with_context(
                         daemon(client, "capability_tool_call", dynamic).await?,
                     )));
                 }
-                Err(error) => return Err(error),
+                Err(error) => return Err(error.into()),
             };
             let mut result = daemon(client, &op, args).await?;
             crate::context_projection::apply(name, &mut result, &arguments);
@@ -223,7 +225,7 @@ async fn capability_use(
     client: &DaemonClient,
     arguments: Map<String, Value>,
     context: Option<RequestContext<'_>>,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     let group_id = arguments
         .get("group_id")
         .and_then(Value::as_str)
@@ -300,7 +302,8 @@ async fn capability_use(
             return Err(format!(
                 "capability_use_ambiguous_tool: tool maps to multiple capabilities: {tool_name} ({})",
                 candidates.join(", ")
-            ));
+            )
+            .into());
         }
         capability_id = candidates.pop().unwrap_or_default();
         if capability_id.is_empty() {
@@ -323,7 +326,8 @@ async fn capability_use(
                 return Err(format!(
                     "capability_use_ambiguous_tool: tool maps to multiple capabilities: {tool_name} ({})",
                     dynamic_candidates.join(", ")
-                ));
+                )
+                .into());
             }
             capability_id = dynamic_candidates.pop().unwrap_or_default();
         }
@@ -463,7 +467,7 @@ async fn capability_state(
     group_id: &str,
     actor_id: &str,
     by: &str,
-) -> Result<Map<String, Value>, String> {
+) -> Result<Map<String, Value>, ToolCallError> {
     daemon(
         client,
         "capability_state",
@@ -564,7 +568,10 @@ fn help_markdown() -> String {
     )
 }
 
-async fn group_help(client: &DaemonClient, arguments: Map<String, Value>) -> Result<Value, String> {
+async fn group_help(
+    client: &DaemonClient,
+    arguments: Map<String, Value>,
+) -> Result<Value, ToolCallError> {
     if !arguments.contains_key("group_id") {
         return Ok(tool_result(json!({
             "markdown": help_markdown(),
@@ -674,7 +681,10 @@ async fn postprocess_actor_notes(
     );
 }
 
-async fn project_info(client: &DaemonClient, args: Map<String, Value>) -> Result<Value, String> {
+async fn project_info(
+    client: &DaemonClient,
+    args: Map<String, Value>,
+) -> Result<Value, ToolCallError> {
     let group_id = args
         .get("group_id")
         .cloned()
@@ -711,7 +721,7 @@ pub(crate) async fn daemon(
     client: &DaemonClient,
     op: &str,
     args: Map<String, Value>,
-) -> Result<Map<String, Value>, String> {
+) -> Result<Map<String, Value>, ToolCallError> {
     let response = client
         .call(&DaemonRequest {
             v: 1,
@@ -719,13 +729,13 @@ pub(crate) async fn daemon(
             args,
         })
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ToolCallError::from(error.to_string()))?;
     if response.ok {
         return Ok(response.result);
     }
     Err(response.error.map_or_else(
-        || "daemon operation failed".into(),
-        |error| format!("{}: {}", error.code, error.message),
+        || ToolCallError::from("daemon operation failed"),
+        ToolCallError::from_daemon,
     ))
 }
 
@@ -791,11 +801,86 @@ fn with_post_message_context(
         .get_mut("structuredContent")
         .and_then(Value::as_object_mut)
     {
+        if message_operation_succeeded(payload) {
+            payload.insert(
+                "post_message_nudge".into(),
+                json!({
+                    "kind":"whole_situation_reconstruction",
+                    "message":cccc_core::peer_insight::POST_MESSAGE_NUDGE
+                }),
+            );
+        }
         insert_mail_pending_context(home, payload, group_id, actor_id);
         let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
         result["content"] = json!([{"type":"text","text":text}]);
     }
     result
+}
+
+fn message_operation_succeeded(payload: &Map<String, Value>) -> bool {
+    message_operation_outcome(payload) == Some(true)
+}
+
+fn message_operation_outcome(payload: &Map<String, Value>) -> Option<bool> {
+    if payload.get("error").is_some_and(Value::is_object)
+        || payload.get("partial_failure").and_then(Value::as_bool) == Some(true)
+        || payload.get("message_sent").and_then(Value::as_bool) == Some(false)
+    {
+        return Some(false);
+    }
+    if let Some(reply) = payload.get("group_bridge_reply").and_then(Value::as_object) {
+        if reply.get("error").is_some_and(Value::is_object)
+            || receipt_status(reply).is_some_and(|status| !delivery_receipt_succeeded(status))
+        {
+            return Some(false);
+        }
+    }
+    if let Some(status) = receipt_status(payload) {
+        return Some(delivery_receipt_succeeded(status));
+    }
+    if let Some(remote) = payload.get("remote_send").and_then(Value::as_object) {
+        if remote.get("error").is_some_and(Value::is_object) {
+            return Some(false);
+        }
+        if let Some(status) = receipt_status(remote) {
+            return Some(delivery_receipt_succeeded(status));
+        }
+    }
+    for key in ["result", "structuredContent"] {
+        if let Some(outcome) = payload
+            .get(key)
+            .and_then(Value::as_object)
+            .and_then(message_operation_outcome)
+        {
+            return Some(outcome);
+        }
+    }
+    if payload.get("event").is_some_and(Value::is_object)
+        || (payload.get("src_event").is_some_and(Value::is_object)
+            && payload.get("dst_event").is_some_and(Value::is_object))
+        || payload.get("message_sent").and_then(Value::as_bool) == Some(true)
+        || payload.get("sent").and_then(Value::as_bool) == Some(true)
+        || payload
+            .get("event_id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Some(true);
+    }
+    None
+}
+
+fn receipt_status(payload: &Map<String, Value>) -> Option<&str> {
+    payload
+        .get("receipt")
+        .and_then(Value::as_object)
+        .and_then(|receipt| receipt.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+}
+
+fn delivery_receipt_succeeded(status: &str) -> bool {
+    matches!(status, "queued" | "retrying" | "sent")
 }
 
 fn insert_mail_pending_context(
@@ -839,7 +924,8 @@ fn is_repo_tool(name: &str) -> bool {
 mod tests {
     use super::{
         apply_actor_context, apply_request_context, help_markdown, is_message_operation,
-        is_task_mail_boundary, postprocess_task_result, prepare_task_arguments,
+        is_task_mail_boundary, message_operation_succeeded, postprocess_task_result,
+        prepare_task_arguments, with_post_message_context,
     };
     use crate::RequestContext;
     use serde_json::json;
@@ -994,17 +1080,92 @@ mod tests {
         daemon_task.abort();
     }
 
+    #[tokio::test]
+    async fn user_control_plane_routes_an_explicit_cross_group_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("groups");
+        let focus = store.create("focus", "").expect("focus group");
+        let target = store.create("target", "").expect("target group");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client = cccc_client::DaemonClient::new(home.clone());
+        for _ in 0..100 {
+            if client
+                .call(&cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "group_list".into(),
+                    args: serde_json::Map::new(),
+                })
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        let listed = super::call(
+            &home,
+            &client,
+            "cccc_group",
+            json!({"action":"list","by":"user"})
+                .as_object()
+                .cloned()
+                .expect("list arguments"),
+        )
+        .await
+        .expect("list groups");
+        let listed_ids = listed["structuredContent"]["groups"]
+            .as_array()
+            .expect("listed groups")
+            .iter()
+            .filter_map(|group| group["group_id"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(listed_ids.contains(focus.group_id.as_str()));
+        assert!(listed_ids.contains(target.group_id.as_str()));
+
+        let mut arguments = json!({
+            "action":"info",
+            "group_id":target.group_id,
+            "actor_id":"user",
+            "by":"intruder"
+        })
+        .as_object()
+        .cloned()
+        .expect("arguments");
+        apply_actor_context(&mut arguments, Some("user"));
+        let result = super::call(&home, &client, "cccc_group", arguments)
+            .await
+            .expect("explicit cross-group query");
+
+        assert_eq!(
+            result["structuredContent"]["group"]["group_id"],
+            target.group_id
+        );
+        assert_ne!(
+            result["structuredContent"]["group"]["group_id"],
+            focus.group_id
+        );
+        daemon_task.abort();
+    }
+
     #[test]
-    fn runtime_actor_is_authoritative_but_does_not_replace_target_actor() {
-        let mut args = json!({"actor_id":"target-peer","by":"user"})
-            .as_object()
-            .cloned()
-            .expect("args");
+    fn runtime_actor_is_authoritative_without_replacing_explicit_targets() {
+        let mut args = json!({
+            "group_id":"g_explicit",
+            "actor_id":"target-peer",
+            "by":"intruder"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
 
-        apply_actor_context(&mut args, Some("backend"));
+        apply_actor_context(&mut args, Some("user"));
 
+        assert_eq!(args["group_id"], "g_explicit");
         assert_eq!(args["actor_id"], "target-peer");
-        assert_eq!(args["by"], "backend");
+        assert_eq!(args["by"], "user");
     }
 
     #[test]
@@ -1101,6 +1262,85 @@ mod tests {
                 .cloned()
                 .expect("read args")
         ));
+    }
+
+    #[test]
+    fn successful_message_results_restore_the_reconstruction_nudge() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        for payload in [
+            json!({"event":{"id":"event-1"}}),
+            json!({"receipt":{"status":"retrying"}}),
+            json!({"sent":true,"result":{"event":{"id":"event-2"}}}),
+            json!({"result":{"structuredContent":{"receipt":{"status":"sent"}}}}),
+        ] {
+            assert!(message_operation_succeeded(
+                payload.as_object().expect("payload")
+            ));
+            let result = with_post_message_context(&home, super::tool_result(payload), "", "");
+            assert_eq!(
+                result["structuredContent"]["post_message_nudge"]["kind"],
+                "whole_situation_reconstruction"
+            );
+            assert_eq!(
+                result["structuredContent"]["post_message_nudge"]["message"],
+                cccc_core::peer_insight::POST_MESSAGE_NUDGE
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_message_results_do_not_claim_completion() {
+        for payload in [
+            json!({}),
+            json!({"partial_failure":true,"event":{"id":"event-1"}}),
+            json!({"message_sent":false}),
+            json!({"receipt":{"status":"failed"}}),
+            json!({"sent":true,"result":{"partial_failure":true}}),
+            json!({"event":{"id":"event-remote"},"remote_send":{"error":{"code":"failed"}}}),
+            json!({"event":{"id":"event-2"},"group_bridge_reply":{"error":{"code":"failed"}}}),
+            json!({"event":{"id":"event-3"},"group_bridge_reply":{"receipt":{"status":"unknown"}}}),
+        ] {
+            assert!(!message_operation_succeeded(
+                payload.as_object().expect("payload")
+            ));
+        }
+    }
+
+    #[test]
+    fn reconstruction_and_pending_mail_context_remain_independent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("message context", "").expect("group");
+        cccc_core::actors::add(&mut group, cccc_contracts::Actor::new("peer1")).expect("add peer");
+        store.save(&group).expect("save group");
+        let mut mail = cccc_contracts::Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = json!({"to":["peer1"],"text":"later","message_mode":"mail"})
+            .as_object()
+            .cloned()
+            .expect("mail data");
+        cccc_core::ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &mail)
+            .expect("append mail");
+
+        let success = with_post_message_context(
+            &home,
+            super::tool_result(json!({"event":{"id":"event-1"}})),
+            &group.group_id,
+            "peer1",
+        );
+        assert!(success["structuredContent"]["post_message_nudge"].is_object());
+        assert_eq!(success["structuredContent"]["mail_pending"]["count"], 1);
+
+        let incomplete = with_post_message_context(
+            &home,
+            super::tool_result(json!({"partial_failure":true})),
+            &group.group_id,
+            "peer1",
+        );
+        assert!(incomplete["structuredContent"]["post_message_nudge"].is_null());
+        assert_eq!(incomplete["structuredContent"]["mail_pending"]["count"], 1);
     }
 
     #[test]

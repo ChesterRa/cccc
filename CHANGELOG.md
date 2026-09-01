@@ -7,8 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- **Agent messages are concise without losing their reply target.** Runtime delivery keeps the full actionable event ID, removes repeated default mode and parent metadata, and gives one correct reply-tool reminder per batch. Successful MCP message operations again return the perspective-reset context, while policy failures retain structured recovery details.
 - **Direct localhost Web use is passwordless again without creating a hidden administrator token.** Requests served on a loopback browser origin receive an in-memory local administrator principal, while public Host/Origin and non-local proxy sources remain behind the explicit Access Token boundary.
-- **Group Bridge v2 now proves the complete live handshake and pins both peers.** A fresh client nonce and server-signed ready transcript prevent challenge/ready replay, while the native client persists `min_session_protocol=2` and refuses later v1 fallback. Approved, unclaimed records from before the claim-window upgrade receive one persisted ten-minute compatibility window instead of becoming permanently unclaimable.
+- **Group Bridge v2 now proves the complete live handshake and pins both peers.** A fresh client nonce and server-signed ready transcript prevent challenge/ready replay, while the native client persists `min_session_protocol=2` and refuses later v1 fallback. Each approved, unclaimed record from before the claim-window upgrade receives one persisted ten-minute compatibility window when that record is first accessed instead of becoming permanently unclaimable.
 - **Mobile Web sessions survive normal tab reclamation.** Access-token login establishes a rolling 30-day HttpOnly cookie and clears the temporary browser bearer after verification, avoiding repeated token entry without placing credentials in URLs or local storage.
 
 ## [0.4.36] — 2026-08-30

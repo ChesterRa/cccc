@@ -81,10 +81,13 @@ invalidate existing trusts. Native clients try the challenge-response
 endpoint only when the remote server does not expose v2. Native servers keep v1
 available for 0.4.35 clients until that trust completes one v2 handshake; the
 successful handshake persists `min_session_protocol=2`, after which v1 downgrade
-attempts are rejected. Approved, unclaimed requests created before claim expiry
-was persisted receive one bounded ten-minute compatibility window on their first
-status or claim request after upgrade; that migrated deadline is stored and never
-extended by later retries. The daemon reuses the established Ed25519 identity, keeps
+attempts are rejected. Each side persists that pin before it exposes the session
+as ready, and the server closes clients that leave the signed hello unfinished.
+Each approved, unclaimed request created before claim expiry was persisted
+receives one bounded ten-minute compatibility window on that record's first
+status or claim request after upgrade; accessing another request does not start
+its window, and a migrated deadline is never extended by later retries. The
+daemon reuses the established Ed25519 identity, keeps
 the selected WebSocket alive with heartbeats and bounded exponential backoff,
 and prefers the live route before authenticated HTTP and authorized remote MCP
 fallback.

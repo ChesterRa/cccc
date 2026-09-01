@@ -1389,7 +1389,7 @@
       "remoteNeedsAttention": "要対応",
       "remoteNeedsAttentionHint": "リモートアクセスは設定済みですが、前提条件またはバインド問題でまだ止まっています。",
       "open": "初期設定が必要",
-      "openHint": "アクセストークンはまだありません。ローカル bootstrap コードで最初の管理者トークンを作成するまで、保護 API はロックされたままです。",
+      "openHint": "アクセストークンはまだありません。localhost はパスワードなしで利用できます。LAN または公開アクセスを有効にする前に、ローカル bootstrap コードで最初の管理者トークンを作成してください。",
       "protected": "ログイン有効",
       "protectedHint": "{{count}} 個のアクセストークンが設定されています。localhost でも、トークンを持たないブラウザはサインインが必要です。"
     },

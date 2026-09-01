@@ -8,6 +8,14 @@ fn home_with_settings(settings: &str) -> (tempfile::TempDir, HomeLayout) {
     (temp, home)
 }
 
+fn endpoint(
+    home: &HomeLayout,
+    submitted: &str,
+    lan_ip: Option<Ipv4Addr>,
+) -> Result<String, ApiError> {
+    preferred_issuer_endpoint(home, submitted, lan_ip, "127.0.0.1", 8848)
+}
+
 #[test]
 fn submitted_public_https_origin_wins_atomically() {
     let (_temp, home) = home_with_settings(
@@ -15,7 +23,7 @@ fn submitted_public_https_origin_wins_atomically() {
     );
 
     assert_eq!(
-        preferred_issuer_endpoint(
+        endpoint(
             &home,
             "https://cccc.tae.vera-mesh.com/pairing?source=ui#invite",
             Some(Ipv4Addr::new(172, 30, 92, 65)),
@@ -30,7 +38,7 @@ fn submitted_nonstandard_port_is_preserved() {
     let (_temp, home) = home_with_settings("remote_access:\n  web_host: 0.0.0.0\n  web_port: 80\n");
 
     assert_eq!(
-        preferred_issuer_endpoint(&home, "https://bridge.example:9443/ui", None).expect("endpoint"),
+        endpoint(&home, "https://bridge.example:9443/ui", None).expect("endpoint"),
         "https://bridge.example:9443"
     );
 }
@@ -42,14 +50,13 @@ fn empty_submission_falls_back_to_public_url() {
     );
 
     assert_eq!(
-        preferred_issuer_endpoint(&home, "  ", Some(Ipv4Addr::new(172, 30, 92, 65)))
-            .expect("endpoint"),
+        endpoint(&home, "  ", Some(Ipv4Addr::new(172, 30, 92, 65))).expect("endpoint"),
         "https://fallback.example:9443"
     );
 }
 
 #[test]
-fn localhost_submission_uses_lan_compatibility_boundary() {
+fn localhost_submission_does_not_inherit_a_stale_saved_port() {
     let (_temp, home) =
         home_with_settings("remote_access:\n  web_host: 0.0.0.0\n  web_port: 9000\n");
 
@@ -58,9 +65,11 @@ fn localhost_submission_uses_lan_compatibility_boundary() {
             &home,
             "https://localhost:5555",
             Some(Ipv4Addr::new(192, 168, 1, 20)),
+            "0.0.0.0",
+            5555,
         )
         .expect("endpoint"),
-        "https://192.168.1.20:9000"
+        "https://192.168.1.20:5555"
     );
 }
 
@@ -69,7 +78,7 @@ fn localhost_submission_stays_when_binding_is_loopback() {
     let (_temp, home) = home_with_settings("remote_access: {}\n");
 
     assert_eq!(
-        preferred_issuer_endpoint(
+        endpoint(
             &home,
             "http://localhost:5555",
             Some(Ipv4Addr::new(192, 168, 1, 20)),
@@ -84,8 +93,7 @@ fn ipv6_origin_remains_well_formed() {
     let (_temp, home) = home_with_settings("remote_access: {}\n");
 
     assert_eq!(
-        preferred_issuer_endpoint(&home, "https://[2001:db8::1]:9443/path", None)
-            .expect("endpoint"),
+        endpoint(&home, "https://[2001:db8::1]:9443/path", None).expect("endpoint"),
         "https://[2001:db8::1]:9443"
     );
 }
@@ -100,9 +108,9 @@ fn invalid_or_missing_origins_are_rejected() {
         "https://user@bridge.example",
         "https://",
     ] {
-        assert!(preferred_issuer_endpoint(&home, endpoint, None).is_err());
+        assert!(self::endpoint(&home, endpoint, None).is_err());
     }
-    assert!(preferred_issuer_endpoint(&home, "", None).is_err());
+    assert!(endpoint(&home, "", None).is_err());
 }
 
 #[test]
@@ -110,11 +118,10 @@ fn tailscale_cgnat_http_endpoint_is_allowed_as_a_private_overlay() {
     let (_temp, home) = home_with_settings("remote_access: {}\n");
 
     assert_eq!(
-        preferred_issuer_endpoint(&home, "http://100.100.10.20:8848", None)
-            .expect("tailnet endpoint"),
+        endpoint(&home, "http://100.100.10.20:8848", None).expect("tailnet endpoint"),
         "http://100.100.10.20:8848"
     );
-    assert!(preferred_issuer_endpoint(&home, "http://100.128.0.1:8848", None).is_err());
+    assert!(endpoint(&home, "http://100.128.0.1:8848", None).is_err());
 }
 
 #[test]

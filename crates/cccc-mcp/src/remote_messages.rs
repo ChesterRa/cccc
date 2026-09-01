@@ -1,8 +1,12 @@
 use cccc_client::DaemonClient;
+#[cfg(test)]
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
+
+use crate::ToolCallError;
+use crate::router::daemon;
 
 pub(crate) fn apply_cross_group_default(args: &mut Map<String, Value>) -> Result<(), String> {
     let cross_group = match (text(args, "group_id"), text(args, "dst_group_id")) {
@@ -42,12 +46,12 @@ pub(crate) async fn try_send(
     home: &HomeLayout,
     client: &DaemonClient,
     args: Map<String, Value>,
-) -> Option<Result<Value, String>> {
+) -> Option<Result<Value, ToolCallError>> {
     let source_group_id = text(&args, "group_id")?.to_owned();
     if let Some(destination_group_id) = text(&args, "dst_group_id") {
         let state = match cccc_core::group_bridge_legacy::load(home) {
             Ok(state) => state,
-            Err(error) => return Some(Err(error.to_string())),
+            Err(error) => return Some(Err(error.to_string().into())),
         };
         let trust = find_trust(&state, &source_group_id, destination_group_id, None)?;
         return Some(send_new(home, client, args, trust).await);
@@ -63,12 +67,10 @@ async fn send_new(
     client: &DaemonClient,
     mut args: Map<String, Value>,
     trust: &Value,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     let access = trust["remote_access_level"].as_str().unwrap_or("messages");
     if !matches!(access, "messages" | "read" | "full") {
-        return Err(format!(
-            "remote Group Bridge access={access} does not allow messages"
-        ));
+        return Err(format!("remote Group Bridge access={access} does not allow messages").into());
     }
     let source_group_id = required_text(&args, "group_id")?.to_owned();
     let registration_id = ["registration_id", "trust_id"]
@@ -162,10 +164,12 @@ fn normalize_author_and_recipients(args: &mut Map<String, Value>) {
     }
 }
 
-fn validate_peer_insight(args: &mut Map<String, Value>) -> Result<(), String> {
-    let recipients = args.get("to").and_then(Value::as_array).ok_or(
-        "remote messages require explicit `to`; use \"@foreman\", \"@all\", or a target actor",
-    )?;
+fn validate_peer_insight(args: &mut Map<String, Value>) -> Result<(), ToolCallError> {
+    let recipients = args.get("to").and_then(Value::as_array).ok_or_else(|| {
+        ToolCallError::from(
+            "remote messages require explicit `to`; use \"@foreman\", \"@all\", or a target actor",
+        )
+    })?;
     if !recipients
         .iter()
         .filter_map(Value::as_str)
@@ -181,7 +185,7 @@ fn validate_peer_insight(args: &mut Map<String, Value>) -> Result<(), String> {
         .filter_map(Value::as_str)
         .any(|recipient| !matches!(recipient.trim(), "" | "user" | "@user"));
     let insight = cccc_core::peer_insight::normalize(args.get("insight"))
-        .map_err(|error| format!("invalid insight: {error}"))?;
+        .map_err(|error| ToolCallError::new("invalid_insight", error, Map::new()))?;
     match insight {
         Some(insight) => {
             args.insert("insight".into(), Value::String(insight));
@@ -189,9 +193,17 @@ fn validate_peer_insight(args: &mut Map<String, Value>) -> Result<(), String> {
         None => {
             args.remove("insight");
             if peer_facing {
-                return Err(format!(
-                    "peer_insight_required: Not sent: this peer-facing message is missing `insight`. {}",
-                    *cccc_core::peer_insight::PEER_INSIGHT_REQUIRED_ACTION
+                return Err(ToolCallError::new(
+                    "peer_insight_required",
+                    "Not sent: this peer-facing message is missing `insight`.",
+                    json!({
+                        "delivery_state":"not_sent",
+                        "new_side_effects":false,
+                        "recommended_action":cccc_core::peer_insight::PEER_INSIGHT_REQUIRED_ACTION.as_str(),
+                    })
+                    .as_object()
+                    .cloned()
+                    .expect("peer insight details"),
                 ));
             }
         }
@@ -252,29 +264,6 @@ fn remote_message_mode(args: &Map<String, Value>) -> Result<&str, String> {
         return Err("mode must be mail, send, or request_reply".into());
     }
     Ok(mode)
-}
-
-async fn daemon(
-    client: &DaemonClient,
-    op: &str,
-    args: Map<String, Value>,
-) -> Result<Map<String, Value>, String> {
-    let response = client
-        .call(&DaemonRequest {
-            v: 1,
-            op: op.into(),
-            args,
-        })
-        .await
-        .map_err(|error| error.to_string())?;
-    if response.ok {
-        Ok(response.result)
-    } else {
-        Err(response.error.map_or_else(
-            || "daemon operation failed".into(),
-            |error| format!("{}: {}", error.code, error.message),
-        ))
-    }
 }
 
 fn trusts(state: &Value) -> &[Value] {
@@ -1052,10 +1041,15 @@ mod tests {
             .as_object()
             .cloned()
             .expect("args");
+        let error = validate_peer_insight(&mut missing_insight).expect_err("missing insight");
+        assert!(error.contains("peer_insight_required"));
+        let payload = error.payload();
+        assert_eq!(payload["error"]["details"]["delivery_state"], "not_sent");
+        assert_eq!(payload["error"]["details"]["new_side_effects"], false);
         assert!(
-            validate_peer_insight(&mut missing_insight)
-                .expect_err("missing insight")
-                .contains("peer_insight_required")
+            payload["error"]["details"]["recommended_action"]
+                .as_str()
+                .is_some_and(|value| value.contains("Do not mechanically add"))
         );
     }
 

@@ -552,7 +552,12 @@ async fn drain(
                         json!({"type":"tool_response","id":event_id,"ok":true,"result":result})
                     }
                     Err(error) => {
-                        json!({"type":"tool_response","id":event_id,"ok":false,"error":error})
+                        json!({
+                            "type":"tool_response",
+                            "id":event_id,
+                            "ok":false,
+                            "error":error.error_value(),
+                        })
                     }
                 };
                 send_command(&mut cell_io.stdin, &payload).await?;
@@ -615,14 +620,14 @@ async fn call_nested(
     owner: &Owner,
     name: &str,
     input: Option<&Value>,
-) -> Result<Value, String> {
+) -> Result<Value, crate::ToolCallError> {
     if matches!(name, "cccc_code_exec" | "cccc_code_wait") {
-        return Err(format!("{name} cannot be invoked from code mode"));
+        return Err(format!("{name} cannot be invoked from code mode").into());
     }
     let mut args = match input {
         None | Some(Value::Null) => Map::new(),
         Some(Value::Object(object)) => object.clone(),
-        Some(_) => return Err(format!("{name} expects a JSON object argument")),
+        Some(_) => return Err(format!("{name} expects a JSON object argument").into()),
     };
     args.insert("group_id".into(), Value::String(owner.group_id.clone()));
     args.insert("by".into(), Value::String(owner.actor_id.clone()));

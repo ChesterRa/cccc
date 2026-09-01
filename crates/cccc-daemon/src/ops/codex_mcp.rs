@@ -193,15 +193,16 @@ pub(crate) fn configure_mcp_only(
     actor_id: &str,
     command: &mut Vec<String>,
     env: &mut BTreeMap<String, String>,
-) {
+) -> bool {
     let Some(executable) = configure_actor_cli(env) else {
-        return;
+        return false;
     };
     append_mcp_overrides(command, home.root(), &executable, group_id, actor_id);
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
     );
+    true
 }
 
 pub(crate) fn hook_command_for(executable: &Path, action: &str) -> String {

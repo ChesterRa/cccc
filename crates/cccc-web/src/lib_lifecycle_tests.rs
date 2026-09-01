@@ -33,6 +33,43 @@ fn remote_listener_requires_an_administrator_access_token() {
         .expect("admin token");
     assert!(ensure_listener_auth(&home, "0.0.0.0:8848".parse().expect("address")).is_ok());
 }
+
+#[tokio::test]
+async fn scoped_tokens_cannot_access_global_codex_voice_authority() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let group = cccc_core::GroupStore::new(home.clone())
+        .expect("groups")
+        .create("Voice scope", "")
+        .expect("group");
+    let token = AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("scoped", vec![group.group_id.clone()], false, None)
+        .expect("scoped token");
+    let router = app_with_mode(home, WebMode::Normal);
+
+    for request in [
+        Request::builder()
+            .uri("/api/v1/codex_voice/calls/active")
+            .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+            .body(Body::empty())
+            .expect("active request"),
+        Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/groups/{}/codex_voice/calls",
+                group.group_id
+            ))
+            .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+            .body(Body::empty())
+            .expect("start request"),
+    ] {
+        let response = router.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}
+
 #[tokio::test]
 async fn shutdown_closes_active_sse_response() {
     let temp = tempfile::tempdir().expect("tempdir");

@@ -85,10 +85,11 @@ fn is_mutating_get(path: &str) -> bool {
             | "/api/v1/fs/scope_root"
             | "/api/group-bridge/session/ws"
             | "/api/group-bridge/session/ws/v2"
-    ) || path
-        .strip_prefix("/nomcp/s/")
-        .and_then(|rest| rest.strip_suffix("/send"))
-        .is_some_and(|session_id| !session_id.is_empty() && !session_id.contains('/'))
+    ) || (path.contains("/codex_voice/calls/") && path.ends_with("/events"))
+        || path
+            .strip_prefix("/nomcp/s/")
+            .and_then(|rest| rest.strip_suffix("/send"))
+            .is_some_and(|session_id| !session_id.is_empty() && !session_id.contains('/'))
 }
 
 fn read_only_response() -> Response {
@@ -137,6 +138,7 @@ mod tests {
             "/nomcp/s/session-1/send",
             "/api/group-bridge/session/ws",
             "/api/group-bridge/session/ws/v2",
+            "/api/v1/groups/g_one/codex_voice/calls/generation/events",
         ] {
             assert!(!is_read_only_safe(&Method::GET, path), "{path}");
         }

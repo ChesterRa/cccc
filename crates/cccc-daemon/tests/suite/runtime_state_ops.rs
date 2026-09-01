@@ -55,15 +55,16 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         .as_str()
         .expect("coalesced text");
     assert!(coalesced.contains("[cccc] user → headless1 [event_id="));
-    assert!(coalesced.contains("message_mode=send]: first"));
-    assert!(coalesced.contains("message_mode=send]: second"));
-    assert!(!coalesced.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE));
+    assert!(coalesced.contains("]: first"));
+    assert!(coalesced.contains("]: second"));
+    assert!(!coalesced.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE));
     assert!(
         turn.result["turn"]["system_prompt"]
             .as_str()
             .is_some_and(|prompt| {
                 prompt.contains("headless1")
-                    && prompt.contains(cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE)
+                    && prompt.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE)
+                    && prompt.contains(cccc_core::system_prompt::EXISTING_MESSAGE_REPLY_GUIDANCE)
             })
     );
     let event_ids = turn.result["turn"]["event_ids"]
@@ -72,7 +73,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         .expect("event ids");
     for event_id in &event_ids {
         let event_id = event_id.as_str().expect("event id");
-        assert!(coalesced.contains(&format!("[event_id={event_id} message_mode=send]")));
+        assert!(coalesced.contains(&format!("[event_id={event_id}]")));
     }
     let turn_id = turn.result["turn"]["turn_id"]
         .as_str()

@@ -817,6 +817,13 @@ fn visible_tools(
             .map(|value| (*value).to_owned())
             .collect::<BTreeSet<_>>()
     };
+    if actor_id == "user" {
+        names.extend(
+            cccc_core::USER_CONTROL_TOOL_NAMES
+                .iter()
+                .map(|value| (*value).to_owned()),
+        );
+    }
     if !web_model {
         for capability in catalog.iter().filter(|item| enabled.contains(&item.id)) {
             names.extend(capability.tool_names.iter().cloned());

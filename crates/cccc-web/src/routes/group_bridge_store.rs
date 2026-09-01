@@ -55,7 +55,7 @@ impl<'a> BridgeStore<'a> {
         Ok(())
     }
 
-    pub fn repair_legacy_claim_windows(&self) -> io::Result<()> {
+    pub fn repair_legacy_claim_window(&self, request_id: &str, invite_id: &str) -> io::Result<()> {
         let mut raw = cccc_core::group_bridge_legacy::load(self.home)?;
         if !raw.is_object() {
             raw = json!({});
@@ -63,11 +63,11 @@ impl<'a> BridgeStore<'a> {
         let state = raw.as_object_mut().expect("bridge store initialized");
         ensure_sections(state);
         let now = Utc::now();
-        if !migrate_legacy_claim_windows(state, now) {
+        if !migrate_legacy_claim_window(state, request_id, invite_id, now) {
             return Ok(());
         }
         self.update(|state| {
-            migrate_legacy_claim_windows(state, now);
+            migrate_legacy_claim_window(state, request_id, invite_id, now);
             Ok(())
         })
     }
@@ -176,10 +176,16 @@ fn normalize_legacy_active_outbounds(state: &mut Map<String, Value>) -> bool {
     changed
 }
 
-fn migrate_legacy_claim_windows(state: &mut Map<String, Value>, now: DateTime<Utc>) -> bool {
-    let mut changed = false;
-    for request in items_mut(state, "requests") {
-        changed |= super::group_bridge_pairing_policy::migrate_legacy_claim_window(request, now);
-    }
-    changed
+fn migrate_legacy_claim_window(
+    state: &mut Map<String, Value>,
+    request_id: &str,
+    invite_id: &str,
+    now: DateTime<Utc>,
+) -> bool {
+    items_mut(state, "requests")
+        .iter_mut()
+        .find(|request| request["request_id"] == request_id && request["invite_id"] == invite_id)
+        .is_some_and(|request| {
+            super::group_bridge_pairing_policy::migrate_legacy_claim_window(request, now)
+        })
 }

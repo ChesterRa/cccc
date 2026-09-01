@@ -962,7 +962,7 @@ fn headless_turn_uses_complete_envelope_and_control_semantics() {
     let (rendered, control) = render_turn(&message).expect("turn");
     assert!(control.is_empty());
     for expected in [
-        "REPLY REQUIRED",
+        "reply_required",
         "(reply:source-e)",
         "quoted",
         "spec.md",

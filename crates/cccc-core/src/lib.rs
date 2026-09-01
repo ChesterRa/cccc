@@ -58,7 +58,9 @@ pub mod web_login_grants;
 pub mod web_model_connectors;
 pub mod web_runtime_proof;
 
-pub use capability_builtin::{WEB_MODEL_CORE_TOOL_NAMES, is_builtin_capability_pack_tool};
+pub use capability_builtin::{
+    USER_CONTROL_TOOL_NAMES, WEB_MODEL_CORE_TOOL_NAMES, is_builtin_capability_pack_tool,
+};
 pub use group::{GroupDoc, GroupStore, Scope};
 pub use home::{HomeError, HomeLayout};
 pub use registry::{GroupMeta, Registry};

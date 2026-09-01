@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getMobileFloatingControlsTopInsetPx,
   getMobileMessageTopInsetPx,
   MOBILE_APP_HEADER_HEIGHT_PX,
   MOBILE_APP_HEADER_SAFE_TOP_INSET_PX,
@@ -23,5 +24,12 @@ describe("responsiveLayout", () => {
     expect(MOBILE_FLOATING_CONTROLS_MESSAGE_TOP_INSET_PX).toBe(128);
     expect(getMobileMessageTopInsetPx(false)).toBe(64);
     expect(getMobileMessageTopInsetPx(true)).toBe(128);
+    expect(getMobileFloatingControlsTopInsetPx()).toBe(68);
+  });
+
+  it("does not reserve the app header twice below the active voice bar", () => {
+    expect(getMobileMessageTopInsetPx(false, true)).toBe(8);
+    expect(getMobileMessageTopInsetPx(true, true)).toBe(72);
+    expect(getMobileFloatingControlsTopInsetPx(true)).toBe(12);
   });
 });

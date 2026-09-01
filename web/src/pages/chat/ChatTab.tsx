@@ -33,8 +33,8 @@ import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
 import { clampPresentationSplitWidth } from "../../utils/presentationSplitLayout";
 import {
+  getMobileFloatingControlsTopInsetPx,
   getMobileMessageTopInsetPx,
-  MOBILE_FLOATING_CONTROLS_TOP_INSET_PX,
 } from "../../utils/responsiveLayout";
 import {
   buildWebModelDeliveryStatusByEventId,
@@ -114,6 +114,7 @@ export interface ChatTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
+  mobileAppHeaderReserved?: boolean;
 
   // Core data (must be passed from App)
   selectedGroupId: string;
@@ -163,6 +164,7 @@ export function ChatTab({
   isDark,
   isSmallScreen,
   readOnly,
+  mobileAppHeaderReserved = false,
   selectedGroupId,
   selectedGroupRunning,
   selectedGroupActorsHydrating,
@@ -672,7 +674,7 @@ export function ChatTab({
   const showMobileFloatingControls =
     isSmallScreen && (showMessageFilters || showMobilePresentationAction);
   const mobileMessageTopInsetPx = isSmallScreen
-    ? getMobileMessageTopInsetPx(showMobileFloatingControls)
+    ? getMobileMessageTopInsetPx(showMobileFloatingControls, mobileAppHeaderReserved)
     : 0;
 
   return (
@@ -758,7 +760,7 @@ export function ChatTab({
               {showMobileFloatingControls && (
                 <div
                   className="pointer-events-none absolute inset-x-0 z-30 px-3"
-                  style={{ top: MOBILE_FLOATING_CONTROLS_TOP_INSET_PX }}
+                  style={{ top: getMobileFloatingControlsTopInsetPx(mobileAppHeaderReserved) }}
                 >
                   <div className="flex items-center gap-3">
                     {showMessageFilters ? (

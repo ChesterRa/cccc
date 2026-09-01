@@ -172,7 +172,7 @@ For a browser-delivered batch, the injected prompt already contains the messages
 
 ### Prompt and Help Layering
 
-The browser-injected prompt should stay small. Each embedded message uses the same actor-facing format as normal peers, including its current `event_id`, canonical `message_mode`, and a distinct parent `reply_to` when present. `event_id` is the value to pass to `cccc_message_reply` when answering that message. The first injected batch in a bound or newly auto-bound ChatGPT conversation also carries the normal actor system prompt plus a short Web transport note; later batches do not repeat that seed. Durable collaboration rules belong in the shared `cccc_help` path, including the Web Model Transport runtime note appended for `runtime=web_model` actors.
+The browser-injected prompt should stay small. Each embedded message uses the same actor-facing format as normal peers: sender, audience, full current `event_id`, an optional short parent correlation marker, and `reply_required` only when it changes the required action. It does not repeat the canonical storage mode or full parent id. `event_id` is the value to pass to `cccc_message_reply` when answering that message. The first injected batch in a bound or newly auto-bound ChatGPT conversation also carries the normal actor system prompt plus a short Web transport note; later batches do not repeat that seed. Durable collaboration rules belong in the shared `cccc_help` path, including the Web Model Transport runtime note appended for `runtime=web_model` actors.
 
 Use this split to avoid duplicate or drifting instructions:
 
@@ -233,7 +233,7 @@ curl -s "$CONNECTOR_URL" \
 - `web_model` does not spawn a local PTY or local headless model process.
 - Connector secrets are one-time visible; CCCC stores only a hash.
 - Connector activity is best-effort diagnostic state. `Settings > Global > ChatGPT Web Model` shows the latest remote method/tool, wait status, delivery or turn id, error, and last-seen time after ChatGPT calls the connector.
-- Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; the native server includes a machine-readable payload in `structuredContent` and the text content.
+- Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; the native server includes the daemon's machine-readable `code`, `message`, and non-empty `details` in `structuredContent.error` as well as the text content.
 - Only tools whose declared operation is read-only are annotated with `readOnlyHint: true`. Mixed-action and mutating tools remain unannotated so a client is not encouraged to bypass approval for a write path.
 - The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Direct calls remain limited to that advertised surface; hidden built-in capability-pack tools must pass through `cccc_capability_use` and its actor-role checks.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.

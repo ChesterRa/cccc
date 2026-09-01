@@ -20,3 +20,20 @@ pub use dispatch::dispatch as handle_request;
 pub use paths::DaemonPaths;
 pub use process::{DetachedDaemon, StartOutcome};
 pub use server::run;
+
+/// Opt-in, compatibility-pinned Codex Realtime Voice building blocks.
+///
+/// This API is intentionally experimental. It owns no ledger schema or roster
+/// identity and may change when the upstream private Voice protocol changes.
+pub mod experimental_codex_voice {
+    pub use crate::ops::codex_voice_analyst::{LaunchConfig, TurnReceipt};
+    pub use crate::ops::codex_voice_controller::{
+        CodexVoiceAnalyst, CodexVoiceCall, DEFAULT_REALTIME_VOICE, FinalProjection,
+        ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig, create_realtime_answer,
+        parse_provider_delegation, realtime_greeting_commands, realtime_notice_commands,
+        validate_realtime_voice,
+    };
+    pub use crate::ops::codex_voice_lifecycle::{
+        AnalystLifecycleEvent, AnalystTurnOrigin, TrackedWork,
+    };
+}

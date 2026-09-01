@@ -924,6 +924,9 @@ async fn revoked_websocket_polling_closes_before_forwarding_events() {
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("remote target", "").expect("group");
     seed_active_bridge(&home, &group.group_id);
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
     let (server, address, mut socket) = connect_bridge_socket(home.clone()).await;
     assert_eq!(next_socket_json(&mut socket).await["type"], "ready");
 
@@ -935,6 +938,7 @@ async fn revoked_websocket_polling_closes_before_forwarding_events() {
     assert_eq!(error["type"], "error", "{error}");
     expect_socket_closed(&mut socket).await;
     server.abort();
+    daemon.abort();
 }
 
 type TestSocket =

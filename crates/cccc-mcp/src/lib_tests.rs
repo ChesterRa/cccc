@@ -106,6 +106,161 @@ async fn protocol_and_tool_execution_errors_use_distinct_envelopes() {
     assert!(execution_error.get("error").is_none());
 }
 
+#[tokio::test]
+async fn daemon_error_details_survive_the_native_mcp_boundary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("error details", "").expect("group");
+    cccc_core::actors::add(&mut group, cccc_contracts::Actor::new("peer1")).expect("add peer");
+    store.save(&group).expect("save group");
+
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    for _ in 0..100 {
+        if client
+            .call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "group_list".into(),
+                args: serde_json::Map::new(),
+            })
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let response = crate::handle_request(
+        &home,
+        &json!({
+            "jsonrpc":"2.0",
+            "id":7,
+            "method":"tools/call",
+            "params":{
+                "name":"cccc_message_send",
+                "arguments":{
+                    "group_id":group.group_id,
+                    "by":"user",
+                    "to":["peer1"],
+                    "text":"review this",
+                    "mode":"send"
+                }
+            }
+        }),
+    )
+    .await;
+    let error = &response["result"]["structuredContent"]["error"];
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(error["code"], "peer_insight_required");
+    assert_eq!(error["details"]["delivery_state"], "not_sent");
+    assert_eq!(error["details"]["new_side_effects"], false);
+    assert!(
+        error["details"]["recommended_action"]
+            .as_str()
+            .is_some_and(|value| value.contains("Do not mechanically add"))
+    );
+
+    let success = crate::handle_request(
+        &home,
+        &json!({
+            "jsonrpc":"2.0",
+            "id":8,
+            "method":"tools/call",
+            "params":{
+                "name":"cccc_message_send",
+                "arguments":{
+                    "group_id":group.group_id,
+                    "by":"user",
+                    "to":["peer1"],
+                    "text":"review this later",
+                    "insight":"The decision boundary matters more than the local wording.",
+                    "mode":"mail"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_ne!(success["result"]["isError"], true);
+    assert_eq!(
+        success["result"]["structuredContent"]["post_message_nudge"]["kind"],
+        "whole_situation_reconstruction"
+    );
+    daemon_task.abort();
+}
+
+#[tokio::test]
+async fn daemon_error_details_survive_nested_code_mode_calls() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("code mode error details", "").expect("group");
+    let root = temp.path().join("repo");
+    std::fs::create_dir_all(&root).expect("root");
+    group = cccc_core::group_scope::attach(
+        &store,
+        &group.group_id,
+        cccc_core::Scope {
+            scope_key: "s_code_mode".into(),
+            url: root.to_string_lossy().into_owned(),
+            label: "Code mode".into(),
+            git_remote: String::new(),
+        },
+    )
+    .expect("attach root");
+    let mut web = cccc_contracts::Actor::new("web1");
+    web.runtime = cccc_contracts::ActorRuntime::WebModel;
+    cccc_core::actors::add(&mut group, web).expect("add Web Model");
+    cccc_core::actors::add(&mut group, cccc_contracts::Actor::new("peer1")).expect("add peer");
+    store.save(&group).expect("save group");
+
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    for _ in 0..100 {
+        if client
+            .call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "group_list".into(),
+                args: serde_json::Map::new(),
+            })
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let response = crate::handle_request(
+        &home,
+        &json!({
+            "jsonrpc":"2.0",
+            "id":9,
+            "method":"tools/call",
+            "params":{
+                "name":"cccc_code_exec",
+                "arguments":{
+                    "group_id":group.group_id,
+                    "by":"web1",
+                    "source":"try { await tools.cccc_message_send({to:['peer1'], text:'review this', mode:'send'}); } catch (error) { text(JSON.stringify({code:error.code, delivery_state:error.details?.delivery_state, new_side_effects:error.details?.new_side_effects})); }"
+                }
+            }
+        }),
+    )
+    .await;
+    let output = response["result"]["structuredContent"]["output"]
+        .as_str()
+        .expect("code mode output");
+    let error: serde_json::Value = serde_json::from_str(output).expect("structured nested error");
+    assert_eq!(error["code"], "peer_insight_required");
+    assert_eq!(error["delivery_state"], "not_sent");
+    assert_eq!(error["new_side_effects"], false);
+    daemon_task.abort();
+}
+
 #[test]
 fn unscoped_fallback_remains_the_fifteen_core_tools() {
     let names = crate::core_tools(crate::tools::catalog())
@@ -134,6 +289,26 @@ fn unscoped_fallback_remains_the_fifteen_core_tools() {
     .collect::<BTreeSet<_>>();
 
     assert_eq!(names, expected);
+}
+
+#[tokio::test]
+async fn user_fallback_includes_the_minimal_group_control_plane() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.create("user tools", ""))
+        .expect("group");
+    let client = cccc_client::DaemonClient::new(home.clone());
+
+    let names = crate::visible_tools_for_actor(&home, &client, &group.group_id, "user")
+        .await
+        .into_iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+
+    assert!(names.contains("cccc_group"));
+    assert!(names.contains("cccc_actor"));
+    assert!(!names.contains("cccc_runtime_list"));
 }
 
 #[tokio::test]

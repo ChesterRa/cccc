@@ -9,6 +9,8 @@ pub(super) fn preferred_issuer_endpoint(
     home: &HomeLayout,
     submitted: &str,
     lan_ip: Option<Ipv4Addr>,
+    live_host: &str,
+    live_port: u16,
 ) -> Result<String, ApiError> {
     let submitted = submitted.trim();
     if submitted.is_empty() {
@@ -24,7 +26,7 @@ pub(super) fn preferred_issuer_endpoint(
         return Ok(submitted);
     }
 
-    local_advertised_endpoint(home, &submitted, lan_ip)
+    local_advertised_endpoint(&submitted, lan_ip, live_host, live_port)
 }
 
 pub(super) fn requester_endpoint(home: &HomeLayout) -> String {
@@ -44,25 +46,15 @@ pub(super) fn requester_endpoint(home: &HomeLayout) -> String {
 }
 
 fn local_advertised_endpoint(
-    home: &HomeLayout,
     submitted: &str,
     lan_ip: Option<Ipv4Addr>,
+    live_host: &str,
+    live_port: u16,
 ) -> Result<String, ApiError> {
-    let settings =
-        cccc_core::settings::load(home).map_err(|error| ApiError::bad(error.to_string()))?;
-    let config = &settings.remote_access;
-    let bind_host = config
-        .get("web_host")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .or_else(|| nonempty_env("CCCC_WEB_HOST"))
-        .unwrap_or_else(|| "127.0.0.1".to_owned());
-    let advertised_host = match bind_host.as_str() {
+    let advertised_host = match live_host.trim() {
         "0.0.0.0" | "::" | "[::]" => lan_ip.map(|ip| ip.to_string()),
         "127.0.0.1" | "localhost" | "::1" | "[::1]" => None,
-        _ => Some(bind_host),
+        host => Some(host.to_owned()),
     };
     let Some(advertised_host) = advertised_host else {
         return Ok(submitted.to_owned());
@@ -70,15 +62,8 @@ fn local_advertised_endpoint(
 
     let submitted_url = reqwest::Url::parse(submitted)
         .map_err(|_| ApiError::bad("issuer_endpoint must be an http(s) URL"))?;
-    let port = config
-        .get("web_port")
-        .and_then(Value::as_u64)
-        .and_then(|value| u16::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .or_else(|| nonempty_env("CCCC_WEB_PORT").and_then(|value| value.parse::<u16>().ok()))
-        .unwrap_or(8848);
     normalize_endpoint(&format!(
-        "{}://{}:{port}",
+        "{}://{}:{live_port}",
         submitted_url.scheme(),
         bracket_ipv6(&advertised_host)
     ))

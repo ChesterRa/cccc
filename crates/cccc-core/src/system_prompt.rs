@@ -7,7 +7,9 @@ use crate::{GroupDoc, GroupStore, HomeLayout};
 
 mod voice_secretary;
 
-pub const MESSAGE_DELIVERY_GUIDANCE: &str = "New messages: use mode=\"mail\" unless delayed awareness would cost more than interrupting the recipient; then use mode=\"send\". Use mode=\"request_reply\" only when a concrete reply is also required. Do not send routine noise; use cccc_message_reply for an existing event. Mail is agent-only. Never mix user and agent recipients in one message; send separate messages when both audiences need different actions.";
+pub const NEW_MESSAGE_MODE_GUIDANCE: &str = "New messages: use mode=\"mail\" unless delayed awareness would cost more than interrupting the recipient; then use mode=\"send\". Use mode=\"request_reply\" only when a concrete reply is also required. Do not send routine noise. Mail is agent-only. Never mix user and agent recipients in one message; send separate messages when both audiences need different actions.";
+pub const EXISTING_MESSAGE_REPLY_GUIDANCE: &str =
+    "For an existing event, use cccc_message_reply instead of cccc_message_send.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -114,8 +116,9 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
         String::new(),
         "---".into(),
         "CCCC Protocol:".into(),
-        format!("- {MESSAGE_DELIVERY_GUIDANCE}"),
-        "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs."
+        format!("- {NEW_MESSAGE_MODE_GUIDANCE}"),
+        format!("- {EXISTING_MESSAGE_REPLY_GUIDANCE}"),
+        "- Before replying, verify `event_id`; before any message, verify `to` and make the audience explicit when it differs."
             .into(),
         "- Terminal output is not delivered.".into(),
     ]);
@@ -185,7 +188,9 @@ fn enum_name(value: impl serde::Serialize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MESSAGE_DELIVERY_GUIDANCE, render, render_session};
+    use super::{
+        EXISTING_MESSAGE_REPLY_GUIDANCE, NEW_MESSAGE_MODE_GUIDANCE, render, render_session,
+    };
     use crate::GroupStore;
     use crate::home::HomeLayout;
     use cccc_contracts::Actor;
@@ -202,8 +207,9 @@ mod tests {
         assert!(prompt.contains("You are peer1"));
         assert!(prompt.contains(&group.group_id));
         assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
-        assert_eq!(prompt.matches(MESSAGE_DELIVERY_GUIDANCE).count(), 1);
-        assert!(prompt.contains("verify `reply_to` and `to`"));
+        assert_eq!(prompt.matches(NEW_MESSAGE_MODE_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(EXISTING_MESSAGE_REPLY_GUIDANCE).count(), 1);
+        assert!(prompt.contains("Before replying, verify `event_id`"));
         assert!(prompt.contains("Terminal output is not delivered."));
         assert!(!prompt.contains("Current Context Snapshot"));
     }

@@ -2,6 +2,7 @@ import type { LucideIcon, LucideProps } from "lucide-react";
 import {
   AppWindow,
   ArrowDown,
+  AudioLines,
   Bookmark,
   Bell,
   Camera,
@@ -22,6 +23,7 @@ import {
   Folder,
   Globe,
   GripVertical,
+  Headphones,
   House,
   Image,
   Inbox,
@@ -30,6 +32,7 @@ import {
   Maximize2,
   Menu,
   Mic,
+  MicOff,
   MessageSquare,
   MessageSquareQuote,
   MessageSquareText,
@@ -55,6 +58,7 @@ import {
   TextCursorInput,
   Trash2,
   Download,
+  Volume2,
   X,
 } from "lucide-react";
 
@@ -139,7 +143,11 @@ export const TrashIcon = createIcon(Trash2);
 export const ChevronDownIcon = createIcon(ChevronDown);
 export const SendIcon = createIcon(Send);
 export const AttachmentIcon = createIcon(Paperclip);
+export const VoiceWaveformIcon = createIcon(AudioLines, 1.8);
 export const MicrophoneIcon = createIcon(Mic);
+export const MicrophoneOffIcon = createIcon(MicOff);
+export const VolumeIcon = createIcon(Volume2);
+export const HeadphonesIcon = createIcon(Headphones, 1.8);
 export const CameraIcon = createIcon(Camera, 1.9);
 export const ReplyIcon = createIcon(Reply);
 export const PowerIcon = createIcon(Power);

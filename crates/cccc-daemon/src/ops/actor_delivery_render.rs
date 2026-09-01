@@ -91,12 +91,6 @@ pub fn render_batch_with_mail_context(
 
 fn protocol_lines(event: &Event) -> Vec<String> {
     let mut lines = Vec::new();
-    if text(event, "message_mode") == "request_reply" {
-        lines.push(format!(
-            "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_reply.",
-            event.id
-        ));
-    }
     let source_group = text(event, "src_group_id");
     let source_event = text(event, "src_event_id");
     if !source_group.is_empty() && !source_event.is_empty() {
@@ -164,10 +158,6 @@ fn format_envelope(event: &Event, body: &str) -> String {
         targets.join(", ")
     };
     let reply_to = text(event, "reply_to");
-    let message_mode = match text(event, "message_mode") {
-        value if !value.is_empty() => value,
-        _ => "send".to_owned(),
-    };
     let reply = if reply_to.is_empty() {
         String::new()
     } else {
@@ -182,15 +172,12 @@ fn format_envelope(event: &Event, body: &str) -> String {
     let metadata = if event.id.trim().is_empty() {
         String::new()
     } else {
-        let parent = if reply_to.is_empty() {
-            String::new()
+        let reply_required = if text(event, "message_mode") == "request_reply" {
+            " reply_required"
         } else {
-            format!(" reply_to={reply_to}")
+            ""
         };
-        format!(
-            " [event_id={} message_mode={message_mode}{parent}]",
-            event.id
-        )
+        format!(" [event_id={}{reply_required}]", event.id)
     };
     if body.contains(['\r', '\n']) {
         format!("[cccc] {sender} → {targets}{reply}{metadata}{quote}:\n{body}")
@@ -269,14 +256,8 @@ mod tests {
         .cloned()
         .expect("object");
         let rendered = render_batch(&[event]).expect("render");
-        assert!(
-            rendered.starts_with(
-                "[cccc] user → peer1 [event_id=event-123 message_mode=request_reply]:\n"
-            )
-        );
-        assert!(
-            rendered.contains("REPLY REQUIRED (event_id=event-123): reply via cccc_message_reply.")
-        );
+        assert!(rendered.starts_with("[cccc] user → peer1 [event_id=event-123 reply_required]:\n"));
+        assert!(!rendered.contains("REPLY REQUIRED (event_id="));
         assert!(rendered.contains("task_ref: Fix send"));
         assert!(rendered.contains("cccc_file(action=\"read\", group_id=\"g_test\""));
         assert!(rendered.contains("screen.png (42 bytes) [state/blobs/abc]"));

@@ -4,6 +4,7 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
+use crate::ToolCallError;
 use crate::router::{daemon, tool_result};
 
 pub async fn call(
@@ -11,7 +12,7 @@ pub async fn call(
     client: &DaemonClient,
     name: &str,
     args: Map<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     let root = scope(client, &args).await?;
     let payload = match name {
         "cccc_repo" | "cccc_repo_edit" => crate::repo::call(&root, action(&args), &args)?,
@@ -23,12 +24,12 @@ pub async fn call(
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
         "cccc_file" => file(home, client, &root, &args).await?,
-        _ => return Err(format!("unsupported local tool: {name}")),
+        _ => return Err(format!("unsupported local tool: {name}").into()),
     };
     Ok(tool_result(payload))
 }
 
-async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathBuf, String> {
+async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathBuf, ToolCallError> {
     let group_id = args
         .get("group_id")
         .cloned()
@@ -305,7 +306,7 @@ async fn file(
     client: &DaemonClient,
     root: &Path,
     args: &Map<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, ToolCallError> {
     let action = action(args);
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
     let path = if raw.starts_with("state/blobs/") {

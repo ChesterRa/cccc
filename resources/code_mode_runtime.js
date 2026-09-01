@@ -49,16 +49,16 @@ function buildBridge() {
       }),
     },
     toolCall: {
-      value: hardenFunction((rawName, payloadJson, resolveJson, rejectMessage) => {
+      value: hardenFunction((rawName, payloadJson, resolveJson, rejectErrorJson) => {
         const id = `tool-${nextToolId++}`;
         let payload = null;
         try {
           payload = JSON.parse(String(payloadJson || "null"));
         } catch (err) {
-          rejectMessage(String(err && err.message || err));
+          rejectErrorJson(jsonString(String(err && err.message || err)));
           return;
         }
-        pending.set(id, { resolveJson, rejectMessage });
+        pending.set(id, { resolveJson, rejectErrorJson });
         send({ type: "tool_call", id, name: String(rawName || ""), input: payload });
       }),
     },
@@ -179,7 +179,26 @@ function buildContext(toolsMetadata, initialStoredValues, workLoops, helpAliases
                 reject(err);
               }
             },
-            (message) => reject(new Error(String(message || "tool call failed")))
+            (errorJson) => {
+              let payload = null;
+              try {
+                payload = JSON.parse(String(errorJson || "null"));
+              } catch (_err) {
+                payload = String(errorJson || "tool call failed");
+              }
+              if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+                reject(new Error(String(payload || "tool call failed")));
+                return;
+              }
+              const code = String(payload.code || "");
+              const message = String(payload.message || "tool call failed");
+              const error = new Error(code ? code + ": " + message : message);
+              if (code) error.code = code;
+              if (payload.details && typeof payload.details === "object") {
+                error.details = cloneSerializable(payload.details, rawName + " error details");
+              }
+              reject(error);
+            }
           );
         });
       },
@@ -405,7 +424,7 @@ function resolveToolResponse(command) {
   if (command.ok) {
     entry.resolveJson(jsonString(command.result));
   } else {
-    entry.rejectMessage(String(command.error || "tool call failed"));
+    entry.rejectErrorJson(jsonString(command.error || "tool call failed"));
   }
 }
 

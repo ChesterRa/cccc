@@ -19,10 +19,77 @@ Open http://127.0.0.1:8848/ in your browser.
 The Web UI has these main areas:
 
 - **Header**: Group selector, settings, theme toggle
-- **Sidebar**: Group list and navigation
+- **Sidebar**: Group list, navigation, and the persistent Codex Voice control
 - **Tabs**: Chat tab + one tab per agent
 - **Main Area**: Chat messages or terminal view
 - **Input**: Message composer with @mention support
+
+### Codex Voice (Experimental)
+
+The **Codex Voice** control below the Group list is a global assistant entry, not a Group roster item.
+It has two stable actions: the main control always opens the Voice console, and the adjacent
+microphone/square control starts or stops live audio. The same meanings are preserved in the
+collapsed sidebar and active-call mobile bar. Settings, mute, and the Analyst terminal are not
+separate Dock actions.
+
+The Voice console is one operational workspace. Call state, audio settings, mute, and Stop are in its
+top audio-control area. The left pane shows the current spoken turn and accumulates provider fragments
+until the authoritative final transcript arrives; the right pane embeds the genuine Voice Analyst
+Codex TUI. On narrow screens, **Conversation** and **Voice Analyst** are tabs in the same console.
+Speaking voice, microphone, and (where supported) speaker choices expand inline rather than opening a
+second settings modal. The host must already be signed in through `codex login`, and the browser must
+allow microphone access.
+
+The two visible roles are one product flow:
+
+- **Realtime Voice** owns the low-latency spoken conversation, interruption, and clarification.
+- **Voice Analyst** is the backing Codex thread. It handles file inspection, tools, current CCCC facts,
+  and substantial analysis, then returns useful progress and the final result to the same spoken
+  conversation. Under local user authority it can list all Groups and query an explicitly named Group.
+
+Codex still requires a concrete repository working directory. On the first-ever launch, CCCC uses
+the selected Group's attached root only to bootstrap that working directory. The materialized
+Analyst binding is then stored once per `CCCC_HOME`; later calls and Web restarts resume that exact
+thread independently of sidebar selection. This root is neither a product scope nor an authorization
+boundary, and no Group scope is presented in the Voice UI.
+
+CCCC reads the existing Codex credential only in the native process that creates the provider call;
+the browser receives the WebRTC answer and bounded session events, not the credential. Use the
+console header to mute the microphone, resume browser-blocked playback, or stop the call. The
+Analyst inherits the normal Codex model/profile configuration and uses the same trusted-local YOLO
+boundary as a CCCC Codex Actor. CCCC pins both the app-server base configuration and every new or
+resumed thread to `approvalPolicy=never` and `sandbox=danger-full-access`; this is required because
+thread-only overrides do not govern MCP connection approval authority. CCCC does not maintain a
+second browser-local copy of model/profile settings. Browser-local audio choices apply to the next
+call.
+
+Realtime Call and Voice Analyst have separate lifecycles. Stopping voice disconnects browser audio
+and releases the microphone lease, but keeps the Analyst warm. Ongoing Analyst or linked
+Actor work continues, and its result returns to the Analyst thread without waking audio; only a
+result from the exact still-active call generation may become speech. A later call reuses the warm
+Analyst. The console embeds the genuine Codex TUI for that same Analyst thread using the existing
+terminal transport; it stays available after the call stops and does not create an Actor or a second
+Analyst. Codex creates the resumable rollout lazily, so the terminal appears when the first real
+investigation starts; CCCC does not create a
+token-consuming placeholder task. **New Analyst session** is the explicit reset action and is
+available only after the call stops. Raw local paths, Codex thread IDs, loopback endpoints, and
+external terminal commands are deliberately not part of the product surface.
+
+The session manager keeps at most one Codex Voice call and one warm Voice Analyst per interactive
+Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses
+the existing daemon-owned global recording lease shared with Voice Secretary. Hiding the details
+panel, switching Groups, or leaving the tab in the background does not stop or retarget the call.
+Application-level heartbeats keep the otherwise idle event WebSocket alive through ordinary proxies.
+Explicit cross-Group CCCC queries do not change repository focus. Use **Stop voice** to disconnect
+explicitly.
+Closing or reloading the owning page or losing its browser transport ends only the live call and
+releases the recording lease. Stopping Web also stops the warm Analyst process and embedded TUI,
+while retaining the one exact materialized bootstrap Group/root/thread binding in global runtime
+state; the next call attempts to resume it and starts fresh with a visible warning only when resume
+fails or that repository is no longer attached.
+This Experimental surface does not automatically reconnect a browser audio call. Current live
+evidence covers Linux x86_64/WSL2 and isolated Chrome desktop plus 390px responsive journeys; macOS,
+native Windows, mobile browsers, and physical-device audio quality remain unclaimed.
 
 ### Embedded browser views
 
@@ -251,7 +318,7 @@ when the reconstructed browser-facing origin is loopback. Unsafe writes and WebS
 carry the exact same loopback Origin; non-local proxy client addresses are rejected. This local
 principal is never persisted and is not valid through LAN, Reach, a public URL, or a reverse proxy.
 
-Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, CCCC serves the UI shell and health/session guidance but keeps protected APIs and business WebSockets locked. Read the one-time bootstrap code from `~/.cccc/web_bootstrap_token` on the CCCC host and enter it only when creating the first administrator token; the file is mode `0600` on Unix and is deleted after successful use.
+Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, non-local clients receive only the UI shell and health/session guidance; protected APIs and business WebSockets remain locked, while direct loopback access keeps the passwordless local principal described above. Read the one-time bootstrap code from `~/.cccc/web_bootstrap_token` on the CCCC host and enter it only when creating the first administrator token; the file is mode `0600` on Unix and is deleted after successful use.
 
 The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. The native daemon and Web boundary enforce the same rule at remote start, apply, and listener boundaries, so direct API calls and stale saved settings cannot bypass the panel. Group-scoped tokens do not satisfy this administrator recovery requirement. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
 

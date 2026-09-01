@@ -283,6 +283,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/actor_profiles")
         || path.starts_with("/api/v1/nomcp/")
         || path.starts_with("/api/v1/web-model/")
+        || is_codex_voice_path(path)
         || path.starts_with("/api/v1/space/providers/")
         || path == "/api/v1/mcp"
         || path.starts_with("/api/v1/observability")
@@ -298,6 +299,17 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || (path == "/api/v1/groups" && *method == Method::POST)
         || (*method == Method::DELETE && group_from_path(path).is_some())
         || path.ends_with("/reset")
+}
+
+fn is_codex_voice_path(path: &str) -> bool {
+    if path.starts_with("/api/v1/codex_voice/") {
+        return true;
+    }
+    path.strip_prefix("/api/v1/groups/")
+        .and_then(|tail| tail.split_once('/'))
+        .is_some_and(|(_, operation)| {
+            operation == "codex_voice" || operation.starts_with("codex_voice/")
+        })
 }
 
 fn group_from_query(request: &Request) -> Option<String> {

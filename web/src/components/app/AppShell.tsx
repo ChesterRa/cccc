@@ -1,10 +1,14 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
 import { GroupSidebar } from "../layout/GroupSidebar";
-import { ModalFrame } from "../modals/ModalFrame";
-import { useModalA11y } from "../../hooks/useModalA11y";
+import { RuntimeInspectorModal } from "../modals/RuntimeInspectorModal";
+import {
+  CodexVoiceMobileDock,
+  CodexVoiceOverlays,
+} from "../../features/codexVoice/CodexVoiceShellSurfaces";
+import { useCodexVoiceShell } from "../../features/codexVoice/useCodexVoiceShell";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
 import type {
@@ -116,41 +120,6 @@ function areMountedRuntimeActorSnapshotsEqual(
   return leftIds.every((actorId) => left.actorsById[actorId] === right.actorsById[actorId]);
 }
 
-function RuntimeInspectorModal({
-  isOpen,
-  isDark,
-  onClose,
-  titleId,
-  closeAriaLabel,
-  children,
-}: {
-  isOpen: boolean;
-  isDark: boolean;
-  onClose: () => void;
-  titleId: string;
-  closeAriaLabel: string;
-  children: ReactNode;
-}) {
-  const { modalRef } = useModalA11y(isOpen, onClose);
-
-  return (
-    <ModalFrame
-      isOpen={isOpen}
-      isDark={isDark}
-      onClose={onClose}
-      titleId={titleId}
-      title=""
-      closeAriaLabel={closeAriaLabel}
-      panelClassName="h-full w-full max-w-none overflow-hidden sm:h-[92vh] sm:w-[min(1480px,98vw)] sm:max-w-[98vw]"
-      floatingCloseClassName="sm:!top-3"
-      floatingCloseButtonClassName="!min-h-[40px] !min-w-[40px] !rounded-xl"
-      modalRef={modalRef}
-    >
-      {children}
-    </ModalFrame>
-  );
-}
-
 export function AppShell({
   orderedGroups,
   archivedGroupIds,
@@ -239,6 +208,7 @@ export function AppShell({
   } as CSSProperties;
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
+  const codexVoice = useCodexVoiceShell(!webReadOnly, selectedGroupId);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -270,6 +240,7 @@ export function AppShell({
         isDark={isDark}
         isSmallScreen={isSmallScreen}
         readOnly={webReadOnly}
+        codexVoice={codexVoice}
         onSelectGroup={onSelectGroup}
         onWarmGroup={onWarmGroup}
         onCreateGroup={onCreateGroup}
@@ -309,6 +280,10 @@ export function AppShell({
           onOpenMobileMenu={onOpenMobileMenu}
         />
 
+        {!webReadOnly ? (
+          <CodexVoiceMobileDock voice={codexVoice} selectedGroupId={selectedGroupId} />
+        ) : null}
+
         <div
           ref={contentRef}
           className={`relative flex min-h-0 flex-1 flex-col overflow-hidden transition-opacity duration-150 ${
@@ -323,6 +298,7 @@ export function AppShell({
                 isDark={isDark}
                 isSmallScreen={isSmallScreen}
                 readOnly={webReadOnly}
+                mobileAppHeaderReserved={!webReadOnly && codexVoice.controller.isEngaged}
                 selectedGroupId={selectedGroupId}
                 selectedGroupRunning={selectedGroupRunning}
                 selectedGroupActorsHydrating={selectedGroupActorsHydrating}
@@ -412,6 +388,13 @@ export function AppShell({
           })}
         </div>
       </main>
+
+      <CodexVoiceOverlays
+        voice={codexVoice}
+        selectedGroupId={selectedGroupId}
+        isDark={isDark}
+        isSmallScreen={isSmallScreen}
+      />
     </div>
   );
 }

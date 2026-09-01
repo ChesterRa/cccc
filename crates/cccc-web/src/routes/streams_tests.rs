@@ -40,6 +40,7 @@ fn test_state(home: HomeLayout) -> AppState {
     AppState {
         client: DaemonClient::new(home.clone()),
         browser_surfaces: Arc::new(browser_surface::BrowserSurfaces::default()),
+        codex_voice: Arc::new(crate::codex_voice::CodexVoiceSessions::default()),
         notebooklm_auth: Arc::new(crate::notebooklm_auth::AuthFlowManager::default()),
         ledger_events: ledger_events.clone(),
         im_workers: Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events)),

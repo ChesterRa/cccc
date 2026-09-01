@@ -8,6 +8,39 @@ const SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:cccc:self-evolution";
 const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:agent_self_proposed:cccc-self-evolution";
 
 #[test]
+fn user_authority_gets_group_controls_without_widening_actor_core_tools() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("user control plane", "")
+        .expect("group");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group.group_id,"actor_id":"peer1","by":"user"}),
+    );
+
+    let user = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    let user_tools = user["visible_tools"].as_array().expect("user tools");
+    assert!(user_tools.contains(&json!("cccc_group")));
+    assert!(user_tools.contains(&json!("cccc_actor")));
+
+    let peer = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"peer1","by":"peer1"}),
+    );
+    let peer_tools = peer["visible_tools"].as_array().expect("peer tools");
+    assert!(!peer_tools.contains(&json!("cccc_group")));
+    assert!(!peer_tools.contains(&json!("cccc_actor")));
+}
+
+#[test]
 fn self_evolution_is_builtin_and_default_enabled_once() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
