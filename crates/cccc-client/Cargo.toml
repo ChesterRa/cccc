@@ -9,8 +9,8 @@ description = "IPC client for the CCCC collaborative agent control plane"
 publish = false
 
 [dependencies]
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.36", path = "../cccc-contracts" }
-cccc-core = { package = "cccc-pair-core", version = "=0.4.36", path = "../cccc-core" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.37", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.37", path = "../cccc-core" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
