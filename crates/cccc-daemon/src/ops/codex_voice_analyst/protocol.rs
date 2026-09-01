@@ -1,7 +1,7 @@
 use super::AnalystEvent;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -13,6 +13,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 32;
+
+struct PendingResponse {
+    response: oneshot::Sender<io::Result<Value>>,
+    turn_delegation_id: Option<String>,
+}
 
 pub(super) async fn connect_with_retry(
     endpoint: &str,
@@ -138,18 +143,45 @@ async fn protocol_loop<S>(
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let mut next_id = 1_u64;
-    let mut pending: HashMap<u64, oneshot::Sender<io::Result<Value>>> = HashMap::new();
+    let mut pending: HashMap<u64, PendingResponse> = HashMap::new();
+    let mut pending_turn_start = None;
+    let mut deferred_events = VecDeque::new();
+    let mut turn_delegations = HashMap::new();
     let terminal_error = loop {
         tokio::select! {
             command = commands.recv() => match command {
                 Some(ProtocolCommand::Request(request)) => {
                     let id = next_id;
                     next_id = next_id.saturating_add(1);
+                    let turn_delegation_id = (request.method == "turn/start")
+                        .then(|| {
+                            request.params
+                                .get("responsesapiClientMetadata")?
+                                .get("cccc_voice_delegation_id")?
+                                .as_str()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_owned)
+                        })
+                        .flatten();
                     let message = json!({
                         "jsonrpc":"2.0", "id":id,
                         "method":request.method, "params":request.params,
                     });
-                    pending.insert(id, request.response);
+                    if turn_delegation_id.is_some() {
+                        if pending_turn_start.is_some() {
+                            let _ = request.response.send(Err(io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                "another Voice Analyst turn/start request is unresolved",
+                            )));
+                            continue;
+                        }
+                        pending_turn_start = Some(id);
+                    }
+                    pending.insert(id, PendingResponse {
+                        response: request.response,
+                        turn_delegation_id,
+                    });
                     if let Err(error) = socket.send(Message::Text(message.to_string().into())).await {
                         break format!("failed to write app-server request: {error}");
                     }
@@ -169,20 +201,64 @@ async fn protocol_loop<S>(
                 Some(Ok(Message::Text(text))) => {
                     let Ok(message) = serde_json::from_str::<Value>(&text) else { continue };
                     if message.get("method").is_some() {
-                        let _ = events.send(AnalystEvent {
-                            generation: generation.clone(), message,
-                        });
+                        if pending_turn_start.is_some() {
+                            if deferred_events.len() >= EVENT_CAPACITY {
+                                break "Voice Analyst produced too many events before turn/start settled".into();
+                            }
+                            deferred_events.push_back(message);
+                        } else {
+                            publish_event(
+                                &events,
+                                &generation,
+                                message,
+                                &mut turn_delegations,
+                            );
+                        }
                         continue;
                     }
                     let Some(id) = message.get("id").and_then(Value::as_u64) else { continue };
-                    let Some(response) = pending.remove(&id) else { continue };
-                    if let Some(error) = message.get("error") {
-                        let _ = response.send(Err(io::Error::other(format!(
+                    let Some(pending_response) = pending.remove(&id) else { continue };
+                    let result = if let Some(error) = message.get("error") {
+                        Err(io::Error::other(format!(
                             "Codex app-server request failed: {error}"
-                        ))));
+                        )))
                     } else {
-                        let _ = response.send(Ok(message.get("result").cloned().unwrap_or(Value::Null)));
+                        Ok(message.get("result").cloned().unwrap_or(Value::Null))
+                    };
+                    if pending_turn_start == Some(id) {
+                        pending_turn_start = None;
+                        let response_turn_id = result
+                            .as_ref()
+                            .ok()
+                            .and_then(|result| result
+                                .get("turn")
+                                .and_then(|turn| turn.get("id"))
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty()));
+                        if let Some(response_turn_id) = response_turn_id
+                            && deferred_events.iter().any(|event| {
+                                started_turn_id(event)
+                                    .is_some_and(|turn_id| turn_id != response_turn_id)
+                            })
+                        {
+                            break "a competing terminal turn started while Voice delegation was pending".into();
+                        }
+                        if let (Some(delegation_id), Some(turn_id)) =
+                            (pending_response.turn_delegation_id.as_ref(), response_turn_id)
+                        {
+                            turn_delegations.insert(turn_id.to_owned(), delegation_id.clone());
+                        }
+                        while let Some(event) = deferred_events.pop_front() {
+                            publish_event(
+                                &events,
+                                &generation,
+                                event,
+                                &mut turn_delegations,
+                            );
+                        }
                     }
+                    let _ = pending_response.response.send(result);
                 }
                 Some(Ok(Message::Ping(payload))) => {
                     if let Err(error) = socket.send(Message::Pong(payload)).await {
@@ -195,8 +271,8 @@ async fn protocol_loop<S>(
             }
         }
     };
-    for (_, response) in pending {
-        let _ = response.send(Err(io::Error::new(
+    for (_, pending_response) in pending {
+        let _ = pending_response.response.send(Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
             terminal_error.clone(),
         )));
@@ -204,5 +280,51 @@ async fn protocol_loop<S>(
     let _ = events.send(AnalystEvent {
         generation,
         message: json!({"method":"cccc/voiceAnalyst/disconnected","params":{"reason":terminal_error}}),
+        requested_delegation_id: None,
+    });
+}
+
+fn started_turn_id(message: &Value) -> Option<&str> {
+    (message.get("method").and_then(Value::as_str) == Some("turn/started"))
+        .then(|| {
+            message
+                .get("params")?
+                .get("turn")?
+                .get("id")?
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .flatten()
+}
+
+fn publish_event(
+    events: &broadcast::Sender<AnalystEvent>,
+    generation: &str,
+    message: Value,
+    turn_delegations: &mut HashMap<String, String>,
+) {
+    let method = message.get("method").and_then(Value::as_str);
+    let turn_id = message
+        .get("params")
+        .and_then(|params| params.get("turn"))
+        .and_then(|turn| turn.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let requested_delegation_id = if method == Some("turn/started") {
+        turn_id.and_then(|turn_id| turn_delegations.remove(turn_id))
+    } else {
+        if method == Some("turn/completed")
+            && let Some(turn_id) = turn_id
+        {
+            turn_delegations.remove(turn_id);
+        }
+        None
+    };
+    let _ = events.send(AnalystEvent {
+        generation: generation.to_owned(),
+        message,
+        requested_delegation_id,
     });
 }

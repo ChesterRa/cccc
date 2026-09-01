@@ -2,7 +2,7 @@ use super::AnalystSnapshot;
 use super::analyst_runtime::actor_result_is_speakable;
 use super::persistence::{
     PersistedAnalyst, TEST_ANALYST_STATE_FILE, resolve_resumable_scope, resumable_thread_id,
-    validate_client_session_id,
+    validate_analyst_scope, validate_client_session_id,
 };
 use cccc_core::{GroupStore, HomeLayout, Scope, group_scope};
 
@@ -31,6 +31,14 @@ fn a_disconnected_analyst_is_replaced_before_the_next_call() {
             phase: "needs_attention".into(),
             last_result: String::new(),
             warning: "analyst_disconnected".into(),
+        }
+        .reusable_for_call()
+    );
+    assert!(
+        !AnalystSnapshot {
+            phase: "needs_attention".into(),
+            last_result: String::new(),
+            warning: "analyst_event_gap".into(),
         }
         .reusable_for_call()
     );
@@ -187,4 +195,30 @@ fn an_invalid_materialized_binding_is_not_treated_as_missing() {
 
     let error = resolve_resumable_scope(&home).expect_err("invalid binding must be distinct");
     assert!(error.to_string().contains("persisted Voice Analyst Group"));
+}
+
+#[test]
+fn a_warm_binding_is_revalidated_after_its_scope_is_detached() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("Warm Voice", "").expect("group");
+    let root = temp.path().join("warm-repo");
+    std::fs::create_dir_all(&root).expect("root");
+    group_scope::attach(
+        &store,
+        &group.group_id,
+        Scope {
+            scope_key: "s_warm_voice".into(),
+            url: root.to_string_lossy().into_owned(),
+            label: "Warm Voice".into(),
+            git_remote: String::new(),
+        },
+    )
+    .expect("attach scope");
+
+    assert!(validate_analyst_scope(&home, &group.group_id, &root).is_ok());
+    group_scope::detach(&store, &group.group_id, "s_warm_voice").expect("detach scope");
+    assert!(validate_analyst_scope(&home, &group.group_id, &root).is_err());
 }

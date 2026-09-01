@@ -55,6 +55,10 @@ impl CodexVoiceAnalyst {
         self.lifecycle.is_busy().await
     }
 
+    pub async fn terminal_input_allowed(&self) -> bool {
+        self.lifecycle.terminal_input_allowed().await
+    }
+
     pub async fn cancel_current(&self) -> Result<bool> {
         self.lifecycle.cancel_current().await
     }

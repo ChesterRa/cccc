@@ -51,20 +51,18 @@ impl AnalystLifecycle {
             return;
         }
         if method == "cccc/voiceAnalyst/disconnected" {
-            let mut state = self.state.lock().await;
-            state.active = None;
-            state.pending = None;
-            let _ = self.events.send(AnalystLifecycleEvent::Disconnected);
+            self.invalidate().await;
             return;
         }
         if method == "turn/started" {
-            self.handle_turn_started(params).await;
+            self.handle_turn_started(&event).await;
             return;
         }
         self.handle_turn_event(method, params).await;
     }
 
-    async fn handle_turn_started(&self, params: &Value) {
+    async fn handle_turn_started(&self, event: &AnalystEvent) {
+        let params = &event.message["params"];
         let turn_id = params["turn"]["id"].as_str().unwrap_or_default().trim();
         if turn_id.is_empty() {
             return;
@@ -79,6 +77,9 @@ impl AnalystLifecycle {
         let (delegation_id, origin) = state
             .pending
             .as_ref()
+            .filter(|pending| {
+                event.requested_delegation_id.as_deref() == Some(pending.delegation_id.as_str())
+            })
             .map(|pending| (pending.delegation_id.clone(), pending.origin))
             .unwrap_or_else(|| (String::new(), AnalystTurnOrigin::Terminal));
         state.active = Some(ActiveTurn {
@@ -189,6 +190,11 @@ pub(super) fn tracked_work(message: &Value) -> Option<TrackedWork> {
     let payload = payload.get("tool_result").unwrap_or(payload);
     let task_id = payload.get("task_id")?.as_str()?.trim();
     let source_event_id = payload.get("event_id")?.as_str()?.trim();
+    let recipients = payload.get("event")?.get("data")?.get("to")?.as_array()?;
+    let [recipient] = recipients.as_slice() else {
+        return None;
+    };
+    let actor_id = recipient.as_str()?.trim();
     let group_id = payload
         .get("event")
         .and_then(|event| event.get("group_id"))
@@ -201,11 +207,16 @@ pub(super) fn tracked_work(message: &Value) -> Option<TrackedWork> {
                 .as_str()
         })?
         .trim();
-    (!task_id.is_empty() && !source_event_id.is_empty() && !group_id.is_empty()).then(|| {
-        TrackedWork {
-            group_id: group_id.to_owned(),
-            task_id: task_id.to_owned(),
-            source_event_id: source_event_id.to_owned(),
-        }
+    (!task_id.is_empty()
+        && !source_event_id.is_empty()
+        && !group_id.is_empty()
+        && !actor_id.is_empty()
+        && actor_id != "user"
+        && !actor_id.starts_with('@'))
+    .then(|| TrackedWork {
+        group_id: group_id.to_owned(),
+        task_id: task_id.to_owned(),
+        source_event_id: source_event_id.to_owned(),
+        actor_id: actor_id.to_owned(),
     })
 }

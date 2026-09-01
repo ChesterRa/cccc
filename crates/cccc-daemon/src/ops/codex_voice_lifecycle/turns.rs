@@ -31,6 +31,9 @@ impl AnalystLifecycle {
     ) -> Result<TurnReceipt> {
         {
             let mut state = self.state.lock().await;
+            if state.invalidated {
+                bail!("Voice Analyst lifecycle is no longer trustworthy");
+            }
             if let Some(receipt) = state.delegations.get(delegation_id) {
                 return Ok(receipt.clone());
             }
@@ -223,6 +226,11 @@ impl AnalystLifecycle {
     pub(crate) async fn is_busy(&self) -> bool {
         let state = self.state.lock().await;
         state.active.is_some() || state.pending.is_some()
+    }
+
+    pub(crate) async fn terminal_input_allowed(&self) -> bool {
+        let state = self.state.lock().await;
+        !state.invalidated && state.pending.is_none()
     }
 }
 

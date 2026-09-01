@@ -83,7 +83,9 @@ Application-level heartbeats keep the otherwise idle event WebSocket alive throu
 Explicit cross-Group CCCC queries do not change repository focus. Use **Stop voice** to disconnect
 explicitly.
 Closing or reloading the owning page or losing its browser transport ends only the live call and
-releases the recording lease. Stopping Web also stops the warm Analyst process and embedded TUI,
+releases the recording lease. Before each call, CCCC revalidates that the warm Analyst's bootstrap
+Group and repository remain attached; a stale binding is replaced rather than reused. Stopping Web
+also stops the warm Analyst process and embedded TUI,
 while retaining the one exact materialized bootstrap Group/root/thread binding in global runtime
 state; the next call attempts to resume it and starts fresh with a visible warning only when resume
 fails or that repository is no longer attached.

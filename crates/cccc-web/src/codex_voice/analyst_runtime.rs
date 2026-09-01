@@ -2,7 +2,11 @@ use super::*;
 
 impl AnalystSnapshot {
     pub(super) fn reusable_for_call(&self) -> bool {
-        !(self.phase == "needs_attention" && self.warning == "analyst_disconnected")
+        !(self.phase == "needs_attention"
+            && matches!(
+                self.warning.as_str(),
+                "analyst_disconnected" | "analyst_event_gap"
+            ))
     }
 }
 

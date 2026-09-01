@@ -180,10 +180,18 @@ pub(super) async fn serve(
                     break;
                 }
                 Ok(AnalystLifecycleEvent::TrackedWork(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => tracing::warn!(
-                    skipped,
-                    "Codex Voice WebSocket fell behind Analyst progress; continuing from the retained event tail"
-                ),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        skipped,
+                        "Codex Voice WebSocket fell behind Analyst lifecycle; closing the unreplayable stream"
+                    );
+                    let _ = send_error(
+                        &mut socket,
+                        "analyst_event_gap",
+                        "The Voice Analyst event stream lost state and must reconnect.",
+                    ).await;
+                    break;
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }

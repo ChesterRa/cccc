@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite};
+use tungstenite::Message;
 
 pub(super) async fn fake_app_server() -> (
     String,
@@ -23,7 +24,12 @@ pub(super) async fn fake_app_server() -> (
             let (stream, _) = listener.accept().await.expect("accept");
             let mut socket = accept_async(stream).await.expect("websocket");
             while let Some(frame) = socket.next().await {
-                let Message::Text(text) = frame.expect("frame") else {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(error) if is_peer_shutdown(&error) => break,
+                    Err(error) => panic!("frame: {error}"),
+                };
+                let Message::Text(text) = frame else {
                     continue;
                 };
                 let request: Value = serde_json::from_str(&text).expect("request");
@@ -123,7 +129,12 @@ pub(super) async fn fake_disconnecting_app_server() -> (String, JoinHandle<()>, 
         let (stream, _) = listener.accept().await.expect("accept");
         let mut socket = accept_async(stream).await.expect("websocket");
         while let Some(frame) = socket.next().await {
-            let Message::Text(text) = frame.expect("frame") else {
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(error) if is_peer_shutdown(&error) => break,
+                Err(error) => panic!("frame: {error}"),
+            };
+            let Message::Text(text) = frame else {
                 continue;
             };
             let request: Value = serde_json::from_str(&text).expect("request");
@@ -143,6 +154,25 @@ pub(super) async fn fake_disconnecting_app_server() -> (String, JoinHandle<()>, 
         }
     });
     (endpoint, server, turn_starts)
+}
+
+fn is_peer_shutdown(error: &tungstenite::Error) -> bool {
+    matches!(
+        error,
+        tungstenite::Error::Protocol(
+            tungstenite::error::ProtocolError::ResetWithoutClosingHandshake
+        )
+    ) || matches!(
+        error,
+        tungstenite::Error::Io(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+    )
 }
 
 async fn send_result<S>(socket: &mut WebSocketStream<S>, id: u64, result: Value)

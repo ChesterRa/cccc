@@ -39,12 +39,25 @@ impl CodexVoiceSessions {
             return Ok(StartOutcome::Busy(session.info()));
         }
 
-        let (group_id, group_title, analyst) = if state
+        let reusable_analyst = state
             .analyst
             .as_ref()
             .is_some_and(|analyst| analyst.reusable_for_call())
-        {
-            let analyst = Arc::clone(state.analyst.as_ref().expect("reusable Voice Analyst"));
+            .then(|| Arc::clone(state.analyst.as_ref().expect("reusable Voice Analyst")))
+            .and_then(|analyst| {
+                match persistence::validate_analyst_scope(home, &analyst.group_id, &analyst.root) {
+                    Ok(_) => Some(analyst),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            group_id = %analyst.group_id,
+                            "warm Voice Analyst binding is no longer valid; replacing it"
+                        );
+                        None
+                    }
+                }
+            });
+        let (group_id, group_title, analyst) = if let Some(analyst) = reusable_analyst {
             // Codex needs one concrete repository cwd, but the Voice product is global. Once a
             // warm Analyst exists, sidebar selection must not silently replace its thread.
             (

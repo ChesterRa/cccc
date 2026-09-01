@@ -194,6 +194,7 @@ impl AnalystSession {
         let _ = self.protocol.events.send(AnalystEvent {
             generation: self.generation.clone(),
             message,
+            requested_delegation_id: None,
         });
     }
 

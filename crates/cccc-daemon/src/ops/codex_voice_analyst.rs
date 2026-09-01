@@ -50,6 +50,7 @@ pub(crate) struct ScopeBinding {
 pub struct AnalystEvent {
     pub generation: String,
     pub message: Value,
+    pub requested_delegation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

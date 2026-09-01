@@ -72,23 +72,37 @@ pub(super) fn resolve_resumable_scope(
     if !persisted.materialized || persisted.thread_id.trim().is_empty() {
         return Ok(None);
     }
-    let store =
-        GroupStore::new(home.clone()).context("open Group store for Voice Analyst resume")?;
+    validate_analyst_scope(home, &persisted.group_id, Path::new(&persisted.root))
+        .with_context(|| {
+            format!(
+                "validate persisted Voice Analyst Group {}",
+                persisted.group_id
+            )
+        })
+        .map(Some)
+}
+
+pub(super) fn validate_analyst_scope(
+    home: &HomeLayout,
+    group_id: &str,
+    expected_root: &Path,
+) -> Result<(String, String, PathBuf)> {
+    let store = GroupStore::new(home.clone()).context("open Group store for Voice Analyst")?;
     let group = store
-        .load(&persisted.group_id)
-        .with_context(|| format!("load persisted Voice Analyst Group {}", persisted.group_id))?;
-    let scope = group_scope::resolve_attached_scope(&group, &persisted.root)
-        .context("persisted Voice Analyst repository is no longer attached")?;
-    let root = PathBuf::from(&scope.url)
+        .load(group_id)
+        .with_context(|| format!("load Voice Analyst Group {group_id}"))?;
+    let expected_root = expected_root
+        .canonicalize()
+        .context("resolve expected Voice Analyst repository")?;
+    let scope = group_scope::resolve_attached_scope(&group, &expected_root.to_string_lossy())
+        .context("Voice Analyst repository is no longer attached")?;
+    let attached_root = PathBuf::from(&scope.url)
         .canonicalize()
         .context("resolve attached Voice Analyst repository")?;
-    let persisted_root = PathBuf::from(&persisted.root)
-        .canonicalize()
-        .context("resolve persisted Voice Analyst repository")?;
-    if root != persisted_root || !root.is_dir() {
-        bail!("persisted Voice Analyst repository binding no longer matches");
+    if attached_root != expected_root || !attached_root.is_dir() {
+        bail!("Voice Analyst repository binding no longer matches");
     }
-    Ok(Some((group.group_id, group.title, root)))
+    Ok((group.group_id, group.title, attached_root))
 }
 
 pub(super) async fn launch_fresh_analyst(

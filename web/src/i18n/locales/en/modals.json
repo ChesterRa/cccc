@@ -511,6 +511,7 @@
     "cancel_failed": "The current Analyst investigation could not be cancelled.",
     "unexpected_approval": "The YOLO Analyst requested an unexpected approval. The investigation was stopped.",
     "analyst_disconnected": "The Voice Analyst disconnected. Its resumable thread was retained.",
+    "analyst_event_gap": "The Voice Analyst event stream lost state. Start Voice again to resume or replace the retained thread.",
     "actor_result_return_failed": "A linked Actor result could not be returned to the Voice Analyst.",
     "analyst_projection_failed": "The Analyst result could not be returned to Realtime Voice.",
     "provider_error": "The Codex Realtime Voice provider reported an error.",
@@ -524,6 +525,7 @@
     "analyst_resume_replaced": "The previous Analyst thread could not be resumed, so CCCC started a new one.",
     "unexpected_approval": "The YOLO Analyst requested an unexpected approval. The investigation was stopped.",
     "analyst_disconnected": "The Voice Analyst disconnected. Start Voice again to resume its retained thread.",
+    "analyst_event_gap": "The Voice Analyst event stream lost state. Start Voice again to recover safely.",
     "actor_result_return_failed": "A linked Actor result could not be returned to this Analyst thread."
   },
   "codexVoicePhase": {

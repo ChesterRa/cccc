@@ -128,6 +128,7 @@ fn replay_result(
 
 fn actor_reply(event: &Event, work: &TrackedWork) -> Option<ObservedActorResult> {
     if event.kind != "chat.message"
+        || event.by.trim() != work.actor_id
         || event.data.get("reply_to")?.as_str()?.trim() != work.source_event_id
     {
         return None;
@@ -182,14 +183,19 @@ mod tests {
             group_id: "g_target".into(),
             task_id: "T007".into(),
             source_event_id: "event-source".into(),
+            actor_id: "worker".into(),
         }
     }
 
     #[test]
     fn accepts_only_a_non_empty_reply_to_the_tracked_source() {
         let mut event = Event::new("chat.message", "g_target");
+        event.by = "other-actor".into();
         event.data.insert("reply_to".into(), json!("event-source"));
         event.data.insert("text".into(), json!(" ACTOR_RESULT "));
+        assert!(actor_reply(&event, &work()).is_none());
+
+        event.by = "worker".into();
         let result = actor_reply(&event, &work()).expect("matching reply");
         assert!(result.prompt.contains("ACTOR_RESULT"));
 

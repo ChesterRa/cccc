@@ -33,6 +33,7 @@ pub struct TrackedWork {
     pub group_id: String,
     pub task_id: String,
     pub source_event_id: String,
+    pub actor_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,7 @@ struct LifecycleState {
     pending: Option<PendingStart>,
     settled_pending: Option<TurnReceipt>,
     delegations: HashMap<String, TurnReceipt>,
+    invalidated: bool,
 }
 
 pub(crate) struct AnalystLifecycle {
@@ -111,14 +113,24 @@ impl AnalystLifecycle {
                         };
                         lifecycle.handle(event).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => tracing::warn!(
-                        skipped,
-                        "Voice Analyst lifecycle reader fell behind; resuming from the retained event tail"
-                    ),
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped,
+                            "Voice Analyst lifecycle reader fell behind; invalidating the unreplayable session"
+                        );
+                        if let Some(lifecycle) = Weak::upgrade(&weak) {
+                            lifecycle.invalidate().await;
+                            if let Err(error) =
+                                lifecycle.session.stop(lifecycle.session.generation()).await
+                            {
+                                tracing::warn!(%error, "failed to stop invalid Voice Analyst session");
+                            }
+                        }
+                        break;
+                    }
                     Err(broadcast::error::RecvError::Closed) => {
                         if let Some(lifecycle) = Weak::upgrade(&weak) {
-                            lifecycle.state.lock().await.active = None;
-                            let _ = lifecycle.events.send(AnalystLifecycleEvent::Disconnected);
+                            lifecycle.invalidate().await;
                         }
                         break;
                     }
@@ -134,6 +146,15 @@ impl AnalystLifecycle {
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<AnalystLifecycleEvent> {
         self.events.subscribe()
+    }
+
+    async fn invalidate(&self) {
+        let mut state = self.state.lock().await;
+        state.active = None;
+        state.pending = None;
+        state.settled_pending = None;
+        state.invalidated = true;
+        let _ = self.events.send(AnalystLifecycleEvent::Disconnected);
     }
 }
 

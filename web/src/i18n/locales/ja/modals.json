@@ -511,6 +511,7 @@
     "cancel_failed": "現在の Analyst 調査をキャンセルできませんでした。",
     "unexpected_approval": "YOLO Analyst が予期しない承認を要求したため、調査を停止しました。",
     "analyst_disconnected": "Voice Analyst が切断されましたが、再開可能なスレッドは保持されています。",
+    "analyst_event_gap": "Voice Analyst のイベント状態が失われました。Voice を再開して、保持されたスレッドを再開または置換してください。",
     "actor_result_return_failed": "関連する Agent の結果を Voice Analyst に返せませんでした。",
     "analyst_projection_failed": "Analyst の結果を Realtime Voice に返せませんでした。",
     "provider_error": "Codex Realtime Voice プロバイダーからエラーが返されました。",
@@ -524,6 +525,7 @@
     "analyst_resume_replaced": "以前の Analyst スレッドを再開できなかったため、CCCC が新しいスレッドを開始しました。",
     "unexpected_approval": "YOLO Analyst が予期しない承認を要求したため、調査を停止しました。",
     "analyst_disconnected": "Voice Analyst が切断されました。Voice を再開すると保持されたスレッドの再開を試みます。",
+    "analyst_event_gap": "Voice Analyst のイベント状態が失われました。Voice を再開して安全に復旧してください。",
     "actor_result_return_failed": "関連する Agent の結果を現在の Analyst スレッドに返せませんでした。"
   },
   "codexVoicePhase": {

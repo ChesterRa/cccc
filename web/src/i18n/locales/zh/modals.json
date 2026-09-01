@@ -511,6 +511,7 @@
     "cancel_failed": "无法取消当前分析调查。",
     "unexpected_approval": "YOLO 分析助手发出了异常授权请求，本次调查已停止。",
     "analyst_disconnected": "Voice Analyst 已断开，但可恢复的分析线程仍已保留。",
+    "analyst_event_gap": "Voice Analyst 事件流已丢失状态；请重新启动语音，以恢复或替换保留的线程。",
     "actor_result_return_failed": "相关 Agent 的结果无法返回给 Voice Analyst。",
     "analyst_projection_failed": "分析结果无法返回给 Realtime Voice。",
     "provider_error": "Codex Realtime Voice 服务返回了错误。",
@@ -524,6 +525,7 @@
     "analyst_resume_replaced": "上一次分析线程无法恢复，CCCC 已启动一个新线程。",
     "unexpected_approval": "YOLO 分析助手发出了异常授权请求，本次调查已停止。",
     "analyst_disconnected": "Voice Analyst 已断开；再次启动语音时会尝试恢复保留的线程。",
+    "analyst_event_gap": "Voice Analyst 事件流已丢失状态；请重新启动语音以安全恢复。",
     "actor_result_return_failed": "相关 Agent 的结果无法返回到当前分析线程。"
   },
   "codexVoicePhase": {

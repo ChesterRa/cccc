@@ -65,6 +65,7 @@ describe("Codex Voice realtime event model", () => {
 
   it("preserves a specific server failure when the event stream closes", () => {
     expect(eventStreamCloseCode("analyst_disconnected")).toBe("analyst_disconnected");
+    expect(eventStreamCloseCode("analyst_event_gap")).toBe("analyst_event_gap");
     expect(eventStreamCloseCode("Voice Analyst disconnected.")).toBe("event_stream_disconnected");
     expect(eventStreamCloseCode("")).toBe("event_stream_disconnected");
   });

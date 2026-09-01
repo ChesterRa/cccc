@@ -174,6 +174,14 @@ async fn handle_input(
     };
     match opcode {
         b'0' if writable && !payload.is_empty() => {
+            if !session.analyst().terminal_input_allowed().await {
+                return send_input_error(
+                    socket,
+                    "analyst_busy",
+                    "Wait for the pending Voice Analyst request before using terminal input.",
+                )
+                .await;
+            }
             let input = input.clone();
             let payload = payload.to_vec();
             match tokio::task::spawn_blocking(move || input.write(&payload)).await {

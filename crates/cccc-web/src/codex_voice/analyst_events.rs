@@ -17,9 +17,12 @@ impl AnalystRuntime {
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(
                             skipped,
-                            "Voice Analyst runtime projection fell behind; resuming from the retained event tail"
+                            "Voice Analyst runtime projection fell behind; invalidating its derived state"
                         );
-                        continue;
+                        if let Some(runtime) = weak.upgrade() {
+                            runtime.mark_failed("analyst_event_gap");
+                        }
+                        break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
