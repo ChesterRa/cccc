@@ -67,84 +67,79 @@ export function useCodexVoiceSessionController(enabled = true) {
   useCodexVoiceWindowLifecycle({ refresh, mountedRef, refreshGenerationRef, sessionRef });
   useCodexVoicePolling({ enabled, analyst, sessionRef, refresh });
 
-  const start = useCallback(
-    async (groupId: string) => {
-      const audio = audioRef.current;
-      const normalizedGroupId = groupId.trim();
-      if (!audio || !normalizedGroupId || sessionRef.current) return;
-      if (call) {
-        setError(t("codexVoiceExistingCallStartBlocked"));
-        return;
-      }
-      if (readiness && !readiness.codex_cli_available) {
-        setPhase("failed");
-        setError(t("codexVoiceCodexCliMissing"));
-        return;
-      }
-      if (readiness && !readiness.codex_credentials_available) {
-        setPhase("failed");
-        setError(t("codexVoiceCodexLoginRequired"));
-        return;
-      }
+  const start = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio || sessionRef.current) return;
+    if (call) {
+      setError(t("codexVoiceExistingCallStartBlocked"));
+      return;
+    }
+    if (readiness && !readiness.codex_cli_available) {
+      setPhase("failed");
+      setError(t("codexVoiceCodexCliMissing"));
+      return;
+    }
+    if (readiness && !readiness.realtime_credentials_available) {
+      setPhase("failed");
+      setError(t("codexVoiceCodexLoginRequired"));
+      return;
+    }
 
-      refreshGenerationRef.current += 1;
-      setChecking(false);
-      setError("");
-      setUserTranscript("");
-      setAssistantTranscript("");
-      setMicrophoneMuted(false);
-      setPlaybackBlocked(false);
+    refreshGenerationRef.current += 1;
+    setChecking(false);
+    setError("");
+    setUserTranscript("");
+    setAssistantTranscript("");
+    setMicrophoneMuted(false);
+    setPlaybackBlocked(false);
 
-      const session = new CodexVoiceBrowserSession({
-        groupId: normalizedGroupId,
-        audio,
-        preferences,
-        callbacks: {
-          onPhase: (next) => {
-            if (mountedRef.current) setPhase(next);
-          },
-          onCall: (next) => {
-            if (!mountedRef.current) return;
-            setCall(next);
-            if (!next) {
-              if (sessionRef.current === session) sessionRef.current = null;
-              setOwned(false);
-            }
-          },
-          onAnalyst: (next) => {
-            if (!mountedRef.current) return;
-            setAnalyst(next);
-          },
-          onUserTranscript: (text) => {
-            if (mountedRef.current) setUserTranscript(text);
-          },
-          onAssistantTranscript: (text) => {
-            if (mountedRef.current) setAssistantTranscript(text);
-          },
-          onAnalystProgress: () => undefined,
-          onAnalystResult: () => undefined,
-          onPlaybackBlocked: (blocked) => {
-            if (mountedRef.current) setPlaybackBlocked(blocked);
-          },
-          onError: (code) => {
-            if (mountedRef.current) setError(codexVoiceErrorText(t, code));
-          },
+    const session = new CodexVoiceBrowserSession({
+      audio,
+      preferences,
+      callbacks: {
+        onPhase: (next) => {
+          if (mountedRef.current) setPhase(next);
         },
-      });
-      sessionRef.current = session;
-      setOwned(true);
-      try {
-        await session.start();
-      } catch {
-        if (sessionRef.current === session) sessionRef.current = null;
-        if (mountedRef.current) {
-          setOwned(false);
-          void refresh();
-        }
+        onCall: (next) => {
+          if (!mountedRef.current) return;
+          setCall(next);
+          if (!next) {
+            if (sessionRef.current === session) sessionRef.current = null;
+            setOwned(false);
+          }
+        },
+        onAnalyst: (next) => {
+          if (!mountedRef.current) return;
+          setAnalyst(next);
+        },
+        onUserTranscript: (text) => {
+          if (mountedRef.current) setUserTranscript(text);
+        },
+        onAssistantTranscript: (text) => {
+          if (mountedRef.current) setAssistantTranscript(text);
+        },
+        onAnalystProgress: () => undefined,
+        onAnalystResult: () => undefined,
+        onPlaybackBlocked: (blocked) => {
+          if (mountedRef.current) setPlaybackBlocked(blocked);
+        },
+        onError: (code) => {
+          if (mountedRef.current) setError(codexVoiceErrorText(t, code));
+        },
+      },
+    });
+    sessionRef.current = session;
+    setOwned(true);
+    try {
+      await session.start();
+    } catch {
+      if (sessionRef.current === session) sessionRef.current = null;
+      if (mountedRef.current) {
+        setOwned(false);
+        void refresh();
       }
-    },
-    [call, preferences, readiness, refresh, t],
-  );
+    }
+  }, [call, preferences, readiness, refresh, t]);
 
   const disconnect = useCallback(async () => {
     refreshGenerationRef.current += 1;
@@ -158,7 +153,7 @@ export function useCodexVoiceSessionController(enabled = true) {
     }
     if (!call) return;
     setPhase("stopping");
-    const response = await stopCodexVoiceCall(call.group_id, call.generation);
+    const response = await stopCodexVoiceCall(call.generation);
     if (!mountedRef.current) return;
     if (!response.ok) {
       setError(codexVoiceErrorText(t, response.error.code));
@@ -173,7 +168,7 @@ export function useCodexVoiceSessionController(enabled = true) {
     if (!analyst || analyst.phase !== "working") return false;
     setError("");
     if (sessionRef.current?.cancelInvestigation()) return true;
-    const response = await cancelCodexVoiceAnalyst(analyst.group_id, analyst.generation);
+    const response = await cancelCodexVoiceAnalyst(analyst.generation);
     if (!mountedRef.current) return false;
     if (!response.ok) {
       setError(codexVoiceErrorText(t, response.error.code));
@@ -199,7 +194,7 @@ export function useCodexVoiceSessionController(enabled = true) {
   const startNewAnalyst = useCallback(async () => {
     if (!analyst || call || analyst.phase === "working") return false;
     setError("");
-    const response = await resetCodexVoiceAnalyst(analyst.group_id, analyst.generation);
+    const response = await resetCodexVoiceAnalyst(analyst.generation);
     if (!mountedRef.current) return false;
     if (!response.ok) {
       setError(codexVoiceErrorText(t, response.error.code));

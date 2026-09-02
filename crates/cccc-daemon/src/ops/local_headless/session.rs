@@ -1,4 +1,7 @@
-use super::{ActiveTurn, Session, Turn, TurnOutputState, output, poisoned, protocol};
+use super::{
+    ActiveTurn, Session, SessionTransport, Turn, TurnOutputState, codex_runtime, output, poisoned,
+    protocol,
+};
 use cccc_contracts::{ActorRuntime, utc_now};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
@@ -12,10 +15,21 @@ impl Session {
         if self.stopped.load(Ordering::Acquire) {
             return false;
         }
-        self.child
-            .lock()
-            .ok()
-            .is_some_and(|mut child| child.try_wait().ok().flatten().is_none())
+        match &self.transport {
+            SessionTransport::Process { child, .. } => child
+                .lock()
+                .ok()
+                .is_some_and(|mut child| child.try_wait().ok().flatten().is_none()),
+            SessionTransport::CodexApp {
+                session,
+                has_terminal,
+            } => {
+                session.process_running()
+                    && (!has_terminal.load(Ordering::Acquire)
+                        || cccc_runtime::status(&self.group_id, &self.actor_id)
+                            .is_ok_and(|status| status.running))
+            }
+        }
     }
 
     pub(super) fn stop(&self) {
@@ -25,11 +39,24 @@ impl Session {
     pub(super) fn stop_after_invalidate(&self, after_invalidate: impl FnOnce()) {
         let first_stop = !self.stopped.swap(true, Ordering::AcqRel);
         after_invalidate();
-        if let Ok(mut child) = self.child.lock() {
-            if child.try_wait().ok().flatten().is_none() {
-                let _ = child.kill();
+        match &self.transport {
+            SessionTransport::Process { child, .. } => {
+                if let Ok(mut child) = child.lock() {
+                    if child.try_wait().ok().flatten().is_none() {
+                        let _ = child.kill();
+                    }
+                    let _ = child.wait();
+                }
             }
-            let _ = child.wait();
+            SessionTransport::CodexApp {
+                session,
+                has_terminal,
+            } => {
+                if has_terminal.load(Ordering::Acquire) {
+                    let _ = cccc_runtime::stop(&self.group_id, &self.actor_id);
+                }
+                let _ = codex_runtime().block_on(session.stop(session.generation()));
+            }
         }
         self.set_status("stopped", None);
         self.completion.1.notify_all();
@@ -49,8 +76,30 @@ impl Session {
         }
     }
 
+    pub(super) fn attach_terminal(&self, pid: Option<u32>) {
+        if let SessionTransport::CodexApp { has_terminal, .. } = &self.transport {
+            has_terminal.store(true, Ordering::Release);
+        }
+        if let Ok(mut state) = self.status.lock() {
+            state.pid = pid;
+            state.updated_at = utc_now();
+        }
+    }
+
+    pub(super) fn mark_codex_thread_materialized(&self) {
+        if let SessionTransport::CodexApp { session, .. } = &self.transport {
+            session.mark_thread_materialized();
+        }
+    }
+
     pub(super) fn write_json(&self, value: &Value) -> io::Result<()> {
-        let mut stdin = self.stdin.lock().map_err(|_| poisoned())?;
+        let SessionTransport::Process { stdin, .. } = &self.transport else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Codex app-server transport does not expose process stdin",
+            ));
+        };
+        let mut stdin = stdin.lock().map_err(|_| poisoned())?;
         serde_json::to_writer(&mut *stdin, value).map_err(io::Error::other)?;
         stdin.write_all(b"\n")?;
         stdin.flush()
@@ -62,6 +111,9 @@ impl Session {
         params: Value,
         timeout: Duration,
     ) -> io::Result<Value> {
+        if let SessionTransport::CodexApp { session, .. } = &self.transport {
+            return codex_runtime().block_on(session.request(method, params, timeout));
+        }
         let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::sync_channel(1);
         self.pending
@@ -94,6 +146,17 @@ impl Session {
         }
         Ok(response.get("result").cloned().unwrap_or(Value::Null))
     }
+
+    pub(super) fn respond_error(&self, id: Value, error: Value) -> io::Result<()> {
+        match &self.transport {
+            SessionTransport::CodexApp { session, .. } => {
+                codex_runtime().block_on(session.respond_error(id, error))
+            }
+            SessionTransport::Process { .. } => {
+                self.write_json(&json!({"jsonrpc":"2.0","id":id,"error":error}))
+            }
+        }
+    }
 }
 
 pub(super) fn spawn_reader(
@@ -120,6 +183,47 @@ pub(super) fn spawn_reader(
             }
             session.set_status("stopped", None);
             session.completion.1.notify_all();
+        })?;
+    Ok(())
+}
+
+pub(super) fn spawn_codex_reader(
+    session: Arc<Session>,
+    mut events: tokio::sync::broadcast::Receiver<super::super::codex_voice_analyst::AnalystEvent>,
+) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name(format!(
+            "cccc-codex-app-out:{}:{}",
+            session.group_id, session.actor_id
+        ))
+        .spawn(move || {
+            loop {
+                match codex_runtime().block_on(events.recv()) {
+                    Ok(event) => {
+                        let disconnected = event.message.get("method").and_then(Value::as_str)
+                            == Some(super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD);
+                        output::handle_message(&session, event.message);
+                        if disconnected {
+                            session.stop();
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped,
+                            group_id = %session.group_id,
+                            actor_id = %session.actor_id,
+                            "Codex Actor app-server event reader fell behind; stopping the unreplayable session"
+                        );
+                        session.stop();
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        session.stop();
+                        break;
+                    }
+                }
+            }
         })?;
     Ok(())
 }
@@ -183,23 +287,9 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
         .spawn(move || {
             while session.running() {
                 let Ok(turn) = receiver.recv() else { break };
-                let generation = session
-                    .completion
-                    .0
-                    .lock()
-                    .map(|value| *value)
-                    .unwrap_or_default();
-                let Ok(mut active_turn) = session.active_turn.lock() else {
+                let Some(generation) = claim_turn(&session, &turn) else {
                     break;
                 };
-                *active_turn = Some(ActiveTurn {
-                    event_id: turn.event_id.clone(),
-                    turn_id: String::new(),
-                    control_kind: turn.control_kind.clone(),
-                    output_state: TurnOutputState::Buffering,
-                    pending_messages: Vec::new(),
-                });
-                drop(active_turn);
                 session.set_status(
                     "working",
                     Some(turn.event_id.clone()).filter(|id| !id.is_empty()),
@@ -210,11 +300,8 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
                     protocol::submit_claude(&session, &turn)
                 };
                 let Ok(turn_id) = result else {
-                    if let Ok(mut active_turn) = session.active_turn.lock() {
-                        active_turn.take();
-                    }
-                    session.set_status("waiting", None);
                     output::emit_turn(&session, &turn, "headless.turn.failed", "");
+                    output::release_failed_reservation(&session);
                     continue;
                 };
                 if let Ok(mut active_turn) = session.active_turn.lock()
@@ -243,4 +330,101 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
             }
         })?;
     Ok(())
+}
+
+fn claim_turn(session: &Session, turn: &Turn) -> Option<u64> {
+    claim_turn_when(
+        &session.active_turn,
+        &session.completion,
+        || session.running(),
+        turn,
+    )
+}
+
+fn claim_turn_when(
+    active_turn: &std::sync::Mutex<Option<ActiveTurn>>,
+    completion: &(std::sync::Mutex<u64>, std::sync::Condvar),
+    is_running: impl Fn() -> bool,
+    turn: &Turn,
+) -> Option<u64> {
+    let mut completed = completion.0.lock().ok()?;
+    loop {
+        if !is_running() {
+            return None;
+        }
+        let mut active = active_turn.lock().ok()?;
+        if active.is_none() {
+            *active = Some(ActiveTurn {
+                event_id: turn.event_id.clone(),
+                turn_id: String::new(),
+                control_kind: turn.control_kind.clone(),
+                external: false,
+                output_state: TurnOutputState::Buffering,
+                pending_messages: Vec::new(),
+            });
+            return Some(*completed);
+        }
+        drop(active);
+        completed = completion.1.wait(completed).ok()?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn queued_delivery_waits_until_an_external_turn_settles() {
+        let active_turn = Arc::new(std::sync::Mutex::new(Some(ActiveTurn {
+            event_id: String::new(),
+            turn_id: "turn-terminal".into(),
+            control_kind: String::new(),
+            external: true,
+            output_state: TurnOutputState::Announced,
+            pending_messages: Vec::new(),
+        })));
+        let completion = Arc::new((std::sync::Mutex::new(0), std::sync::Condvar::new()));
+        let running = Arc::new(AtomicBool::new(true));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let waiting_active = Arc::clone(&active_turn);
+        let waiting_completion = Arc::clone(&completion);
+        let waiting_running = Arc::clone(&running);
+        let worker = std::thread::spawn(move || {
+            let turn = Turn {
+                text: "queued delivery".into(),
+                event_id: "event-1".into(),
+                control_kind: String::new(),
+            };
+            let claimed = claim_turn_when(
+                &waiting_active,
+                &waiting_completion,
+                || waiting_running.load(Ordering::Acquire),
+                &turn,
+            );
+            sender.send(claimed).expect("claim result");
+        });
+
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(50)).is_err(),
+            "delivery claimed the thread while the terminal turn was active"
+        );
+        active_turn.lock().expect("active turn").take();
+        let mut generation = completion.0.lock().expect("completion generation");
+        *generation += 1;
+        drop(generation);
+        completion.1.notify_all();
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("delivery claim"),
+            Some(1)
+        );
+        let active = active_turn.lock().expect("claimed turn");
+        let active = active.as_ref().expect("delivery active");
+        assert_eq!(active.event_id, "event-1");
+        assert!(!active.external);
+        worker.join().expect("worker");
+    }
 }

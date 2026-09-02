@@ -9,9 +9,6 @@ case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64)
     target=x86_64-unknown-linux-gnu
     ;;
-  Darwin:x86_64|Darwin:amd64)
-    target=x86_64-apple-darwin
-    ;;
   Darwin:arm64|Darwin:aarch64)
     target=aarch64-apple-darwin
     ;;
@@ -49,7 +46,7 @@ make_release() {
     checksum_value=$(checksum "$release_dir/$package.tar.gz")
   fi
   : > "$release_dir/SHA256SUMS"
-  for fixture_target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+  for fixture_target in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
     fixture_name="cccc-v${version}-${fixture_target}"
     fixture_ext=tar.gz
     [[ "$fixture_target" == x86_64-pc-windows-msvc ]] && fixture_ext=zip
@@ -64,7 +61,7 @@ make_release() {
     *-rc[0-9]*) wheel_version=${wheel_version/-rc/rc} ;;
     *) wheel_version=${wheel_version//-/} ;;
   esac
-  for platform_tag in manylinux_2_28_x86_64 macosx_11_0_x86_64 macosx_11_0_arm64 win_amd64; do
+  for platform_tag in manylinux_2_28_x86_64 macosx_11_0_arm64 win_amd64; do
     printf '%s  cccc_pair-%s-py3-none-%s.whl\n' "$(printf '0%.0s' {1..64})" "$wheel_version" "$platform_tag" >> "$release_dir/SHA256SUMS"
   done
   rm -rf "$TMP_ROOT/package"
@@ -73,13 +70,35 @@ make_release() {
 version=0.0.0-test
 make_release "$version"
 
-# Older complete releases used a four-archive manifest without native wheels.
-# Keep that published shape installable while current release sets add four
-# native wheels to the same checksum manifest.
+# Intel Macs fail before version resolution or download.
+mkdir -p "$TMP_ROOT/fake-intel-bin"
+cat > "$TMP_ROOT/fake-intel-bin/uname" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+  -s) printf 'Darwin\n' ;;
+  -m) printf 'x86_64\n' ;;
+  *) printf 'Darwin\n' ;;
+esac
+EOF
+chmod 755 "$TMP_ROOT/fake-intel-bin/uname"
+if PATH="$TMP_ROOT/fake-intel-bin:$PATH" \
+  HOME="$TMP_ROOT/intel-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/intel-error"; then
+  echo "installer accepted a retired macOS Intel host" >&2
+  exit 1
+fi
+grep -Fq 'macOS Intel (x86_64) support ended with CCCC v0.4.37' "$TMP_ROOT/intel-error"
+
+# Older releases used a four-archive manifest without native wheels. Keep that
+# published shape installable from a currently supported host.
 legacy_manifest_version=0.0.12-test
 make_release "$legacy_manifest_version"
 legacy_manifest="$TMP_ROOT/releases/download/v${legacy_manifest_version}/SHA256SUMS"
 grep -v 'cccc_pair-' "$legacy_manifest" > "$legacy_manifest.legacy"
+printf '%s  cccc-v%s-x86_64-apple-darwin.tar.gz\n' "$(printf '0%.0s' {1..64})" "$legacy_manifest_version" >> "$legacy_manifest.legacy"
 mv "$legacy_manifest.legacy" "$legacy_manifest"
 HOME="$TMP_ROOT/legacy-manifest-home" \
   CCCC_VERSION="$legacy_manifest_version" \
@@ -88,7 +107,22 @@ HOME="$TMP_ROOT/legacy-manifest-home" \
   sh "$ROOT_DIR/scripts/install.sh"
 [[ "$("$TMP_ROOT/legacy-manifest-home/.local/bin/cccc" --version)" == "cccc $legacy_manifest_version" ]]
 
-prerelease_version=0.0.13-rc1
+# The final Intel-capable releases contain all four archive/wheel pairs. Their
+# extra Intel entries must not block rollback on a supported host.
+legacy_complete_version=0.0.13-test
+make_release "$legacy_complete_version"
+legacy_complete_manifest="$TMP_ROOT/releases/download/v${legacy_complete_version}/SHA256SUMS"
+legacy_complete_wheel_version=${legacy_complete_version//-/}
+printf '%s  cccc-v%s-x86_64-apple-darwin.tar.gz\n' "$(printf '0%.0s' {1..64})" "$legacy_complete_version" >> "$legacy_complete_manifest"
+printf '%s  cccc_pair-%s-py3-none-macosx_11_0_x86_64.whl\n' "$(printf '0%.0s' {1..64})" "$legacy_complete_wheel_version" >> "$legacy_complete_manifest"
+HOME="$TMP_ROOT/legacy-complete-home" \
+  CCCC_VERSION="$legacy_complete_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$TMP_ROOT/legacy-complete-home/.local/bin/cccc" --version)" == "cccc $legacy_complete_version" ]]
+
+prerelease_version=0.0.14-rc1
 make_release "$prerelease_version"
 HOME="$TMP_ROOT/prerelease-home" \
   CCCC_VERSION="$prerelease_version" \

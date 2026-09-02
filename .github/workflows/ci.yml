@@ -98,12 +98,12 @@ jobs:
           mkdir -p native-wheel-smoke
           python scripts/build_native_wheel.py \
             /bin/true \
-            --platform-tag linux_x86_64 \
+            --platform-tag manylinux_2_28_x86_64 \
             --output-dir native-wheel-smoke
           native_wheel="$(find native-wheel-smoke -maxdepth 1 -name '*.whl' -print -quit)"
           python scripts/verify_native_wheel.py \
             "$native_wheel" \
-            --platform-tag linux_x86_64 \
+            --platform-tag manylinux_2_28_x86_64 \
             --binary /bin/true
           python -m twine check "$native_wheel"
           python - <<'PY'
@@ -111,7 +111,7 @@ jobs:
           import zipfile
 
           wheel = next(Path("native-wheel-smoke").glob("*.whl"))
-          assert "-py3-none-linux_x86_64.whl" in wheel.name, wheel
+          assert "-py3-none-manylinux_2_28_x86_64.whl" in wheel.name, wheel
           with zipfile.ZipFile(wheel) as archive:
               names = set(archive.namelist())
               assert not any(name.endswith((".py", ".pyc")) for name in names)

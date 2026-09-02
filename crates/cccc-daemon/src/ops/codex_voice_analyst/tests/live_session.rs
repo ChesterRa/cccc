@@ -2,8 +2,21 @@ use super::super::*;
 use super::live_support::{
     wait_for_interruptible_activity, wait_for_turn_status, wait_for_turn_text,
 };
-use cccc_core::{GroupStore, HomeLayout, group_scope, scope};
-use std::path::PathBuf;
+use cccc_core::HomeLayout;
+
+fn live_launch_config(root: &std::path::Path) -> LaunchConfig {
+    let mut config = LaunchConfig::new(root);
+    let model = std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into());
+    config.command = vec![
+        std::env::var_os("CCCC_CODEX_EXECUTABLE").map_or_else(
+            || "codex".into(),
+            |path| path.to_string_lossy().into_owned(),
+        ),
+        "--model".into(),
+        model,
+    ];
+    config
+}
 
 #[tokio::test]
 async fn live_codex_app_server_session_when_explicitly_enabled() {
@@ -15,26 +28,31 @@ async fn live_codex_app_server_session_when_explicitly_enabled() {
     let root = temp.path().join("project");
     std::fs::create_dir_all(&root).expect("root");
     std::fs::write(root.join("banana"), "TOPAZ\n").expect("fixture");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("live voice analyst", "").expect("group");
-    let group = group_scope::attach(
-        &store,
-        &group.group_id,
-        scope::detect(&root).expect("scope"),
-    )
-    .expect("attach");
-    let mut config = LaunchConfig::new(&group.group_id, &root);
-    config.model =
-        Some(std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into()));
-    config.codex_executable = std::env::var_os("CCCC_CODEX_EXECUTABLE").map(PathBuf::from);
+    let config = live_launch_config(&root);
     let session = AnalystSession::launch(&home, config)
         .await
         .expect("launch live Analyst");
-    assert_eq!(session.binding().group_id, group.group_id);
     assert_eq!(session.binding().root, root.canonicalize().expect("root"));
     assert!(super::super::process::validate_loopback_endpoint(session.endpoint()).is_ok());
     assert!(!session.thread_id().is_empty());
-    assert_eq!(session.tui_command()[4], session.thread_id());
+    let tui_command = session.tui_command();
+    let remote = tui_command
+        .iter()
+        .position(|argument| argument == "--remote")
+        .expect("remote TUI endpoint flag");
+    assert_eq!(
+        tui_command.get(remote + 1).map(String::as_str),
+        Some(session.endpoint())
+    );
+    let resume = tui_command
+        .iter()
+        .position(|argument| argument == "resume")
+        .expect("remote TUI resume command");
+    assert_eq!(
+        tui_command.get(resume + 1).map(String::as_str),
+        Some(session.thread_id())
+    );
+    assert!(tui_command.windows(2).any(|pair| pair[0] == "--model"));
 
     let mut events = session.subscribe();
     let generation = session.generation().to_owned();
@@ -116,11 +134,8 @@ async fn live_codex_app_server_session_when_explicitly_enabled() {
         .await
         .expect("stop live Analyst");
 
-    let mut resume_config = LaunchConfig::new(&group.group_id, &root);
-    resume_config.model =
-        Some(std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into()));
+    let mut resume_config = live_launch_config(&root);
     resume_config.resume_thread_id = Some(thread_id.clone());
-    resume_config.codex_executable = std::env::var_os("CCCC_CODEX_EXECUTABLE").map(PathBuf::from);
     let resumed = AnalystSession::launch(&home, resume_config)
         .await
         .expect("resume Analyst in a new app-server process");

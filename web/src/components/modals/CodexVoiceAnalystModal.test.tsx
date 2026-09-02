@@ -40,7 +40,7 @@ function controller(
     analystWarning: "",
     preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
     supportedVoices: ["cove"],
-    readiness: { codex_cli_available: true, codex_credentials_available: true },
+    readiness: { codex_cli_available: true, realtime_credentials_available: true },
     updatePreferences: vi.fn(),
     refresh: vi.fn(async () => undefined),
     start: vi.fn(async () => undefined),
@@ -55,8 +55,6 @@ function controller(
 }
 
 const readyAnalyst = {
-  group_id: "g_alpha",
-  group_title: "Alpha",
   generation: "analyst-1",
   tui_ready: true,
   phase: "ready" as const,
@@ -78,7 +76,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark={false}
         isSmallScreen={false}
-        selectedGroupId="g_alpha"
         controller={controller({ analyst: readyAnalyst })}
         onClose={vi.fn()}
       />,
@@ -94,7 +91,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark={false}
         isSmallScreen={false}
-        selectedGroupId="g_alpha"
         controller={controller()}
         onClose={vi.fn()}
       />,
@@ -102,7 +98,7 @@ describe("CodexVoiceAnalystModal", () => {
 
     expect(html).toContain("codexVoiceConversation");
     expect(html).toContain("codexVoiceAnalystTitle");
-    expect(html).toContain('aria-label="codexVoiceAudioSettings"');
+    expect(html).toContain('aria-label="codexVoiceSettings"');
     expect(html).toContain("codexVoiceStart");
     expect(html).toContain("lucide-audio-lines");
     expect(html).not.toContain("Alpha");
@@ -116,7 +112,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark
         isSmallScreen={false}
-        selectedGroupId="g_beta"
         controller={controller({
           phase: "listening",
           owned: true,
@@ -141,7 +136,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark={false}
         isSmallScreen={false}
-        selectedGroupId="g_alpha"
         controller={controller({
           userTranscript: "今天天气怎么样",
           assistantTranscript: "我来帮你查一下。",
@@ -161,7 +155,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark={false}
         isSmallScreen={false}
-        selectedGroupId="g_alpha"
         controller={controller({
           analyst: { ...readyAnalyst, tui_ready: false, phase: "waiting" },
         })}
@@ -179,7 +172,6 @@ describe("CodexVoiceAnalystModal", () => {
         isOpen
         isDark={false}
         isSmallScreen={false}
-        selectedGroupId="g_alpha"
         controller={controller({ phase: "failed", error: "CONTROL_STREAM_LOST" })}
         onClose={vi.fn()}
       />,

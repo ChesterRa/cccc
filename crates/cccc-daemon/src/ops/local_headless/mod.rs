@@ -21,9 +21,13 @@ use std::collections::HashMap;
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, OnceLock};
 
 pub use supervisor::{running, start, status, stop, stop_all, stop_group, submit, supports};
+
+pub(super) fn uses_codex_app_server(actor: &cccc_contracts::Actor) -> bool {
+    supervisor::uses_codex_app_server(actor)
+}
 
 pub(super) fn uses_managed_provider_cli(actor: &cccc_contracts::Actor) -> bool {
     provider_cli::uses_managed_provider_cli(actor)
@@ -49,6 +53,7 @@ struct ActiveTurn {
     event_id: String,
     turn_id: String,
     control_kind: String,
+    external: bool,
     output_state: TurnOutputState,
     pending_messages: Vec<Value>,
 }
@@ -65,8 +70,7 @@ struct Session {
     group_id: String,
     actor_id: String,
     runtime: ActorRuntime,
-    child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    transport: SessionTransport,
     status: Mutex<HeadlessStatus>,
     stopped: AtomicBool,
     next_request_id: AtomicU64,
@@ -78,10 +82,33 @@ struct Session {
     turns: SyncSender<Turn>,
 }
 
+enum SessionTransport {
+    Process {
+        child: Mutex<Child>,
+        stdin: Mutex<ChildStdin>,
+    },
+    CodexApp {
+        session: std::sync::Arc<super::codex_voice_analyst::AnalystSession>,
+        has_terminal: AtomicBool,
+    },
+}
+
 fn turn_channel() -> (SyncSender<Turn>, std::sync::mpsc::Receiver<Turn>) {
     sync_channel(256)
 }
 
 fn poisoned() -> std::io::Error {
     std::io::Error::other("headless supervisor lock poisoned")
+}
+
+fn codex_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("cccc-codex-app")
+            .enable_all()
+            .build()
+            .expect("build shared Codex app-server runtime")
+    })
 }

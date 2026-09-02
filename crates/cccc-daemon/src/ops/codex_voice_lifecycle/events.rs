@@ -50,7 +50,7 @@ impl AnalystLifecycle {
             });
             return;
         }
-        if method == "cccc/voiceAnalyst/disconnected" {
+        if method == super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD {
             self.invalidate().await;
             return;
         }

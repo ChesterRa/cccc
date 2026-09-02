@@ -29,6 +29,14 @@ pub(super) fn announce_turn(session: &Session) {
     });
 }
 
+pub(super) fn release_failed_reservation(session: &Session) {
+    let pending_messages = take_buffered_messages(&session.active_turn);
+    session.set_status("waiting", None);
+    for message in pending_messages {
+        handle_announced_message(session, message);
+    }
+}
+
 fn defer_until_announced(session: &Session, message: &Value) -> bool {
     defer_message_until_announced(&session.active_turn, message)
 }
@@ -75,6 +83,15 @@ fn drain_buffered_messages(
     }
 }
 
+fn take_buffered_messages(active_turn: &std::sync::Mutex<Option<ActiveTurn>>) -> Vec<Value> {
+    active_turn
+        .lock()
+        .ok()
+        .and_then(|mut active_turn| active_turn.take())
+        .map(|active_turn| active_turn.pending_messages)
+        .unwrap_or_default()
+}
+
 fn respond_unsupported_server_request(session: &Session, message: &Value) {
     let Some(id) = message.get("id") else {
         return;
@@ -83,17 +100,22 @@ fn respond_unsupported_server_request(session: &Session, message: &Value) {
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let _ = session.write_json(&json!({
-        "jsonrpc":"2.0",
-        "id":id,
-        "error":{
+    let _ = session.respond_error(
+        id.clone(),
+        json!({
             "code":-32601,
             "message":format!("CCCC headless does not support provider request: {method}")
-        }
-    }));
+        }),
+    );
 }
 
 fn handle_announced_message(session: &Session, message: Value) {
+    if session.runtime == ActorRuntime::Codex
+        && message.get("method").and_then(Value::as_str) == Some("turn/started")
+    {
+        handle_codex_turn_started(session, &message);
+        return;
+    }
     let completed = if session.runtime == ActorRuntime::Codex {
         message.get("method").and_then(Value::as_str) == Some("turn/completed")
     } else {
@@ -122,7 +144,7 @@ fn handle_announced_message(session: &Session, message: Value) {
                 Some("waitingOnApproval" | "waitingOnUserInput")
             )
         });
-        let task = active_context(session).map(|(_, turn_id, _)| turn_id);
+        let task = active_context(session).map(|(_, turn_id, _, _)| turn_id);
         if waiting {
             session.set_status("waiting", task);
         } else if message
@@ -136,6 +158,66 @@ fn handle_announced_message(session: &Session, message: Value) {
                 .is_ok_and(|state| state.status == "waiting")
         {
             session.set_status("working", task);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartedTurnDisposition {
+    Adopted,
+    Matched,
+    Conflict,
+}
+
+fn handle_codex_turn_started(session: &Session, message: &Value) {
+    let turn_id = message
+        .pointer("/params/turn/id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(turn_id) = turn_id else { return };
+    session.mark_codex_thread_materialized();
+    match observe_started_turn(&session.active_turn, turn_id) {
+        StartedTurnDisposition::Adopted => {
+            session.set_status("working", Some(turn_id.to_owned()));
+        }
+        StartedTurnDisposition::Matched => {}
+        StartedTurnDisposition::Conflict => {
+            tracing::warn!(
+                group_id = %session.group_id,
+                actor_id = %session.actor_id,
+                turn_id,
+                "Codex Actor reported an overlapping terminal turn; stopping the inconsistent session"
+            );
+            session.stop();
+        }
+    }
+}
+
+fn observe_started_turn(
+    active_turn: &std::sync::Mutex<Option<ActiveTurn>>,
+    turn_id: &str,
+) -> StartedTurnDisposition {
+    let Ok(mut active_turn) = active_turn.lock() else {
+        return StartedTurnDisposition::Conflict;
+    };
+    match active_turn.as_mut() {
+        Some(active) if active.turn_id.is_empty() => {
+            active.turn_id = turn_id.to_owned();
+            StartedTurnDisposition::Matched
+        }
+        Some(active) if active.turn_id == turn_id => StartedTurnDisposition::Matched,
+        Some(_) => StartedTurnDisposition::Conflict,
+        None => {
+            *active_turn = Some(ActiveTurn {
+                event_id: String::new(),
+                turn_id: turn_id.to_owned(),
+                control_kind: String::new(),
+                external: true,
+                output_state: TurnOutputState::Announced,
+                pending_messages: Vec::new(),
+            });
+            StartedTurnDisposition::Adopted
         }
     }
 }
@@ -169,6 +251,9 @@ fn complete_turn(session: &Session, message: &Value) {
         *generation += 1;
     }
     session.completion.1.notify_all();
+    if current.external {
+        return;
+    }
     let (kind, mut data) = if session.runtime == ActorRuntime::Codex {
         codex_terminal_event(message, &current.event_id)
     } else {
@@ -227,12 +312,13 @@ fn claude_resume_rejection(session: &Session, message: &Value) -> Option<String>
     Some(error)
 }
 
-fn active_context(session: &Session) -> Option<(String, String, String)> {
+fn active_context(session: &Session) -> Option<(String, String, String, bool)> {
     session.active_turn.lock().ok()?.as_ref().map(|turn| {
         (
             turn.event_id.clone(),
             turn.turn_id.clone(),
             turn.control_kind.clone(),
+            turn.external,
         )
     })
 }
@@ -419,9 +505,12 @@ fn emit_message(session: &Session, kind: &str, text: &str, stream_id: &str) {
     if text.is_empty() {
         return;
     }
-    let Some((event_id, turn_id, _)) = active_context(session) else {
+    let Some((event_id, turn_id, _, external)) = active_context(session) else {
         return;
     };
+    if external {
+        return;
+    }
     let key = if kind.ends_with("delta") {
         "delta"
     } else {
@@ -474,6 +563,7 @@ mod tests {
             event_id: "event-1".into(),
             turn_id: "turn-1".into(),
             control_kind: String::new(),
+            external: false,
             output_state: TurnOutputState::Buffering,
             pending_messages: vec![json!({"sequence":1})],
         }));
@@ -500,6 +590,29 @@ mod tests {
                 .output_state,
             TurnOutputState::Announced
         );
+    }
+
+    #[test]
+    fn failed_delivery_reservation_keeps_buffered_terminal_lifecycle() {
+        let started = json!({
+            "method":"turn/started",
+            "params":{"turn":{"id":"turn-terminal"}}
+        });
+        let completed = json!({
+            "method":"turn/completed",
+            "params":{"turn":{"id":"turn-terminal","status":"completed"}}
+        });
+        let active_turn = std::sync::Mutex::new(Some(ActiveTurn {
+            event_id: "event-delivery".into(),
+            turn_id: String::new(),
+            control_kind: String::new(),
+            external: false,
+            output_state: TurnOutputState::Buffering,
+            pending_messages: vec![started.clone(), completed.clone()],
+        }));
+
+        assert_eq!(take_buffered_messages(&active_turn), [started, completed]);
+        assert!(active_turn.lock().expect("active turn").is_none());
     }
 
     #[test]
@@ -546,6 +659,46 @@ mod tests {
         assert_eq!(data["turn_id"], "turn-completed");
         assert_eq!(data["status"], "completed");
         assert_eq!(data["error"], Value::Null);
+    }
+
+    #[test]
+    fn an_untracked_codex_turn_is_adopted_until_its_completion() {
+        let active_turn = std::sync::Mutex::new(None);
+
+        assert_eq!(
+            observe_started_turn(&active_turn, "turn-terminal"),
+            StartedTurnDisposition::Adopted
+        );
+        let active = active_turn.lock().expect("active turn");
+        let active = active.as_ref().expect("adopted turn");
+        assert_eq!(active.turn_id, "turn-terminal");
+        assert!(active.external);
+        assert_eq!(active.output_state, TurnOutputState::Announced);
+    }
+
+    #[test]
+    fn a_started_event_matches_the_reserved_delivery_turn_but_not_an_overlap() {
+        let active_turn = std::sync::Mutex::new(Some(ActiveTurn {
+            event_id: "event-1".into(),
+            turn_id: String::new(),
+            control_kind: String::new(),
+            external: false,
+            output_state: TurnOutputState::Buffering,
+            pending_messages: Vec::new(),
+        }));
+
+        assert_eq!(
+            observe_started_turn(&active_turn, "turn-delivery"),
+            StartedTurnDisposition::Matched
+        );
+        assert_eq!(
+            observe_started_turn(&active_turn, "turn-delivery"),
+            StartedTurnDisposition::Matched
+        );
+        assert_eq!(
+            observe_started_turn(&active_turn, "turn-overlap"),
+            StartedTurnDisposition::Conflict
+        );
     }
 
     #[test]

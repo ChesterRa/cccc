@@ -137,15 +137,21 @@ pub fn prepare_codex_app_thread(
     Ok(Some(thread_id))
 }
 
+pub struct CodexAppThread<'a> {
+    pub id: &'a str,
+    pub resumed: bool,
+    pub runner: cccc_contracts::RunnerKind,
+}
+
 pub fn record_codex_app_thread(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,
     cwd: &Path,
     command: &[String],
-    thread_id: &str,
-    resumed: bool,
+    thread: CodexAppThread<'_>,
 ) -> std::io::Result<()> {
+    let thread_id = thread.id;
     if !resume_enabled() {
         return Ok(());
     }
@@ -162,7 +168,13 @@ pub fn record_codex_app_thread(
         ("group_id".into(), json!(group_id)),
         ("actor_id".into(), json!(actor_id)),
         ("runtime".into(), json!("codex")),
-        ("runner".into(), json!("headless")),
+        (
+            "runner".into(),
+            json!(match thread.runner {
+                cccc_contracts::RunnerKind::Pty => "pty",
+                cccc_contracts::RunnerKind::Headless => "headless",
+            }),
+        ),
         ("workspace_path".into(), json!(workspace_path(cwd))),
         (
             "command_fingerprint".into(),
@@ -174,7 +186,7 @@ pub fn record_codex_app_thread(
         ("resume_command_hint".into(), json!("")),
         (
             "captured_from".into(),
-            json!(if resumed {
+            json!(if thread.resumed {
                 "app_server_thread_resume"
             } else {
                 "app_server_thread_start"
@@ -758,8 +770,19 @@ mod tests {
         let (_temp, home, group_id, cwd) = fixture();
         let command = app_thread_command();
 
-        record_codex_app_thread(&home, &group_id, "peer1", &cwd, &command, "thread-1", false)
-            .expect("record app thread");
+        record_codex_app_thread(
+            &home,
+            &group_id,
+            "peer1",
+            &cwd,
+            &command,
+            CodexAppThread {
+                id: "thread-1",
+                resumed: false,
+                runner: cccc_contracts::RunnerKind::Headless,
+            },
+        )
+        .expect("record app thread");
 
         let stored = read(&home, &group_id, "peer1").expect("stored metadata");
         assert_eq!(stored["runner"], "headless");
@@ -772,6 +795,24 @@ mod tests {
             stored["command_fingerprint"],
             "e21da22b1aea2a44604536594c24efbfc4eabe61a03b833c6cb64b09f13ecad4"
         );
+
+        record_codex_app_thread(
+            &home,
+            &group_id,
+            "peer2",
+            &cwd,
+            &command,
+            CodexAppThread {
+                id: "thread-2",
+                resumed: true,
+                runner: cccc_contracts::RunnerKind::Pty,
+            },
+        )
+        .expect("record PTY app thread");
+        let pty = read(&home, &group_id, "peer2").expect("stored PTY metadata");
+        assert_eq!(pty["runner"], "pty");
+        assert_eq!(pty["provider_thread_id"], "thread-2");
+        assert_eq!(pty["captured_from"], "app_server_thread_resume");
     }
 
     #[test]

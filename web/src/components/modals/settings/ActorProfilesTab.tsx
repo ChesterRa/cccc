@@ -26,6 +26,7 @@ import {
 import { CapabilityPicker } from "../../CapabilityPicker";
 import { SelectCombobox } from "../../SelectCombobox";
 import { BodyPortal } from "../../ui/BodyPortal";
+import { formatRuntimeCommand } from "../runtimeProfileControlsModel";
 
 interface ActorProfilesTabProps {
   isDark: boolean;
@@ -46,13 +47,6 @@ type EditorState = {
   capabilityDefaultScope: "actor" | "session";
   capabilitySessionTtlSeconds: number;
 };
-
-function formatCommand(cmd: string[] | undefined): string {
-  const parts = Array.isArray(cmd)
-    ? cmd.filter((item) => typeof item === "string" && item.trim())
-    : [];
-  return parts.join(" ");
-}
 
 const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   amp: "amp",
@@ -103,7 +97,7 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
       : supportsStandardWebHeadlessRuntime(runtime)
         ? normalizeActorRunner(profile?.runner)
         : "pty";
-  const command = formatCommand(profile?.command);
+  const command = formatRuntimeCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =
     supportsRuntimeDefaultCommand(runtime) &&

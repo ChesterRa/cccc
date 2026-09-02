@@ -1,5 +1,7 @@
 use super::launcher::{prepend_executable_dir, resolve_on_path, valid_public_launcher};
-use super::overrides::{append_overrides, hook_hash};
+use super::overrides::{
+    append_global_user_mcp_overrides, append_mcp_overrides, append_overrides, hook_hash,
+};
 use super::{
     CodexLaunch, begin_hook_launch, configure_with_executable, hook_command_for_platform,
     is_direct_codex_command, record_launch_issue,
@@ -82,6 +84,64 @@ fn inserts_all_overrides_before_the_prompt_tail() {
         command[..separator]
             .iter()
             .any(|item| item.starts_with("hooks.SessionStart="))
+    );
+}
+
+#[test]
+fn global_voice_mcp_has_user_authority_without_an_implicit_group() {
+    let mut command = vec![
+        "codex".into(),
+        "-c".into(),
+        "model=\"gpt-test\"".into(),
+        "app-server".into(),
+    ];
+    append_global_user_mcp_overrides(
+        &mut command,
+        Path::new("/tmp/cccc home"),
+        Path::new("/tmp/cccc bin/cccc"),
+    );
+
+    let app_server = command
+        .iter()
+        .position(|item| item == "app-server")
+        .expect("app-server");
+    let overrides = &command[..app_server];
+    assert!(overrides.contains(&"mcp_servers.cccc.env.CCCC_GROUP_ID=\"\"".into()));
+    assert!(overrides.contains(&"mcp_servers.cccc.env.CCCC_ACTOR_ID=\"user\"".into()));
+    assert!(overrides.contains(&"mcp_servers.cccc.env.CCCC_MCP_TOOL_PROFILE=\"full\"".into()));
+    assert!(command[app_server + 1..].is_empty());
+}
+
+#[test]
+fn actor_mcp_overrides_remain_global_arguments_for_app_server() {
+    let mut command = vec![
+        "codex".into(),
+        "-m".into(),
+        "glm-test".into(),
+        "app-server".into(),
+        "--listen".into(),
+        "ws://127.0.0.1:0".into(),
+    ];
+    append_mcp_overrides(
+        &mut command,
+        Path::new("/tmp/cccc home"),
+        Path::new("/tmp/cccc bin/cccc"),
+        "g_test",
+        "backend",
+    );
+
+    let app_server = command
+        .iter()
+        .position(|item| item == "app-server")
+        .expect("app-server");
+    assert!(
+        command[..app_server]
+            .iter()
+            .any(|item| item == "mcp_servers.cccc.env.CCCC_ACTOR_ID=\"backend\"")
+    );
+    assert_eq!(
+        &command[app_server..],
+        ["app-server", "--listen", "ws://127.0.0.1:0"]
     );
 }
 

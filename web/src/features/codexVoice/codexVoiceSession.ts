@@ -37,7 +37,6 @@ export {
 export type { CodexVoicePhase, CodexVoiceSessionCallbacks } from "./codexVoiceTypes";
 
 export class CodexVoiceBrowserSession {
-  private readonly groupId: string;
   private readonly audio: HTMLAudioElement;
   private readonly callbacks: CodexVoiceSessionCallbacks;
   private readonly preferences: CodexVoicePreferences;
@@ -54,12 +53,10 @@ export class CodexVoiceBrowserSession {
   private readonly transcripts = new RealtimeTranscriptAccumulator();
 
   constructor(args: {
-    groupId: string;
     audio: HTMLAudioElement;
     preferences: CodexVoicePreferences;
     callbacks: CodexVoiceSessionCallbacks;
   }) {
-    this.groupId = args.groupId;
     this.audio = args.audio;
     this.preferences = args.preferences;
     this.callbacks = args.callbacks;
@@ -110,7 +107,7 @@ export class CodexVoiceBrowserSession {
       this.callbacks.onPhase("connecting");
       const requestAbort = new AbortController();
       this.requestAbort = requestAbort;
-      const response = await startCodexVoiceCall(this.groupId, {
+      const response = await startCodexVoiceCall({
         clientSessionId: this.clientSessionId,
         offerSdp,
         voice: this.preferences.voice,
@@ -192,7 +189,7 @@ export class CodexVoiceBrowserSession {
     this.callbacks.onCall(null);
 
     if (call) {
-      const response = await stopCodexVoiceCall(call.group_id, call.generation);
+      const response = await stopCodexVoiceCall(call.generation);
       if (!response.ok) this.callbacks.onError(response.error.code);
     }
     if (options.notifyPhase !== false) this.callbacks.onPhase("idle");

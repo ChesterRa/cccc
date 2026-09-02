@@ -169,7 +169,7 @@
   "customRuntimeRequiresCommand": "カスタムランタイムにはコマンドが必要です。",
   "commandOverrideRequired": "既定コマンドをオフにしたため、オーバーライド用コマンドを入力してください。",
   "runtimeNotInstalled": "{{runtime}} がインストールされていません。",
-  "creationMode": "作成方法",
+  "creationMode": "構成方法",
   "customAgent": "カスタム",
   "fromActorProfile": "Runtime Profile を使う",
   "actorProfile": "Runtime Profile",

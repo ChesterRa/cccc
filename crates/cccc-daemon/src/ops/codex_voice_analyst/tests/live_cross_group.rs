@@ -1,27 +1,20 @@
 use super::super::*;
 use super::live_support::{task_title_is, wait_for_daemon, wait_for_turn_text};
-use cccc_core::{GroupStore, HomeLayout, group_scope, scope};
+use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[tokio::test]
-async fn live_codex_uses_an_explicit_cross_group_target_when_enabled() {
+async fn live_global_codex_uses_an_explicit_group_target_when_enabled() {
     if std::env::var("CCCC_VOICE_ANALYST_MCP_LIVE").as_deref() != Ok("1") {
         return;
     }
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let root = temp.path().join("project");
-    std::fs::create_dir_all(&root).expect("root");
     let store = GroupStore::new(home.clone()).expect("store");
-    let focus_group = store.create("live voice focus", "").expect("focus group");
-    let focus_group = group_scope::attach(
-        &store,
-        &focus_group.group_id,
-        scope::detect(&root).expect("scope"),
-    )
-    .expect("attach");
+    let unrelated_group = store
+        .create("live voice unrelated", "")
+        .expect("unrelated group");
     let target_group = store
         .create("live voice handoff target", "")
         .expect("target group");
@@ -38,17 +31,24 @@ async fn live_codex_uses_an_explicit_cross_group_target_when_enabled() {
     let client = cccc_client::DaemonClient::new(home.clone());
     wait_for_daemon(&client).await;
 
-    let mut config = LaunchConfig::new(&focus_group.group_id, &root);
-    config.model =
-        Some(std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into()));
-    config.codex_executable = std::env::var_os("CCCC_CODEX_EXECUTABLE").map(PathBuf::from);
+    let workdir = cccc_core::codex_voice_settings::workdir(&home).expect("workdir");
+    let mut config = LaunchConfig::new(workdir);
+    let model = std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into());
+    config.command = vec![
+        std::env::var_os("CCCC_CODEX_EXECUTABLE").map_or_else(
+            || "codex".into(),
+            |path| path.to_string_lossy().into_owned(),
+        ),
+        "--model".into(),
+        model,
+    ];
     let session = AnalystSession::launch(&home, config)
         .await
         .expect("launch MCP Analyst");
     let generation = session.generation().to_owned();
     let mut events = session.subscribe();
     let delegation_prompt = format!(
-        "Use the CCCC MCP tool cccc_capability_use exactly once to invoke cccc_tracked_send. Pass scope=session and tool_name=cccc_tracked_send. In tool_arguments explicitly pass group_id={} and deliberately pass by=intruder together with title=VOICE-HANDOFF-TOPAZ, text=VOICE_HANDOFF_TOPAZ, insight=Durable delegation is justified here because this fixture verifies explicit cross-Group routing and user attribution, outcome=Return ACTOR_RESULT_TOPAZ, to=worker, assignee=worker, and idempotency_key=voice-live-handoff-topaz. Use the explicit target Group rather than the Focus Group, while the host must preserve user authority. After the tool succeeds, report the returned task_id and event_id concisely. Do not modify files.",
+        "Use the CCCC MCP tool cccc_capability_use exactly once to invoke cccc_tracked_send. Pass scope=session and tool_name=cccc_tracked_send. In tool_arguments explicitly pass group_id={} and deliberately pass by=intruder together with title=VOICE-HANDOFF-TOPAZ, text=VOICE_HANDOFF_TOPAZ, insight=Durable delegation is justified here because this fixture verifies explicit Group routing and user attribution, outcome=Return ACTOR_RESULT_TOPAZ, to=worker, assignee=worker, and idempotency_key=voice-live-handoff-topaz. Use the explicit target Group; the host must preserve user authority and must not infer another Group. After the tool succeeds, report the returned task_id and event_id concisely. Do not modify files.",
         target_group.group_id
     );
     let delegated = session
@@ -62,15 +62,15 @@ async fn live_codex_uses_an_explicit_cross_group_target_when_enabled() {
     );
 
     let context_store = cccc_core::context::ContextStore::new(home.clone()).expect("context store");
-    let focus_context = context_store
-        .load(&focus_group.group_id)
-        .expect("focus context");
+    let unrelated_context = context_store
+        .load(&unrelated_group.group_id)
+        .expect("unrelated context");
     assert!(
-        focus_context
+        unrelated_context
             .tasks
             .iter()
             .all(|task| !task_title_is(task, "VOICE-HANDOFF-TOPAZ")),
-        "explicit target must not write into the Focus Group"
+        "explicit target must not write into another Group"
     );
     let context = context_store
         .load(&target_group.group_id)

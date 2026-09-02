@@ -19,9 +19,7 @@ export class CodexVoiceEventSocket {
   ) {}
 
   connect(): Promise<void> {
-    const socket = new WebSocket(
-      getCodexVoiceWebSocketUrl(this.call.group_id, this.call.generation),
-    );
+    const socket = new WebSocket(getCodexVoiceWebSocketUrl(this.call.generation));
     this.socket = socket;
     return new Promise<void>((resolve, reject) => {
       let ready = false;

@@ -20,11 +20,9 @@ actual=$(mktemp)
 trap 'rm -f "$expected" "$actual"' EXIT
 printf '%s\n' \
   "cccc-v${VERSION}-aarch64-apple-darwin.tar.gz" \
-  "cccc-v${VERSION}-x86_64-apple-darwin.tar.gz" \
   "cccc-v${VERSION}-x86_64-pc-windows-msvc.zip" \
   "cccc-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
   "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_arm64.whl" \
-  "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_x86_64.whl" \
   "cccc_pair-${WHEEL_VERSION}-py3-none-manylinux_2_28_x86_64.whl" \
   "cccc_pair-${WHEEL_VERSION}-py3-none-win_amd64.whl" > "$expected"
 
@@ -32,7 +30,7 @@ find "$ASSET_DIR" -maxdepth 1 -type f \
   \( -name 'cccc-v*.tar.gz' -o -name 'cccc-v*.zip' -o -name 'cccc_pair-*.whl' \) \
   -exec basename {} \; | LC_ALL=C sort > "$actual"
 if ! diff -u "$expected" "$actual"; then
-  echo "release payload set does not match the four supported targets" >&2
+  echo "release payload set does not match the three supported targets" >&2
   exit 1
 fi
 
@@ -56,4 +54,4 @@ for installer in install.sh install.ps1; do
 done
 chmod 755 "$ASSET_DIR/install.sh"
 
-echo "OK: prepared four archives, four Rust-only wheels, SHA256SUMS, and versioned installers for v$VERSION"
+echo "OK: prepared three archives, three Rust-only wheels, SHA256SUMS, and versioned installers for v$VERSION"

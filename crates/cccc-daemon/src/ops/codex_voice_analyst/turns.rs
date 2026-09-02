@@ -12,7 +12,8 @@ impl AnalystSession {
             binding,
             endpoint,
             thread_id,
-            codex_executable,
+            remote_tui_prefix,
+            environment,
             protocol,
             process,
             delegations,
@@ -24,11 +25,12 @@ impl AnalystSession {
             binding,
             generation: uuid::Uuid::new_v4().simple().to_string(),
             endpoint,
-            codex_executable,
-            model: None,
+            remote_tui_prefix,
+            environment,
             resume_thread_id: Some(thread_id),
             process,
             delegations: delegations.into_inner(),
+            purpose: SessionPurpose::VoiceAnalyst,
         })
         .await
     }
@@ -64,8 +66,7 @@ impl AnalystSession {
                     "clientUserMessageId":format!("cccc-voice:{}:{delegation_id}", self.generation),
                     "responsesapiClientMetadata":{
                         "cccc_voice_generation":self.generation,
-                        "cccc_voice_delegation_id":delegation_id,
-                        "cccc_group_id":self.binding.group_id,
+                        "cccc_turn_correlation_id":delegation_id,
                     }
                 }),
                 REQUEST_TIMEOUT,

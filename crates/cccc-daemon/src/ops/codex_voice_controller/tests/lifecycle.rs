@@ -1,6 +1,6 @@
 use super::super::*;
 use super::fake_server::{fake_analyst_server, fake_disconnecting_analyst_server};
-use crate::ops::codex_voice_analyst::{AnalystSession, ScopeBinding};
+use crate::ops::codex_voice_analyst::{AnalystSession, WorkspaceBinding};
 use cccc_core::{HomeLayout, voice_recording_lease};
 use serde_json::json;
 use std::path::PathBuf;
@@ -16,14 +16,10 @@ async fn stopping_audio_keeps_the_shared_analyst_available_for_the_next_call() {
     std::fs::create_dir_all(&root).expect("root");
     let (endpoint, server, _, _) = fake_analyst_server().await;
     let analyst = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_voice".into(),
-            root,
-        },
+        WorkspaceBinding { root },
         "analyst-shared".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("Analyst");
@@ -70,14 +66,10 @@ async fn analyst_disconnect_is_generation_bound_and_call_drop_releases_the_lease
     std::fs::create_dir_all(&root).expect("root");
     let (endpoint, server) = fake_disconnecting_analyst_server().await;
     let analyst = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_voice".into(),
-            root,
-        },
+        WorkspaceBinding { root },
         "analyst-disconnect".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("Analyst");
@@ -104,7 +96,9 @@ async fn analyst_disconnect_is_generation_bound_and_call_drop_releases_the_lease
     let disconnected = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = events.recv().await.expect("Analyst event");
-            if event.message["method"] == "cccc/voiceAnalyst/disconnected" {
+            if event.message["method"]
+                == super::super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD
+            {
                 return event;
             }
         }

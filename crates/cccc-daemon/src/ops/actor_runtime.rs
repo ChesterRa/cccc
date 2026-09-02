@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::SessionStatus;
 use std::path::PathBuf;
@@ -41,22 +41,22 @@ pub fn apply(
         super::deepseek_runtime::apply(home, group, actor, kind)?;
         return Ok(None);
     }
-    if is_structured(actor) {
-        if super::local_headless::supports(actor) {
-            match kind {
-                "actor.stop" => super::local_headless::stop(&group.group_id, actor_id),
-                "actor.restart" | "actor.new_session" => {
-                    super::local_headless::stop(&group.group_id, actor_id);
-                    start_local_headless(home, group, actor)?;
-                }
-                _ if !super::local_headless::running(&group.group_id, actor_id) => {
-                    start_local_headless(home, group, actor)?;
-                }
-                _ => {}
+    if super::local_headless::supports(actor) {
+        match kind {
+            "actor.stop" => super::local_headless::stop(&group.group_id, actor_id),
+            "actor.restart" | "actor.new_session" => {
+                super::local_headless::stop(&group.group_id, actor_id);
+                start_local_headless(home, group, actor)?;
             }
-        } else {
-            let _ = stop(group, actor_id)?;
+            _ if !super::local_headless::running(&group.group_id, actor_id) => {
+                start_local_headless(home, group, actor)?;
+            }
+            _ => {}
         }
+        return Ok(None);
+    }
+    if is_structured(actor) {
+        let _ = stop(group, actor_id)?;
         return Ok(None);
     }
     match kind {
@@ -70,6 +70,19 @@ pub fn apply(
             _ => start(home, group, actor).map(Some),
         },
     }
+}
+
+pub(crate) fn normalize_codex_app_server(actor: &mut Actor) {
+    if actor.runtime != ActorRuntime::Codex {
+        return;
+    }
+    actor.runtime_state_source = if super::local_headless::uses_codex_app_server(actor) {
+        RuntimeStateSource::AppServer
+    } else if actor.runner == RunnerKind::Pty {
+        RuntimeStateSource::Terminal
+    } else {
+        actor.runtime_state_source
+    };
 }
 
 fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {

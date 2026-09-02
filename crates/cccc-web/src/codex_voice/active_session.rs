@@ -12,8 +12,6 @@ impl ActiveSession {
 
     pub(crate) fn info(&self) -> SessionInfo {
         SessionInfo {
-            group_id: self.group_id.clone(),
-            group_title: self.group_title.clone(),
             generation: self.call.generation().to_owned(),
             analyst_generation: self.analyst.analyst.generation().to_owned(),
             voice: self.voice.clone(),

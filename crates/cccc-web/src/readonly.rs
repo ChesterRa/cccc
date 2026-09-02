@@ -138,7 +138,7 @@ mod tests {
             "/nomcp/s/session-1/send",
             "/api/group-bridge/session/ws",
             "/api/group-bridge/session/ws/v2",
-            "/api/v1/groups/g_one/codex_voice/calls/generation/events",
+            "/api/v1/codex_voice/calls/generation/events",
         ] {
             assert!(!is_read_only_safe(&Method::GET, path), "{path}");
         }

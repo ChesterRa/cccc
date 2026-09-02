@@ -169,7 +169,7 @@
   "customRuntimeRequiresCommand": "Custom runtime requires a command.",
   "commandOverrideRequired": "Command override is enabled. Please enter a command.",
   "runtimeNotInstalled": "{{runtime}} is not installed.",
-  "creationMode": "Creation mode",
+  "creationMode": "Configuration mode",
   "customAgent": "Custom",
   "fromActorProfile": "Use Runtime Profile",
   "actorProfile": "Runtime Profile",

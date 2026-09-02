@@ -2876,6 +2876,7 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
+- A daemon-launched actor whose executable is directly identified as `codex` MUST enter one daemon-owned Codex app-server session for both PTY and headless runners. Unsupported subcommands or prompt tails fail explicitly instead of silently selecting another Codex transport. Actor deliveries go to that session as structured turns. PTY adds a remote TUI attached to the same app-server thread; headless omits only that presentation layer. The app-server and remote TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same persisted thread when eligible. An opaque wrapper that cannot be transformed without changing its meaning MAY retain the legacy direct-PTY or stdio compatibility path.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply to an actor is also an explicit wake action: it MUST enable the targeted actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
@@ -3091,6 +3092,7 @@ Args:
 Notes:
 - Runtime variables are unified as profile secrets (`actor_profile_secret_*`).
 - `profile.env` is accepted only as a legacy bridge and migrated into profile secrets; stored profile `env` is kept empty.
+- `command` accepts the historical shell-command string for compatibility, but successful writes normalize it to a `string[]`. Readers must continue to accept an existing string until that profile is saved again.
 
 Result:
 ```ts
@@ -3187,6 +3189,27 @@ Args:
 Result:
 ```ts
 { profile_id: string; source_profile_id: string; keys: string[] }
+```
+
+#### `actor_profile_copy_voice_analyst_secrets`
+
+Copy the Voice Analyst custom private environment into a Runtime Profile without returning values.
+This operation is administrator-only and is used when the Voice settings surface saves its Custom
+configuration as a reusable Profile.
+
+Args:
+```ts
+{
+  profile_id: string
+  profile_scope?: "global" | "user"
+  profile_owner?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{ profile_id: string; keys: string[] }
 ```
 
 ### 8.6 Chat Messaging

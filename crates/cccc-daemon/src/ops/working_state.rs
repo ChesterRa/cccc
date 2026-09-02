@@ -39,7 +39,11 @@ pub(super) fn fields(
     let capability = hook_runtime.and_then(|runtime| {
         super::runtime_hook_session::validated(home, runtime, group_id, &actor.id, pid)
     });
-    let hook_state = (running && !super::local_headless::supports(actor))
+    let direct_pty_compatibility = actor.runtime == ActorRuntime::Codex
+        && actor.runner == cccc_contracts::RunnerKind::Pty
+        && local_state.is_none();
+    let hook_state = (running
+        && (!super::local_headless::supports(actor) || direct_pty_compatibility))
         .then(|| {
             hook_runtime.and_then(|runtime| {
                 cccc_core::codex_hook_state::read_runtime(home, runtime, group_id, &actor.id)
@@ -61,7 +65,11 @@ pub(super) fn fields(
     } else if let Some(local_state) = local_state {
         (
             local_state.status,
-            "provider_headless_session".to_owned(),
+            if runner_effective == "pty" {
+                "codex_app_server_session".to_owned()
+            } else {
+                "provider_headless_session".to_owned()
+            },
             Some(local_state.updated_at),
             local_state.task_id,
         )

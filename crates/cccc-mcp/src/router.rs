@@ -741,10 +741,7 @@ pub(crate) async fn daemon(
 
 fn add_runtime_context(home: &HomeLayout, args: &mut Map<String, Value>) {
     if !args.contains_key("group_id") {
-        let group = std::env::var("CCCC_GROUP_ID")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .or_else(|| cccc_core::active::get(home).ok().flatten());
+        let group = runtime_group_id(home, std::env::var("CCCC_GROUP_ID").ok());
         if let Some(group) = group {
             args.insert("group_id".into(), Value::String(group));
         }
@@ -753,6 +750,13 @@ fn add_runtime_context(home: &HomeLayout, args: &mut Map<String, Value>) {
         .ok()
         .filter(|value| !value.trim().is_empty());
     apply_actor_context(args, actor.as_deref());
+}
+
+fn runtime_group_id(home: &HomeLayout, configured: Option<String>) -> Option<String> {
+    match configured {
+        Some(value) => (!value.trim().is_empty()).then_some(value),
+        None => cccc_core::active::get(home).ok().flatten(),
+    }
 }
 
 fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
@@ -925,10 +929,25 @@ mod tests {
     use super::{
         apply_actor_context, apply_request_context, help_markdown, is_message_operation,
         is_task_mail_boundary, message_operation_succeeded, postprocess_task_result,
-        prepare_task_arguments, with_post_message_context,
+        prepare_task_arguments, runtime_group_id, with_post_message_context,
     };
     use crate::RequestContext;
     use serde_json::json;
+
+    #[test]
+    fn an_explicit_empty_runtime_group_never_inherits_the_active_group() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        cccc_core::active::set(&home, "g_active").expect("active group");
+
+        assert_eq!(runtime_group_id(&home, None).as_deref(), Some("g_active"));
+        assert_eq!(runtime_group_id(&home, Some(String::new())), None);
+        assert_eq!(
+            runtime_group_id(&home, Some("g_explicit".into())).as_deref(),
+            Some("g_explicit")
+        );
+    }
 
     #[test]
     fn web_model_tool_authorization_is_role_aware_and_capability_routed() {

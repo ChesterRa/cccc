@@ -99,7 +99,7 @@ readme = {{ file = "README.md", content-type = "text/markdown" }}
     directory.joinpath("README.md").unlink()
 
 
-def test_accepts_four_wheels_and_four_byte_identical_archives(tmp_path: Path) -> None:
+def test_accepts_three_wheels_and_three_byte_identical_archives(tmp_path: Path) -> None:
     _complete_set(tmp_path)
     verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
@@ -108,7 +108,7 @@ def test_rejects_an_incomplete_distribution_set(tmp_path: Path) -> None:
     _complete_set(tmp_path)
     tmp_path.joinpath(f"cccc_pair-{WHEEL_VERSION}-py3-none-win_amd64.whl").unlink()
 
-    with pytest.raises(ValueError, match="exactly four wheels"):
+    with pytest.raises(ValueError, match="exactly three wheels"):
         verify(tmp_path, cargo_version=CARGO_VERSION, wheel_version=WHEEL_VERSION)
 
 

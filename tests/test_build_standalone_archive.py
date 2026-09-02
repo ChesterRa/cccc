@@ -25,7 +25,6 @@ def _project(root: Path) -> None:
     ("target", "suffix", "executable"),
     [
         ("x86_64-unknown-linux-gnu", ".tar.gz", "cccc"),
-        ("x86_64-apple-darwin", ".tar.gz", "cccc"),
         ("aarch64-apple-darwin", ".tar.gz", "cccc"),
         ("x86_64-pc-windows-msvc", ".zip", "cccc.exe"),
     ],
@@ -70,3 +69,17 @@ def test_archive_is_reproducible(
         hashlib.sha256(first.read_bytes()).digest()
         == hashlib.sha256(second.read_bytes()).digest()
     )
+
+
+def test_rejects_retired_macos_intel_target(tmp_path: Path) -> None:
+    _project(tmp_path)
+    binary = tmp_path / "cccc"
+    binary.write_bytes(b"retired target")
+
+    with pytest.raises(ValueError, match="unsupported release target"):
+        build(
+            binary,
+            tmp_path / "dist",
+            target="x86_64-apple-darwin",
+            root=tmp_path,
+        )

@@ -1,6 +1,6 @@
 use super::super::*;
 use super::fake_server::fake_analyst_server;
-use crate::ops::codex_voice_analyst::{AnalystSession, ScopeBinding};
+use crate::ops::codex_voice_analyst::{AnalystSession, WorkspaceBinding};
 use cccc_core::{HomeLayout, voice_recording_lease};
 use serde_json::json;
 use std::path::PathBuf;
@@ -17,14 +17,10 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     std::fs::create_dir_all(&root).expect("root");
     let (endpoint, server, starts, steers) = fake_analyst_server().await;
     let analyst = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_voice".into(),
-            root: root.clone(),
-        },
+        WorkspaceBinding { root: root.clone() },
         "analyst-generation".into(),
         endpoint.clone(),
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("Analyst");

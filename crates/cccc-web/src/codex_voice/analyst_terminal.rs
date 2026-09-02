@@ -1,6 +1,5 @@
 use super::*;
 use anyhow::{Result, anyhow};
-use std::collections::BTreeMap;
 
 impl AnalystRuntime {
     pub(crate) async fn attach_terminal(
@@ -18,7 +17,8 @@ impl AnalystRuntime {
             .unwrap_or(false);
         if !running {
             let command = self.analyst.tui_command();
-            let root = self.root.clone();
+            let root = self.workdir.clone();
+            let env = self.analyst.tui_environment();
             let scope = scope_id.clone();
             let session = session_id.clone();
             let (cols, rows) = initial_size.unwrap_or((120, 32));
@@ -29,7 +29,7 @@ impl AnalystRuntime {
                     runner: cccc_contracts::RunnerKind::Pty,
                     command,
                     cwd: root,
-                    env: BTreeMap::new(),
+                    env,
                     cols,
                     rows,
                 })
@@ -85,7 +85,7 @@ impl AnalystRuntime {
 
     fn terminal_runtime_key(&self) -> (String, String) {
         (
-            format!("codex-voice-terminal:{}", self.group_id),
+            "codex-voice-terminal".into(),
             self.analyst.generation().to_owned(),
         )
     }

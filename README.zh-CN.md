@@ -76,8 +76,9 @@ python -m pip install -U "cccc-pair>=0.4.36"
 
 > **CCCC 0.4.36 只有一个产品实现：Rust。** 推荐使用官网安装脚本；pip 命令用于
 > 包管理器兼容，安装的是同一个原生可执行文件，不包含 Python daemon、启动器或
-> 回退实现。支持 Linux x86-64（glibc 2.28+）、Intel/Apple Silicon macOS 11+
-> 和 Windows x86-64。
+> 回退实现。支持 Linux x86-64（glibc 2.28+）、Apple Silicon macOS 11+ 和
+> Windows x86-64。CCCC v0.4.37 是最后一个支持 Intel Mac 的版本；后续版本不再
+> 发布 `x86_64-apple-darwin` 构件。
 
 ### 升级
 

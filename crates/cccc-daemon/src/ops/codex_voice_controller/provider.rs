@@ -39,19 +39,17 @@ impl RealtimeCallConfig {
 
     pub fn from_environment_with_voice(voice: &str) -> Result<Self> {
         let voice = validate_realtime_voice(voice)?;
-        let auth_path = std::env::var_os("CCCC_CODEX_AUTH_PATH")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("CODEX_HOME")
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from)
-                    .map(|path| path.join("auth.json"))
-            })
-            .map(Ok)
-            .unwrap_or_else(|| {
-                cccc_core::path_input::expand_user_path("~/.codex/auth.json")
-                    .context("resolve Codex authentication path")
-            })?;
+        let auth_path = configured_auth_path(
+            std::env::var_os("CCCC_CODEX_AUTH_PATH").map(PathBuf::from),
+            std::env::var_os("CODEX_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
+        )
+        .map(Ok)
+        .unwrap_or_else(|| {
+            cccc_core::path_input::expand_user_path("~/.codex/auth.json")
+                .context("resolve Codex authentication path")
+        })?;
         Ok(Self {
             auth_path,
             base_url: std::env::var("CCCC_CODEX_VOICE_BASE_URL")
@@ -59,6 +57,13 @@ impl RealtimeCallConfig {
             voice,
         })
     }
+}
+
+pub(super) fn configured_auth_path(
+    explicit_auth_path: Option<PathBuf>,
+    inherited_codex_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    explicit_auth_path.or_else(|| inherited_codex_home.map(|path| path.join("auth.json")))
 }
 
 pub fn validate_realtime_voice(value: &str) -> Result<String> {
@@ -156,12 +161,10 @@ pub(super) fn validated_realtime_offer(offer: &str) -> Result<&str> {
     Ok(offer)
 }
 
-pub fn realtime_greeting_commands(contextual: bool) -> Vec<Value> {
-    session_context_commands(if contextual {
-        "The voice session has started with context from the ongoing CCCC Working Group. Greet the user by briefly acknowledging that you are ready to investigate this Group, then wait for them to speak."
-    } else {
-        "The voice session has started. Give the user one short, natural greeting, then wait for them to speak."
-    })
+pub fn realtime_greeting_commands() -> Vec<Value> {
+    session_context_commands(
+        "The global voice session has started. Give the user one short, natural greeting, then wait for them to speak. Do not imply that a Working Group is already selected.",
+    )
 }
 
 pub fn realtime_notice_commands(message: &str) -> Vec<Value> {

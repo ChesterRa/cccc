@@ -10,7 +10,6 @@ if (metadataFlag >= 0 && !metadataPath) {
 function requiredAssets(version) {
   return [
     `cccc-v${version}-aarch64-apple-darwin.tar.gz`,
-    `cccc-v${version}-x86_64-apple-darwin.tar.gz`,
     `cccc-v${version}-x86_64-pc-windows-msvc.zip`,
     `cccc-v${version}-x86_64-unknown-linux-gnu.tar.gz`,
     "SHA256SUMS",

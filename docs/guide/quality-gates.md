@@ -109,10 +109,10 @@ executable in a fresh `CCCC_HOME`. It verifies daemon lifecycle, a scoped Web
 Model actor, MCP initialization, a real `cccc_code_exec` cell, and clean stop.
 
 Release verification repeats installation and same-version replacement against
-the exact Linux, Intel macOS, Apple Silicon macOS, and Windows artifacts. Linux
-artifacts must satisfy the manylinux 2.28 dependency boundary; macOS artifacts
-declare macOS 11.0; Windows builds target Server 2022. Publication requires four
-native wheels, four standalone archives, matching executable hashes, checksums,
+the exact Linux, Apple Silicon macOS, and Windows artifacts. Linux artifacts
+must satisfy the manylinux 2.28 dependency boundary; the macOS artifact declares
+macOS 11.0; Windows builds target Server 2022. Publication requires three native
+wheels, three standalone archives, matching executable hashes, checksums,
 version-bound installers, release notes, installed CLI/MCP/daemon/Web smoke, and
 platform installer verification. Each wheel must also carry `pip-v1` in the
 shared ownership marker path, replace any stale standalone marker on install,

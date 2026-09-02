@@ -1,4 +1,5 @@
 use cccc_core::HomeLayout;
+use cccc_core::codex_voice_settings::ResolvedAgentRuntime;
 use cccc_daemon::experimental_codex_voice::{
     AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, LaunchConfig, RealtimeCallConfig,
     create_realtime_answer,
@@ -16,6 +17,7 @@ use crate::ledger_event_hub::LedgerEventHub;
 mod active_session;
 mod analyst_events;
 mod analyst_runtime;
+mod analyst_settings;
 mod analyst_terminal;
 mod persistence;
 mod sessions_lifecycle;
@@ -29,8 +31,6 @@ const CONNECTION_CLOSING: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionInfo {
-    pub group_id: String,
-    pub group_title: String,
     pub generation: String,
     pub analyst_generation: String,
     pub voice: String,
@@ -39,8 +39,6 @@ pub(crate) struct SessionInfo {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnalystInfo {
-    pub group_id: String,
-    pub group_title: String,
     pub generation: String,
     pub tui_ready: bool,
     pub phase: String,
@@ -73,10 +71,9 @@ struct AnalystSnapshot {
 }
 
 pub(crate) struct AnalystRuntime {
-    group_id: String,
-    group_title: String,
-    root: PathBuf,
+    workdir: PathBuf,
     analyst: Arc<CodexVoiceAnalyst>,
+    launch_runtime: ResolvedAgentRuntime,
     terminal_gate: Mutex<()>,
     snapshot: StdMutex<AnalystSnapshot>,
     monitor: StdMutex<Option<JoinHandle<()>>>,
@@ -87,8 +84,6 @@ pub(crate) struct AnalystRuntime {
 }
 
 pub(crate) struct ActiveSession {
-    group_id: String,
-    group_title: String,
     call: Arc<CodexVoiceCall>,
     analyst: Arc<AnalystRuntime>,
     client_session_id: String,
@@ -106,6 +101,12 @@ pub(crate) struct SessionAttachment {
 struct ManagedState {
     active: Option<Arc<ActiveSession>>,
     analyst: Option<Arc<AnalystRuntime>>,
+}
+
+pub(crate) struct AnalystSettingsOutcome {
+    pub analyst: Option<AnalystInfo>,
+    pub restarted: bool,
+    pub started_new_session: bool,
 }
 
 pub(crate) struct CodexVoiceSessions {

@@ -314,7 +314,7 @@ export type ActorProfile = {
   owner_id?: string;
   runtime: SupportedRuntime | string;
   runner: "pty" | "headless";
-  command: string[];
+  command: string[] | string;
   submit: "enter" | "newline" | "none";
   env: Record<string, string>;
   capability_defaults?: {

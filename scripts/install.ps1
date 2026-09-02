@@ -294,35 +294,40 @@ try {
 
   $expectedArchives = @(
     "cccc-v$Version-x86_64-unknown-linux-gnu.tar.gz",
-    "cccc-v$Version-x86_64-apple-darwin.tar.gz",
     "cccc-v$Version-aarch64-apple-darwin.tar.gz",
     "cccc-v$Version-x86_64-pc-windows-msvc.zip"
   )
   $expectedWheels = @(
     "cccc_pair-$wheelVersion-py3-none-manylinux_2_28_x86_64.whl",
-    "cccc_pair-$wheelVersion-py3-none-macosx_11_0_x86_64.whl",
     "cccc_pair-$wheelVersion-py3-none-macosx_11_0_arm64.whl",
     "cccc_pair-$wheelVersion-py3-none-win_amd64.whl"
   )
-  $expectedPayloads = @($expectedArchives) + @($expectedWheels)
+  $legacyArchive = "cccc-v$Version-x86_64-apple-darwin.tar.gz"
+  $legacyWheel = "cccc_pair-$wheelVersion-py3-none-macosx_11_0_x86_64.whl"
+  $expectedPayloads = @($expectedArchives) + @($expectedWheels) + @($legacyArchive, $legacyWheel)
   $checksumEntries = @{}
   foreach ($line in Get-Content -LiteralPath $checksumsPath) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     if ($line -notmatch '^([0-9A-Fa-f]{64})[ \t]+\*?([^/\\]+)$') {
-      throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
+      throw "SHA256SUMS must contain the three current release archives and optional wheels, or an exact legacy four-target set"
     }
     $name = $Matches[2]
     if ($expectedPayloads -notcontains $name -or $checksumEntries.ContainsKey($name)) {
-      throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
+      throw "SHA256SUMS must contain the three current release archives and optional wheels, or an exact legacy four-target set"
     }
     $checksumEntries[$name] = $Matches[1].ToLowerInvariant()
   }
-  $hasAllArchives = @($expectedArchives.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 4
-  $hasAllWheels = @($expectedWheels.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 4
+  $hasAllArchives = @($expectedArchives.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 3
+  $hasAllWheels = @($expectedWheels.Where({ $checksumEntries.ContainsKey($_) })).Count -eq 3
+  $hasLegacyArchive = $checksumEntries.ContainsKey($legacyArchive)
+  $hasLegacyWheel = $checksumEntries.ContainsKey($legacyWheel)
+  $isCurrentArchivesOnly = $checksumEntries.Count -eq 3 -and -not $hasLegacyArchive -and -not $hasLegacyWheel
+  $isCurrentComplete = $checksumEntries.Count -eq 6 -and $hasAllWheels -and -not $hasLegacyArchive -and -not $hasLegacyWheel
+  $isLegacyArchivesOnly = $checksumEntries.Count -eq 4 -and $hasLegacyArchive -and -not $hasLegacyWheel
+  $isLegacyComplete = $checksumEntries.Count -eq 8 -and $hasAllWheels -and $hasLegacyArchive -and $hasLegacyWheel
   if (-not $hasAllArchives -or
-      ($checksumEntries.Count -ne 4 -and $checksumEntries.Count -ne 8) -or
-      ($checksumEntries.Count -eq 8 -and -not $hasAllWheels)) {
-    throw "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
+      (-not $isCurrentArchivesOnly -and -not $isCurrentComplete -and -not $isLegacyArchivesOnly -and -not $isLegacyComplete)) {
+    throw "SHA256SUMS must contain the three current release archives and optional wheels, or an exact legacy four-target set"
   }
 
   Receive-File "$downloadUrl/$archive" $archivePath

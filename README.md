@@ -79,7 +79,9 @@ python -m pip install -U "cccc-pair>=0.4.36"
 > recommended. The pip command installs the same native executable in a
 > platform wheel for package-manager compatibility; it does not install a
 > Python daemon, launcher, or fallback. Supported targets are Linux x86-64
-> (glibc 2.28+), Intel/Apple Silicon macOS 11+, and Windows x86-64.
+> (glibc 2.28+), Apple Silicon macOS 11+, and Windows x86-64. CCCC v0.4.37
+> is the final release for Intel Macs; newer releases do not publish
+> `x86_64-apple-darwin` artifacts.
 
 ### Upgrade
 
@@ -511,8 +513,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 
 This installs the checksum-verified native product from GitHub Releases and
 updates through the same installer. It targets glibc 2.28+ Linux x86-64 without
-a system OpenSSL dependency, macOS 11+
-on Intel or Apple Silicon, and Windows x86-64. The
+a system OpenSSL dependency, Apple Silicon macOS 11+, and Windows x86-64. The
 installer refuses to overwrite an existing `cccc` command that it does not own;
 uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
 Commands in other directories are left untouched. For the default install

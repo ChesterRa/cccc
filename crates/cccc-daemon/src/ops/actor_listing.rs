@@ -35,6 +35,7 @@ pub(super) fn list(
         .filter(|actor| include_internal || actor.internal_kind.is_none())
         .cloned()
         .map(|mut actor| -> Result<Value, OpError> {
+            super::actor_runtime::normalize_codex_app_server(&mut actor);
             actor.role = actors::effective_role(group, &actor.id);
             let status = actor_runtime_status::resolve(group, &actor);
             let mut value = serde_json::to_value(&actor).unwrap_or_else(|_| json!({}));

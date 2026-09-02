@@ -84,8 +84,11 @@ pub(super) fn initialize_codex(
         &session.actor_id,
         cwd,
         command,
-        thread_id,
-        resumed,
+        runtime_session::CodexAppThread {
+            id: thread_id,
+            resumed,
+            runner: cccc_contracts::RunnerKind::Headless,
+        },
     ) {
         tracing::warn!(
             %error,
@@ -100,17 +103,34 @@ pub(super) fn initialize_codex(
 
 pub(super) fn submit_codex(session: &Arc<Session>, turn: &Turn) -> io::Result<String> {
     let thread_id = session.thread_id.lock().map_err(|_| poisoned())?.clone();
+    let request_id = if turn.event_id.trim().is_empty() {
+        uuid::Uuid::new_v4().simple().to_string()
+    } else {
+        turn.event_id.clone()
+    };
     let result = session.request(
         "turn/start",
-        json!({"threadId":thread_id,"input":[{"type":"text","text":turn.text}]}),
+        json!({
+            "threadId":thread_id,
+            "input":[{"type":"text","text":turn.text}],
+            "clientUserMessageId":format!("cccc-actor:{}:{}:{request_id}", session.group_id, session.actor_id),
+            "responsesapiClientMetadata":{
+                "cccc_actor_generation":format!("actor:{}:{}", session.group_id, session.actor_id),
+                "cccc_turn_correlation_id":request_id,
+            }
+        }),
         Duration::from_secs(30),
     )?;
-    Ok(result
+    let turn_id = result
         .get("turn")
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
-        .unwrap_or(&turn.event_id)
-        .to_owned())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| io::Error::other("Codex app-server returned an empty turn id"))?
+        .to_owned();
+    session.mark_codex_thread_materialized();
+    Ok(turn_id)
 }
 
 pub(super) fn submit_claude(session: &Arc<Session>, turn: &Turn) -> io::Result<String> {

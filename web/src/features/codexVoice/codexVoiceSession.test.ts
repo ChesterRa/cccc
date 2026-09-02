@@ -89,7 +89,6 @@ describe("Codex Voice realtime event model", () => {
       srcObject: null,
     } as unknown as HTMLAudioElement;
     const session = new CodexVoiceBrowserSession({
-      groupId: "g_voice",
       audio,
       preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
       callbacks: {

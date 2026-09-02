@@ -1,133 +1,99 @@
 use super::*;
-use anyhow::{Context, Result, anyhow, bail};
-use cccc_core::{GroupStore, group_scope};
+use anyhow::{Context, Result, bail};
+use cccc_core::codex_voice_settings::ResolvedAgentRuntime;
 use serde::{Deserialize, Serialize};
 
 const MAX_CLIENT_SESSION_ID_BYTES: usize = 128;
 const ANALYST_STATE_FILE: &str = "codex_voice_analyst.json";
+const ANALYST_WORKSPACE_VERSION: u32 = 1;
 
-pub(super) fn resolve_scope(
-    home: &HomeLayout,
-    group_id: &str,
-) -> Result<(String, String, PathBuf)> {
-    let store = GroupStore::new(home.clone()).context("open Group store")?;
-    let group = store
-        .load(group_id.trim())
-        .with_context(|| format!("load Codex Voice Group {group_id}"))?;
-    let scope = group_scope::resolve_attached_scope(&group, &group.active_scope_key)
-        .ok_or_else(|| anyhow!("Codex Voice requires one active attached repository root"))?;
-    let root = PathBuf::from(&scope.url)
-        .canonicalize()
-        .with_context(|| format!("resolve active repository root {}", scope.url))?;
-    if !root.is_dir() {
-        bail!("Codex Voice active repository root is not a directory");
-    }
-    Ok((group.group_id, group.title, root))
-}
-
-pub(super) async fn launch_analyst(
-    home: &HomeLayout,
-    group_id: &str,
-    group_title: &str,
-    root: &Path,
-    fresh_warning: String,
-) -> Result<AnalystRuntime> {
-    let resume_thread_id = resumable_thread_id(home, group_id, root);
+pub(super) async fn launch_analyst(home: &HomeLayout) -> Result<AnalystRuntime> {
+    let workdir = cccc_core::codex_voice_settings::workdir(home)
+        .context("prepare neutral Voice Analyst working directory")?;
+    let settings = cccc_core::codex_voice_settings::load(home)
+        .context("load Voice Analyst launch settings")?;
+    let custom_environment = cccc_core::codex_voice_settings::private_environment(home)
+        .context("load Voice Analyst private environment")?;
+    let runtime = cccc_core::codex_voice_settings::resolve(home, &settings, &custom_environment)
+        .context("resolve Voice Analyst runtime configuration")?;
+    let identity_fingerprint = runtime.identity_fingerprint();
+    let (resume_thread_id, warning) = resumable_thread(home, &workdir, &identity_fingerprint)?;
     if let Some(thread_id) = resume_thread_id {
-        let mut config = LaunchConfig::new(group_id, root);
-        config.resume_thread_id = Some(thread_id);
-        match CodexVoiceAnalyst::launch(home, config).await {
-            Ok(analyst) => {
-                return Ok(AnalystRuntime::new(
-                    group_id.to_owned(),
-                    group_title.to_owned(),
-                    root.to_owned(),
-                    analyst,
-                    "ready",
-                    String::new(),
-                ));
-            }
+        match launch_exact(
+            home,
+            workdir.clone(),
+            runtime.clone(),
+            Some(thread_id),
+            "ready",
+            String::new(),
+        )
+        .await
+        {
+            Ok(analyst) => return Ok(analyst),
             Err(error) => {
-                tracing::warn!(%error, %group_id, "Voice Analyst resume failed; starting fresh");
-                return launch_fresh_analyst(
+                tracing::warn!(%error, "Voice Analyst resume failed; starting fresh");
+                return launch_exact(
                     home,
-                    group_id,
-                    group_title,
-                    root,
+                    workdir,
+                    runtime,
+                    None,
+                    "waiting",
                     "analyst_resume_replaced".into(),
                 )
                 .await;
             }
         }
     }
-    launch_fresh_analyst(home, group_id, group_title, root, fresh_warning).await
-}
-
-pub(super) fn resolve_resumable_scope(
-    home: &HomeLayout,
-) -> Result<Option<(String, String, PathBuf)>> {
-    let Some(persisted) = load_persisted_analyst(home)? else {
-        return Ok(None);
-    };
-    if !persisted.materialized || persisted.thread_id.trim().is_empty() {
-        return Ok(None);
-    }
-    validate_analyst_scope(home, &persisted.group_id, Path::new(&persisted.root))
-        .with_context(|| {
-            format!(
-                "validate persisted Voice Analyst Group {}",
-                persisted.group_id
-            )
-        })
-        .map(Some)
-}
-
-pub(super) fn validate_analyst_scope(
-    home: &HomeLayout,
-    group_id: &str,
-    expected_root: &Path,
-) -> Result<(String, String, PathBuf)> {
-    let store = GroupStore::new(home.clone()).context("open Group store for Voice Analyst")?;
-    let group = store
-        .load(group_id)
-        .with_context(|| format!("load Voice Analyst Group {group_id}"))?;
-    let expected_root = expected_root
-        .canonicalize()
-        .context("resolve expected Voice Analyst repository")?;
-    let scope = group_scope::resolve_attached_scope(&group, &expected_root.to_string_lossy())
-        .context("Voice Analyst repository is no longer attached")?;
-    let attached_root = PathBuf::from(&scope.url)
-        .canonicalize()
-        .context("resolve attached Voice Analyst repository")?;
-    if attached_root != expected_root || !attached_root.is_dir() {
-        bail!("Voice Analyst repository binding no longer matches");
-    }
-    Ok((group.group_id, group.title, attached_root))
+    launch_exact(home, workdir, runtime, None, "waiting", warning).await
 }
 
 pub(super) async fn launch_fresh_analyst(
     home: &HomeLayout,
-    group_id: &str,
-    group_title: &str,
-    root: &Path,
     warning: String,
 ) -> Result<AnalystRuntime> {
-    let analyst = CodexVoiceAnalyst::launch(home, LaunchConfig::new(group_id, root)).await?;
-    Ok(AnalystRuntime::new(
-        group_id.to_owned(),
-        group_title.to_owned(),
-        root.to_owned(),
-        analyst,
+    let settings = cccc_core::codex_voice_settings::load(home)?;
+    let custom_environment = cccc_core::codex_voice_settings::private_environment(home)?;
+    let runtime = cccc_core::codex_voice_settings::resolve(home, &settings, &custom_environment)?;
+    launch_exact(
+        home,
+        cccc_core::codex_voice_settings::workdir(home)?,
+        runtime,
+        None,
         "waiting",
         warning,
+    )
+    .await
+}
+
+pub(super) async fn launch_exact(
+    home: &HomeLayout,
+    workdir: PathBuf,
+    runtime: ResolvedAgentRuntime,
+    resume_thread_id: Option<String>,
+    phase: &str,
+    warning: String,
+) -> Result<AnalystRuntime> {
+    let mut config = LaunchConfig::new(&workdir);
+    config.runtime = runtime.runtime;
+    config.command = runtime.command.clone();
+    config.environment = runtime.environment.clone();
+    config.resume_thread_id = resume_thread_id;
+    let analyst = CodexVoiceAnalyst::launch(home, config).await?;
+    Ok(AnalystRuntime::new(
+        workdir, analyst, runtime, phase, warning,
     ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct PersistedAnalyst {
+    #[serde(default)]
+    pub(super) workspace_version: u32,
+    #[serde(default)]
     pub(super) group_id: String,
     pub(super) root: String,
     pub(super) thread_id: String,
+    #[serde(default)]
+    pub(super) identity_fingerprint: String,
     pub(super) materialized: bool,
     pub(super) updated_at: String,
 }
@@ -143,22 +109,13 @@ fn load_persisted_analyst(home: &HomeLayout) -> Result<Option<PersistedAnalyst>>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(latest_legacy_persisted_analyst(home))
         }
-        Err(error) => {
-            if let Some(legacy) = latest_legacy_persisted_analyst(home) {
-                tracing::warn!(%error, path = %path.display(), "using legacy Voice Analyst resume state because the global state is invalid");
-                return Ok(Some(legacy));
-            }
-            Err(error).with_context(|| {
-                format!("read persisted Voice Analyst binding at {}", path.display())
-            })
-        }
+        Err(error) => Err(error)
+            .with_context(|| format!("read Voice Analyst resume state at {}", path.display())),
     }
 }
 
 fn latest_legacy_persisted_analyst(home: &HomeLayout) -> Option<PersistedAnalyst> {
-    // Early experimental builds stored one resume receipt per Group. Read the newest valid one
-    // only as a migration source; the next successful launch writes the canonical global receipt.
-    let store = GroupStore::new(home.clone()).ok()?;
+    let store = cccc_core::GroupStore::new(home.clone()).ok()?;
     store
         .list()
         .ok()?
@@ -174,24 +131,30 @@ fn latest_legacy_persisted_analyst(home: &HomeLayout) -> Option<PersistedAnalyst
         .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
 }
 
-pub(super) fn resumable_thread_id(
+pub(super) fn resumable_thread(
     home: &HomeLayout,
-    group_id: &str,
-    root: &Path,
-) -> Option<String> {
-    let persisted = match load_persisted_analyst(home) {
-        Ok(Some(persisted)) => persisted,
-        Ok(None) => return None,
-        Err(error) => {
-            tracing::warn!(%error, "ignored invalid Voice Analyst resume state");
-            return None;
-        }
+    workdir: &Path,
+    identity_fingerprint: &str,
+) -> Result<(Option<String>, String)> {
+    let Some(persisted) = load_persisted_analyst(home)? else {
+        return Ok((None, String::new()));
     };
-    (persisted.materialized
-        && persisted.group_id == group_id
-        && Path::new(&persisted.root) == root
-        && !persisted.thread_id.trim().is_empty())
-    .then_some(persisted.thread_id)
+    if !persisted.materialized || persisted.thread_id.trim().is_empty() {
+        return Ok((None, String::new()));
+    }
+    if persisted.workspace_version != ANALYST_WORKSPACE_VERSION {
+        return Ok((None, "analyst_workspace_migrated".into()));
+    }
+    let Ok(persisted_root) = PathBuf::from(&persisted.root).canonicalize() else {
+        return Ok((None, "analyst_resume_replaced".into()));
+    };
+    if persisted_root != workdir {
+        return Ok((None, "analyst_resume_replaced".into()));
+    }
+    if persisted.identity_fingerprint != identity_fingerprint {
+        return Ok((None, "analyst_configuration_started_new_session".into()));
+    }
+    Ok((Some(persisted.thread_id), String::new()))
 }
 
 pub(super) fn persist_analyst(
@@ -203,9 +166,11 @@ pub(super) fn persist_analyst(
     cccc_core::fs::write_json(
         &path,
         &PersistedAnalyst {
-            group_id: analyst.group_id.clone(),
-            root: analyst.root.to_string_lossy().into_owned(),
+            workspace_version: ANALYST_WORKSPACE_VERSION,
+            group_id: String::new(),
+            root: analyst.workdir.to_string_lossy().into_owned(),
             thread_id: analyst.analyst.thread_id().to_owned(),
+            identity_fingerprint: analyst.launch_runtime().identity_fingerprint(),
             materialized,
             updated_at: cccc_contracts::utc_now(),
         },
@@ -229,3 +194,6 @@ pub(super) fn validate_client_session_id(value: &str) -> Result<String> {
 
 #[cfg(test)]
 pub(super) const TEST_ANALYST_STATE_FILE: &str = ANALYST_STATE_FILE;
+
+#[cfg(test)]
+pub(super) const TEST_ANALYST_WORKSPACE_VERSION: u32 = ANALYST_WORKSPACE_VERSION;

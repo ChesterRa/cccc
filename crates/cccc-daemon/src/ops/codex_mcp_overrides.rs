@@ -58,6 +58,34 @@ pub(super) fn append_mcp_overrides(
     );
 }
 
+pub(super) fn append_global_user_mcp_overrides(
+    command: &mut Vec<String>,
+    home: &Path,
+    executable: &Path,
+) {
+    let executable_toml = toml_string(executable);
+    let home = toml_string(home);
+    let arguments = [
+        "-c".into(),
+        format!("mcp_servers.cccc.command={executable_toml}"),
+        "-c".into(),
+        "mcp_servers.cccc.args=[\"mcp\"]".into(),
+        "-c".into(),
+        format!("mcp_servers.cccc.env.CCCC_HOME={home}"),
+        "-c".into(),
+        "mcp_servers.cccc.env.CCCC_GROUP_ID=\"\"".into(),
+        "-c".into(),
+        "mcp_servers.cccc.env.CCCC_ACTOR_ID=\"user\"".into(),
+        "-c".into(),
+        "mcp_servers.cccc.env.CCCC_MCP_TOOL_PROFILE=\"full\"".into(),
+    ];
+    let index = command
+        .iter()
+        .position(|argument| argument == "app-server")
+        .unwrap_or(command.len());
+    command.splice(index..index, arguments);
+}
+
 pub(super) fn append_hook_overrides(command: &mut Vec<String>, executable: &Path) {
     insert_before_prompt_tail(command, hook_arguments(executable));
 }
@@ -124,7 +152,7 @@ fn insert_before_prompt_tail(
 ) {
     let index = command
         .iter()
-        .position(|argument| argument == "--")
+        .position(|argument| matches!(argument.as_str(), "app-server" | "--"))
         .unwrap_or(command.len());
     command.splice(index..index, arguments);
 }

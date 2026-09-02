@@ -18,25 +18,23 @@ fi
 
 for archive in \
   "cccc-v${VERSION}-aarch64-apple-darwin.tar.gz" \
-  "cccc-v${VERSION}-x86_64-apple-darwin.tar.gz" \
   "cccc-v${VERSION}-x86_64-pc-windows-msvc.zip" \
   "cccc-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"; do
   printf 'fixture %s\n' "$archive" > "$TMP_ROOT/$archive"
 done
 for wheel in \
   "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_arm64.whl" \
-  "cccc_pair-${WHEEL_VERSION}-py3-none-macosx_11_0_x86_64.whl" \
   "cccc_pair-${WHEEL_VERSION}-py3-none-manylinux_2_28_x86_64.whl" \
   "cccc_pair-${WHEEL_VERSION}-py3-none-win_amd64.whl"; do
   printf 'fixture %s\n' "$wheel" > "$TMP_ROOT/$wheel"
 done
 
 "$ROOT_DIR/scripts/package_release_assets.sh" "$TMP_ROOT" "$VERSION" "$WHEEL_VERSION"
-test "$(wc -l < "$TMP_ROOT/SHA256SUMS" | tr -d ' ')" -eq 8
+test "$(wc -l < "$TMP_ROOT/SHA256SUMS" | tr -d ' ')" -eq 6
 grep -Fq "DEFAULT_VERSION=\"$VERSION\"" "$TMP_ROOT/install.sh"
 grep -Fq "defaultVersion = \"$VERSION\"" "$TMP_ROOT/install.ps1"
-grep -Fq 'count != 4 && count != 8' "$TMP_ROOT/install.sh"
-grep -Fq '$checksumEntries.Count -ne 4 -and $checksumEntries.Count -ne 8' "$TMP_ROOT/install.ps1"
+grep -Fq 'counts["current_archive"] != 3' "$TMP_ROOT/install.sh"
+grep -Fq '$isCurrentComplete = $checksumEntries.Count -eq 6' "$TMP_ROOT/install.ps1"
 grep -Fq 'CCCC_RELEASE_TAG_PREFIX:-v' "$TMP_ROOT/install.sh"
 grep -Fq 'CCCC_RELEASE_TAG_PREFIX' "$TMP_ROOT/install.ps1"
 grep -Fq '"v"' "$TMP_ROOT/install.ps1"

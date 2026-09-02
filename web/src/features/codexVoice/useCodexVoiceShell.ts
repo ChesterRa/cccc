@@ -1,15 +1,14 @@
 import { useState } from "react";
 import { useCodexVoiceSessionController } from "./useCodexVoiceSessionController";
 
-export function useCodexVoiceShell(enabled: boolean, selectedGroupId: string) {
+export function useCodexVoiceShell(enabled: boolean) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const controller = useCodexVoiceSessionController(enabled);
 
   const start = () => {
-    const launchGroupId = controller.analyst?.group_id || selectedGroupId;
-    if (!launchGroupId || controller.isEngaged) return;
+    if (controller.isEngaged) return;
     setDetailsOpen(true);
-    void controller.start(launchGroupId);
+    void controller.start();
   };
   return {
     controller,

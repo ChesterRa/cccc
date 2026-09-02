@@ -38,7 +38,7 @@ until the authoritative final transcript arrives; the right pane embeds the genu
 Codex TUI. On narrow screens, **Conversation** and **Voice Analyst** are tabs in the same console.
 Speaking voice, microphone, and (where supported) speaker choices expand inline rather than opening a
 second settings modal. The host must already be signed in through `codex login`, and the browser must
-allow microphone access.
+allow microphone access. That host login belongs only to the Realtime provider call.
 
 The two visible roles are one product flow:
 
@@ -47,21 +47,58 @@ The two visible roles are one product flow:
   and substantial analysis, then returns useful progress and the final result to the same spoken
   conversation. Under local user authority it can list all Groups and query an explicitly named Group.
 
-Codex still requires a concrete repository working directory. On the first-ever launch, CCCC uses
-the selected Group's attached root only to bootstrap that working directory. The materialized
-Analyst binding is then stored once per `CCCC_HOME`; later calls and Web restarts resume that exact
-thread independently of sidebar selection. This root is neither a product scope nor an authorization
-boundary, and no Group scope is presented in the Voice UI.
+CCCC starts the Analyst in one stable neutral directory at
+`CCCC_HOME/state/codex_voice/analyst-workdir/`. It is not a repository, Working Group, implicit MCP
+target, or authorization boundary. Voice therefore starts without a selected Group or attached
+repository and never changes identity when the sidebar selection changes. The Analyst's CCCC MCP
+session has global user authority and the full tool catalog, but it receives no default `group_id`;
+every Group, Actor, task, ledger, or repository operation must resolve and pass an explicit target.
+Repository modification remains work for the target Group's Foreman or peer rather than work rooted
+in the neutral Voice directory.
 
 CCCC reads the existing Codex credential only in the native process that creates the provider call;
 the browser receives the WebRTC answer and bounded session events, not the credential. Use the
 console header to mute the microphone, resume browser-blocked playback, or stop the call. The
-Analyst inherits the normal Codex model/profile configuration and uses the same trusted-local YOLO
-boundary as a CCCC Codex Actor. CCCC pins both the app-server base configuration and every new or
-resumed thread to `approvalPolicy=never` and `sandbox=danger-full-access`; this is required because
-thread-only overrides do not govern MCP connection approval authority. CCCC does not maintain a
-second browser-local copy of model/profile settings. Browser-local audio choices apply to the next
-call.
+Analyst uses the same trusted-local YOLO boundary as a CCCC Codex Actor. Its authentication and model
+provider are independent from the Realtime login: the default launch inherits the normal Codex
+configuration, while Custom or Runtime Profile private environment can select another Codex home,
+provider, or API key without changing the Realtime credential path. The two sides exchange only
+delegations, progress, and results through the CCCC controller.
+
+The Analyst **Runtime Setup** uses the same Custom / Runtime Profile model as Actor editing. Custom
+mode accepts the ordinary Codex command (including model, Codex profile, search, and `-c key=value`
+options) plus write-only private environment values, and it can save that complete configuration as
+a reusable Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves the
+selected Codex profile's command and private environment from the shared profile store; Actor-only
+runner and submit fields do not alter the Voice host. Historical Profiles with a string command are
+accepted and normalized to the canonical argument array when next saved. CCCC then removes
+conflicting host flags and pins app-server, `shell_environment_policy.inherit=all`,
+`approval_policy=never`, `sandbox_mode=danger-full-access`, the neutral Voice workspace, and the
+global CCCC MCP binding. These CCCC-owned values cannot be overridden. Only Codex Runtime Profiles
+are offered because no other Voice host adapter is implemented yet.
+
+The app-server and its remote TUI are two processes but one configured Analyst: both receive the
+same resolved executable, model, Codex Profile, supported `-c` overrides, YOLO policy, and private
+environment. Only the app-server receives the CCCC MCP binding and loopback listener arguments.
+Opening the embedded terminal therefore observes the existing Analyst thread without falling back
+to the user's unrelated global Codex provider or starting a second model session.
+
+Ordinary Codex PTY and Headless Actors use this same app-server host. PTY adds the remote TUI;
+Headless omits only that presentation process. Their app-server is bound to the concrete Group and
+Actor MCP identity, while Voice Analyst uses the global user identity and its neutral workspace.
+These are separate roles over one Codex launch/session mechanism, not separate configuration or
+authentication paths. Commands that are arbitrary wrappers and cannot be rewritten without
+changing their meaning remain on the explicit direct-PTY or stdio compatibility path.
+
+Custom non-secret settings live in `settings.yaml`; custom private values live in
+`CCCC_HOME/state/secrets/codex_voice_analyst.json`. Profile secrets remain owned by the Runtime
+Profile store, and Web receives key names only. Applying a valid setting while idle restarts the
+app-server and resumes the same materialized Analyst thread. An effective Runtime Profile
+command/environment change replaces the warm host at the next voice start while retaining the same
+thread when its Codex identity is unchanged; name, runner, submit, and capability-only edits do not
+restart this host. Changing `CODEX_HOME`, `HOME`, or `USERPROFILE` changes
+that identity and starts a new thread after explicit confirmation in Custom mode. A failed candidate
+launch restores the prior settings and runtime. Browser-local audio choices apply to the next call.
 
 Realtime Call and Voice Analyst have separate lifecycles. Stopping voice disconnects browser audio
 and releases the microphone lease, but keeps the Analyst warm. Ongoing Analyst or linked
@@ -80,15 +117,14 @@ Web host. The normal launcher permits one such Web process per `CCCC_HOME`, whil
 the existing daemon-owned global recording lease shared with Voice Secretary. Hiding the details
 panel, switching Groups, or leaving the tab in the background does not stop or retarget the call.
 Application-level heartbeats keep the otherwise idle event WebSocket alive through ordinary proxies.
-Explicit cross-Group CCCC queries do not change repository focus. Use **Stop voice** to disconnect
-explicitly.
+Explicit cross-Group CCCC queries do not retarget the neutral Analyst workspace. Use **Stop voice**
+to disconnect explicitly.
 Closing or reloading the owning page or losing its browser transport ends only the live call and
-releases the recording lease. Before each call, CCCC revalidates that the warm Analyst's bootstrap
-Group and repository remain attached; a stale binding is replaced rather than reused. Stopping Web
-also stops the warm Analyst process and embedded TUI,
-while retaining the one exact materialized bootstrap Group/root/thread binding in global runtime
-state; the next call attempts to resume it and starts fresh with a visible warning only when resume
-fails or that repository is no longer attached.
+releases the recording lease. Stopping Web also stops the warm Analyst process and embedded TUI while
+retaining only the exact materialized neutral-workspace thread receipt in global runtime state. The
+next call attempts to resume that thread; a legacy repository-bound receipt is deliberately replaced
+with a fresh neutral-workspace thread and a visible migration warning. A resume failure likewise
+starts fresh with a visible warning rather than silently changing scope.
 This Experimental surface does not automatically reconnect a browser audio call. Current live
 evidence covers Linux x86_64/WSL2 and isolated Chrome desktop plus 390px responsive journeys; macOS,
 native Windows, mobile browsers, and physical-device audio quality remain unclaimed.

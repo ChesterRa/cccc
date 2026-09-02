@@ -28,9 +28,12 @@ Or install the same native executable through pip:
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-PyPI publishes four native platform wheels: Linux x86-64, Intel/Apple Silicon
-macOS, and Windows x86-64. Each wheel contains only the native `cccc`
-executable, its package-manager ownership marker, license, and package metadata.
+Starting after v0.4.37, PyPI publishes three native platform wheels: Linux
+x86-64, Apple Silicon macOS, and Windows x86-64. CCCC v0.4.37 is the final Intel
+Mac release; its published artifacts remain available for archived installs,
+but newer releases do not publish `x86_64-apple-darwin`. Each current wheel
+contains only the native `cccc` executable, its package-manager ownership
+marker, license, and package metadata.
 The minimum-version constraint keeps
 pip from silently selecting a historical Python-only release on an unsupported
 platform. There is no 0.4.36 source distribution, portable wheel, importable
@@ -116,13 +119,14 @@ profiles, and settings therefore survive reinstall. Back up and erase that
 recorded directory separately only when permanent data deletion is intended.
 
 The released 0.4.35 line uses the six-file dual-engine PyPI set described above.
-For the approved 0.4.36 Rust-only consolidation, the canonical release workflow
-has already been reduced to one build per supported platform. It wraps the exact
-same self-contained executable bytes in one standalone archive and one native
-wheel, producing four archives and four wheels with no source distribution or
-portable fallback wheel. The compatibility wheel installs `cccc` through the
-wheel scripts scheme and contains no importable CCCC Python package or Python
-runtime dependencies. Its installed smoke covers 0.4.35-layout cleanup, PATH
+The 0.4.36 Rust-only consolidation initially shipped one build for each of four
+platforms. After the final Intel-compatible v0.4.37 release, the canonical
+workflow omits that retired target and wraps each of the three supported
+platform executables in one standalone archive and one native wheel, with no
+source distribution or portable fallback wheel. The compatibility wheel
+installs `cccc` through the wheel scripts scheme and contains no importable CCCC
+Python package or Python runtime dependencies. Its installed smoke covers
+0.4.35-layout cleanup, PATH
 ownership, version, MCP discovery, daemon lifecycle, Web health, package-manager
 update refusal, reinstall, and uninstall without deleting `CCCC_HOME`.
 
@@ -130,18 +134,18 @@ The standalone Linux x86-64 artifact is built against the same manylinux 2.28
 ABI baseline as the native wheel and statically carries the OpenSSL used by its
 native-TLS dependency; it therefore requires glibc 2.28 or newer but not a
 distribution OpenSSL package. A pre-package check rejects newer GLIBC, GLIBCXX,
-or CXXABI references and non-baseline shared libraries. Both macOS artifacts
-declare macOS 11.0 as their minimum deployment target and may link only Apple
-system libraries. Windows x86-64 is built and verified on the pinned Windows
-Server 2022 runner with the static MSVC runtime. These are artifact boundaries,
-not a promise that every optional external browser, microphone, GPU, or provider
-integration is available on every host.
+or CXXABI references and non-baseline shared libraries. The current Apple
+Silicon artifact declares macOS 11.0 as its minimum deployment target and may
+link only Apple system libraries. Windows x86-64 is built and verified on the
+pinned Windows Server 2022 runner with the static MSVC runtime. These are
+artifact boundaries, not a promise that every optional external browser,
+microphone, GPU, or provider integration is available on every host.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 Every pushed `v*` product tag runs the one canonical release workflow. It
-publishes only after the four archive/wheel pairs have identical executable
-hashes, the complete checksum manifest passes, and all four final installer
-candidates succeed. PyPI receives only the four wheels; GitHub Releases receives
+publishes only after the three archive/wheel pairs have identical executable
+hashes, the complete checksum manifest passes, and all three final installer
+candidates succeed. PyPI receives only the three wheels; GitHub Releases receives
 the wheels, archives, checksums, and versioned installers. Prerelease tags are
 marked as such in both channels. The documentation site pins its hosted
 installers to the newest stable published release that has the complete asset
@@ -350,9 +354,14 @@ that CCCC does not own are reported rather than overwritten. This prevents an
 old Python launcher path or dangling symlink from freezing a newly created
 provider session without CCCC tools.
 
-`runner=headless` never creates a PTY. Codex and Claude use daemon-managed local
-provider sessions: Codex app-server JSON-RPC and Claude bidirectional
-stream-json. Their messages are pushed through bounded actor delivery workers,
+`runner=headless` never creates a PTY. Direct, safely parseable Codex PTY and
+Headless actors share one daemon-owned app-server session implementation,
+structured turn delivery, persisted thread resume, Profile/provider arguments,
+and private environment; PTY only adds Codex's remote TUI on that exact thread.
+Voice Analyst uses the same host/TUI substrate with its separate global-user
+identity and warm lifecycle. Opaque Codex wrappers retain their explicit
+compatibility path. Claude continues to use daemon-managed bidirectional
+stream-json. Provider messages are pushed through bounded actor delivery workers,
 and actor health comes from the real provider process. Web Model and the
 programmatically configured custom external-headless path retain the pull contract:
 the executor obtains an ordered direct-delivery batch with
@@ -430,19 +439,19 @@ A release is publishable only when all of these remain true:
 
 - Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
 - The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- Four native wheels and four standalone archives wrap byte-identical native
+- Three native wheels and three standalone archives wrap byte-identical native
   executables for their platform and pass metadata, size, payload, ABI, and
   checksum checks. There is no source distribution or portable wheel.
 - CI installs the native wheels and runs their declared CLI, MCP, daemon, Web,
   update, and uninstall journeys. It also runs offline status, daemon lifecycle,
   MCP initialization, and a real `cccc_code_exec` cell against the built binary.
   Final-installer verification repeats the complete Unix
-  flow on Linux and both macOS architectures; Windows verifies installed offline
+  flow on Linux and Apple Silicon macOS; Windows verifies installed offline
   status, MCP startup, daemon lifecycle, and executable release after shutdown.
 - Wheel metadata, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
 - Frozen 0.4.35 homes pass the native migration suite without Python on `PATH`.
-- PyPI and GitHub publication happen only after the complete four-platform
+- PyPI and GitHub publication happen only after the complete three-platform
   release set passes one canonical workflow.
 - Supported 0.4.35 `~/.cccc` data remains available after upgrading.
 

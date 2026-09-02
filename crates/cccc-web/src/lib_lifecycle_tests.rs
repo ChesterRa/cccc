@@ -57,10 +57,7 @@ async fn scoped_tokens_cannot_access_global_codex_voice_authority() {
             .expect("active request"),
         Request::builder()
             .method("POST")
-            .uri(format!(
-                "/api/v1/groups/{}/codex_voice/calls",
-                group.group_id
-            ))
+            .uri("/api/v1/codex_voice/calls")
             .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
             .body(Body::empty())
             .expect("start request"),

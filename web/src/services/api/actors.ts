@@ -399,6 +399,13 @@ export async function copyActorPrivateEnvToProfile(
   );
 }
 
+export async function copyVoiceAnalystPrivateEnvToProfile(profileId: string) {
+  return apiJson<{ profile_id: string; keys: string[] }>(
+    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/copy_voice_analyst_secrets`,
+    { method: "POST", body: JSON.stringify({ by: "user", scope: "global", owner_id: "" }) },
+  );
+}
+
 export async function copyActorProfilePrivateEnvFromProfile(
   profileId: string,
   sourceProfileId: string,

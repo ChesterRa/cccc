@@ -20,13 +20,11 @@ else:
 
 WHEEL_TARGETS = {
     "manylinux_2_28_x86_64": "x86_64-unknown-linux-gnu",
-    "macosx_11_0_x86_64": "x86_64-apple-darwin",
     "macosx_11_0_arm64": "aarch64-apple-darwin",
     "win_amd64": "x86_64-pc-windows-msvc",
 }
 ARCHIVE_SUFFIXES = {
     "x86_64-unknown-linux-gnu": ".tar.gz",
-    "x86_64-apple-darwin": ".tar.gz",
     "aarch64-apple-darwin": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
@@ -141,7 +139,7 @@ def verify(directory: Path, *, cargo_version: str, wheel_version: str) -> None:
     actual = frozenset(path.name for path in directory.iterdir() if path.is_file())
     if actual != expected:
         raise ValueError(
-            "expected exactly four wheels, four archives, two installers, and SHA256SUMS; "
+            "expected exactly three wheels, three archives, two installers, and SHA256SUMS; "
             f"missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}"
         )
 
@@ -174,7 +172,7 @@ def verify(directory: Path, *, cargo_version: str, wheel_version: str) -> None:
     manifest = _checksum_manifest(directory / "SHA256SUMS")
     if frozenset(manifest) != payload_names:
         raise ValueError(
-            "SHA256SUMS must cover the exact eight executable payloads; "
+            "SHA256SUMS must cover the exact six executable payloads; "
             f"found={sorted(manifest)}"
         )
     for filename, expected_digest in manifest.items():
@@ -216,7 +214,7 @@ def main() -> int:
     ) as error:
         parser.error(str(error))
     print(
-        "OK: four Rust-only wheels and four standalone archives contain identical platform binaries"
+        "OK: three Rust-only wheels and three standalone archives contain identical platform binaries"
     )
     return 0
 

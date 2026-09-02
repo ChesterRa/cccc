@@ -1,6 +1,6 @@
 use super::events::{tracked_work, truncate_utf8};
 use super::*;
-use crate::ops::codex_voice_analyst::ScopeBinding;
+use crate::ops::codex_voice_analyst::WorkspaceBinding;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -354,14 +354,12 @@ async fn test_session() -> (AnalystSession, JoinHandle<()>) {
         }
     });
     let session = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_lifecycle".into(),
+        WorkspaceBinding {
             root: PathBuf::from("/tmp"),
         },
         "generation-lifecycle".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("connect test Analyst");
@@ -420,14 +418,12 @@ async fn test_session_with_delayed_interrupt() -> (
         }
     });
     let session = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_lifecycle".into(),
+        WorkspaceBinding {
             root: PathBuf::from("/tmp"),
         },
         "generation-lifecycle".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("connect test Analyst");
@@ -495,14 +491,12 @@ async fn test_session_with_fast_completion() -> (AnalystSession, JoinHandle<()>,
         }
     });
     let session = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_lifecycle".into(),
+        WorkspaceBinding {
             root: PathBuf::from("/tmp"),
         },
         "generation-lifecycle".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("connect test Analyst");
@@ -556,14 +550,12 @@ async fn test_session_with_competing_tui_start() -> (AnalystSession, JoinHandle<
         }
     });
     let session = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_lifecycle".into(),
+        WorkspaceBinding {
             root: PathBuf::from("/tmp"),
         },
         "generation-lifecycle".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("connect test Analyst");
@@ -629,14 +621,12 @@ async fn test_session_with_retryable_interrupt()
         }
     });
     let session = AnalystSession::connect_for_test(
-        ScopeBinding {
-            group_id: "g_lifecycle".into(),
+        WorkspaceBinding {
             root: PathBuf::from("/tmp"),
         },
         "generation-lifecycle".into(),
         endpoint,
         PathBuf::from("codex"),
-        None,
     )
     .await
     .expect("connect test Analyst");

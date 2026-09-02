@@ -1,6 +1,6 @@
 use cccc_contracts::Actor;
 use cccc_core::HomeLayout;
-use cccc_core::profiles::ProfileStore;
+use cccc_core::profiles::{ProfileStore, RuntimeProfileConfig};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,14 +49,7 @@ pub fn profile_secrets(
     if actor.profile_id.is_empty() {
         return Ok(BTreeMap::new());
     }
-    ProfileStore::new(home.clone())
-        .map_err(OpError::io)?
-        .secret_values_ref(
-            &actor.profile_id,
-            &actor.profile_scope,
-            &actor.profile_owner,
-        )
-        .map_err(OpError::io)
+    Ok(runtime_profile(home, actor, &actor.profile_id)?.environment)
 }
 
 pub fn capability_defaults(
@@ -112,43 +105,29 @@ pub fn capability_defaults(
 }
 
 fn apply(home: &HomeLayout, actor: &Actor, profile_id: &str) -> Result<Actor, OpError> {
-    let profile = ProfileStore::new(home.clone())
+    let profile = runtime_profile(home, actor, profile_id)?;
+    let mut resolved = actor.clone();
+    resolved.runtime = profile.runtime;
+    resolved.runner = profile.runner;
+    resolved.submit = profile.submit;
+    resolved.command = profile.command;
+    resolved.profile_revision_applied = profile.revision;
+    Ok(resolved)
+}
+
+fn runtime_profile(
+    home: &HomeLayout,
+    actor: &Actor,
+    profile_id: &str,
+) -> Result<RuntimeProfileConfig, OpError> {
+    ProfileStore::new(home.clone())
         .map_err(OpError::io)?
-        .get_ref(profile_id, &actor.profile_scope, &actor.profile_owner)
-        .map_err(OpError::io)?
+        .runtime_ref(profile_id, &actor.profile_scope, &actor.profile_owner)
+        .map_err(|error| OpError::new("invalid_profile", error.to_string()))?
         .ok_or_else(|| {
             OpError::new(
                 "profile_not_found",
                 format!("profile not found: {profile_id}"),
             )
-        })?;
-    let mut resolved = actor.clone();
-    if let Some(value) = profile.get("runtime") {
-        resolved.runtime = parse(value, "profile runtime")?;
-    }
-    if let Some(value) = profile.get("runner") {
-        resolved.runner = parse(value, "profile runner")?;
-    }
-    if let Some(value) = profile.get("submit") {
-        resolved.submit = parse(value, "profile submit")?;
-    }
-    if let Some(command) = profile.get("command") {
-        resolved.command = command
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-    }
-    resolved.profile_revision_applied = profile["revision"].as_u64().unwrap_or(0);
-    Ok(resolved)
-}
-
-fn parse<T: serde::de::DeserializeOwned>(value: &Value, field: &str) -> Result<T, OpError> {
-    serde_json::from_value(value.clone())
-        .map_err(|error| OpError::new("invalid_profile", format!("{field}: {error}")))
+        })
 }

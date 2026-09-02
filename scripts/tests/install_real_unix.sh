@@ -12,7 +12,6 @@ test "$("$BINARY" --version)" = "cccc $VERSION"
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64) target=x86_64-unknown-linux-gnu ;;
-  Darwin:x86_64|Darwin:amd64) target=x86_64-apple-darwin ;;
   Darwin:arm64|Darwin:aarch64) target=aarch64-apple-darwin ;;
   *) echo "unsupported test platform" >&2; exit 1 ;;
 esac
@@ -34,7 +33,7 @@ cp "$BINARY" "$TMP_ROOT/package/$package/cccc"
 tar -C "$TMP_ROOT/package" -czf "$release_dir/$package.tar.gz" "$package"
 
 : > "$release_dir/SHA256SUMS"
-for fixture_target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+for fixture_target in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
   fixture_name="cccc-v${VERSION}-${fixture_target}"
   fixture_ext=tar.gz
   [[ "$fixture_target" == x86_64-pc-windows-msvc ]] && fixture_ext=zip

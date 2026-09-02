@@ -208,7 +208,7 @@ export function AppShell({
   } as CSSProperties;
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
-  const codexVoice = useCodexVoiceShell(!webReadOnly, selectedGroupId);
+  const codexVoice = useCodexVoiceShell(!webReadOnly);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -280,9 +280,7 @@ export function AppShell({
           onOpenMobileMenu={onOpenMobileMenu}
         />
 
-        {!webReadOnly ? (
-          <CodexVoiceMobileDock voice={codexVoice} selectedGroupId={selectedGroupId} />
-        ) : null}
+        {!webReadOnly ? <CodexVoiceMobileDock voice={codexVoice} /> : null}
 
         <div
           ref={contentRef}
@@ -389,12 +387,7 @@ export function AppShell({
         </div>
       </main>
 
-      <CodexVoiceOverlays
-        voice={codexVoice}
-        selectedGroupId={selectedGroupId}
-        isDark={isDark}
-        isSmallScreen={isSmallScreen}
-      />
+      <CodexVoiceOverlays voice={codexVoice} isDark={isDark} isSmallScreen={isSmallScreen} />
     </div>
   );
 }

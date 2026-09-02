@@ -334,12 +334,10 @@ def test_release_builds_one_atomic_rust_only_set() -> None:
     desktop_matrix = jobs["build-desktop"]["strategy"]["matrix"]["include"]
     assert {item["target"] for item in desktop_matrix} == {
         "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
         "x86_64-pc-windows-msvc",
     }
     assert {item["platform_tag"] for item in desktop_matrix} == {
         "macosx_11_0_arm64",
-        "macosx_11_0_x86_64",
         "win_amd64",
     }
     assert next(item for item in desktop_matrix if item["platform_tag"] == "win_amd64")["os"] == (
@@ -427,7 +425,6 @@ def test_product_tag_publishes_one_verified_pypi_and_github_release() -> None:
     assert desktop["needs"] == "web"
     assert {item["target"] for item in desktop["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
         "x86_64-pc-windows-msvc",
     }
     assert next(item for item in desktop["strategy"]["matrix"]["include"] if "windows" in item["target"])[
@@ -457,7 +454,6 @@ def test_product_tag_publishes_one_verified_pypi_and_github_release() -> None:
     assert verify["timeout-minutes"] == "10"
     assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
     }

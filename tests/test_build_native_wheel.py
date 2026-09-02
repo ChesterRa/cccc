@@ -33,7 +33,6 @@ readme = { file = "README.md", content-type = "text/markdown" }
     ("platform_tag", "executable"),
     [
         ("manylinux_2_28_x86_64", "cccc"),
-        ("macosx_11_0_x86_64", "cccc"),
         ("macosx_11_0_arm64", "cccc"),
         ("win_amd64", "cccc.exe"),
     ],
@@ -74,10 +73,16 @@ def test_wheel_is_reproducible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "1770000000")
 
     first = build(
-        binary, tmp_path / "first", platform_tag="linux_x86_64", root=tmp_path
+        binary,
+        tmp_path / "first",
+        platform_tag="manylinux_2_28_x86_64",
+        root=tmp_path,
     )
     second = build(
-        binary, tmp_path / "second", platform_tag="linux_x86_64", root=tmp_path
+        binary,
+        tmp_path / "second",
+        platform_tag="manylinux_2_28_x86_64",
+        root=tmp_path,
     )
 
     assert (
@@ -91,8 +96,22 @@ def test_rejects_a_universal_platform_tag(tmp_path: Path) -> None:
     binary = tmp_path / "cccc"
     binary.write_bytes(b"payload")
 
-    with pytest.raises(ValueError, match="invalid native wheel platform tag"):
+    with pytest.raises(ValueError, match="unsupported release wheel platform tag"):
         build(binary, tmp_path / "dist", platform_tag="any", root=tmp_path)
+
+
+def test_rejects_retired_macos_intel_platform_tag(tmp_path: Path) -> None:
+    _project(tmp_path)
+    binary = tmp_path / "cccc"
+    binary.write_bytes(b"payload")
+
+    with pytest.raises(ValueError, match="unsupported release wheel platform tag"):
+        build(
+            binary,
+            tmp_path / "dist",
+            platform_tag="macosx_11_0_x86_64",
+            root=tmp_path,
+        )
 
 
 def test_source_pep517_build_fails_instead_of_installing_an_empty_wheel() -> None:
@@ -110,7 +129,12 @@ def test_rejects_an_extra_fully_recorded_wheel_member(tmp_path: Path) -> None:
     _project(tmp_path)
     binary = tmp_path / "cccc"
     binary.write_bytes(b"native payload")
-    wheel = build(binary, tmp_path / "dist", platform_tag="linux_x86_64", root=tmp_path)
+    wheel = build(
+        binary,
+        tmp_path / "dist",
+        platform_tag="manylinux_2_28_x86_64",
+        root=tmp_path,
+    )
     replacement = tmp_path / "replacement.whl"
 
     with zipfile.ZipFile(wheel) as source:
@@ -133,4 +157,4 @@ def test_rejects_an_extra_fully_recorded_wheel_member(tmp_path: Path) -> None:
     os.replace(replacement, wheel)
 
     with pytest.raises(ValueError, match="invalid Rust-only layout"):
-        verify(wheel, platform_tag="linux_x86_64", binary=binary)
+        verify(wheel, platform_tag="manylinux_2_28_x86_64", binary=binary)

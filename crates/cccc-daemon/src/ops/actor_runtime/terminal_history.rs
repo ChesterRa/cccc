@@ -4,7 +4,7 @@ use cccc_runtime::HistoryConfig;
 const DEFAULT_TRANSCRIPT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES: usize = 50_000_000;
 
-pub(super) fn config(
+pub(crate) fn config(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,

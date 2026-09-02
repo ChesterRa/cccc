@@ -381,6 +381,8 @@ pub(super) fn delivery_transport(
         "deepseek"
     } else if actor.runtime == ActorRuntime::WebModel {
         web_model_delivery_transport(home, group, actor)
+    } else if crate::ops::local_headless::uses_codex_app_server(actor) {
+        "codex_app_server"
     } else if crate::ops::local_headless::supports(actor) {
         "local_headless"
     } else {

@@ -17,6 +17,7 @@ pub mod capability_legacy;
 mod capability_legacy_tests;
 pub mod cloudflared;
 pub mod codex_hook_state;
+pub mod codex_voice_settings;
 pub mod context;
 pub mod deepseek_restart_gate;
 pub mod fs;

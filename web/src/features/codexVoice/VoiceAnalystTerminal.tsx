@@ -119,9 +119,8 @@ export function VoiceAnalystTerminal({ analyst, isVisible }: Props) {
   }, [fit, isVisible]);
 
   const buildCustomWebSocketUrl = useCallback(
-    (query: string) =>
-      getCodexVoiceTerminalWebSocketUrl(analyst.group_id, analyst.generation, query),
-    [analyst.generation, analyst.group_id],
+    (query: string) => getCodexVoiceTerminalWebSocketUrl(analyst.generation, query),
+    [analyst.generation],
   );
   const noopSignal = useCallback(() => undefined, []);
   const {
@@ -135,7 +134,7 @@ export function VoiceAnalystTerminal({ analyst, isVisible }: Props) {
     activated: isVisible,
     isRunning: true,
     isHeadless: false,
-    groupId: analyst.group_id,
+    groupId: "codex-voice",
     actorId: analyst.generation,
     actorRuntime: "codex",
     canControl: true,

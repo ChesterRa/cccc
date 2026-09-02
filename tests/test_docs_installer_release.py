@@ -14,7 +14,6 @@ RESOLVER = "scripts/resolve_docs_installer_version.mjs"
 def _release(version: str, *, complete: bool) -> dict[str, object]:
     names = [
         f"cccc-v{version}-aarch64-apple-darwin.tar.gz",
-        f"cccc-v{version}-x86_64-apple-darwin.tar.gz",
         f"cccc-v{version}-x86_64-pc-windows-msvc.zip",
         f"cccc-v{version}-x86_64-unknown-linux-gnu.tar.gz",
         "SHA256SUMS",

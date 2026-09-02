@@ -33,7 +33,7 @@ pub(super) async fn serve(
         finish(&state, attachment).await;
         return;
     }
-    for command in realtime_greeting_commands(true) {
+    for command in realtime_greeting_commands() {
         if !send_provider_command(&mut socket, command).await {
             finish(&state, attachment).await;
             return;
@@ -201,12 +201,8 @@ pub(super) async fn serve(
 
 async fn finish(state: &AppState, attachment: crate::codex_voice::SessionAttachment) {
     let info = attachment.session().info();
-    if let Err(error) = state
-        .codex_voice
-        .stop(&info.group_id, &info.generation)
-        .await
-    {
-        tracing::warn!(%error, group_id = %info.group_id, generation = %info.generation, "Codex Voice connection cleanup failed");
+    if let Err(error) = state.codex_voice.stop(&info.generation).await {
+        tracing::warn!(%error, generation = %info.generation, "Codex Voice connection cleanup failed");
     }
     drop(attachment);
 }

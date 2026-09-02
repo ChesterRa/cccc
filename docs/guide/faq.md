@@ -105,7 +105,7 @@ Then install the new version. Note that 0.4.x has a completely different command
 
 ### What are the system requirements?
 
-- A supported 64-bit Linux, macOS, or Windows target
+- Linux x86-64 with glibc 2.28+, Apple Silicon macOS 11+, or Windows x86-64
 - At least one supported agent runtime CLI
 
 Normal installation requires neither Python nor a Rust toolchain. The MCP

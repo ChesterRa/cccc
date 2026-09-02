@@ -125,36 +125,52 @@ Restarting a provider process does not transfer its input mode, preamble memory,
 or hot terminal ring; durable ledger, Mail cursor, reply-obligation, and
 runtime-delivery facts remain the recovery authority.
 
-### Codex and Claude PTY Hook State
+### Codex app-server and Claude PTY Hook State
 
-The daemon does not parse PTY output to infer activity for eligible provider
-sessions. Codex PTY activity comes from lifecycle hooks injected only into
-processes that CCCC starts: prompt and tool events report `working`, permission
-requests report `waiting`, and verified stop/session events report `idle` or
-`stopped`. CCCC registers only events in the current
-[Codex Hooks contract](https://developers.openai.com/codex/hooks); non-zero tool
-commands still complete through `PostToolUse`, and Codex does not currently
-expose separate `PostToolUseFailure` or `StopFailure` events. Every injected
-hook process carries a per-launch fence, and Codex turn-scoped events must
-identify the active provider turn or its bound tool operation. Tool operations
-are observed serially: a second operation cannot start before the active one
-closes, and operation-specific events must carry the exact active operation ID.
-Late events from an older launch, session, turn, or operation cannot overwrite
-current state.
+For a command whose executable is directly identified as Codex, PTY and
+Headless share one daemon-owned app-server session implementation for
+structured Codex turns. Unsupported subcommands or prompt tails fail explicitly
+instead of selecting another Codex transport. PTY
+is only a presentation choice: CCCC additionally opens Codex's remote TUI
+against the exact hosted thread, while Headless omits that terminal. The
+app-server and TUI receive the same executable, model, Codex Profile, supported
+`-c` overrides, YOLO policy, and private environment; only the host receives
+the actor-scoped CCCC MCP and listener arguments. Provider events, rather than
+terminal text, are the working-state and completion authority. Stop/start
+resumes the same validated thread, while `actor new-session` deliberately
+creates a new one. Voice Analyst uses this same Codex host/remote-TUI substrate,
+with a global user MCP identity and its own warm lifecycle instead of Actor
+identity and Group lifecycle.
+
+An arbitrary wrapper that cannot be transformed into a Codex app-server
+without changing its meaning remains an explicit direct-PTY or headless-stdio
+compatibility path. On that path, Codex activity comes from lifecycle hooks injected only
+into processes that CCCC starts: prompt and tool events report `working`,
+permission requests report `waiting`, and verified stop/session events report
+`idle` or `stopped`. CCCC registers only events in the current
+[Codex Hooks contract](https://developers.openai.com/codex/hooks). Every
+injected hook process carries a per-launch fence, and late events from an older
+launch, session, turn, or operation cannot overwrite current state.
 
 Turn and per-turn operation identity histories have a hard 4096-entry safety bound and never evict entries. Reaching a bound fails closed instead of making an old identity reusable: turn exhaustion revokes the active turn for the rest of that session, while operation exhaustion revokes operation writes for the current turn. The corresponding working-state reasons are `codex_hook_turn_fence_exhausted` and `codex_hook_operation_fence_exhausted`.
 
 Claude PTY hooks do not provide one stable turn identifier across prompt, tool, permission, notification, and stop events. CCCC therefore treats them fail-closed: fenced `SessionStart` and `SessionEnd` establish only the session boundary, normal `terminal_write` opens a local `working` generation, and Esc or Ctrl-C closes it to `idle`. Claude PTY prompt/tool/permission/notification/stop hooks cannot change working state, so permission `waiting` and automatic stop `idle` are intentionally not claimed as precise; `PostToolUseFailure` is still registered so the separate runtime-activity projection can close a failed tool instead of leaving it active. The API exposes this limitation through `effective_working_reason` values prefixed with `claude_pty_fail_closed_`. Claude headless sessions are unchanged and continue to use structured provider events for precise turn lifecycle.
 
-Both integrations are session-only. CCCC generates a new launch fence for every actual provider process, including a direct `codex resume`, and passes it only through that process environment. An already-running actor keeps its existing fence. Before a new process is started, the launch transaction invalidates the prior capability and writes the new token's pending or unavailable baseline under the same state lock; a late event can therefore finish before that transaction and be overwritten, or arrive afterward and fail its token fence. Codex receives command-line hook overrides plus exact per-hook trust hashes for only the CCCC commands injected through session flags. Project, plugin, and user hooks keep their own Codex trust decisions, and CCCC does not use the global hook-trust bypass flag. CCCC first validates the session Hook configuration with a bounded local Codex config probe; an unsupported, failed, or timed-out probe records `HookUnavailableSettings` and launches the original Codex command without Hook injection. For a direct Claude Code command, CCCC reads Claude's effective final `--settings` value, preserves its fields and existing hooks, and replaces duplicate CLI settings arguments with one merged inline document. Relative settings paths resolve from the actor working directory; the source file is never modified. Wrapper and alternate commands are not mutated. CCCC does not write `~/.codex`, `~/.claude`, or project settings files, and sessions launched outside CCCC do not run the CCCC status hook. Version 2 hook-state files remain readable for diagnostics but are reported as `legacy_unfenced`; configuring a new launch replaces them with a fenced version 3 pending state, and tokenless legacy events cannot unlock it.
+The direct-hook compatibility path and Claude integration are session-only.
+CCCC generates a new launch fence for every actual direct provider process and
+passes it only through that process environment. Wrapper and alternate commands
+are not mutated. CCCC does not write `~/.codex`, `~/.claude`, or project
+settings files, and sessions launched outside CCCC do not run the CCCC status
+hook. Version 2 hook-state files remain readable for diagnostics but are
+reported as `legacy_unfenced`; configuring a new direct launch replaces them
+with a fenced version 3 pending state, and tokenless legacy events cannot unlock
+it.
 
-For a direct Codex PTY actor, the same fenced `SessionStart` event is also the
-primary source of durable provider session identity. CCCC persists its UUID
-only after the launch token and process PID still match the running actor, then
-uses `codex resume <session_id>` on the next compatible start. The terminal
-`/status` parser remains a delayed compatibility fallback for older or
-hook-unavailable Codex versions; current Codex releases no longer need to expose
-session identity in human-readable status output.
+For the direct-hook Codex compatibility path, fenced `SessionStart` remains the
+durable provider-session identity source and the terminal `/status` parser is a
+delayed fallback. App-server-backed Codex PTY actors instead persist the
+provider thread returned by the structured protocol; they never derive that
+identity from terminal text.
 
 Claude PTY hook state requires Claude Code 2.1.141 or newer, confirmed by a successful `--version` probe. Wrapper commands, alternate commands, failed probes, and older Claude versions remain on the prior PTY state source and are not mutated; their newly written unavailable baseline prevents a stale hook file from being treated as current. For an otherwise eligible direct command, a settings merge, hook executable, or spawn failure records a specific `HookUnavailable…` launch reason and fails closed instead of silently falling back to terminal-text inference. Enterprise policy, `disableAllHooks`, and safe/bare modes can still prevent a valid injected hook from running; that remains visible as a pending hook reason.
 
@@ -170,7 +186,8 @@ The Rust daemon also owns the lifetime of every process-backed actor. On Windows
 Verified PTY hook events also feed the Web runtime activity ticker. This is a separate, short-lived observability channel rather than chat history: it carries only structured lifecycle fields, replays briefly after reconnects, and detects long-running turn or tool activity. See [PTY Runtime Activity](/guide/runtime-activity) for the event contract, retention, and privacy boundaries.
 
 `runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed
-provider process. Codex uses its app-server JSON-RPC transport, Claude uses
+provider process. Codex reuses the same app-server launch, thread, delivery, and
+resume mechanics as Codex PTY but omits the remote TUI. Claude uses
 bidirectional stream-json, and DeepSeek uses ACP NDJSON through CCCC's fixed
 composition. Messages are delivered automatically, provider health determines
 the actor's `running` value, and stopping the actor or group terminates the
@@ -210,8 +227,8 @@ tool request, CCCC returns an explicit JSON-RPC unsupported-method error instead
 of hanging the turn or approving it implicitly. Use the PTY runner when the
 provider workflow requires interactive approval or input.
 
-Daemon-managed Codex headless actors persist the app-server thread in the
-runtime-session state. An ordinary actor stop/start resumes that exact thread
+Daemon-managed Codex PTY and headless actors persist the app-server thread in
+the runtime-session state. An ordinary actor stop/start resumes that exact thread
 after validating the runtime, workspace, command, model, and saved-state
 status. If the provider rejects the resume, CCCC records the failure and starts
 a fresh thread. `actor_new_session` deliberately clears the saved thread first,

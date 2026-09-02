@@ -98,7 +98,9 @@ case "$os:$arch" in
     fi
     target=x86_64-unknown-linux-gnu
     ;;
-  Darwin:x86_64|Darwin:amd64) target=x86_64-apple-darwin ;;
+  Darwin:x86_64|Darwin:amd64)
+    fail "macOS Intel (x86_64) support ended with CCCC v0.4.37; install its archived x86_64-apple-darwin asset manually or use a supported Apple Silicon Mac"
+    ;;
   Darwin:arm64|Darwin:aarch64) target=aarch64-apple-darwin ;;
   *) fail "unsupported platform: $os $arch" ;;
 esac
@@ -204,14 +206,14 @@ printf 'Downloading CCCC v%s for %s...\n' "$VERSION" "$target"
 download "$download_url/SHA256SUMS" "$tmp_dir/SHA256SUMS"
 if ! awk -v version="$VERSION" -v wheel_version="$wheel_version" '
   BEGIN {
-    valid["cccc-v" version "-x86_64-unknown-linux-gnu.tar.gz"] = "archive"
-    valid["cccc-v" version "-x86_64-apple-darwin.tar.gz"] = "archive"
-    valid["cccc-v" version "-aarch64-apple-darwin.tar.gz"] = "archive"
-    valid["cccc-v" version "-x86_64-pc-windows-msvc.zip"] = "archive"
-    valid["cccc_pair-" wheel_version "-py3-none-manylinux_2_28_x86_64.whl"] = "wheel"
-    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_x86_64.whl"] = "wheel"
-    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_arm64.whl"] = "wheel"
-    valid["cccc_pair-" wheel_version "-py3-none-win_amd64.whl"] = "wheel"
+    valid["cccc-v" version "-x86_64-unknown-linux-gnu.tar.gz"] = "current_archive"
+    valid["cccc-v" version "-aarch64-apple-darwin.tar.gz"] = "current_archive"
+    valid["cccc-v" version "-x86_64-pc-windows-msvc.zip"] = "current_archive"
+    valid["cccc_pair-" wheel_version "-py3-none-manylinux_2_28_x86_64.whl"] = "current_wheel"
+    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_arm64.whl"] = "current_wheel"
+    valid["cccc_pair-" wheel_version "-py3-none-win_amd64.whl"] = "current_wheel"
+    valid["cccc-v" version "-x86_64-apple-darwin.tar.gz"] = "legacy_archive"
+    valid["cccc_pair-" wheel_version "-py3-none-macosx_11_0_x86_64.whl"] = "legacy_wheel"
   }
   NF == 0 { next }
   NF != 2 || length($1) != 64 || $1 ~ /[^0-9A-Fa-f]/ { exit 1 }
@@ -219,17 +221,18 @@ if ! awk -v version="$VERSION" -v wheel_version="$wheel_version" '
     name = $2
     sub(/^\*/, "", name)
     if (!(name in valid) || seen[name]++) { exit 1 }
-    count++
+    counts[valid[name]]++
   }
   END {
-    if (count != 4 && count != 8) exit 1
-    for (name in valid) {
-      if (valid[name] == "archive" && !seen[name]) exit 1
-      if (count == 8 && !seen[name]) exit 1
-    }
+    if (counts["current_archive"] != 3) exit 1
+    current_archives_only = counts["current_wheel"] == 0 && counts["legacy_archive"] == 0 && counts["legacy_wheel"] == 0
+    current_complete = counts["current_wheel"] == 3 && counts["legacy_archive"] == 0 && counts["legacy_wheel"] == 0
+    legacy_archives_only = counts["current_wheel"] == 0 && counts["legacy_archive"] == 1 && counts["legacy_wheel"] == 0
+    legacy_complete = counts["current_wheel"] == 3 && counts["legacy_archive"] == 1 && counts["legacy_wheel"] == 1
+    if (!current_archives_only && !current_complete && !legacy_archives_only && !legacy_complete) exit 1
   }
 ' "$tmp_dir/SHA256SUMS"; then
-  fail "SHA256SUMS must contain four release archives, optionally plus the four native wheels"
+  fail "SHA256SUMS must contain the three current release archives and optional wheels, or an exact legacy four-target set"
 fi
 
 expected=$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1 }' "$tmp_dir/SHA256SUMS")

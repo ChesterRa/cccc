@@ -16,9 +16,28 @@ pub(super) fn resolve(group: &GroupDoc, actor: &Actor) -> RuntimeStatus {
     }
     if super::local_headless::supports(actor) {
         let status = super::local_headless::status(&group.group_id, &actor.id);
+        if let Some(status) = status {
+            return RuntimeStatus {
+                running: true,
+                pid: status.pid,
+            };
+        }
+        // A process started by an older daemon can still be present while the
+        // actor is being projected during an in-place upgrade. Preserve that
+        // observable session until its next explicit restart migrates it.
+        if actor.runtime == ActorRuntime::Codex
+            && actor.runner == cccc_contracts::RunnerKind::Pty
+            && let Some(status) = super::actor_runtime::status(&group.group_id, &actor.id)
+            && status.running
+        {
+            return RuntimeStatus {
+                running: true,
+                pid: status.pid,
+            };
+        }
         return RuntimeStatus {
-            running: status.is_some(),
-            pid: status.and_then(|item| item.pid),
+            running: false,
+            pid: None,
         };
     }
     let session = super::actor_runtime::status(&group.group_id, &actor.id);

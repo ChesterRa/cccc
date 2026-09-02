@@ -409,13 +409,7 @@ export function GroupSidebar({
           )}
         </div>
 
-        {!readOnly ? (
-          <CodexVoiceSidebarDock
-            voice={codexVoice}
-            selectedGroupId={selectedGroupId}
-            collapsed={isCollapsed}
-          />
-        ) : null}
+        {!readOnly ? <CodexVoiceSidebarDock voice={codexVoice} collapsed={isCollapsed} /> : null}
 
         {!isCollapsed && (
           <SidebarResizeHandle

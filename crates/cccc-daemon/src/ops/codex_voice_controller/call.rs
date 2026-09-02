@@ -4,7 +4,6 @@ use super::projection::{
 };
 use super::*;
 use anyhow::{Context, Result, bail};
-use cccc_core::GroupStore;
 use serde_json::Value;
 
 impl CodexVoiceCall {
@@ -15,18 +14,8 @@ impl CodexVoiceCall {
     }
 
     pub async fn start(home: &HomeLayout, analyst: Arc<CodexVoiceAnalyst>) -> Result<Self> {
-        let group_id = analyst.session.binding().group_id.as_str();
-        let group = GroupStore::new(home.clone())
-            .context("open Group store for Codex Voice")?
-            .load(group_id)
-            .context("load Codex Voice Group")?;
         let generation = uuid::Uuid::new_v4().simple().to_string();
-        let lease = CallLease::acquire(
-            home,
-            &group.group_id,
-            &group.title,
-            &format!("codex-voice:{generation}"),
-        )?;
+        let lease = CallLease::acquire(home, "", "", &format!("codex-voice:{generation}"))?;
         Ok(Self {
             generation,
             analyst,

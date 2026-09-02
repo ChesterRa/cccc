@@ -28,7 +28,7 @@ function controller(
     analystWarning: "",
     preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
     supportedVoices: ["cove"],
-    readiness: { codex_cli_available: true, codex_credentials_available: true },
+    readiness: { codex_cli_available: true, realtime_credentials_available: true },
     updatePreferences: vi.fn(),
     refresh: vi.fn(async () => undefined),
     start: vi.fn(async () => undefined),
@@ -45,12 +45,7 @@ function controller(
 describe("CodexVoiceDock", () => {
   it("keeps two stable global actions: open console and start voice", () => {
     const html = renderToStaticMarkup(
-      <CodexVoiceDock
-        controller={controller()}
-        selectedGroupId="g_alpha"
-        onOpen={vi.fn()}
-        onStart={vi.fn()}
-      />,
+      <CodexVoiceDock controller={controller()} onOpen={vi.fn()} onStart={vi.fn()} />,
     );
 
     expect(html).toContain('aria-label="layout:codexVoiceOpenConsole"');
@@ -65,7 +60,6 @@ describe("CodexVoiceDock", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceDock
         controller={controller({ phase: "listening", owned: true, isEngaged: true })}
-        selectedGroupId="g_alpha"
         onOpen={vi.fn()}
         onStart={vi.fn()}
       />,
@@ -78,26 +72,18 @@ describe("CodexVoiceDock", () => {
 
   it("preserves the same two semantics in the collapsed sidebar", () => {
     const html = renderToStaticMarkup(
-      <CodexVoiceDock
-        controller={controller()}
-        selectedGroupId="g_alpha"
-        collapsed
-        onOpen={vi.fn()}
-        onStart={vi.fn()}
-      />,
+      <CodexVoiceDock controller={controller()} collapsed onOpen={vi.fn()} onStart={vi.fn()} />,
     );
 
     expect(html).toContain('aria-label="layout:codexVoiceOpenConsole"');
     expect(html).toContain('aria-label="layout:codexVoiceStart"');
   });
 
-  it("reports a warm Analyst without exposing its bound Group", () => {
+  it("reports the global warm Analyst without exposing Group state", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceDock
         controller={controller({
           analyst: {
-            group_id: "g_alpha",
-            group_title: "Alpha",
             generation: "analyst-1",
             tui_ready: true,
             phase: "ready",
@@ -105,7 +91,6 @@ describe("CodexVoiceDock", () => {
             warning: "",
           },
         })}
-        selectedGroupId="g_beta"
         onOpen={vi.fn()}
         onStart={vi.fn()}
       />,

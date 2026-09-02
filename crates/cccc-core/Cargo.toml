@@ -22,6 +22,7 @@ hmac.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+shell-words.workspace = true
 mime_guess.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

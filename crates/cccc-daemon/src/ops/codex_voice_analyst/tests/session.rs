@@ -9,23 +9,34 @@ use std::time::{Duration, Instant};
 #[tokio::test]
 async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() {
     let (endpoint, server, turn_starts, elicitation_response) = fake_app_server().await;
-    let binding = ScopeBinding {
-        group_id: "g_voice".into(),
+    let binding = WorkspaceBinding {
         root: std::env::current_dir().expect("cwd"),
     };
     let session = AnalystSession::connect(ConnectConfig {
         binding,
         generation: "generation-a".into(),
         endpoint: endpoint.clone(),
-        codex_executable: PathBuf::from("codex"),
-        model: Some("gpt-5.6-sol".into()),
+        remote_tui_prefix: vec![
+            "codex".into(),
+            "-c".into(),
+            "model_provider=\"ZAI\"".into(),
+            "--model".into(),
+            "glm-5.3".into(),
+        ],
+        environment: Default::default(),
         resume_thread_id: None,
         process: None,
         delegations: HashMap::new(),
+        purpose: SessionPurpose::VoiceAnalyst,
     })
     .await
     .expect("connect");
     assert!(!session.tui_ready());
+    assert_eq!(
+        session.actor_tui_command(),
+        session.tui_command(),
+        "a fresh Actor terminal must attach to the controller-created thread",
+    );
     let mut events = session.subscribe();
 
     let first = session
@@ -106,6 +117,10 @@ async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() 
         session.tui_command(),
         vec![
             "codex",
+            "-c",
+            "model_provider=\"ZAI\"",
+            "--model",
+            "glm-5.3",
             "--remote",
             endpoint.as_str(),
             "resume",
@@ -119,6 +134,12 @@ async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() 
         .expect("reconnect session");
     assert_ne!(session.generation(), "generation-a");
     assert_eq!(session.thread_id(), "thread-1");
+    assert!(
+        session
+            .tui_command()
+            .windows(2)
+            .any(|pair| pair == ["-c", "model_provider=\"ZAI\""])
+    );
     assert_eq!(
         session
             .start_turn(
@@ -147,17 +168,17 @@ async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() 
 async fn disconnected_start_is_reported_and_the_ambiguous_delegation_is_not_replayed() {
     let (endpoint, server, turn_starts) = fake_disconnecting_app_server().await;
     let session = AnalystSession::connect(ConnectConfig {
-        binding: ScopeBinding {
-            group_id: "g_voice".into(),
+        binding: WorkspaceBinding {
             root: std::env::current_dir().expect("cwd"),
         },
         generation: "generation-disconnect".into(),
         endpoint,
-        codex_executable: PathBuf::from("codex"),
-        model: None,
+        remote_tui_prefix: vec![PathBuf::from("codex").to_string_lossy().into_owned()],
+        environment: Default::default(),
         resume_thread_id: None,
         process: None,
         delegations: HashMap::new(),
+        purpose: SessionPurpose::VoiceAnalyst,
     })
     .await
     .expect("connect");
@@ -178,7 +199,7 @@ async fn disconnected_start_is_reported_and_the_ambiguous_delegation_is_not_repl
     let disconnected = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = events.recv().await.expect("disconnect event");
-            if event.message["method"] == "cccc/voiceAnalyst/disconnected" {
+            if event.message["method"] == super::super::CODEX_APP_DISCONNECTED_METHOD {
                 return event;
             }
         }

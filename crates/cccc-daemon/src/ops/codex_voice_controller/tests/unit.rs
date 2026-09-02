@@ -1,5 +1,7 @@
 use super::super::projection::{SpeakableProgress, utf8_chunks};
-use super::super::provider::{REALTIME_INSTRUCTIONS, validated_realtime_offer};
+use super::super::provider::{
+    REALTIME_INSTRUCTIONS, configured_auth_path, validated_realtime_offer,
+};
 use super::super::*;
 use cccc_core::{HomeLayout, voice_recording_lease};
 use serde_json::json;
@@ -72,6 +74,22 @@ fn realtime_voice_selection_is_allowlisted_and_normalized() {
     assert_eq!(REALTIME_VOICES.len(), 9);
     assert!(validate_realtime_voice("arbitrary-provider-value").is_err());
     assert!(validate_realtime_voice("").is_err());
+}
+
+#[test]
+fn realtime_credentials_follow_only_the_host_identity() {
+    assert_eq!(
+        configured_auth_path(None, Some("/host/codex".into())),
+        Some(std::path::PathBuf::from("/host/codex/auth.json"))
+    );
+    assert_eq!(
+        configured_auth_path(
+            Some("/explicit/auth.json".into()),
+            Some("/host/codex".into()),
+        ),
+        Some(std::path::PathBuf::from("/explicit/auth.json"))
+    );
+    assert_eq!(configured_auth_path(None, None), None);
 }
 
 #[test]

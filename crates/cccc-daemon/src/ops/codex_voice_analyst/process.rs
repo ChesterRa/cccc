@@ -48,10 +48,10 @@ fn spawn_output_reader(
     suffix: &str,
 ) -> io::Result<()> {
     std::thread::Builder::new()
-        .name(format!("cccc-voice-analyst-{suffix}"))
+        .name(format!("cccc-codex-app-{suffix}"))
         .spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                tracing::debug!(message = %line, "Voice Analyst app-server output");
+                tracing::debug!(message = %line, "Codex app-server output");
                 let _ = sender.send(line);
             }
         })?;
@@ -124,7 +124,7 @@ pub(super) fn validate_loopback_endpoint(endpoint: &str) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "Codex Voice Analyst requires an uncredentialed loopback ws endpoint",
+            "Codex app-server requires an uncredentialed loopback ws endpoint",
         ))
     }
 }
@@ -144,7 +144,7 @@ impl ChildOwner {
         let Some(mut child) = self
             .child
             .lock()
-            .map_err(|_| io::Error::other("Voice Analyst child lock poisoned"))?
+            .map_err(|_| io::Error::other("Codex app-server child lock poisoned"))?
             .take()
         else {
             return Ok(());
@@ -157,6 +157,21 @@ impl ChildOwner {
         }
         let _ = child.wait();
         Ok(())
+    }
+
+    pub(super) fn running(&self) -> bool {
+        self.child
+            .lock()
+            .ok()
+            .and_then(|mut child| child.as_mut().map(|child| child.try_wait()))
+            .is_some_and(|status| status.ok().flatten().is_none())
+    }
+
+    pub(super) fn id(&self) -> Option<u32> {
+        self.child
+            .lock()
+            .ok()
+            .and_then(|child| child.as_ref().map(Child::id))
     }
 }
 

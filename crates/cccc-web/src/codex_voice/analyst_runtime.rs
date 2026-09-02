@@ -12,18 +12,16 @@ impl AnalystSnapshot {
 
 impl AnalystRuntime {
     pub(super) fn new(
-        group_id: String,
-        group_title: String,
-        root: PathBuf,
+        workdir: PathBuf,
         analyst: CodexVoiceAnalyst,
+        launch_runtime: ResolvedAgentRuntime,
         phase: &str,
         warning: String,
     ) -> Self {
         Self {
-            group_id,
-            group_title,
-            root,
+            workdir,
             analyst: Arc::new(analyst),
+            launch_runtime,
             terminal_gate: Mutex::new(()),
             snapshot: StdMutex::new(AnalystSnapshot {
                 phase: phase.to_owned(),
@@ -45,6 +43,14 @@ impl AnalystRuntime {
             .reusable_for_call()
     }
 
+    pub(super) fn matches_launch(&self, fingerprint: [u8; 32]) -> bool {
+        self.launch_runtime.fingerprint() == fingerprint
+    }
+
+    pub(super) fn launch_runtime(&self) -> ResolvedAgentRuntime {
+        self.launch_runtime.clone()
+    }
+
     pub(crate) fn analyst(&self) -> Arc<CodexVoiceAnalyst> {
         Arc::clone(&self.analyst)
     }
@@ -55,8 +61,6 @@ impl AnalystRuntime {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         AnalystInfo {
-            group_id: self.group_id.clone(),
-            group_title: self.group_title.clone(),
             generation: self.analyst.generation().to_owned(),
             tui_ready: self.analyst.tui_ready(),
             phase: snapshot.phase.clone(),

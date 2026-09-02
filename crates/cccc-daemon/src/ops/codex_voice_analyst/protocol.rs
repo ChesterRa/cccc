@@ -29,7 +29,7 @@ pub(super) async fn connect_with_retry(
         match tokio_tungstenite::connect_async(endpoint).await {
             Ok((socket, _)) => return Ok(socket),
             Err(error) if tokio::time::Instant::now() < deadline => {
-                tracing::debug!(%error, "waiting for Voice Analyst app-server websocket");
+                tracing::debug!(%error, "waiting for Codex app-server websocket");
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Err(error) => {
@@ -51,6 +51,7 @@ struct RpcRequest {
 enum ProtocolCommand {
     Request(RpcRequest),
     Respond { id: Value, result: Value },
+    RespondError { id: Value, error: Value },
     Close,
 }
 
@@ -112,6 +113,13 @@ impl ProtocolClient {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "app-server is closed"))
     }
 
+    pub(super) async fn respond_error(&self, id: Value, error: Value) -> io::Result<()> {
+        self.commands
+            .send(ProtocolCommand::RespondError { id, error })
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "app-server is closed"))
+    }
+
     pub(super) async fn close(&self) {
         let _ = self.commands.send(ProtocolCommand::Close).await;
         let task = self.task.lock().ok().and_then(|mut task| task.take());
@@ -155,9 +163,10 @@ async fn protocol_loop<S>(
                     next_id = next_id.saturating_add(1);
                     let turn_delegation_id = (request.method == "turn/start")
                         .then(|| {
-                            request.params
-                                .get("responsesapiClientMetadata")?
-                                .get("cccc_voice_delegation_id")?
+                            let metadata = request.params.get("responsesapiClientMetadata")?;
+                            metadata
+                                .get(super::CODEX_TURN_CORRELATION_KEY)
+                                .or_else(|| metadata.get("cccc_voice_delegation_id"))?
                                 .as_str()
                                 .map(str::trim)
                                 .filter(|value| !value.is_empty())
@@ -172,7 +181,7 @@ async fn protocol_loop<S>(
                         if pending_turn_start.is_some() {
                             let _ = request.response.send(Err(io::Error::new(
                                 io::ErrorKind::WouldBlock,
-                                "another Voice Analyst turn/start request is unresolved",
+                                "another correlated Codex turn/start request is unresolved",
                             )));
                             continue;
                         }
@@ -192,6 +201,12 @@ async fn protocol_loop<S>(
                         break format!("failed to write app-server response: {error}");
                     }
                 }
+                Some(ProtocolCommand::RespondError { id, error }) => {
+                    let message = json!({"jsonrpc":"2.0","id":id,"error":error});
+                    if let Err(error) = socket.send(Message::Text(message.to_string().into())).await {
+                        break format!("failed to write app-server response: {error}");
+                    }
+                }
                 Some(ProtocolCommand::Close) | None => {
                     let _ = socket.close(None).await;
                     break "app-server client closed".to_owned();
@@ -203,7 +218,7 @@ async fn protocol_loop<S>(
                     if message.get("method").is_some() {
                         if pending_turn_start.is_some() {
                             if deferred_events.len() >= EVENT_CAPACITY {
-                                break "Voice Analyst produced too many events before turn/start settled".into();
+                                break "Codex app-server produced too many events before turn/start settled".into();
                             }
                             deferred_events.push_back(message);
                         } else {
@@ -242,7 +257,7 @@ async fn protocol_loop<S>(
                                     .is_some_and(|turn_id| turn_id != response_turn_id)
                             })
                         {
-                            break "a competing terminal turn started while Voice delegation was pending".into();
+                            break "a competing terminal turn started while a correlated Codex request was pending".into();
                         }
                         if let (Some(delegation_id), Some(turn_id)) =
                             (pending_response.turn_delegation_id.as_ref(), response_turn_id)
@@ -279,7 +294,7 @@ async fn protocol_loop<S>(
     }
     let _ = events.send(AnalystEvent {
         generation,
-        message: json!({"method":"cccc/voiceAnalyst/disconnected","params":{"reason":terminal_error}}),
+        message: json!({"method":super::CODEX_APP_DISCONNECTED_METHOD,"params":{"reason":terminal_error}}),
         requested_delegation_id: None,
     });
 }

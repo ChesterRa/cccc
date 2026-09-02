@@ -54,7 +54,7 @@ export function CodexVoiceAudioSettings({
     "mt-1.5 h-10 w-full rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-sm text-[var(--color-text-primary)] outline-none transition-colors focus-visible:border-[var(--color-accent-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]/20";
 
   return (
-    <div className="grid gap-4 border-b border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-5 py-4 sm:grid-cols-3 sm:px-6">
+    <div className="grid gap-5 px-5 py-5 sm:grid-cols-3 sm:px-6 sm:py-6">
       <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
         <span className="inline-flex items-center gap-1.5">
           <HeadphonesIcon size={14} aria-hidden="true" />

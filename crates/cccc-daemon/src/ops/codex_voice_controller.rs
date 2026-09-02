@@ -24,7 +24,7 @@ pub use provider::{
     realtime_greeting_commands, realtime_notice_commands, validate_realtime_voice,
 };
 
-/// One repository-bound, resumable Codex analysis runtime behind the global Voice surface.
+/// One globally scoped, resumable Codex analysis runtime behind the Voice surface.
 ///
 /// This runtime deliberately outlives individual microphone calls. The Web
 /// owner keeps one instance warm and may wrap it in multiple short-lived

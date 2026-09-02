@@ -8,7 +8,6 @@ VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head 
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64) host_target=x86_64-unknown-linux-gnu ;;
-  Darwin:x86_64|Darwin:amd64) host_target=x86_64-apple-darwin ;;
   Darwin:arm64|Darwin:aarch64) host_target=aarch64-apple-darwin ;;
   *) echo "unsupported release verification platform" >&2; exit 1 ;;
 esac

@@ -17,7 +17,6 @@ from pathlib import Path
 
 _TARGETS = {
     "x86_64-unknown-linux-gnu": (".tar.gz", "cccc"),
-    "x86_64-apple-darwin": (".tar.gz", "cccc"),
     "aarch64-apple-darwin": (".tar.gz", "cccc"),
     "x86_64-pc-windows-msvc": (".zip", "cccc.exe"),
 }

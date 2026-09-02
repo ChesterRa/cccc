@@ -77,8 +77,9 @@ python -m pip install -U "cccc-pair>=0.4.36"
 > **CCCC 0.4.36 の製品実装は Rust の 1 つだけです。** Web サイトのインストーラーを
 > 推奨します。pip はパッケージマネージャー互換用で、同じネイティブ実行ファイルを
 > platform wheel として導入します。Python daemon、launcher、fallback は含みません。
-> 対応対象は Linux x86-64（glibc 2.28+）、Intel/Apple Silicon macOS 11+、
-> Windows x86-64 です。
+> 対応対象は Linux x86-64（glibc 2.28+）、Apple Silicon macOS 11+、Windows
+> x86-64 です。Intel Mac 対応は CCCC v0.4.37 が最終版で、それ以降は
+> `x86_64-apple-darwin` artifact を公開しません。
 
 ### アップグレード
 

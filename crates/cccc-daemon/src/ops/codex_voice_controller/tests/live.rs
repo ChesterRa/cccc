@@ -2,15 +2,14 @@ use super::super::*;
 use super::live_helper::{LiveVoiceHelper, required_env_path, send_helper_command};
 use super::live_loop::run_integrated_loop;
 use base64::Engine as _;
-use cccc_core::{GroupStore, HomeLayout, group_scope, scope, voice_recording_lease};
+use cccc_core::{HomeLayout, voice_recording_lease};
 use serde_json::json;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[tokio::test]
-async fn live_realtime_delegation_runs_through_the_group_bound_call_when_enabled() {
+async fn live_realtime_delegation_runs_through_the_global_analyst_when_enabled() {
     if std::env::var("CCCC_CODEX_VOICE_INTEGRATED_LIVE").as_deref() != Ok("1") {
         return;
     }
@@ -19,21 +18,18 @@ async fn live_realtime_delegation_runs_through_the_group_bound_call_when_enabled
     let auth_path = required_env_path("CCCC_CODEX_AUTH_PATH");
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let root = temp.path().join("project");
-    std::fs::create_dir_all(&root).expect("root");
-    std::fs::write(root.join("banana"), "TOPAZ\n").expect("fixture");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let group = store.create("integrated voice", "").expect("group");
-    let group = group_scope::attach(
-        &store,
-        &group.group_id,
-        scope::detect(&root).expect("scope"),
-    )
-    .expect("attach");
-    let mut analyst_config = LaunchConfig::new(&group.group_id, &root);
-    analyst_config.model =
-        Some(std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into()));
-    analyst_config.codex_executable = std::env::var_os("CCCC_CODEX_EXECUTABLE").map(PathBuf::from);
+    let workdir = cccc_core::codex_voice_settings::workdir(&home).expect("workdir");
+    std::fs::write(workdir.join("banana"), "TOPAZ\n").expect("fixture");
+    let mut analyst_config = LaunchConfig::new(workdir);
+    let model = std::env::var("CCCC_VOICE_ANALYST_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".into());
+    analyst_config.command = vec![
+        std::env::var_os("CCCC_CODEX_EXECUTABLE").map_or_else(
+            || "codex".into(),
+            |path| path.to_string_lossy().into_owned(),
+        ),
+        "--model".into(),
+        model,
+    ];
     let call = CodexVoiceCall::launch(&home, analyst_config)
         .await
         .expect("launch integrated Codex Voice call");

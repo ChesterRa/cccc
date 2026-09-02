@@ -7,7 +7,6 @@ import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
 
 export function CodexVoiceDock({
   controller,
-  selectedGroupId,
   collapsed = false,
   variant = "sidebar",
   onOpen,
@@ -33,8 +32,7 @@ export function CodexVoiceDock({
   const stopLabel = t(
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
-  const startDisabled =
-    (!selectedGroupId && !controller.analyst) || controller.checking || controller.isStarting;
+  const startDisabled = controller.checking || controller.isStarting;
 
   const callControl = controller.isEngaged ? (
     <IconButton

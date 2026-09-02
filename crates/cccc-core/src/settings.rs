@@ -5,6 +5,7 @@ use std::io;
 
 use crate::HomeLayout;
 use crate::fs::{read_json, read_yaml, with_exclusive_lock, write_yaml};
+use cccc_contracts::CodexVoiceSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalSettings {
@@ -15,6 +16,8 @@ pub struct GlobalSettings {
     pub branding: Map<String, Value>,
     #[serde(default)]
     pub remote_access: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "CodexVoiceSettings::is_default")]
+    pub codex_voice: CodexVoiceSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

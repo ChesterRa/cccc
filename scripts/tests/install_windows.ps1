@@ -36,11 +36,9 @@ function Write-ChecksumManifest([string]$ReleaseDir, [string]$Version, [string]$
     -replace '-', ''
   $entries = @(
     "$("0" * 64)  cccc-v$Version-x86_64-unknown-linux-gnu.tar.gz",
-    "$("0" * 64)  cccc-v$Version-x86_64-apple-darwin.tar.gz",
     "$("0" * 64)  cccc-v$Version-aarch64-apple-darwin.tar.gz",
     "$ArchiveChecksum  cccc-v$Version-$target.zip",
     "$("0" * 64)  cccc_pair-$wheelVersion-py3-none-manylinux_2_28_x86_64.whl",
-    "$("0" * 64)  cccc_pair-$wheelVersion-py3-none-macosx_11_0_x86_64.whl",
     "$("0" * 64)  cccc_pair-$wheelVersion-py3-none-macosx_11_0_arm64.whl",
     "$("0" * 64)  cccc_pair-$wheelVersion-py3-none-win_amd64.whl"
   )

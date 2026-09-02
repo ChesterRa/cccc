@@ -1,11 +1,12 @@
 use super::*;
 use anyhow::{Context, Result};
+use std::collections::BTreeMap;
 
 impl CodexVoiceAnalyst {
     pub async fn launch(home: &HomeLayout, config: LaunchConfig) -> Result<Self> {
         let session = AnalystSession::launch(home, config)
             .await
-            .context("launch repository-bound Voice Analyst")?;
+            .context("launch global Voice Analyst")?;
         Ok(Self::from_session(session))
     }
 
@@ -25,6 +26,10 @@ impl CodexVoiceAnalyst {
 
     pub fn tui_command(&self) -> Vec<String> {
         self.session.tui_command()
+    }
+
+    pub fn tui_environment(&self) -> BTreeMap<String, String> {
+        self.session.tui_environment()
     }
 
     pub fn tui_ready(&self) -> bool {

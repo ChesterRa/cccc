@@ -2,14 +2,13 @@ import { CodexVoiceDock } from "../../components/layout/CodexVoiceDock";
 import { CodexVoiceAnalystModal } from "../../components/modals/CodexVoiceAnalystModal";
 import type { CodexVoiceShellState } from "./useCodexVoiceShell";
 
-type SharedProps = { voice: CodexVoiceShellState; selectedGroupId: string };
+type SharedProps = { voice: CodexVoiceShellState };
 
 export function CodexVoiceSidebarDock(props: SharedProps & { collapsed: boolean }) {
-  const { voice, selectedGroupId, collapsed } = props;
+  const { voice, collapsed } = props;
   return (
     <CodexVoiceDock
       controller={voice.controller}
-      selectedGroupId={selectedGroupId}
       collapsed={collapsed}
       onOpen={voice.openDetails}
       onStart={voice.start}
@@ -18,14 +17,13 @@ export function CodexVoiceSidebarDock(props: SharedProps & { collapsed: boolean 
 }
 
 export function CodexVoiceMobileDock(props: SharedProps) {
-  const { voice, selectedGroupId } = props;
+  const { voice } = props;
   if (!voice.controller.isEngaged) return null;
   return (
     <div className="mt-14 flex-none md:hidden">
       <CodexVoiceDock
         variant="mobile"
         controller={voice.controller}
-        selectedGroupId={selectedGroupId}
         onOpen={voice.openDetails}
         onStart={voice.start}
       />
@@ -36,7 +34,7 @@ export function CodexVoiceMobileDock(props: SharedProps) {
 export function CodexVoiceOverlays(
   props: SharedProps & { isDark: boolean; isSmallScreen: boolean },
 ) {
-  const { voice, selectedGroupId, isDark, isSmallScreen } = props;
+  const { voice, isDark, isSmallScreen } = props;
   return (
     <>
       <audio ref={voice.controller.audioRef} autoPlay playsInline className="hidden" />
@@ -44,7 +42,6 @@ export function CodexVoiceOverlays(
         isOpen={voice.detailsOpen}
         isDark={isDark}
         isSmallScreen={isSmallScreen}
-        selectedGroupId={selectedGroupId}
         controller={voice.controller}
         onClose={voice.closeDetails}
       />

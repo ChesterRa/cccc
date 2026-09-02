@@ -46,7 +46,7 @@ pub(super) async fn fake_app_server() -> (
                             request["params"]["cwd"],
                             json!(std::env::current_dir().expect("cwd"))
                         );
-                        assert_eq!(request["params"]["model"], "gpt-5.6-sol");
+                        assert!(request["params"].get("model").is_none());
                         assert_eq!(request["params"]["approvalPolicy"], "never");
                         assert_eq!(request["params"]["sandbox"], "danger-full-access");
                         assert_eq!(request["params"]["historyMode"], "legacy");
@@ -76,9 +76,10 @@ pub(super) async fn fake_app_server() -> (
                         let turn_number = counter.fetch_add(1, Ordering::SeqCst) + 1;
                         let turn_id = format!("turn-{turn_number}");
                         assert_eq!(request["params"]["threadId"], "thread-1");
-                        assert_eq!(
-                            request["params"]["responsesapiClientMetadata"]["cccc_group_id"],
-                            "g_voice"
+                        assert!(
+                            request["params"]["responsesapiClientMetadata"]
+                                .get("cccc_group_id")
+                                .is_none()
                         );
                         send_result(&mut socket, id, json!({"turn":{"id":turn_id}})).await;
                         socket

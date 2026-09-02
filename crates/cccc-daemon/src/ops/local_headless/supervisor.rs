@@ -1,8 +1,11 @@
-use super::{HeadlessStatus, Session, Turn, events, poisoned, provider_cli, session, turn_channel};
+use super::{
+    ActiveTurn, HeadlessStatus, Session, SessionTransport, Turn, TurnOutputState, codex_runtime,
+    events, poisoned, provider_cli, session, turn_channel,
+};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -53,8 +56,169 @@ impl Drop for StartGuard {
 
 #[must_use]
 pub fn supports(actor: &Actor) -> bool {
-    actor.runner == RunnerKind::Headless
-        && matches!(actor.runtime, ActorRuntime::Codex | ActorRuntime::Claude)
+    (actor.runner == RunnerKind::Headless
+        && matches!(actor.runtime, ActorRuntime::Codex | ActorRuntime::Claude))
+        || uses_codex_app_server(actor)
+}
+
+pub(super) fn uses_codex_app_server(actor: &Actor) -> bool {
+    actor.runtime == ActorRuntime::Codex
+        && matches!(actor.runner, RunnerKind::Pty | RunnerKind::Headless)
+        && provider_cli::is_provider_binary(actor, &provider_cli::base_command(actor))
+}
+
+fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key) -> io::Result<()> {
+    let cwd = working_directory(group, actor)?;
+    let mut env = actor.env.clone();
+    env.insert(
+        "CCCC_HOME".into(),
+        home.root().to_string_lossy().into_owned(),
+    );
+    env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
+    env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
+    env.insert(
+        "CCCC_RUNNER".into(),
+        match actor.runner {
+            RunnerKind::Pty => "pty",
+            RunnerKind::Headless => "headless",
+        }
+        .into(),
+    );
+    super::super::codex_mcp::configure_actor_cli(&mut env);
+    let app = codex_runtime().block_on(
+        super::super::codex_voice_analyst::AnalystSession::launch_actor(
+            home,
+            super::super::codex_voice_analyst::ActorLaunchConfig {
+                workdir: cwd.clone(),
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: actor.runner,
+                command: provider_cli::base_command(actor),
+                environment: env,
+            },
+        ),
+    )?;
+    let app = Arc::new(app);
+    let prompt = cccc_core::system_prompt::render_session(home, group, actor);
+    let bootstrap = Turn {
+        text: format!(
+            "[CCCC] Bootstrap this actor. Use the CCCC MCP tools for coordination and replies.\n\n{prompt}"
+        ),
+        event_id: String::new(),
+        control_kind: "bootstrap".into(),
+    };
+    let eager_bootstrap = actor.runner == RunnerKind::Pty;
+    let (turns, receiver) = turn_channel();
+    let item = Arc::new(Session {
+        home: home.clone(),
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        runtime: actor.runtime,
+        transport: SessionTransport::CodexApp {
+            session: Arc::clone(&app),
+            has_terminal: AtomicBool::new(false),
+        },
+        status: Mutex::new(HeadlessStatus {
+            status: if eager_bootstrap { "working" } else { "idle" }.into(),
+            task_id: None,
+            updated_at: utc_now(),
+            pid: app.process_id(),
+        }),
+        stopped: AtomicBool::new(false),
+        next_request_id: AtomicU64::new(1),
+        pending: Mutex::new(HashMap::new()),
+        thread_id: Mutex::new(app.thread_id().to_owned()),
+        resumed_provider_session_id: Mutex::new(String::new()),
+        active_turn: Mutex::new(eager_bootstrap.then(|| ActiveTurn {
+            event_id: bootstrap.event_id.clone(),
+            turn_id: String::new(),
+            control_kind: bootstrap.control_kind.clone(),
+            external: false,
+            output_state: TurnOutputState::Buffering,
+            pending_messages: Vec::new(),
+        })),
+        completion: (Mutex::new(0), Condvar::new()),
+        turns,
+    });
+    if let Err(error) = session::spawn_codex_reader(Arc::clone(&item), app.subscribe()) {
+        item.stop();
+        return Err(error);
+    }
+    let eager_turn_id = if eager_bootstrap {
+        match super::protocol::submit_codex(&item, &bootstrap) {
+            Ok(turn_id) => {
+                if let Ok(mut active) = item.active_turn.lock()
+                    && let Some(active) = active.as_mut()
+                {
+                    active.turn_id.clone_from(&turn_id);
+                }
+                Some(turn_id)
+            }
+            Err(error) => {
+                item.stop();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    if actor.runner == RunnerKind::Pty {
+        let history = match super::super::actor_runtime::terminal_history::config(
+            home,
+            &group.group_id,
+            &actor.id,
+        ) {
+            Ok(history) => history,
+            Err(error) => {
+                item.stop();
+                return Err(error);
+            }
+        };
+        let terminal = match cccc_runtime::start_with_history(
+            cccc_runtime::LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: app.actor_tui_command(),
+                cwd: cwd.clone(),
+                env: app.tui_environment(),
+                cols: 120,
+                rows: 40,
+            },
+            history,
+        ) {
+            Ok(status) => status,
+            Err(error) => {
+                item.stop();
+                return Err(io::Error::other(error));
+            }
+        };
+        item.attach_terminal(terminal.pid);
+    }
+    if let Err(error) = sessions()
+        .write()
+        .map_err(|_| poisoned())
+        .map(|mut items| items.insert(key.clone(), Arc::clone(&item)))
+    {
+        item.stop();
+        return Err(error);
+    }
+    if let Err(error) = session::spawn_worker(Arc::clone(&item), receiver) {
+        sessions()
+            .write()
+            .ok()
+            .and_then(|mut items| items.remove(&key));
+        item.stop();
+        return Err(error);
+    }
+    if let Some(turn_id) = eager_turn_id {
+        super::output::emit_turn(&item, &bootstrap, "headless.turn.started", &turn_id);
+        super::output::announce_turn(&item);
+    } else {
+        let _ = item.turns.try_send(bootstrap);
+    }
+    super::output::emit(&item, "headless.session.started", Map::new());
+    Ok(())
 }
 
 pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<()> {
@@ -68,6 +232,10 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     }
     stop(&group.group_id, &actor.id);
 
+    if uses_codex_app_server(actor) {
+        return start_codex_app(home, group, actor, key);
+    }
+
     let cwd = working_directory(group, actor)?;
     let mut env = actor.env.clone();
     env.insert(
@@ -79,7 +247,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     env.insert("CCCC_RUNNER".into(), "headless".into());
     super::super::codex_mcp::configure_actor_cli(&mut env);
     let model = model_from_command(&actor.command);
-    let (mut command, session_command) = provider_command(home, group, actor, &mut env)?;
+    let (mut command, session_command) = provider_command(home, group, actor)?;
     let claude_session = if actor.runtime == ActorRuntime::Claude {
         let prepared = super::super::runtime_session::prepare_claude_headless_session(
             home,
@@ -132,8 +300,10 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
         runtime: actor.runtime,
-        child: Mutex::new(child),
-        stdin: Mutex::new(stdin),
+        transport: SessionTransport::Process {
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+        },
         status: Mutex::new(HeadlessStatus {
             status: "idle".into(),
             task_id: None,
@@ -357,25 +527,16 @@ fn provider_command(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
-    env: &mut BTreeMap<String, String>,
 ) -> io::Result<(Vec<String>, Vec<String>)> {
     let base = provider_cli::base_command(actor);
     if !provider_cli::is_provider_binary(actor, &base) {
         return Ok((base.clone(), base));
     }
     if actor.runtime == ActorRuntime::Codex {
-        let mut command = vec![base[0].clone()];
-        command.extend(preserved_codex_args(&base[1..]));
-        command.extend(["app-server".into(), "--listen".into(), "stdio://".into()]);
-        let session_command = command.clone();
-        super::super::codex_mcp::configure_mcp_only(
-            home,
-            &group.group_id,
-            &actor.id,
-            &mut command,
-            env,
-        );
-        Ok((command, session_command))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "direct Codex commands must use the shared app-server transport",
+        ))
     } else {
         let mut command = vec![base[0].clone()];
         command.extend(preserved_claude_args(&base[1..]));
@@ -397,25 +558,6 @@ fn provider_command(
         }
         Ok((command, session_command))
     }
-}
-
-fn preserved_codex_args(args: &[String]) -> Vec<String> {
-    let mut preserved = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let arg = &args[index];
-        if arg == "app-server" {
-            index += 1;
-        } else if arg == "--listen" {
-            index += 2;
-        } else if arg.starts_with("--listen=") {
-            index += 1;
-        } else {
-            preserved.push(arg.clone());
-            index += 1;
-        }
-    }
-    preserved
 }
 
 fn preserved_claude_args(args: &[String]) -> Vec<String> {
@@ -493,7 +635,48 @@ mod tests {
     use cccc_core::{GroupStore, Scope};
 
     #[test]
-    fn provider_commands_preserve_compatible_actor_arguments() {
+    fn direct_codex_actors_use_the_shared_app_server_while_wrappers_stay_compatible() {
+        let mut direct = Actor::new("codex-direct");
+        direct.runtime = ActorRuntime::Codex;
+        direct.runner = RunnerKind::Pty;
+        direct.command = vec![
+            "codex".into(),
+            "-c".into(),
+            "model_provider=\"ZAI\"".into(),
+            "-m".into(),
+            "glm-test".into(),
+        ];
+        assert!(supports(&direct));
+        assert!(uses_codex_app_server(&direct));
+
+        let mut headless = direct.clone();
+        headless.id = "codex-headless".into();
+        headless.runner = RunnerKind::Headless;
+        assert!(supports(&headless));
+        assert!(uses_codex_app_server(&headless));
+
+        let mut wrapped = direct.clone();
+        wrapped.id = "codex-wrapper".into();
+        wrapped.command = vec![
+            "sh".into(),
+            "-lc".into(),
+            "exec codex --dangerously-bypass-approvals-and-sandbox".into(),
+        ];
+        assert!(!supports(&wrapped));
+        assert!(!uses_codex_app_server(&wrapped));
+
+        wrapped.runner = RunnerKind::Headless;
+        assert!(supports(&wrapped));
+        assert!(!uses_codex_app_server(&wrapped));
+
+        let mut unsupported_direct = direct;
+        unsupported_direct.command = vec!["codex".into(), "exec".into()];
+        assert!(supports(&unsupported_direct));
+        assert!(uses_codex_app_server(&unsupported_direct));
+    }
+
+    #[test]
+    fn direct_codex_cannot_enter_compatibility_transport_and_claude_preserves_arguments() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
@@ -501,8 +684,6 @@ mod tests {
             .expect("store")
             .create("commands", "")
             .expect("group");
-        let mut env = BTreeMap::new();
-
         let mut codex = Actor::new("codex");
         codex.runtime = ActorRuntime::Codex;
         codex.runner = RunnerKind::Headless;
@@ -514,45 +695,9 @@ mod tests {
             "--model".into(),
             "gpt-test".into(),
         ];
-        let (codex_command, codex_session_command) =
-            provider_command(&home, &group, &codex, &mut env).expect("codex command");
-        assert!(
-            codex_command
-                .windows(2)
-                .any(|args| args == ["-c", "feature=true"])
-        );
-        assert!(codex_command.iter().any(|arg| arg == "--search"));
-        assert!(
-            codex_command
-                .windows(2)
-                .any(|args| args == ["--model", "gpt-test"])
-        );
-        assert_eq!(
-            codex_command
-                .iter()
-                .filter(|arg| arg.as_str() == "app-server")
-                .count(),
-            1
-        );
-        assert_eq!(
-            codex_session_command,
-            vec![
-                "codex",
-                "-c",
-                "feature=true",
-                "--search",
-                "--model",
-                "gpt-test",
-                "app-server",
-                "--listen",
-                "stdio://",
-            ]
-        );
-        assert!(
-            !codex_session_command
-                .iter()
-                .any(|arg| arg.contains("mcp_servers.cccc"))
-        );
+        let error = provider_command(&home, &group, &codex)
+            .expect_err("direct Codex cannot enter the compatibility transport");
+        assert!(error.to_string().contains("shared app-server transport"));
 
         let mut claude = Actor::new("claude");
         claude.runtime = ActorRuntime::Claude;
@@ -567,7 +712,7 @@ mod tests {
             "custom.json".into(),
         ];
         let (claude_command, claude_session_command) =
-            provider_command(&home, &group, &claude, &mut env).expect("claude command");
+            provider_command(&home, &group, &claude).expect("claude command");
         assert!(
             claude_command
                 .windows(2)
@@ -750,9 +895,8 @@ while IFS= read -r line; do :; done
         );
         group.actors.push(actor.clone());
 
-        let mut command_env = actor.env.clone();
         let (_, session_command) =
-            provider_command(&home, &group, &actor, &mut command_env).expect("provider command");
+            provider_command(&home, &group, &actor).expect("provider command");
         let stale_session = "42e9ef0c-3b75-43a0-9056-eef13dd1061d";
         crate::ops::runtime_session::record_claude_headless_session(
             &home,
@@ -869,9 +1013,8 @@ esac
         );
         group.actors.push(actor.clone());
 
-        let mut command_env = actor.env.clone();
         let (_, session_command) =
-            provider_command(&home, &group, &actor, &mut command_env).expect("provider command");
+            provider_command(&home, &group, &actor).expect("provider command");
         let stale_session = "42e9ef0c-3b75-43a0-9056-eef13dd1061d";
         crate::ops::runtime_session::record_claude_headless_session(
             &home,

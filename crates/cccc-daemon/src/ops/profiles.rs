@@ -24,6 +24,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "actor_profile_copy_profile_secrets" | "actor_profile_secret_copy_from_profile" => {
             copy_profile(home, request)
         }
+        "actor_profile_copy_voice_analyst_secrets" => copy_voice_analyst(home, request),
         _ => return None,
     })
 }
@@ -323,6 +324,36 @@ fn copy_profile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         )
         .map_err(OpError::io)?;
     object(json!({"profile_id":profile_id,"source_profile_id":source,"keys":keys}))
+}
+
+fn copy_voice_analyst(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if !bool_arg(request, "is_admin", false) {
+        return Err(OpError::new(
+            "permission_denied",
+            "administrator access is required to copy Voice Analyst secrets",
+        ));
+    }
+    let profile_id = required_arg(request, "profile_id")?;
+    let profiles = store(home)?;
+    let profile = profiles
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
+        .map_err(OpError::io)?
+        .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
+    super::profile_access::require_write(request, &profile)?;
+    let values = cccc_core::codex_voice_settings::private_environment(home).map_err(OpError::io)?;
+    let keys = profiles
+        .replace_secrets_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+            values,
+        )
+        .map_err(OpError::io)?;
+    object(json!({"profile_id":profile_id,"keys":keys}))
 }
 
 fn profile_scope(request: &DaemonRequest) -> String {

@@ -18,12 +18,12 @@ fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {
         "/api/v1/codex_voice/calls/active"
     ));
     assert!(requires_admin(
-        &Method::POST,
-        "/api/v1/groups/g_one/codex_voice/calls"
+        &Method::PUT,
+        "/api/v1/codex_voice/analyst-settings"
     ));
     assert!(requires_admin(
         &Method::GET,
-        "/api/v1/groups/g_one/codex_voice/analysts/a_one/terminal"
+        "/api/v1/codex_voice/analysts/a_one/terminal"
     ));
     assert!(!requires_admin(&Method::GET, "/api/v1/groups/g_one/actors"));
 }

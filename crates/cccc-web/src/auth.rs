@@ -302,14 +302,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
 }
 
 fn is_codex_voice_path(path: &str) -> bool {
-    if path.starts_with("/api/v1/codex_voice/") {
-        return true;
-    }
-    path.strip_prefix("/api/v1/groups/")
-        .and_then(|tail| tail.split_once('/'))
-        .is_some_and(|(_, operation)| {
-            operation == "codex_voice" || operation.starts_with("codex_voice/")
-        })
+    path.starts_with("/api/v1/codex_voice/")
 }
 
 fn group_from_query(request: &Request) -> Option<String> {

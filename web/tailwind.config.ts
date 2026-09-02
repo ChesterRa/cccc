@@ -49,6 +49,7 @@ export default {
         "fade-in": "fade-in 0.2s ease-out",
         "slide-up": "slide-up 0.25s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
+        "codex-voice-drawer-in": "codex-voice-drawer-in 0.18s ease-out",
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
       },
       transitionTimingFunction: { "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)" },

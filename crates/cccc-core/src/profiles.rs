@@ -1,4 +1,4 @@
-use cccc_contracts::utc_now;
+use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind, utc_now};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -46,6 +46,16 @@ const fn profile_version() -> u8 {
 struct SecretDoc {
     #[serde(default)]
     profiles: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeProfileConfig {
+    pub runtime: ActorRuntime,
+    pub runner: RunnerKind,
+    pub command: Vec<String>,
+    pub submit: ActorSubmit,
+    pub revision: u64,
+    pub environment: BTreeMap<String, String>,
 }
 
 impl ProfileStore {
@@ -123,6 +133,33 @@ impl ProfileStore {
             .cloned())
     }
 
+    /// Resolve the runtime-owned portion of a profile into one typed shape.
+    /// Actor hosts and platform-managed agent hosts intentionally share this
+    /// boundary instead of each interpreting the profile JSON independently.
+    pub fn runtime_ref(
+        &self,
+        profile_id: &str,
+        scope: &str,
+        owner_id: &str,
+    ) -> io::Result<Option<RuntimeProfileConfig>> {
+        let Some(profile) = self.get_ref(profile_id, scope, owner_id)? else {
+            return Ok(None);
+        };
+        let runtime = parse_profile_field(&profile, "runtime", ActorRuntime::default())?;
+        let runner = parse_profile_field(&profile, "runner", RunnerKind::default())?;
+        let submit = parse_profile_field(&profile, "submit", ActorSubmit::default())?;
+        let command = parse_profile_command(&profile)?;
+        let environment = self.secret_values_ref(profile_id, scope, owner_id)?;
+        Ok(Some(RuntimeProfileConfig {
+            runtime,
+            runner,
+            command,
+            submit,
+            revision: profile["revision"].as_u64().unwrap_or(0),
+            environment,
+        }))
+    }
+
     pub fn upsert(
         &self,
         mut profile: Map<String, Value>,
@@ -183,7 +220,11 @@ impl ProfileStore {
         profile.insert("owner_id".into(), json!(owner_id));
         profile.entry("runtime").or_insert_with(|| json!("codex"));
         profile.entry("runner").or_insert_with(|| json!("pty"));
-        profile.entry("command").or_insert_with(|| json!([]));
+        let command = parse_profile_command_value(profile.get("command"))?;
+        profile.insert(
+            "command".into(),
+            serde_json::to_value(command).map_err(io::Error::other)?,
+        );
         profile.entry("submit").or_insert_with(|| json!("enter"));
         profile.insert("env".into(), json!({}));
         profile.insert(
@@ -624,6 +665,46 @@ fn python_string(value: &Value) -> String {
     }
 }
 
+fn parse_profile_field<T>(profile: &Value, field: &str, default: T) -> io::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let Some(value) = profile.get(field) else {
+        return Ok(default);
+    };
+    serde_json::from_value(value.clone()).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid Runtime Profile {field}: {error}"),
+        )
+    })
+}
+
+fn parse_profile_command(profile: &Value) -> io::Result<Vec<String>> {
+    parse_profile_command_value(profile.get("command"))
+}
+
+fn parse_profile_command_value(value: Option<&Value>) -> io::Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    match value {
+        Value::Null => Ok(Vec::new()),
+        Value::String(command) => shell_words::split(command).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid Runtime Profile command: {error}"),
+            )
+        }),
+        _ => serde_json::from_value::<Vec<String>>(value.clone()).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid Runtime Profile command: {error}"),
+            )
+        }),
+    }
+}
+
 fn python_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".into(),
@@ -652,6 +733,67 @@ fn python_repr(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_upsert_canonicalizes_shell_command_strings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = ProfileStore::new(home).expect("store");
+        let profile = store
+            .upsert(
+                json!({
+                    "id":"string-command",
+                    "runtime":"codex",
+                    "command":"codex -c 'model_provider=\"ZAI\"' -m glm-5.3"
+                })
+                .as_object()
+                .expect("profile")
+                .clone(),
+                None,
+            )
+            .expect("upsert");
+        assert_eq!(
+            profile["command"],
+            json!(["codex", "-c", "model_provider=\"ZAI\"", "-m", "glm-5.3"])
+        );
+    }
+
+    #[test]
+    fn runtime_ref_reads_legacy_shell_command_strings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = ProfileStore::new(home.clone()).expect("store");
+        store
+            .upsert(
+                json!({"id":"legacy-command","runtime":"codex","command":["codex"]})
+                    .as_object()
+                    .expect("profile")
+                    .clone(),
+                None,
+            )
+            .expect("upsert");
+        let path = home.root().join("state/actor_profiles/profiles.json");
+        let mut document: Value = read_json(&path).expect("profiles");
+        let stored = document["profiles"]
+            .as_object_mut()
+            .expect("profile map")
+            .values_mut()
+            .find(|profile| profile["id"] == "legacy-command")
+            .expect("legacy profile");
+        stored["command"] = json!("codex --profile voice");
+        write_json(&path, &document).expect("legacy fixture");
+
+        assert_eq!(
+            store
+                .runtime_ref("legacy-command", "global", "")
+                .expect("runtime profile")
+                .expect("profile")
+                .command,
+            ["codex", "--profile", "voice"]
+        );
+    }
 
     #[test]
     fn opening_store_migrates_legacy_env_before_profiles_are_returned() {

@@ -14,29 +14,30 @@ mod voice_socket;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/codex_voice/calls/active", get(handlers::active))
+        .route("/api/v1/codex_voice/calls", post(handlers::start))
         .route(
-            "/api/v1/groups/{group_id}/codex_voice/calls",
-            post(handlers::start),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/codex_voice/calls/{generation}",
+            "/api/v1/codex_voice/calls/{generation}",
             delete(handlers::stop),
         )
         .route(
-            "/api/v1/groups/{group_id}/codex_voice/calls/{generation}/events",
+            "/api/v1/codex_voice/calls/{generation}/events",
             get(handlers::upgrade),
         )
         .route(
-            "/api/v1/groups/{group_id}/codex_voice/analysts/{generation}/terminal",
+            "/api/v1/codex_voice/analysts/{generation}/terminal",
             get(handlers::upgrade_terminal),
         )
         .route(
-            "/api/v1/groups/{group_id}/codex_voice/analysts/{generation}/reset",
+            "/api/v1/codex_voice/analysts/{generation}/reset",
             post(handlers::reset_analyst),
         )
         .route(
-            "/api/v1/groups/{group_id}/codex_voice/analysts/{generation}/cancel",
+            "/api/v1/codex_voice/analysts/{generation}/cancel",
             post(handlers::cancel_analyst),
+        )
+        .route(
+            "/api/v1/codex_voice/analyst-settings",
+            get(handlers::analyst_settings).put(handlers::update_analyst_settings),
         )
 }
 

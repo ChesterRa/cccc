@@ -17,8 +17,12 @@ import zipfile
 from pathlib import Path
 
 
-_TAG_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 _WHEEL_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._!+]*$")
+_PLATFORM_EXECUTABLES = {
+    "manylinux_2_28_x86_64": "cccc",
+    "macosx_11_0_arm64": "cccc",
+    "win_amd64": "cccc.exe",
+}
 
 
 def _project(root: Path) -> tuple[str, str, str, str, str]:
@@ -102,8 +106,8 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
     binary = binary.resolve()
     if not binary.is_file():
         raise ValueError(f"release binary not found: {binary}")
-    if _TAG_RE.fullmatch(platform_tag) is None or platform_tag.lower() == "any":
-        raise ValueError(f"invalid native wheel platform tag: {platform_tag!r}")
+    if platform_tag not in _PLATFORM_EXECUTABLES:
+        raise ValueError(f"unsupported release wheel platform tag: {platform_tag!r}")
 
     name, version, summary, readme_content_type, readme = _project(root.resolve())
     distribution = _wheel_name_component(name)
@@ -111,7 +115,7 @@ def build(binary: Path, output_dir: Path, *, platform_tag: str, root: Path) -> P
     stem = f"{distribution}-{version_component}"
     wheel_name = f"{stem}-py3-none-{platform_tag}.whl"
     dist_info = f"{stem}.dist-info"
-    executable_name = "cccc.exe" if platform_tag == "win_amd64" else "cccc"
+    executable_name = _PLATFORM_EXECUTABLES[platform_tag]
     script = f"{stem}.data/scripts/{executable_name}"
     install_marker = f"{stem}.data/scripts/.cccc-standalone"
     wheel = f"{dist_info}/WHEEL"

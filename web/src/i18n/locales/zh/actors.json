@@ -169,7 +169,7 @@
   "customRuntimeRequiresCommand": "自定义运行时需要提供命令。",
   "commandOverrideRequired": "已关闭默认命令，请填写命令覆盖内容。",
   "runtimeNotInstalled": "{{runtime}} 未安装。",
-  "creationMode": "创建方式",
+  "creationMode": "配置方式",
   "customAgent": "自定义",
   "fromActorProfile": "使用 Runtime Profile",
   "actorProfile": "Runtime Profile",

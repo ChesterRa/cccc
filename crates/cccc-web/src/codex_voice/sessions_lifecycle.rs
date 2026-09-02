@@ -2,17 +2,13 @@ use super::*;
 use anyhow::{Context, Result, anyhow, bail};
 
 impl CodexVoiceSessions {
-    pub(crate) async fn heartbeat_if_unattached(
-        &self,
-        group_id: &str,
-        generation: &str,
-    ) -> Result<bool> {
+    pub(crate) async fn heartbeat_if_unattached(&self, generation: &str) -> Result<bool> {
         let session = {
             let state = self.state.lock().await;
             let Some(session) = state.active.as_ref() else {
                 return Ok(false);
             };
-            if session.group_id != group_id || session.call.generation() != generation {
+            if session.call.generation() != generation {
                 return Ok(false);
             }
             if session.connection_state.load(Ordering::Acquire) != CONNECTION_UNATTACHED {
@@ -27,13 +23,13 @@ impl CodexVoiceSessions {
         Ok(true)
     }
 
-    pub(crate) async fn stop(&self, group_id: &str, generation: &str) -> Result<bool> {
+    pub(crate) async fn stop(&self, generation: &str) -> Result<bool> {
         let session = {
             let mut state = self.state.lock().await;
             let Some(session) = state.active.as_ref() else {
                 return Ok(false);
             };
-            if session.group_id != group_id || session.call.generation() != generation {
+            if session.call.generation() != generation {
                 return Ok(false);
             }
             session
@@ -53,17 +49,13 @@ impl CodexVoiceSessions {
         Ok(true)
     }
 
-    pub(crate) async fn stop_if_unattached(
-        &self,
-        group_id: &str,
-        generation: &str,
-    ) -> Result<bool> {
+    pub(crate) async fn stop_if_unattached(&self, generation: &str) -> Result<bool> {
         let session = {
             let mut state = self.state.lock().await;
             let Some(session) = state.active.as_ref() else {
                 return Ok(false);
             };
-            if session.group_id != group_id || session.call.generation() != generation {
+            if session.call.generation() != generation {
                 return Ok(false);
             }
             if session
@@ -95,7 +87,6 @@ impl CodexVoiceSessions {
     pub(crate) async fn reset_analyst(
         &self,
         home: &HomeLayout,
-        group_id: &str,
         analyst_generation: &str,
     ) -> Result<AnalystInfo> {
         let mut state = self.state.lock().await;
@@ -105,9 +96,7 @@ impl CodexVoiceSessions {
         let previous = state
             .analyst
             .as_ref()
-            .filter(|analyst| {
-                analyst.group_id == group_id && analyst.analyst.generation() == analyst_generation
-            })
+            .filter(|analyst| analyst.analyst.generation() == analyst_generation)
             .cloned()
             .ok_or_else(|| anyhow!("Voice Analyst is no longer active"))?;
         if previous.analyst.is_busy().await {
@@ -116,15 +105,9 @@ impl CodexVoiceSessions {
             );
         }
         let replacement = Arc::new(
-            persistence::launch_fresh_analyst(
-                home,
-                &previous.group_id,
-                &previous.group_title,
-                &previous.root,
-                String::new(),
-            )
-            .await
-            .context("start a new Voice Analyst session")?,
+            persistence::launch_fresh_analyst(home, String::new())
+                .await
+                .context("start a new Voice Analyst session")?,
         );
         replacement.start_monitor(home.clone(), self.ledger_events.clone());
         persistence::persist_analyst(home, &replacement, false)?;
