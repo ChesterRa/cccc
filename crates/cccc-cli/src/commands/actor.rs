@@ -149,11 +149,115 @@ fn parse_command(command: &str) -> Result<Vec<String>> {
     if command.trim().is_empty() {
         return Ok(Vec::new());
     }
+    #[cfg(windows)]
+    return parse_windows_command(command);
+    #[cfg(not(windows))]
     shell_words::split(command).map_err(Into::into)
+}
+
+/// Split the human-facing `--command` value without treating Windows path
+/// separators as POSIX escapes. Quotes only group text and are not retained.
+#[cfg(any(windows, test))]
+fn parse_windows_command(command: &str) -> Result<Vec<String>> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        if quote != Some('\'') && character == '\\' {
+            let mut backslashes = 1;
+            while characters.peek() == Some(&'\\') {
+                characters.next();
+                backslashes += 1;
+            }
+            if characters.peek() == Some(&'"') {
+                current.extend(std::iter::repeat_n('\\', backslashes / 2));
+                characters.next();
+                if backslashes % 2 == 1 {
+                    current.push('"');
+                } else if quote == Some('"') {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some('"');
+                } else {
+                    current.push('"');
+                }
+                started = true;
+                continue;
+            }
+            current.extend(std::iter::repeat_n('\\', backslashes));
+            started = true;
+            continue;
+        }
+        match (quote, character) {
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                started = true;
+            }
+            (Some(open), value) if value == open => quote = None,
+            (None, value) if value.is_whitespace() => {
+                if started {
+                    values.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (_, value) => {
+                current.push(value);
+                started = true;
+            }
+        }
+    }
+    anyhow::ensure!(quote.is_none(), "unterminated quote in command");
+    if started {
+        values.push(current);
+    }
+    Ok(values)
 }
 
 fn optional(map: &mut Map<String, Value>, key: &str, value: Option<String>) {
     if let Some(value) = value {
         map.insert(key.into(), Value::String(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_windows_command;
+
+    #[test]
+    fn windows_command_parser_preserves_path_separators() {
+        assert_eq!(
+            parse_windows_command(
+                r#"C:\Users\USER\AppData\Roaming\npm\claude.cmd --dangerously-skip-permissions"#
+            )
+            .expect("command"),
+            [
+                r"C:\Users\USER\AppData\Roaming\npm\claude.cmd",
+                "--dangerously-skip-permissions"
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_command_parser_groups_quoted_paths_and_empty_arguments() {
+        assert_eq!(
+            parse_windows_command(r#""C:\Program Files\Claude\claude.exe" --name ''"#)
+                .expect("command"),
+            [r"C:\Program Files\Claude\claude.exe", "--name", ""]
+        );
+    }
+
+    #[test]
+    fn windows_command_parser_rejects_unterminated_quotes() {
+        assert!(parse_windows_command(r#""C:\Program Files\Claude"#).is_err());
+    }
+
+    #[test]
+    fn windows_command_parser_preserves_escaped_json_quotes() {
+        assert_eq!(
+            parse_windows_command("tool --json \"{\\\"key\\\":\\\"value\\\"}\"").expect("command"),
+            ["tool", "--json", r#"{"key":"value"}"#]
+        );
     }
 }

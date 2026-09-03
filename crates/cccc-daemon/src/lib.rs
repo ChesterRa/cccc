@@ -21,6 +21,14 @@ pub use paths::DaemonPaths;
 pub use process::{DetachedDaemon, StartOutcome};
 pub use server::run;
 
+/// Return the recorded Web binding only when its process and signed readiness
+/// endpoint still match the persisted runtime identity.
+pub fn live_web_binding(home: &cccc_core::HomeLayout) -> Option<(String, u16)> {
+    crate::ops::validated_live_web_binding(home)
+        .ok()
+        .map(|binding| (binding.host, binding.port))
+}
+
 /// Opt-in, compatibility-pinned Codex Realtime Voice building blocks.
 ///
 /// This API is intentionally experimental. It owns no ledger schema or roster

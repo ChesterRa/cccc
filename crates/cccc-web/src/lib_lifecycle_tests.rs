@@ -1,4 +1,33 @@
 use super::*;
+
+#[tokio::test]
+async fn windows_reserved_port_retries_with_zero_and_returns_the_effective_listener() {
+    let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = std::sync::Arc::clone(&attempts);
+    let listener =
+        web_listener::bind_web_listener_with("127.0.0.1", 8848, true, move |host, port| {
+            let observed = std::sync::Arc::clone(&observed);
+            async move {
+                observed
+                    .lock()
+                    .expect("attempts")
+                    .push((host.clone(), port));
+                if port == 8848 {
+                    Err(std::io::Error::from_raw_os_error(10013))
+                } else {
+                    tokio::net::TcpListener::bind((host, port)).await
+                }
+            }
+        })
+        .await
+        .expect("fallback listener");
+
+    assert_eq!(
+        *attempts.lock().expect("attempts"),
+        [("127.0.0.1".to_owned(), 8848), ("127.0.0.1".to_owned(), 0)]
+    );
+    assert!(listener.local_addr().expect("effective address").port() > 0);
+}
 use futures_util::StreamExt;
 use tower::ServiceExt;
 

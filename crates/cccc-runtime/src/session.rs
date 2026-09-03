@@ -56,8 +56,8 @@ impl Session {
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
     ) -> Result<Self, RuntimeError> {
-        let (program, args) = spec
-            .command
+        let prepared_command = crate::prepare_pty_command(&spec.command, &spec.env);
+        let (program, args) = prepared_command
             .split_first()
             .ok_or(RuntimeError::EmptyCommand)?;
         let pair = native_pty_system()

@@ -10,7 +10,7 @@ use crate::dispatch::{OpError, OpResult, bool_arg, object, string_arg};
 
 #[path = "membership/web_runtime.rs"]
 mod web_runtime;
-use web_runtime::live_web_port;
+pub(crate) use web_runtime::validated_live_web_binding;
 
 struct PublicUrls {
     hostname: Option<String>,
@@ -216,7 +216,7 @@ pub(super) fn reach_on(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     reach_on_with(
         home,
         request,
-        live_web_port,
+        web_runtime::live_web_port,
         |home| membership_cloudflared::ensure(home, false).map(|_| ()),
         |home, token| membership_cloudflared::start(home, token).map(|_| ()),
     )

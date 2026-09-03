@@ -48,6 +48,7 @@ mod im;
 pub(crate) mod local_headless;
 mod maintenance;
 mod membership;
+pub(crate) use membership::validated_live_web_binding;
 mod membership_account;
 mod membership_cloudflared;
 mod memory;

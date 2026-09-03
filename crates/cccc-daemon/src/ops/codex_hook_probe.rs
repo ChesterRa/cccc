@@ -14,10 +14,16 @@ pub(super) fn supports_hooks(
     let Some(program) = command.first() else {
         return false;
     };
+    let mut probe_command = vec![program.clone()];
+    probe_command.extend(super::overrides::hook_arguments(cccc_executable));
+    probe_command.extend(["mcp".into(), "list".into()]);
+    let probe_command = cccc_runtime::prepare_pty_command(&probe_command, env);
+    let Some((program, args)) = probe_command.split_first() else {
+        return false;
+    };
     let mut probe = Command::new(program);
     probe
-        .args(super::overrides::hook_arguments(cccc_executable))
-        .args(["mcp", "list"])
+        .args(args)
         .current_dir(cwd)
         .envs(env)
         .stdin(Stdio::null())

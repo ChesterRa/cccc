@@ -16,6 +16,12 @@ pub fn resolve(
     host_override: Option<&str>,
     port_override: Option<u16>,
 ) -> Result<WebBinding> {
+    if host_override.is_none()
+        && port_override.is_none()
+        && let Some(binding) = live_runtime_binding(home)
+    {
+        return Ok(binding);
+    }
     let global = settings::load(home)?;
     Ok(resolve_values(
         host_override,
@@ -24,6 +30,11 @@ pub fn resolve(
         std::env::var("CCCC_WEB_HOST").ok().as_deref(),
         std::env::var("CCCC_WEB_PORT").ok().as_deref(),
     ))
+}
+
+fn live_runtime_binding(home: &HomeLayout) -> Option<WebBinding> {
+    let (host, port) = cccc_daemon::live_web_binding(home)?;
+    Some(WebBinding { host, port })
 }
 
 fn resolve_values(
@@ -68,12 +79,57 @@ fn nonempty(value: Option<&str>) -> Option<&str> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     fn remote_access(host: &str, port: u16) -> Map<String, serde_json::Value> {
         json!({"web_host":host,"web_port":port})
             .as_object()
             .cloned()
             .expect("object")
+    }
+
+    fn verified_web_runtime(home: &HomeLayout, runtime_id: &str, proof_key: &str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind Web fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        let response_runtime_id = runtime_id.to_owned();
+        let response_proof_key = proof_key.to_owned();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept readiness request");
+            let mut request = [0_u8; 2048];
+            let count = stream.read(&mut request).expect("read readiness request");
+            let request = String::from_utf8_lossy(&request[..count]);
+            let target = request.split_whitespace().nth(1).expect("request target");
+            let challenge = target
+                .strip_prefix("/api/v1/ready?challenge=")
+                .expect("challenge query");
+            let proof =
+                cccc_core::web_runtime_proof::sign(&response_proof_key, challenge).expect("proof");
+            let body = json!({
+                "ok":true,
+                "result":{"web":"ready","runtime_id":response_runtime_id,"proof":proof}
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write readiness response");
+        });
+        cccc_core::fs::write_secret_json(
+            &home.daemon_dir().join("web_runtime.json"),
+            &json!({
+                "pid":std::process::id(),
+                "runtime_id":runtime_id,
+                "runtime_proof_key":proof_key,
+                "host":"127.0.0.1",
+                "port":port,
+            }),
+        )
+        .expect("runtime state");
+        port
     }
 
     #[test]
@@ -144,6 +200,90 @@ mod tests {
             resolve(&home, None, None).expect("binding"),
             WebBinding {
                 host: "0.0.0.0".into(),
+                port: 9300,
+            }
+        );
+    }
+
+    #[test]
+    fn live_runtime_binding_wins_without_cli_overrides() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let port = verified_web_runtime(&home, "web-live", "proof-key");
+
+        assert_eq!(
+            resolve(&home, None, None).expect("live binding"),
+            WebBinding {
+                host: "127.0.0.1".into(),
+                port,
+            }
+        );
+        assert_eq!(
+            resolve(&home, Some("192.0.2.10"), Some(9100)).expect("explicit binding"),
+            WebBinding {
+                host: "192.0.2.10".into(),
+                port: 9100,
+            }
+        );
+    }
+
+    #[test]
+    fn live_binding_resolution_is_safe_inside_a_tokio_runtime_context() {
+        // `im`/`space`/default launch call `resolve` inside `#[tokio::main]`;
+        // the live-binding probe used to panic there with "Cannot drop a
+        // runtime in a context where blocking is not allowed" (exit 101).
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let port = verified_web_runtime(&home, "web-live", "proof-key");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let binding = runtime
+            .block_on(async { resolve(&home, None, None) })
+            .expect("live binding");
+
+        assert_eq!(
+            binding,
+            WebBinding {
+                host: "127.0.0.1".into(),
+                port,
+            }
+        );
+    }
+
+    #[test]
+    fn dead_runtime_binding_falls_back_to_saved_configuration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        std::fs::write(
+            home.root().join("settings.yaml"),
+            "remote_access:\n  web_host: 127.0.0.2\n  web_port: 9300\n",
+        )
+        .expect("settings");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserved fixture port");
+        let stale_port = listener.local_addr().expect("fixture address").port();
+        drop(listener);
+        cccc_core::fs::write_secret_json(
+            &home.daemon_dir().join("web_runtime.json"),
+            &json!({
+                "pid":u32::MAX,
+                "runtime_id":"web-stale",
+                "runtime_proof_key":"proof-key",
+                "host":"127.0.0.1",
+                "port":stale_port,
+            }),
+        )
+        .expect("stale runtime state");
+
+        assert_eq!(
+            resolve(&home, None, None).expect("saved binding"),
+            WebBinding {
+                host: "127.0.0.2".into(),
                 port: 9300,
             }
         );

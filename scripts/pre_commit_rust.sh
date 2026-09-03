@@ -40,6 +40,8 @@ rust_packages=()
 rust_source_packages=()
 rust_test_specs=()
 rust_workspace=0
+daemon_impacted=0
+runtime_impacted=0
 
 append_unique_package() {
   local candidate="$1"
@@ -100,6 +102,11 @@ mark_rust_change() {
         return
       fi
       append_unique_package "$package_name"
+      if [[ "$package_name" == "cccc-pair-daemon" ]]; then
+        daemon_impacted=1
+      elif [[ "$package_name" == "cccc-pair-runtime" ]]; then
+        runtime_impacted=1
+      fi
       crate_relative="${relative#*/}"
       case "$crate_relative" in
         tests/*.rs)
@@ -150,34 +157,63 @@ elif [[ ${#rust_packages[@]} -gt 0 ]]; then
   scope_label="${rust_packages[*]}"
 fi
 
+rust_lint_command=()
+rust_test_command=()
+rust_runtime_test_command=()
+rust_daemon_test_command=()
+if [[ "$full" == "1" ]]; then
+  rust_lint_command=(cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings)
+elif [[ ${#rust_source_scope_args[@]} -gt 0 ]]; then
+  rust_lint_command=(cargo clippy "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs" -- -D warnings)
+fi
+if [[ "$full" == "1" || "$rust_workspace" == "1" || "$daemon_impacted" == "1" || "$runtime_impacted" == "1" ]]; then
+  rust_test_command=(cargo test --workspace --exclude cccc-pair-daemon --exclude cccc-pair-runtime --locked --jobs "$cargo_jobs")
+  rust_runtime_test_command=(cargo test --package cccc-pair-runtime --locked --jobs "$cargo_jobs" -- --test-threads=1)
+  rust_daemon_test_command=(cargo test --package cccc-pair-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1)
+elif [[ ${#rust_source_scope_args[@]} -gt 0 ]]; then
+  rust_test_command=(cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs")
+fi
+
+changed_test_lint_command=()
+changed_test_command=()
+plan_changed_test() {
+  local test_spec="$1"
+  local package_name="${test_spec%%:*}"
+  local test_name="${test_spec#*:}"
+  changed_test_lint_command=(cargo clippy --package "$package_name" --test "$test_name" --locked --jobs "$cargo_jobs" -- -D warnings)
+  changed_test_command=(cargo test --package "$package_name" --test "$test_name" --locked --jobs "$cargo_jobs")
+  if [[ "$package_name" == "cccc-pair-daemon" || "$package_name" == "cccc-pair-runtime" ]]; then
+    changed_test_command+=(-- --test-threads=1)
+  fi
+}
+
+print_command() {
+  local label="$1"
+  shift
+  [[ $# -gt 0 ]] || return 0
+  printf '%s=' "$label"
+  printf '%q ' "$@"
+  echo ""
+}
+
 print_plan() {
   echo "cargo_jobs=$cargo_jobs"
   echo "rust_scope=$scope_label"
   if [[ "$full" == "1" ]]; then
     echo "rust_targets=all"
-    printf "rust_clippy="
-    printf '%q ' cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings
-    echo ""
-    printf "rust_test="
-    printf '%q ' cargo test --workspace --exclude cccc-pair-daemon --locked --jobs "$cargo_jobs"
-    echo ""
-    printf "rust_daemon_test="
-    printf '%q ' cargo test --package cccc-pair-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1
-    echo ""
-    return
+  else
+    echo "rust_targets=default,changed-tests"
   fi
-
-  echo "rust_targets=default,changed-tests"
-  if [[ "$rust_workspace" == "1" || ${#rust_source_packages[@]} -gt 0 ]]; then
-    printf "rust_clippy="
-    printf '%q ' cargo clippy "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs" -- -D warnings
-    echo ""
-    printf "rust_test="
-    printf '%q ' cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs"
-    echo ""
-  fi
+  print_command rust_clippy "${rust_lint_command[@]}"
+  print_command rust_test "${rust_test_command[@]}"
+  print_command rust_runtime_test "${rust_runtime_test_command[@]}"
+  print_command rust_daemon_test "${rust_daemon_test_command[@]}"
   if [[ ${#rust_test_specs[@]} -gt 0 ]]; then
-    printf 'rust_changed_tests=%s\n' "${rust_test_specs[*]}"
+    for test_spec in "${rust_test_specs[@]}"; do
+      plan_changed_test "$test_spec"
+      print_command "rust_changed_test_lint[$test_spec]" "${changed_test_lint_command[@]}"
+      print_command "rust_changed_test[$test_spec]" "${changed_test_command[@]}"
+    done
   fi
 }
 
@@ -198,31 +234,26 @@ echo "Running Rust format, lint, and tests for: $scope_label"
 echo "Cargo build jobs: $cargo_jobs"
 run_timed "Rust format" cargo fmt --all --check
 
-if [[ "$full" == "1" ]]; then
-  run_timed "Rust lint" cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings
-  run_timed "Rust tests" cargo test --workspace --exclude cccc-pair-daemon --locked --jobs "$cargo_jobs"
-  run_timed "Rust daemon tests" cargo test --package cccc-pair-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1
-  echo "Rust checks passed"
-  echo ""
-  exit 0
+if [[ ${#rust_lint_command[@]} -gt 0 ]]; then
+  run_timed "Rust lint" "${rust_lint_command[@]}"
 fi
-
-if [[ "$rust_workspace" == "1" || ${#rust_source_packages[@]} -gt 0 ]]; then
-  run_timed "Rust source lint" cargo clippy "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs" -- -D warnings
-  run_timed "Rust tests" cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs"
+if [[ ${#rust_test_command[@]} -gt 0 ]]; then
+  run_timed "Rust tests" "${rust_test_command[@]}"
+fi
+if [[ ${#rust_runtime_test_command[@]} -gt 0 ]]; then
+  run_timed "Rust runtime tests" "${rust_runtime_test_command[@]}"
+fi
+if [[ ${#rust_daemon_test_command[@]} -gt 0 ]]; then
+  run_timed "Rust daemon tests" "${rust_daemon_test_command[@]}"
 fi
 
 if [[ ${#rust_test_specs[@]} -gt 0 ]]; then
   for test_spec in "${rust_test_specs[@]}"; do
     package_name="${test_spec%%:*}"
     test_name="${test_spec#*:}"
-    run_timed "$package_name/$test_name lint" cargo clippy --package "$package_name" --test "$test_name" --locked --jobs "$cargo_jobs" -- -D warnings
-    test_args=(cargo test --package "$package_name" --test "$test_name" --locked --jobs "$cargo_jobs")
-    if [[ "$package_name:$test_name" == "cccc-pair-daemon:integration" ]]; then
-      # These PTY lifecycle tests share process-global runtime resources.
-      test_args+=(-- --test-threads=1)
-    fi
-    run_timed "$package_name/$test_name test" "${test_args[@]}"
+    plan_changed_test "$test_spec"
+    run_timed "$package_name/$test_name lint" "${changed_test_lint_command[@]}"
+    run_timed "$package_name/$test_name test" "${changed_test_command[@]}"
   done
 fi
 

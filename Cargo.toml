@@ -53,7 +53,9 @@ flate2 = "1.1"
 futures-util = "0.3"
 http-body-util = "0.1"
 hmac = "0.12"
-portable-pty = "0.9"
+# 0.9.0 unconditionally enables ConPTY cursor inheritance and regresses native
+# Windows streams (wezterm/wezterm#6783). Keep the last stable ConPTY behavior.
+portable-pty = "=0.8.1"
 percent-encoding = "2.3"
 regex = "1.11"
 retach = { version = "=0.10.1", default-features = false }
@@ -84,6 +86,7 @@ notify = "8.2"
 nix = { version = "0.28", features = ["signal"] }
 uuid = { version = "1.17", features = ["v4", "serde"] }
 unicode-width = "0.2"
+windows-sys = "0.61"
 win32job = "2.0.3"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 hound = "3.5"

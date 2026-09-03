@@ -65,7 +65,11 @@ pub fn configure(
         )?;
         return Ok(setup(launch_token, false));
     };
-    if append_settings(command, cwd, &executable).is_err() {
+    let settings_path = cccc_core::GroupStore::new(home.clone())?
+        .state_dir(group_id)?
+        .join("runtime-settings")
+        .join(format!("{actor_id}.claude.json"));
+    if append_settings(command, cwd, &executable, &settings_path).is_err() {
         super::codex_mcp::record_launch_issue(
             home,
             "claude",
@@ -97,10 +101,20 @@ fn is_direct_claude_command(command: &[String]) -> bool {
     command
         .first()
         .and_then(|value| value.rsplit(['/', '\\']).next())
-        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "claude" | "claude.exe"))
+        .is_some_and(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "claude" | "claude.exe" | "claude.cmd" | "claude.bat"
+            )
+        })
 }
 
-fn append_settings(command: &mut Vec<String>, cwd: &Path, executable: &Path) -> Result<(), String> {
+fn append_settings(
+    command: &mut Vec<String>,
+    cwd: &Path,
+    executable: &Path,
+    settings_path: &Path,
+) -> Result<(), String> {
     let mut effective_settings = None;
     let mut retained = Vec::with_capacity(command.len() + 2);
     let mut post_double_dash = Vec::new();
@@ -148,7 +162,12 @@ fn append_settings(command: &mut Vec<String>, cwd: &Path, executable: &Path) -> 
         &hook_command,
         Some(NOTIFICATION_MATCHER),
     )?;
-    retained.extend(["--settings".into(), Value::Object(settings).to_string()]);
+    cccc_core::fs::write_secret_json(settings_path, &Value::Object(settings))
+        .map_err(|error| format!("failed to write managed Claude settings: {error}"))?;
+    retained.extend([
+        "--settings".into(),
+        settings_path.to_string_lossy().into_owned(),
+    ]);
     retained.extend(post_double_dash);
     *command = retained;
     Ok(())

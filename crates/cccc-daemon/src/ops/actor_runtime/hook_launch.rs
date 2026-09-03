@@ -66,12 +66,13 @@ pub(super) fn launch_serialized_with_permit(
     actor: &Actor,
     cwd: &Path,
     env: &BTreeMap<String, String>,
-    mut command: Vec<String>,
+    command: Vec<String>,
 ) -> Result<SessionStatus, OpError> {
-    let original_command = command.clone();
     let mut launch_env = env.clone();
     let original_env = launch_env.clone();
     codex_mcp::configure_actor_cli(&mut launch_env);
+    let mut command = cccc_runtime::resolve_command_executable(&command, &launch_env);
+    let original_command = command.clone();
 
     let setup = match launch_integration(actor) {
         LaunchIntegration::CodexHooks => codex_mcp::configure(

@@ -5,6 +5,8 @@ pub mod deepseek_supervisor;
 mod executable;
 mod history_access;
 mod manager;
+#[cfg(all(test, windows))]
+mod manager_windows_tests;
 mod output;
 mod output_reader;
 mod process_tree;
@@ -41,7 +43,7 @@ pub use command::{
     is_canonical_deepseek_config, is_canonical_deepseek_profile_manifest,
     is_canonical_deepseek_runtime_manifest,
 };
-pub use executable::resolve_executable_in_path;
+pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
     history_since, retained_history, retained_history_tail,

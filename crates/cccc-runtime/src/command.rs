@@ -705,7 +705,7 @@ mod tests {
         env.insert("PATH".into(), temp.path().display().to_string());
         env.insert("CCCC_HOME".into(), cccc_home.display().to_string());
         env.insert("CCCC_NODE_VERSION".into(), "0.0.0".into());
-        assert!(deepseek_preflight(&["dsh-acp-demo".into()], &env).is_ok());
+        deepseek_preflight(&["dsh-acp-demo".into()], &env).expect("canonical DeepSeek fixture");
         let adapter_manifest = home
             .join("node_modules")
             .join(super::DEEPSEEK_LLM_ADAPTER_PACKAGE)

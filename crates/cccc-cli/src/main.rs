@@ -1,9 +1,12 @@
 mod args;
 mod commands;
+#[cfg(windows)]
+mod console_encoding;
 #[cfg(any(windows, test))]
 mod detached_daemon_owner;
 mod hook_receiver;
 mod shutdown;
+mod web_endpoint;
 mod web_instance;
 mod web_launch;
 
@@ -25,6 +28,8 @@ const DAEMON_OWNER_HANDOFF_GRACE: std::time::Duration = std::time::Duration::fro
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(windows)]
+    let _console_encoding = console_encoding::use_utf8();
     let cli = Cli::parse();
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
@@ -82,12 +87,12 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Im(args)) => {
             let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
-            let web_endpoint = web_endpoint(&binding.host, binding.port);
+            let web_endpoint = web_endpoint::format(&binding.host, binding.port);
             commands::integrations::im(&client, &home, &web_endpoint, args).await
         }
         Some(CommandKind::Space(args)) => {
             let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
-            let web_endpoint = web_endpoint(&binding.host, binding.port);
+            let web_endpoint = web_endpoint::format(&binding.host, binding.port);
             commands::integrations::space(&client, &home, &web_endpoint, args).await
         }
         Some(CommandKind::Send(args)) => commands::messaging::send(&client, &home, args).await,
@@ -116,21 +121,6 @@ async fn main() -> Result<()> {
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
         Some(CommandKind::Update(args)) => commands::update::run(args).await,
     }
-}
-
-fn web_endpoint(host: &str, port: u16) -> String {
-    let host = match host {
-        "0.0.0.0" | "::" => "127.0.0.1",
-        value => value,
-    };
-    let url_host = if host.starts_with('[') && host.ends_with(']') {
-        host.to_owned()
-    } else if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    format!("http://{url_host}:{port}")
 }
 
 async fn launch(
@@ -576,7 +566,7 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
 mod tests {
     use super::{
         PRODUCT_VERSION, is_compatible_daemon, select_active_group, wait_for_daemon,
-        wait_for_daemon_lock_release, web_endpoint,
+        wait_for_daemon_lock_release,
     };
     use cccc_client::DaemonClient;
     use cccc_contracts::DaemonResponse;
@@ -624,16 +614,6 @@ mod tests {
         assert!(is_compatible_daemon(&compatible_other_version));
         assert!(!is_compatible_daemon(&legacy));
         assert!(!is_compatible_daemon(&stale_rust));
-    }
-
-    #[test]
-    fn web_endpoint_brackets_ipv6_literals() {
-        assert_eq!(web_endpoint("::1", 8848), "http://[::1]:8848");
-        assert_eq!(
-            web_endpoint("[2001:db8::1]", 9000),
-            "http://[2001:db8::1]:9000"
-        );
-        assert_eq!(web_endpoint("127.0.0.1", 8848), "http://127.0.0.1:8848");
     }
 
     #[test]

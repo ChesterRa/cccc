@@ -133,6 +133,31 @@ fn reach_rejects_a_listener_that_reflects_the_public_challenge() {
 }
 
 #[test]
+fn live_binding_discovery_is_safe_inside_a_tokio_runtime_context() {
+    // `cccc`, `cccc im`, and `cccc space` resolve the live binding inside
+    // `#[tokio::main]`; the readiness probe used to panic there with
+    // "Cannot drop a runtime in a context where blocking is not allowed".
+    let port = web_ready_server("web_fixture", "proof-key");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("home");
+    fs::write_json(
+        &home.daemon_dir().join("web_runtime.json"),
+        &json!({"pid":std::process::id(),"runtime_id":"web_fixture","runtime_proof_key":"proof-key","host":"127.0.0.1","port":port}),
+    )
+    .expect("runtime state");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let binding = runtime
+        .block_on(async { validated_live_web_binding(&home) })
+        .expect("live binding");
+    assert_eq!(binding.host, "127.0.0.1");
+    assert_eq!(binding.port, port);
+}
+
+#[test]
 fn reach_rejects_a_live_web_binding_that_cannot_accept_loopback() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

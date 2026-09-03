@@ -2,6 +2,18 @@ use super::*;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod chrome_test_guard;
+use chrome_test_guard::chrome_test_guard;
+
+macro_rules! require_chrome {
+    () => {
+        if !chrome_available() {
+            return;
+        }
+        let _chrome_guard = chrome_test_guard().await;
+    };
+}
+
 #[test]
 fn extracts_google_account_route_from_completion_url() {
     assert_eq!(
@@ -17,9 +29,7 @@ fn extracts_google_account_route_from_completion_url() {
 
 #[tokio::test]
 async fn launches_chromium_and_captures_nonempty_frame() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><html><body style='background:#fff'><h1>CCCC browser frame</h1><input autofocus></body></html>",
     )
@@ -52,9 +62,7 @@ async fn launches_chromium_and_captures_nonempty_frame() {
 
 #[tokio::test]
 async fn open_completes_after_dom_content_loaded_without_waiting_for_subresources() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = page_with_stalled_subresource().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -95,9 +103,7 @@ async fn open_completes_after_dom_content_loaded_without_waiting_for_subresource
 
 #[tokio::test]
 async fn concurrent_ensure_open_reuses_one_profile_owner() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC concurrent browser").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -123,9 +129,7 @@ async fn concurrent_ensure_open_reuses_one_profile_owner() {
 
 #[tokio::test]
 async fn reopens_same_profile_after_process_exit() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC reopen browser").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -146,9 +150,7 @@ async fn reopens_same_profile_after_process_exit() {
 
 #[tokio::test]
 async fn info_reaps_a_finished_browser_handler_instead_of_reporting_active() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC browser exit status").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -237,9 +239,7 @@ async fn inactive_stale_profile_is_replaced_for_the_same_key() {
 
 #[tokio::test]
 async fn failed_open_releases_profile_registration() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC failed open cleanup").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -270,9 +270,7 @@ async fn failed_open_releases_profile_registration() {
 
 #[tokio::test]
 async fn open_and_close_share_one_profile_lifecycle_boundary() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC open close race").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -295,9 +293,7 @@ async fn open_and_close_share_one_profile_lifecycle_boundary() {
 
 #[tokio::test]
 async fn shutdown_closes_all_browser_processes() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page("CCCC shutdown browser").await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
@@ -385,9 +381,7 @@ async fn page_with_stalled_subresource() -> (String, JoinHandle<()>) {
 
 #[tokio::test]
 async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><script>globalThis.WIZ_global_data={SNlM0e:'csrf',FdrFJe:'session'}</script>",
     )
@@ -436,9 +430,7 @@ async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
 
 #[tokio::test]
 async fn special_key_command_applies_native_input_behavior() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><input id='email' autofocus value='waterbang@'><script>email.setSelectionRange(email.value.length,email.value.length)</script>",
     )
@@ -490,9 +482,7 @@ async fn special_key_command_applies_native_input_behavior() {
 
 #[tokio::test]
 async fn click_command_preserves_the_requested_mouse_button() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><style>html,body{margin:0}#target{width:300px;height:300px}</style><div id='target'>target</div><script>target.addEventListener('contextmenu',event=>{event.preventDefault();document.body.dataset.button=String(event.button)})</script>",
     )
@@ -539,9 +529,7 @@ async fn click_command_preserves_the_requested_mouse_button() {
 
 #[tokio::test]
 async fn core_interaction_commands_complete_a_real_page_journey() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><style>html,body{margin:0}#input{position:absolute;left:20px;top:20px;width:240px;height:50px}</style><input id='input'><script>sessionStorage.loads=String(Number(sessionStorage.loads||0)+1)</script>",
     )
@@ -651,9 +639,7 @@ async fn core_interaction_commands_complete_a_real_page_journey() {
 
 #[tokio::test]
 async fn scroll_command_targets_the_nested_container_under_the_pointer() {
-    if !chrome_available() {
-        return;
-    }
+    require_chrome!();
     let (url, server) = local_page(
         "<!doctype html><style>html,body{margin:0;height:100%;overflow:hidden}#scroller{width:400px;height:300px;overflow:auto}#content{height:2000px}</style><div id='scroller'><div id='content'>scroll target</div></div>",
     )

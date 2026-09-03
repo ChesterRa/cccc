@@ -14,6 +14,7 @@ mod routes;
 mod security_headers;
 mod shutdown;
 mod web_banner;
+mod web_listener;
 mod web_runtime_state;
 
 use anyhow::Result;
@@ -26,7 +27,6 @@ use cccc_core::HomeLayout;
 use cccc_core::access_tokens::AccessTokenStore;
 use rust_embed::RustEmbed;
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -439,7 +439,7 @@ where
             "Remote Web access remains locked until the first administrator token is created with the local bootstrap code; direct localhost access stays passwordless"
         );
     }
-    let listener = tokio::net::TcpListener::bind((host, port)).await?;
+    let listener = web_listener::bind_web_listener(host, port).await?;
     let address = listener.local_addr()?;
     ensure_listener_auth(&home, address)?;
     let runtime_id = new_web_runtime_id();

@@ -9,8 +9,12 @@ pub(super) fn supported_version(
     cwd: &Path,
     env: &BTreeMap<String, String>,
 ) -> bool {
-    Command::new(executable)
-        .arg("--version")
+    let command = cccc_runtime::prepare_pty_command(&[executable.into(), "--version".into()], env);
+    let Some((program, args)) = command.split_first() else {
+        return false;
+    };
+    Command::new(program)
+        .args(args)
         .current_dir(cwd)
         .envs(env)
         .output()

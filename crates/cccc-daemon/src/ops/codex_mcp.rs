@@ -136,7 +136,10 @@ fn is_direct_codex_command(command: &[String]) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if !matches!(name.as_str(), "codex" | "codex.exe") {
+    if !matches!(
+        name.as_str(),
+        "codex" | "codex.exe" | "codex.cmd" | "codex.bat"
+    ) {
         return false;
     }
     command

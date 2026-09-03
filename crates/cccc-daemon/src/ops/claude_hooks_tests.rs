@@ -5,7 +5,9 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-fn merges_the_effective_inline_settings_into_one_argument() {
+fn writes_the_effective_inline_settings_to_a_managed_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed = temp.path().join("managed.json");
     let mut command = vec![
         "claude".into(),
         "--settings".into(),
@@ -19,6 +21,7 @@ fn merges_the_effective_inline_settings_into_one_argument() {
         &mut command,
         Path::new("/workspace"),
         Path::new("/tmp/cccc bin/cccc"),
+        &managed,
     )
     .expect("merge settings");
 
@@ -27,8 +30,12 @@ fn merges_the_effective_inline_settings_into_one_argument() {
         1
     );
     assert_eq!(&command[..3], ["claude", "--model", "sonnet"]);
-    let settings: Value =
-        serde_json::from_str(command.last().expect("settings")).expect("inline settings");
+    assert_eq!(
+        command.last(),
+        Some(&managed.to_string_lossy().into_owned())
+    );
+    let settings: Value = serde_json::from_slice(&fs::read(&managed).expect("managed settings"))
+        .expect("settings JSON");
     assert_eq!(settings["language"], "chinese");
     assert_eq!(settings["hooks"]["Stop"][0]["matcher"], "existing");
     assert_eq!(settings["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
@@ -71,12 +78,13 @@ fn merges_a_relative_settings_file_without_mutating_it() {
     let path = temp.path().join("claude.json");
     fs::write(&path, r#"{"env":{"EXAMPLE":"kept"}}"#).expect("settings file");
     let mut command = vec!["claude".into(), "--settings=claude.json".into()];
+    let managed = temp.path().join("managed.json");
 
-    append_settings(&mut command, temp.path(), Path::new("/bin/cccc"))
+    append_settings(&mut command, temp.path(), Path::new("/bin/cccc"), &managed)
         .expect("merge file settings");
 
-    let settings: Value =
-        serde_json::from_str(command.last().expect("settings")).expect("inline settings");
+    let settings: Value = serde_json::from_slice(&fs::read(managed).expect("managed settings"))
+        .expect("settings JSON");
     assert_eq!(settings["env"]["EXAMPLE"], "kept");
     assert_eq!(
         fs::read_to_string(path).expect("original file"),
@@ -94,32 +102,44 @@ fn merges_an_absolute_settings_file() {
         "--settings".into(),
         path.to_string_lossy().into_owned(),
     ];
+    let managed = temp.path().join("managed.json");
 
-    append_settings(&mut command, Path::new("/ignored"), Path::new("/bin/cccc"))
-        .expect("merge absolute settings");
+    append_settings(
+        &mut command,
+        Path::new("/ignored"),
+        Path::new("/bin/cccc"),
+        &managed,
+    )
+    .expect("merge absolute settings");
 
-    let settings: Value =
-        serde_json::from_str(command.last().expect("settings")).expect("inline settings");
+    let settings: Value = serde_json::from_slice(&fs::read(managed).expect("managed settings"))
+        .expect("settings JSON");
     assert_eq!(settings["model"], "sonnet");
 }
 
 #[test]
 fn rejects_invalid_settings_without_partially_rewriting_command() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed = temp.path().join("managed.json");
     let original = vec!["claude".into(), "--settings".into(), "missing.json".into()];
     let mut command = original.clone();
     assert!(
         append_settings(
             &mut command,
             Path::new("/workspace"),
-            Path::new("/bin/cccc")
+            Path::new("/bin/cccc"),
+            &managed,
         )
         .is_err()
     );
     assert_eq!(command, original);
+    assert!(!managed.exists());
 }
 
 #[test]
 fn does_not_treat_prompt_text_after_double_dash_as_cli_settings() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let managed = temp.path().join("managed.json");
     let mut command = vec![
         "claude".into(),
         "--".into(),
@@ -130,10 +150,12 @@ fn does_not_treat_prompt_text_after_double_dash_as_cli_settings() {
         &mut command,
         Path::new("/workspace"),
         Path::new("/bin/cccc"),
+        &managed,
     )
     .expect("append settings");
     assert_eq!(command[0], "claude");
     assert_eq!(command[1], "--settings");
+    assert_eq!(command[2], managed.to_string_lossy());
     assert_eq!(&command[3..], ["--", "--settings", "is prompt text"]);
 }
 
@@ -142,6 +164,7 @@ fn only_direct_claude_commands_are_eligible() {
     assert!(is_direct_claude_command(&["claude".into()]));
     assert!(is_direct_claude_command(&["/opt/bin/claude".into()]));
     assert!(is_direct_claude_command(&[r"C:\bin\claude.exe".into()]));
+    assert!(is_direct_claude_command(&[r"C:\bin\claude.cmd".into()]));
     assert!(!is_direct_claude_command(&[
         "wrapper".into(),
         "claude".into()
