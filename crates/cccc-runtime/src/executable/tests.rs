@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-fn windows_resolution_skips_extensionless_npm_shim() {
+fn windows_resolution_skips_extensionless_shim_and_follows_pathext_order() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::write(temp.path().join("claude"), "#!/bin/sh").expect("shim");
     fs::write(temp.path().join("claude.cmd"), "@echo off").expect("cmd shim");
@@ -18,9 +18,9 @@ fn windows_resolution_skips_extensionless_npm_shim() {
             true,
             Some(".CMD;.EXE")
         ),
-        Some(temp.path().join("claude.exe"))
+        Some(temp.path().join("claude.cmd"))
     );
-    fs::remove_file(temp.path().join("claude.exe")).expect("remove exe");
+    fs::remove_file(temp.path().join("claude.cmd")).expect("remove cmd");
     assert_eq!(
         resolve_executable(
             "claude",
@@ -28,7 +28,23 @@ fn windows_resolution_skips_extensionless_npm_shim() {
             true,
             Some(".CMD;.EXE")
         ),
-        Some(temp.path().join("claude.cmd"))
+        Some(temp.path().join("claude.exe"))
+    );
+}
+
+#[test]
+fn windows_resolution_does_not_restore_extensions_excluded_by_pathext() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("tool.exe"), "binary").expect("exe");
+
+    assert_eq!(
+        resolve_executable(
+            "tool",
+            Some(&temp.path().display().to_string()),
+            true,
+            Some(".CMD")
+        ),
+        None
     );
 }
 

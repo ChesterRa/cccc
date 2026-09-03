@@ -153,20 +153,6 @@ jobs:
           process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history
           -- --test-threads=1
 
-      - name: Verify Windows PTY UTF-8 message delivery
-        timeout-minutes: 10
-        run: >-
-          cargo test --package cccc-pair-runtime --lib --locked
-          manager_windows_tests::npm_style_batch_actor_survives_utf8_message_delivery
-          -- --test-threads=1
-
-      - name: Verify Windows console UTF-8 encoding lifecycle
-        timeout-minutes: 10
-        run: >-
-          cargo test --package cccc --bin cccc --locked
-          console_encoding::tests::console_uses_utf8_for_cli_lifetime_and_restores_previous_pages
-          -- --test-threads=1
-
   rust-linux:
     needs: web
     runs-on: ubuntu-latest

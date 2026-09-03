@@ -22,24 +22,19 @@ pub(super) fn is_supported_extension(extension: &str, pathext: Option<&str>) -> 
 }
 
 fn extensions(pathext: Option<&str>) -> Vec<String> {
-    let mut values = vec![".exe", ".cmd", ".bat", ".com"]
-        .into_iter()
-        .map(str::to_owned)
+    let mut values = pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if value.starts_with('.') {
+                value.to_ascii_lowercase()
+            } else {
+                format!(".{value}").to_ascii_lowercase()
+            }
+        })
         .collect::<Vec<_>>();
-    values.extend(
-        pathext
-            .unwrap_or(".COM;.EXE;.BAT;.CMD")
-            .split(';')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| {
-                if value.starts_with('.') {
-                    value.to_ascii_uppercase()
-                } else {
-                    format!(".{}", value.to_ascii_uppercase())
-                }
-            }),
-    );
     let mut seen = HashSet::new();
     values.retain(|value| seen.insert(value.to_ascii_uppercase()));
     values

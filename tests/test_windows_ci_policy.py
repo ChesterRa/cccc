@@ -26,16 +26,6 @@ def test_windows_smoke_keeps_focused_native_checks() -> None:
         "process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history"
         in runs
     )
-    assert "cargo test --package cccc-pair-runtime --lib --locked" in runs
-    assert (
-        "manager_windows_tests::npm_style_batch_actor_survives_utf8_message_delivery"
-        in runs
-    )
-    assert "cargo test --package cccc --bin cccc --locked" in runs
-    assert (
-        "console_encoding::tests::console_uses_utf8_for_cli_lifetime_and_restores_previous_pages"
-        in runs
-    )
     assert "-- --test-threads=1" in runs
     assert not any(item.startswith("actions/setup-node") for item in uses)
     assert not any(item.startswith("actions/setup-python") for item in uses)

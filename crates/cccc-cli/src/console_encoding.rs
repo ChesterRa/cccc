@@ -36,37 +36,60 @@ impl Drop for ConsoleEncoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::System::Console::{AllocConsole, FreeConsole};
 
-    const GBK_CODE_PAGE: u32 = 936;
+    const TEST_CODE_PAGE: u32 = 437;
 
-    struct RestoreConsoleCodePages {
-        input: u32,
-        output: u32,
+    struct TestConsole {
+        original: (u32, u32),
+        allocated: bool,
     }
 
-    impl Drop for RestoreConsoleCodePages {
+    impl TestConsole {
+        fn attach() -> Self {
+            let original = unsafe { (GetConsoleCP(), GetConsoleOutputCP()) };
+            let allocated = original.0 == 0 || original.1 == 0;
+            if allocated {
+                assert_ne!(
+                    unsafe { AllocConsole() },
+                    0,
+                    "test runner has no console and AllocConsole failed"
+                );
+            }
+            assert_ne!(unsafe { GetConsoleCP() }, 0, "input console unavailable");
+            assert_ne!(
+                unsafe { GetConsoleOutputCP() },
+                0,
+                "output console unavailable"
+            );
+            Self {
+                original,
+                allocated,
+            }
+        }
+    }
+
+    impl Drop for TestConsole {
         fn drop(&mut self) {
-            unsafe {
-                SetConsoleCP(self.input);
-                SetConsoleOutputCP(self.output);
+            if self.allocated {
+                unsafe { FreeConsole() };
+            } else {
+                unsafe {
+                    SetConsoleCP(self.original.0);
+                    SetConsoleOutputCP(self.original.1);
+                }
             }
         }
     }
 
     #[test]
     fn console_uses_utf8_for_cli_lifetime_and_restores_previous_pages() {
-        let runner = unsafe { (GetConsoleCP(), GetConsoleOutputCP()) };
-        let restore_runner = RestoreConsoleCodePages {
-            input: runner.0,
-            output: runner.1,
-        };
-        assert_ne!(runner.0, 0, "test requires an attached input console");
-        assert_ne!(runner.1, 0, "test requires an attached output console");
-        assert_ne!(unsafe { SetConsoleCP(GBK_CODE_PAGE) }, 0);
-        assert_ne!(unsafe { SetConsoleOutputCP(GBK_CODE_PAGE) }, 0);
+        let console = TestConsole::attach();
+        assert_ne!(unsafe { SetConsoleCP(TEST_CODE_PAGE) }, 0);
+        assert_ne!(unsafe { SetConsoleOutputCP(TEST_CODE_PAGE) }, 0);
         assert_eq!(
             unsafe { (GetConsoleCP(), GetConsoleOutputCP()) },
-            (GBK_CODE_PAGE, GBK_CODE_PAGE)
+            (TEST_CODE_PAGE, TEST_CODE_PAGE)
         );
 
         {
@@ -78,10 +101,14 @@ mod tests {
         }
         assert_eq!(
             unsafe { (GetConsoleCP(), GetConsoleOutputCP()) },
-            (GBK_CODE_PAGE, GBK_CODE_PAGE)
+            (TEST_CODE_PAGE, TEST_CODE_PAGE)
         );
 
-        drop(restore_runner);
-        assert_eq!(unsafe { (GetConsoleCP(), GetConsoleOutputCP()) }, runner);
+        let original = console.original;
+        let allocated = console.allocated;
+        drop(console);
+        if !allocated {
+            assert_eq!(unsafe { (GetConsoleCP(), GetConsoleOutputCP()) }, original);
+        }
     }
 }
