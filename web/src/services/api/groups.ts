@@ -45,6 +45,10 @@ import {
   withAuthToken,
   clearSharedReadRequest,
 } from "./base";
+import {
+  voiceTranscriptRevisionBody,
+  type VoiceTranscriptRevisionPayload,
+} from "./voiceTranscriptRevision";
 
 export async function fetchGroups() {
   return reuseRecentReadRequest(groupsRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
@@ -854,6 +858,7 @@ export async function appendVoiceAssistantTranscriptSegment(
     startMs?: number;
     endMs?: number;
     speakerLabel?: string;
+    revision?: VoiceTranscriptRevisionPayload;
     by?: string;
   },
 ): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
@@ -879,6 +884,7 @@ export async function appendVoiceAssistantTranscriptSegment(
           ? Math.max(0, Math.round(Number(payload.endMs)))
           : null,
         speaker_label: String(payload.speakerLabel || "").trim(),
+        ...voiceTranscriptRevisionBody(payload.revision),
         by: String(payload.by || "user").trim() || "user",
       }),
     },

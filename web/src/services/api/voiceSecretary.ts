@@ -1,5 +1,6 @@
-import type { AssistantVoiceDocument } from "../../types";
+import type { AssistantVoiceDocument, AssistantVoiceTranscriptSegmentResult } from "../../types";
 import { apiJson, ApiResponse, asOptionalString, asRecord, asString } from "./base";
+import { appendVoiceAssistantTranscriptSegment } from "./groups";
 
 function normalizeVoiceDocument(value: unknown): AssistantVoiceDocument | null {
   const record = asRecord(value);
@@ -61,4 +62,39 @@ export async function fetchVoiceAssistantDocumentContent(
     ok: true,
     result: { group_id: asString(result.group_id).trim() || gid, document: documents[0] },
   };
+}
+
+export function retryVoiceAssistantFinalRevision(
+  groupId: string,
+  payload: {
+    sessionId: string;
+    documentPath: string;
+    text: string;
+    language: string;
+    modelId?: string;
+  },
+): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
+  const modelId = String(payload.modelId || "").trim();
+  return appendVoiceAssistantTranscriptSegment(groupId, {
+    sessionId: payload.sessionId,
+    segmentId: "final-asr",
+    documentPath: payload.documentPath,
+    text: payload.text,
+    language: payload.language,
+    isFinal: true,
+    flush: true,
+    revision: {
+      stage: "final",
+      revisionOnly: true,
+      supersedeStage: "live",
+      sourceModelId: modelId,
+    },
+    trigger: {
+      trigger_kind: "browser_persistence_retry",
+      capture_mode: "service",
+      recognition_backend: "assistant_service_local_asr_final",
+      final_model_id: modelId,
+    },
+    by: "user",
+  });
 }

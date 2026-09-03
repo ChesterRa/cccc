@@ -70,4 +70,27 @@ fn final_asr_wins_but_streaming_text_is_a_safe_fallback() {
         best_transcript(&json!({"ok":true,"text":"  "}), "streaming final".into()),
         "streaming final"
     );
+    assert_eq!(
+        best_transcript(
+            &json!({"ok":true,"partial":true,"text":"partial final"}),
+            "complete streaming".into()
+        ),
+        "complete streaming"
+    );
+    assert_eq!(
+        best_transcript(
+            &json!({"ok":true,"partial":true,"text":"partial final"}),
+            String::new()
+        ),
+        "partial final"
+    );
+    assert!(has_usable_final_transcript(
+        &json!({"ok":true,"text":"offline final"})
+    ));
+    assert!(!has_usable_final_transcript(
+        &json!({"ok":false,"text":"failed output"})
+    ));
+    assert!(!has_usable_final_transcript(
+        &json!({"ok":true,"partial":true,"text":"partial final"})
+    ));
 }

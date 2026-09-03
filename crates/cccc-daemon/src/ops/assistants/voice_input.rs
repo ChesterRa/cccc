@@ -9,12 +9,14 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
-use super::{voice_document_state, voice_input_delivery, voice_semantic_input};
+use super::{
+    voice_document_state, voice_input_dedupe, voice_input_delivery, voice_semantic_input,
+    voice_transcript_input, voice_transcript_revision,
+};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
 const ACTOR_ID: &str = "voice-secretary";
 const INPUT_STATE_SCHEMA: u64 = 1;
-
 pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let session_id = safe_id(&required_arg(request, "session_id")?)?;
@@ -47,23 +49,28 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "voice_secretary is disabled",
         ));
     }
-
     let now = utc_now();
     let language = string_arg(request, "language").unwrap_or_default();
     let is_final = bool_arg(request, "is_final", true);
     let document_path = effective_document_path(home, &group_id, request)?;
-    let segment = json!({
-        "schema":1,"segment_id":segment_id,"session_id":session_id,"group_id":group_id,
-        "assistant_id":"voice_secretary","text":text,"language":language,"is_final":is_final,
-        "start_ms":request.args.get("start_ms"),"end_ms":request.args.get("end_ms"),
-        "speaker_label":string_arg(request,"speaker_label").unwrap_or_default(),
-        "document_path":document_path,"trigger":request.args.get("trigger").cloned().unwrap_or_else(||json!({})),
-        "by":string_arg(request,"by").unwrap_or_else(||"user".into()),"created_at":now,"updated_at":now
-    });
+    let revision = voice_transcript_revision::resolve(request, &segment_id)?;
+    let mut segment = voice_transcript_revision::build_segment(
+        request,
+        voice_transcript_revision::SegmentData {
+            group_id: &group_id,
+            session_id: &session_id,
+            segment_id: &segment_id,
+            text: &text,
+            language: &language,
+            document_path: &document_path,
+            now: &now,
+        },
+        &revision,
+    );
     let segment_path = segment_log_path(home, &group_id, &session_id);
     ensure_document_file(home, &group, &document_path)?;
     let document_record = ensure_document_record(home, &group, &document_path, &now)?;
-
+    let mut segment_superseded = false;
     let auto_document = with_transcript_lock(home, &group_id, || {
         let auto_document = assistant_state::update(home,&group_id,|root| {
             let sessions=array(root,"sessions");
@@ -71,12 +78,16 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             let session=&mut sessions[index];
             let transcript={
                 let segments=session.get_mut("segments").and_then(Value::as_array_mut).expect("segments initialized");
-                let duplicate=segments.iter().any(|item|item["segment_id"]==segment_id);
-                if !duplicate && !text.is_empty() {
+                let duplicate=segments.iter().find(|item|item["segment_id"]==segment_id).cloned();
+                if let Some(existing)=duplicate {
+                    segment=existing;
+                } else if !text.is_empty() {
+                    voice_transcript_revision::prepare_for_commit(&mut segment,segments,&revision);
                     segments.push(segment.clone());
                     if segments.len()>200 { segments.drain(..segments.len()-200); }
                 }
-                segments.iter().filter(|item|item["is_final"].as_bool().unwrap_or(true)).filter_map(|item|item["text"].as_str()).collect::<Vec<_>>().join("\n")
+                segment_superseded = !voice_transcript_revision::contains(segments,&segment_id);
+                voice_transcript_revision::projected_transcript(segments)
             };
             session["transcript"]=json!(transcript);
             session["updated_at"]=json!(now);
@@ -95,37 +106,23 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         Ok(auto_document)
     }).map_err(OpError::io)?;
-    let input_kind = string_arg(request, "input_kind").unwrap_or_else(|| "asr_transcript".into());
-    let (candidate_input, input_created) = if !is_final
-        || text.is_empty()
-        || (input_kind == "asr_transcript" && !auto_document)
-    {
-        find_input(home, &group_id, &session_id, &segment_id)
-            .map(|existing| (existing, false))
-            .map_err(OpError::io)?
-    } else {
-        append_input(home, &group_id, json!({
-            "schema":1,
-            "input_id":format!("vin_{}",Uuid::new_v4().simple()),
-            "kind":input_kind,
-            "group_id":group_id,
-            "assistant_id":"voice_secretary",
-            "text":text,
-            "language":language,
-            "document_path":document_path,
-            "session_id":session_id,
-            "segment_id":segment_id,
-            "by":segment["by"],
-            "trigger":segment["trigger"],
-            "request_id":string_arg(request,"request_id").unwrap_or_default(),
-            "operation":string_arg(request,"operation").unwrap_or_default(),
-            "composer_snapshot_hash":string_arg(request,"composer_snapshot_hash").unwrap_or_default(),
-            "metadata":request.args.get("metadata").cloned().unwrap_or_else(||json!({})),
-            "created_at":now,
-            "updated_at":now
-        })).map_err(OpError::io)?
-    };
-
+    let (candidate_input, input_created) =
+        voice_transcript_input::resolve(voice_transcript_input::CandidateContext {
+            home,
+            request,
+            group_id: &group_id,
+            session_id: &session_id,
+            segment_id: &segment_id,
+            text: &text,
+            language: &language,
+            document_path: &document_path,
+            now: &now,
+            segment: &segment,
+            is_final,
+            auto_document,
+            segment_superseded,
+            policy: voice_input_dedupe::for_transcript(revision.revision_only, &revision.stage),
+        })?;
     let delivery = voice_input_delivery::deliver(
         home,
         &store,
@@ -161,11 +158,9 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "actor_notify_delivery":delivery.delivery
     }))
 }
-
 pub fn named(home: &HomeLayout, request: &DaemonRequest, kind: &str, text: String) -> OpResult {
     voice_semantic_input::append(home, request, kind, text)
 }
-
 pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let by = string_arg(request, "by").unwrap_or_else(|| "assistant:voice_secretary".into());
@@ -198,7 +193,6 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"group_id":group_id,"item_count":inputs.len(),"document_count":batches.len(),"input_text":input_text,"input_batches":batches,"documents":document_state["documents"],"has_new_input":false}),
     )
 }
-
 fn effective_document_path(
     home: &HomeLayout,
     group_id: &str,
@@ -217,7 +211,6 @@ fn effective_document_path(
     validate_document_path(&path)?;
     Ok(path)
 }
-
 fn ensure_document_record(
     home: &HomeLayout,
     group: &cccc_core::GroupDoc,
@@ -472,7 +465,6 @@ fn migrate_legacy_input(home: &HomeLayout, group_id: &str) -> std::io::Result<()
     let legacy = read_jsonl_matching(&legacy_path, |_| true)?;
     let legacy_state = assistant_state::load(home, group_id)?;
     let legacy_read_cursor = legacy_state["input_read_cursor"].as_u64().unwrap_or(0);
-
     with_input_state_lock(home, group_id, || {
         let canonical = read_jsonl_matching(&input_log_path(home, group_id), |_| true)?;
         let mut state = load_input_state_unlocked(home, group_id)?;
@@ -554,6 +546,7 @@ pub(super) fn append_input(
     home: &HomeLayout,
     group_id: &str,
     mut record: Value,
+    policy: voice_input_dedupe::Policy,
 ) -> std::io::Result<(Option<Value>, bool)> {
     migrate_legacy_input(home, group_id)?;
     with_input_state_lock(home, group_id, || {
@@ -580,6 +573,9 @@ pub(super) fn append_input(
             state.insert("latest_seq".into(), json!(latest));
             save_input_state_unlocked(home, group_id, &state)?;
             return Ok((Some(existing), false));
+        }
+        if voice_input_dedupe::should_skip(&values, &record, policy) {
+            return Ok((None, false));
         }
         let next_seq = state
             .get("latest_seq")
@@ -722,7 +718,6 @@ pub(super) fn append_jsonl_io(path: &Path, value: &Value) -> std::io::Result<()>
     let unlock = FileExt::unlock(&file);
     result.and(unlock)
 }
-
 fn repair_incomplete_tail_locked(file: &mut std::fs::File) -> std::io::Result<()> {
     const CHUNK_BYTES: usize = 64 * 1024;
     let len = file.metadata()?.len();
@@ -735,7 +730,6 @@ fn repair_incomplete_tail_locked(file: &mut std::fs::File) -> std::io::Result<()
     if last[0] == b'\n' {
         return Ok(());
     }
-
     let mut position = len;
     let mut chunks = Vec::new();
     let truncate_at;
@@ -845,12 +839,10 @@ fn array<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> 
 pub(super) fn default_assistant() -> Value {
     json!({"assistant_id":"voice_secretary","kind":"voice_secretary","enabled":false,"lifecycle":"disabled","config":{"auto_document_enabled":true}})
 }
-
 #[allow(dead_code)]
 fn content_sha(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,7 +851,6 @@ mod tests {
     fn append_repairs_only_the_incomplete_tail() {
         let file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(file.path(), b"{\"seq\":1}\n{\"seq\":").expect("fixture");
-
         append_jsonl_io(file.path(), &json!({"seq":2})).expect("append");
 
         let values = read_jsonl_matching(file.path(), |_| true).expect("read repaired log");
@@ -870,7 +861,6 @@ mod tests {
     fn append_preserves_a_valid_final_record_without_newline() {
         let file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(file.path(), b"{\"seq\":1}").expect("fixture");
-
         append_jsonl_io(file.path(), &json!({"seq":2})).expect("append");
 
         let values = read_jsonl_matching(file.path(), |_| true).expect("read log");

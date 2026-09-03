@@ -7,7 +7,6 @@ export function useCodexVoiceShell(enabled: boolean) {
 
   const start = () => {
     if (controller.isEngaged) return;
-    setDetailsOpen(true);
     void controller.start();
   };
   return {

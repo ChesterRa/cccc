@@ -1,5 +1,5 @@
 use super::super::*;
-use super::fake_server::fake_analyst_server;
+use super::fake_server::gated_analyst_server;
 use crate::ops::codex_voice_analyst::{AnalystSession, WorkspaceBinding};
 use cccc_core::{HomeLayout, voice_recording_lease};
 use serde_json::json;
@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-
 #[tokio::test]
 async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -15,7 +14,7 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
     home.initialize().expect("initialize");
     let root = temp.path().join("root");
     std::fs::create_dir_all(&root).expect("root");
-    let (endpoint, server, starts, steers) = fake_analyst_server().await;
+    let (endpoint, server, starts, steers, release_interrupt) = gated_analyst_server().await;
     let analyst = AnalystSession::connect_for_test(
         WorkspaceBinding { root: root.clone() },
         "analyst-generation".into(),
@@ -179,6 +178,7 @@ async fn call_generation_coalesces_delegations_and_projects_progress_once() {
             .await
             .expect("terminal replay is idempotent")
     );
+    release_interrupt.send(()).expect("release terminal");
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if matches!(

@@ -6,24 +6,24 @@ use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io;
 use uuid::Uuid;
-
 mod document_reconcile;
 mod prompt_refine;
 mod voice_ask;
 mod voice_document_state;
 mod voice_input;
+mod voice_input_dedupe;
 mod voice_input_delivery;
 mod voice_semantic_input;
 mod voice_session;
 mod voice_settings;
-
+mod voice_transcript_input;
+mod voice_transcript_revision;
 use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
 use crate::ops::actor_delivery;
 
 const KEY: &str = "assistants";
-
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "assistant_state" | "assistant_index"

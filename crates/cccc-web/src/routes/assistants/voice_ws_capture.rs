@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 use super::{
     voice_asr, voice_diarization, voice_final_asr, voice_segmented_recording, voice_ws_lifecycle,
+    voice_ws_revision,
 };
 use crate::AppState;
 
@@ -158,6 +159,21 @@ impl VoiceWsCapture {
         )
         .await;
         final_asr["seq"] = seq.clone();
+        if self.persist_artifacts {
+            let _ = voice_ws_revision::persist_final_revision(
+                state,
+                voice_ws_revision::FinalRevision {
+                    group_id,
+                    client_session_id: &self.client_session_id,
+                    document_path: &self.document_path,
+                    language: &self.language,
+                    configured_model_id: &self.selected_model,
+                    trigger_kind: "push_to_talk_stop",
+                },
+                &mut final_asr,
+            )
+            .await;
+        }
         events.push(final_asr);
 
         if self.persist_artifacts {

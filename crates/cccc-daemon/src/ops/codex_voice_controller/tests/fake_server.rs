@@ -8,6 +8,24 @@ use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 pub(super) async fn fake_analyst_server()
 -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    fake_analyst_server_inner(None).await
+}
+
+pub(super) async fn gated_analyst_server() -> (
+    String,
+    JoinHandle<()>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let (endpoint, server, starts, steers) = fake_analyst_server_inner(Some(wait)).await;
+    (endpoint, server, starts, steers, release)
+}
+
+async fn fake_analyst_server_inner(
+    mut interrupt_gate: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> (String, JoinHandle<()>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
     let starts = Arc::new(AtomicUsize::new(0));
@@ -65,6 +83,9 @@ pub(super) async fn fake_analyst_server()
                 "turn/interrupt" => {
                     assert_eq!(request["params"]["turnId"], active_turn);
                     send_result(&mut socket, id, json!({})).await;
+                    if let Some(gate) = interrupt_gate.take() {
+                        let _ = gate.await;
+                    }
                     socket
                         .send(Message::Text(
                             json!({

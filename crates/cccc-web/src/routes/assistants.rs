@@ -26,7 +26,7 @@ mod voice_speaker_transcript;
 mod voice_ws;
 mod voice_ws_capture;
 mod voice_ws_lifecycle;
-
+mod voice_ws_revision;
 #[derive(Debug, Default, Deserialize)]
 struct DocumentQuery {
     #[serde(default)]

@@ -22,7 +22,8 @@ import { SortableGroupItem } from "../../src/components/layout/SortableGroupItem
 import { GroupMeta } from "../../src/types";
 
 describe("SortableGroupItem", () => {
-  it("starts pointer dragging from the whole group item", async () => {
+  it("starts pointer dragging only from the dedicated drag handle", async () => {
+    sortableMocks.onPointerDown.mockClear();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -34,6 +35,7 @@ describe("SortableGroupItem", () => {
           isActive
           isDark={false}
           isCollapsed={false}
+          dragHandleLabel="Reorder AQuant"
           onSelect={vi.fn()}
         />,
       );
@@ -42,9 +44,16 @@ describe("SortableGroupItem", () => {
     const item = host.querySelector<HTMLElement>('[role="button"]')!;
     item.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
 
+    expect(sortableMocks.onPointerDown).not.toHaveBeenCalled();
+
+    const dragHandle = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder AQuant"]',
+    )!;
+    dragHandle.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+
     expect(sortableMocks.onPointerDown).toHaveBeenCalledOnce();
-    expect(item.className).toContain("cursor-grab");
-    expect(item.querySelector("button")).toBeNull();
+    expect(dragHandle.className).toContain("cursor-grab");
+    expect(dragHandle.style.touchAction).toBe("none");
 
     await act(async () => root.unmount());
     host.remove();
@@ -63,6 +72,7 @@ describe("SortableGroupItem", () => {
           isActive
           isDark={false}
           isCollapsed={false}
+          dragHandleLabel="Reorder AQuant"
           menuActionLabel="Archive group"
           onMenuAction={onMenuAction}
           onSelect={vi.fn()}
@@ -105,6 +115,7 @@ describe("SortableGroupItem", () => {
           isActive
           isDark={false}
           isCollapsed={false}
+          dragHandleLabel="Reorder AQuant"
           menuActionLabel="Archive group"
           onMenuAction={vi.fn()}
           onSelect={vi.fn()}
@@ -147,6 +158,7 @@ describe("SortableGroupItem", () => {
           isActive
           isDark={false}
           isCollapsed={false}
+          dragHandleLabel="Reorder AQuant"
           menuActionLabel="Archive group"
           menuAriaLabel="Group actions"
           onMenuAction={vi.fn()}

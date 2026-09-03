@@ -2086,6 +2086,33 @@ session display window. If the input log was committed but its ledger input or
 notify event was interrupted, retrying the same segment reuses the canonical
 input record and completes only the missing delivery work.
 
+Transcript producers MAY attach the following revision metadata:
+
+- `transcript_stage`: `live` or `final`. When omitted, the daemon infers
+  `final` only from `trigger.recognition_backend=assistant_service_local_asr_final`;
+  other legacy segments are treated as `live`.
+- `supersedes_segment_ids`: segment IDs in the same session that the new record
+  replaces in the current projection.
+- `supersede_stage: "live"`: daemon shorthand that resolves all current live
+  segment IDs in the session into `supersedes_segment_ids` before committing
+  and keeps race-late live checkpoints in that session raw-only.
+- `source_model_id`: the producer model identity retained with the raw record.
+- `revision_only: true`: valid only for a `final` segment. The daemon persists
+  the segment and updates transcript projection. Under the input-state lock it
+  MUST reuse an existing ASR input for that session; when none exists, it MUST
+  create and deliver the final segment as the session's first semantic input.
+
+Revision records are append-only. The daemon MUST retain superseded live rows
+in session and document transcript sidecars, while the bounded session
+`transcript` projection and Web meeting view omit them. A normal document-mode
+WebSocket stop and a successfully finalized disconnect MUST persist the final
+SenseVoice result as a revision-only record superseding the session's live
+checkpoints. A partial final result MUST NOT supersede live checkpoints. A
+document-mode `final_asr_text` reports `transcript_persistence` as `persisted`,
+`skipped_partial`, or `failed`, with `transcript_persisted` carrying the boolean
+commit result. Callers MUST retain or retry their fallback text until persistence
+is confirmed. If final ASR fails, the existing live projection remains valid.
+
 The public document identity for Voice Secretary APIs is `document_path`, a
 repository-relative markdown path. `document_id` may exist in daemon sidecar
 state as an implementation detail, but runtime actors and Web clients should

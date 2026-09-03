@@ -68,7 +68,18 @@ failure until after recording starts.
 Disconnects finalize the last hypothesis. Stopping capture releases the
 microphone immediately, runs the installed SenseVoice model on the blocking
 worker pool, and sends `final_asr_text` before closing the recording connection.
-If final ASR fails, the live transcript remains available. For segmented
+For document capture, successful complete final ASR is also stored as a `final`
+revision that supersedes the session's `live` checkpoints. The meeting view therefore
+replaces the low-latency **Live Paraformer** cards with the higher-quality
+**Final SenseVoice** result after stop or reconnect, while the raw live rows
+remain in transcript sidecars for recovery and audit. The daemon atomically
+deduplicates this revision against existing live semantic input; a short
+recording with no live input uses the final revision as its one required input.
+Partial final ASR never supersedes the complete live transcript. If no live text
+exists, its successful partial text remains the fallback. If final persistence
+fails, the WebSocket reports that state and the browser retries the idempotent
+revision before falling back to its retained transcript. If final ASR fails,
+the live transcript remains available. For segmented
 recordings, successful segment text is retained, while any failed segment is
 reported explicitly as a partial final transcript in the Web UI. An installed
 diarization model then adds speaker ranges in the background and emits an
@@ -117,6 +128,13 @@ Both Web implementations read these records through the daemon instead of
 owning a separate browser-side transcript authority. Transcript clearing also
 uses the daemon operation so the session projection and both durable logs are
 removed under the same transcript lock.
+
+Each stored segment declares a transcript stage when the producer knows it:
+`live` for incremental Paraformer checkpoints and `final` for a complete stopped
+SenseVoice pass. A final revision records the live segment IDs it supersedes.
+Consumers project the non-superseded records, but storage keeps both stages;
+this is raw/final revision history, not destructive replacement. General LLM
+punctuation, filler removal, and prose polishing are not part of this path.
 
 Prompt refinement and document instructions are semantic inputs, not meeting
 transcripts: they never create a session entry or a per-session transcript

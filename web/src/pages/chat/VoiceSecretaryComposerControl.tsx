@@ -35,6 +35,7 @@ import {
   fetchVoiceAssistantDocumentContent,
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
+  retryVoiceAssistantFinalRevision,
   saveVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
   updateVoiceAssistantRecordingLease,
@@ -74,6 +75,23 @@ import {
   type VoiceCaptureChannelMessage,
 } from "./voice-secretary/voiceCaptureLock";
 import { getVoiceSecretaryWorkspaceVisibility } from "./voice-secretary/voiceSecretaryWorkspaceLayout";
+import type {
+  BrowserAudioSupportIssue,
+  BrowserSpeechRecognition,
+  BrowserSpeechSupportIssue,
+  VoiceRecordingStopReason,
+} from "./voice-secretary/voiceBrowserSpeechTypes";
+import {
+  abortBrowserSpeechRecognition,
+  getBrowserAudioSupportIssue,
+  getBrowserMicrophoneSupportIssue,
+  getBrowserSpeechRecognitionConstructor,
+  getBrowserSpeechSupportIssue,
+  mediaRecorderSupported,
+  mediaStreamHasLiveAudio,
+  stopMediaStream,
+} from "./voice-secretary/voiceBrowserSpeechSupport";
+import { documentFinalAsrDisposition } from "./voice-secretary/voiceFinalAsrPolicy";
 import {
   newestVoiceActivityItemsFirst,
   shouldSettleLiveVoiceActivityStream,
@@ -188,58 +206,9 @@ export type VoiceSecretaryComposerControlProps = {
   initiallyOpen?: boolean;
 };
 export type VoiceSecretaryCaptureMode = "document" | "instruction" | "prompt";
-type BrowserSpeechRecognitionAlternative = { transcript: string };
-type BrowserSpeechRecognitionResult = {
-  isFinal: boolean;
-  length: number;
-  [index: number]: BrowserSpeechRecognitionAlternative;
-};
-
-type BrowserSpeechRecognitionResultList = {
-  length: number;
-  [index: number]: BrowserSpeechRecognitionResult;
-};
-
-type BrowserSpeechRecognitionEvent = {
-  resultIndex: number;
-  results: BrowserSpeechRecognitionResultList;
-};
-
-type BrowserSpeechRecognitionErrorEvent = { error?: string; message?: string };
-
-type BrowserSpeechRecognition = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  maxAlternatives?: number;
-  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
-  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  onspeechstart?: (() => void) | null;
-  onspeechend?: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-};
-
-type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
-
 type VoiceActivityFeedItem =
   | { kind: "ask"; id: string; sortAt: number; item: AssistantVoiceAskFeedback }
   | { kind: "prompt"; id: string; sortAt: number; status: "waiting" | "ready"; text: string };
-
-type VoiceRecordingStopReason = {
-  code: string;
-  detail?: string;
-  backend?: string;
-  groupId?: string;
-  runId?: number;
-  at: number;
-};
-
-type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
-type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
-type BrowserSpeechSupportIssue = "" | "unsupported";
 
 const VOICE_RECORDING_LEASE_TTL_SECONDS = 30;
 const BROWSER_DEFAULT_MIC_LABEL = "browser_default";
@@ -285,55 +254,6 @@ function voiceDocumentRevisionKey(document: AssistantVoiceDocument | null | unde
   ].join("|");
 }
 
-function getBrowserSpeechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
-  if (typeof window === "undefined") return null;
-  const speechWindow = window as typeof window & {
-    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
-    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
-  };
-  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null;
-}
-
-function getBrowserSpeechSupportIssue(): BrowserSpeechSupportIssue {
-  if (!getBrowserSpeechRecognitionConstructor()) return "unsupported";
-  return "";
-}
-
-function mediaRecorderSupported(): boolean {
-  return !getBrowserAudioSupportIssue();
-}
-
-function getBrowserMicrophoneSupportIssue(): BrowserMicrophoneSupportIssue {
-  if (typeof window !== "undefined" && window.isSecureContext === false) return "secure_context";
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia)
-    return "get_user_media";
-  return "";
-}
-
-function getBrowserAudioSupportIssue(): BrowserAudioSupportIssue {
-  const microphoneIssue = getBrowserMicrophoneSupportIssue();
-  if (microphoneIssue) return microphoneIssue;
-  return "";
-}
-
-function stopMediaStream(stream: MediaStream | null): void {
-  if (!stream) return;
-  try {
-    stream.getTracks().forEach((track) => track.stop());
-  } catch {
-    // ignore browser cleanup failure
-  }
-}
-
-function mediaStreamHasLiveAudio(stream: MediaStream | null): boolean {
-  if (!stream) return false;
-  try {
-    return stream.getAudioTracks().some((track) => track.readyState === "live");
-  } catch {
-    return false;
-  }
-}
-
 function browserSpeechRestartDelayMs(transientErrorCount: number): number {
   const count = Math.max(1, transientErrorCount);
   return Math.min(BROWSER_SPEECH_RESTART_MAX_MS, BROWSER_SPEECH_RESTART_BASE_MS * count);
@@ -347,20 +267,6 @@ function hashComposerSnapshot(value: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function abortBrowserSpeechRecognition(recognition: BrowserSpeechRecognition | null): void {
-  if (!recognition) return;
-  recognition.onend = null;
-  recognition.onerror = null;
-  recognition.onresult = null;
-  recognition.onspeechstart = null;
-  recognition.onspeechend = null;
-  try {
-    recognition.abort();
-  } catch {
-    // ignore browser cleanup failure
-  }
 }
 
 export function VoiceSecretaryComposerControl({
@@ -3452,21 +3358,65 @@ export function VoiceSecretaryComposerControl({
             }
             if (type === "final_asr_text") {
               if (payload.ok !== false) {
+                const documentDisposition =
+                  captureDispatchTarget === "document"
+                    ? documentFinalAsrDisposition(payload)
+                    : null;
                 if (payload.partial === true) {
                   showNotice({
                     message: t("voiceSecretaryFinalAsrPartial", {
                       count: Math.max(1, Number(payload.failed_segment_count) || 1),
                     }),
                   });
+                  if (documentDisposition === "preserve_live") {
+                    const partialText = String(payload.text || "").trim();
+                    if (isMeaningfulVoiceDispatchText(partialText)) {
+                      serviceFinalTranscriptRef.current = mergeTranscriptChunks(
+                        serviceFinalTranscriptRef.current,
+                        partialText,
+                      );
+                    }
+                    return;
+                  }
                 }
                 const finalText = String(payload.text || "").trim();
                 if (isMeaningfulVoiceDispatchText(finalText)) {
-                  serviceFinalAsrTextRef.current = finalText;
-                  const hasWindowedDocumentCheckpoint = Boolean(
-                    captureDispatchTarget === "document" &&
-                    normalizeBrowserTranscriptChunk(serviceDocumentCommittedTranscriptRef.current),
-                  );
-                  if (!hasWindowedDocumentCheckpoint) {
+                  if (captureDispatchTarget === "document") {
+                    if (documentDisposition === "retry_persistence") {
+                      serviceFinalTranscriptRef.current = mergeTranscriptChunks(
+                        serviceFinalTranscriptRef.current,
+                        finalText,
+                      );
+                      const retry = await retryVoiceAssistantFinalRevision(gid, {
+                        sessionId: voiceRecordingSessionIdRef.current,
+                        documentPath: effectiveCaptureTargetDocumentPath,
+                        text: finalText,
+                        language: effectiveRecognitionLanguage,
+                        modelId: String(payload.model_id || "").trim(),
+                      });
+                      if (!retry.ok) {
+                        if (isCurrentGroup(gid)) {
+                          showError(
+                            retry.error.message ||
+                              t("voiceSecretaryTranscriptAppendFailed", {
+                                defaultValue: "Failed to save Voice Secretary transcript segment.",
+                              }),
+                          );
+                        }
+                        return;
+                      }
+                      if (isCurrentGroup(gid)) applyTranscriptAppendResult(retry.result);
+                    }
+                    serviceFinalAsrTextRef.current = finalText;
+                    serviceCommittedTranscriptRef.current = finalText;
+                    serviceDocumentCommittedTranscriptRef.current = finalText;
+                    finalizeLiveTranscriptPreview();
+                    await restoreLatestVoiceMeetingSession({
+                      replaceSession: true,
+                      sessionId: voiceRecordingSessionIdRef.current,
+                    });
+                  } else {
+                    serviceFinalAsrTextRef.current = finalText;
                     await handleServiceStreamingFinal(finalText);
                   }
                 }
@@ -3671,6 +3621,7 @@ export function VoiceSecretaryComposerControl({
     }
   }, [
     acquireDaemonVoiceRecordingLease,
+    applyTranscriptAppendResult,
     beginRecordingRun,
     cleanupServiceAudio,
     appendDirectDictationToComposer,
@@ -3696,6 +3647,7 @@ export function VoiceSecretaryComposerControl({
     reportRecordingStopReason,
     refreshAssistant,
     releaseVoiceRecordingGuards,
+    restoreLatestVoiceMeetingSession,
     sendInstructionTranscript,
     open,
     selectedAudioDeviceId,

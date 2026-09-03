@@ -5,11 +5,11 @@ export interface SidebarReorderState {
 }
 
 export function canReorderSidebarGroups({
-  isSmallScreen,
+  isSmallScreen: _isSmallScreen,
   isCollapsed,
   readOnly,
 }: SidebarReorderState): boolean {
-  return !isSmallScreen && !isCollapsed && !readOnly;
+  return !isCollapsed && !readOnly;
 }
 
 export function groupSidebarScrollClass(isCollapsed: boolean): string {

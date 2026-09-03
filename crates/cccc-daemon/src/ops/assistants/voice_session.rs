@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 
-use super::{voice_document_state, voice_input};
+use super::{voice_document_state, voice_input, voice_transcript_revision};
 
 const MAX_SESSION_RECORDS: usize = 50;
 
@@ -53,14 +53,7 @@ fn document_transcript_session(
         return Ok(None);
     };
     let last = segments.last().expect("non-empty transcript segments");
-    let transcript = segments
-        .iter()
-        .filter(|segment| segment["is_final"].as_bool().unwrap_or(true))
-        .filter_map(|segment| segment["text"].as_str())
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let transcript = voice_transcript_revision::projected_transcript(&segments);
     Ok(Some(json!({
         "schema":1,
         "group_id":group_id,
@@ -381,16 +374,12 @@ fn sanitize_document_session(session: &Value, requested_path: &str) -> Option<Va
     sanitized["capture_mode"] = json!("document");
     sanitized["document_path"] = json!(document_path);
     sanitized["segments"] = json!(segments);
-    sanitized["transcript"] = json!(
+    sanitized["transcript"] = json!(voice_transcript_revision::projected_transcript(
         sanitized["segments"]
             .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|segment| segment["is_final"].as_bool().unwrap_or(true))
-            .filter_map(|segment| segment["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    ));
     if let Some(diarization) = sanitized
         .get_mut("diarization")
         .and_then(Value::as_object_mut)

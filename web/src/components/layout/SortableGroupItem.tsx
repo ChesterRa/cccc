@@ -15,7 +15,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { MoreIcon } from "../Icons";
+import { GripIcon, MoreIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { GroupMenuAction } from "./GroupMenuAction";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
@@ -29,6 +29,7 @@ interface SortableGroupItemProps {
   dragDisabled?: boolean;
   menuActionLabel?: string;
   menuAriaLabel?: string;
+  dragHandleLabel: string;
   onMenuAction?: () => void;
   onSelect: () => void;
   onWarm?: () => void;
@@ -43,6 +44,7 @@ export function SortableGroupItem({
   dragDisabled = false,
   menuActionLabel,
   menuAriaLabel,
+  dragHandleLabel,
   onMenuAction,
   onSelect,
   onWarm,
@@ -102,12 +104,10 @@ export function SortableGroupItem({
       setMenuOpen(true);
       return;
     }
-    if (event.key === "Enter" || (dragDisabled && event.key === " ")) {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onSelect();
-      return;
     }
-    listeners?.onKeyDown?.(event);
   };
 
   const actionMenu = onMenuAction && menuActionLabel && (
@@ -179,12 +179,8 @@ export function SortableGroupItem({
       className={classNames("group/item relative", isDragging && "z-50")}
     >
       <div
-        ref={setItemActivatorRef}
-        {...attributes}
-        {...listeners}
         className={classNames(
           "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
-          !dragDisabled && "cursor-grab select-none active:cursor-grabbing",
           isDragging && "opacity-70 shadow-lg ring-2 ring-[rgb(143,163,187)]/24",
           isActive ? "glass-group-item-active" : "glass-group-item",
           isArchived && !isActive && "opacity-90",
@@ -214,6 +210,22 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
+        {!dragDisabled && (
+          <IconButton
+            ref={setItemActivatorRef}
+            type="button"
+            variant="ghost"
+            size="sm"
+            label={dragHandleLabel}
+            style={{ touchAction: "none" }}
+            className="shrink-0 touch-none cursor-grab select-none text-[var(--color-text-tertiary)] opacity-70 active:cursor-grabbing md:opacity-0 md:group-hover/item:opacity-70 md:focus-visible:opacity-100"
+            {...attributes}
+            {...listeners}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <GripIcon size={16} />
+          </IconButton>
+        )}
         {onMenuAction && menuActionLabel && (
           <IconButton
             type="button"

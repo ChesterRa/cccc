@@ -2,9 +2,7 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
-  MouseSensor,
   PointerSensor,
-  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -27,6 +25,7 @@ interface GroupSidebarSortableListProps {
   readOnly?: boolean;
   menuActionLabel?: string;
   menuAriaLabel?: string;
+  dragHandleLabel: string;
   onMenuAction?: (groupId: string) => void;
   onReorderSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
   onSelectGroup: (groupId: string) => void;
@@ -43,6 +42,7 @@ export function GroupSidebarSortableList({
   readOnly,
   menuActionLabel,
   menuAriaLabel,
+  dragHandleLabel,
   onMenuAction,
   onReorderSection,
   onSelectGroup,
@@ -50,9 +50,7 @@ export function GroupSidebarSortableList({
   onClose,
 }: GroupSidebarSortableListProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -92,6 +90,7 @@ export function GroupSidebarSortableList({
                 menuAriaLabel={
                   menuAriaLabel ? `${menuAriaLabel} · ${group.title || gid}` : undefined
                 }
+                dragHandleLabel={`${dragHandleLabel} · ${group.title || gid}`}
                 onMenuAction={onMenuAction ? () => onMenuAction(gid) : undefined}
                 onSelect={() => {
                   onSelectGroup(gid);

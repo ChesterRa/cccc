@@ -28,6 +28,7 @@
   "workingGroups": "Working Groups",
   "archivedGroups": "Archived",
   "groupActions": "Group actions",
+  "reorderGroup": "Reorder group",
   "archiveGroup": "Archive",
   "restoreGroup": "Restore",
   "noGroupsYet": "No working groups yet",

@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 use super::{
     object, short_id, voice_asr, voice_diarization, voice_final_asr, voice_segmented_recording,
+    voice_ws_revision,
 };
 use crate::AppState;
 
@@ -84,7 +85,7 @@ pub(super) async fn finalize_disconnect(
 
     let diarization_reservation = voice_diarization::try_reserve(&state, &diarization_model_id);
     let can_defer_to_speaker_analysis = diarization_reservation.is_ok();
-    let final_result = voice_final_asr::transcribe_pcm16_segments(
+    let mut final_result = voice_final_asr::transcribe_pcm16_segments(
         state.home.clone(),
         final_model_id.clone(),
         language.clone(),
@@ -93,17 +94,48 @@ pub(super) async fn finalize_disconnect(
     )
     .await;
     let final_text = best_transcript(&final_result, streaming_text);
-
-    persist_disconnect_text(
-        &state,
-        &group_id,
-        &session_id,
-        &document_path,
-        &language,
-        &final_text,
-        "assistant_service_local_asr_final",
-    )
-    .await;
+    if has_usable_final_transcript(&final_result) {
+        let persistence = voice_ws_revision::persist_final_revision(
+            &state,
+            voice_ws_revision::FinalRevision {
+                group_id: &group_id,
+                client_session_id: &session_id,
+                document_path: &document_path,
+                language: &language,
+                configured_model_id: &final_model_id,
+                trigger_kind: "websocket_disconnect",
+            },
+            &mut final_result,
+        )
+        .await;
+        if persistence == voice_ws_revision::PersistenceStatus::Failed {
+            tracing::warn!("retrying disconnected final transcript with the same revision id");
+            let _ = voice_ws_revision::persist_final_revision(
+                &state,
+                voice_ws_revision::FinalRevision {
+                    group_id: &group_id,
+                    client_session_id: &session_id,
+                    document_path: &document_path,
+                    language: &language,
+                    configured_model_id: &final_model_id,
+                    trigger_kind: "websocket_disconnect",
+                },
+                &mut final_result,
+            )
+            .await;
+        }
+    } else {
+        persist_disconnect_text(
+            &state,
+            &group_id,
+            &session_id,
+            &document_path,
+            &language,
+            &final_text,
+            "assistant_service_local_asr_streaming",
+        )
+        .await;
+    }
     if let Ok(reservation) = diarization_reservation {
         let _ = voice_diarization::spawn(
             voice_diarization::DiarizationJob {
@@ -122,12 +154,21 @@ pub(super) async fn finalize_disconnect(
 }
 
 fn best_transcript(final_result: &Value, streaming_text: String) -> String {
-    final_result["text"]
-        .as_str()
-        .filter(|_| final_result["ok"].as_bool().unwrap_or(false))
-        .map(str::to_owned)
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or(streaming_text)
+    if has_usable_final_transcript(final_result) {
+        return final_result["text"].as_str().unwrap_or_default().to_owned();
+    }
+    if !streaming_text.trim().is_empty() {
+        return streaming_text;
+    }
+    final_result["text"].as_str().unwrap_or_default().to_owned()
+}
+
+fn has_usable_final_transcript(final_result: &Value) -> bool {
+    final_result["ok"].as_bool().unwrap_or(false)
+        && !final_result["partial"].as_bool().unwrap_or(false)
+        && final_result["text"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty())
 }
 
 async fn finish_streaming(streaming: Option<voice_asr::StreamingSession>) -> String {

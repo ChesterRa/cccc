@@ -5,12 +5,11 @@ import type {
   AssistantVoicePromptDraft,
 } from "../../../types";
 import { createVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStreamModel";
+import { projectVoiceTranscriptRevisions } from "./voiceTranscriptRevisions";
 import { voiceTranscriptSourceDetail, voiceTranscriptSourceLabel } from "./voiceTranscriptSource";
-
 const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
 const VOICE_PROMPT_REQUEST_STALE_MS = 180_000;
 const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
-
 export function visibleVoiceDocuments(
   documents: AssistantVoiceDocument[],
 ): AssistantVoiceDocument[] {
@@ -21,7 +20,6 @@ export function visibleVoiceDocuments(
     return status !== "archived" && status !== "deleted";
   });
 }
-
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
   "嗯",
   "嗯嗯",
@@ -373,8 +371,10 @@ export function voiceTranscriptItemsFromMeetingSession(
       ? diarization.speaker_transcript_segments
       : []
   ).filter(isDocumentVoiceTranscriptSegment);
-  const rawSegments = (Array.isArray(session.segments) ? session.segments : []).filter(
-    isDocumentVoiceTranscriptSegment,
+  const rawSegments = projectVoiceTranscriptRevisions(
+    (Array.isArray(session.segments) ? session.segments : []).filter(
+      isDocumentVoiceTranscriptSegment,
+    ),
   );
   if (!captureMode && speakerTranscriptSegments.length === 0 && rawSegments.length === 0) return [];
   const segments = speakerTranscriptSegments.length ? speakerTranscriptSegments : rawSegments;

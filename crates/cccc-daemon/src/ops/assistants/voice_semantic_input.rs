@@ -91,6 +91,7 @@ pub(super) fn append_with_state(
             "created_at":now,
             "updated_at":now
         }),
+        super::voice_input_dedupe::Policy::Exact,
     )
     .map_err(OpError::io)?;
     let delivery = voice_input_delivery::deliver(

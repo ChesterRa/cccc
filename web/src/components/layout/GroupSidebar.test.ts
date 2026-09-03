@@ -3,10 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { canReorderSidebarGroups, groupSidebarScrollClass } from "./groupSidebarModel";
 
 describe("canReorderSidebarGroups", () => {
-  it("keeps touch scrolling exclusive on small screens", () => {
+  it("enables handle-based reordering on expanded writable small screens", () => {
     expect(
       canReorderSidebarGroups({ isSmallScreen: true, isCollapsed: false, readOnly: false }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("enables reordering only for an expanded writable desktop sidebar", () => {

@@ -174,6 +174,7 @@ export function GroupSidebar({
             readOnly={readOnly}
             menuActionLabel={menuActionLabel}
             menuAriaLabel={t("groupActions")}
+            dragHandleLabel={t("reorderGroup")}
             onMenuAction={handleMenuAction}
             onReorderSection={onReorderSection}
             onSelectGroup={onSelectGroup}
