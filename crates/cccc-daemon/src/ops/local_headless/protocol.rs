@@ -1,5 +1,6 @@
 use super::super::runtime_session;
-use super::{Session, Turn};
+use super::{Session, SessionTransport, Turn, managed_runtime};
+use cccc_contracts::ActorRuntime;
 use serde_json::{Value, json};
 use std::io;
 use std::sync::Arc;
@@ -101,7 +102,31 @@ pub(super) fn initialize_codex(
     Ok(())
 }
 
-pub(super) fn submit_codex(session: &Arc<Session>, turn: &Turn) -> io::Result<String> {
+pub(super) fn submit_managed(session: &Arc<Session>, turn: &Turn) -> io::Result<String> {
+    if matches!(session.runtime, ActorRuntime::Grok | ActorRuntime::Opencode) {
+        let SessionTransport::ManagedAgent {
+            session: managed, ..
+        } = &session.transport
+        else {
+            return Err(io::Error::other(
+                "ACP Actor is not connected to its managed session",
+            ));
+        };
+        let request_id = if turn.event_id.trim().is_empty() {
+            uuid::Uuid::new_v4().simple().to_string()
+        } else {
+            turn.event_id.clone()
+        };
+        return managed_runtime()
+            .block_on(managed.start_turn(managed.generation(), &request_id, &turn.text))
+            .map(|receipt| receipt.turn_id);
+    }
+    if session.runtime != ActorRuntime::Codex {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "managed Actor protocol is unavailable for this Runtime",
+        ));
+    }
     let thread_id = session.thread_id.lock().map_err(|_| poisoned())?.clone();
     let request_id = if turn.event_id.trim().is_empty() {
         uuid::Uuid::new_v4().simple().to_string()
@@ -129,7 +154,7 @@ pub(super) fn submit_codex(session: &Arc<Session>, turn: &Turn) -> io::Result<St
         .filter(|value| !value.is_empty())
         .ok_or_else(|| io::Error::other("Codex app-server returned an empty turn id"))?
         .to_owned();
-    session.mark_codex_thread_materialized();
+    session.mark_managed_session_materialized();
     Ok(turn_id)
 }
 

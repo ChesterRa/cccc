@@ -16,11 +16,23 @@ impl AnalystSession {
             environment,
             protocol,
             process,
+            auxiliary_processes,
+            native_tui_command,
+            cleanup_paths,
             delegations,
             ..
         } = self;
         protocol.close().await;
         drop(protocol);
+        if !auxiliary_processes.is_empty()
+            || native_tui_command.is_some()
+            || !cleanup_paths.is_empty()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "ACP test reconnect must restart its managed topology",
+            ));
+        }
         Self::connect(ConnectConfig {
             binding,
             generation: uuid::Uuid::new_v4().simple().to_string(),
@@ -56,24 +68,45 @@ impl AnalystSession {
                 )),
             };
         }
-        let result = match self
-            .protocol
-            .request(
-                "turn/start",
-                json!({
-                    "threadId":self.thread_id,
-                    "input":[{"type":"text","text":text}],
-                    "clientUserMessageId":format!("cccc-voice:{}:{delegation_id}", self.generation),
-                    "responsesapiClientMetadata":{
-                        "cccc_voice_generation":self.generation,
-                        "cccc_turn_correlation_id":delegation_id,
-                    }
+        let turn_result = match &self.protocol {
+            ManagedProtocol::Codex(protocol) => protocol
+                .request(
+                    "turn/start",
+                    json!({
+                        "threadId":self.thread_id,
+                        "input":[{"type":"text","text":text}],
+                        "clientUserMessageId":format!("cccc-voice:{}:{delegation_id}", self.generation),
+                        "responsesapiClientMetadata":{
+                            "cccc_voice_generation":self.generation,
+                            "cccc_turn_correlation_id":delegation_id,
+                        }
+                    }),
+                    REQUEST_TIMEOUT,
+                )
+                .await
+                .and_then(|result| {
+                    result
+                        .get("turn")
+                        .and_then(|turn| turn.get("id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                        .ok_or_else(|| {
+                            io::Error::other(
+                                "Codex app-server accepted a delegation without returning a turn id",
+                            )
+                        })
                 }),
-                REQUEST_TIMEOUT,
-            )
-            .await
-        {
-            Ok(result) => result,
+            ManagedProtocol::Acp(protocol) => protocol
+                .start_prompt(&self.thread_id, delegation_id, text)
+                .await,
+        };
+        let turn_id = match turn_result {
+            Ok(turn_id) => turn_id,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                return Err(error);
+            }
             Err(error) => {
                 let kind = error.kind();
                 let message = error.to_string();
@@ -83,21 +116,6 @@ impl AnalystSession {
                 );
                 return Err(io::Error::new(kind, message));
             }
-        };
-        let turn_id = result
-            .get("turn")
-            .and_then(|turn| turn.get("id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        let Some(turn_id) = turn_id else {
-            let message = "Codex app-server accepted a delegation without returning a turn id";
-            delegations.insert(
-                delegation_id.to_owned(),
-                DelegationState::Unresolved(message.into()),
-            );
-            return Err(io::Error::other(message));
         };
         let receipt = TurnReceipt {
             delegation_id: delegation_id.to_owned(),
@@ -110,93 +128,5 @@ impl AnalystSession {
             DelegationState::Started(receipt.clone()),
         );
         Ok(receipt)
-    }
-
-    pub(crate) async fn steer(
-        &self,
-        expected_generation: &str,
-        turn_id: &str,
-        text: &str,
-    ) -> io::Result<()> {
-        self.require_generation(expected_generation)?;
-        let turn_id = required_value(turn_id, "turn_id")?;
-        let text = required_value(text, "text")?;
-        self.protocol
-            .request(
-                "turn/steer",
-                json!({
-                    "threadId":self.thread_id,
-                    "expectedTurnId":turn_id,
-                    "input":[{"type":"text","text":text}],
-                }),
-                REQUEST_TIMEOUT,
-            )
-            .await
-            .map(|_| ())
-    }
-
-    pub(crate) async fn interrupt(
-        &self,
-        expected_generation: &str,
-        turn_id: &str,
-    ) -> io::Result<()> {
-        self.require_generation(expected_generation)?;
-        let turn_id = required_value(turn_id, "turn_id")?;
-        self.protocol
-            .request(
-                "turn/interrupt",
-                json!({"threadId":self.thread_id,"turnId":turn_id}),
-                REQUEST_TIMEOUT,
-            )
-            .await
-            .map(|_| ())
-    }
-
-    pub(crate) async fn respond_mcp_elicitation(
-        &self,
-        expected_generation: &str,
-        request: &AnalystEvent,
-        action: ElicitationAction,
-    ) -> io::Result<()> {
-        self.require_generation(expected_generation)?;
-        if request.generation != self.generation
-            || request.message.get("method").and_then(Value::as_str)
-                != Some("mcpServer/elicitation/request")
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "event is not an MCP elicitation for this Voice Analyst generation",
-            ));
-        }
-        let id = request
-            .message
-            .get("id")
-            .filter(|id| id.is_number() || id.is_string())
-            .cloned()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "elicitation has no id"))?;
-        let content = (action == ElicitationAction::Accept).then(|| json!({}));
-        self.protocol
-            .respond(id, json!({"action":action.as_str(),"content":content}))
-            .await
-    }
-
-    pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
-        self.require_generation(expected_generation)?;
-        self.protocol.close().await;
-        if let Some(process) = &self.process {
-            process.stop()?;
-        }
-        Ok(())
-    }
-
-    fn require_generation(&self, expected: &str) -> io::Result<()> {
-        if expected == self.generation {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "stale Voice Analyst generation",
-            ))
-        }
     }
 }

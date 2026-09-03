@@ -78,8 +78,8 @@ export function CodexVoiceAnalystModal({
   });
   const readinessProblem = !controller.readiness
     ? ""
-    : !controller.readiness.codex_cli_available
-      ? t("codexVoiceCodexCliMissing")
+    : !controller.readiness.analyst_runtime_available
+      ? t("codexVoiceAnalystRuntimeMissing", { runtime: controller.readiness.analyst_runtime })
       : !controller.readiness.realtime_credentials_available
         ? t("codexVoiceCodexLoginRequired")
         : "";

@@ -199,7 +199,7 @@ async fn disconnected_start_is_reported_and_the_ambiguous_delegation_is_not_repl
     let disconnected = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let event = events.recv().await.expect("disconnect event");
-            if event.message["method"] == super::super::CODEX_APP_DISCONNECTED_METHOD {
+            if event.message["method"] == super::super::MANAGED_AGENT_DISCONNECTED_METHOD {
                 return event;
             }
         }

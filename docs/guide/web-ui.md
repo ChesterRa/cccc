@@ -34,8 +34,8 @@ separate Dock actions.
 
 The Voice console is one operational workspace. Call state, audio settings, mute, and Stop are in its
 top audio-control area. The left pane shows the current spoken turn and accumulates provider fragments
-until the authoritative final transcript arrives; the right pane embeds the genuine Voice Analyst
-Codex TUI. On narrow screens, **Conversation** and **Voice Analyst** are tabs in the same console.
+until the authoritative final transcript arrives; the right pane embeds the selected Voice Analyst
+runtime's genuine writable TUI. On narrow screens, **Conversation** and **Voice Analyst** are tabs in the same console.
 Speaking voice, microphone, and (where supported) speaker choices expand inline rather than opening a
 second settings modal. The host must already be signed in through `codex login`, and the browser must
 allow microphone access. That host login belongs only to the Realtime provider call.
@@ -43,9 +43,10 @@ allow microphone access. That host login belongs only to the Realtime provider c
 The two visible roles are one product flow:
 
 - **Realtime Voice** owns the low-latency spoken conversation, interruption, and clarification.
-- **Voice Analyst** is the backing Codex thread. It handles file inspection, tools, current CCCC facts,
+- **Voice Analyst** is the backing managed agent session. It handles file inspection, tools, current CCCC facts,
   and substantial analysis, then returns useful progress and the final result to the same spoken
   conversation. Under local user authority it can list all Groups and query an explicitly named Group.
+  Codex, Grok Build, and OpenCode are the currently admitted Analyst runtimes.
 
 CCCC starts the Analyst in one stable neutral directory at
 `CCCC_HOME/state/codex_voice/analyst-workdir/`. It is not a repository, Working Group, implicit MCP
@@ -59,58 +60,85 @@ in the neutral Voice directory.
 CCCC reads the existing Codex credential only in the native process that creates the provider call;
 the browser receives the WebRTC answer and bounded session events, not the credential. Use the
 console header to mute the microphone, resume browser-blocked playback, or stop the call. The
-Analyst uses the same trusted-local YOLO boundary as a CCCC Codex Actor. Its authentication and model
-provider are independent from the Realtime login: the default launch inherits the normal Codex
-configuration, while Custom or Runtime Profile private environment can select another Codex home,
-provider, or API key without changing the Realtime credential path. The two sides exchange only
+Analyst uses the same trusted-local YOLO boundary as the corresponding CCCC Actor runtime. Its
+authentication and model provider are independent from the Realtime login: the default launch
+inherits the normal Codex configuration, while Custom or Runtime Profile settings can select Codex,
+Grok, or OpenCode and configure that runtime's provider home, model provider, or API key without
+changing the Realtime credential path. The two sides exchange only
 delegations, progress, and results through the CCCC controller.
 
 The Analyst **Runtime Setup** uses the same Custom / Runtime Profile model as Actor editing. Custom
-mode accepts the ordinary Codex command (including model, Codex profile, search, and `-c key=value`
-options) plus write-only private environment values, and it can save that complete configuration as
-a reusable Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves the
-selected Codex profile's command and private environment from the shared profile store; Actor-only
-runner and submit fields do not alter the Voice host. Historical Profiles with a string command are
-accepted and normalized to the canonical argument array when next saved. CCCC then removes
-conflicting host flags and pins app-server, `shell_environment_policy.inherit=all`,
-`approval_policy=never`, `sandbox_mode=danger-full-access`, the neutral Voice workspace, and the
-global CCCC MCP binding. These CCCC-owned values cannot be overridden. Only Codex Runtime Profiles
-are offered because no other Voice host adapter is implemented yet.
+mode accepts a direct Codex, Grok, or OpenCode command, including supported provider/model options, plus
+write-only private environment values, and it can save that complete configuration as a reusable
+Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves a compatible Codex,
+Grok, or OpenCode Profile's command and private environment from the shared profile store; Actor-only runner
+and submit fields do not alter the Voice host. Historical Profiles with a string command are accepted
+and normalized to the canonical argument array when next saved.
 
-The app-server and its remote TUI are two processes but one configured Analyst: both receive the
-same resolved executable, model, Codex Profile, supported `-c` overrides, YOLO policy, and private
-environment. Only the app-server receives the CCCC MCP binding and loopback listener arguments.
-Opening the embedded terminal therefore observes the existing Analyst thread without falling back
-to the user's unrelated global Codex provider or starting a second model session.
+For Codex, CCCC removes conflicting host flags and pins app-server,
+`shell_environment_policy.inherit=all`, `approval_policy=never`,
+`sandbox_mode=danger-full-access`, the neutral Voice workspace, and the global CCCC MCP binding. For
+Grok, CCCC accepts a direct root command with supported global provider/model options, then owns the
+private leader socket, ACP controller, native TUI attachment, YOLO policy, workspace, and per-session
+MCP binding. Grok subcommands, wrappers, prompt tails, and user-owned topology/session flags are
+rejected rather than routed through a second PTY path. For OpenCode, CCCC owns the ACP process,
+generation-scoped authenticated loopback backend, session/load boundary, one-time permission policy,
+per-session MCP injection, and native `opencode attach` command. It preserves supported model, agent,
+pure-mode, and logging choices. OpenCode wrappers, subcommands, prompt tails, and user-owned topology
+or session flags likewise fail explicitly. OpenCode 1.18.14 or newer is required so its ACP prompt
+response is a reliable completion fence; an older executable fails startup with an upgrade message.
+These CCCC-owned values cannot be overridden.
 
-Ordinary Codex PTY and Headless Actors use this same app-server host. PTY adds the remote TUI;
-Headless omits only that presentation process. Their app-server is bound to the concrete Group and
-Actor MCP identity, while Voice Analyst uses the global user identity and its neutral workspace.
-These are separate roles over one Codex launch/session mechanism, not separate configuration or
-authentication paths. Commands that are arbitrary wrappers and cannot be rewritten without
-changing their meaning remain on the explicit direct-PTY or stdio compatibility path.
+Each runtime's controller and native TUI are separate processes but one configured Analyst. Codex's
+app-server and remote TUI receive the same executable, model, Profile, supported `-c` overrides, YOLO
+policy, and private environment. Grok's leader, ACP client, and TUI share one resolved provider
+configuration, private environment, and exact session; CCCC adds topology arguments only to the
+processes that accept them. OpenCode's stdio ACP controller and authenticated native TUI attach share
+one provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
+managed session,
+so the model reached from either client has the same CCCC tools. Opening the embedded terminal
+therefore observes and controls the existing Analyst session instead of starting another model
+conversation.
+
+Ordinary Codex, Grok, and OpenCode PTY/Headless Actors use the same runtime-specific managed adapter
+as Voice Analyst. PTY adds the native TUI; Headless omits only that presentation process. Actor controllers
+are bound to a concrete Group and Actor MCP identity, while Voice Analyst uses the global user
+identity and its neutral workspace. These are separate roles over the same adapter, not divergent
+delivery paths. Codex retains an explicit compatibility path for commands that cannot safely be
+normalized; admitted Grok and OpenCode commands fail explicitly instead of falling back.
 
 Custom non-secret settings live in `settings.yaml`; custom private values live in
 `CCCC_HOME/state/secrets/codex_voice_analyst.json`. Profile secrets remain owned by the Runtime
 Profile store, and Web receives key names only. Applying a valid setting while idle restarts the
-app-server and resumes the same materialized Analyst thread. An effective Runtime Profile
+managed host and resumes the same materialized Analyst session. An effective Runtime Profile
 command/environment change replaces the warm host at the next voice start while retaining the same
-thread when its Codex identity is unchanged; name, runner, submit, and capability-only edits do not
-restart this host. Changing `CODEX_HOME`, `HOME`, or `USERPROFILE` changes
-that identity and starts a new thread after explicit confirmation in Custom mode. A failed candidate
+session when its runtime identity is unchanged; name, runner, submit, and capability-only edits do not
+restart this host. Changing the selected runtime, `CODEX_HOME`, `GROK_HOME`, OpenCode's storage/config
+roots (including `OPENCODE_DB`), `HOME`, or `USERPROFILE` changes that identity and starts a new session after explicit
+confirmation in Custom mode. A failed candidate
 launch restores the prior settings and runtime. Browser-local audio choices apply to the next call.
 
 Realtime Call and Voice Analyst have separate lifecycles. Stopping voice disconnects browser audio
 and releases the microphone lease, but keeps the Analyst warm. Ongoing Analyst or linked
-Actor work continues, and its result returns to the Analyst thread without waking audio; only a
+Actor work continues, and its result returns to the Analyst session without waking audio; only a
 result from the exact still-active call generation may become speech. A later call reuses the warm
-Analyst. The console embeds the genuine Codex TUI for that same Analyst thread using the existing
+Analyst. The console embeds the selected runtime's genuine TUI for that same Analyst session using the existing
 terminal transport; it stays available after the call stops and does not create an Actor or a second
-Analyst. Codex creates the resumable rollout lazily, so the terminal appears when the first real
-investigation starts; CCCC does not create a
-token-consuming placeholder task. **New Analyst session** is the explicit reset action and is
-available only after the call stops. Raw local paths, Codex thread IDs, loopback endpoints, and
+Analyst. Codex creates its resumable rollout lazily, so its terminal appears when the first real
+investigation starts; Grok and OpenCode managed TUIs can attach as soon as their sessions are ready. CCCC does not
+create a token-consuming placeholder task. **New Analyst session** is the explicit reset action and is
+available only after the call stops. Raw local paths, provider session IDs, loopback endpoints, and
 external terminal commands are deliberately not part of the product surface.
+
+Grok and OpenCode accept only one ACP prompt in a managed session at a time. While a Voice
+delegation is active, the embedded TUI remains visible but temporarily stops accepting keyboard
+input; input resumes automatically when that turn settles. This keeps spoken delegations and manual
+terminal turns on the same session without overlapping. Input that races with the read-only state
+transition is discarded and refreshes the terminal state without printing a diagnostic into the
+provider TUI. OpenCode Analyst results remain available to Realtime Voice when the provider omits a
+live ACP prompt echo: CCCC acknowledges the request from the matching user message on OpenCode's
+authenticated backend stream, then uses the ACP response as the exact completion fence. A completed
+Voice turn with no result is reported as failed instead of silently returning an empty answer.
 
 The session manager keeps at most one Codex Voice call and one warm Voice Analyst per interactive
 Web host. The normal launcher permits one such Web process per `CCCC_HOME`, while the call also uses

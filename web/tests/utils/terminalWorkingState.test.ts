@@ -179,7 +179,7 @@ describe("terminalWorkingState", () => {
           id: "peer-1",
           running: true,
           runner: "pty",
-          runtime_state_source: "app_server",
+          runtime_state_source: "managed_session",
           effective_working_state: "working",
         },
         { kind: "idle_prompt", updatedAt: Date.now() },

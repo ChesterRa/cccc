@@ -32,7 +32,8 @@ pub enum RunnerKind {
 pub enum RuntimeStateSource {
     #[default]
     Terminal,
-    AppServer,
+    #[serde(rename = "managed_session", alias = "app_server")]
+    ManagedSession,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -171,7 +172,7 @@ fn global_scope() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Actor, ActorRuntime, RunnerKind};
+    use super::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
 
     #[test]
     fn cline_runtime_round_trips_through_the_shared_contract() {
@@ -200,5 +201,16 @@ mod tests {
         actor.runner = RunnerKind::Pty;
         actor.normalize_runtime_constraints();
         assert_eq!(actor.runner, RunnerKind::Headless);
+    }
+
+    #[test]
+    fn legacy_app_server_state_upgrades_to_managed_session() {
+        let state: RuntimeStateSource =
+            serde_json::from_str(r#""app_server""#).expect("legacy state");
+        assert_eq!(state, RuntimeStateSource::ManagedSession);
+        assert_eq!(
+            serde_json::to_string(&state).expect("managed state"),
+            r#""managed_session""#
+        );
     }
 }

@@ -97,7 +97,7 @@ async fn analyst_disconnect_is_generation_bound_and_call_drop_releases_the_lease
         loop {
             let event = events.recv().await.expect("Analyst event");
             if event.message["method"]
-                == super::super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD
+                == super::super::super::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD
             {
                 return event;
             }

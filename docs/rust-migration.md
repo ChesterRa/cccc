@@ -324,13 +324,22 @@ runtime is slow to prepare or fails to resume; individual restore failures are
 logged and do not prevent the daemon from becoming ready. Each Group is
 reloaded and restored under the same mutation lock used by lifecycle requests,
 so a concurrent stop or pause cannot be overwritten by a stale startup snapshot.
+Restoration itself never submits a model turn. It reconnects a validated provider
+session when one exists, and providers capable of opening an idle terminal may
+start without running the model. A fresh managed PTY that cannot expose its
+native terminal before a provider turn remains dormant until an explicit start
+or a real pending delivery wakes it. Recovering an unread Send is real work and
+may start the runtime, but an otherwise quiet daemon restart cannot make every
+Actor run a synthetic bootstrap task.
 
 Actor-bound chat messages and system notifications use one bounded FIFO worker
 per actor. A worker seeds the runtime with its CCCC system prompt once per
 session, preserves message order, uses bracketed paste when the terminal enables
-it, and applies the actor's configured submit mode. Successful delivery returns
-to the daemon's serialized state path by appending `runtime.delivery`; it never
-advances the separate Mail cursor.
+it, and applies the actor's configured submit mode. For a worker successfully
+reconnected during daemon restoration, the pending startup prompt is prepended
+to its first real delivery instead of being sent as a standalone provider turn.
+Successful delivery returns to the daemon's serialized state path by appending
+`runtime.delivery`; it never advances the separate Mail cursor.
 The native preamble retains the 0.4.35 contract: cold-start and resumed sessions
 are told to call `cccc_bootstrap`, which returns one bounded semantic packet:
 session orientation, recovery state, an actionable inbox preview, context
@@ -346,21 +355,25 @@ Before starting an automatically managed PTY actor, CCCC applies the retained
 runtime MCP readiness contract. CLI-backed and configuration-backed runtimes
 are classified as `ready`, `missing`, or `stale`; missing or safely replaceable
 entries are installed, then verified before the provider process is created.
-This covers Claude, Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Grok,
-Hermes, Kimi, and OpenCode. Codex continues to receive its actor-scoped command
-line override, while OpenCode receives an inline launch configuration.
+This covers Claude, Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Hermes,
+and Kimi. Codex, Grok, and OpenCode instead receive actor-scoped MCP servers in
+their managed sessions; none of those providers' global MCP registries is
+mutated.
 More-specific stale entries
 that CCCC does not own are reported rather than overwritten. This prevents an
 old Python launcher path or dangling symlink from freezing a newly created
 provider session without CCCC tools.
 
-`runner=headless` never creates a PTY. Direct, safely parseable Codex PTY and
-Headless actors share one daemon-owned app-server session implementation,
-structured turn delivery, persisted thread resume, Profile/provider arguments,
-and private environment; PTY only adds Codex's remote TUI on that exact thread.
-Voice Analyst uses the same host/TUI substrate with its separate global-user
-identity and warm lifecycle. Opaque Codex wrappers retain their explicit
-compatibility path. Claude continues to use daemon-managed bidirectional
+`runner=headless` never creates a PTY. Direct, safely parseable Codex actors
+share one daemon-owned app-server session implementation across PTY and
+Headless. Direct Grok actors likewise share one private leader and ACP session;
+direct OpenCode actors share one authenticated loopback backend and ACP session.
+All three adapters own structured turn delivery, validated resume, Profile/provider
+arguments, and private environment; PTY adds the provider's native writable TUI
+to that exact session. Voice Analyst reuses the selected adapter with its
+separate global-user identity and warm lifecycle. Opaque Codex wrappers retain
+their explicit compatibility path; Grok and OpenCode have no raw-PTY fallback. Claude
+continues to use daemon-managed bidirectional
 stream-json. Provider messages are pushed through bounded actor delivery workers,
 and actor health comes from the real provider process. Web Model and the
 programmatically configured custom external-headless path retain the pull contract:

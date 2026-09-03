@@ -63,6 +63,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalWritable, setTerminalWritable] = useState(false);
+  const terminalWritableRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,6 +79,10 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   const onStatusChangeRef = useRef(onStatusChange);
   const setTerminalSignalRef = useRef(setTerminalSignal);
   const clearTerminalSignalRef = useRef(clearTerminalSignal);
+  const updateTerminalWritable = useCallback((writable: boolean) => {
+    terminalWritableRef.current = writable;
+    setTerminalWritable(writable);
+  }, []);
 
   useEffect(() => {
     isRunningRef.current = isRunning;
@@ -91,7 +96,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
       terminalAttachStartupRaceRef.current = false;
     }
     if (!isRunning || isHeadless || !canControl) {
-      const timer = window.setTimeout(() => setTerminalWritable(false), 0);
+      const timer = window.setTimeout(() => updateTerminalWritable(false), 0);
       return () => window.clearTimeout(timer);
     }
   }, [
@@ -102,6 +107,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     isRunning,
     onStatusChange,
     setTerminalSignal,
+    updateTerminalWritable,
   ]);
 
   useEffect(() => {
@@ -215,7 +221,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           }
           setConnectionStatus("connected");
           setConnectionFailed(false);
-          setTerminalWritable(false);
+          updateTerminalWritable(false);
           reconnectAttemptRef.current = 0;
           terminalSignalBufferRef.current = "";
           // The first attach is rebuilt from either a negotiated snapshot or a
@@ -304,7 +310,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           isCurrentGeneration: () => generation === connectionGeneration,
           canControl: () => canControlRef.current,
           onDecoded: handleDecoded,
-          setWritable: setTerminalWritable,
+          setWritable: updateTerminalWritable,
           setServerResponseOwnership: (owned) => {
             serverOwnsTerminalResponses = owned;
           },
@@ -409,7 +415,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
         const term = terminalRef.current;
         if (term && canControlRef.current) {
           disposable = term.onData((data) => {
-            if (ws.readyState !== WebSocket.OPEN) return;
+            if (ws.readyState !== WebSocket.OPEN || !terminalWritableRef.current) return;
             const runtime = runtimeRef.current;
             const input = filterTerminalInputForRuntime(data, runtime, {
               replaying: replayWriteGuard.isReplaying(),
@@ -462,7 +468,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
       }
       setConnectionStatus("disconnected");
       setTerminalReady(false);
-      setTerminalWritable(false);
+      updateTerminalWritable(false);
     };
   }, [
     activated,
@@ -476,6 +482,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     inspectActorTail,
     terminalConnectionKey,
     terminalRef,
+    updateTerminalWritable,
   ]);
 
   useEffect(() => {

@@ -828,12 +828,12 @@ describe("runtimeDockItems", () => {
       liveWorkCard: null,
       runner: "pty",
     });
-    const appServerPtyItem = makeRuntimeDockItem({
-      actorId: "pty-app",
-      actorLabel: "PTY App",
+    const managedPtyItem = makeRuntimeDockItem({
+      actorId: "pty-managed",
+      actorLabel: "PTY Managed",
       liveWorkCard: null,
       runner: "pty",
-      runtimeStateSource: "app_server",
+      runtimeStateSource: "managed_session",
     });
 
     expect(getRuntimeRingTone(failedItem, false, "idle")).toBe("attention");
@@ -844,9 +844,9 @@ describe("runtimeDockItems", () => {
     expect(getRuntimeRingTone(headlessItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(headlessItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(headlessItem, true, "stuck")).toBe("attention");
-    expect(getRuntimeRingTone(appServerPtyItem, true, "working")).toBe("active");
-    expect(getRuntimeRingTone(appServerPtyItem, true, "waiting")).toBe("idle");
-    expect(getRuntimeRingTone(appServerPtyItem, true, "stuck")).toBe("attention");
+    expect(getRuntimeRingTone(managedPtyItem, true, "working")).toBe("active");
+    expect(getRuntimeRingTone(managedPtyItem, true, "waiting")).toBe("idle");
+    expect(getRuntimeRingTone(managedPtyItem, true, "stuck")).toBe("attention");
     expect(getRuntimeRingTone(ptyItem, true, "working")).toBe("active");
     expect(getRuntimeRingTone(ptyItem, true, "waiting")).toBe("idle");
     expect(getRuntimeRingTone(ptyItem, true, "stuck")).toBe("idle");

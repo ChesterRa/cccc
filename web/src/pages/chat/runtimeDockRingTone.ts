@@ -25,7 +25,7 @@ export function getRuntimeRingTone(
     return "idle";
   }
 
-  if (stateSource === "app_server") {
+  if (stateSource === "managed_session" || stateSource === "app_server") {
     if (actorState === "stuck") return "attention";
     if (actorState === "working") return "active";
     return "idle";

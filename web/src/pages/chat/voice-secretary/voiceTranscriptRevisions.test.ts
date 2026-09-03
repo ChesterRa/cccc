@@ -26,6 +26,27 @@ describe("projectVoiceTranscriptRevisions", () => {
     expect(projectVoiceTranscriptRevisions(segments)).toEqual(segments);
   });
 
+  it("does not let an unstable revision hide the stable live transcript", () => {
+    const live = {
+      session_id: "session-1",
+      segment_id: "live-1",
+      transcript_stage: "live",
+      is_final: true,
+      text: "stable live text",
+    };
+    const partialFinal = {
+      session_id: "session-1",
+      segment_id: "partial-final",
+      transcript_stage: "final",
+      supersede_stage: "live",
+      supersedes_segment_ids: ["live-1"],
+      is_final: false,
+      text: "partial final text",
+    };
+
+    expect(projectVoiceTranscriptRevisions([live, partialFinal])).toEqual([live]);
+  });
+
   it("restores the final SenseVoice revision instead of superseded Live Paraformer cards", () => {
     const items = voiceTranscriptItemsFromMeetingSession({
       session_id: "session-1",

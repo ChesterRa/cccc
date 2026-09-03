@@ -290,7 +290,7 @@ export type Actor = {
   runner?: string;
   runner_effective?: string;
   runtime?: string;
-  runtime_state_source?: "terminal" | "app_server" | string;
+  runtime_state_source?: "terminal" | "managed_session" | string;
   runtime_session_status?: string | null;
   runtime_session_resume_eligible?: boolean | null;
   runtime_session_last_resume_error?: string | null;
@@ -1505,10 +1505,10 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
     desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
   },
   droid: { label: "Droid", desc: "" },
-  grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
+  grok: { label: "Grok Build", desc: "Managed delivery in the same native Grok TUI" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi CLI", desc: "" },
-  opencode: { label: "OpenCode", desc: "Uses inline OpenCode MCP config at actor launch" },
+  opencode: { label: "OpenCode", desc: "Managed delivery in the same native OpenCode TUI" },
   web_model: {
     label: "ChatGPT Web Model",
     desc: "ChatGPT browser delivery + remote MCP connector",

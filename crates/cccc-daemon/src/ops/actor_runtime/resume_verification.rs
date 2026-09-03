@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime};
+use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, HomeLayout};
 use cccc_runtime::SessionStatus;
 use std::collections::BTreeMap;
@@ -213,18 +213,6 @@ fn schedule_with_timing(
                             "failed to persist resume failure"
                         );
                     }
-                    let fresh_command = if actor.runtime == ActorRuntime::Grok {
-                        runtime_session::prepare_fresh_grok_command(
-                            &home,
-                            &group.group_id,
-                            &actor.id,
-                            &cwd,
-                            &base_command,
-                        )
-                        .command
-                    } else {
-                        base_command.clone()
-                    };
                     Some(hook_launch::launch_serialized_with_permit(
                         &start_permit,
                         &home,
@@ -232,7 +220,7 @@ fn schedule_with_timing(
                         &actor,
                         &cwd,
                         &env,
-                        fresh_command,
+                        base_command.clone(),
                     ))
                 },
             );

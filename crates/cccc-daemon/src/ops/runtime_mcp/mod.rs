@@ -3,7 +3,6 @@ mod state;
 
 use cccc_contracts::ActorRuntime;
 use cccc_core::HomeLayout;
-use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -30,9 +29,12 @@ pub(super) fn prepare(
     if !cccc_core::runtime_mcp::is_auto_managed(runtime) {
         return Ok(());
     }
-    // Codex receives its actor-scoped MCP entry later in the launch pipeline.
-    // Do not require a discoverable public launcher for custom Codex commands.
-    if runtime == ActorRuntime::Codex {
+    // Managed sessions receive their actor-scoped MCP entry later in the launch
+    // pipeline. Do not mutate a provider-global MCP registry for these runtimes.
+    if matches!(
+        runtime,
+        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+    ) {
         return Ok(());
     }
     let executable = super::codex_mcp::resolve_cccc_executable().ok_or_else(|| {
@@ -47,8 +49,9 @@ pub(super) fn prepare(
     );
 
     match runtime {
-        ActorRuntime::Codex => unreachable!("Codex returns before persistent MCP setup"),
-        ActorRuntime::Opencode => inject_opencode(env, &executable),
+        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode => {
+            unreachable!("managed runtime returned early")
+        }
         ActorRuntime::Hermes => {
             let _guard = setup_lock().lock().map_err(|_| {
                 OpError::new(
@@ -162,13 +165,6 @@ fn inspect(
             expected,
         ),
         ActorRuntime::Devin => inspect_devin(cwd, env, expected),
-        ActorRuntime::Grok => inspect_cli(
-            runtime,
-            &["grok", "mcp", "list", "--json"],
-            cwd,
-            env,
-            expected,
-        ),
         _ => Ok(state::json_state(runtime, cwd, env, expected)),
     }
 }
@@ -277,80 +273,9 @@ fn run_checked(
     ))
 }
 
-fn inject_opencode(env: &mut BTreeMap<String, String>, executable: &Path) -> Result<(), OpError> {
-    let mut document = match env.get("OPENCODE_CONFIG_CONTENT") {
-        Some(raw) if !raw.trim().is_empty() => serde_json::from_str::<Value>(raw)
-            .map_err(|error| OpError::new("runtime_mcp_config_invalid", error.to_string()))?
-            .as_object()
-            .cloned()
-            .ok_or_else(|| {
-                OpError::new(
-                    "runtime_mcp_config_invalid",
-                    "OPENCODE_CONFIG_CONTENT must be a JSON object",
-                )
-            })?,
-        _ => Map::new(),
-    };
-    let mcp = document
-        .entry("mcp")
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !mcp.is_object() {
-        *mcp = Value::Object(Map::new());
-    }
-    let environment = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID"]
-        .into_iter()
-        .filter_map(|key| env.get(key).map(|value| (key.to_owned(), value.clone())))
-        .collect::<BTreeMap<_, _>>();
-    let mcp = mcp.as_object_mut().ok_or_else(|| {
-        OpError::new(
-            "runtime_mcp_config_invalid",
-            "OpenCode mcp config must be an object",
-        )
-    })?;
-    mcp.insert(
-        "cccc".into(),
-        json!({
-            "type":"local",
-            "command":cccc_core::runtime_mcp::expected_command(executable),
-            "enabled":true,
-            "environment":environment,
-        }),
-    );
-    env.insert(
-        "OPENCODE_CONFIG_CONTENT".into(),
-        Value::Object(document).to_string(),
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn opencode_injection_preserves_unrelated_inline_config() {
-        let mut env = BTreeMap::from([
-            ("CCCC_HOME".into(), "/tmp/home".into()),
-            ("CCCC_GROUP_ID".into(), "g_test".into()),
-            ("CCCC_ACTOR_ID".into(), "peer1".into()),
-            (
-                "OPENCODE_CONFIG_CONTENT".into(),
-                r#"{"theme":"dark","mcp":{"other":{"type":"remote"}}}"#.into(),
-            ),
-        ]);
-        inject_opencode(&mut env, Path::new("/opt/cccc")).expect("inject");
-        let document: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).expect("json");
-        assert_eq!(document["theme"], "dark");
-        assert_eq!(document["mcp"]["other"]["type"], "remote");
-        assert_eq!(
-            document["mcp"]["cccc"]["command"],
-            json!(["/opt/cccc", "mcp"])
-        );
-        assert_eq!(
-            document["mcp"]["cccc"]["environment"]["CCCC_ACTOR_ID"],
-            "peer1"
-        );
-    }
 
     #[cfg(unix)]
     #[test]

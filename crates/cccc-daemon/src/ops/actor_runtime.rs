@@ -15,6 +15,7 @@ mod reconcile;
 mod resume_verification;
 pub(crate) mod terminal_history;
 pub use persistence::persist_lifecycle;
+pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
 
 pub fn apply(
@@ -46,10 +47,10 @@ pub fn apply(
             "actor.stop" => super::local_headless::stop(&group.group_id, actor_id),
             "actor.restart" | "actor.new_session" => {
                 super::local_headless::stop(&group.group_id, actor_id);
-                start_local_headless(home, group, actor)?;
+                start_local_headless(home, group, actor, false)?;
             }
             _ if !super::local_headless::running(&group.group_id, actor_id) => {
-                start_local_headless(home, group, actor)?;
+                start_local_headless(home, group, actor, kind == "actor.restore")?;
             }
             _ => {}
         }
@@ -72,12 +73,15 @@ pub fn apply(
     }
 }
 
-pub(crate) fn normalize_codex_app_server(actor: &mut Actor) {
-    if actor.runtime != ActorRuntime::Codex {
+pub(crate) fn normalize_managed_session(actor: &mut Actor) {
+    if !matches!(
+        actor.runtime,
+        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+    ) {
         return;
     }
-    actor.runtime_state_source = if super::local_headless::uses_codex_app_server(actor) {
-        RuntimeStateSource::AppServer
+    actor.runtime_state_source = if super::local_headless::uses_managed_session(actor) {
+        RuntimeStateSource::ManagedSession
     } else if actor.runner == RunnerKind::Pty {
         RuntimeStateSource::Terminal
     } else {
@@ -85,7 +89,12 @@ pub(crate) fn normalize_codex_app_server(actor: &mut Actor) {
     };
 }
 
-fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
+fn start_local_headless(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    restoring: bool,
+) -> Result<(), OpError> {
     let mut actor = environment::resolve_launch_actor(home, group, actor)?;
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
@@ -95,7 +104,12 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    super::local_headless::start(home, group, &actor).map_err(OpError::io)
+    if restoring {
+        super::local_headless::restore(home, group, &actor)
+    } else {
+        super::local_headless::start(home, group, &actor)
+    }
+    .map_err(OpError::io)
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
@@ -111,15 +125,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let prepared = match (actor.runtime, actor.runner) {
         (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
             runtime_session::prepare_codex_command(
-                home,
-                &group.group_id,
-                &actor.id,
-                &cwd,
-                &base_command,
-            )
-        }
-        (ActorRuntime::Grok, cccc_contracts::RunnerKind::Pty) => {
-            runtime_session::prepare_grok_command(
                 home,
                 &group.group_id,
                 &actor.id,

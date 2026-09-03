@@ -1,6 +1,6 @@
 use super::{
-    ActiveTurn, Session, SessionTransport, Turn, TurnOutputState, codex_runtime, output, poisoned,
-    protocol,
+    ActiveTurn, Session, SessionTransport, Turn, TurnOutputState, block_on_managed,
+    managed_runtime, output, poisoned, protocol,
 };
 use cccc_contracts::{ActorRuntime, utc_now};
 use serde_json::{Value, json};
@@ -20,7 +20,7 @@ impl Session {
                 .lock()
                 .ok()
                 .is_some_and(|mut child| child.try_wait().ok().flatten().is_none()),
-            SessionTransport::CodexApp {
+            SessionTransport::ManagedAgent {
                 session,
                 has_terminal,
             } => {
@@ -37,6 +37,14 @@ impl Session {
     }
 
     pub(super) fn stop_after_invalidate(&self, after_invalidate: impl FnOnce()) {
+        let _ = self.stop_once(after_invalidate);
+    }
+
+    pub(super) fn stop_after_process_exit(&self) -> bool {
+        self.stop_once(|| {})
+    }
+
+    fn stop_once(&self, after_invalidate: impl FnOnce()) -> bool {
         let first_stop = !self.stopped.swap(true, Ordering::AcqRel);
         after_invalidate();
         match &self.transport {
@@ -48,14 +56,14 @@ impl Session {
                     let _ = child.wait();
                 }
             }
-            SessionTransport::CodexApp {
+            SessionTransport::ManagedAgent {
                 session,
                 has_terminal,
             } => {
                 if has_terminal.load(Ordering::Acquire) {
                     let _ = cccc_runtime::stop(&self.group_id, &self.actor_id);
                 }
-                let _ = codex_runtime().block_on(session.stop(session.generation()));
+                let _ = block_on_managed(session.stop(session.generation()));
             }
         }
         self.set_status("stopped", None);
@@ -63,6 +71,7 @@ impl Session {
         if first_stop {
             output::emit(self, "headless.session.stopped", serde_json::Map::new());
         }
+        first_stop
     }
 
     pub(super) fn set_status(&self, status: &str, task_id: Option<String>) {
@@ -77,7 +86,7 @@ impl Session {
     }
 
     pub(super) fn attach_terminal(&self, pid: Option<u32>) {
-        if let SessionTransport::CodexApp { has_terminal, .. } = &self.transport {
+        if let SessionTransport::ManagedAgent { has_terminal, .. } = &self.transport {
             has_terminal.store(true, Ordering::Release);
         }
         if let Ok(mut state) = self.status.lock() {
@@ -86,8 +95,8 @@ impl Session {
         }
     }
 
-    pub(super) fn mark_codex_thread_materialized(&self) {
-        if let SessionTransport::CodexApp { session, .. } = &self.transport {
+    pub(super) fn mark_managed_session_materialized(&self) {
+        if let SessionTransport::ManagedAgent { session, .. } = &self.transport {
             session.mark_thread_materialized();
         }
     }
@@ -96,7 +105,7 @@ impl Session {
         let SessionTransport::Process { stdin, .. } = &self.transport else {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Codex app-server transport does not expose process stdin",
+                "managed Agent transport does not expose process stdin",
             ));
         };
         let mut stdin = stdin.lock().map_err(|_| poisoned())?;
@@ -111,8 +120,8 @@ impl Session {
         params: Value,
         timeout: Duration,
     ) -> io::Result<Value> {
-        if let SessionTransport::CodexApp { session, .. } = &self.transport {
-            return codex_runtime().block_on(session.request(method, params, timeout));
+        if let SessionTransport::ManagedAgent { session, .. } = &self.transport {
+            return managed_runtime().block_on(session.request(method, params, timeout));
         }
         let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -149,8 +158,8 @@ impl Session {
 
     pub(super) fn respond_error(&self, id: Value, error: Value) -> io::Result<()> {
         match &self.transport {
-            SessionTransport::CodexApp { session, .. } => {
-                codex_runtime().block_on(session.respond_error(id, error))
+            SessionTransport::ManagedAgent { session, .. } => {
+                managed_runtime().block_on(session.respond_error(id, error))
             }
             SessionTransport::Process { .. } => {
                 self.write_json(&json!({"jsonrpc":"2.0","id":id,"error":error}))
@@ -183,47 +192,6 @@ pub(super) fn spawn_reader(
             }
             session.set_status("stopped", None);
             session.completion.1.notify_all();
-        })?;
-    Ok(())
-}
-
-pub(super) fn spawn_codex_reader(
-    session: Arc<Session>,
-    mut events: tokio::sync::broadcast::Receiver<super::super::codex_voice_analyst::AnalystEvent>,
-) -> io::Result<()> {
-    std::thread::Builder::new()
-        .name(format!(
-            "cccc-codex-app-out:{}:{}",
-            session.group_id, session.actor_id
-        ))
-        .spawn(move || {
-            loop {
-                match codex_runtime().block_on(events.recv()) {
-                    Ok(event) => {
-                        let disconnected = event.message.get("method").and_then(Value::as_str)
-                            == Some(super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD);
-                        output::handle_message(&session, event.message);
-                        if disconnected {
-                            session.stop();
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(
-                            skipped,
-                            group_id = %session.group_id,
-                            actor_id = %session.actor_id,
-                            "Codex Actor app-server event reader fell behind; stopping the unreplayable session"
-                        );
-                        session.stop();
-                        break;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        session.stop();
-                        break;
-                    }
-                }
-            }
         })?;
     Ok(())
 }
@@ -285,24 +253,61 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
             session.group_id, session.actor_id
         ))
         .spawn(move || {
-            while session.running() {
+            'deliveries: while session.running() {
                 let Ok(turn) = receiver.recv() else { break };
-                let Some(generation) = claim_turn(&session, &turn) else {
-                    break;
-                };
-                session.set_status(
-                    "working",
-                    Some(turn.event_id.clone()).filter(|id| !id.is_empty()),
-                );
-                let result = if session.runtime == ActorRuntime::Codex {
-                    protocol::submit_codex(&session, &turn)
-                } else {
-                    protocol::submit_claude(&session, &turn)
-                };
-                let Ok(turn_id) = result else {
-                    output::emit_turn(&session, &turn, "headless.turn.failed", "");
-                    output::release_failed_reservation(&session);
-                    continue;
+                let (generation, turn_id) = loop {
+                    let Some(generation) = claim_turn(&session, &turn) else {
+                        break 'deliveries;
+                    };
+                    session.set_status(
+                        "working",
+                        Some(turn.event_id.clone()).filter(|id| !id.is_empty()),
+                    );
+                    let startup_prompt = session
+                        .startup_prompt
+                        .lock()
+                        .ok()
+                        .and_then(|prompt| prompt.clone());
+                    let prepared_turn = Turn {
+                        text: startup_prompt.as_ref().map_or_else(
+                            || turn.text.clone(),
+                            |prompt| format!("{prompt}\n\n{}", turn.text),
+                        ),
+                        event_id: turn.event_id.clone(),
+                        control_kind: turn.control_kind.clone(),
+                    };
+                    let result = if session.uses_structured_turn_protocol() {
+                        protocol::submit_managed(&session, &prepared_turn)
+                    } else {
+                        protocol::submit_claude(&session, &prepared_turn)
+                    };
+                    match result {
+                        Ok(turn_id) => {
+                            if startup_prompt.is_some()
+                                && let Ok(mut prompt) = session.startup_prompt.lock()
+                            {
+                                *prompt = None;
+                            }
+                            break (generation, turn_id);
+                        }
+                        Err(error)
+                            if session.is_managed()
+                                && error.kind() == io::ErrorKind::WouldBlock =>
+                        {
+                            // The native TUI won the provider-side race before its
+                            // lifecycle event reached this supervisor. Release the
+                            // local reservation so that event can be adopted, then
+                            // keep this durable delivery queued until the shared
+                            // session is idle.
+                            output::release_failed_reservation(&session);
+                            std::thread::sleep(Duration::from_millis(25));
+                        }
+                        Err(_) => {
+                            output::emit_turn(&session, &turn, "headless.turn.failed", "");
+                            output::release_failed_reservation(&session);
+                            continue 'deliveries;
+                        }
+                    }
                 };
                 if let Ok(mut active_turn) = session.active_turn.lock()
                     && let Some(active_turn) = active_turn.as_mut()

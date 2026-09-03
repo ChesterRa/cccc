@@ -324,15 +324,7 @@ async fn visible_tools_with_context(
         return core_tools(catalog);
     };
     let response = client
-        .call(&cccc_contracts::DaemonRequest {
-            v: 1,
-            op: "capability_state".into(),
-            args: serde_json::Map::from_iter([
-                ("group_id".into(), Value::String(group_id.clone())),
-                ("actor_id".into(), Value::String(actor_id.clone())),
-                ("by".into(), Value::String(actor_id.clone())),
-            ]),
-        })
+        .call(&capability_catalog_request(&group_id, &actor_id))
         .await;
     let Ok(response) = response else {
         return actor_fallback_tools(home, catalog, &group_id, &actor_id);
@@ -372,6 +364,19 @@ async fn visible_tools_with_context(
         }
     }
     output
+}
+
+fn capability_catalog_request(group_id: &str, actor_id: &str) -> cccc_contracts::DaemonRequest {
+    cccc_contracts::DaemonRequest {
+        v: 1,
+        op: "capability_state".into(),
+        args: serde_json::Map::from_iter([
+            ("group_id".into(), Value::String(group_id.into())),
+            ("actor_id".into(), Value::String(actor_id.into())),
+            ("by".into(), Value::String(actor_id.into())),
+            ("view".into(), Value::String("mcp_catalog".into())),
+        ]),
+    }
 }
 
 fn actor_fallback_tools(

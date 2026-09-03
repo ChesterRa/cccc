@@ -110,13 +110,13 @@ fn respond_unsupported_server_request(session: &Session, message: &Value) {
 }
 
 fn handle_announced_message(session: &Session, message: Value) {
-    if session.runtime == ActorRuntime::Codex
+    if session.uses_structured_turn_protocol()
         && message.get("method").and_then(Value::as_str) == Some("turn/started")
     {
-        handle_codex_turn_started(session, &message);
+        handle_managed_turn_started(session, &message);
         return;
     }
-    let completed = if session.runtime == ActorRuntime::Codex {
+    let completed = if session.uses_structured_turn_protocol() {
         message.get("method").and_then(Value::as_str) == Some("turn/completed")
     } else {
         message.get("type").and_then(Value::as_str) == Some("result")
@@ -125,12 +125,12 @@ fn handle_announced_message(session: &Session, message: Value) {
         complete_turn(session, &message);
         return;
     }
-    if session.runtime == ActorRuntime::Codex {
-        handle_codex_output(session, &message);
+    if session.uses_structured_turn_protocol() {
+        handle_managed_output(session, &message);
     } else {
         handle_claude_output(session, &message);
     }
-    if session.runtime == ActorRuntime::Codex
+    if session.uses_structured_turn_protocol()
         && message.get("method").and_then(Value::as_str) == Some("thread/status/changed")
     {
         let flags = message
@@ -169,14 +169,14 @@ enum StartedTurnDisposition {
     Conflict,
 }
 
-fn handle_codex_turn_started(session: &Session, message: &Value) {
+fn handle_managed_turn_started(session: &Session, message: &Value) {
     let turn_id = message
         .pointer("/params/turn/id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(turn_id) = turn_id else { return };
-    session.mark_codex_thread_materialized();
+    session.mark_managed_session_materialized();
     match observe_started_turn(&session.active_turn, turn_id) {
         StartedTurnDisposition::Adopted => {
             session.set_status("working", Some(turn_id.to_owned()));
@@ -187,7 +187,7 @@ fn handle_codex_turn_started(session: &Session, message: &Value) {
                 group_id = %session.group_id,
                 actor_id = %session.actor_id,
                 turn_id,
-                "Codex Actor reported an overlapping terminal turn; stopping the inconsistent session"
+                "managed Actor reported an overlapping terminal turn; stopping the inconsistent session"
             );
             session.stop();
         }
@@ -229,7 +229,7 @@ fn complete_turn(session: &Session, message: &Value) {
     let Some(current) = active_turn.as_ref() else {
         return;
     };
-    if session.runtime == ActorRuntime::Codex {
+    if session.uses_structured_turn_protocol() {
         let reported_turn_id = message
             .pointer("/params/turn/id")
             .and_then(Value::as_str)
@@ -254,8 +254,8 @@ fn complete_turn(session: &Session, message: &Value) {
     if current.external {
         return;
     }
-    let (kind, mut data) = if session.runtime == ActorRuntime::Codex {
-        codex_terminal_event(message, &current.event_id)
+    let (kind, mut data) = if session.uses_structured_turn_protocol() {
+        managed_terminal_event(message, &current.event_id)
     } else {
         claude_terminal_event(message, &current.event_id)
     };
@@ -323,7 +323,7 @@ fn active_context(session: &Session) -> Option<(String, String, String, bool)> {
     })
 }
 
-fn codex_terminal_event(message: &Value, event_id: &str) -> (&'static str, Map<String, Value>) {
+fn managed_terminal_event(message: &Value, event_id: &str) -> (&'static str, Map<String, Value>) {
     let turn = message.pointer("/params/turn").and_then(Value::as_object);
     let turn_id = turn
         .and_then(|value| value.get("id"))
@@ -423,7 +423,7 @@ fn normalize_provider_error(value: &Value) -> Value {
     }
 }
 
-fn handle_codex_output(session: &Session, message: &Value) {
+fn handle_managed_output(session: &Session, message: &Value) {
     let method = message
         .get("method")
         .and_then(Value::as_str)
@@ -626,7 +626,7 @@ mod tests {
             }}
         });
 
-        let (kind, data) = codex_terminal_event(&message, "event-1");
+        let (kind, data) = managed_terminal_event(&message, "event-1");
 
         assert_eq!(kind, "headless.turn.failed");
         assert_eq!(data["turn_id"], "turn-failed");
@@ -641,7 +641,7 @@ mod tests {
             json!({"params":{"turn":{"id":"turn-cancelled","status":"cancelled"}}}),
             json!({"params":{"turn":{"id":"turn-error","status":"completed","error":"late failure"}}}),
         ] {
-            let (kind, data) = codex_terminal_event(&message, "event-1");
+            let (kind, data) = managed_terminal_event(&message, "event-1");
             assert_eq!(kind, "headless.turn.failed");
             assert_eq!(data["event_id"], "event-1");
         }
@@ -653,7 +653,7 @@ mod tests {
             "params":{"turn":{"id":"turn-completed","status":"completed"}}
         });
 
-        let (kind, data) = codex_terminal_event(&message, "event-1");
+        let (kind, data) = managed_terminal_event(&message, "event-1");
 
         assert_eq!(kind, "headless.turn.completed");
         assert_eq!(data["turn_id"], "turn-completed");

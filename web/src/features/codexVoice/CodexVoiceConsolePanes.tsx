@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { StopIcon, TerminalIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
+import { RUNTIME_INFO } from "../../types";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
 import { VoiceAnalystTerminal } from "./VoiceAnalystTerminal";
 
@@ -86,6 +87,8 @@ export function CodexVoiceAnalystPane({
 }) {
   const { t } = useTranslation("modals");
   const analyst = controller.analyst;
+  const runtime = controller.readiness?.analyst_runtime;
+  const runtimeLabel = runtime ? RUNTIME_INFO[runtime]?.label || runtime : "";
 
   return (
     <section
@@ -101,6 +104,11 @@ export function CodexVoiceAnalystPane({
           >
             {t("codexVoiceAnalystTitle")}
           </h3>
+          {runtimeLabel ? (
+            <span className="truncate text-xs text-[var(--color-text-muted)]">
+              · {runtimeLabel}
+            </span>
+          ) : null}
           {analystPhase ? (
             <span className="truncate text-xs text-[var(--color-text-muted)]">
               · {analystPhase}
@@ -147,7 +155,7 @@ export function CodexVoiceAnalystPane({
 
       <div className="min-h-0 flex-1">
         {analyst?.tui_ready ? (
-          <VoiceAnalystTerminal analyst={analyst} isVisible={terminalVisible} />
+          <VoiceAnalystTerminal analyst={analyst} isVisible={terminalVisible} runtime={runtime} />
         ) : (
           <div className="flex h-full min-h-56 flex-col items-center justify-center px-8 text-center">
             <TerminalIcon size={30} className="text-[var(--color-text-tertiary)]" />

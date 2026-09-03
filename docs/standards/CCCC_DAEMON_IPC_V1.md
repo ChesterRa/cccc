@@ -824,8 +824,16 @@ Args:
   actor_id?: string
   by?: string
   capability_id?: string // optional; returns capability_usage for this id
+  view?: "mcp_catalog" // reserved for actor-scoped MCP tool discovery
 }
 ```
+
+The `mcp_catalog` view is read from the latest atomic Group snapshot without acquiring the
+outer Group lifecycle lock. Managed runtimes can initialize their actor-scoped CCCC MCP server
+while `actor_start` is still materializing the provider, so serializing this internal catalog
+read behind that same lifecycle lock would deadlock provider startup. All other
+`capability_state` reads retain normal Group read serialization; capability-store updates keep
+their own locking and are not relaxed by this view.
 
 Result:
 ```ts
@@ -2093,14 +2101,17 @@ Transcript producers MAY attach the following revision metadata:
   other legacy segments are treated as `live`.
 - `supersedes_segment_ids`: segment IDs in the same session that the new record
   replaces in the current projection.
-- `supersede_stage: "live"`: daemon shorthand that resolves all current live
-  segment IDs in the session into `supersedes_segment_ids` before committing
-  and keeps race-late live checkpoints in that session raw-only.
+- `supersede_stage: "live"`: daemon shorthand for a stable `final` segment
+  (`is_final=true`) that resolves all current live segment IDs in the session
+  into `supersedes_segment_ids` before committing and keeps race-late live
+  checkpoints in that session raw-only.
 - `source_model_id`: the producer model identity retained with the raw record.
-- `revision_only: true`: valid only for a `final` segment. The daemon persists
-  the segment and updates transcript projection. Under the input-state lock it
-  MUST reuse an existing ASR input for that session; when none exists, it MUST
-  create and deliver the final segment as the session's first semantic input.
+- `revision_only: true`: valid only for a stable `final` segment
+  (`is_final=true`). The daemon retains this marker with the raw segment and
+  updates transcript projection. Under the input-state lock it MUST reuse an
+  existing ASR input for that session; when none exists and automatic document
+  input is enabled, it MUST create and deliver the final segment as the
+  session's first semantic input.
 
 Revision records are append-only. The daemon MUST retain superseded live rows
 in session and document transcript sidecars, while the bounded session
@@ -2903,7 +2914,13 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
-- A daemon-launched actor whose executable is directly identified as `codex` MUST enter one daemon-owned Codex app-server session for both PTY and headless runners. Unsupported subcommands or prompt tails fail explicitly instead of silently selecting another Codex transport. Actor deliveries go to that session as structured turns. PTY adds a remote TUI attached to the same app-server thread; headless omits only that presentation layer. The app-server and remote TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same persisted thread when eligible. An opaque wrapper that cannot be transformed without changing its meaning MAY retain the legacy direct-PTY or stdio compatibility path.
+- A daemon-launched actor whose executable is directly identified as `codex` MUST enter one daemon-owned Codex app-server session for both PTY and headless runners. Unsupported subcommands or prompt tails fail explicitly instead of silently selecting another Codex transport. Actor deliveries go to that session as structured turns. PTY adds a remote TUI attached to the same app-server thread; headless omits only that presentation layer. The app-server and remote TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same persisted thread when eligible. An opaque Codex wrapper that cannot be transformed without changing its meaning MAY retain the explicit direct-PTY or stdio compatibility path.
+- A daemon-launched `grok` actor MUST use one CCCC-owned managed session for both PTY and headless runners. CCCC starts a dedicated private Grok leader, connects its ACP controller and (for PTY) the native writable Grok TUI to the same provider session, injects the actor-scoped CCCC MCP server at session creation, and treats structured lifecycle events as working/completion authority. CCCC owns leader/socket, session/load, cwd, MCP, and approval arguments; a conflicting subcommand, wrapper, prompt tail, or user-owned session-control argument MUST fail explicitly and MUST NOT fall back to terminal-text injection. The controller and TUI MUST resolve the same model/provider configuration and private environment; CCCC-owned topology arguments MUST be applied only to the Grok process that accepts them. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-PTY Grok receipts MUST NOT be resumed.
+- A daemon-launched `opencode` actor MUST use one CCCC-owned managed session for both PTY and headless runners. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, controls the ACP session over stdio, attaches `opencode attach` to that exact session for PTY, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer; older releases may return from `session/prompt` before their final output updates and therefore MUST fail startup with an actionable upgrade error. ACP updates and the authenticated session-status stream are lifecycle authority; a lost or malformed non-replayable stream invalidates the session. CCCC owns ACP/server/session/attach/cwd/MCP and permission policy. It MAY preserve documented provider/model/agent/logging options, but conflicting subcommands, wrappers, prompt tails, server/session/attach arguments, or user-owned topology MUST fail explicitly and MUST NOT fall back to terminal-text injection. Permission requests MAY receive only a request-scoped one-time approval; CCCC MUST NOT persist a provider-global approval. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-PTY OpenCode state MUST NOT be resumed.
+- Managed runtime startup MAY synchronously enumerate the injected actor-scoped CCCC MCP tools before its provider session becomes ready. That catalog discovery MUST use `capability_state` with `view="mcp_catalog"` so it cannot wait on the same Group lifecycle lock held by `actor_start`; ordinary capability reads remain serialized normally.
+- For any managed session, a native-TUI turn and a daemon delivery MUST never overlap. A delivery that loses the provider-side busy race before the corresponding lifecycle event is observed remains queued and retries only after the shared session is idle; this explicit pre-acceptance busy result MUST NOT be persisted as an ambiguous or unresolved delivery attempt.
+- Managed ACP output received before prompt admission MUST be buffered within fixed byte and event-count bounds. An explicit provider-busy rejection MUST discard that buffer and leave the delivery queued. Once the provider authoritatively accepts the prompt, CCCC MUST publish the buffered lifecycle updates in order, including for providers that omit a live ACP user-message echo. A provider-specific authenticated event stream MAY establish early admission only by correlating the same managed session, a user-authored message, and the exact submitted prompt; generic busy or output activity is insufficient. When an admitted provider version guarantees that all prompt output precedes the `session/prompt` response, that response MUST be the exact completion fence. A bounded post-response drain MAY be enabled only as an explicit provider-specific normalization policy; it MUST NOT mask a known-bad provider version.
+- Daemon startup restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. It MAY reconnect a validated existing session or initialize a provider that can expose its native terminal while remaining idle. A fresh managed PTY that requires a provider turn before its terminal can attach MUST remain dormant until an explicit lifecycle request or a real pending delivery starts it. A restored headless worker MAY initialize its provider process in an idle state, but its CCCC startup prompt MUST be deferred to and combined with the first real delivery. Recovery of an actual pending Send is a valid work trigger; daemon startup alone is not.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply to an actor is also an explicit wake action: it MUST enable the targeted actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
@@ -2926,7 +2943,7 @@ Result:
 ```
 
 Notes:
-- Supported for Antigravity, `claude`, `codex`, and Grok PTY actors.
+- Supported for Antigravity, `claude`, `codex`, Grok, and OpenCode actors.
 - A running Antigravity actor starts a fresh provider conversation through its native `/clear` boundary while preserving the authenticated PTY process. A stopped Antigravity actor starts normally with the same runtime settings.
 - Other supported runtimes stop the current actor process if present, clear CCCC's saved runtime session metadata for that actor, then start the actor with the same runtime settings.
 - Does not delete provider-side conversation/session history.

@@ -26,7 +26,7 @@ impl ResolvedAgentRuntime {
 
     #[must_use]
     pub fn identity_fingerprint(&self) -> String {
-        identity_fingerprint(&self.environment)
+        identity_fingerprint(self.runtime, &self.environment)
     }
 }
 
@@ -78,7 +78,10 @@ pub fn resolve(
             environment: custom_environment.clone(),
         }
     };
-    if resolved.runtime != ActorRuntime::Codex {
+    if !matches!(
+        resolved.runtime,
+        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+    ) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(
@@ -146,22 +149,51 @@ pub fn validate_private_environment(values: &BTreeMap<String, String>) -> io::Re
     validation::validate_private_environment(values)
 }
 
-pub fn identity_environment_changed(
-    before: &BTreeMap<String, String>,
-    after: &BTreeMap<String, String>,
+pub fn runtime_identity_changed(
+    before: &ResolvedAgentRuntime,
+    after: &ResolvedAgentRuntime,
 ) -> bool {
-    identity_fingerprint(before) != identity_fingerprint(after)
+    before.identity_fingerprint() != after.identity_fingerprint()
 }
 
-fn identity_fingerprint(environment: &BTreeMap<String, String>) -> String {
-    let effective = ["CODEX_HOME", "HOME", "USERPROFILE"].map(|key| {
-        let value = environment
-            .get(key)
-            .cloned()
-            .or_else(|| std::env::var_os(key).map(|value| value.to_string_lossy().into_owned()));
-        (key, value)
-    });
-    let encoded = serde_json::to_vec(&effective).expect("Codex identity environment serializes");
+fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, String>) -> String {
+    if runtime == ActorRuntime::Codex {
+        // Keep the v0.4.37 receipt format byte-for-byte stable so adding other
+        // managed Runtimes does not discard an existing Codex conversation.
+        let effective = ["CODEX_HOME", "HOME", "USERPROFILE"].map(|key| {
+            let value = environment.get(key).cloned().or_else(|| {
+                std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+            });
+            (key, value)
+        });
+        let encoded =
+            serde_json::to_vec(&effective).expect("Codex identity environment serializes");
+        return format!("{:x}", Sha256::digest(encoded));
+    }
+    let provider_keys: &[&str] = match runtime {
+        ActorRuntime::Grok => &["GROK_HOME", "HOME", "USERPROFILE"],
+        ActorRuntime::Opencode => &[
+            "HOME",
+            "USERPROFILE",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_DB",
+        ],
+        _ => &["HOME", "USERPROFILE"],
+    };
+    let effective = provider_keys
+        .iter()
+        .map(|key| {
+            let value = environment.get(*key).cloned().or_else(|| {
+                std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+            });
+            (*key, value)
+        })
+        .collect::<Vec<_>>();
+    let encoded = serde_json::to_vec(&(runtime, effective))
+        .expect("managed Runtime identity environment serializes");
     format!("{:x}", Sha256::digest(encoded))
 }
 

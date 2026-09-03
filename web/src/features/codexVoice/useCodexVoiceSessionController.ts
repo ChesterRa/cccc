@@ -74,9 +74,9 @@ export function useCodexVoiceSessionController(enabled = true) {
       setError(t("codexVoiceExistingCallStartBlocked"));
       return;
     }
-    if (readiness && !readiness.codex_cli_available) {
+    if (readiness && !readiness.analyst_runtime_available) {
       setPhase("failed");
-      setError(t("codexVoiceCodexCliMissing"));
+      setError(t("codexVoiceAnalystRuntimeMissing", { runtime: readiness.analyst_runtime }));
       return;
     }
     if (readiness && !readiness.realtime_credentials_available) {

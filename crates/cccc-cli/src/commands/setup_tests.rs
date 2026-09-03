@@ -1,4 +1,5 @@
 use super::*;
+use cccc_contracts::ActorRuntime;
 
 #[test]
 fn public_launcher_override_must_be_an_existing_absolute_file() {
@@ -66,4 +67,59 @@ fn builds_noninteractive_cline_command_with_compiled_binary() {
             "mcp"
         ]
     );
+}
+
+#[test]
+fn grok_setup_reports_session_owned_mcp_without_a_global_command() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let args = SetupArgs {
+        runtime: Some("grok".into()),
+        path: ".".into(),
+    };
+    let value = setup_one(
+        &home,
+        &args,
+        "grok",
+        Path::new("/opt/cccc"),
+        &json!({"mcpServers":{}}),
+    )
+    .expect("managed setup");
+
+    assert_eq!(value["status"], "ready");
+    assert_eq!(value["managed"], true);
+    assert_eq!(value["mode"], "managed_session");
+    assert_eq!(value["mcp"], "injected_per_session");
+    assert!(
+        cccc_core::runtime_mcp::add_command(ActorRuntime::Grok, Path::new("/opt/cccc")).is_none()
+    );
+    assert!(cccc_core::runtime_mcp::remove_command(ActorRuntime::Grok).is_none());
+}
+
+#[test]
+fn opencode_setup_reports_session_owned_mcp_without_global_config_mutation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let args = SetupArgs {
+        runtime: Some("opencode".into()),
+        path: ".".into(),
+    };
+    let value = setup_one(
+        &home,
+        &args,
+        "opencode",
+        Path::new("/opt/cccc"),
+        &json!({"mcpServers":{}}),
+    )
+    .expect("managed setup");
+
+    assert_eq!(value["status"], "ready");
+    assert_eq!(value["managed"], true);
+    assert_eq!(value["mode"], "managed_session");
+    assert_eq!(value["mcp"], "injected_per_session");
+    assert!(
+        cccc_core::runtime_mcp::add_command(ActorRuntime::Opencode, Path::new("/opt/cccc"))
+            .is_none()
+    );
+    assert!(cccc_core::runtime_mcp::remove_command(ActorRuntime::Opencode).is_none());
 }

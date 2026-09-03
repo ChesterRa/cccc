@@ -63,7 +63,7 @@ fn model_from_arguments(arguments: &[String]) -> String {
         .unwrap_or_default()
 }
 
-fn resolve_runtime_executable(
+pub(super) fn resolve_runtime_executable(
     value: &str,
     environment: &BTreeMap<String, String>,
 ) -> io::Result<PathBuf> {

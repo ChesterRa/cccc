@@ -230,7 +230,12 @@ export function getActorDisplayWorkingState(
     .toLowerCase();
   const isRunning = actor.running ?? actor.enabled ?? false;
 
-  if (!isRunning || effectiveRunner === "headless" || stateSource === "app_server") {
+  if (
+    !isRunning ||
+    effectiveRunner === "headless" ||
+    stateSource === "managed_session" ||
+    stateSource === "app_server"
+  ) {
     return backendState;
   }
 

@@ -14,6 +14,17 @@ fn initialize_negotiates_supported_legacy_protocol_versions() {
     );
 }
 
+#[test]
+fn actor_scoped_catalog_query_marks_the_lock_independent_view() {
+    let request = crate::capability_catalog_request("g_one", "peer1");
+
+    assert_eq!(request.op, "capability_state");
+    assert_eq!(request.args["group_id"], "g_one");
+    assert_eq!(request.args["actor_id"], "peer1");
+    assert_eq!(request.args["by"], "peer1");
+    assert_eq!(request.args["view"], "mcp_catalog");
+}
+
 #[tokio::test]
 async fn initialize_truthfully_disables_tool_list_change_notifications() {
     let temp = tempfile::tempdir().expect("tempdir");

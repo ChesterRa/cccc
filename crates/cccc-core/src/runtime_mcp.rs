@@ -159,18 +159,6 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
         ]),
         ActorRuntime::Amp => common(&["amp", "mcp", "add", "cccc", &cccc, "mcp"]),
         ActorRuntime::Auggie => common(&["auggie", "mcp", "add", "cccc", "--", &cccc, "mcp"]),
-        ActorRuntime::Grok => vec![
-            "grok".into(),
-            "mcp".into(),
-            "add".into(),
-            "cccc".into(),
-            "--command".into(),
-            cccc,
-            "--args".into(),
-            "mcp".into(),
-            "--env".into(),
-            "PYTHONUNBUFFERED=1".into(),
-        ],
         ActorRuntime::Kimi => common(&[
             "kimi",
             "mcp",
@@ -199,7 +187,6 @@ pub fn remove_command(runtime: ActorRuntime) -> Option<Vec<String>> {
         ActorRuntime::Droid => &["droid", "mcp", "remove", "cccc"],
         ActorRuntime::Amp => &["amp", "mcp", "remove", "cccc"],
         ActorRuntime::Auggie => &["auggie", "mcp", "remove", "cccc"],
-        ActorRuntime::Grok => &["grok", "mcp", "remove", "cccc"],
         ActorRuntime::Kimi => &["kimi", "mcp", "remove", "cccc"],
         _ => return None,
     };
@@ -211,7 +198,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_managed_runtime_catalog_matches_python_contract() {
+    fn auto_managed_runtime_catalog_matches_supported_contract() {
         let runtimes = [
             ActorRuntime::Claude,
             ActorRuntime::Cline,
@@ -230,16 +217,6 @@ mod tests {
         assert!(runtimes.into_iter().all(is_auto_managed));
         assert!(!is_auto_managed(ActorRuntime::Cursor));
         assert!(!is_auto_managed(ActorRuntime::Custom));
-    }
-
-    #[test]
-    fn grok_setup_keeps_python_compatibility_environment() {
-        let command = add_command(ActorRuntime::Grok, Path::new("/opt/cccc")).expect("command");
-        assert!(
-            command
-                .windows(2)
-                .any(|parts| parts == ["--env", "PYTHONUNBUFFERED=1"])
-        );
     }
 
     #[test]

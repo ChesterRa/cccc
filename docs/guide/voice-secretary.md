@@ -74,7 +74,8 @@ replaces the low-latency **Live Paraformer** cards with the higher-quality
 **Final SenseVoice** result after stop or reconnect, while the raw live rows
 remain in transcript sidecars for recovery and audit. The daemon atomically
 deduplicates this revision against existing live semantic input; a short
-recording with no live input uses the final revision as its one required input.
+recording with no live input uses the final revision as its one document input
+when automatic document input is enabled.
 Partial final ASR never supersedes the complete live transcript. If no live text
 exists, its successful partial text remains the fallback. If final persistence
 fails, the WebSocket reports that state and the browser retries the idempotent

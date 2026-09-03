@@ -16,12 +16,12 @@ pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value
         cccc_core::codex_voice_settings::private_environment(home).unwrap_or_default();
     let runtime =
         cccc_core::codex_voice_settings::resolve(home, &settings, &custom_environment).ok();
-    let codex_cli_available = runtime.as_ref().is_some_and(|runtime| {
-        let executable = runtime
-            .command
-            .first()
-            .map(String::as_str)
-            .unwrap_or("codex");
+    let analyst_runtime = runtime
+        .as_ref()
+        .map(|runtime| runtime_name(runtime.runtime))
+        .unwrap_or_else(|| runtime_name(settings.runtime));
+    let analyst_runtime_available = runtime.as_ref().is_some_and(|runtime| {
+        let executable = analyst_runtime_executable(runtime);
         let explicit = std::path::Path::new(executable).is_absolute()
             || executable == "~"
             || executable.starts_with("~/")
@@ -44,9 +44,31 @@ pub(super) async fn codex_voice_readiness(home: &cccc_core::HomeLayout) -> Value
             Err(_) => false,
         };
     json!({
-        "codex_cli_available":codex_cli_available,
+        "analyst_runtime":analyst_runtime,
+        "analyst_runtime_available":analyst_runtime_available,
         "realtime_credentials_available":realtime_credentials_available,
     })
+}
+
+fn analyst_runtime_executable(
+    runtime: &cccc_core::codex_voice_settings::ResolvedAgentRuntime,
+) -> &str {
+    runtime
+        .command
+        .first()
+        .map(String::as_str)
+        .unwrap_or_else(|| match runtime.runtime {
+            cccc_contracts::ActorRuntime::Grok => "grok",
+            cccc_contracts::ActorRuntime::Opencode => "opencode",
+            _ => "codex",
+        })
+}
+
+fn runtime_name(runtime: cccc_contracts::ActorRuntime) -> String {
+    serde_json::to_value(runtime)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +187,12 @@ fn realtime_credentials_available(bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_analyst_settings, realtime_credentials_available};
+    use super::{
+        analyst_runtime_executable, parse_analyst_settings, realtime_credentials_available,
+    };
+    use cccc_contracts::ActorRuntime;
+    use cccc_core::codex_voice_settings::ResolvedAgentRuntime;
+    use std::collections::BTreeMap;
 
     #[test]
     fn readiness_requires_both_codex_token_fields() {
@@ -176,6 +203,22 @@ mod tests {
             br#"{"tokens":{"access_token":"access"}}"#
         ));
         assert!(!realtime_credentials_available(b"not-json"));
+    }
+
+    #[test]
+    fn readiness_probes_the_selected_runtime_default() {
+        for (runtime, executable) in [
+            (ActorRuntime::Codex, "codex"),
+            (ActorRuntime::Grok, "grok"),
+            (ActorRuntime::Opencode, "opencode"),
+        ] {
+            let resolved = ResolvedAgentRuntime {
+                runtime,
+                command: Vec::new(),
+                environment: BTreeMap::new(),
+            };
+            assert_eq!(analyst_runtime_executable(&resolved), executable);
+        }
     }
 
     #[test]

@@ -24,7 +24,8 @@ export type CodexVoiceActiveResult = {
 };
 
 export type CodexVoiceReadiness = {
-  codex_cli_available: boolean;
+  analyst_runtime: string;
+  analyst_runtime_available: boolean;
   realtime_credentials_available: boolean;
 };
 

@@ -18,9 +18,10 @@ pub(super) fn launch_integration(actor: &Actor) -> LaunchIntegration {
     match (actor.runtime, actor.runtime_state_source) {
         // PTY Codex actors need lifecycle hooks for working-state projection,
         // including actors explicitly configured with app-server state.
-        (ActorRuntime::Codex, RuntimeStateSource::Terminal | RuntimeStateSource::AppServer) => {
-            LaunchIntegration::CodexHooks
-        }
+        (
+            ActorRuntime::Codex,
+            RuntimeStateSource::Terminal | RuntimeStateSource::ManagedSession,
+        ) => LaunchIntegration::CodexHooks,
         (ActorRuntime::Claude, RuntimeStateSource::Terminal) => LaunchIntegration::ClaudeHooks,
         _ => LaunchIntegration::None,
     }

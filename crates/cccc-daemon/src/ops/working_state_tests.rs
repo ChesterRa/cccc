@@ -48,7 +48,7 @@ fn app_server_codex_uses_the_bound_hook_process_state() {
     let group_id = "g_app_server_codex_projection";
     let mut actor = Actor::new("peer1");
     actor.runtime = ActorRuntime::Codex;
-    actor.runtime_state_source = RuntimeStateSource::AppServer;
+    actor.runtime_state_source = RuntimeStateSource::ManagedSession;
     cccc_core::codex_hook_state::begin_launch(
         &home,
         "codex",

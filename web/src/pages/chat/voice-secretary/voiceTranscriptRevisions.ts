@@ -1,8 +1,9 @@
 type TranscriptRecord = Record<string, unknown>;
 
 export function projectVoiceTranscriptRevisions(segments: TranscriptRecord[]): TranscriptRecord[] {
+  const stableSegments = segments.filter((segment) => segment.is_final !== false);
   const superseded = new Set(
-    segments.flatMap((segment) => {
+    stableSegments.flatMap((segment) => {
       const sessionId = String(segment.session_id || "").trim();
       return Array.isArray(segment.supersedes_segment_ids)
         ? segment.supersedes_segment_ids
@@ -13,13 +14,13 @@ export function projectVoiceTranscriptRevisions(segments: TranscriptRecord[]): T
     }),
   );
   const supersedesLiveSessions = new Set(
-    segments
+    stableSegments
       .filter(
         (segment) => segment.transcript_stage === "final" && segment.supersede_stage === "live",
       )
       .map((segment) => String(segment.session_id || "").trim()),
   );
-  return segments.filter((segment) => {
+  return stableSegments.filter((segment) => {
     const segmentId = String(segment.segment_id || "").trim();
     const sessionId = String(segment.session_id || "").trim();
     return (

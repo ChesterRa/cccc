@@ -152,7 +152,20 @@ fn setup_one(
     }
     if runtime == "opencode" {
         return Ok(json!({
-            "runtime":runtime,"mode":"runtime_env","status":"managed_by_cccc_actor","config":config
+            "runtime":runtime,
+            "mode":"managed_session",
+            "status":"ready",
+            "managed":true,
+            "mcp":"injected_per_session"
+        }));
+    }
+    if runtime == "grok" {
+        return Ok(json!({
+            "runtime":runtime,
+            "mode":"managed_session",
+            "status":"ready",
+            "managed":true,
+            "mcp":"injected_per_session"
         }));
     }
     let command = add_command(runtime, executable)?;

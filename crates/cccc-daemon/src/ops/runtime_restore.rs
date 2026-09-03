@@ -84,7 +84,7 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
             );
             continue;
         }
-        match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
+        match actor_runtime::apply(home, &group, &actor.id, "actor.restore") {
             Ok(_) => {
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
             }

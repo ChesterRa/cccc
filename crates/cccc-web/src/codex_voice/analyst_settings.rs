@@ -88,9 +88,9 @@ impl CodexVoiceSessions {
             resolved_previous_runtime.unwrap_or_else(|| previous.launch_runtime());
 
         let materialized = previous.analyst.tui_ready();
-        let identity_changed = cccc_core::codex_voice_settings::identity_environment_changed(
-            &previous_runtime.environment,
-            &candidate_runtime.environment,
+        let identity_changed = cccc_core::codex_voice_settings::runtime_identity_changed(
+            &previous_runtime,
+            &candidate_runtime,
         );
         let resume_thread_id =
             (materialized && !identity_changed).then(|| previous.analyst.thread_id().to_owned());

@@ -13,6 +13,7 @@ vi.mock("../../../services/api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../services/api")>();
   return {
     ...original,
+    fetchMembership: vi.fn(),
     createGroupBridgePairingInvite: vi.fn(),
     createGroupBridgePairingConnectionInfo: vi.fn(),
   };
@@ -35,6 +36,10 @@ describe("GroupBridgePairingSection invitation auto-copy", () => {
 
   beforeEach(async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.mocked(api.fetchMembership).mockResolvedValue({
+      ok: true,
+      result: { membership: { logged_in: false } },
+    });
     vi.mocked(api.createGroupBridgePairingInvite).mockResolvedValue({
       ok: true,
       result: {

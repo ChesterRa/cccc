@@ -65,25 +65,42 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     }
     // Preserve desired lifecycle after a provider exit. A later user-directed
     // message follows the same wake path whether the process exited or was stopped.
-    append_exit_event(store, status)
+    append_exit_event(store, &status.group_id, &status.actor_id, status.exit_code)
 }
 
-fn append_exit_event(store: &GroupStore, status: SessionStatus) -> Result<(), OpError> {
-    let mut event = Event::new("actor.stop", &status.group_id);
+pub(crate) fn record_process_exit(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    exit_code: Option<u32>,
+) -> Result<(), OpError> {
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let Ok(group) = store.load(group_id) else {
+        return Ok(());
+    };
+    if !group.actors.iter().any(|actor| actor.id == actor_id) {
+        return Ok(());
+    }
+    append_exit_event(&store, group_id, actor_id, exit_code)
+}
+
+fn append_exit_event(
+    store: &GroupStore,
+    group_id: &str,
+    actor_id: &str,
+    exit_code: Option<u32>,
+) -> Result<(), OpError> {
+    let mut event = Event::new("actor.stop", group_id);
     event.by = "system".into();
     event.data = serde_json::json!({
-        "actor_id": status.actor_id,
+        "actor_id": actor_id,
         "reason": "process_exit",
-        "exit_code": status.exit_code,
+        "exit_code": exit_code,
     })
     .as_object()
     .cloned()
     .unwrap_or_default();
-    ledger::append(
-        &store.ledger_path(&status.group_id).map_err(OpError::io)?,
-        &event,
-    )
-    .map_err(OpError::io)
+    ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event).map_err(OpError::io)
 }
 
 #[cfg(test)]
@@ -104,7 +121,7 @@ mod tests {
         store
             .mutate(&group.group_id, |doc| {
                 let mut actor = Actor::new("peer1");
-                actor.runtime_state_source = RuntimeStateSource::AppServer;
+                actor.runtime_state_source = RuntimeStateSource::ManagedSession;
                 doc.actors.push(actor);
                 doc.running = true;
                 Ok(())

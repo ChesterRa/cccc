@@ -1,30 +1,10 @@
-use cccc_contracts::{
-    Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind, RuntimeStateSource,
-};
+use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, Scope, actors, inbox, ledger};
 use serde_json::{Map, json};
 
 use crate::dispatch_concurrency::DispatchLocks;
 
 use super::{actor_delivery, actor_runtime, runtime_restore};
-
-#[test]
-fn codex_runtime_source_follows_the_effective_app_server_capability() {
-    let mut actor = Actor::new("codex");
-    actor.runtime = ActorRuntime::Codex;
-    actor.runner = RunnerKind::Pty;
-    actor_runtime::normalize_codex_app_server(&mut actor);
-    assert_eq!(actor.runtime_state_source, RuntimeStateSource::AppServer);
-
-    actor.runner = RunnerKind::Headless;
-    actor_runtime::normalize_codex_app_server(&mut actor);
-    assert_eq!(actor.runtime_state_source, RuntimeStateSource::AppServer);
-
-    actor.runner = RunnerKind::Pty;
-    actor.command = vec!["custom-codex-wrapper".into()];
-    actor_runtime::normalize_codex_app_server(&mut actor);
-    assert_eq!(actor.runtime_state_source, RuntimeStateSource::Terminal);
-}
 
 #[test]
 fn restore_migrates_legacy_actor_scope_paths_even_for_stopped_groups() {

@@ -1,6 +1,6 @@
 use super::{
-    ActiveTurn, HeadlessStatus, Session, SessionTransport, Turn, TurnOutputState, codex_runtime,
-    events, poisoned, provider_cli, session, turn_channel,
+    ActiveTurn, HeadlessStatus, Session, SessionTransport, Turn, TurnOutputState, events,
+    managed_reader, managed_runtime, poisoned, provider_cli, session, turn_channel,
 };
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
@@ -58,16 +58,29 @@ impl Drop for StartGuard {
 pub fn supports(actor: &Actor) -> bool {
     (actor.runner == RunnerKind::Headless
         && matches!(actor.runtime, ActorRuntime::Codex | ActorRuntime::Claude))
-        || uses_codex_app_server(actor)
+        || uses_managed_session(actor)
 }
 
-pub(super) fn uses_codex_app_server(actor: &Actor) -> bool {
-    actor.runtime == ActorRuntime::Codex
-        && matches!(actor.runner, RunnerKind::Pty | RunnerKind::Headless)
-        && provider_cli::is_provider_binary(actor, &provider_cli::base_command(actor))
+pub(super) fn uses_managed_session(actor: &Actor) -> bool {
+    if !matches!(actor.runner, RunnerKind::Pty | RunnerKind::Headless) {
+        return false;
+    }
+    match actor.runtime {
+        ActorRuntime::Grok | ActorRuntime::Opencode => true,
+        ActorRuntime::Codex => {
+            provider_cli::is_provider_binary(actor, &provider_cli::base_command(actor))
+        }
+        _ => false,
+    }
 }
 
-fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key) -> io::Result<()> {
+fn start_managed_agent(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    key: Key,
+    restoring: bool,
+) -> io::Result<()> {
     let cwd = working_directory(group, actor)?;
     let mut env = actor.env.clone();
     env.insert(
@@ -85,7 +98,7 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
         .into(),
     );
     super::super::codex_mcp::configure_actor_cli(&mut env);
-    let app = codex_runtime().block_on(
+    let app = managed_runtime().block_on(
         super::super::codex_voice_analyst::AnalystSession::launch_actor(
             home,
             super::super::codex_voice_analyst::ActorLaunchConfig {
@@ -93,6 +106,7 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
                 group_id: group.group_id.clone(),
                 actor_id: actor.id.clone(),
                 runner: actor.runner,
+                runtime: actor.runtime,
                 command: provider_cli::base_command(actor),
                 environment: env,
             },
@@ -107,14 +121,29 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
         event_id: String::new(),
         control_kind: "bootstrap".into(),
     };
-    let eager_bootstrap = actor.runner == RunnerKind::Pty;
+    // A fresh Codex legacy-history thread cannot be resumed by the stock TUI
+    // until its first real turn materializes the rollout. During daemon restore
+    // there is no user work to justify such a turn, so leave that actor dormant;
+    // unread delivery or an explicit start will wake it through the normal path.
+    // Providers that can expose an idle TUI without model work still restore.
+    if restoring && actor.runner == RunnerKind::Pty && !app.tui_ready() {
+        let _ = managed_runtime().block_on(app.stop(app.generation()));
+        let _ = super::super::runtime_session::remove(home, &group.group_id, &actor.id);
+        tracing::info!(
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            "deferred fresh managed PTY until real work or an explicit start"
+        );
+        return Ok(());
+    }
+    let eager_bootstrap = !restoring && actor.runner == RunnerKind::Pty;
     let (turns, receiver) = turn_channel();
     let item = Arc::new(Session {
         home: home.clone(),
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
         runtime: actor.runtime,
-        transport: SessionTransport::CodexApp {
+        transport: SessionTransport::ManagedAgent {
             session: Arc::clone(&app),
             has_terminal: AtomicBool::new(false),
         },
@@ -129,6 +158,7 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
         pending: Mutex::new(HashMap::new()),
         thread_id: Mutex::new(app.thread_id().to_owned()),
         resumed_provider_session_id: Mutex::new(String::new()),
+        startup_prompt: Mutex::new(restoring.then_some(prompt)),
         active_turn: Mutex::new(eager_bootstrap.then(|| ActiveTurn {
             event_id: bootstrap.event_id.clone(),
             turn_id: String::new(),
@@ -140,12 +170,12 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
         completion: (Mutex::new(0), Condvar::new()),
         turns,
     });
-    if let Err(error) = session::spawn_codex_reader(Arc::clone(&item), app.subscribe()) {
+    if let Err(error) = managed_reader::spawn(Arc::clone(&item), app.subscribe()) {
         item.stop();
         return Err(error);
     }
     let eager_turn_id = if eager_bootstrap {
-        match super::protocol::submit_codex(&item, &bootstrap) {
+        match super::protocol::submit_managed(&item, &bootstrap) {
             Ok(turn_id) => {
                 if let Ok(mut active) = item.active_turn.lock()
                     && let Some(active) = active.as_mut()
@@ -214,7 +244,7 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
     if let Some(turn_id) = eager_turn_id {
         super::output::emit_turn(&item, &bootstrap, "headless.turn.started", &turn_id);
         super::output::announce_turn(&item);
-    } else {
+    } else if !restoring {
         let _ = item.turns.try_send(bootstrap);
     }
     super::output::emit(&item, "headless.session.started", Map::new());
@@ -222,6 +252,19 @@ fn start_codex_app(home: &HomeLayout, group: &GroupDoc, actor: &Actor, key: Key)
 }
 
 pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<()> {
+    start_with_mode(home, group, actor, false)
+}
+
+pub fn restore(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<()> {
+    start_with_mode(home, group, actor, true)
+}
+
+fn start_with_mode(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    restoring: bool,
+) -> io::Result<()> {
     if !supports(actor) {
         return Ok(());
     }
@@ -232,8 +275,8 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     }
     stop(&group.group_id, &actor.id);
 
-    if uses_codex_app_server(actor) {
-        return start_codex_app(home, group, actor, key);
+    if uses_managed_session(actor) {
+        return start_managed_agent(home, group, actor, key, restoring);
     }
 
     let cwd = working_directory(group, actor)?;
@@ -295,6 +338,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
         .ok_or_else(|| io::Error::other("headless stderr unavailable"))?;
     let pid = child.id();
     let (turns, receiver) = turn_channel();
+    let prompt = cccc_core::system_prompt::render_session(home, group, actor);
     let item = Arc::new(Session {
         home: home.clone(),
         group_id: group.group_id.clone(),
@@ -321,6 +365,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
                 .map(|(session_id, _)| session_id.clone())
                 .unwrap_or_default(),
         ),
+        startup_prompt: Mutex::new(restoring.then_some(prompt.clone())),
         active_turn: Mutex::new(None),
         completion: (Mutex::new(0), Condvar::new()),
         turns,
@@ -387,15 +432,16 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
         .map_err(|_| poisoned())?
         .insert(key, Arc::clone(&item));
     session::spawn_worker(Arc::clone(&item), receiver)?;
-    let prompt = cccc_core::system_prompt::render_session(home, group, actor);
-    let bootstrap = format!(
-        "[CCCC] Bootstrap this actor. Use the CCCC MCP tools for coordination and replies.\n\n{prompt}"
-    );
-    let _ = item.turns.try_send(Turn {
-        text: bootstrap,
-        event_id: String::new(),
-        control_kind: "bootstrap".into(),
-    });
+    if !restoring {
+        let bootstrap = format!(
+            "[CCCC] Bootstrap this actor. Use the CCCC MCP tools for coordination and replies.\n\n{prompt}"
+        );
+        let _ = item.turns.try_send(Turn {
+            text: bootstrap,
+            event_id: String::new(),
+            control_kind: "bootstrap".into(),
+        });
+    }
     super::output::emit(&item, "headless.session.started", Map::new());
     Ok(())
 }
@@ -635,47 +681,6 @@ mod tests {
     use cccc_core::{GroupStore, Scope};
 
     #[test]
-    fn direct_codex_actors_use_the_shared_app_server_while_wrappers_stay_compatible() {
-        let mut direct = Actor::new("codex-direct");
-        direct.runtime = ActorRuntime::Codex;
-        direct.runner = RunnerKind::Pty;
-        direct.command = vec![
-            "codex".into(),
-            "-c".into(),
-            "model_provider=\"ZAI\"".into(),
-            "-m".into(),
-            "glm-test".into(),
-        ];
-        assert!(supports(&direct));
-        assert!(uses_codex_app_server(&direct));
-
-        let mut headless = direct.clone();
-        headless.id = "codex-headless".into();
-        headless.runner = RunnerKind::Headless;
-        assert!(supports(&headless));
-        assert!(uses_codex_app_server(&headless));
-
-        let mut wrapped = direct.clone();
-        wrapped.id = "codex-wrapper".into();
-        wrapped.command = vec![
-            "sh".into(),
-            "-lc".into(),
-            "exec codex --dangerously-bypass-approvals-and-sandbox".into(),
-        ];
-        assert!(!supports(&wrapped));
-        assert!(!uses_codex_app_server(&wrapped));
-
-        wrapped.runner = RunnerKind::Headless;
-        assert!(supports(&wrapped));
-        assert!(!uses_codex_app_server(&wrapped));
-
-        let mut unsupported_direct = direct;
-        unsupported_direct.command = vec!["codex".into(), "exec".into()];
-        assert!(supports(&unsupported_direct));
-        assert!(uses_codex_app_server(&unsupported_direct));
-    }
-
-    #[test]
     fn direct_codex_cannot_enter_compatibility_transport_and_claude_preserves_arguments() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -833,6 +838,82 @@ mod tests {
             std::fs::read_to_string(&starts_path).expect("start count"),
             "x"
         );
+        stop(&group.group_id, &actor.id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_restore_waits_for_real_delivery_before_bootstrapping_a_provider() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let mut group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("quiet restore", "")
+            .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_project".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_project".into();
+        let input_log = temp.path().join("provider-input.jsonl");
+        let mut actor = Actor::new("headless");
+        actor.role = Some(ActorRole::Foreman);
+        actor.runtime = ActorRuntime::Claude;
+        actor.runner = RunnerKind::Headless;
+        actor.command = vec![
+            "sh".into(),
+            "-c".into(),
+            r#"while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$CCCC_TEST_INPUT_LOG"
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"ok"}\n'
+done"#
+                .into(),
+        ];
+        actor.env.insert(
+            "CCCC_TEST_INPUT_LOG".into(),
+            input_log.to_string_lossy().into_owned(),
+        );
+        group.actors.push(actor.clone());
+        group.running = true;
+        GroupStore::new(home.clone())
+            .expect("store")
+            .save(&group)
+            .expect("persist running group");
+
+        super::super::super::runtime_restore::restore_running(&home).expect("restore provider");
+        assert!(running(&group.group_id, &actor.id));
+        assert!(
+            !input_log.exists(),
+            "daemon restore submitted provider work without a real trigger"
+        );
+
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({
+            "text":"message-after-restore",
+            "to":[actor.id.clone()],
+            "message_mode":"send",
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+        assert!(submit(&home, &group, &actor, &event));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !input_log.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let inputs = std::fs::read_to_string(&input_log).expect("provider input");
+        assert_eq!(
+            inputs.lines().count(),
+            1,
+            "bootstrap must share the real turn"
+        );
+        assert!(inputs.contains("message-after-restore"));
+        assert!(inputs.contains("cccc_bootstrap"));
         stop(&group.group_id, &actor.id);
     }
 

@@ -1,7 +1,12 @@
+use super::turn_wait::{
+    for_settlement as wait_for_turn_settlement, until_ready as wait_until_ready,
+};
 use super::*;
 #[cfg(test)]
 use anyhow::anyhow;
 use anyhow::{Context, Result, bail};
+
+const MANAGED_CANCEL_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl AnalystLifecycle {
     pub(crate) async fn begin_voice(&self, delegation_id: &str, text: &str) -> Result<TurnReceipt> {
@@ -29,7 +34,8 @@ impl AnalystLifecycle {
         text: &str,
         origin: AnalystTurnOrigin,
     ) -> Result<TurnReceipt> {
-        {
+        let mut lifecycle_events = self.subscribe();
+        loop {
             let mut state = self.state.lock().await;
             if state.invalidated {
                 bail!("Voice Analyst lifecycle is no longer trustworthy");
@@ -42,7 +48,17 @@ impl AnalystLifecycle {
                     bail!("Voice Analyst turn is cancelling");
                 }
                 if active.origin != AnalystTurnOrigin::Voice || origin != AnalystTurnOrigin::Voice {
-                    bail!("Voice Analyst is busy with another investigation");
+                    if self.session.supports_steer() {
+                        bail!("Voice Analyst is busy with another investigation");
+                    }
+                    drop(state);
+                    wait_until_ready(&mut lifecycle_events).await?;
+                    continue;
+                }
+                if !self.session.supports_steer() {
+                    drop(state);
+                    wait_until_ready(&mut lifecycle_events).await?;
+                    continue;
                 }
                 self.session
                     .steer(self.session.generation(), &active.turn_id, text)
@@ -67,10 +83,11 @@ impl AnalystLifecycle {
                 origin,
             });
             state.settled_pending = None;
+            break;
         }
 
-        // Codex may publish `turn/started` before answering `turn/start`; the monitor must be able
-        // to record that authoritative event while the request is in flight.
+        // A managed Runtime may publish `turn/started` before answering its start request; the
+        // monitor must be able to record that authoritative event while the request is in flight.
         let result = self
             .session
             .start_turn(self.session.generation(), delegation_id, text)
@@ -95,7 +112,9 @@ impl AnalystLifecycle {
             Ok(receipt) => {
                 if let Some(settled) = settled_pending {
                     if settled.turn_id != receipt.turn_id {
-                        bail!("Codex completed a different Voice Analyst turn while starting");
+                        bail!(
+                            "managed Runtime completed a different Voice Analyst turn while starting"
+                        );
                     }
                     state
                         .delegations
@@ -104,7 +123,7 @@ impl AnalystLifecycle {
                 }
                 let emit_started = if let Some(active) = state.active.as_mut() {
                     if active.turn_id != receipt.turn_id {
-                        bail!("Codex reported two concurrent Voice Analyst turns");
+                        bail!("managed Runtime reported two concurrent Voice Analyst turns");
                     }
                     if active.latest_delegation_id.is_empty() {
                         active.latest_delegation_id = delegation_id.to_owned();
@@ -152,6 +171,8 @@ impl AnalystLifecycle {
     }
 
     pub(crate) async fn cancel_current(&self) -> Result<bool> {
+        let wait_for_settlement = !self.session.supports_steer();
+        let mut lifecycle_events = wait_for_settlement.then(|| self.subscribe());
         let turn_id = {
             let mut state = self.state.lock().await;
             let Some(active) = state.active.as_mut() else {
@@ -179,6 +200,26 @@ impl AnalystLifecycle {
                 active.cancelling = false;
             }
             return Err(error);
+        }
+        if let Some(events) = lifecycle_events.as_mut() {
+            let settled = match tokio::time::timeout(
+                MANAGED_CANCEL_SETTLE_TIMEOUT,
+                wait_for_turn_settlement(events, &turn_id),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!(
+                    "managed Runtime did not confirm turn cancellation"
+                )),
+            };
+            if let Err(error) = settled {
+                self.invalidate().await;
+                if let Err(stop_error) = self.session.stop(self.session.generation()).await {
+                    tracing::warn!(%stop_error, "failed to stop an untrustworthy managed Runtime after cancellation");
+                }
+                return Err(error);
+            }
         }
         Ok(true)
     }
@@ -230,7 +271,9 @@ impl AnalystLifecycle {
 
     pub(crate) async fn terminal_input_allowed(&self) -> bool {
         let state = self.state.lock().await;
-        !state.invalidated && state.pending.is_none()
+        !state.invalidated
+            && state.pending.is_none()
+            && (state.active.is_none() || self.session.supports_steer())
     }
 }
 

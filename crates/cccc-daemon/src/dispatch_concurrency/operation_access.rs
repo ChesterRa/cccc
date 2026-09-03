@@ -1,4 +1,5 @@
 use cccc_contracts::DaemonRequest;
+use serde_json::Value;
 
 pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
     if uses_runtime_lock_only(&request.op) {
@@ -101,6 +102,11 @@ pub(super) fn is_read_only(op: &str) -> bool {
                 | "web_model_delivery_preferences_get"
                 | "web_model_runtime_recover_turn"
         )
+}
+
+pub(super) fn is_group_lock_independent_read(request: &DaemonRequest) -> bool {
+    request.op == "capability_state"
+        && request.args.get("view").and_then(Value::as_str) == Some("mcp_catalog")
 }
 
 pub(super) fn uses_runtime_lock_only(op: &str) -> bool {

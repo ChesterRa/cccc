@@ -7,7 +7,6 @@ import {
 } from "../../components/modals/RuntimeProfileControls";
 import { SelectCombobox } from "../../components/SelectCombobox";
 import { Button } from "../../components/ui/button";
-import { Surface } from "../../components/ui/surface";
 import { RUNTIME_INFO } from "../../types";
 import { useCodexVoiceAnalystSettings } from "./useCodexVoiceAnalystSettings";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
@@ -66,37 +65,25 @@ export function CodexVoiceAnalystSettings({
                   </label>
                   <SelectCombobox
                     className="w-full min-h-[44px] rounded-xl border px-4 py-2.5 text-sm glass-input text-[var(--color-text-primary)]"
-                    value="codex"
-                    onChange={() => undefined}
+                    value={form.settings.runtime}
+                    onChange={form.setRuntime}
                     disabled={form.editingDisabled}
                     ariaLabel={tActors("runtime")}
-                    items={[{ value: "codex", label: RUNTIME_INFO.codex.label }]}
+                    items={[
+                      { value: "codex", label: RUNTIME_INFO.codex.label },
+                      { value: "grok", label: RUNTIME_INFO.grok.label },
+                      { value: "opencode", label: RUNTIME_INFO.opencode.label },
+                    ]}
                   />
                   <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                    {t("codexVoiceAnalystCodexOnlyHint")}
+                    {t("codexVoiceAnalystSupportedRuntimesHint")}
                   </p>
                 </div>
 
-                <Surface
-                  className="px-3 py-2 text-xs text-[var(--color-text-secondary)]"
-                  variant="subtle"
-                  radius="md"
-                  padding="none"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span>{RUNTIME_INFO.codex.label}</span>
-                    <span>
-                      {controller.readiness?.codex_cli_available
-                        ? tActors("available", { defaultValue: "Available" })
-                        : tActors("notAvailable", { defaultValue: "Not available" })}
-                    </span>
-                  </div>
-                </Surface>
-
                 <RuntimeCommandControl
-                  runtime="codex"
+                  runtime={form.settings.runtime}
                   command={form.settings.command}
-                  defaultCommand="codex"
+                  defaultCommand={form.defaultCommand}
                   useDefaultCommand={form.useDefaultCommand}
                   disabled={form.editingDisabled}
                   description={t("codexVoiceAnalystCommandHint")}

@@ -55,7 +55,11 @@ function controller(): CodexVoiceSessionController {
   return {
     isEngaged: false,
     analyst: null,
-    readiness: { codex_cli_available: true, realtime_credentials_available: true },
+    readiness: {
+      analyst_runtime: "codex",
+      analyst_runtime_available: true,
+      realtime_credentials_available: true,
+    },
     refresh: vi.fn(async () => undefined),
   } as unknown as CodexVoiceSessionController;
 }
@@ -99,6 +103,38 @@ describe("CodexVoiceAnalystSettings", () => {
     await act(async () => buttonWithText(host, "fromActorProfile").click());
     expect(host.textContent).toContain("codexVoiceAnalystCompatibleProfilesEmpty");
     expect(host.textContent).not.toContain("secretManager.addVariable");
+    await act(async () => root.unmount());
+  });
+
+  it("lets the user replace the runtime default with an editable explicit command", async () => {
+    api.fetchSettings.mockResolvedValue({
+      ok: true,
+      result: { settings: customSettings, environment_keys: [] },
+    });
+    api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+    api.updateSettings.mockResolvedValue({
+      ok: true,
+      result: { analyst: null, restarted: false, started_new_session: false },
+    });
+
+    const { host, root } = await renderSettings();
+    const toggle = host.querySelector('input[type="checkbox"]');
+    if (!(toggle instanceof HTMLInputElement)) throw new Error("default command toggle not found");
+    expect(toggle.checked).toBe(true);
+
+    await act(async () => toggle.click());
+
+    expect(toggle.checked).toBe(false);
+    const command = host.querySelector('input[placeholder="codex"]');
+    expect(command).toBeInstanceOf(HTMLInputElement);
+    expect((command as HTMLInputElement).value).toBe("codex");
+    await act(async () => buttonWithText(host, "codexVoiceAnalystSettingsSave").click());
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      settings: { ...customSettings, command: "codex" },
+      environmentSet: {},
+      environmentUnset: [],
+      environmentClear: false,
+    });
     await act(async () => root.unmount());
   });
 

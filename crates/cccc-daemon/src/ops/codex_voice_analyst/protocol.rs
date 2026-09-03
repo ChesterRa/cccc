@@ -294,7 +294,7 @@ async fn protocol_loop<S>(
     }
     let _ = events.send(AnalystEvent {
         generation,
-        message: json!({"method":super::CODEX_APP_DISCONNECTED_METHOD,"params":{"reason":terminal_error}}),
+        message: json!({"method":super::MANAGED_AGENT_DISCONNECTED_METHOD,"params":{"reason":terminal_error}}),
         requested_delegation_id: None,
     });
 }

@@ -54,7 +54,7 @@ fn normalizes_the_shared_runtime_command() {
 }
 
 #[test]
-fn runtime_identity_tracks_codex_storage_roots_but_not_model_credentials() {
+fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_credentials() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,
         command: vec!["codex".into()],
@@ -81,10 +81,70 @@ fn runtime_identity_tracks_codex_storage_roots_but_not_model_credentials() {
         baseline.identity_fingerprint(),
         identity_change.identity_fingerprint()
     );
-    assert!(identity_environment_changed(
-        &baseline.environment,
-        &identity_change.environment
-    ));
+    assert!(runtime_identity_changed(&baseline, &identity_change));
+
+    let mut grok = baseline.clone();
+    grok.runtime = ActorRuntime::Grok;
+    grok.command = vec!["grok".into()];
+    assert!(runtime_identity_changed(&baseline, &grok));
+
+    let opencode_a = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Opencode,
+        command: vec!["opencode".into()],
+        environment: BTreeMap::from([("XDG_DATA_HOME".into(), "/tmp/opencode-a".into())]),
+    };
+    let mut opencode_b = opencode_a.clone();
+    opencode_b
+        .environment
+        .insert("XDG_DATA_HOME".into(), "/tmp/opencode-b".into());
+    assert_ne!(
+        opencode_a.identity_fingerprint(),
+        opencode_b.identity_fingerprint()
+    );
+    opencode_b.environment.insert(
+        "OPENCODE_CONFIG_CONTENT".into(),
+        r#"{"provider":{"token":"rotated-secret"}}"#.into(),
+    );
+    opencode_b
+        .environment
+        .insert("XDG_DATA_HOME".into(), "/tmp/opencode-a".into());
+    assert_eq!(
+        opencode_a.identity_fingerprint(),
+        opencode_b.identity_fingerprint(),
+        "inline config may contain credentials and must not be hashed into receipts"
+    );
+
+    opencode_b
+        .environment
+        .insert("OPENCODE_DB".into(), "alternate.db".into());
+    assert_ne!(
+        opencode_a.identity_fingerprint(),
+        opencode_b.identity_fingerprint(),
+        "the OpenCode database selects the durable session store"
+    );
+}
+
+#[test]
+fn codex_identity_keeps_the_legacy_receipt_format() {
+    let runtime = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Codex,
+        command: vec!["codex".into()],
+        environment: BTreeMap::from([
+            ("CODEX_HOME".into(), "/identity/codex".into()),
+            ("HOME".into(), "/identity/home".into()),
+            ("USERPROFILE".into(), "C:\\identity\\home".into()),
+        ]),
+    };
+    let legacy_effective = [
+        ("CODEX_HOME", Some("/identity/codex".to_owned())),
+        ("HOME", Some("/identity/home".to_owned())),
+        ("USERPROFILE", Some("C:\\identity\\home".to_owned())),
+    ];
+    let legacy = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&legacy_effective).expect("legacy identity"))
+    );
+    assert_eq!(runtime.identity_fingerprint(), legacy);
 }
 
 #[test]

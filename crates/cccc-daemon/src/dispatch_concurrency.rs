@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
 mod operation_access;
-use operation_access::{is_global_write, is_read_only, uses_runtime_lock_only};
+use operation_access::{
+    is_global_write, is_group_lock_independent_read, is_read_only, uses_runtime_lock_only,
+};
 
 #[derive(Clone, Default)]
 pub struct DispatchLocks {
@@ -110,6 +112,13 @@ fn access(request: &DaemonRequest) -> Access {
         // lock would deadlock a reply waiting for its matching poll/complete.
         return Access::GlobalRead;
     }
+    if is_group_lock_independent_read(request) {
+        // Managed runtimes enumerate their CCCC MCP tools while actor_start is
+        // still materializing the provider. capability_state reads atomic
+        // Group snapshots and synchronizes its own CapabilityStore mutations,
+        // so taking the outer Group lock here would deadlock that handshake.
+        return Access::GlobalRead;
+    }
     let group_id = request
         .args
         .get("group_id")
@@ -160,6 +169,20 @@ mod tests {
                 json!({"group_id":"g_one","actor_id":"peer1"})
             )),
             Access::GroupRead(group_id) if group_id == "g_one"
+        ));
+        assert!(matches!(
+            access(&request(
+                "capability_state",
+                json!({"group_id":"g_one","actor_id":"peer1"})
+            )),
+            Access::GroupRead(group_id) if group_id == "g_one"
+        ));
+        assert!(matches!(
+            access(&request(
+                "capability_state",
+                json!({"group_id":"g_one","actor_id":"peer1","view":"mcp_catalog"})
+            )),
+            Access::GlobalRead
         ));
         assert!(matches!(
             access(&request(
@@ -244,6 +267,22 @@ mod tests {
                 "{op} must be serialized as a group write"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn capability_catalog_can_be_read_while_runtime_start_holds_the_group_lock() {
+        let locks = DispatchLocks::default();
+        let _runtime_start = locks.group_write("g_one").await;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            locks.acquire(&request(
+                "capability_state",
+                json!({"group_id":"g_one","actor_id":"peer1","view":"mcp_catalog"}),
+            )),
+        )
+        .await
+        .expect("managed runtime MCP discovery must not deadlock actor startup");
     }
 
     #[test]

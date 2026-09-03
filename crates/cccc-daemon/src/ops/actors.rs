@@ -78,7 +78,7 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if actor.runtime == ActorRuntime::WebModel {
         require_single_web_model_actor(home, &group_id, &actor.id)?;
     }
-    actor_runtime::normalize_codex_app_server(&mut actor);
+    actor_runtime::normalize_managed_session(&mut actor);
     actor.default_scope_key = normalize_default_scope_key(&group, &actor.default_scope_key)?;
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
@@ -198,7 +198,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         patched_preview
     };
     final_preview.role = None;
-    actor_runtime::normalize_codex_app_server(&mut final_preview);
+    actor_runtime::normalize_managed_session(&mut final_preview);
     if final_preview.runtime == ActorRuntime::WebModel {
         require_single_web_model_actor(home, &group_id, &actor_id)?;
     }
@@ -235,7 +235,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             };
             final_actor.role = None;
             final_actor.normalize_runtime_constraints();
-            actor_runtime::normalize_codex_app_server(&mut final_actor);
+            actor_runtime::normalize_managed_session(&mut final_actor);
             let index = doc
                 .actors
                 .iter()

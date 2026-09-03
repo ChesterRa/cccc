@@ -1,15 +1,69 @@
 use axum::extract::ws::{Message, WebSocket};
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, parse_provider_delegation, realtime_greeting_commands,
+    AnalystLifecycleEvent, CodexVoiceCall, parse_provider_delegation, realtime_greeting_commands,
     realtime_notice_commands,
 };
 use serde_json::{Value, json};
+use std::fmt::Display;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 
 use crate::AppState;
 
 const MAX_BROWSER_EVENT_BYTES: usize = 128 * 1024;
+const RECORDING_LEASE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+
+struct RecordingLeaseHeartbeat {
+    failure: oneshot::Receiver<String>,
+    task: JoinHandle<()>,
+}
+
+impl RecordingLeaseHeartbeat {
+    fn start(call: Arc<CodexVoiceCall>, generation: String) -> Self {
+        Self::start_with(RECORDING_LEASE_HEARTBEAT_INTERVAL, move || {
+            call.heartbeat(&generation)
+        })
+    }
+
+    fn start_with<F, E>(interval: Duration, mut heartbeat: F) -> Self
+    where
+        F: FnMut() -> Result<(), E> + Send + 'static,
+        E: Display + Send + 'static,
+    {
+        let (failure_sender, failure) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                if let Err(error) = heartbeat() {
+                    let _ = failure_sender.send(error.to_string());
+                    return;
+                }
+            }
+        });
+        Self { failure, task }
+    }
+
+    async fn failed(&mut self) -> String {
+        (&mut self.failure)
+            .await
+            .unwrap_or_else(|_| "recording lease heartbeat task stopped unexpectedly".to_owned())
+    }
+
+    async fn stop(mut self) {
+        self.task.abort();
+        let _ = (&mut self.task).await;
+    }
+}
+
+impl Drop for RecordingLeaseHeartbeat {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
 
 pub(super) async fn serve(
     mut socket: WebSocket,
@@ -22,19 +76,23 @@ pub(super) async fn serve(
     let call = Arc::clone(session.call());
     let mut lifecycle_events = call.analyst().subscribe_lifecycle();
     let mut shutdown = state.shutdown.subscribe();
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Analyst admission can outlast the recording TTL, so renewal must not share its event loop.
+    let mut lease_heartbeat = RecordingLeaseHeartbeat::start(Arc::clone(&call), generation.clone());
+    let mut socket_heartbeat = tokio::time::interval(RECORDING_LEASE_HEARTBEAT_INTERVAL);
+    socket_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     if !send_json(
         &mut socket,
         json!({"type":"ready","call":super::payload::info_value(info.clone())}),
     )
     .await
     {
+        lease_heartbeat.stop().await;
         finish(&state, attachment).await;
         return;
     }
     for command in realtime_greeting_commands() {
         if !send_provider_command(&mut socket, command).await {
+            lease_heartbeat.stop().await;
             finish(&state, attachment).await;
             return;
         }
@@ -43,12 +101,12 @@ pub(super) async fn serve(
     'session: loop {
         tokio::select! {
             _ = shutdown.recv() => break,
-            _ = heartbeat.tick() => {
-                if let Err(error) = call.heartbeat(&generation) {
-                    tracing::warn!(%error, "Codex Voice recording lease heartbeat failed");
-                    let _ = send_error(&mut socket, "recording_lease_lost", "The Codex Voice recording lease was lost.").await;
-                    break;
-                }
+            error = lease_heartbeat.failed() => {
+                tracing::warn!(%error, "Codex Voice recording lease heartbeat failed");
+                let _ = send_error(&mut socket, "recording_lease_lost", "The Codex Voice recording lease was lost.").await;
+                break;
+            }
+            _ = socket_heartbeat.tick() => {
                 // Keep proxy and browser stacks from reclaiming an otherwise idle connection.
                 if !send_json(&mut socket, json!({"type":"heartbeat"})).await { break; }
             }
@@ -196,6 +254,7 @@ pub(super) async fn serve(
             }
         }
     }
+    lease_heartbeat.stop().await;
     finish(&state, attachment).await;
 }
 
@@ -224,4 +283,48 @@ async fn send_json(socket: &mut WebSocket, value: Value) -> bool {
         .send(Message::Text(value.to_string().into()))
         .await
         .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
+
+    #[tokio::test]
+    async fn recording_lease_heartbeat_keeps_running_while_socket_work_waits() {
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let reached_three_ticks = Arc::new(Notify::new());
+        let observed_ticks = Arc::clone(&ticks);
+        let observed_notification = Arc::clone(&reached_three_ticks);
+        let heartbeat = RecordingLeaseHeartbeat::start_with(
+            Duration::from_millis(5),
+            move || -> Result<(), &'static str> {
+                if observed_ticks.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                    observed_notification.notify_one();
+                }
+                Ok(())
+            },
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), reached_three_ticks.notified())
+            .await
+            .expect("independent heartbeat must continue during long socket work");
+        assert!(ticks.load(Ordering::SeqCst) >= 3);
+        heartbeat.stop().await;
+    }
+
+    #[tokio::test]
+    async fn recording_lease_heartbeat_reports_real_lease_loss() {
+        let mut heartbeat = RecordingLeaseHeartbeat::start_with(
+            Duration::from_millis(1),
+            || -> Result<(), &'static str> { Err("lease lost") },
+        );
+
+        let failure = tokio::time::timeout(Duration::from_secs(1), heartbeat.failed())
+            .await
+            .expect("lease failure must be reported promptly");
+        assert_eq!(failure, "lease lost");
+        heartbeat.stop().await;
+    }
 }

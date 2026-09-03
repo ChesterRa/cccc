@@ -238,13 +238,13 @@ CCCC orchestrates agents across 17 first-class runtimes, with `custom` available
 | Kilo Code CLI | Prompt-assisted MCP setup | `kilo` |
 | Antigravity CLI | Prompt-assisted MCP setup | `agy` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
-| Grok Build | Auto MCP setup | `grok` |
+| Grok Build | Managed ACP session + native TUI; per-session MCP | `grok` |
 | Hermes Agent | Auto MCP setup | `hermes` |
 | Droid | Auto MCP setup | `droid` |
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Auto MCP setup | `auggie` |
 | Kimi CLI | Auto MCP setup | `kimi` |
-| OpenCode | Auto MCP setup via runtime config | `opencode` |
+| OpenCode | Managed ACP session + native TUI; per-session MCP | `opencode` |
 | Custom | Manual | Any command |
 
 These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
@@ -259,7 +259,7 @@ cccc runtime list --all           # show all available runtimes
 cccc doctor                       # verify environment and runtime availability
 ```
 
-Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code and Codex CLI support both modes; headless gives the daemon tighter delivery and streaming control.
+Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code, Codex CLI, Grok Build, and OpenCode support both modes; headless gives the daemon tighter delivery and streaming control.
 
 For setup commands, runner-mode guidance, and troubleshooting for every supported runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 

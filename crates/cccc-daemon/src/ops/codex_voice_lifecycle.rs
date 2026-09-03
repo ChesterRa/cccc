@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 mod events;
 #[cfg(test)]
 mod tests;
+mod turn_wait;
 mod turns;
 
 const EVENT_CAPACITY: usize = 1024;

@@ -2,13 +2,15 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader};
 use std::net::IpAddr;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use url::Url;
 
+mod child;
+pub(super) use child::ChildOwner;
+use child::configure_process_group;
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(super) fn spawn_app_server(
     command: &[String],
@@ -42,17 +44,93 @@ pub(super) fn spawn_app_server(
     Ok((ChildOwner::new(child), receiver))
 }
 
+pub(super) fn spawn_background(
+    command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    label: &'static str,
+) -> io::Result<ChildOwner> {
+    let (program, args) = command
+        .split_first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty managed command"))?;
+    let mut process = Command::new(program);
+    process
+        .args(args)
+        .current_dir(cwd)
+        .envs(env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_process_group(&mut process);
+    let mut child = process.spawn()?;
+    if let Some(stdout) = child.stdout.take() {
+        spawn_log_reader(stdout, label)?;
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_log_reader(stderr, label)?;
+    }
+    Ok(ChildOwner::new(child))
+}
+
+pub(super) fn spawn_piped(
+    command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    label: &'static str,
+) -> io::Result<(ChildOwner, ChildStdin, ChildStdout)> {
+    let (program, args) = command
+        .split_first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty managed command"))?;
+    let mut process = Command::new(program);
+    process
+        .args(args)
+        .current_dir(cwd)
+        .envs(env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_process_group(&mut process);
+    let mut child = process.spawn()?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("managed process stdin is unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("managed process stdout is unavailable"))?;
+    if let Some(stderr) = child.stderr.take() {
+        spawn_log_reader(stderr, label)?;
+    }
+    Ok((ChildOwner::new(child), stdin, stdout))
+}
+
 fn spawn_output_reader(
     stream: impl std::io::Read + Send + 'static,
     sender: std::sync::mpsc::Sender<String>,
     suffix: &str,
 ) -> io::Result<()> {
+    let suffix = suffix.to_owned();
     std::thread::Builder::new()
         .name(format!("cccc-codex-app-{suffix}"))
         .spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                tracing::debug!(message = %line, "Codex app-server output");
+                tracing::debug!(message = %line, source = %suffix, "managed Agent process output");
                 let _ = sender.send(line);
+            }
+        })?;
+    Ok(())
+}
+
+fn spawn_log_reader(
+    stream: impl std::io::Read + Send + 'static,
+    source: &'static str,
+) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name(format!("cccc-managed-agent-{source}"))
+        .spawn(move || {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                tracing::debug!(message = %line, source, "managed Agent process output");
             }
         })?;
     Ok(())
@@ -127,130 +205,4 @@ pub(super) fn validate_loopback_endpoint(endpoint: &str) -> io::Result<()> {
             "Codex app-server requires an uncredentialed loopback ws endpoint",
         ))
     }
-}
-
-pub(super) struct ChildOwner {
-    child: Mutex<Option<Child>>,
-}
-
-impl ChildOwner {
-    fn new(child: Child) -> Self {
-        Self {
-            child: Mutex::new(Some(child)),
-        }
-    }
-
-    pub(super) fn stop(&self) -> io::Result<()> {
-        let Some(mut child) = self
-            .child
-            .lock()
-            .map_err(|_| io::Error::other("Codex app-server child lock poisoned"))?
-            .take()
-        else {
-            return Ok(());
-        };
-        if child.try_wait()?.is_none() {
-            terminate_process_group(&mut child);
-            if !wait_bounded(&mut child, STOP_TIMEOUT)? {
-                kill_process_group(&mut child);
-            }
-        }
-        let _ = child.wait();
-        Ok(())
-    }
-
-    pub(super) fn running(&self) -> bool {
-        self.child
-            .lock()
-            .ok()
-            .and_then(|mut child| child.as_mut().map(|child| child.try_wait()))
-            .is_some_and(|status| status.ok().flatten().is_none())
-    }
-
-    pub(super) fn id(&self) -> Option<u32> {
-        self.child
-            .lock()
-            .ok()
-            .and_then(|child| child.as_ref().map(Child::id))
-    }
-}
-
-impl Drop for ChildOwner {
-    fn drop(&mut self) {
-        let child = self.child.get_mut().ok().and_then(Option::take);
-        if let Some(mut child) = child {
-            if child.try_wait().ok().flatten().is_none() {
-                kill_process_group(&mut child);
-            }
-            let _ = child.wait();
-        }
-    }
-}
-
-fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait()?.is_some() {
-            return Ok(true);
-        }
-        if Instant::now() >= deadline {
-            return Ok(false);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-#[cfg(unix)]
-fn configure_process_group(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_process_group(_command: &mut Command) {}
-
-#[cfg(unix)]
-fn terminate_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGTERM);
-}
-
-#[cfg(unix)]
-fn kill_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGKILL);
-    let _ = child.kill();
-}
-
-#[cfg(unix)]
-fn signal_process_group(child: &Child, signal: nix::sys::signal::Signal) {
-    use nix::sys::signal::killpg;
-    use nix::unistd::Pid;
-    if let Ok(group_id) = i32::try_from(child.id()) {
-        let _ = killpg(Pid::from_raw(group_id), signal);
-    }
-}
-
-#[cfg(windows)]
-fn terminate_process_group(child: &mut Child) {
-    kill_process_group(child);
-}
-
-#[cfg(windows)]
-fn kill_process_group(child: &mut Child) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let _ = child.kill();
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn terminate_process_group(child: &mut Child) {
-    let _ = child.kill();
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn kill_process_group(child: &mut Child) {
-    let _ = child.kill();
 }

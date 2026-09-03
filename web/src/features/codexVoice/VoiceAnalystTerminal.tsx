@@ -13,9 +13,9 @@ import type { CodexVoiceAnalystInfo } from "../../services/api";
 import { getCodexVoiceTerminalWebSocketUrl } from "../../services/api";
 import { copyTextToClipboard } from "../../utils/copy";
 
-type Props = { analyst: CodexVoiceAnalystInfo; isVisible: boolean };
+type Props = { analyst: CodexVoiceAnalystInfo; isVisible: boolean; runtime?: string };
 
-export function VoiceAnalystTerminal({ analyst, isVisible }: Props) {
+export function VoiceAnalystTerminal({ analyst, isVisible, runtime }: Props) {
   const { t } = useTranslation("modals");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -136,7 +136,7 @@ export function VoiceAnalystTerminal({ analyst, isVisible }: Props) {
     isHeadless: false,
     groupId: "codex-voice",
     actorId: analyst.generation,
-    actorRuntime: "codex",
+    actorRuntime: runtime,
     canControl: true,
     termEpoch: 0,
     reconnectTrigger,

@@ -1,4 +1,4 @@
-use super::events::{tracked_work, truncate_utf8};
+use super::events::{normalized_completion_status, tracked_work, truncate_utf8};
 use super::*;
 use crate::ops::codex_voice_analyst::WorkspaceBinding;
 use futures_util::{SinkExt, StreamExt};
@@ -322,6 +322,18 @@ fn completed_text_is_utf8_bounded_and_tracked_work_is_strict() {
     );
     assert!(!AnalystTurnOrigin::ActorResult { speakable: false }.speakable());
     assert!(AnalystTurnOrigin::ActorResult { speakable: true }.speakable());
+    assert_eq!(
+        normalized_completion_status("completed", "", AnalystTurnOrigin::Voice),
+        "failed"
+    );
+    assert_eq!(
+        normalized_completion_status("completed", "", AnalystTurnOrigin::Terminal),
+        "completed"
+    );
+    assert_eq!(
+        normalized_completion_status("completed", "answer", AnalystTurnOrigin::Voice),
+        "completed"
+    );
 }
 
 async fn test_session() -> (AnalystSession, JoinHandle<()>) {

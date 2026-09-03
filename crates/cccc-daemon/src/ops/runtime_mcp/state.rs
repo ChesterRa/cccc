@@ -222,25 +222,6 @@ pub(super) fn command_output_state(
                 },
             )
         }
-        ActorRuntime::Grok => {
-            let Ok(entries) = serde_json::from_str::<Vec<Value>>(output) else {
-                return Report::new(State::Missing);
-            };
-            let mut state = State::Missing;
-            for entry in entries.iter().filter(|entry| entry["name"] == "cccc") {
-                let env_ok = entry
-                    .get("env")
-                    .and_then(Value::as_object)
-                    .and_then(|env| env.get("PYTHONUNBUFFERED"))
-                    .and_then(Value::as_str)
-                    == Some("1");
-                if common_matches(entry, expected) && env_ok {
-                    return Report::new(State::Ready);
-                }
-                state = State::Stale;
-            }
-            Report::new(state)
-        }
         _ => Report::new(State::Missing),
     }
 }
@@ -645,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_backed_runtime_outputs_match_python_parsers() {
+    fn cli_backed_runtime_outputs_match_supported_parsers() {
         let expected = ["/opt/cccc".into(), "mcp".into()];
         let fixtures = [
             (
@@ -659,10 +640,6 @@ mod tests {
             (
                 ActorRuntime::Devin,
                 r#"McpServer { transport: stdio, command: "/opt/cccc", args: ["mcp"] }"#,
-            ),
-            (
-                ActorRuntime::Grok,
-                r#"[{"name":"cccc","command":"/opt/cccc","args":["mcp"],"enabled":true,"env":{"PYTHONUNBUFFERED":"1"}}]"#,
             ),
         ];
         for (runtime, output) in fixtures {

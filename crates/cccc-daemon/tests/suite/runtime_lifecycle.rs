@@ -132,7 +132,7 @@ fn actor_lifecycle_controls_terminal_process() {
                 "group_id":group_id,
                 "actor_id":"peer1",
                 "runtime":"codex",
-                "runtime_state_source":"app_server",
+                "runtime_state_source":"managed_session",
                 "by":"user"
             }),
         )

@@ -56,7 +56,11 @@ function controller(): CodexVoiceSessionController {
     analystWarning: "",
     preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
     supportedVoices: ["cove"],
-    readiness: { codex_cli_available: true, realtime_credentials_available: true },
+    readiness: {
+      analyst_runtime: "codex",
+      analyst_runtime_available: true,
+      realtime_credentials_available: true,
+    },
     updatePreferences: vi.fn(),
     refresh: vi.fn(async () => undefined),
     start: vi.fn(async () => undefined),

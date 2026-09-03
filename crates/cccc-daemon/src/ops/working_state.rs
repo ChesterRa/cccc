@@ -66,7 +66,7 @@ pub(super) fn fields(
         (
             local_state.status,
             if runner_effective == "pty" {
-                "codex_app_server_session".to_owned()
+                "managed_agent_session".to_owned()
             } else {
                 "provider_headless_session".to_owned()
             },

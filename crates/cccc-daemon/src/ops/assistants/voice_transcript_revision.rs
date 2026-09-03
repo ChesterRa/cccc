@@ -36,10 +36,27 @@ pub(super) fn resolve(
         ));
     }
     let revision_only = bool_arg(request, "revision_only", false);
-    if revision_only && stage != "final" {
+    let is_final = bool_arg(request, "is_final", true);
+    if revision_only && (stage != "final" || !is_final) {
         return Err(OpError::new(
             "invalid_args",
-            "revision_only is valid only for final transcript revisions",
+            "revision_only requires a stable final transcript segment",
+        ));
+    }
+    let supersede_live = match string_arg(request, "supersede_stage").as_deref() {
+        None | Some("") => false,
+        Some("live") => true,
+        Some(_) => {
+            return Err(OpError::new(
+                "invalid_args",
+                "supersede_stage must be live when provided",
+            ));
+        }
+    };
+    if supersede_live && (stage != "final" || !is_final) {
+        return Err(OpError::new(
+            "invalid_args",
+            "supersede_stage=live requires a stable final transcript segment",
         ));
     }
     let mut supersedes = request
@@ -60,7 +77,7 @@ pub(super) fn resolve(
         revision_only,
         supersedes,
         source_model_id: string_arg(request, "source_model_id").unwrap_or_default(),
-        supersede_live: string_arg(request, "supersede_stage").as_deref() == Some("live"),
+        supersede_live,
     })
 }
 
@@ -95,6 +112,7 @@ pub(super) fn build_segment(
         "assistant_id":"voice_secretary","text":data.text,"language":data.language,
         "is_final":crate::dispatch::bool_arg(request,"is_final",true),
         "transcript_stage":revision.stage,
+        "revision_only":revision.revision_only,
         "supersede_stage":if revision.supersede_live {"live"} else {""},
         "supersedes_segment_ids":revision.supersedes,
         "source_model_id":revision.source_model_id,
@@ -120,6 +138,7 @@ pub(super) fn contains(segments: &[Value], segment_id: &str) -> bool {
 fn projected_segments(segments: &[Value]) -> impl Iterator<Item = &Value> {
     let superseded = segments
         .iter()
+        .filter(|item| stable_segment(item))
         .flat_map(|item| {
             let session_id = item["session_id"].as_str().unwrap_or_default();
             item["supersedes_segment_ids"]
@@ -133,17 +152,24 @@ fn projected_segments(segments: &[Value]) -> impl Iterator<Item = &Value> {
     let supersedes_live = segments
         .iter()
         .filter(|item| {
-            segment_stage(item) == "final" && item["supersede_stage"].as_str() == Some("live")
+            stable_segment(item)
+                && segment_stage(item) == "final"
+                && item["supersede_stage"].as_str() == Some("live")
         })
         .filter_map(|item| item["session_id"].as_str())
         .collect::<HashSet<_>>();
     segments.iter().filter(move |item| {
         let session_id = item["session_id"].as_str().unwrap_or_default();
-        (!supersedes_live.contains(session_id) || segment_stage(item) != "live")
+        stable_segment(item)
+            && (!supersedes_live.contains(session_id) || segment_stage(item) != "live")
             && item["segment_id"]
                 .as_str()
                 .is_none_or(|segment_id| !superseded.contains(&(session_id, segment_id)))
     })
+}
+
+fn stable_segment(segment: &Value) -> bool {
+    segment["is_final"].as_bool().unwrap_or(true)
 }
 
 fn inferred_stage(request: &DaemonRequest) -> String {
@@ -177,4 +203,106 @@ fn safe_id(value: &str) -> bool {
         && value
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Map, json};
+
+    fn request(args: Value) -> DaemonRequest {
+        DaemonRequest {
+            v: 1,
+            op: "assistant_voice_transcript_append".into(),
+            args: args.as_object().cloned().unwrap_or_else(Map::new),
+        }
+    }
+
+    #[test]
+    fn revision_only_requires_a_stable_final_segment() {
+        let request = request(json!({
+            "transcript_stage": "final",
+            "revision_only": true,
+            "supersede_stage": "live",
+            "is_final": false
+        }));
+
+        assert!(resolve(&request, "final-asr").is_err());
+    }
+
+    #[test]
+    fn superseding_live_requires_a_stable_final_segment() {
+        let request = request(json!({
+            "transcript_stage": "final",
+            "revision_only": false,
+            "supersede_stage": "live",
+            "is_final": false
+        }));
+
+        assert!(resolve(&request, "final-asr").is_err());
+    }
+
+    #[test]
+    fn unknown_supersede_stage_is_rejected() {
+        let request = request(json!({
+            "transcript_stage": "final",
+            "supersede_stage": "lvie",
+            "is_final": true
+        }));
+
+        assert!(resolve(&request, "final-asr").is_err());
+    }
+
+    #[test]
+    fn raw_segment_retains_revision_only_metadata() {
+        let request = request(json!({
+            "transcript_stage": "final",
+            "revision_only": true,
+            "supersede_stage": "live",
+            "is_final": true
+        }));
+        let revision = resolve(&request, "final-asr").expect("valid final revision");
+        let segment = build_segment(
+            &request,
+            SegmentData {
+                group_id: "group",
+                session_id: "session",
+                segment_id: "final-asr",
+                text: "final transcript",
+                language: "en",
+                document_path: "meeting.md",
+                now: "2026-09-03T00:00:00Z",
+            },
+            &revision,
+        );
+
+        assert_eq!(segment["revision_only"], true);
+    }
+
+    #[test]
+    fn unstable_legacy_revision_cannot_hide_live_projection() {
+        let segments = json!([
+            {
+                "session_id": "session",
+                "segment_id": "live",
+                "transcript_stage": "live",
+                "is_final": true,
+                "text": "live transcript"
+            },
+            {
+                "session_id": "session",
+                "segment_id": "partial-final",
+                "transcript_stage": "final",
+                "supersede_stage": "live",
+                "supersedes_segment_ids": ["live"],
+                "is_final": false,
+                "text": "partial final"
+            }
+        ]);
+
+        assert_eq!(
+            projected_transcript(segments.as_array().expect("segments")),
+            "live transcript"
+        );
+    }
 }

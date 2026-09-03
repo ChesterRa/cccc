@@ -21,10 +21,10 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Droid CLI | `droid` | `droid` | Auto |
 | Amp | `amp` | `amp` | Auto |
 | Auggie (Augment) | `auggie` | `auggie` | Auto |
-| Grok Build | `grok` | `grok` | Auto |
+| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Injected into each managed session |
 | Hermes Agent | `hermes` | `hermes` | Auto through the user's Hermes profile |
 | Kimi CLI | `kimi` | `kimi` | Auto |
-| OpenCode | `opencode` | `opencode` | Auto via launch config |
+| OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
@@ -48,7 +48,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `grok` | `grok --always-approve` | Starts Grok Build with approval prompts bypassed. |
 | `hermes` | `hermes --tui --yolo` | Starts Hermes in TUI YOLO mode. |
 | `kimi` | `kimi --yolo` | Starts Kimi in YOLO mode. |
-| `opencode` | `opencode --auto` | Auto-approves OpenCode permission requests that are not explicitly denied. |
+| `opencode` | `opencode --auto` | CCCC owns the ACP permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
 | `amp` | `amp` | No extra CCCC launch flag; Amp's current CLI default is already direct tool execution. |
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
 | `kilo` | `kilo` | Use Kilo's `kilo.jsonc` permission settings or Auto Approve UI for broad approval policy. |
@@ -99,7 +99,7 @@ Actors normally run in one of two modes:
 - **PTY**: the runtime runs in an embedded terminal. This is the broadest compatibility mode.
 - **Headless**: CCCC manages structured runtime I/O without a terminal. This gives tighter delivery and streaming control where supported.
 
-Claude Code and Codex CLI support both PTY and headless operation. DeepSeek Harness is fixed to headless ACP operation. Most other CLI runtimes, including Cline, use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
+Claude Code, Codex CLI, Grok Build, and OpenCode support both PTY and headless operation. DeepSeek Harness is fixed to headless ACP operation. Most other CLI runtimes, including Cline, use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
 
 Cline is currently integrated as a fresh-start PTY runtime. CCCC does not persist or reuse Cline's `--id` session identifier, so stopping and starting a Cline actor opens a new Cline TUI session.
 
@@ -125,7 +125,16 @@ Restarting a provider process does not transfer its input mode, preamble memory,
 or hot terminal ring; durable ledger, Mail cursor, reply-obligation, and
 runtime-delivery facts remain the recovery authority.
 
-### Codex app-server and Claude PTY Hook State
+Daemon startup does not count as Actor work and never submits a synthetic model
+turn. CCCC reconnects a validated managed session where possible, and a provider
+that can open its terminal without model work may start idle. A fresh managed PTY
+whose native terminal requires a materialized provider turn remains dormant until
+an explicit start or a real pending Send wakes it; a restored headless worker
+stays idle. The first real delivery to a successfully restored worker also
+carries its pending CCCC startup instructions, in the same provider turn rather
+than through a separate bootstrap request.
+
+### Managed Codex/Grok/OpenCode sessions and Claude PTY Hook State
 
 For a command whose executable is directly identified as Codex, PTY and
 Headless share one daemon-owned app-server session implementation for
@@ -141,6 +150,39 @@ resumes the same validated thread, while `actor new-session` deliberately
 creates a new one. Voice Analyst uses this same Codex host/remote-TUI substrate,
 with a global user MCP identity and its own warm lifecycle instead of Actor
 identity and Group lifecycle.
+
+Direct Grok Actors use the same managed-session contract through Grok's native
+topology: CCCC owns one private leader, connects an ACP controller, and attaches
+the native writable Grok TUI to the exact same provider session for PTY mode.
+Headless mode omits only that TUI. Structured ACP events own delivery, progress,
+completion, cancellation, and working state; terminal text is never scraped as
+protocol. CCCC injects the actor-scoped MCP server into the session rather than
+changing Grok's global MCP registry. Stop/start validates and loads the version-2
+managed receipt, while `actor new-session` deliberately replaces it. Grok
+subcommands, wrappers, prompt tails, and user-owned leader/session flags fail
+explicitly; there is no raw-PTY fallback beside the managed path.
+
+Direct OpenCode Actors require OpenCode 1.18.14 or newer. They use one
+`opencode acp` process as both the structured controller endpoint and an
+authenticated loopback backend. CCCC injects the
+actor-scoped MCP server when it creates or loads the ACP session. PTY attaches
+OpenCode's native writable TUI to that exact backend and session; Headless omits
+only the TUI. CCCC observes authenticated `session.status` events for native-TUI
+turn ownership, so a terminal turn blocks queued delivery until it settles.
+Losing that non-replayable lifecycle stream invalidates the session rather than
+guessing that it is idle. Stop/start validates and loads a version-2 OpenCode
+receipt; `actor new-session` deliberately replaces it. CCCC owns ACP/server,
+session, attach, cwd, MCP, and permission arguments. It accepts documented
+model, agent, pure-mode, and logging options, but subcommands, wrappers, prompt
+tails, and user-owned topology/session flags fail explicitly with no raw-PTY
+fallback. OpenCode does not emit the accepted user prompt through ACP, so CCCC
+correlates the same user message and exact prompt on OpenCode's authenticated
+backend event stream before acknowledging admission. Pre-admission ACP updates
+remain bounded and are released only after that match; busy rejections discard
+the buffer and remain retryable.
+For supported OpenCode releases, the prompt response is the exact completion
+fence; older releases are rejected instead of being hidden behind timing-based
+output recovery. Grok retains its explicit bounded post-response normalization.
 
 An arbitrary wrapper that cannot be transformed into a Codex app-server
 without changing its meaning remains an explicit direct-PTY or headless-stdio
@@ -185,14 +227,17 @@ The Rust daemon also owns the lifetime of every process-backed actor. On Windows
 
 Verified PTY hook events also feed the Web runtime activity ticker. This is a separate, short-lived observability channel rather than chat history: it carries only structured lifecycle fields, replays briefly after reconnects, and detects long-running turn or tool activity. See [PTY Runtime Activity](/guide/runtime-activity) for the event contract, retention, and privacy boundaries.
 
-`runtime=codex|claude|deepseek` with `runner=headless` starts a daemon-managed
+`runtime=codex|grok|opencode|claude|deepseek` with `runner=headless` starts a daemon-managed
 provider process. Codex reuses the same app-server launch, thread, delivery, and
-resume mechanics as Codex PTY but omits the remote TUI. Claude uses
-bidirectional stream-json, and DeepSeek uses ACP NDJSON through CCCC's fixed
-composition. Messages are delivered automatically, provider health determines
-the actor's `running` value, and stopping the actor or group terminates the
-provider process. Headless state comes from these structured provider protocols
-rather than the PTY hooks.
+resume mechanics as Codex PTY but omits the remote TUI. Grok reuses its private
+leader, ACP session, delivery, and resume mechanics while likewise omitting only
+the TUI. OpenCode reuses its authenticated ACP backend, session, delivery, and
+resume mechanics while omitting only `opencode attach`. Claude uses
+bidirectional stream-json, and DeepSeek uses ACP NDJSON
+through CCCC's fixed composition. Messages are delivered automatically, provider
+health determines the actor's `running` value, and stopping the actor or group
+terminates the provider process. Headless state comes from these structured
+provider protocols rather than the PTY hooks.
 
 DeepSeek ACP prompts are sent as `ContentBlock[]`. ACP agent-message chunks are
 projected to `headless.message.delta` and `headless.message.completed`; turn
@@ -256,8 +301,6 @@ exposes this generic pull contract to programmatically configured
 expose that combination. These actors do not claim to have a local provider
 process.
 
-CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
-
 For a running Antigravity PTY actor, `actor_new_session` submits the runtime's
 native `/clear` command. This creates a new provider conversation while keeping
 the authenticated process, project, and terminal sandbox alive. A stopped
@@ -307,7 +350,7 @@ Common checks:
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates an automatically managed PTY session or launches Claude/Codex directly as a daemon-managed local headless provider, it checks that the runtime's `cccc` MCP entry points to the active public CCCC executable. Missing entries are installed, stale user/global entries are replaced when the runtime provides a safe removal command, and the result is verified before the actor process starts. A failed check, repair, or verification prevents the actor from launching, including during daemon restart recovery. Codex keeps its actor-scoped launch override. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Prompt-assisted runtimes (`cursor`, `kilo`, and `antigravity`) retain their startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration.
+Before the Rust daemon creates an automatically managed PTY session or launches a supported local headless provider, it establishes the runtime's CCCC MCP path. Codex, Grok, and OpenCode receive an actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Prompt-assisted runtimes (`cursor`, `kilo`, and `antigravity`) retain their startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup --runtime grok` and `cccc setup --runtime opencode` therefore report session ownership instead of mutating provider-global configuration.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { formatRuntimeCommand } from "../../components/modals/runtimeProfileControlsModel";
 import {
   buildActorSecretSaveChanges,
   emptyActorSecretChanges,
@@ -13,54 +12,20 @@ import {
   upsertActorProfile,
   updateCodexVoiceAnalystSettings,
   updateProfilePrivateEnv,
-  type CodexVoiceAnalystSettings,
 } from "../../services/api";
 import type { ActorProfile } from "../../types";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
 import type { RuntimeConfigurationMode } from "../../components/modals/RuntimeProfileControls";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
-
-export type VoiceAnalystDraftSettings = {
-  runtime: string;
-  command: string;
-  profile_id: string;
-  profile_scope: "global" | "user";
-  profile_owner: string;
-};
-
-const emptySettings: VoiceAnalystDraftSettings = {
-  runtime: "codex",
-  command: "",
-  profile_id: "",
-  profile_scope: "global",
-  profile_owner: "",
-};
-const identityEnvironmentKeys = new Set(["CODEX_HOME", "HOME", "USERPROFILE"]);
-
-function normalizeSettings(settings?: CodexVoiceAnalystSettings): VoiceAnalystDraftSettings {
-  return {
-    runtime: String(settings?.runtime || "codex"),
-    command: formatRuntimeCommand(settings?.command),
-    profile_id: String(settings?.profile_id || "").trim(),
-    profile_scope: settings?.profile_scope === "user" ? "user" : "global",
-    profile_owner: String(settings?.profile_owner || "").trim(),
-  };
-}
-
-function withProfile(
-  settings: VoiceAnalystDraftSettings,
-  profile?: ActorProfile,
-): VoiceAnalystDraftSettings {
-  if (!profile) {
-    return { ...settings, profile_id: "", profile_scope: "global", profile_owner: "" };
-  }
-  return {
-    ...settings,
-    profile_id: String(profile.id || "").trim(),
-    profile_scope: profile.scope === "user" ? "user" : "global",
-    profile_owner: String(profile.owner_id || "").trim(),
-  };
-}
+import {
+  analystIdentityEnvironmentKeys,
+  bindVoiceAnalystProfile,
+  defaultAnalystRuntimeCommand,
+  emptyVoiceAnalystSettings,
+  managedAnalystRuntimes,
+  normalizeVoiceAnalystSettings,
+  type VoiceAnalystDraftSettings,
+} from "./codexVoiceAnalystSettingsModel";
 
 export function useCodexVoiceAnalystSettings(
   active: boolean,
@@ -68,8 +33,9 @@ export function useCodexVoiceAnalystSettings(
 ) {
   const { t } = useTranslation("modals");
   const { t: tActors } = useTranslation("actors");
-  const [settings, setSettings] = useState<VoiceAnalystDraftSettings>(emptySettings);
-  const [loadedSettings, setLoadedSettings] = useState<VoiceAnalystDraftSettings>(emptySettings);
+  const [settings, setSettings] = useState<VoiceAnalystDraftSettings>(emptyVoiceAnalystSettings);
+  const [loadedSettings, setLoadedSettings] =
+    useState<VoiceAnalystDraftSettings>(emptyVoiceAnalystSettings);
   const [mode, setMode] = useState<RuntimeConfigurationMode>("custom");
   const [profiles, setProfiles] = useState<ActorProfile[]>([]);
   const [environmentKeys, setEnvironmentKeys] = useState<string[]>([]);
@@ -106,7 +72,7 @@ export function useCodexVoiceAnalystSettings(
       listActorProfiles(),
     ]);
     if (settingsResponse.ok) {
-      const nextSettings = normalizeSettings(settingsResponse.result.settings);
+      const nextSettings = normalizeVoiceAnalystSettings(settingsResponse.result.settings);
       setSettings(nextSettings);
       setLoadedSettings(nextSettings);
       setMode(nextSettings.profile_id ? "profile" : "custom");
@@ -134,7 +100,10 @@ export function useCodexVoiceAnalystSettings(
   }, [load]);
 
   const compatibleProfiles = useMemo(
-    () => profiles.filter((profile) => String(profile.runtime).trim().toLowerCase() === "codex"),
+    () =>
+      profiles.filter((profile) =>
+        managedAnalystRuntimes.has(String(profile.runtime).trim().toLowerCase()),
+      ),
     [profiles],
   );
   const profileIdentity = settings.profile_id
@@ -173,18 +142,20 @@ export function useCodexVoiceAnalystSettings(
     setSaved("");
     setError("");
     if (nextMode === "custom") {
-      setSettings((current) => withProfile(current));
+      setSettings((current) => bindVoiceAnalystProfile(current));
       return;
     }
     setEnvironmentChangesState(emptyActorSecretChanges());
-    setSettings((current) => withProfile(current, selectedProfile || compatibleProfiles[0]));
+    setSettings((current) =>
+      bindVoiceAnalystProfile(current, selectedProfile || compatibleProfiles[0]),
+    );
   };
 
   const selectProfile = (identity: string) => {
     const profile = compatibleProfiles.find(
       (candidate) => actorProfileIdentityKey(candidate) === identity,
     );
-    setSettings((current) => withProfile(current, profile));
+    setSettings((current) => bindVoiceAnalystProfile(current, profile));
     setSaved("");
   };
 
@@ -193,7 +164,7 @@ export function useCodexVoiceAnalystSettings(
     const response = await fetchCodexVoiceAnalystSettings();
     if (response.ok) {
       if (settingsLoadFailed) {
-        const nextSettings = normalizeSettings(response.result.settings);
+        const nextSettings = normalizeVoiceAnalystSettings(response.result.settings);
         setSettings(nextSettings);
         setLoadedSettings(nextSettings);
         setMode(nextSettings.profile_id ? "profile" : "custom");
@@ -213,10 +184,15 @@ export function useCodexVoiceAnalystSettings(
     const identityCandidates = environmentSaveChanges.clear
       ? environmentKeys
       : [...Object.keys(environmentSaveChanges.setVars), ...environmentSaveChanges.unsetKeys];
-    const changesCodexIdentity =
-      mode === "custom" && identityCandidates.some((key) => identityEnvironmentKeys.has(key));
+    const changesAnalystIdentity =
+      settings.runtime !== loadedSettings.runtime ||
+      settings.profile_id !== loadedSettings.profile_id ||
+      settings.profile_scope !== loadedSettings.profile_scope ||
+      settings.profile_owner !== loadedSettings.profile_owner ||
+      (mode === "custom" &&
+        identityCandidates.some((key) => analystIdentityEnvironmentKeys.has(key)));
     if (
-      changesCodexIdentity &&
+      changesAnalystIdentity &&
       controller.analyst?.tui_ready &&
       !window.confirm(t("codexVoiceAnalystIdentityChangeConfirm"))
     ) {
@@ -251,9 +227,26 @@ export function useCodexVoiceAnalystSettings(
     setSettings((current) => ({ ...current, command }));
     setSaved("");
   };
-  const useDefaultCommand = !settings.command.trim() || settings.command.trim() === "codex";
+  const setRuntime = (runtime: string) => {
+    if (!managedAnalystRuntimes.has(runtime)) return;
+    setSettings((current) => {
+      const previousDefault = defaultAnalystRuntimeCommand(current.runtime);
+      const command =
+        !current.command.trim() || current.command.trim() === previousDefault
+          ? ""
+          : current.command;
+      return { ...current, runtime, command };
+    });
+    setSaved("");
+    setError("");
+  };
+  const defaultCommand = defaultAnalystRuntimeCommand(settings.runtime);
+  // An empty command is the persisted "use the runtime default" sentinel.
+  // Once the user opts out, keep the copied default as an explicit editable
+  // command instead of inferring the checkbox state from string equality.
+  const useDefaultCommand = !settings.command.trim();
   const setUseDefaultCommand = (enabled: boolean) => {
-    setCommand(enabled ? "" : settings.command.trim() || "codex");
+    setCommand(enabled ? "" : settings.command.trim() || defaultCommand);
   };
 
   const saveAsProfile = async () => {
@@ -266,7 +259,7 @@ export function useCodexVoiceAnalystSettings(
     try {
       const response = await upsertActorProfile({
         name: name.trim(),
-        runtime: "codex",
+        runtime: settings.runtime,
         runner: "pty",
         command: settings.command.trim(),
         submit: "enter",
@@ -313,7 +306,7 @@ export function useCodexVoiceAnalystSettings(
         profile,
       ]);
       setMode("profile");
-      setSettings((current) => withProfile(current, profile));
+      setSettings((current) => bindVoiceAnalystProfile(current, profile));
       setEnvironmentChangesState(emptyActorSecretChanges());
       setSaved(t("codexVoiceAnalystProfileCreated", { name: profile.name || name.trim() }));
     } catch (error) {
@@ -352,6 +345,8 @@ export function useCodexVoiceAnalystSettings(
     selectProfile,
     refreshEnvironment,
     setCommand,
+    setRuntime,
+    defaultCommand,
     useDefaultCommand,
     setUseDefaultCommand,
     setEnvironmentChanges,

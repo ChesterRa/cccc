@@ -575,7 +575,7 @@ Runtime acceptance:
     "source_event_id": "01HZY2... (opaque)",
     "delivery_id": "delivery:foreman:01HZY2...",
     "state": "accepted",
-    "transport": "codex_app_server"
+    "transport": "managed_session"
   }
 }
 ```

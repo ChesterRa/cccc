@@ -45,11 +45,14 @@ pub(super) async fn serve(
         }
     };
     let attachment_id = attachment.attachment_id();
-    let mut writable = attachment.terminal_writable();
+    let mut attachment_writable = attachment.terminal_writable();
+    let analyst_input_allowed = session.analyst().terminal_input_allowed().await;
+    let mut writable = attachment_writable && analyst_input_allowed;
     let mut attach_result = json!({
         "attachment_id":attachment_id,
         "terminal_mode":attachment.mode().as_str(),
         "terminal_writable":writable,
+        "terminal_input_blocked":attachment_writable && !analyst_input_allowed,
         "writer_replaced":attachment.writer_replaced(),
         "terminal_response_owner":"server_v1",
         "replay_cursor":attachment.replay_cursor(),
@@ -111,7 +114,10 @@ pub(super) async fn serve(
                 break;
             }
             _ = writable_poll.tick(), if mode == cccc_runtime::TerminalAttachMode::Control => {
-                let Ok(next_writable) = session.terminal_writable(attachment_id) else { continue; };
+                let Ok(next_attachment_writable) = session.terminal_writable(attachment_id) else { continue; };
+                let next_analyst_input_allowed = session.analyst().terminal_input_allowed().await;
+                let next_writable = next_attachment_writable && next_analyst_input_allowed;
+                attachment_writable = next_attachment_writable;
                 if next_writable != writable {
                     writable = next_writable;
                     let payload = json!({"terminal_writable":writable});
@@ -127,7 +133,13 @@ pub(super) async fn serve(
                     continue;
                 }
                 if !handle_input(
-                    &mut socket, &session, &input, attachment_id, writable, message,
+                    &mut socket,
+                    &session,
+                    &input,
+                    attachment_id,
+                    attachment_writable,
+                    &mut writable,
+                    message,
                 ).await {
                     break;
                 }
@@ -163,7 +175,8 @@ async fn handle_input(
     session: &crate::codex_voice::AnalystRuntime,
     input: &cccc_runtime::TerminalInput,
     attachment_id: u64,
-    writable: bool,
+    attachment_writable: bool,
+    writable: &mut bool,
     message: Message,
 ) -> bool {
     let Message::Binary(data) = message else {
@@ -173,14 +186,16 @@ async fn handle_input(
         return true;
     };
     match opcode {
-        b'0' if writable && !payload.is_empty() => {
+        b'0' if attachment_writable && !payload.is_empty() => {
             if !session.analyst().terminal_input_allowed().await {
-                return send_input_error(
-                    socket,
-                    "analyst_busy",
-                    "Wait for the pending Voice Analyst request before using terminal input.",
-                )
-                .await;
+                *writable = false;
+                let payload = json!({"terminal_writable":false});
+                return socket
+                    .send(Message::Binary(
+                        frame(b'6', payload.to_string().as_bytes()).into(),
+                    ))
+                    .await
+                    .is_ok();
             }
             let input = input.clone();
             let payload = payload.to_vec();
@@ -205,7 +220,7 @@ async fn handle_input(
                 }
             }
         }
-        b'0' if writable => true,
+        b'0' if attachment_writable => true,
         b'0' => {
             send_input_error(
                 socket,
@@ -214,7 +229,7 @@ async fn handle_input(
             )
             .await
         }
-        b'2' if writable => {
+        b'2' if attachment_writable => {
             let value: Value = serde_json::from_slice(payload).unwrap_or_else(|_| json!({}));
             let Some((cols, rows)) = parsed_terminal_size(&value) else {
                 return true;

@@ -7,6 +7,8 @@ mod actor_listing;
 mod actor_profile_runtime;
 pub(crate) mod actor_runtime;
 #[cfg(test)]
+mod actor_runtime_managed_tests;
+#[cfg(test)]
 mod actor_runtime_mcp_tests;
 mod actor_runtime_status;
 #[cfg(test)]

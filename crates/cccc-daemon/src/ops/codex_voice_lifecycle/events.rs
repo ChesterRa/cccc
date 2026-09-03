@@ -15,7 +15,7 @@ impl AnalystLifecycle {
             .and_then(Value::as_str)
             .is_some_and(|thread_id| thread_id != self.session.thread_id())
         {
-            tracing::warn!("ignored Voice Analyst event for a different Codex thread");
+            tracing::warn!("ignored Voice Analyst event for a different managed session");
             return;
         }
         let method = event.message["method"].as_str().unwrap_or_default();
@@ -50,7 +50,7 @@ impl AnalystLifecycle {
             });
             return;
         }
-        if method == super::super::codex_voice_analyst::CODEX_APP_DISCONNECTED_METHOD {
+        if method == super::super::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD {
             self.invalidate().await;
             return;
         }
@@ -153,16 +153,30 @@ impl AnalystLifecycle {
         } else {
             active.completed_text.trim().to_owned()
         };
+        let status = normalized_completion_status(
+            params["turn"]["status"].as_str().unwrap_or("failed"),
+            &result,
+            active.origin,
+        );
         let _ = self.events.send(AnalystLifecycleEvent::Completed {
             turn_id: active.turn_id,
             delegation_id: active.latest_delegation_id,
-            status: params["turn"]["status"]
-                .as_str()
-                .unwrap_or("failed")
-                .to_owned(),
+            status,
             result,
             speakable: active.origin.speakable(),
         });
+    }
+}
+
+pub(super) fn normalized_completion_status(
+    status: &str,
+    result: &str,
+    origin: AnalystTurnOrigin,
+) -> String {
+    if status == "completed" && origin.speakable() && result.trim().is_empty() {
+        "failed".into()
+    } else {
+        status.to_owned()
     }
 }
 
