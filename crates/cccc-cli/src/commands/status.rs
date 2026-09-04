@@ -87,13 +87,9 @@ fn render(home: &HomeLayout, product_version: &str, daemon_running: bool) -> Res
                 .ok()
                 .and_then(|runtime| runtime.as_str().map(str::to_owned))
                 .unwrap_or_else(|| "codex".into());
-            let runner = serde_json::to_value(actor.runner)
-                .ok()
-                .and_then(|runner| runner.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "pty".into());
             writeln!(
                 output,
-                "      {} ({role}, {runtime}, {runner}) [{}]",
+                "      {} ({role}, {runtime}) [{}]",
                 actor.id,
                 if actor.enabled { "on" } else { "off" }
             )?;

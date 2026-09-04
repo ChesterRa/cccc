@@ -18,8 +18,6 @@ pub enum ActorAction {
         title: String,
         #[arg(long, default_value = "codex")]
         runtime: String,
-        #[arg(long, default_value = "pty")]
-        runner: String,
         #[arg(long, default_value = "")]
         command: String,
         #[arg(long = "env")]
@@ -46,8 +44,6 @@ pub enum ActorAction {
         #[arg(long)]
         runtime: Option<String>,
         #[arg(long)]
-        runner: Option<String>,
-        #[arg(long)]
         scope: Option<String>,
         #[arg(long)]
         command: Option<String>,
@@ -57,8 +53,6 @@ pub enum ActorAction {
         submit: Option<String>,
         #[arg(long)]
         enabled: Option<bool>,
-        #[arg(long)]
-        runtime_state_source: Option<String>,
         #[arg(long, default_value = "user")]
         by: String,
     },

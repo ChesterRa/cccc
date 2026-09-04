@@ -130,9 +130,6 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
     let cccc = executable.to_string_lossy().into_owned();
     let common = |parts: &[&str]| parts.iter().map(|part| (*part).to_owned()).collect();
     Some(match runtime {
-        ActorRuntime::Claude => common(&[
-            "claude", "mcp", "add", "-s", "user", "cccc", "--", &cccc, "mcp",
-        ]),
         ActorRuntime::Cline => {
             common(&["cline", "mcp", "add", "cccc", "--yes", "--", &cccc, "mcp"])
         }
@@ -177,7 +174,6 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
 #[must_use]
 pub fn remove_command(runtime: ActorRuntime) -> Option<Vec<String>> {
     let parts: &[&str] = match runtime {
-        ActorRuntime::Claude => &["claude", "mcp", "remove", "cccc", "-s", "user"],
         ActorRuntime::Codex => &["codex", "mcp", "remove", "cccc"],
         ActorRuntime::Copilot => &["copilot", "mcp", "remove", "cccc"],
         ActorRuntime::Devin => &["devin", "mcp", "remove", "-s", "user", "cccc"],

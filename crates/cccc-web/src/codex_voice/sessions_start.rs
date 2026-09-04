@@ -52,13 +52,26 @@ impl CodexVoiceSessions {
         let analyst = if let Some(analyst) = analyst {
             analyst
         } else {
-            let previous = state.analyst.clone();
+            let previous = state.analyst.take();
             if let Some(previous) = previous.as_ref()
                 && previous.analyst.is_busy().await
             {
+                state.analyst = Some(Arc::clone(previous));
                 bail!(
                     "Wait for or cancel the current Voice Analyst investigation before replacing it"
                 );
+            }
+            if let Some(previous) = previous.as_ref() {
+                // A disconnected Claude replacement may resume the exact same Agent View job.
+                // Relinquish the old owner first; stopping it after launch would kill the job
+                // that the replacement just adopted.
+                previous.stop_terminal();
+                if let Err(error) = previous.analyst.shutdown().await {
+                    state.analyst = Some(Arc::clone(previous));
+                    return Err(error.context(
+                        "stop previous Voice Analyst before resuming its persistent session",
+                    ));
+                }
             }
             let analyst = Arc::new(
                 persistence::launch_analyst(home)
@@ -66,12 +79,18 @@ impl CodexVoiceSessions {
                     .context("launch persistent Voice Analyst")?,
             );
             analyst.start_monitor(home.clone(), self.ledger_events.clone());
-            persistence::persist_analyst(home, &analyst, analyst.analyst.tui_ready())?;
-            state.analyst = Some(Arc::clone(&analyst));
-            if let Some(previous) = previous {
-                previous.stop_terminal();
-                previous.analyst.shutdown().await.ok();
+            if let Err(error) =
+                persistence::persist_analyst(home, &analyst, analyst.analyst.tui_ready())
+            {
+                analyst.stop_terminal();
+                return match analyst.analyst.shutdown().await {
+                    Ok(()) => Err(error.context("persist replacement Voice Analyst receipt")),
+                    Err(cleanup) => Err(anyhow!(
+                        "persist replacement Voice Analyst receipt: {error}; replacement cleanup also failed: {cleanup}"
+                    )),
+                };
             }
+            state.analyst = Some(Arc::clone(&analyst));
             analyst
         };
 
@@ -106,11 +125,20 @@ impl CodexVoiceSessions {
     }
 
     pub(crate) async fn current(&self) -> VoiceState {
-        let state = self.state.lock().await;
-        VoiceState {
-            call: state.active.as_ref().map(|session| session.info()),
-            analyst: state.analyst.as_ref().map(|analyst| analyst.info()),
-        }
+        let (call, analyst) = {
+            let state = self.state.lock().await;
+            (
+                state.active.as_ref().map(|session| session.info()),
+                state.analyst.clone(),
+            )
+        };
+        let analyst = if let Some(analyst) = analyst {
+            let busy = analyst.analyst.is_busy().await;
+            Some(with_authoritative_busy(analyst.info(), busy))
+        } else {
+            None
+        };
+        VoiceState { call, analyst }
     }
 
     pub(crate) async fn attach(&self, generation: &str) -> Result<SessionAttachment> {
@@ -154,6 +182,17 @@ impl CodexVoiceSessions {
     }
 }
 
+fn with_authoritative_busy(mut info: AnalystInfo, busy: bool) -> AnalystInfo {
+    if info.phase != "needs_attention" {
+        if busy {
+            info.phase = "working".into();
+        } else if info.phase == "working" {
+            info.phase = "ready".into();
+        }
+    }
+    info
+}
+
 async fn create_realtime_answer_with_heartbeat(
     call: &CodexVoiceCall,
     realtime: &RealtimeCallConfig,
@@ -177,5 +216,37 @@ async fn create_realtime_answer_with_heartbeat(
                     .context("renew Codex Voice recording lease during provider handshake")?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod current_tests {
+    use super::with_authoritative_busy;
+    use crate::codex_voice::AnalystInfo;
+
+    fn info(phase: &str) -> AnalystInfo {
+        AnalystInfo {
+            generation: "analyst-1".into(),
+            tui_ready: true,
+            phase: phase.into(),
+            last_result: String::new(),
+            warning: String::new(),
+        }
+    }
+
+    #[test]
+    fn current_state_projects_pending_runtime_work_without_hiding_attention() {
+        assert_eq!(
+            with_authoritative_busy(info("ready"), true).phase,
+            "working"
+        );
+        assert_eq!(
+            with_authoritative_busy(info("working"), false).phase,
+            "ready"
+        );
+        assert_eq!(
+            with_authoritative_busy(info("needs_attention"), true).phase,
+            "needs_attention"
+        );
     }
 }

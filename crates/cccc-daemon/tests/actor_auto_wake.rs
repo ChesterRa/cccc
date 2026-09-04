@@ -320,7 +320,6 @@ async fn setup(
         json!({
             "group_id":group_id,
             "actor_id":"peer1",
-            "runner":"pty",
             "runtime":"custom",
             "submit":"newline",
             "command":["sh","-c",command],

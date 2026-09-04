@@ -17,7 +17,7 @@ fn duplicate_client_id_returns_the_original_event() {
     call(
         &home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"lead","runner":"headless","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"lead","by":"user"}),
     );
     let args = json!({
         "group_id":group_id,
@@ -63,7 +63,6 @@ fn directed_message_wakes_an_explicitly_stopped_actor_and_delivers_once() {
             "group_id":group_id,
             "actor_id":"peer1",
             "runtime":"custom",
-            "runner":"pty",
             "submit":"newline",
             "command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'PREAMBLE:%s\\nRECEIVED:%s' \"$preamble\" \"$message\"; sleep 2"],
             "enabled":false,

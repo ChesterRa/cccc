@@ -792,15 +792,10 @@ export function CapabilitiesTab({
             return;
           }
           if (!hasAutoload) {
-            const resp = await api.updateActor(
-              gid,
-              aid,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              { capabilityAutoload: [...currentAutoload, capId], capabilityHidden: nextHidden },
-            );
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, {
+              capabilityAutoload: [...currentAutoload, capId],
+              capabilityHidden: nextHidden,
+            });
             if (!resp.ok) {
               await api.enableGroupCapability(gid, capId, {
                 enabled: false,
@@ -812,15 +807,9 @@ export function CapabilitiesTab({
               return;
             }
           } else if (hasHidden !== shouldHide) {
-            const resp = await api.updateActor(
-              gid,
-              aid,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              { capabilityHidden: nextHidden },
-            );
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, {
+              capabilityHidden: nextHidden,
+            });
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
@@ -828,32 +817,18 @@ export function CapabilitiesTab({
           }
         } else {
           if (hasAutoload) {
-            const resp = await api.updateActor(
-              gid,
-              aid,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              {
-                capabilityAutoload: currentAutoload.filter((item) => item !== capId),
-                capabilityHidden: nextHidden,
-              },
-            );
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, {
+              capabilityAutoload: currentAutoload.filter((item) => item !== capId),
+              capabilityHidden: nextHidden,
+            });
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           } else if (hasHidden !== shouldHide) {
-            const resp = await api.updateActor(
-              gid,
-              aid,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              { capabilityHidden: nextHidden },
-            );
+            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, {
+              capabilityHidden: nextHidden,
+            });
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;

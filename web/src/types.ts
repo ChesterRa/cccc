@@ -237,24 +237,6 @@ export type HeadlessStreamEvent = {
   data?: Record<string, unknown>;
 };
 
-export type RuntimeActivityEvent = {
-  v: number;
-  id: string;
-  ts: string;
-  group_id: string;
-  actor_id: string;
-  runtime: string;
-  activity_id: string;
-  kind: "session" | "turn" | "tool" | "subagent" | string;
-  status: "started" | "waiting" | "completed" | "failed" | "stuck" | string;
-  event_type: string;
-  session_id: string;
-  turn_id?: string | null;
-  operation_id?: string | null;
-  tool_name?: string | null;
-  duration_ms?: number | null;
-};
-
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
   obligation_status?: Record<string, ObligationStatus>;
@@ -738,7 +720,6 @@ export type GroupSettings = {
   silence_timeout_seconds: number;
   help_nudge_interval_seconds: number;
   help_nudge_min_messages: number;
-  min_interval_seconds: number;
   mail_notice_after_seconds: number;
   reply_notice_after_seconds: number;
 
@@ -1483,26 +1464,26 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   amp: { label: "Amp", desc: "" },
   auggie: { label: "Auggie (Augment)", desc: "" },
   claude: { label: "Claude Code", desc: "" },
-  cline: { label: "Cline CLI", desc: "Uses Cline CLI MCP setup with the PTY TUI" },
+  cline: { label: "Cline CLI", desc: "Uses Cline's native terminal with CCCC MCP" },
   codex: { label: "Codex CLI", desc: "" },
   deepseek: {
     label: "DeepSeek Harness",
-    desc: "Experimental ACP headless runtime; CCCC installs its pinned composition on first start",
+    desc: "Experimental ACP runtime; CCCC installs its pinned composition on first start",
   },
-  copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
+  copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot's native terminal with CCCC MCP" },
   cursor: {
     label: "Cursor CLI",
-    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+    desc: "Uses an idempotent MCP setup prompt in Cursor's native terminal",
   },
-  devin: { label: "Devin CLI", desc: "Uses Devin MCP CLI setup with the PTY runner" },
-  kiro: { label: "Kiro CLI", desc: "Uses Kiro MCP CLI setup with the PTY runner" },
+  devin: { label: "Devin CLI", desc: "Uses Devin's native terminal with CCCC MCP" },
+  kiro: { label: "Kiro CLI", desc: "Uses Kiro's native terminal with CCCC MCP" },
   kilo: {
     label: "Kilo Code CLI",
-    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+    desc: "Uses an idempotent MCP setup prompt in Kilo's native terminal",
   },
   antigravity: {
     label: "Antigravity CLI",
-    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+    desc: "Uses an idempotent MCP setup prompt in Antigravity's native terminal",
   },
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Managed delivery in the same native Grok TUI" },

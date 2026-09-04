@@ -384,7 +384,6 @@ export function ChatTab({
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const liveWorkCards = useRuntimeDockWorkCards({
-    groupId: selectedGroupId,
     actors: runtimeActors,
     events: liveWorkEvents,
     bucket: liveWorkBucket,

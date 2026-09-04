@@ -107,17 +107,17 @@ fn delivery_preferences_update(home: &HomeLayout, request: &DaemonRequest) -> Op
 fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
-    if actor.runner != RunnerKind::Headless && actor.runtime != ActorRuntime::WebModel {
-        return Err(OpError::new(
-            "invalid_actor_runner",
-            "headless operations require runner=headless or runtime=web_model",
-        ));
-    }
     if super::local_headless::supports(actor) {
         let state = super::local_headless::status(&group.group_id, &actor_id)
             .map(|state| serde_json::to_value(state).unwrap_or(Value::Null))
             .unwrap_or_else(|| default_state(&group, &actor_id));
         return object(json!({"state":state}));
+    }
+    if actor.runner != RunnerKind::Headless && actor.runtime != ActorRuntime::WebModel {
+        return Err(OpError::new(
+            "invalid_actor_runner",
+            "headless operations require runner=headless or runtime=web_model",
+        ));
     }
     let mut state = actor_state(home, &group.group_id, &actor_id)?;
     if state.is_null() {
@@ -129,16 +129,16 @@ fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn headless_set_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local managed-runtime headless status is owned by the daemon supervisor",
+        ));
+    }
     if actor.runner != RunnerKind::Headless && actor.runtime != ActorRuntime::WebModel {
         return Err(OpError::new(
             "invalid_actor_runner",
             "headless operations require runner=headless or runtime=web_model",
-        ));
-    }
-    if super::local_headless::supports(actor) {
-        return Err(OpError::new(
-            "provider_managed_headless",
-            "local Codex/Claude headless status is managed by the daemon supervisor",
         ));
     }
     let status = required_arg(request, "status")?;
@@ -169,16 +169,16 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     let actor = actor(&group, &actor_id)?;
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local managed-runtime headless actors receive turns from the daemon supervisor",
+        ));
+    }
     if !super::actor_runtime::is_structured(actor) {
         return Err(OpError::new(
             "invalid_actor_runner",
             "cccc_runtime_wait_next_turn requires runner=headless or runtime=web_model",
-        ));
-    }
-    if super::local_headless::supports(actor) {
-        return Err(OpError::new(
-            "provider_managed_headless",
-            "local Codex/Claude headless actors receive turns from the daemon supervisor",
         ));
     }
     if !actor.enabled
@@ -401,16 +401,16 @@ fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local managed-runtime headless turns are completed by the daemon supervisor",
+        ));
+    }
     if !super::actor_runtime::is_structured(actor) {
         return Err(OpError::new(
             "invalid_actor_runner",
             "cccc_runtime_complete_turn requires runner=headless or runtime=web_model",
-        ));
-    }
-    if super::local_headless::supports(actor) {
-        return Err(OpError::new(
-            "provider_managed_headless",
-            "local Codex/Claude headless turns are completed by the daemon supervisor",
         ));
     }
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());

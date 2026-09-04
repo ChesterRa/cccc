@@ -1633,7 +1633,7 @@ Notes:
 - `stopped` is not a valid `group_set_state` value in daemon IPC v1.
 - Higher-level surfaces (CLI/MCP) MAY expose `stopped` as a convenience alias that maps to `group_stop`.
 - While a group remains `paused`, the daemon MUST NOT submit queued
-  `chat.message` or `system.notify` work to PTY or headless actor runtimes.
+  `chat.message` or `system.notify` work to actor runtimes.
   A user-authored Send or Request Reply is an explicit use action: it MUST first
   resume the group to `active`, enable its addressed actors, and then deliver
   through the normal runtime path. Mail does not resume the group. Canonical
@@ -1656,8 +1656,8 @@ Args:
 
 Patch keys used by CCCC include:
 - Messaging: `default_send_to`
-- Delivery: `min_interval_seconds`, `mail_notice_after_seconds` (default 1800,
-  zero disables), `reply_notice_after_seconds` (default 900, zero disables)
+- Delivery: `mail_notice_after_seconds` (default 1800, zero disables),
+  `reply_notice_after_seconds` (default 900, zero disables)
 - Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
   `keepalive_max_per_actor`,
   `silence_timeout_seconds`, `help_nudge_interval_seconds`,
@@ -1763,8 +1763,8 @@ Update group-scoped built-in assistant settings.
 When `voice_secretary.enabled=true`, the daemon also materializes a hidden
 internal actor with `internal_kind="voice_secretary"` and `actor_id="voice-secretary"`.
 That actor is a distinct assistant identity, not the foreman and not a normal
-peer. Its startup runtime config (`runtime`, `runner`, `command`, env/secrets,
-scope, submit behavior) is copied from the current stable foreman actor so the user
+peer. Its startup runtime config (Runtime-derived execution surface, `command`,
+env/secrets, scope, submit behavior) is copied from the current stable foreman actor so the user
 does not configure a second runtime profile. The foreman's enabled/running state
 does not affect assistant config inheritance. If no foreman actor exists,
 enabling Voice Secretary fails. If the group is already running, the daemon
@@ -2073,15 +2073,14 @@ markdown working document. The working document is a user-facing repo artifact;
 raw transcript/source/revision sidecars remain in CCCC_HOME. When new input is
 available, the daemon emits a targeted `system.notify` to `voice-secretary` with
 `context.kind="voice_secretary_input"` and a daemon-owned `input_envelope`. The
-envelope is the canonical work item delivered to both PTY and headless runtimes;
+envelope is the canonical work item delivered to every actor runtime;
 `assistant_voice_document_input_read` /
 `cccc_voice_secretary_document(action="read_new_input")` remains a legacy,
 recovery, and debugging entrypoint. Input append is durable before runtime actor
 wake-up; if wake-up fails, the input remains readable and the API reports the
 best-effort wake error separately. If wake-up succeeds after the notify was
-created while the actor was stopped, the daemon re-dispatches that same notify:
-headless runtimes receive it as a control turn, and PTY runtimes receive it
-through the pending delivery queue so lazy preamble delivery is triggered.
+created while the actor was stopped, the daemon re-dispatches that same notify
+through the actor's normal runtime input so lazy startup instructions are included.
 
 The group operation validates or creates the Markdown target before committing
 transcript/session/input state. Retrying the same `session_id` and `segment_id`
@@ -2781,7 +2780,7 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; started: string[]; forced_headless?: string[]; event: CCCSEventV1 }
+{ group_id: string; started: string[]; event: CCCSEventV1 }
 ```
 
 #### `group_stop`
@@ -2810,7 +2809,7 @@ Args:
 
 Result:
 ```ts
-{ actors: Array<Record<string, unknown>> } // includes at least id/title/runner/runtime/enabled + role/running
+{ actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running
 ```
 
 #### `actor_add`
@@ -2822,13 +2821,12 @@ Args:
   actor_id?: string
   title?: string
   runtime?: string
-  runner?: "pty" | "headless"
   command?: string[]
   env?: Record<string, string>
   capability_autoload?: string[] // actor startup autoload capability ids
   capability_hidden?: string[] // actor-level skill menu hide preferences; does not disable capabilities
   env_private?: Record<string, string> // write-only secrets (stored under CCCC_HOME/state; never persisted into ledger)
-  profile_id?: string            // optional Actor Profile link (runtime/runner/command/submit/env + secrets)
+  profile_id?: string            // optional Actor Profile link (runtime/command/submit/env + secrets)
   default_scope_key?: string
   submit?: "enter" | "newline" | "none"
   by?: string
@@ -2873,7 +2871,7 @@ Args:
 
 Patch keys used by CCCC v0.4.x include:
 - Identity/UI: `title`
-- Runtime: `runtime`, `runner`, `command`, `submit`
+- Runtime: `runtime`, `command`, `submit`
 - Scope: `default_scope_key`
 - Enable/disable: `enabled`
 - Environment (use with care): `env`
@@ -2914,18 +2912,26 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
-- A daemon-launched actor whose executable is directly identified as `codex` MUST enter one daemon-owned Codex app-server session for both PTY and headless runners. Unsupported subcommands or prompt tails fail explicitly instead of silently selecting another Codex transport. Actor deliveries go to that session as structured turns. PTY adds a remote TUI attached to the same app-server thread; headless omits only that presentation layer. The app-server and remote TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same persisted thread when eligible. An opaque Codex wrapper that cannot be transformed without changing its meaning MAY retain the explicit direct-PTY or stdio compatibility path.
-- A daemon-launched `grok` actor MUST use one CCCC-owned managed session for both PTY and headless runners. CCCC starts a dedicated private Grok leader, connects its ACP controller and (for PTY) the native writable Grok TUI to the same provider session, injects the actor-scoped CCCC MCP server at session creation, and treats structured lifecycle events as working/completion authority. CCCC owns leader/socket, session/load, cwd, MCP, and approval arguments; a conflicting subcommand, wrapper, prompt tail, or user-owned session-control argument MUST fail explicitly and MUST NOT fall back to terminal-text injection. The controller and TUI MUST resolve the same model/provider configuration and private environment; CCCC-owned topology arguments MUST be applied only to the Grok process that accepts them. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-PTY Grok receipts MUST NOT be resumed.
-- A daemon-launched `opencode` actor MUST use one CCCC-owned managed session for both PTY and headless runners. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, controls the ACP session over stdio, attaches `opencode attach` to that exact session for PTY, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer; older releases may return from `session/prompt` before their final output updates and therefore MUST fail startup with an actionable upgrade error. ACP updates and the authenticated session-status stream are lifecycle authority; a lost or malformed non-replayable stream invalidates the session. CCCC owns ACP/server/session/attach/cwd/MCP and permission policy. It MAY preserve documented provider/model/agent/logging options, but conflicting subcommands, wrappers, prompt tails, server/session/attach arguments, or user-owned topology MUST fail explicitly and MUST NOT fall back to terminal-text injection. Permission requests MAY receive only a request-scoped one-time approval; CCCC MUST NOT persist a provider-global approval. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-PTY OpenCode state MUST NOT be resumed.
+- A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
+- A daemon-launched `claude` actor MUST use one CCCC-owned Claude Agent View background session and MUST start `claude attach` against that exact session. The resolved executable MUST report Claude Code 2.1.259 or newer; the supervisor MUST validate both the installed executable and the live worker version, the protocol-v1 control response shape, and the credential-file boundary. Version, protocol, or credential drift MUST fail closed. CCCC observes turn ownership and terminal settlement from the append-only provider transcript. A single retryable control-query failure MUST NOT invalidate a still-live session; sustained inability to verify liveness or confirmed job absence MUST disconnect it. CCCC owns background/session/attach, name, MCP identity, autonomy, and resume arguments. Runtime Profile environment values MUST be merged into one stable, owner-scoped, CCCC-protected settings file because Agent View deliberately strips arbitrary process environment from persisted jobs and stores that file path in its durable respawn metadata; raw values MUST NOT appear in the job record, terminal command, receipt, or logs. An ordinary process stop MUST retain this file while the durable session receipt remains resumable. The copy MUST be atomically replaced when that owner's effective settings change and removed when the managed session identity, Actor, or Group is retired. Stop MUST report success only after the Agent View job is confirmed absent. Start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, and the complete effective Claude launch identity, including content of file-backed settings and prompt inputs, still match. A live idle matching session MAY be re-adopted; an active, ambiguous, copied, or identity-mismatched session MUST fail or start fresh according to the existing receipt boundary and MUST NOT be guessed. Legacy Claude Hook and print-mode receipts MUST NOT be resumed.
+- A daemon-launched `grok` actor MUST use one CCCC-owned managed session. CCCC starts a dedicated private Grok leader, connects its ACP observer, and attaches the native writable Grok TUI to the same provider session. It injects the actor-scoped CCCC MCP server at session creation and treats structured lifecycle events as working/completion authority. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-terminal Grok receipts MUST NOT be resumed.
+- A daemon-launched `opencode` actor MUST use one CCCC-owned managed session. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, observes the ACP session over stdio, attaches `opencode attach` to that exact session, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer; older releases can return from `session/prompt` before their final output update and therefore cannot satisfy the completion fence. ACP updates and the authenticated session-status stream are lifecycle authority; a lost or malformed non-replayable stream invalidates the session. A model selection made in the native TUI becomes authoritative for later CCCC-managed prompts when the user submits the next TUI message; CCCC MUST mirror that message's exact provider/model and variant into the same ACP session. An explicit runtime-command `--model` remains the launch-time override. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-terminal OpenCode state MUST NOT be resumed.
 - Managed runtime startup MAY synchronously enumerate the injected actor-scoped CCCC MCP tools before its provider session becomes ready. That catalog discovery MUST use `capability_state` with `view="mcp_catalog"` so it cannot wait on the same Group lifecycle lock held by `actor_start`; ordinary capability reads remain serialized normally.
-- For any managed session, a native-TUI turn and a daemon delivery MUST never overlap. A delivery that loses the provider-side busy race before the corresponding lifecycle event is observed remains queued and retries only after the shared session is idle; this explicit pre-acceptance busy result MUST NOT be persisted as an ambiguous or unresolved delivery attempt.
-- Managed ACP output received before prompt admission MUST be buffered within fixed byte and event-count bounds. An explicit provider-busy rejection MUST discard that buffer and leave the delivery queued. Once the provider authoritatively accepts the prompt, CCCC MUST publish the buffered lifecycle updates in order, including for providers that omit a live ACP user-message echo. A provider-specific authenticated event stream MAY establish early admission only by correlating the same managed session, a user-authored message, and the exact submitted prompt; generic busy or output activity is insufficient. When an admitted provider version guarantees that all prompt output precedes the `session/prompt` response, that response MUST be the exact completion fence. A bounded post-response drain MAY be enabled only as an explicit provider-specific normalization policy; it MUST NOT mask a known-bad provider version.
-- Daemon startup restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. It MAY reconnect a validated existing session or initialize a provider that can expose its native terminal while remaining idle. A fresh managed PTY that requires a provider turn before its terminal can attach MUST remain dormant until an explicit lifecycle request or a real pending delivery starts it. A restored headless worker MAY initialize its provider process in an idle state, but its CCCC startup prompt MUST be deferred to and combined with the first real delivery. Recovery of an actual pending Send is a valid work trigger; daemon startup alone is not.
+- For Codex, Claude, Grok, and OpenCode Actors, CCCC MUST hand an incoming Actor delivery to the writable native TUI as soon as that terminal is ready. CCCC MUST NOT inspect provider busy state to choose `steer` versus `queue`, and MUST NOT hold the delivery until the current turn settles. The receiving Runtime owns that policy according to its own configuration. `runtime.delivery=accepted` means the canonical input and submit sequence were written successfully to the Runtime terminal; it does not claim that the provider completed or semantically accepted the work. Structured protocols remain authoritative for session identity, lifecycle, progress, completion, cancellation, and Voice Analyst delegation.
+- Realtime Voice owns the intent decision to create a Voice Analyst delegation; it does not own provider scheduling. Once `delegation.created` exists, CCCC MUST immediately hand the exact correlated input to the managed Runtime and MUST NOT hide it in a server-side wait-for-idle queue. An active Runtime with a verified exact-turn steer operation MAY receive the input through that operation; otherwise CCCC MUST write the exact payload and submit sequence to the same verified native terminal session, after which the Runtime owns the steer-versus-queue decision. CCCC MUST register correlation before the write, project whichever authoritative turn consumes it, and report success only after the Runtime control operation or complete terminal submit sequence was accepted. A missing, closed, or rejecting Runtime input path MUST return an explicit delivery error; busy state alone MUST NOT drop, delay, merge, or reject the delegation.
+- Voice Analyst Runtime settings MUST NOT change while a Realtime Voice call is active. After the call stops, active or queued Analyst work MUST block an ordinary settings update rather than being discarded implicitly. An interactive administrator MAY explicitly confirm discarding that work as part of the same settings transaction; CCCC MUST then stop the old managed session before applying the replacement and MUST report whether unfinished work was discarded. Candidate-launch failure MUST restore the prior settings and Runtime, but MUST NOT claim that explicitly discarded work was recovered.
+- Claude transcript entries MUST use the provider `promptId` as the durable provider-turn identity and MUST NOT infer identity from the Agent View summary headline. A human prompt observed before control acceptance is an external turn. Because the authenticated `reply` response does not expose that `promptId`, CCCC MAY return a stable local turn receipt as soon as the control request is accepted, but Voice ownership, progress, and results become authoritative only when the next transcript user record exactly matches the one pending controlled prompt and supplies its provider identifier. A competing prompt plus successful control acceptance is ambiguous and MUST invalidate the managed session rather than replaying the delivery. A controlled request that never starts, or settles without exposing the matching transcript, MUST fail within bounded post-acceptance or post-settlement intervals; active provider work MUST NOT expire solely because its turn is long. `turn_duration`, the provider interruption marker, and an explicit failure record are terminal authority. The state file and selected transcript file identity MUST be revalidated while following the session. Losing, truncating, rotating, replacing, or malformedly extending the non-replayable transcript tail, including an incomplete record that does not settle within a bounded interval, MUST invalidate the session.
+- A native-terminal delivery MUST wait for the TUI's advertised input mode before writing any payload; a PTY handle alone does not prove input readiness. Readiness waiting MUST be bounded and cancellable and MUST NOT inject a probe prompt, fall through on timeout, or wait for provider work to finish. Actor deliveries remain unaccepted on readiness failure; Voice native-input deliveries report an explicit error without writing the payload.
+- A Claude receipt MAY name an empty session that has never created a transcript. Before respawning it, CCCC MUST inspect the existing durable job metadata: only positive empty-input evidence with no transcript path, consumed transcript bytes, output, or token usage permits transcript-free recovery. Unknown or materialized history MUST retain strict transcript validation. This exception MUST preserve the exact provider session ID and MUST NOT replay old input or create a replacement conversation silently.
+- Observer failure MUST NOT be treated as proof of provider process exit. Actor and Analyst teardown MUST use confirmed provider stop, and a failed stop MUST retain retryable ownership rather than mark the job stopped. Normal managed-client shutdown MUST explicitly terminate event readers even when the session still retains the event sender; observers MUST distinguish expected closure from a failure and MUST NOT emit duplicate stop events.
+- Managed protocol output received before a protocol-originated request is admitted MUST be buffered within fixed byte and event-count bounds. This rule applies to Voice Analyst and internal control requests; Actor message delivery uses the native-TUI rule above. Once the provider authoritatively accepts a protocol request, CCCC MUST publish buffered lifecycle updates in order. A bounded post-response drain MAY be enabled only as an explicit provider-specific normalization policy.
+- Voice result projection MUST reconcile the authoritative final with the exact already-projected prefix. A different final MUST NOT be discarded merely because progress was streamed. Result accumulation is bounded to 32 KiB; overflow without a bounded authoritative final MUST settle as `result_too_large`, not as successful truncated output. The Voice port MUST report that limitation without terminating the warm Analyst or the audio call. Context sends, provider context receipts, and completed speech turns MUST remain distinct observations; receipt absence MUST NOT trigger blind replay, and receipt presence MUST NOT be treated as proof that every fact was spoken.
+- Actor start, restart, new-session, and daemon restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. They create or resume the daemon-owned control session and attach its native terminal while the model remains idle. Only real input—a pending CCCC delivery or human terminal input—may start model work. The CCCC startup prompt MUST be deferred to and combined with the first successfully accepted CCCC delivery, MUST NOT be sent as a standalone turn, and MUST remain pending if that delivery is not accepted. Recovery of an actual pending Send is a valid work trigger; lifecycle operations alone are not.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply to an actor is also an explicit wake action: it MUST enable the targeted actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
-- A `deepseek` actor MUST use the headless runner. The daemon MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
+- A `deepseek` actor has no native terminal surface and MUST use CCCC's structured ACP surface. The daemon MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
 - The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
 - Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
 - The managed `dsh-llm-deepseek` profile MUST set `maxTokens` to the shared `DEEPSEEK_MAX_OUTPUT_TOKENS` contract value (currently 65,536), preserving input/tool headroom instead of inheriting the upstream 256k output reservation. Credential absence and provider context-window overflow are permanent for the current runtime session: both MUST be normalized to stable, secret-free failed-turn errors and MUST stop automatic retries until a lifecycle start/restart successfully initializes the actor again.
@@ -3119,7 +3125,6 @@ Args:
     id?: string
     name: string
     runtime: string
-    runner: "pty" | "headless"
     command?: string[] | string
     submit?: "enter" | "newline" | "none"
     env?: Record<string, string> // deprecated legacy input; values are migrated into profile secrets
@@ -3326,7 +3331,7 @@ identity and canonical `message_mode`. Ordinary `send` and delivered `mail`
 messages need no mode label because the label does not change the receiver's
 next action. A `request_reply` message MUST instead add the actionable
 `reply_required` marker in the same metadata block. Implementations MUST use
-the same envelope in PTY, headless, and Web Model delivery. The metadata MUST
+the same envelope in native-terminal, structured, and Web Model delivery. The metadata MUST
 remain in the existing first header line so adding it does not turn a one-line
 message into multiple runtime input lines. It does not add or mutate ledger
 fields, and it is not required for `system.notify`.
@@ -4237,7 +4242,7 @@ Notes:
 
 `presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 
-### 8.9 Headless Runner
+### 8.9 Structured Runtime State
 
 #### `headless_status`
 
@@ -4296,7 +4301,7 @@ There is no generic notification acknowledgement operation. Domain workflows
 must expose domain lifecycle operations; chat reply obligations use
 `request_reply` and `reply_request_cancel`.
 
-### 8.11 Terminal Diagnostics and PTY Attach
+### 8.11 Terminal Diagnostics and Attach
 
 #### `terminal_tail`
 

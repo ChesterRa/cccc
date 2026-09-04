@@ -245,7 +245,7 @@ fn relaunch_preserves_runtime_metadata_but_new_session_clears_it() {
             });
             group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
-            actor.runtime = ActorRuntime::Codex;
+            actor.runtime = ActorRuntime::Custom;
             actor.runner = RunnerKind::Pty;
             actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
             actors::add(group, actor)
@@ -258,7 +258,7 @@ fn relaunch_preserves_runtime_metadata_but_new_session_clears_it() {
     cccc_core::fs::write_json(
         &session_path,
         &json!({
-            "runtime":"codex",
+            "runtime":"custom",
             "status":"usable",
             "resume_eligible":true,
             "provider_session_id":"019eece8-8c6d-7811-a700-26593825ae2d"
@@ -291,7 +291,7 @@ fn new_session_ledger_failure_restores_runtime_metadata_and_stops_replacement() 
             });
             group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
-            actor.runtime = ActorRuntime::Codex;
+            actor.runtime = ActorRuntime::Custom;
             actor.runner = RunnerKind::Pty;
             actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
             actors::add(group, actor)
@@ -304,7 +304,7 @@ fn new_session_ledger_failure_restores_runtime_metadata_and_stops_replacement() 
     cccc_core::fs::write_json(
         &session_path,
         &json!({
-            "runtime":"codex",
+            "runtime":"custom",
             "status":"usable",
             "resume_eligible":true,
             "provider_session_id":"019eece8-8c6d-7811-a700-26593825ae2d"

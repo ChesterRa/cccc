@@ -150,16 +150,7 @@ fn setup_one(
             "instruction":"Add or replace the stdio MCP server named cccc with this configuration, then verify it is enabled."
         }));
     }
-    if runtime == "opencode" {
-        return Ok(json!({
-            "runtime":runtime,
-            "mode":"managed_session",
-            "status":"ready",
-            "managed":true,
-            "mcp":"injected_per_session"
-        }));
-    }
-    if runtime == "grok" {
+    if matches!(runtime, "claude" | "grok" | "opencode") {
         return Ok(json!({
             "runtime":runtime,
             "mode":"managed_session",

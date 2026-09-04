@@ -47,7 +47,6 @@ mod presentation;
 mod presentation_browser;
 mod remote_access;
 mod remote_access_projection;
-mod runtime_activity;
 mod settings;
 mod streams;
 mod system;
@@ -117,7 +116,6 @@ pub fn router() -> Router<AppState> {
         .merge(diagnostics::routes())
         .merge(membership::routes())
         .merge(remote_access::routes())
-        .merge(runtime_activity::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
         .merge(streams::routes())

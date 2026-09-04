@@ -35,7 +35,10 @@ function shouldIncludeTickerPreview(
 ): boolean {
   if (isLiveWorkCardActive(card)) return true;
   if (card.phase !== "completed" && card.phase !== "failed") return false;
-  return hasTickerTranscript(previewSessions) || (card.runtimeActivities?.length || 0) > 0;
+  // A completed transcript may need one final flush into the short-lived UI
+  // cache. Completed activities are retained preview history, not live work;
+  // replaying them here makes stale tool calls reappear on every projection.
+  return hasTickerTranscript(previewSessions);
 }
 
 function isSubstantiveActivity(activity: StreamingActivity): boolean {
@@ -68,18 +71,10 @@ function getTickerPreviewSessions(
     ? card.previewSessions.filter(Boolean)
     : [];
   if (previewSessions.length > 0) {
-    const latestIndex = previewSessions.length - 1;
-    return previewSessions.map((session, index) =>
-      index === latestIndex
-        ? {
-            ...session,
-            activities: dedupeStreamingActivities([
-              ...(session.activities || []),
-              ...(card.runtimeActivities || []),
-            ]),
-          }
-        : session,
-    );
+    return previewSessions.map((session) => ({
+      ...session,
+      activities: dedupeStreamingActivities(session.activities || []),
+    }));
   }
 
   const text = normalizeTickerText(card.text);
@@ -217,8 +212,7 @@ export function buildRuntimeDockTickerEntries(
     if (!card) continue;
     const previewSessions = getTickerPreviewSessions(item, card);
     if (!shouldIncludeTickerPreview(card, previewSessions)) continue;
-    const includeActivities =
-      isLiveWorkCardActive(card) || (card.runtimeActivities?.length || 0) > 0;
+    const includeActivities = isLiveWorkCardActive(card);
     for (const session of previewSessions) {
       const sessionKey = getPreviewSessionKey(
         session,

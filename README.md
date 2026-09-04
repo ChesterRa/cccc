@@ -202,8 +202,8 @@ graph TB
         RG2["Another machine/team"]
     end
 
-    A1 <-->|MCP tools<br/>PTY/headless| Daemon
-    A2 <-->|MCP tools<br/>PTY/headless| Daemon
+    A1 <-->|Native terminal<br/>MCP + protocol| Daemon
+    A2 <-->|Native terminal<br/>MCP + protocol| Daemon
     A3 <-->|Browser delivery<br/>Remote MCP| Daemon
     A4 <-->|MCP tools| Daemon
     A5 <-->|MCP tools| Daemon
@@ -228,7 +228,7 @@ CCCC orchestrates agents across 17 first-class runtimes, with `custom` available
 
 | Runtime | Integration | Entrypoint / Surface |
 |---------|-------------|----------------------|
-| Claude Code | Auto MCP setup | `claude` |
+| Claude Code | Managed Agent View session + native TUI; per-session MCP | `claude` |
 | Cline CLI | Auto MCP setup | `cline` |
 | Codex CLI | Auto MCP setup | `codex` |
 | GitHub Copilot CLI | Auto MCP setup | `copilot` |
@@ -250,8 +250,8 @@ CCCC orchestrates agents across 17 first-class runtimes, with `custom` available
 These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
 
 ```bash
-cccc setup --runtime claude       # auto-configures MCP for this runtime
-cccc setup --runtime cline        # configures Cline CLI MCP for its PTY TUI
+cccc setup --runtime claude       # reports CCCC-owned per-session MCP
+cccc setup --runtime cline        # configures Cline CLI MCP for its native TUI
 cccc setup --runtime cursor       # shows the prompt-assisted MCP setup contract
 cccc setup --runtime kilo         # shows the prompt-assisted MCP setup contract
 cccc setup --runtime antigravity  # shows the prompt-assisted MCP setup contract
@@ -259,9 +259,9 @@ cccc runtime list --all           # show all available runtimes
 cccc doctor                       # verify environment and runtime availability
 ```
 
-Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code, Codex CLI, Grok Build, and OpenCode support both modes; headless gives the daemon tighter delivery and streaming control.
+Choose a Runtime; CCCC derives its interaction surface automatically. CLI Actors expose their native writable terminal. Claude Code, Codex CLI, Grok Build, and OpenCode pair that terminal with a structured background protocol on the same provider session, so users keep direct control while CCCC receives precise lifecycle state. Actor messages enter the native terminal immediately, leaving queue-versus-steer behavior to the receiving Runtime.
 
-For setup commands, runner-mode guidance, and troubleshooting for every supported runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
+For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 
 ### ChatGPT Web / GPT-5.x as a local development actor
 

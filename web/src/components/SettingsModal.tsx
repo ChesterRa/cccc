@@ -138,7 +138,6 @@ export function SettingsModal({
   const clearSettingsTarget = useModalStore((state) => state.clearSettingsTarget);
 
   // Automation + delivery settings state
-  const [minIntervalSeconds, setMinIntervalSeconds] = useState(0);
   const [mailNoticeAfterSeconds, setMailNoticeAfterSeconds] = useState(1800);
   const [replyNoticeAfterSeconds, setReplyNoticeAfterSeconds] = useState(900);
   const [idleSeconds, setIdleSeconds] = useState(0);
@@ -233,7 +232,6 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen && settings) {
-      setMinIntervalSeconds(settings.min_interval_seconds ?? 0);
       setMailNoticeAfterSeconds(settings.mail_notice_after_seconds ?? 1800);
       setReplyNoticeAfterSeconds(settings.reply_notice_after_seconds ?? 900);
       setIdleSeconds(settings.actor_idle_timeout_seconds);
@@ -543,7 +541,6 @@ export function SettingsModal({
 
   const handleSaveDeliverySettings = async () => {
     await onUpdateSettings({
-      min_interval_seconds: minIntervalSeconds,
       mail_notice_after_seconds: mailNoticeAfterSeconds,
       reply_notice_after_seconds: replyNoticeAfterSeconds,
     });
@@ -1283,8 +1280,6 @@ export function SettingsModal({
                   <DeliveryTab
                     isDark={isDark}
                     busy={busy}
-                    minIntervalSeconds={minIntervalSeconds}
-                    setMinIntervalSeconds={setMinIntervalSeconds}
                     mailNoticeAfterSeconds={mailNoticeAfterSeconds}
                     setMailNoticeAfterSeconds={setMailNoticeAfterSeconds}
                     replyNoticeAfterSeconds={replyNoticeAfterSeconds}

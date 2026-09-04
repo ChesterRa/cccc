@@ -5,6 +5,30 @@ use std::time::Duration;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AnalystSession {
+    pub(crate) async fn register_native_input(
+        &self,
+        expected_generation: &str,
+        delegation_id: &str,
+        text: &str,
+    ) -> io::Result<()> {
+        self.require_generation(expected_generation)?;
+        let delegation_id = required_value(delegation_id, "delegation_id")?;
+        let text = required_value(text, "text")?;
+        self.protocol
+            .register_native_input(delegation_id, text)
+            .await
+    }
+
+    pub(crate) async fn forget_native_input(
+        &self,
+        expected_generation: &str,
+        delegation_id: &str,
+    ) -> io::Result<()> {
+        self.require_generation(expected_generation)?;
+        let delegation_id = required_value(delegation_id, "delegation_id")?;
+        self.protocol.forget_native_input(delegation_id).await
+    }
+
     pub(crate) async fn steer(
         &self,
         expected_generation: &str,
@@ -31,6 +55,10 @@ impl AnalystSession {
                 io::ErrorKind::Unsupported,
                 "this managed Runtime does not support safe in-turn steering",
             )),
+            ManagedProtocol::Claude(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this managed Runtime does not support safe in-turn steering",
+            )),
         }
     }
 
@@ -51,6 +79,7 @@ impl AnalystSession {
                 .await
                 .map(|_| ()),
             ManagedProtocol::Acp(protocol) => protocol.cancel(&self.thread_id).await,
+            ManagedProtocol::Claude(protocol) => protocol.cancel(turn_id).await,
         }
     }
 
@@ -61,9 +90,9 @@ impl AnalystSession {
         action: ElicitationAction,
     ) -> io::Result<()> {
         self.require_generation(expected_generation)?;
-        if matches!(&self.protocol, ManagedProtocol::Acp(_)) {
-            // ACP permission requests are rejected inside the protocol loop before the
-            // canonical attention event is published; no second response is required.
+        if !matches!(&self.protocol, ManagedProtocol::Codex(_)) {
+            // Non-Codex adapters resolve permissions inside their managed provider path;
+            // they never expose a generic request id that can be answered here.
             return Ok(());
         }
         if request.generation != self.generation
@@ -89,7 +118,11 @@ impl AnalystSession {
 
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
         self.require_generation(expected_generation)?;
-        self.protocol.close().await;
+        self.protocol.close().await?;
+        self.cleanup_owned_resources()
+    }
+
+    fn cleanup_owned_resources(&self) -> io::Result<()> {
         if let Some(process) = &self.process {
             process.stop()?;
         }

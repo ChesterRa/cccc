@@ -47,7 +47,6 @@ fn projected_settings(group: &Value) -> Value {
     if let Some(target) = stored.as_object_mut() {
         for (legacy_key, section, canonical_key) in [
             ("default_send_to", "messaging", "default_send_to"),
-            ("min_interval_seconds", "delivery", "min_interval_seconds"),
             (
                 "mail_notice_after_seconds",
                 "delivery",
@@ -102,7 +101,6 @@ fn projected_settings(group: &Value) -> Value {
         "silence_timeout_seconds":0,
         "help_nudge_interval_seconds":600,
         "help_nudge_min_messages":10,
-        "min_interval_seconds":0,
         "mail_notice_after_seconds":1800,
         "reply_notice_after_seconds":900,
         "terminal_transcript_visibility":"foreman",
@@ -201,17 +199,15 @@ mod tests {
         let settings = projected_settings(&json!({
             "settings": {
                 "default_send_to":"broadcast",
-                "min_interval_seconds":1,
                 "native_extension":{"keep":true}
             },
             "messaging":{"default_send_to":"foreman"},
-            "delivery":{"min_interval_seconds":42,"mail_notice_after_seconds":1801,"reply_notice_after_seconds":901},
+            "delivery":{"mail_notice_after_seconds":1801,"reply_notice_after_seconds":901},
             "terminal_transcript":{"visibility":"all","notify_tail":false,"notify_lines":37},
             "features":{"panorama_enabled":true}
         }));
 
         assert_eq!(settings["default_send_to"], json!("foreman"));
-        assert_eq!(settings["min_interval_seconds"], json!(42));
         assert_eq!(settings["mail_notice_after_seconds"], json!(1801));
         assert_eq!(settings["reply_notice_after_seconds"], json!(901));
         assert_eq!(settings["terminal_transcript_visibility"], json!("all"));

@@ -1,4 +1,4 @@
-use super::events::{normalized_completion_status, tracked_work, truncate_utf8};
+use super::events::{normalized_completion_status, tracked_work};
 use super::*;
 use crate::ops::codex_voice_analyst::WorkspaceBinding;
 use futures_util::{SinkExt, StreamExt};
@@ -11,7 +11,69 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[tokio::test]
-async fn terminal_turn_is_authoritative_and_blocks_parallel_voice_work() {
+async fn oversized_results_are_explicit_and_a_bounded_authoritative_final_can_recover() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    for (index, final_text, expected_status) in [
+        (0, String::new(), "result_too_large"),
+        (1, "An authoritative short result.".into(), "completed"),
+        (2, "界".repeat(32 * 1024), "result_too_large"),
+    ] {
+        let turn_id = format!("oversized-{index}");
+        session.publish_event_for_test(json!({
+            "method":"turn/started",
+            "params":{"threadId":"thread-lifecycle","turn":{"id":turn_id}}
+        }));
+        events.recv().await.expect("turn started");
+        session.publish_event_for_test(json!({
+            "method":"item/agentMessage/delta",
+            "params":{"turnId":turn_id,"delta":"a".repeat(32 * 1024)}
+        }));
+        assert!(matches!(
+            events.recv().await.expect("bounded progress event"),
+            AnalystLifecycleEvent::Progress { .. }
+        ));
+        session.publish_event_for_test(json!({
+            "method":"item/agentMessage/delta",
+            "params":{"turnId":turn_id,"delta":"MUST_NOT_SILENTLY_DISAPPEAR"}
+        }));
+        session.publish_event_for_test(json!({
+            "method":"item/completed",
+            "params":{"turnId":turn_id,"item":{"type":"agentMessage","text":final_text}}
+        }));
+        session.publish_event_for_test(json!({
+            "method":"turn/completed",
+            "params":{"turn":{"id":turn_id,"status":"completed"}}
+        }));
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .expect("completion timeout")
+            .expect("completion event");
+        let AnalystLifecycleEvent::Completed { status, result, .. } = event else {
+            panic!("expected completion, got {event:?}");
+        };
+        assert_eq!(status, expected_status);
+        if status == "result_too_large" {
+            assert!(
+                result.is_empty(),
+                "never present a truncated result as authoritative"
+            );
+        } else {
+            assert_eq!(result, final_text);
+        }
+        assert!(!lifecycle.is_busy().await);
+    }
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop test session");
+    server.await.expect("test server exit");
+}
+
+#[tokio::test]
+async fn an_undelivered_native_voice_input_rolls_back_without_reclassifying_terminal_work() {
     let (session, server) = test_session().await;
     let session = Arc::new(session);
     let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
@@ -34,13 +96,31 @@ async fn terminal_turn_is_authoritative_and_blocks_parallel_voice_work() {
     ));
     assert!(
         session.tui_ready(),
-        "turn start materializes the TUI thread"
+        "the native TUI is attachable before any turn starts"
+    );
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active terminal turn")
+        .cancelling = true;
+    assert_eq!(
+        lifecycle
+            .admit_voice("voice-parallel", "deliver through the Runtime")
+            .await
+            .expect("native route"),
+        VoiceDelegationAdmission::NativeInput {
+            delegation_id: "voice-parallel".into(),
+            text: "deliver through the Runtime".into(),
+        }
     );
     assert!(
         lifecycle
-            .begin_voice("voice-parallel", "must not overlap")
+            .reject_native_voice("voice-parallel")
             .await
-            .is_err()
+            .expect("roll back failed terminal delivery")
     );
 
     session.publish_event_for_test(json!({
@@ -71,6 +151,91 @@ async fn terminal_turn_is_authoritative_and_blocks_parallel_voice_work() {
 }
 
 #[tokio::test]
+async fn native_runtime_input_rebinds_an_active_turn_to_the_exact_voice_delegation() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+
+    session.publish_event_for_test(json!({
+        "method":"turn/started",
+        "params":{"threadId":"thread-lifecycle","turn":{"id":"turn-native"}}
+    }));
+    assert!(matches!(
+        events.recv().await.expect("terminal start"),
+        AnalystLifecycleEvent::Started {
+            origin: AnalystTurnOrigin::Terminal,
+            ..
+        }
+    ));
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active terminal turn")
+        .cancelling = true;
+
+    assert_eq!(
+        lifecycle
+            .admit_voice("voice-native", "do not lose this correction")
+            .await
+            .expect("native admission"),
+        VoiceDelegationAdmission::NativeInput {
+            delegation_id: "voice-native".into(),
+            text: "do not lose this correction".into(),
+        }
+    );
+    session.publish_event_with_delegation_for_test(
+        json!({
+            "method":crate::ops::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD,
+            "params":{"threadId":"thread-lifecycle","turnId":"turn-native"}
+        }),
+        Some("voice-native".into()),
+    );
+    let associated = events.recv().await.expect("delegation association");
+    assert!(matches!(
+        associated,
+        AnalystLifecycleEvent::Associated {
+            receipt: TurnReceipt { ref delegation_id, ref turn_id, .. },
+            origin: AnalystTurnOrigin::Voice,
+        } if delegation_id == "voice-native" && turn_id == "turn-native"
+    ));
+
+    session.publish_event_for_test(json!({
+        "method":"item/agentMessage/delta",
+        "params":{"threadId":"thread-lifecycle","turnId":"turn-native","delta":"accepted"}
+    }));
+    assert!(matches!(
+        events.recv().await.expect("speakable progress"),
+        AnalystLifecycleEvent::Progress {
+            speakable: true,
+            ..
+        }
+    ));
+    session.publish_event_for_test(json!({
+        "method":"turn/completed",
+        "params":{"threadId":"thread-lifecycle","turn":{"id":"turn-native","status":"completed"}}
+    }));
+    assert!(matches!(
+        events.recv().await.expect("speakable completion"),
+        AnalystLifecycleEvent::Completed {
+            ref delegation_id,
+            speakable: true,
+            ..
+        } if delegation_id == "voice-native"
+    ));
+    assert!(!lifecycle.is_busy().await);
+
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop test session");
+    server.await.expect("test app-server");
+}
+
+#[tokio::test]
 async fn a_competing_tui_start_cannot_claim_a_pending_voice_delegation() {
     let (session, server) = test_session_with_competing_tui_start().await;
     let session = Arc::new(session);
@@ -81,7 +246,7 @@ async fn a_competing_tui_start_cannot_claim_a_pending_voice_delegation() {
         let lifecycle = Arc::clone(&lifecycle);
         tokio::spawn(async move {
             lifecycle
-                .begin_voice("voice-pending", "must remain Voice-owned")
+                .admit_voice("voice-pending", "must remain Voice-owned")
                 .await
         })
     };
@@ -156,18 +321,25 @@ async fn completion_before_start_response_does_not_reactivate_the_turn() {
         let lifecycle = Arc::clone(&lifecycle);
         tokio::spawn(async move {
             lifecycle
-                .begin_voice("voice-fast", "finish before the RPC response")
+                .admit_voice("voice-fast", "finish before the RPC response")
                 .await
         })
     };
 
     tokio::time::timeout(Duration::from_secs(2), async {
-        while lifecycle.terminal_input_allowed().await {
+        loop {
+            if lifecycle.state.lock().await.pending.is_some() {
+                break;
+            }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("pending start must gate terminal input");
+    .expect("pending start must become observable");
+    assert!(
+        lifecycle.terminal_input_allowed().await,
+        "the Runtime, rather than CCCC, owns input typed during admission"
+    );
 
     release_response.send(()).expect("release start response");
 
@@ -182,10 +354,13 @@ async fn completion_before_start_response_does_not_reactivate_the_turn() {
         .expect("fast completion event");
     assert!(matches!(completed, AnalystLifecycleEvent::Completed { .. }));
 
-    let receipt = starting
+    let admission = starting
         .await
         .expect("start task")
-        .expect("completed start receipt");
+        .expect("completed start admission");
+    let VoiceDelegationAdmission::Turn(receipt) = admission else {
+        panic!("new work must use the controlled Runtime path")
+    };
     assert_eq!(receipt.turn_id, "turn-fast");
     assert!(!lifecycle.is_busy().await);
 
@@ -216,10 +391,13 @@ async fn an_unreplayable_event_gap_invalidates_the_lifecycle() {
         .expect("event gap timeout")
         .expect("event gap signal");
     assert!(matches!(disconnected, AnalystLifecycleEvent::Disconnected));
-    assert!(!lifecycle.terminal_input_allowed().await);
+    assert!(
+        lifecycle.terminal_input_allowed().await,
+        "an invalidated control lifecycle must release the still-live native terminal to the user"
+    );
     assert!(
         lifecycle
-            .begin_voice("after-gap", "must fail closed")
+            .admit_voice("after-gap", "must fail closed")
             .await
             .is_err()
     );
@@ -268,12 +446,7 @@ async fn failed_interrupt_allows_a_real_retry() {
 }
 
 #[test]
-fn completed_text_is_utf8_bounded_and_tracked_work_is_strict() {
-    let text = "界".repeat(32 * 1024);
-    let bounded = truncate_utf8(&text, 32 * 1024);
-    assert!(bounded.len() <= 32 * 1024);
-    assert!(bounded.is_char_boundary(bounded.len()));
-
+fn tracked_work_is_strict() {
     let work = tracked_work(&json!({
         "method":"item/completed",
         "params":{"item":{

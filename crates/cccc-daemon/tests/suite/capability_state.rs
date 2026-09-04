@@ -1432,7 +1432,6 @@ fn actor_start_applies_and_projects_role_profile_and_actor_autoload() {
                 "id":"autoload-profile",
                 "name":"Autoload Profile",
                 "runtime":"web_model",
-                "runner":"headless",
                 "command":[],
                 "submit":"enter",
                 "capability_defaults":{
@@ -1449,7 +1448,6 @@ fn actor_start_applies_and_projects_role_profile_and_actor_autoload() {
             "group_id":group_id,
             "actor_id":"lead1",
             "runtime":"web_model",
-            "runner":"headless",
             "profile_id":"autoload-profile",
             "capability_autoload":["pack:context-advanced"],
             "by":"user"
@@ -1525,7 +1523,6 @@ fn failed_actor_start_keeps_the_durable_autoload_baseline() {
             "group_id":group_id,
             "actor_id":"lead1",
             "runtime":"custom",
-            "runner":"pty",
             "command":["cccc-audit-command-that-does-not-exist"],
             "capability_autoload":["pack:space"],
             "by":"user"
@@ -1600,7 +1597,6 @@ fn actor_configured_hidden_skill_is_projected_without_being_disabled() {
             "group_id":group_id,
             "actor_id":"peer1",
             "runtime":"custom",
-            "runner":"pty",
             "command":["sh","-c","exit 0"],
             "capability_hidden":[capability_id],
             "by":"user"

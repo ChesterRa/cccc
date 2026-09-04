@@ -117,7 +117,6 @@ fn context_sync_enforces_actor_authority_and_returns_the_standard_receipt() {
                 "group_id":group_id,
                 "actor_id":actor_id,
                 "runtime":"custom",
-                "runner":"pty",
                 "command":["sh","-c","exit 0"],
                 "by":"user"
             }),

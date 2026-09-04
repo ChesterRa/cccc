@@ -1,7 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, CodexVoiceCall, parse_provider_delegation, realtime_greeting_commands,
-    realtime_notice_commands,
+    AnalystLifecycleEvent, CodexVoiceCall, VoiceDelegationAdmission, parse_provider_delegation,
+    realtime_greeting_commands, realtime_notice_commands,
 };
 use serde_json::{Value, json};
 use std::fmt::Display;
@@ -129,6 +129,18 @@ pub(super) async fn serve(
                     }
                 };
                 match value["type"].as_str().unwrap_or_default() {
+                    "provider_receipt" => {
+                        // Browser transport diagnostics only: these counters neither
+                        // authorize Analyst work nor prove that every fact was spoken.
+                        tracing::info!(
+                            %generation,
+                            sent = value["sent"].as_u64(),
+                            acknowledged = value["acknowledged"].as_u64(),
+                            pending = value["pending"].as_u64(),
+                            speech_turns_completed = value["speech_turns_completed"].as_u64(),
+                            "Codex Voice provider delivery receipt"
+                        );
+                    }
                     "provider_event" => {
                         let provider_event = &value["event"];
                         let provider = match parse_provider_delegation(provider_event) {
@@ -140,16 +152,53 @@ pub(super) async fn serve(
                             }
                         };
                         if provider.is_none() { continue; }
-                        match call.begin_provider_event(&generation, provider_event).await {
-                            Ok(Some(_)) | Ok(None) => {}
+                        match call.route_provider_event(&generation, provider_event).await {
+                            Ok(Some(VoiceDelegationAdmission::NativeInput { delegation_id, text })) => {
+                                let delivery = session.analyst().submit_native_voice_input(&text).await;
+                                if !matches!(delivery, Ok(true)) {
+                                    let rolled_back = call
+                                        .reject_native_delegation(&generation, &delegation_id)
+                                        .await
+                                        .unwrap_or(true);
+                                    // A failing terminal write can race the Runtime's authoritative
+                                    // input echo. Once correlated, the delegation was accepted and
+                                    // must neither be rejected nor replayed.
+                                    if !rolled_back {
+                                        continue;
+                                    }
+                                    let error = match delivery {
+                                        Ok(false) => "the native Runtime terminal rejected the input".to_owned(),
+                                        Err(error) => error.to_string(),
+                                        Ok(true) => unreachable!(),
+                                    };
+                                    tracing::warn!(%error, %delegation_id, "Voice Analyst native input delivery failed");
+                                    for command in realtime_notice_commands(
+                                        "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
+                                    ) {
+                                        if !send_provider_command(&mut socket, command).await { break 'session; }
+                                    }
+                                    if !send_error(
+                                        &mut socket,
+                                        "analyst_delivery_failed",
+                                        "The Voice Analyst did not accept that investigation.",
+                                    ).await { break; }
+                                }
+                            }
+                            Ok(Some(VoiceDelegationAdmission::Turn(_)
+                                | VoiceDelegationAdmission::NativeInputPending))
+                            | Ok(None) => {}
                             Err(error) => {
                                 for command in realtime_notice_commands(
-                                    "I couldn't start that investigation. Please check the Voice Analyst status in CCCC.",
+                                    "I couldn't deliver that investigation to the Voice Analyst. Please check its terminal in CCCC.",
                                 ) {
                                     if !send_provider_command(&mut socket, command).await { break 'session; }
                                 }
-                                tracing::warn!(%error, "Voice Analyst investigation start failed");
-                                if !send_error(&mut socket, "analyst_start_failed", "The Voice Analyst could not start that investigation.").await { break; }
+                                tracing::warn!(%error, "Voice Analyst investigation delivery failed");
+                                if !send_error(
+                                    &mut socket,
+                                    "analyst_delivery_failed",
+                                    "The Voice Analyst did not accept that investigation.",
+                                ).await { break; }
                             }
                         }
                     }
@@ -176,7 +225,13 @@ pub(super) async fn serve(
             }
             lifecycle = lifecycle_events.recv() => match lifecycle {
                 Ok(AnalystLifecycleEvent::Started { receipt, origin }) => {
-                    if origin.is_actor_result() && origin.speakable() {
+                    if origin.speakable() {
+                        call.follow_analyst_turn(&receipt).await;
+                    }
+                    if !send_json(&mut socket, json!({"type":"analyst_working"})).await { break; }
+                }
+                Ok(AnalystLifecycleEvent::Associated { receipt, origin }) => {
+                    if origin.speakable() {
                         call.follow_analyst_turn(&receipt).await;
                     }
                     if !send_json(&mut socket, json!({"type":"analyst_working"})).await { break; }
@@ -216,10 +271,18 @@ pub(super) async fn serve(
                         if !send_json(&mut socket, json!({"type":"analyst_result","text":result})).await { break; }
                     } else {
                         let _ = call.settle_without_projection(&generation, &turn_id).await;
+                        if status == "result_too_large" && !send_error(
+                            &mut socket,
+                            "analyst_result_too_large",
+                            "The Analyst result is too long for Voice. Read the full result in its terminal or ask for a shorter summary.",
+                        ).await { break; }
                         if speakable {
-                            for command in realtime_notice_commands(
-                                "The investigation did not complete. Please check the Voice Analyst status in CCCC.",
-                            ) {
+                            let notice = if status == "result_too_large" {
+                                "The Analyst finished, but the result is too long for Voice. Do not present earlier partial updates as the complete result. The full output is in the Analyst terminal; the user can ask for a shorter summary."
+                            } else {
+                                "The investigation did not complete. Please check the Voice Analyst status in CCCC."
+                            };
+                            for command in realtime_notice_commands(notice) {
                                 if !send_provider_command(&mut socket, command).await { break 'session; }
                             }
                         }

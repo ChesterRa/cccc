@@ -1,5 +1,5 @@
 use super::codex_voice_analyst::{AnalystEvent, AnalystSession, ElicitationAction, TurnReceipt};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::task::JoinHandle;
@@ -43,6 +43,10 @@ pub enum AnalystLifecycleEvent {
         receipt: TurnReceipt,
         origin: AnalystTurnOrigin,
     },
+    Associated {
+        receipt: TurnReceipt,
+        origin: AnalystTurnOrigin,
+    },
     Progress {
         turn_id: String,
         text: String,
@@ -62,6 +66,13 @@ pub enum AnalystLifecycleEvent {
     Disconnected,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VoiceDelegationAdmission {
+    Turn(TurnReceipt),
+    NativeInput { delegation_id: String, text: String },
+    NativeInputPending,
+}
+
 #[derive(Debug)]
 struct ActiveTurn {
     turn_id: String,
@@ -70,9 +81,10 @@ struct ActiveTurn {
     cancelling: bool,
     deltas: String,
     completed_text: String,
+    result_overflowed: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PendingStart {
     delegation_id: String,
     origin: AnalystTurnOrigin,
@@ -83,6 +95,7 @@ struct LifecycleState {
     active: Option<ActiveTurn>,
     pending: Option<PendingStart>,
     settled_pending: Option<TurnReceipt>,
+    native_pending: VecDeque<PendingStart>,
     delegations: HashMap<String, TurnReceipt>,
     invalidated: bool,
 }
@@ -109,10 +122,18 @@ impl AnalystLifecycle {
             loop {
                 match source.recv().await {
                     Ok(event) => {
+                        let disconnected = event.message["method"]
+                            == super::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD;
+                        if disconnected && event.message["params"]["expected"] == true {
+                            break;
+                        }
                         let Some(lifecycle) = Weak::upgrade(&weak) else {
                             break;
                         };
                         lifecycle.handle(event).await;
+                        if disconnected {
+                            break;
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(
@@ -154,6 +175,7 @@ impl AnalystLifecycle {
         state.active = None;
         state.pending = None;
         state.settled_pending = None;
+        state.native_pending.clear();
         state.invalidated = true;
         let _ = self.events.send(AnalystLifecycleEvent::Disconnected);
     }

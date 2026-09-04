@@ -4,7 +4,6 @@ import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore }
 import * as api from "../services/api";
 import type { Actor, SupportedRuntime } from "../types";
 import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
-import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 
@@ -28,7 +27,6 @@ export function useActorActions(groupId: string) {
   const { setInboxActorId, setInboxMessages } = useInboxStore();
   const {
     setEditActorRuntime,
-    setEditActorRunner,
     setEditActorCommand,
     setEditActorTitle,
     setEditActorCapabilityAutoloadText,
@@ -125,7 +123,6 @@ export function useActorActions(groupId: string) {
       // Initialize form state with actor's current values
       const runtime = String(actor.runtime || "").trim();
       setEditActorRuntime((runtime || "codex") as SupportedRuntime);
-      setEditActorRunner(getEffectiveActorRunner(actor));
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
       setEditActorTitle(actor.title || "");
       setEditActorCapabilityAutoloadText(formatCapabilityIdInput(actor.capability_autoload));
@@ -134,7 +131,6 @@ export function useActorActions(groupId: string) {
     [
       setEditingActor,
       setEditActorRuntime,
-      setEditActorRunner,
       setEditActorCommand,
       setEditActorTitle,
       setEditActorCapabilityAutoloadText,

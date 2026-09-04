@@ -52,49 +52,47 @@ pub(super) fn wrap_resolved_command(
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     if windows && matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat") {
-        return vec![
+        let mut prepared = vec![
             comspec.unwrap_or("cmd.exe").to_owned(),
             "/D".into(),
             "/S".into(),
             "/C".into(),
-            batch_command_line(&program, &command[1..]),
+            "call".into(),
+            escape_batch_argument(&program),
         ];
+        prepared.extend(
+            command
+                .iter()
+                .skip(1)
+                .map(|argument| escape_batch_argument(argument)),
+        );
+        return prepared;
     }
     let mut prepared = vec![program];
     prepared.extend(command.iter().skip(1).cloned());
     prepared
 }
 
-fn batch_command_line(program: &str, arguments: &[String]) -> String {
-    let mut command = format!("\"\"{program}\"");
-    for argument in arguments {
-        command.push(' ');
-        command.push_str(&escape_batch_argument(argument));
-    }
-    command.push('"');
-    command
-}
-
 fn escape_batch_argument(argument: &str) -> String {
     if argument.is_empty() {
-        return "\"\"".into();
+        return String::new();
     }
-    let quote = argument.chars().any(char::is_whitespace);
+    // CommandBuilder quotes whitespace and embedded quotes when it builds the
+    // CreateProcessW command line. Only protect cmd.exe metacharacters that
+    // would otherwise be active in an unquoted argument.
+    let quoted_by_command_builder = argument
+        .chars()
+        .any(|character| character.is_whitespace() || character == '"');
     let mut escaped = String::new();
     for character in argument.chars() {
         match character {
             '%' => escaped.push_str("%%"),
-            '^' | '&' | '|' | '<' | '>' | '(' | ')' if !quote => {
+            '^' | '&' | '|' | '<' | '>' | '(' | ')' if !quoted_by_command_builder => {
                 escaped.push('^');
                 escaped.push(character);
             }
-            '"' => escaped.push_str("\\\""),
             value => escaped.push(value),
         }
     }
-    if quote {
-        format!("\"{escaped}\"")
-    } else {
-        escaped
-    }
+    escaped
 }

@@ -58,6 +58,7 @@ fn analyst_runtime_executable(
         .first()
         .map(String::as_str)
         .unwrap_or_else(|| match runtime.runtime {
+            cccc_contracts::ActorRuntime::Claude => "claude",
             cccc_contracts::ActorRuntime::Grok => "grok",
             cccc_contracts::ActorRuntime::Opencode => "opencode",
             _ => "codex",
@@ -80,6 +81,8 @@ pub(in crate::routes::codex_voice) struct AnalystSettingsUpdate {
     pub environment_unset: Vec<String>,
     #[serde(default)]
     pub environment_clear: bool,
+    #[serde(default)]
+    pub discard_current_work: bool,
 }
 
 pub(in crate::routes::codex_voice) async fn analyst_settings(
@@ -123,15 +126,22 @@ pub(in crate::routes::codex_voice) async fn update_analyst_settings(
             body.environment_set,
             body.environment_unset,
             body.environment_clear,
+            body.discard_current_work,
         )
         .await
         .map_err(|error| {
             let message = error.to_string();
             tracing::warn!(%error, "Voice Analyst settings update failed");
-            if message.contains("Stop the active") || message.contains("Wait for or cancel") {
+            if message.contains("Stop the active") {
+                ApiError::conflict(
+                    "codex_voice_call_active",
+                    "Stop the active Codex Voice call before applying Analyst settings.",
+                    json!({}),
+                )
+            } else if message.contains("Wait for or cancel") {
                 ApiError::conflict(
                     "codex_voice_settings_busy",
-                    "Stop the call and wait for or cancel current Analyst work before applying settings.",
+                    "The Voice Analyst still has active or queued work.",
                     json!({}),
                 )
             } else {
@@ -142,6 +152,7 @@ pub(in crate::routes::codex_voice) async fn update_analyst_settings(
         "analyst":outcome.analyst.map(payload::analyst_info_value),
         "restarted":outcome.restarted,
         "started_new_session":outcome.started_new_session,
+        "discarded_work":outcome.discarded_work,
     })))
 }
 
@@ -209,6 +220,7 @@ mod tests {
     fn readiness_probes_the_selected_runtime_default() {
         for (runtime, executable) in [
             (ActorRuntime::Codex, "codex"),
+            (ActorRuntime::Claude, "claude"),
             (ActorRuntime::Grok, "grok"),
             (ActorRuntime::Opencode, "opencode"),
         ] {

@@ -24,23 +24,3 @@ pub(super) async fn for_settlement(
         }
     }
 }
-
-pub(super) async fn until_ready(
-    events: &mut broadcast::Receiver<AnalystLifecycleEvent>,
-) -> Result<()> {
-    loop {
-        match events.recv().await {
-            Ok(AnalystLifecycleEvent::Completed { .. }) => return Ok(()),
-            Ok(AnalystLifecycleEvent::Disconnected) => {
-                bail!("Voice Analyst disconnected while waiting for its active turn")
-            }
-            Ok(_) => {}
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                bail!("Voice Analyst lifecycle events were lost while waiting")
-            }
-            Err(broadcast::error::RecvError::Closed) => {
-                bail!("Voice Analyst lifecycle closed while waiting")
-            }
-        }
-    }
-}

@@ -3,7 +3,7 @@ use super::supervisor::{supports, uses_managed_session};
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 
 #[test]
-fn admitted_runtimes_use_managed_sessions_without_raw_pty_fallback() {
+fn admitted_runtimes_use_one_managed_session_and_always_expose_their_terminal() {
     let mut direct = Actor::new("codex-direct");
     direct.runtime = ActorRuntime::Codex;
     direct.runner = RunnerKind::Pty;
@@ -17,11 +17,27 @@ fn admitted_runtimes_use_managed_sessions_without_raw_pty_fallback() {
     assert!(supports(&direct));
     assert!(uses_managed_session(&direct));
 
-    let mut headless = direct.clone();
-    headless.id = "codex-headless".into();
-    headless.runner = RunnerKind::Headless;
-    assert!(supports(&headless));
-    assert!(uses_managed_session(&headless));
+    let mut legacy_runner = direct.clone();
+    legacy_runner.id = "codex-legacy-runner".into();
+    legacy_runner.runner = RunnerKind::Headless;
+    assert!(supports(&legacy_runner));
+    assert!(uses_managed_session(&legacy_runner));
+
+    let mut claude = Actor::new("claude");
+    claude.runtime = ActorRuntime::Claude;
+    claude.runner = RunnerKind::Pty;
+    claude.command = vec!["claude".into(), "--model".into(), "sonnet".into()];
+    assert!(supports(&claude));
+    assert!(uses_managed_session(&claude));
+    claude.runner = RunnerKind::Headless;
+    assert!(supports(&claude));
+    assert!(uses_managed_session(&claude));
+
+    let mut wrapped_claude = claude;
+    wrapped_claude.runner = RunnerKind::Pty;
+    wrapped_claude.command = vec!["sh".into(), "-lc".into(), "exec claude".into()];
+    assert!(supports(&wrapped_claude));
+    assert!(uses_managed_session(&wrapped_claude));
 
     let mut wrapped = direct.clone();
     wrapped.id = "codex-wrapper".into();
@@ -30,12 +46,12 @@ fn admitted_runtimes_use_managed_sessions_without_raw_pty_fallback() {
         "-lc".into(),
         "exec codex --dangerously-bypass-approvals-and-sandbox".into(),
     ];
-    assert!(!supports(&wrapped));
-    assert!(!uses_managed_session(&wrapped));
+    assert!(supports(&wrapped));
+    assert!(uses_managed_session(&wrapped));
 
     wrapped.runner = RunnerKind::Headless;
     assert!(supports(&wrapped));
-    assert!(!uses_managed_session(&wrapped));
+    assert!(uses_managed_session(&wrapped));
 
     let mut unsupported_direct = direct;
     unsupported_direct.command = vec!["codex".into(), "exec".into()];

@@ -17,24 +17,24 @@ fn structured_turn_preserves_inline_text_above_the_legacy_24k_limit() {
     call(
         &home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"headless1","runtime":"custom","runner":"headless","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
     );
     call(
         &home,
         "actor_start",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
     );
     let text = format!("large-start-{}-large-end", "x".repeat(25_000));
     call(
         &home,
         "send",
-        json!({"group_id":group_id,"by":"user","to":["headless1"],"text":text,"message_mode":"send"}),
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":text,"message_mode":"send"}),
     );
 
     let turn = call(
         &home,
         "runtime_wait_next_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
     );
     let coalesced = turn.result["turn"]["coalesced_text"]
         .as_str()

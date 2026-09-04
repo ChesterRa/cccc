@@ -169,12 +169,10 @@ where
     Ok(())
 }
 
-async fn pump_input<R>(mut read: R, input: TerminalInput, home: HomeLayout) -> Result<()>
+async fn pump_input<R>(mut read: R, input: TerminalInput, _home: HomeLayout) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
-    let group_id = input.group_id().to_owned();
-    let actor_id = input.actor_id().to_owned();
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         let count = read.read(&mut buffer).await?;
@@ -183,12 +181,9 @@ where
         }
         let data = buffer[..count].to_vec();
         let writer = input.clone();
-        let written = tokio::task::spawn_blocking(move || writer.write(&data))
+        tokio::task::spawn_blocking(move || writer.write(&data))
             .await
             .map_err(|error| anyhow!("terminal input task failed: {error}"))??;
-        if written {
-            crate::ops::runtime_hook_input::observe(&home, &group_id, &actor_id, &buffer[..count]);
-        }
     }
 }
 

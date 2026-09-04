@@ -64,6 +64,10 @@ export class CodexVoiceBrowserSession {
       (data) => void this.handleProviderMessage(data),
       (code) => void this.fail(code),
       () => this.stopping,
+      () => {
+        this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
+        this.callbacks.onError("provider_context_unconfirmed");
+      },
     );
   }
 
@@ -174,6 +178,7 @@ export class CodexVoiceBrowserSession {
     this.peerMonitor.close();
 
     const call = this.call;
+    this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
     this.sendServerMessage({ type: "stop" });
     this.eventSocket?.close();
     this.eventSocket = null;
@@ -253,6 +258,9 @@ export class CodexVoiceBrowserSession {
       event = JSON.parse(text);
     } catch {
       return;
+    }
+    if (this.providerChannel.observe(event)) {
+      this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
     }
     const transcript = realtimeTranscriptUpdate(event);
     if (transcript) {

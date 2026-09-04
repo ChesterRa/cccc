@@ -51,7 +51,19 @@ impl AnalystLifecycle {
             return;
         }
         if method == super::super::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD {
+            tracing::warn!(
+                reason = params["reason"].as_str().unwrap_or("unspecified"),
+                thread_id = %self.session.thread_id(),
+                "Voice Analyst managed session disconnected"
+            );
             self.invalidate().await;
+            if let Err(error) = self.session.stop(self.session.generation()).await {
+                tracing::error!(%error, "failed to stop disconnected Voice Analyst session");
+            }
+            return;
+        }
+        if method == super::super::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD {
+            self.handle_delegation_attached(&event).await;
             return;
         }
         if method == "turn/started" {
@@ -67,20 +79,46 @@ impl AnalystLifecycle {
         if turn_id.is_empty() {
             return;
         }
-        // A real turn on a legacy-history thread is the Codex materialization boundary. Mark it
-        // before publishing lifecycle state so the Web TUI endpoint cannot lag behind its button.
-        self.session.mark_thread_materialized();
         let mut state = self.state.lock().await;
         if state.active.is_some() {
+            if let Some(delegation_id) = event.requested_delegation_id.as_deref() {
+                associate_native_delegation(
+                    &self.events,
+                    self.session.thread_id(),
+                    &mut state,
+                    turn_id,
+                    delegation_id,
+                );
+            }
             return;
         }
-        let (delegation_id, origin) = state
+        let controlled = state
             .pending
             .as_ref()
             .filter(|pending| {
                 event.requested_delegation_id.as_deref() == Some(pending.delegation_id.as_str())
             })
-            .map(|pending| (pending.delegation_id.clone(), pending.origin))
+            .map(|pending| (pending.delegation_id.clone(), pending.origin));
+        let native = event
+            .requested_delegation_id
+            .as_deref()
+            .and_then(|delegation_id| {
+                take_native_pending(&mut state.native_pending, delegation_id)
+                    .map(|pending| (pending.delegation_id, pending.origin))
+            });
+        // Codex is the only adapter whose native TUI shares the app-server event stream without
+        // an explicit user-echo correlation hook. During its narrow start-admission race, the next
+        // authoritative TUI turn consumes the oldest registered Voice input.
+        let codex_native = (controlled.is_none()
+            && native.is_none()
+            && state.pending.is_none()
+            && self.session.supports_steer())
+        .then(|| state.native_pending.pop_front())
+        .flatten()
+        .map(|pending| (pending.delegation_id, pending.origin));
+        let (delegation_id, origin) = controlled
+            .or(native)
+            .or(codex_native)
             .unwrap_or_else(|| (String::new(), AnalystTurnOrigin::Terminal));
         state.active = Some(ActiveTurn {
             turn_id: turn_id.to_owned(),
@@ -89,6 +127,7 @@ impl AnalystLifecycle {
             cancelling: false,
             deltas: String::new(),
             completed_text: String::new(),
+            result_overflowed: false,
         });
         let receipt = TurnReceipt {
             delegation_id: state
@@ -99,9 +138,37 @@ impl AnalystLifecycle {
             thread_id: self.session.thread_id().to_owned(),
             turn_id: turn_id.to_owned(),
         };
+        if !receipt.delegation_id.is_empty() {
+            state
+                .delegations
+                .insert(receipt.delegation_id.clone(), receipt.clone());
+        }
         let _ = self
             .events
             .send(AnalystLifecycleEvent::Started { receipt, origin });
+    }
+
+    async fn handle_delegation_attached(&self, event: &AnalystEvent) {
+        let turn_id = event.message["params"]["turnId"]
+            .as_str()
+            .unwrap_or_default()
+            .trim();
+        let delegation_id = event
+            .requested_delegation_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim();
+        if turn_id.is_empty() || delegation_id.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().await;
+        associate_native_delegation(
+            &self.events,
+            self.session.thread_id(),
+            &mut state,
+            turn_id,
+            delegation_id,
+        );
     }
 
     async fn handle_turn_event(&self, method: &str, params: &Value) {
@@ -110,9 +177,13 @@ impl AnalystLifecycle {
             return;
         };
         if method == "item/agentMessage/delta" && params["turnId"] == active.turn_id {
-            if let Some(delta) = params["delta"].as_str()
-                && active.deltas.len().saturating_add(delta.len()) <= MAX_RESULT_BYTES
-            {
+            if let Some(delta) = params["delta"].as_str() {
+                if active.result_overflowed
+                    || active.deltas.len().saturating_add(delta.len()) > MAX_RESULT_BYTES
+                {
+                    active.result_overflowed = true;
+                    return;
+                }
                 active.deltas.push_str(delta);
                 let _ = self.events.send(AnalystLifecycleEvent::Progress {
                     turn_id: active.turn_id.clone(),
@@ -126,10 +197,16 @@ impl AnalystLifecycle {
             && params["turnId"] == active.turn_id
             && params["item"]["type"] == "agentMessage"
         {
-            active.completed_text = truncate_utf8(
-                params["item"]["text"].as_str().unwrap_or_default(),
-                MAX_RESULT_BYTES,
-            );
+            let text = params["item"]["text"].as_str().unwrap_or_default();
+            active.completed_text.clear();
+            if !text.trim().is_empty() {
+                // A bounded authoritative final can supersede an overlong stream.
+                // ACP adapters with no final snapshot must retain the overflow.
+                active.result_overflowed = text.len() > MAX_RESULT_BYTES;
+                if !active.result_overflowed {
+                    active.completed_text.push_str(text);
+                }
+            }
             return;
         }
         if method != "turn/completed" || params["turn"]["id"] != active.turn_id {
@@ -148,16 +225,19 @@ impl AnalystLifecycle {
         if settled_pending.is_some() {
             state.settled_pending = settled_pending;
         }
-        let result = if active.completed_text.trim().is_empty() {
+        let result = if active.result_overflowed {
+            String::new()
+        } else if active.completed_text.trim().is_empty() {
             active.deltas.trim().to_owned()
         } else {
             active.completed_text.trim().to_owned()
         };
-        let status = normalized_completion_status(
-            params["turn"]["status"].as_str().unwrap_or("failed"),
-            &result,
-            active.origin,
-        );
+        let provider_status = params["turn"]["status"].as_str().unwrap_or("failed");
+        let status = if provider_status == "completed" && active.result_overflowed {
+            "result_too_large".to_owned()
+        } else {
+            normalized_completion_status(provider_status, &result, active.origin)
+        };
         let _ = self.events.send(AnalystLifecycleEvent::Completed {
             turn_id: active.turn_id,
             delegation_id: active.latest_delegation_id,
@@ -166,6 +246,53 @@ impl AnalystLifecycle {
             speakable: active.origin.speakable(),
         });
     }
+}
+
+fn take_native_pending(
+    pending: &mut std::collections::VecDeque<PendingStart>,
+    delegation_id: &str,
+) -> Option<PendingStart> {
+    let index = pending
+        .iter()
+        .position(|pending| pending.delegation_id == delegation_id)?;
+    pending.remove(index)
+}
+
+fn associate_native_delegation(
+    events: &broadcast::Sender<AnalystLifecycleEvent>,
+    thread_id: &str,
+    state: &mut LifecycleState,
+    turn_id: &str,
+    delegation_id: &str,
+) {
+    if state.delegations.contains_key(delegation_id) {
+        return;
+    }
+    if state
+        .active
+        .as_ref()
+        .is_none_or(|active| active.turn_id != turn_id)
+    {
+        return;
+    }
+    let Some(pending) = take_native_pending(&mut state.native_pending, delegation_id) else {
+        return;
+    };
+    let active = state.active.as_mut().expect("checked active turn");
+    active.latest_delegation_id = delegation_id.to_owned();
+    active.origin = pending.origin;
+    let receipt = TurnReceipt {
+        delegation_id: delegation_id.to_owned(),
+        thread_id: thread_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+    };
+    state
+        .delegations
+        .insert(delegation_id.to_owned(), receipt.clone());
+    let _ = events.send(AnalystLifecycleEvent::Associated {
+        receipt,
+        origin: pending.origin,
+    });
 }
 
 pub(super) fn normalized_completion_status(
@@ -178,17 +305,6 @@ pub(super) fn normalized_completion_status(
     } else {
         status.to_owned()
     }
-}
-
-pub(super) fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_owned();
-    }
-    let mut end = max_bytes.min(value.len());
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
 }
 
 pub(super) fn tracked_work(message: &Value) -> Option<TrackedWork> {

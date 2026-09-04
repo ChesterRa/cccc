@@ -1,18 +1,14 @@
-use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
-use cccc_runtime::SessionStatus;
+use cccc_runtime::{LaunchSpec, SessionStatus};
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
-use crate::ops::{actor_profile_runtime, runtime_session};
+use crate::ops::actor_profile_runtime;
 
 mod environment;
-mod hook_launch;
-#[cfg(test)]
-mod hook_launch_tests;
 mod persistence;
 mod reconcile;
-mod resume_verification;
 pub(crate) mod terminal_history;
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
@@ -44,13 +40,15 @@ pub fn apply(
     }
     if super::local_headless::supports(actor) {
         match kind {
-            "actor.stop" => super::local_headless::stop(&group.group_id, actor_id),
+            "actor.stop" => {
+                super::local_headless::stop(&group.group_id, actor_id).map_err(OpError::io)?
+            }
             "actor.restart" | "actor.new_session" => {
-                super::local_headless::stop(&group.group_id, actor_id);
-                start_local_headless(home, group, actor, false)?;
+                super::local_headless::stop(&group.group_id, actor_id).map_err(OpError::io)?;
+                start_local_headless(home, group, actor)?;
             }
             _ if !super::local_headless::running(&group.group_id, actor_id) => {
-                start_local_headless(home, group, actor, kind == "actor.restore")?;
+                start_local_headless(home, group, actor)?;
             }
             _ => {}
         }
@@ -73,28 +71,7 @@ pub fn apply(
     }
 }
 
-pub(crate) fn normalize_managed_session(actor: &mut Actor) {
-    if !matches!(
-        actor.runtime,
-        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
-    ) {
-        return;
-    }
-    actor.runtime_state_source = if super::local_headless::uses_managed_session(actor) {
-        RuntimeStateSource::ManagedSession
-    } else if actor.runner == RunnerKind::Pty {
-        RuntimeStateSource::Terminal
-    } else {
-        actor.runtime_state_source
-    };
-}
-
-fn start_local_headless(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    actor: &Actor,
-    restoring: bool,
-) -> Result<(), OpError> {
+fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
     let mut actor = environment::resolve_launch_actor(home, group, actor)?;
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
@@ -104,17 +81,12 @@ fn start_local_headless(
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    if restoring {
-        super::local_headless::restore(home, group, &actor)
-    } else {
-        super::local_headless::start(home, group, &actor)
-    }
-    .map_err(OpError::io)
+    super::local_headless::start(home, group, &actor).map_err(OpError::io)
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
     let actor = environment::resolve_launch_actor(home, group, actor)?;
-    let base_command = if actor.command.is_empty() {
+    let command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
@@ -122,104 +94,33 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
-    let prepared = match (actor.runtime, actor.runner) {
-        (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
-            runtime_session::prepare_codex_command(
-                home,
-                &group.group_id,
-                &actor.id,
-                &cwd,
-                &base_command,
-            )
-        }
-        _ => runtime_session::PreparedCommand {
-            command: base_command.clone(),
-            resumed_session_id: None,
-        },
-    };
-    super::runtime_hook_session::with_launch_lock(&group.group_id, &actor.id, || {
-        let status =
-            hook_launch::launch_serialized(home, group, &actor, &cwd, &env, prepared.command)?;
-        if prepared.resumed_session_id.is_some() {
-            resume_verification::schedule(
-                home.clone(),
-                group.clone(),
-                actor.clone(),
-                cwd,
-                env,
-                base_command,
-                status.clone(),
-            );
-        } else {
-            schedule_capture(home, group, &actor, cwd, base_command, &status);
-        }
-        Ok(status)
-    })
-}
-
-fn schedule_capture(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    actor: &Actor,
-    cwd: PathBuf,
-    base_command: Vec<String>,
-    status: &SessionStatus,
-) {
-    if actor.runtime == ActorRuntime::Codex
-        && actor.runner == cccc_contracts::RunnerKind::Pty
-        && status.running
-    {
-        runtime_session::schedule_codex_session_capture(
-            home.clone(),
-            group.group_id.clone(),
-            actor.id.clone(),
+    let _start_permit = crate::runtime_start_gate::permit(home)
+        .map_err(|message| OpError::new("runtime_shutting_down", message))?;
+    let command = cccc_runtime::resolve_command_executable(&command, &env);
+    let history =
+        terminal_history::config(home, &group.group_id, &actor.id).map_err(OpError::io)?;
+    cccc_runtime::start_with_history(
+        LaunchSpec {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            runner: RunnerKind::Pty,
+            command,
             cwd,
-            base_command,
-            status.started_at.clone(),
-        );
-    }
+            env,
+            cols: 120,
+            rows: 40,
+        },
+        history,
+    )
+    .map_err(runtime_error)
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
-    super::runtime_hook_session::with_launch_lock(&group.group_id, actor_id, || {
-        resume_verification::cancel(&group.group_id, actor_id);
-        match cccc_runtime::stop(&group.group_id, actor_id) {
-            Ok(status) => {
-                super::runtime_hook_session::revoke(&group.group_id, actor_id);
-                super::runtime_hook_input::reset(&group.group_id, actor_id);
-                Ok(Some(status))
-            }
-            Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
-            Err(error) => Err(runtime_error(error)),
-        }
-    })
-}
-
-#[cfg(test)]
-pub(super) fn stop_if_started_at(
-    group: &GroupDoc,
-    status: &SessionStatus,
-) -> Result<Option<SessionStatus>, OpError> {
-    super::runtime_hook_session::with_launch_lock(&group.group_id, &status.actor_id, || {
-        resume_verification::cancel_if_current(
-            &group.group_id,
-            &status.actor_id,
-            &status.started_at,
-        );
-        match cccc_runtime::stop_if_started_at(
-            &group.group_id,
-            &status.actor_id,
-            &status.started_at,
-        ) {
-            Ok(Some(stopped)) => {
-                super::runtime_hook_session::revoke(&group.group_id, &status.actor_id);
-                super::runtime_hook_input::reset(&group.group_id, &status.actor_id);
-                Ok(Some(stopped))
-            }
-            Ok(None) => Ok(None),
-            Err(error) => Err(runtime_error(error)),
-        }
-    })
+    match cccc_runtime::stop(&group.group_id, actor_id) {
+        Ok(status) => Ok(Some(status)),
+        Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
+        Err(error) => Err(runtime_error(error)),
+    }
 }
 
 pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
@@ -228,38 +129,64 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
 
 #[must_use]
 pub fn is_structured(actor: &Actor) -> bool {
-    actor.runner == RunnerKind::Headless || actor.runtime == ActorRuntime::WebModel
+    !super::local_headless::uses_managed_session(actor)
+        && (actor.runner == RunnerKind::Headless || actor.runtime == ActorRuntime::WebModel)
 }
 
 pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
-    let mut started = Vec::new();
+    let mut statuses = Vec::new();
+    let mut started_actor_ids = Vec::new();
     for actor in group.actors.iter().filter(|actor| actor.enabled) {
+        let was_running = actor_is_running(group, actor);
         match apply(home, group, &actor.id, "actor.start") {
-            Ok(Some(status)) => started.push(status),
-            Ok(None) => {}
-            Err(error) => {
-                for status in &started {
-                    let _ = stop(group, &status.actor_id);
+            Ok(status) => {
+                if !was_running && actor_is_running(group, actor) {
+                    started_actor_ids.push(actor.id.clone());
                 }
-                return Err(error);
+                if let Some(status) = status {
+                    statuses.push(status);
+                }
+            }
+            Err(error) => {
+                let mut rollback_failures = Vec::new();
+                for actor_id in started_actor_ids.iter().rev() {
+                    if let Err(rollback) = apply(home, group, actor_id, "actor.stop") {
+                        rollback_failures.push(format!("{actor_id}: {}", rollback.message));
+                    }
+                }
+                return if rollback_failures.is_empty() {
+                    Err(error)
+                } else {
+                    Err(OpError::new(
+                        "rollback_failed",
+                        format!(
+                            "{}; failed to stop newly started Actors: {}",
+                            error.message,
+                            rollback_failures.join("; ")
+                        ),
+                    ))
+                };
             }
         }
     }
-    Ok(started)
+    Ok(statuses)
 }
 
-pub(crate) fn cancel_resume_verifications() {
-    resume_verification::cancel_all();
+fn actor_is_running(group: &GroupDoc, actor: &Actor) -> bool {
+    if super::local_headless::supports(actor) {
+        super::local_headless::running(&group.group_id, &actor.id)
+    } else {
+        status(&group.group_id, &actor.id).is_some_and(|status| status.running)
+    }
 }
 
 pub(crate) fn stop_all() -> Result<Vec<SessionStatus>, cccc_runtime::RuntimeError> {
-    cancel_resume_verifications();
     super::deepseek_runtime::stop_all();
     cccc_runtime::stop_all()
 }
 
 pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
-    super::local_headless::stop_group(&group.group_id);
+    super::local_headless::stop_group(&group.group_id).map_err(OpError::io)?;
     super::deepseek_runtime::stop_group(&group.group_id);
     let mut stopped = Vec::new();
     for actor in &group.actors {

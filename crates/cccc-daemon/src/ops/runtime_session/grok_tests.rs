@@ -34,9 +34,10 @@ fn managed_receipt_resumes_only_the_same_command_workspace_and_identity() {
         &environment,
         &session_id,
         false,
-        cccc_contracts::RunnerKind::Pty,
     )
     .expect("record");
+    let stored = read(&home, &group_id, "peer1").expect("receipt");
+    assert!(stored.get("runner").is_none());
     assert_eq!(
         prepare_managed(&home, &group_id, "peer1", &cwd, &command, &environment).expect("prepare"),
         Some(session_id)
@@ -77,7 +78,6 @@ fn legacy_raw_pty_receipt_is_not_resumed() {
         &environment,
         &session_id,
         false,
-        cccc_contracts::RunnerKind::Pty,
     )
     .expect("record");
     let mut legacy = read(&home, &group_id, "peer1").expect("receipt");

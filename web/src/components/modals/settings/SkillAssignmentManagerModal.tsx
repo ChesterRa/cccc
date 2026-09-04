@@ -409,9 +409,7 @@ export function SkillAssignmentManagerModal({
                     .filter((actor) => String(actor.id || "").trim())
                     .map((actor) => {
                       const actorId = String(actor.id || "").trim();
-                      const runtimeLabel = [actor.runtime, actor.runner_effective || actor.runner]
-                        .filter(Boolean)
-                        .join(" / ");
+                      const runtimeLabel = String(actor.runtime || "").trim();
                       return (
                         <div
                           key={actorId}

@@ -49,7 +49,8 @@ pub(super) fn validate_private_environment(values: &BTreeMap<String, String>) ->
         validate_environment_value(key, value)?;
         if matches!(
             key.as_str(),
-            "CODEX_HOME"
+            "CLAUDE_CONFIG_DIR"
+                | "CODEX_HOME"
                 | "GROK_HOME"
                 | "HOME"
                 | "USERPROFILE"
@@ -82,7 +83,8 @@ pub(super) fn validate_env_key(value: &str) -> io::Result<()> {
 pub(super) fn normalized_environment_value(key: &str, value: String) -> io::Result<String> {
     if matches!(
         key,
-        "CODEX_HOME"
+        "CLAUDE_CONFIG_DIR"
+            | "CODEX_HOME"
             | "GROK_HOME"
             | "HOME"
             | "USERPROFILE"

@@ -18,9 +18,10 @@ export const emptyVoiceAnalystSettings: VoiceAnalystDraftSettings = {
   profile_owner: "",
 };
 
-export const managedAnalystRuntimes = new Set(["codex", "grok", "opencode"]);
+export const managedAnalystRuntimes = new Set(["codex", "claude", "grok", "opencode"]);
 export const analystIdentityEnvironmentKeys = new Set([
   "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
   "GROK_HOME",
   "HOME",
   "USERPROFILE",
@@ -32,6 +33,7 @@ export const analystIdentityEnvironmentKeys = new Set([
 ]);
 
 export function defaultAnalystRuntimeCommand(runtime: string): string {
+  if (runtime === "claude") return "claude";
   if (runtime === "grok") return "grok";
   if (runtime === "opencode") return "opencode";
   return "codex";
@@ -62,4 +64,29 @@ export function bindVoiceAnalystProfile(
     profile_scope: profile.scope === "user" ? "user" : "global",
     profile_owner: String(profile.owner_id || "").trim(),
   };
+}
+
+export function voiceAnalystIdentityChanged(
+  current: VoiceAnalystDraftSettings,
+  loaded: VoiceAnalystDraftSettings,
+  mode: "custom" | "profile",
+  changedEnvironmentKeys: Iterable<string>,
+  hasEnvironmentChanges: boolean,
+): boolean {
+  if (
+    current.runtime !== loaded.runtime ||
+    current.profile_id !== loaded.profile_id ||
+    current.profile_scope !== loaded.profile_scope ||
+    current.profile_owner !== loaded.profile_owner
+  ) {
+    return true;
+  }
+  if (mode !== "custom") return false;
+  if (
+    current.runtime === "claude" &&
+    (current.command.trim() !== loaded.command.trim() || hasEnvironmentChanges)
+  ) {
+    return true;
+  }
+  return [...changedEnvironmentKeys].some((key) => analystIdentityEnvironmentKeys.has(key));
 }

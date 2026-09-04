@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { ActorSecretManager } from "../../components/modals/ActorSecretManager";
 import {
+  OpenCodeManagedModelHint,
   RuntimeCommandControl,
   RuntimeConfigurationModePicker,
   RuntimeProfilePicker,
@@ -54,7 +55,6 @@ export function CodexVoiceAnalystSettings({
                 emptyHint={t("codexVoiceAnalystCompatibleProfilesEmpty")}
                 hostNote={t("codexVoiceAnalystProfileHostNote")}
                 detailsLabel={t("codexVoiceAnalystProfileDetails")}
-                showRunner={false}
                 onChange={form.selectProfile}
               />
             ) : (
@@ -71,6 +71,7 @@ export function CodexVoiceAnalystSettings({
                     ariaLabel={tActors("runtime")}
                     items={[
                       { value: "codex", label: RUNTIME_INFO.codex.label },
+                      { value: "claude", label: RUNTIME_INFO.claude.label },
                       { value: "grok", label: RUNTIME_INFO.grok.label },
                       { value: "opencode", label: RUNTIME_INFO.opencode.label },
                     ]}
@@ -78,6 +79,7 @@ export function CodexVoiceAnalystSettings({
                   <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
                     {t("codexVoiceAnalystSupportedRuntimesHint")}
                   </p>
+                  <OpenCodeManagedModelHint runtime={form.settings.runtime} />
                 </div>
 
                 <RuntimeCommandControl
@@ -128,9 +130,13 @@ export function CodexVoiceAnalystSettings({
             <p className="text-rose-500" role="alert">
               {form.error}
             </p>
-          ) : form.blocked ? (
+          ) : form.callActive ? (
             <p className="text-amber-700 dark:text-amber-300">
-              {t("codexVoiceAnalystSettingsBusy")}
+              {t("codexVoiceAnalystSettingsCallActive")}
+            </p>
+          ) : form.analystBusy ? (
+            <p className="text-amber-700 dark:text-amber-300">
+              {t("codexVoiceAnalystSettingsWorkActive")}
             </p>
           ) : form.saved ? (
             <p className="text-emerald-600 dark:text-emerald-400" role="status">

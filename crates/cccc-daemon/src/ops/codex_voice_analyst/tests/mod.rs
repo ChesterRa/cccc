@@ -1,5 +1,7 @@
 #[cfg(unix)]
 mod grok_session;
+mod live_claude;
+mod live_codex_claude_actor;
 mod live_cross_group;
 mod live_grok;
 mod live_grok_actor;

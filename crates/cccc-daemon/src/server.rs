@@ -292,7 +292,6 @@ fn use_tcp() -> bool {
 
 fn begin_runtime_shutdown(home: &HomeLayout) {
     let _ = crate::runtime_start_gate::prevent(home);
-    crate::ops::actor_runtime::cancel_resume_verifications();
 }
 
 #[cfg(test)]

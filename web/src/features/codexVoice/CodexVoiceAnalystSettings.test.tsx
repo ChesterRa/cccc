@@ -47,11 +47,14 @@ afterEach(() => {
   api.copyVoiceSecrets.mockReset();
   api.updateProfileEnv.mockReset();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(window, "confirm");
   Reflect.deleteProperty(window, "prompt");
   document.body.innerHTML = "";
 });
 
-function controller(): CodexVoiceSessionController {
+function controller(
+  overrides: Partial<CodexVoiceSessionController> = {},
+): CodexVoiceSessionController {
   return {
     isEngaged: false,
     analyst: null,
@@ -61,6 +64,7 @@ function controller(): CodexVoiceSessionController {
       realtime_credentials_available: true,
     },
     refresh: vi.fn(async () => undefined),
+    ...overrides,
   } as unknown as CodexVoiceSessionController;
 }
 
@@ -72,18 +76,63 @@ function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement
   return button;
 }
 
-async function renderSettings() {
+async function renderSettings(sessionController = controller()) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () =>
-    root.render(<CodexVoiceAnalystSettings active controller={controller()} />),
+    root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
   );
   await act(async () => undefined);
   return { host, root };
 }
 
 describe("CodexVoiceAnalystSettings", () => {
+  it("allows an explicit runtime switch while Analyst work is still active", async () => {
+    api.fetchSettings.mockResolvedValue({
+      ok: true,
+      result: { settings: customSettings, environment_keys: [] },
+    });
+    api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+    api.updateSettings.mockResolvedValue({
+      ok: true,
+      result: { analyst: null, restarted: true, started_new_session: true, discarded_work: true },
+    });
+    const confirm = vi.fn(() => true);
+    Object.defineProperty(window, "confirm", { configurable: true, value: confirm });
+    const { host, root } = await renderSettings(
+      controller({
+        analyst: {
+          generation: "analyst-1",
+          tui_ready: true,
+          phase: "working",
+          last_result: "",
+          warning: "",
+        },
+      }),
+    );
+
+    const toggle = host.querySelector('input[type="checkbox"]');
+    if (!(toggle instanceof HTMLInputElement)) throw new Error("default command toggle not found");
+    await act(async () => toggle.click());
+
+    expect(host.textContent).toContain("codexVoiceAnalystSettingsWorkActive");
+    const save = buttonWithText(host, "codexVoiceAnalystSettingsApplyRestart");
+    expect(save.disabled).toBe(false);
+    await act(async () => save.click());
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledWith("codexVoiceAnalystSettingsDiscardConfirm");
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      settings: { ...customSettings, command: "codex" },
+      environmentSet: {},
+      environmentUnset: [],
+      environmentClear: false,
+      discardCurrentWork: true,
+    });
+    await act(async () => root.unmount());
+  });
+
   it("uses the same runtime mode and private environment controls as Actor editing", async () => {
     api.fetchSettings.mockResolvedValue({
       ok: true,
@@ -103,6 +152,19 @@ describe("CodexVoiceAnalystSettings", () => {
     await act(async () => buttonWithText(host, "fromActorProfile").click());
     expect(host.textContent).toContain("codexVoiceAnalystCompatibleProfilesEmpty");
     expect(host.textContent).not.toContain("secretManager.addVariable");
+    await act(async () => root.unmount());
+  });
+
+  it("shows the temporary OpenCode model synchronization guidance only for OpenCode", async () => {
+    api.fetchSettings.mockResolvedValue({
+      ok: true,
+      result: { settings: { ...customSettings, runtime: "opencode" }, environment_keys: [] },
+    });
+    api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+
+    const { host, root } = await renderSettings();
+
+    expect(host.textContent).toContain("opencodeManagedModelHint");
     await act(async () => root.unmount());
   });
 
@@ -134,6 +196,7 @@ describe("CodexVoiceAnalystSettings", () => {
       environmentSet: {},
       environmentUnset: [],
       environmentClear: false,
+      discardCurrentWork: false,
     });
     await act(async () => root.unmount());
   });
@@ -158,6 +221,7 @@ describe("CodexVoiceAnalystSettings", () => {
       environmentSet: {},
       environmentUnset: [],
       environmentClear: true,
+      discardCurrentWork: false,
     });
     await act(async () => root.unmount());
   });
@@ -207,6 +271,7 @@ describe("CodexVoiceAnalystSettings", () => {
       environmentSet: {},
       environmentUnset: [],
       environmentClear: false,
+      discardCurrentWork: false,
     });
     await act(async () => root.unmount());
   });
@@ -256,7 +321,6 @@ describe("CodexVoiceAnalystSettings", () => {
     expect(api.upsertProfile).toHaveBeenCalledWith({
       name: "Voice ZAI",
       runtime: "codex",
-      runner: "pty",
       command: "",
       submit: "enter",
       env: {},
@@ -274,6 +338,7 @@ describe("CodexVoiceAnalystSettings", () => {
       environmentSet: {},
       environmentUnset: [],
       environmentClear: false,
+      discardCurrentWork: false,
     });
     await act(async () => root.unmount());
   });

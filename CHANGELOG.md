@@ -6,9 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+- **Claude Code now provides the same visible, precisely observed session to Group Actors and Voice Analyst.** CCCC observes authoritative turns and tool results from Claude Agent View and attaches the native writable Claude TUI to that exact session; ordinary stop/start resumes the validated provider conversation.
+
+### Changed
+- **Claude Code uses one strict managed-session path instead of separate Hook and `claude -p` implementations.** Runtime Profiles retain supported model, effort, tools, plugins, settings, and private environment while CCCC owns session topology, MCP identity, YOLO policy, cancellation, and resume. Unsupported wrappers, prompt tails, transport flags, and legacy receipts fail explicitly instead of falling back to a divergent session.
+- **Actors no longer expose PTY versus Headless as a configuration choice.** CCCC derives the Runtime surface automatically: CLI Actors retain their native writable terminal, while Codex, Claude Code, Grok Build, and OpenCode pair it with structured lifecycle observation on the same session. Incoming Actor messages are handed to that native terminal without CCCC waiting for provider idleness or choosing queue-versus-steer semantics.
+
 ### Fixed
+- **Managed terminal startup no longer accepts truncated first messages.** Actor and Voice Analyst native input waits for the TUI's input mode before writing, without injecting startup work or waiting for the current model turn to finish.
+- **Claude sessions stop and resume reliably across empty starts and observer failures.** Verified empty sessions retain their conversation ID without requiring nonexistent history; observer failures use confirmed background-task shutdown, and normal closure releases event readers. Transcript replacement checks now use file handles supported by stable Rust on Windows.
 - **Native Windows Actors now start and receive messages reliably.** Runtime launch resolves executables in the configured PATHEXT order without restoring excluded extensions or selecting extensionless npm shell shims, routes `.cmd`/`.bat` through the Windows command processor, preserves backslashes in `actor --command`, and uses the last stable `portable-pty` ConPTY behavior. A Windows-only regression test delivers UTF-8 text through an npm-style batch shim and verifies that the Actor stays alive.
-- **Claude hook settings no longer cross the Windows command-line quoting boundary as inline JSON.** CCCC merges the effective settings into a permission-protected managed JSON file under the Group state directory and passes its path to `--settings`, preventing invalid-JSON restart loops while preserving user settings.
+- **Claude managed-session settings no longer cross the Windows command-line quoting boundary as inline JSON.** CCCC merges the effective settings and Runtime Profile environment into a permission-protected JSON file under `CCCC_HOME` and passes only its path to Agent View, preventing invalid-JSON launch loops without exposing private values in process arguments.
 - **Windows Web startup and non-ASCII CLI output recover from platform defaults.** A reserved-port `WSAEACCES` (`10013`) retry uses an OS-assigned port and reports the effective address; later commands reuse that binding only while its recorded process and signed readiness identity remain live. The native CLI uses UTF-8 console code pages for its lifetime and restores the previous values on exit.
 
 ## [0.4.37] — 2026-09-01

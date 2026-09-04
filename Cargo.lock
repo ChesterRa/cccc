@@ -473,6 +473,7 @@ dependencies = [
  "cccc-pair-mcp",
  "cccc-pair-runtime",
  "cccc-pair-web",
+ "cccc-windows-console",
  "clap",
  "fs2",
  "openssl-sys",
@@ -481,7 +482,6 @@ dependencies = [
  "shell-words",
  "tempfile",
  "tokio",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -553,6 +553,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "reqwest 0.12.28",
+ "same-file",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -697,6 +698,13 @@ dependencies = [
  "url",
  "uuid",
  "weixin-agent",
+]
+
+[[package]]
+name = "cccc-windows-console"
+version = "0.4.37"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

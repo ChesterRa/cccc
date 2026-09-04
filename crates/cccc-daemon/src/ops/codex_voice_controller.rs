@@ -1,7 +1,9 @@
 #[cfg(test)]
 use super::codex_voice_analyst::AnalystEvent;
 use super::codex_voice_analyst::{AnalystSession, LaunchConfig, TurnReceipt};
-use super::codex_voice_lifecycle::{AnalystLifecycle, AnalystLifecycleEvent};
+use super::codex_voice_lifecycle::{
+    AnalystLifecycle, AnalystLifecycleEvent, VoiceDelegationAdmission,
+};
 use cccc_core::HomeLayout;
 use std::sync::Arc;
 use tokio::sync::broadcast;

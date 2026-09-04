@@ -34,7 +34,6 @@ fn actor_lifecycle_controls_terminal_process() {
             json!({
                 "group_id":group_id,
                 "actor_id":"peer1",
-                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","printf 'daemon-runtime-ready\\n• Working (1s • esc to interrupt)\\n'; sleep 5"],
                 "by":"user"
@@ -124,49 +123,6 @@ fn actor_lifecycle_controls_terminal_process() {
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
     assert_eq!(restarted.result["event"]["kind"], "actor.restart");
-    assert!(
-        call(
-            &home,
-            "actor_update",
-            json!({
-                "group_id":group_id,
-                "actor_id":"peer1",
-                "runtime":"codex",
-                "runtime_state_source":"managed_session",
-                "by":"user"
-            }),
-        )
-        .ok
-    );
-    cccc_core::codex_hook_state::begin_launch(
-        &home,
-        "codex",
-        &group_id,
-        "peer1",
-        "token",
-        "HookPending",
-    )
-    .expect("begin hook launch");
-    cccc_core::codex_hook_state::record(
-        &home,
-        &group_id,
-        "peer1",
-        "token",
-        &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
-    )
-    .expect("session state");
-    cccc_core::codex_hook_state::record(
-        &home,
-        &group_id,
-        "peer1",
-        "token",
-        &json!({
-            "hook_event_name":"UserPromptSubmit",
-            "session_id":"s1",
-            "turn_id":"turn-1"
-        }),
-    )
-    .expect("hook state");
     let working = call(
         &home,
         "actor_list",
@@ -179,7 +135,7 @@ fn actor_lifecycle_controls_terminal_process() {
     );
     assert_eq!(
         working.result["actors"][0]["effective_working_reason"],
-        "codex_hook_pending"
+        "pty_running_state_unknown"
     );
     let stopped = call(
         &home,
@@ -210,7 +166,6 @@ fn actor_lifecycle_controls_terminal_process() {
             json!({
                 "group_id":group_id,
                 "actor_id":"peer-remove",
-                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","sleep 30"],
                 "by":"user"
@@ -258,7 +213,6 @@ fn terminal_operations_distinguish_invalid_targets_from_inactive_pty_sessions() 
             json!({
                 "group_id":group_id,
                 "actor_id":"pty-stopped",
-                "runner":"pty",
                 "runtime":"codex",
                 "by":"user"
             }),
@@ -272,7 +226,6 @@ fn terminal_operations_distinguish_invalid_targets_from_inactive_pty_sessions() 
             json!({
                 "group_id":group_id,
                 "actor_id":"headless",
-                "runner":"headless",
                 "runtime":"web_model",
                 "by":"user"
             }),
@@ -362,7 +315,6 @@ fn actor_update_enabled_keeps_persisted_and_live_lifecycle_in_sync() {
             json!({
                 "group_id":group_id,
                 "actor_id":actor_id,
-                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","sleep 30"],
                 "by":"user"
@@ -459,7 +411,6 @@ fn actor_update_enable_rolls_back_when_runtime_start_fails() {
         json!({
             "group_id":group_id,
             "actor_id":"keeper",
-            "runner":"pty",
             "runtime":"custom",
             "command":["sh","-c","sleep 30"],
             "by":"user"
@@ -476,7 +427,6 @@ fn actor_update_enable_rolls_back_when_runtime_start_fails() {
         json!({
             "group_id":group_id,
             "actor_id":"broken",
-            "runner":"pty",
             "runtime":"custom",
             "command":["cccc-command-that-does-not-exist"],
             "enabled":false,
@@ -555,7 +505,6 @@ fn actor_update_enabled_compensates_runtime_when_event_append_fails() {
             json!({
                 "group_id":group_id,
                 "actor_id":actor_id,
-                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","sleep 30"],
                 "by":"user"

@@ -16,7 +16,6 @@ pub mod capability_legacy;
 #[cfg(test)]
 mod capability_legacy_tests;
 pub mod cloudflared;
-pub mod codex_hook_state;
 pub mod codex_voice_settings;
 pub mod context;
 pub mod deepseek_restart_gate;
@@ -46,8 +45,6 @@ pub mod permissions;
 pub mod presentation;
 pub mod profiles;
 pub mod registry;
-pub mod runtime_activity;
-pub mod runtime_hook_identity;
 pub mod runtime_mcp;
 pub mod scope;
 pub mod settings;

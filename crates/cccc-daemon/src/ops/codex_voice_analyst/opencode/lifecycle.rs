@@ -8,6 +8,12 @@ use std::time::Duration;
 
 const SSE_BUFFER_LIMIT: usize = 512 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedUserMessage {
+    id: String,
+    model: Option<String>,
+}
+
 pub(super) fn reserve_loopback_port() -> io::Result<u16> {
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?;
     listener.local_addr().map(|address| address.port())
@@ -107,74 +113,89 @@ pub(super) async fn attach(
     let task = tokio::spawn(async move {
         let mut response = response;
         let mut buffer = Vec::new();
-        let mut current_user_message_id = None;
-        let outcome: io::Result<()> =
-            async {
-                while let Some(chunk) = response.chunk().await.map_err(|error| {
-                    io::Error::other(format!("read OpenCode lifecycle: {error}"))
-                })? {
-                    if buffer.len().saturating_add(chunk.len()) > SSE_BUFFER_LIMIT {
+        let mut current_user_message = None;
+        let mut synchronized_model = None;
+        let outcome: io::Result<()> = async {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| io::Error::other(format!("read OpenCode lifecycle: {error}")))?
+            {
+                if buffer.len().saturating_add(chunk.len()) > SSE_BUFFER_LIMIT {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "OpenCode lifecycle event exceeded the bounded buffer",
+                    ));
+                }
+                buffer.extend_from_slice(&chunk);
+                while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                    let mut line = buffer.drain(..=end).collect::<Vec<_>>();
+                    while line
+                        .last()
+                        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+                    {
+                        line.pop();
+                    }
+                    let Ok(line) = std::str::from_utf8(&line) else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "OpenCode lifecycle event exceeded the bounded buffer",
+                            "OpenCode lifecycle event was not UTF-8",
                         ));
+                    };
+                    let Some(data) = line.strip_prefix("data:") else {
+                        continue;
+                    };
+                    let value: Value = serde_json::from_str(data.trim()).map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("invalid OpenCode lifecycle JSON: {error}"),
+                        )
+                    })?;
+                    let payload = value.get("payload").unwrap_or(&value);
+                    if let Some(text) =
+                        observed_user_text(payload, &session_id, &mut current_user_message)
+                    {
+                        let native_input = control.user_text(&session_id, &text).await?;
+                        let observed_model = current_user_message
+                            .as_ref()
+                            .and_then(|message| message.model.as_deref());
+                        if native_input
+                            && observed_model.is_some()
+                            && observed_model != synchronized_model.as_deref()
+                        {
+                            let observed_model = observed_model.expect("checked OpenCode model");
+                            control
+                                .set_config_option(&session_id, "model", observed_model)
+                                .await?;
+                            synchronized_model = Some(observed_model.to_owned());
+                        }
                     }
-                    buffer.extend_from_slice(&chunk);
-                    while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                        let mut line = buffer.drain(..=end).collect::<Vec<_>>();
-                        while line
-                            .last()
-                            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+                    if payload.get("type").and_then(Value::as_str) == Some("session.status")
+                        && payload
+                            .pointer("/properties/sessionID")
+                            .and_then(Value::as_str)
+                            == Some(session_id.as_str())
+                    {
+                        match payload
+                            .pointer("/properties/status/type")
+                            .and_then(Value::as_str)
                         {
-                            line.pop();
-                        }
-                        let Ok(line) = std::str::from_utf8(&line) else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "OpenCode lifecycle event was not UTF-8",
-                            ));
-                        };
-                        let Some(data) = line.strip_prefix("data:") else {
-                            continue;
-                        };
-                        let value: Value = serde_json::from_str(data.trim()).map_err(|error| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!("invalid OpenCode lifecycle JSON: {error}"),
-                            )
-                        })?;
-                        let payload = value.get("payload").unwrap_or(&value);
-                        if let Some(text) =
-                            observed_user_text(payload, &session_id, &mut current_user_message_id)
-                        {
-                            control.user_text(&session_id, &text).await?;
-                        }
-                        if payload.get("type").and_then(Value::as_str) == Some("session.status")
-                            && payload
-                                .pointer("/properties/sessionID")
-                                .and_then(Value::as_str)
-                                == Some(session_id.as_str())
-                        {
-                            match payload
-                                .pointer("/properties/status/type")
-                                .and_then(Value::as_str)
-                            {
-                                Some("busy") => control.status(&session_id, true).await?,
-                                Some("idle") => {
-                                    control.status(&session_id, false).await?;
-                                    current_user_message_id = None;
-                                }
-                                _ => {}
+                            Some("busy") => control.status(&session_id, true).await?,
+                            Some("idle") => {
+                                control.status(&session_id, false).await?;
+                                current_user_message = None;
                             }
+                            _ => {}
                         }
                     }
                 }
-                Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "OpenCode lifecycle event stream ended",
-                ))
             }
-            .await;
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "OpenCode lifecycle event stream ended",
+            ))
+        }
+        .await;
         if let Err(error) = outcome {
             control.disconnected(error.to_string()).await;
         }
@@ -186,7 +207,7 @@ pub(super) async fn attach(
 fn observed_user_text(
     payload: &Value,
     session_id: &str,
-    current_user_message_id: &mut Option<String>,
+    current_user_message: &mut Option<ObservedUserMessage>,
 ) -> Option<String> {
     match payload.get("type").and_then(Value::as_str) {
         Some("message.updated") => {
@@ -196,7 +217,15 @@ fn observed_user_text(
             {
                 return None;
             }
-            *current_user_message_id = info.get("id").and_then(Value::as_str).map(str::to_owned);
+            let id = info
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            *current_user_message = Some(ObservedUserMessage {
+                id: id.to_owned(),
+                model: observed_model(info),
+            });
             None
         }
         Some("message.part.updated") => {
@@ -204,7 +233,9 @@ fn observed_user_text(
             if part.get("sessionID").and_then(Value::as_str) != Some(session_id)
                 || part.get("type").and_then(Value::as_str) != Some("text")
                 || part.get("messageID").and_then(Value::as_str)
-                    != current_user_message_id.as_deref()
+                    != current_user_message
+                        .as_ref()
+                        .map(|message| message.id.as_str())
             {
                 return None;
             }
@@ -215,6 +246,28 @@ fn observed_user_text(
         }
         _ => None,
     }
+}
+
+fn observed_model(info: &Value) -> Option<String> {
+    let provider = info
+        .pointer("/model/providerID")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let model = info
+        .pointer("/model/modelID")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let variant = info
+        .pointer("/model/variant")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "default");
+    Some(match variant {
+        Some(variant) => format!("{provider}/{model}/{variant}"),
+        None => format!("{provider}/{model}"),
+    })
 }
 
 fn basic_authorization(username: &str, password: &str) -> String {
@@ -236,7 +289,7 @@ mod tests {
 
     #[test]
     fn only_the_matching_backend_user_message_yields_prompt_text() {
-        let mut user_message_id = None;
+        let mut user_message = None;
         assert_eq!(
             observed_user_text(
                 &serde_json::json!({
@@ -245,14 +298,25 @@ mod tests {
                         "id":"message-user",
                         "sessionID":"session-owned",
                         "role":"user",
+                        "model":{
+                            "providerID":"anthropic",
+                            "modelID":"claude-sonnet-4",
+                            "variant":"high",
+                        },
                     }}
                 }),
                 "session-owned",
-                &mut user_message_id,
+                &mut user_message,
             ),
             None
         );
-        assert_eq!(user_message_id.as_deref(), Some("message-user"));
+        assert_eq!(
+            user_message,
+            Some(ObservedUserMessage {
+                id: "message-user".into(),
+                model: Some("anthropic/claude-sonnet-4/high".into()),
+            })
+        );
         assert_eq!(
             observed_user_text(
                 &serde_json::json!({
@@ -265,7 +329,7 @@ mod tests {
                     }}
                 }),
                 "session-owned",
-                &mut user_message_id,
+                &mut user_message,
             )
             .as_deref(),
             Some("owned prompt")
@@ -282,9 +346,24 @@ mod tests {
                     }}
                 }),
                 "session-owned",
-                &mut user_message_id,
+                &mut user_message,
             ),
             None
+        );
+    }
+
+    #[test]
+    fn default_variant_uses_the_plain_acp_model_value() {
+        assert_eq!(
+            observed_model(&serde_json::json!({
+                "model":{
+                    "providerID":"openai",
+                    "modelID":"gpt-5",
+                    "variant":"default",
+                }
+            }))
+            .as_deref(),
+            Some("openai/gpt-5")
         );
     }
 }

@@ -67,13 +67,7 @@ pub(super) async fn start(State(state): State<AppState>, Json(body): Json<Value>
     }
 }
 
-fn voice_start_error(error: &anyhow::Error) -> ApiError {
-    if format!("{error:#}").contains("upgrade to 1.18.14 or newer") {
-        return ApiError::unavailable(
-            "opencode_upgrade_required",
-            "OpenCode 1.18.14 or newer is required. Upgrade OpenCode, then restart the Analyst.",
-        );
-    }
+fn voice_start_error(_error: &anyhow::Error) -> ApiError {
     ApiError::unavailable(
         "codex_voice_unavailable",
         "Codex Voice could not start. Check the Analyst Runtime Profile, Realtime Voice login, and current Voice status.",
@@ -188,20 +182,4 @@ fn require_interactive_web(state: &AppState) -> Result<(), ApiError> {
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn opencode_version_failure_is_actionable_through_the_voice_api() {
-        let error = anyhow::anyhow!(
-            "OpenCode 1.18.13 cannot host a reliable managed ACP session; upgrade to 1.18.14 or newer"
-        )
-        .context("launch persistent Voice Analyst");
-        let mapped = voice_start_error(&error);
-
-        assert!(mapped.to_string().starts_with("opencode_upgrade_required:"));
-    }
 }

@@ -140,7 +140,11 @@ impl GroupStore {
     }
 
     pub fn load(&self, group_id: &str) -> io::Result<GroupDoc> {
-        read_yaml(&self.group_dir(group_id)?.join("group.yaml"))
+        let mut group: GroupDoc = read_yaml(&self.group_dir(group_id)?.join("group.yaml"))?;
+        for actor in &mut group.actors {
+            actor.normalize_runtime_constraints();
+        }
+        Ok(group)
     }
 
     pub fn save(&self, group: &GroupDoc) -> io::Result<()> {

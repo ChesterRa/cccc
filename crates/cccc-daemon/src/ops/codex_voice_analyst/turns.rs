@@ -22,7 +22,7 @@ impl AnalystSession {
             delegations,
             ..
         } = self;
-        protocol.close().await;
+        protocol.close().await?;
         drop(protocol);
         if !auxiliary_processes.is_empty()
             || native_tui_command.is_some()
@@ -101,6 +101,9 @@ impl AnalystSession {
             ManagedProtocol::Acp(protocol) => protocol
                 .start_prompt(&self.thread_id, delegation_id, text)
                 .await,
+            ManagedProtocol::Claude(protocol) => {
+                protocol.start_prompt(delegation_id, text).await
+            }
         };
         let turn_id = match turn_result {
             Ok(turn_id) => turn_id,
@@ -122,7 +125,6 @@ impl AnalystSession {
             thread_id: self.thread_id.clone(),
             turn_id,
         };
-        self.mark_thread_materialized();
         delegations.insert(
             delegation_id.to_owned(),
             DelegationState::Started(receipt.clone()),

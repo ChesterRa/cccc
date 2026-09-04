@@ -107,6 +107,7 @@ pub(crate) struct AnalystSettingsOutcome {
     pub analyst: Option<AnalystInfo>,
     pub restarted: bool,
     pub started_new_session: bool,
+    pub discarded_work: bool,
 }
 
 pub(crate) struct CodexVoiceSessions {

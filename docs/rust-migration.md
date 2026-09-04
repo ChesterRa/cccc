@@ -324,20 +324,21 @@ runtime is slow to prepare or fails to resume; individual restore failures are
 logged and do not prevent the daemon from becoming ready. Each Group is
 reloaded and restored under the same mutation lock used by lifecycle requests,
 so a concurrent stop or pause cannot be overwritten by a stale startup snapshot.
-Restoration itself never submits a model turn. It reconnects a validated provider
-session when one exists, and providers capable of opening an idle terminal may
-start without running the model. A fresh managed PTY that cannot expose its
-native terminal before a provider turn remains dormant until an explicit start
-or a real pending delivery wakes it. Recovering an unread Send is real work and
-may start the runtime, but an otherwise quiet daemon restart cannot make every
-Actor run a synthetic bootstrap task.
+Lifecycle start, restart, new-session, and restoration never submit a model
+turn. They create or reconnect the validated provider session and open its
+native terminal while the model remains idle. Recovering an unread Send is real
+work and may start the model, but lifecycle operations alone cannot make Actors
+run a synthetic bootstrap task.
 
 Actor-bound chat messages and system notifications use one bounded FIFO worker
 per actor. A worker seeds the runtime with its CCCC system prompt once per
 session, preserves message order, uses bracketed paste when the terminal enables
-it, and applies the actor's configured submit mode. For a worker successfully
-reconnected during daemon restoration, the pending startup prompt is prepended
-to its first real delivery instead of being sent as a standalone provider turn.
+it, and applies the actor's configured submit mode. It does not wait for a
+managed provider to become idle or choose steer-versus-queue semantics; once
+the native terminal is ready, it writes the message and lets the Runtime decide.
+For every newly created or reconnected worker, the pending startup prompt is
+prepended to its first successfully accepted real delivery instead of being sent
+as a standalone provider turn. A rejected delivery leaves that prompt pending.
 Successful delivery returns to the daemon's serialized state path by appending
 `runtime.delivery`; it never advances the separate Mail cursor.
 The native preamble retains the 0.4.35 contract: cold-start and resumed sessions
@@ -351,12 +352,12 @@ Startup body when present. Each delivered chat batch also ends with the MCP
 reply reminder; batched
 messages receive one reminder for the whole batch rather than one per message.
 
-Before starting an automatically managed PTY actor, CCCC applies the retained
+Before starting an automatically managed terminal Actor, CCCC applies the retained
 runtime MCP readiness contract. CLI-backed and configuration-backed runtimes
 are classified as `ready`, `missing`, or `stale`; missing or safely replaceable
 entries are installed, then verified before the provider process is created.
-This covers Claude, Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Hermes,
-and Kimi. Codex, Grok, and OpenCode instead receive actor-scoped MCP servers in
+This covers Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Hermes,
+and Kimi. Codex, Claude Code, Grok, and OpenCode instead receive actor-scoped MCP servers in
 their managed sessions; none of those providers' global MCP registries is
 mutated.
 More-specific stale entries
@@ -364,23 +365,24 @@ that CCCC does not own are reported rather than overwritten. This prevents an
 old Python launcher path or dangling symlink from freezing a newly created
 provider session without CCCC tools.
 
-`runner=headless` never creates a PTY. Direct, safely parseable Codex actors
-share one daemon-owned app-server session implementation across PTY and
-Headless. Direct Grok actors likewise share one private leader and ACP session;
-direct OpenCode actors share one authenticated loopback backend and ACP session.
-All three adapters own structured turn delivery, validated resume, Profile/provider
-arguments, and private environment; PTY adds the provider's native writable TUI
-to that exact session. Voice Analyst reuses the selected adapter with its
-separate global-user identity and warm lifecycle. Opaque Codex wrappers retain
-their explicit compatibility path; Grok and OpenCode have no raw-PTY fallback. Claude
-continues to use daemon-managed bidirectional
-stream-json. Provider messages are pushed through bounded actor delivery workers,
-and actor health comes from the real provider process. Web Model and the
-programmatically configured custom external-headless path retain the pull contract:
-the executor obtains an ordered direct-delivery batch with
+Users no longer choose a runner mode. Codex Actors share one daemon-owned
+app-server session with a native writable TUI. Direct Claude Actors share one Agent View background session,
+authenticated control channel, and transcript lifecycle. Direct Grok actors
+share one private leader and ACP session; direct OpenCode actors share one
+authenticated loopback backend and ACP session. All four adapters attach the
+provider's native writable TUI to that exact session and own structured lifecycle
+observation, validated resume, Profile/provider arguments, and private environment.
+Actor delivery enters the native TUI; Voice Analyst protocol delegation uses the
+structured controller. Voice Analyst reuses the selected adapter with its
+separate global-user identity and warm lifecycle. A configured command that
+cannot join its Runtime's managed session fails explicitly instead of selecting
+a raw-terminal fallback. Provider messages are pushed through bounded actor delivery workers,
+and actor health comes from the real provider process. Web Model retains its
+pull-consumer contract: the executor obtains an ordered direct-delivery batch with
 `cccc_runtime_wait_next_turn` and closes that exact active turn with
 `cccc_runtime_complete_turn`. Runtime completion does not advance the Inbox read
-cursor; only `cccc_inbox_read` consumes Inbox contents.
+cursor; only `cccc_inbox_read` consumes Inbox contents. DeepSeek remains a
+Runtime-specific ACP integration without a native terminal.
 
 ChatGPT Web Model delivery uses one browser transaction boundary. It selects a
 visible editable composer, confines Send discovery to that

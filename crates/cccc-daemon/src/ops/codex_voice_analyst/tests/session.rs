@@ -31,7 +31,15 @@ async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() 
     })
     .await
     .expect("connect");
-    assert!(!session.tui_ready());
+    assert!(
+        session.tui_ready(),
+        "thread creation must make the native TUI attachable without a model turn"
+    );
+    assert_eq!(
+        turn_starts.load(Ordering::SeqCst),
+        0,
+        "launching a managed session must not manufacture model work"
+    );
     assert_eq!(
         session.actor_tui_command(),
         session.tui_command(),
@@ -48,7 +56,6 @@ async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() 
         .await
         .expect("deduped turn");
     assert_eq!(first, replay);
-    assert!(session.tui_ready());
     assert_eq!(turn_starts.load(Ordering::SeqCst), 1);
     assert_eq!(first.turn_id, "turn-1");
 

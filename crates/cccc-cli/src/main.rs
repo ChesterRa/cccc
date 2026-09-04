@@ -4,7 +4,6 @@ mod commands;
 mod console_encoding;
 #[cfg(any(windows, test))]
 mod detached_daemon_owner;
-mod hook_receiver;
 mod shutdown;
 mod web_endpoint;
 mod web_instance;
@@ -65,7 +64,6 @@ async fn main() -> Result<()> {
             println!("{}", home.root().display());
             Ok(())
         }
-        Some(CommandKind::Hook { action }) => hook_receiver::run(&home, action),
         Some(CommandKind::Attach { path, group_id }) => print(
             call(
                 &client,

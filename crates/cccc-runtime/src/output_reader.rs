@@ -110,6 +110,7 @@ fn copy_output(
 mod tests {
     use super::OutputReader;
     use crate::session_history::SessionHistory;
+    #[cfg(unix)]
     use crate::transcript_archive::HistoryConfig;
     use std::collections::VecDeque;
     use std::io::{Read, Write};

@@ -4,6 +4,36 @@ use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 #[test]
+fn actor_add_rejects_the_removed_runner_selector() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"runtime derived runner"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+
+    let rejected = raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "runtime":"codex",
+            "runner":"headless",
+            "by":"user"
+        }),
+    );
+    assert_eq!(
+        rejected.error.as_ref().map(|error| error.code.as_str()),
+        Some("unsupported_field")
+    );
+}
+
+#[test]
 fn im_auth_operations_use_python_compatible_state_and_standard_results() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -195,7 +225,6 @@ fn actor_stop_ledger_failure_restores_enabled_state() {
             "group_id":group_id,
             "actor_id":"web1",
             "runtime":"web_model",
-            "runner":"headless",
             "by":"user"
         }),
     );
@@ -240,7 +269,6 @@ fn actor_add_validates_private_env_before_persisting_actor() {
             "group_id":group_id,
             "actor_id":"invalid-key",
             "runtime":"codex",
-            "runner":"headless",
             "env_private":{"BAD-KEY":"secret"},
             "by":"user"
         }),
@@ -257,7 +285,6 @@ fn actor_add_validates_private_env_before_persisting_actor() {
             "group_id":group_id,
             "actor_id":"large-secret",
             "runtime":"codex",
-            "runner":"headless",
             "env_private":{"TOKEN":"x".repeat(200_001)},
             "by":"user"
         }),
@@ -297,7 +324,6 @@ fn actor_add_rejects_private_env_from_foreman() {
             "group_id":group_id,
             "actor_id":"lead",
             "runtime":"codex",
-            "runner":"headless",
             "by":"user"
         }),
     );
@@ -309,7 +335,6 @@ fn actor_add_rejects_private_env_from_foreman() {
             "group_id":group_id,
             "actor_id":"peer1",
             "runtime":"codex",
-            "runner":"headless",
             "env_private":{"TOKEN":"secret"},
             "by":"lead"
         }),
@@ -345,7 +370,6 @@ fn actor_removal_retires_connectors_after_the_runtime_changes() {
             "group_id":group_id,
             "actor_id":"former-web",
             "runtime":"custom",
-            "runner":"pty",
             "command":["sh"],
             "enabled":false,
             "by":"user"

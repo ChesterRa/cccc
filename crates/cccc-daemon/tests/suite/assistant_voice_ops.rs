@@ -1,6 +1,4 @@
-use cccc_contracts::{
-    Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event, RunnerKind,
-};
+use cccc_contracts::{Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event};
 use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger, ledger_archive};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
@@ -1609,7 +1607,7 @@ fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
 
 #[cfg(unix)]
 #[test]
-fn headless_voice_secretary_health_tracks_its_local_process() {
+fn voice_secretary_health_tracks_its_local_process() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace = temp.path().join("workspace");
     std::fs::create_dir(&workspace).expect("workspace");
@@ -1617,26 +1615,12 @@ fn headless_voice_secretary_health_tracks_its_local_process() {
     home.initialize().expect("initialize");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("voice", "").expect("group");
-    let fake_app_server = r#"
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
-      ;;
-    *'"method":"thread/start"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
-      ;;
-  esac
-done
-"#;
     store
         .mutate(&group.group_id, |doc| {
             let mut foreman = Actor::new("foreman");
             foreman.role = Some(ActorRole::Foreman);
-            foreman.runtime = ActorRuntime::Codex;
-            foreman.runner = RunnerKind::Headless;
-            foreman.command = vec!["sh".into(), "-c".into(), fake_app_server.into()];
+            foreman.runtime = ActorRuntime::Custom;
+            foreman.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
             doc.actors.push(foreman);
             doc.scopes.push(Scope {
                 scope_key: "scope".into(),
@@ -1648,7 +1632,7 @@ done
             doc.running = true;
             Ok(())
         })
-        .expect("running headless group");
+        .expect("running group");
 
     let enabled = ok(
         &home,

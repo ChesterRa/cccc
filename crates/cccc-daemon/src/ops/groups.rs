@@ -592,6 +592,10 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(&group)?;
+    for actor in &group.actors {
+        super::codex_voice_analyst::remove_claude_actor_settings(home, &group.group_id, &actor.id)
+            .map_err(OpError::io)?;
+    }
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
     if deleted {
         super::actor_secrets::remove_group(home, &group.group_id)?;
@@ -616,7 +620,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
         actor_delivery::shutdown_group(&group.group_id);
-        super::local_headless::stop_group(&group.group_id);
+        super::local_headless::stop_group(&group.group_id).map_err(OpError::io)?;
         super::deepseek_runtime::stop_group(&group.group_id);
     }
     let updated = store(home)?

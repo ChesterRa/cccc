@@ -454,7 +454,9 @@ pub fn is_canonical_deepseek_profile_manifest(manifest: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{deepseek_home, deepseek_preflight, default_command, detect_runtimes};
+    #[cfg(unix)]
+    use super::deepseek_preflight;
+    use super::{deepseek_home, default_command, detect_runtimes};
     use cccc_contracts::ActorRuntime;
     use std::collections::BTreeMap;
 

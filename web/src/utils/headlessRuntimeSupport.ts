@@ -1,8 +1,9 @@
-const STANDARD_WEB_HEADLESS_RUNTIMES = new Set(["codex", "claude", "deepseek", "web_model"]);
-
 export type ActorRunner = "pty" | "headless";
 
-type RunnerSource = { runner?: unknown; runner_effective?: unknown } | null | undefined;
+type RunnerSource =
+  | { runner?: unknown; runner_effective?: unknown; runtime_state_source?: unknown }
+  | null
+  | undefined;
 
 export function normalizeActorRunner(runner: unknown): ActorRunner {
   return String(runner || "")
@@ -21,10 +22,10 @@ export function isHeadlessActorRunner(actor: RunnerSource): boolean {
   return getEffectiveActorRunner(actor) === "headless";
 }
 
-export function supportsStandardWebHeadlessRuntime(runtime: string | null | undefined): boolean {
-  return STANDARD_WEB_HEADLESS_RUNTIMES.has(
-    String(runtime || "")
-      .trim()
-      .toLowerCase(),
-  );
+export function hasManagedRuntimeOutput(actor: RunnerSource): boolean {
+  if (!actor) return false;
+  const source = String(actor.runtime_state_source || "")
+    .trim()
+    .toLowerCase();
+  return isHeadlessActorRunner(actor) || source === "managed_session" || source === "app_server";
 }

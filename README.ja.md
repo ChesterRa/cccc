@@ -124,7 +124,7 @@ Python runtime なしで 0.4.35 home を引き継げます。
 ```bash
 cd /path/to/your/repo
 cccc attach .                              # ディレクトリを scope として紐付け
-cccc setup --runtime claude                # ランタイムの MCP を設定
+cccc setup --runtime claude                # CCCC のセッション単位 MCP 注入を確認
 cccc actor add foreman --runtime claude    # 最初の actor が foreman に
 cccc actor add implementer --runtime codex # peer を追加
 cccc group start                           # 全 actor を起動
@@ -196,8 +196,8 @@ graph TB
         RG2["別マシン/チーム"]
     end
 
-    A1 <-->|MCP ツール<br/>PTY/headless| Daemon
-    A2 <-->|MCP ツール<br/>PTY/headless| Daemon
+    A1 <-->|純正ターミナル<br/>MCP + 制御プロトコル| Daemon
+    A2 <-->|純正ターミナル<br/>MCP + 制御プロトコル| Daemon
     A3 <-->|ブラウザ配信<br/>Remote MCP| Daemon
     A4 <-->|MCP ツール| Daemon
     A5 <-->|MCP ツール| Daemon
@@ -222,7 +222,7 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 
 | ランタイム | 連携方式 | 入口 / サーフェス |
 |-----------|----------|-------------------|
-| Claude Code | MCP 自動設定 | `claude` |
+| Claude Code | 管理 Agent View セッション + 純正 TUI、セッション単位 MCP | `claude` |
 | Cline CLI | MCP 自動設定 | `cline` |
 | Codex CLI | MCP 自動設定 | `codex` |
 | GitHub Copilot CLI | MCP 自動設定 | `copilot` |
@@ -232,20 +232,20 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 | Kilo Code CLI | プロンプト支援 MCP 設定 | `kilo` |
 | Antigravity CLI | プロンプト支援 MCP 設定 | `agy` |
 | ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` conversation |
-| Grok Build | MCP 自動設定 | `grok` |
+| Grok Build | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `grok` |
 | Hermes Agent | MCP 自動設定 | `hermes` |
 | Droid | MCP 自動設定 | `droid` |
 | Amp | MCP 自動設定 | `amp` |
 | Auggie | MCP 自動設定 | `auggie` |
 | Kimi CLI | MCP 自動設定 | `kimi` |
-| OpenCode | ランタイム設定経由の MCP 自動設定 | `opencode` |
+| OpenCode | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `opencode` |
 | Custom | 手動設定 | 任意のコマンド |
 
 ここでは安定したランタイムの入口または利用サーフェスのみを示します。CCCC はランタイムごとの起動デフォルトを自動適用し、actor/profile のコマンドは設定で確認・変更できます。[サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) には、`agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` など、承認を省略する既定の autonomy flags も記載しています。
 
 ```bash
-cccc setup --runtime claude       # ランタイムの MCP を自動設定
-cccc setup --runtime cline        # Cline PTY TUI の MCP を自動設定
+cccc setup --runtime claude       # CCCC のセッション単位 MCP 注入を確認
+cccc setup --runtime cline        # Cline 純正 TUI の MCP を自動設定
 cccc setup --runtime cursor       # プロンプト支援 MCP 設定コントラクトを表示
 cccc setup --runtime kilo         # プロンプト支援 MCP 設定コントラクトを表示
 cccc setup --runtime antigravity  # プロンプト支援 MCP 設定コントラクトを表示
@@ -253,9 +253,9 @@ cccc runtime list --all           # 利用可能なランタイムを表示
 cccc doctor                       # 環境とランタイムの可用性を検証
 ```
 
-Actor は **PTY**（埋め込みターミナル）または **headless**（ターミナルなしの構造化 I/O）モードで実行できます。Claude Code と Codex CLI は両モードに対応。headless モードでは daemon が配信とストリーミングをより精密に制御します。
+ユーザーは Runtime だけを選び、CCCC が利用可能な操作面を自動的に決定します。CLI Actor は常に純正の書き込み可能なターミナルを表示します。Claude Code、Codex CLI、Grok Build、OpenCode は同じ provider session に構造化バックグラウンドプロトコルも接続し、ユーザーの直接操作と正確なライフサイクル把握を両立します。Actor メッセージは純正ターミナルへすぐ渡され、steer と queue の判断は受信 Runtime が行います。
 
-各サポートランタイムの setup コマンド、runner mode の指針、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
+各サポート Runtime の setup コマンド、操作方式、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
 ### ChatGPT Web / GPT-5.x をローカル開発 actor として
 

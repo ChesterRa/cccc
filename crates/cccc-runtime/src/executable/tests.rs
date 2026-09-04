@@ -62,13 +62,15 @@ fn windows_batch_shims_are_routed_through_command_processor() {
             "/D",
             "/S",
             "/C",
-            "\"\"C:\\Program Files\\npm\\claude.cmd\" --version\""
+            "call",
+            r"C:\Program Files\npm\claude.cmd",
+            "--version",
         ]
     );
 }
 
 #[test]
-fn windows_batch_arguments_are_kept_inside_one_escaped_command_string() {
+fn windows_batch_arguments_are_escaped_after_call_prefix() {
     assert_eq!(
         wrap_resolved_command(
             &[
@@ -87,7 +89,33 @@ fn windows_batch_arguments_are_kept_inside_one_escaped_command_string() {
             "/D",
             "/S",
             "/C",
-            "\"\"C:\\Program Files\\tools\\tool.bat\" \"two words\" left^&right %%PATH%% \"\"\"",
+            "call",
+            r"C:\Program Files\tools\tool.bat",
+            "two words",
+            "left^&right",
+            "%%PATH%%",
+            "",
+        ]
+    );
+}
+
+#[test]
+fn windows_batch_program_path_is_escaped_before_cmd_parses_it() {
+    assert_eq!(
+        wrap_resolved_command(
+            &["tool".into(), "--version".into()],
+            Path::new(r"C:\tools&more\actor.cmd"),
+            true,
+            None,
+        ),
+        [
+            "cmd.exe",
+            "/D",
+            "/S",
+            "/C",
+            "call",
+            r"C:\tools^&more\actor.cmd",
+            "--version",
         ]
     );
 }
@@ -122,7 +150,9 @@ fn windows_actor_environment_keys_are_case_insensitive() {
             "/D".into(),
             "/S".into(),
             "/C".into(),
-            format!("\"\"{}\" --version\"", custom.join("actor.cmd").display()),
+            "call".into(),
+            custom.join("actor.cmd").display().to_string(),
+            "--version".into(),
         ]
     );
 }

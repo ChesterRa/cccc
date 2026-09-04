@@ -4,10 +4,6 @@ import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } fro
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
-import {
-  normalizeActorRunner,
-  supportsStandardWebHeadlessRuntime,
-} from "../../../utils/headlessRuntimeSupport";
 import { useGroupStore } from "../../../stores";
 import {
   inputClass,
@@ -39,7 +35,6 @@ type EditorState = {
   revision: number;
   name: string;
   runtime: string;
-  runner: "pty" | "headless";
   command: string;
   useDefaultCommand: boolean;
   submit: "enter" | "newline" | "none";
@@ -80,23 +75,8 @@ function supportsRuntimeDefaultCommand(runtime: string): boolean {
   return String(runtime || "").trim() !== "custom";
 }
 
-function modeButtonClass(selected: boolean): string {
-  return [
-    "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-all ease-spring duration-300",
-    selected
-      ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:bg-[var(--color-text-primary)] hover:text-[var(--color-bg-primary)] hover:opacity-90"
-      : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
-  ].join(" ");
-}
-
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
-  const runner =
-    runtime === "web_model"
-      ? "headless"
-      : supportsStandardWebHeadlessRuntime(runtime)
-        ? normalizeActorRunner(profile?.runner)
-        : "pty";
   const command = formatRuntimeCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =
@@ -107,7 +87,6 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
     revision: Number(profile?.revision || 0),
     name: String(profile?.name || ""),
     runtime,
-    runner,
     command,
     useDefaultCommand,
     submit: String(profile?.submit || "enter") as "enter" | "newline" | "none",
@@ -178,10 +157,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
 
   const editorSupportsDefaultCommand = useMemo(
     () => supportsRuntimeDefaultCommand(editor.runtime),
-    [editor.runtime],
-  );
-  const editorSupportsHeadlessRunner = useMemo(
-    () => supportsStandardWebHeadlessRuntime(editor.runtime),
     [editor.runtime],
   );
   const editorIsWebModel = useMemo(
@@ -265,7 +240,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
             <div>
               <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
               <SelectCombobox
@@ -292,12 +267,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     return {
                       ...prev,
                       runtime: nextRuntime,
-                      runner:
-                        nextRuntime === "web_model"
-                          ? "headless"
-                          : supportsStandardWebHeadlessRuntime(nextRuntime)
-                            ? prev.runner
-                            : "pty",
                       useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
                       command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
                     };
@@ -313,36 +282,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                   new Runtime Profiles cannot use this runtime.
                 </div>
               ) : null}
-            </div>
-
-            <div>
-              <label className={labelClass()}>{t("actorProfiles.runner")}</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className={`${modeButtonClass(editor.runner === "pty")} ${editorIsWebModel ? "opacity-50 cursor-not-allowed" : ""}`}
-                  onClick={() => {
-                    if (editorIsWebModel) return;
-                    setEditor((prev) => ({ ...prev, runner: "pty" }));
-                  }}
-                  disabled={editorIsWebModel}
-                >
-                  {t("actorProfiles.pty")}
-                </button>
-                <button
-                  type="button"
-                  className={modeButtonClass(editor.runner === "headless")}
-                  onClick={() => setEditor((prev) => ({ ...prev, runner: "headless" }))}
-                  disabled={!editorSupportsHeadlessRunner}
-                >
-                  {t("actorProfiles.headless")}
-                </button>
-              </div>
-              <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                {editorSupportsHeadlessRunner
-                  ? t("actorProfiles.runnerModeHint")
-                  : t("actorProfiles.runnerModeHeadlessNote")}
-              </div>
             </div>
           </div>
 
@@ -840,11 +779,6 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         scope: profileScope,
         owner_id: ownerId,
         runtime: editor.runtime,
-        runner: editorIsWebModel
-          ? "headless"
-          : editorSupportsHeadlessRunner
-            ? editor.runner
-            : "pty",
         command:
           editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
         submit: editor.submit,

@@ -16,10 +16,6 @@ import { CapabilityPicker } from "../CapabilityPicker";
 import { RolePresetPicker } from "../RolePresetPicker";
 import { ActorAvatarField } from "../ActorAvatarField";
 import { SelectCombobox } from "../SelectCombobox";
-import {
-  normalizeActorRunner,
-  supportsStandardWebHeadlessRuntime,
-} from "../../utils/headlessRuntimeSupport";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Surface } from "../ui/surface";
@@ -27,6 +23,7 @@ import { Textarea } from "../ui/textarea";
 import { ActorConfigTabs } from "./ActorConfigTabs";
 import { ActorSecretManager } from "./ActorSecretManager";
 import {
+  OpenCodeManagedModelHint,
   RuntimeCommandControl,
   RuntimeConfigurationModePicker,
   RuntimeProfilePicker,
@@ -44,7 +41,6 @@ type AdvancedTabId = "connection" | "environment" | "capabilities" | "profile";
 
 export interface EditActorSavePayload {
   mode: ConfigMode;
-  runner: "pty" | "headless";
   setVars: Record<string, string>;
   unsetKeys: string[];
   clear: boolean;
@@ -83,8 +79,6 @@ export interface EditActorConfigProps extends ActorConfigBaseProps {
   isRunning: boolean;
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
-  runner: "pty" | "headless";
-  onChangeRunner: (runner: "pty" | "headless") => void;
   command: string;
   onChangeCommand: (command: string) => void;
   title: string;
@@ -117,8 +111,6 @@ export interface CreateActorConfigProps extends ActorConfigBaseProps {
   onChangeProfileId: (id: string) => void;
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
-  runner: "pty" | "headless";
-  onChangeRunner: (runner: "pty" | "headless") => void;
   command: string;
   onChangeCommand: (command: string) => void;
   useDefaultCommand: boolean;
@@ -246,8 +238,6 @@ function CreateActorConfigModal({
   onRequestActorProfiles,
   runtime,
   onChangeRuntime,
-  runner,
-  onChangeRunner,
   command,
   onChangeCommand,
   useDefaultCommand,
@@ -306,8 +296,6 @@ function CreateActorConfigModal({
   const defaultCommand = runtimeInfo?.recommended_command || "";
   const previewRuntime = useProfile ? selectedProfileRuntime || null : runtime;
   const previewTitle = String(actorId || "").trim() || suggestedActorId;
-  const customRunnerLockedToPty = !useProfile && !supportsStandardWebHeadlessRuntime(runtime);
-  const webModelRunnerLockedToHeadless = !useProfile && ["web_model", "deepseek"].includes(runtime);
   const showRuntimeSetup = !useProfile && runtime === "custom";
   const webModelSetupIsActorBound = !useProfile && runtime === "web_model";
   const secretsPlaceholder = (SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER).set;
@@ -560,8 +548,6 @@ function CreateActorConfigModal({
                           onChangeRuntime(next);
                           if (next === "custom") onChangeUseDefaultCommand(false);
                           else onChangeUseDefaultCommand(true);
-                          if (["web_model", "deepseek"].includes(next)) onChangeRunner("headless");
-                          else if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           onChangeCommand(String(nextInfo?.recommended_command || "").trim());
                         }}
@@ -578,6 +564,7 @@ function CreateActorConfigModal({
                         })}
                         searchable
                       />
+                      <OpenCodeManagedModelHint runtime={runtime} />
                     </div>
 
                     {runtime ? (
@@ -596,34 +583,6 @@ function CreateActorConfigModal({
                           <span>{runtime === "custom" ? t("custom") : defaultCommand || "—"}</span>
                         </div>
                       </Surface>
-                    ) : null}
-
-                    {supportsStandardWebHeadlessRuntime(runtime) ? (
-                      <div>
-                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                          {t("runnerMode")}
-                        </label>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={modeButtonClass(runner === "pty")}
-                            onClick={() => onChangeRunner("pty")}
-                            disabled={webModelRunnerLockedToHeadless}
-                          >
-                            {t("pty", { defaultValue: "PTY" })}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={modeButtonClass(runner === "headless")}
-                            onClick={() => onChangeRunner("headless")}
-                            disabled={customRunnerLockedToPty}
-                          >
-                            {t("headless")}
-                          </Button>
-                        </div>
-                      </div>
                     ) : null}
 
                     <RuntimeCommandControl
@@ -793,8 +752,6 @@ function EditActorConfigModal({
   runtimes,
   runtime,
   onChangeRuntime,
-  runner,
-  onChangeRunner,
   command,
   onChangeCommand,
   title,
@@ -1149,7 +1106,6 @@ function EditActorConfigModal({
       try {
         await callback({
           mode: "profile",
-          runner: normalizeActorRunner(selectedProfile?.runner || runner),
           setVars: {},
           unsetKeys: [],
           clear: false,
@@ -1184,7 +1140,6 @@ function EditActorConfigModal({
     try {
       await callback({
         mode: "custom",
-        runner,
         setVars: secretSaveChanges.setVars,
         unsetKeys: secretSaveChanges.unsetKeys,
         clear: secretSaveChanges.clear,
@@ -1218,8 +1173,6 @@ function EditActorConfigModal({
     (editMode === "custom" && effectiveLinked) ||
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
-  const customRunnerLockedToPty = !supportsStandardWebHeadlessRuntime(runtime);
-  const webModelRunnerLockedToHeadless = ["web_model", "deepseek"].includes(runtime);
   const normalizedGroupRole = normalizeGroupRole(groupRole);
   const groupRoleLabel =
     normalizedGroupRole === "foreman"
@@ -1449,8 +1402,6 @@ function EditActorConfigModal({
                         onChange={(value) => {
                           const next = value as SupportedRuntime;
                           onChangeRuntime(next);
-                          if (["web_model", "deepseek"].includes(next)) onChangeRunner("headless");
-                          else if (!supportsStandardWebHeadlessRuntime(next)) onChangeRunner("pty");
                           const nextInfo = runtimes.find((r) => r.name === next);
                           const nextDefault = String(nextInfo?.recommended_command || "").trim();
                           onChangeCommand(nextDefault);
@@ -1469,51 +1420,8 @@ function EditActorConfigModal({
                         })}
                         searchable
                       />
+                      <OpenCodeManagedModelHint runtime={runtime} />
                     </div>
-
-                    {supportsStandardWebHeadlessRuntime(runtime) ? (
-                      <div>
-                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                          {t("runnerMode", { defaultValue: "Runner mode" })}
-                        </label>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={modeButtonClass(runner === "pty")}
-                            onClick={() => onChangeRunner("pty")}
-                            disabled={webModelRunnerLockedToHeadless}
-                          >
-                            {t("pty", { defaultValue: "PTY" })}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={modeButtonClass(runner === "headless")}
-                            onClick={() => onChangeRunner("headless")}
-                            disabled={customRunnerLockedToPty}
-                          >
-                            {t("headless")}
-                          </Button>
-                        </div>
-                        <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                          {webModelRunnerLockedToHeadless
-                            ? t("runnerModeWebModelNote", {
-                                defaultValue:
-                                  "ChatGPT Web Model runs through browser delivery and a remote MCP connector, so it is fixed to Headless.",
-                              })
-                            : customRunnerLockedToPty
-                              ? t("runnerModeHeadlessNote", {
-                                  defaultValue:
-                                    "Only some runtimes, such as codex and claude, support Headless mode. Other runtimes are fixed to PTY.",
-                                })
-                              : t("runnerModeHint", {
-                                  defaultValue:
-                                    "PTY uses terminal interaction; Headless uses structured event flow.",
-                                })}
-                        </div>
-                      </div>
-                    ) : null}
 
                     {runtime === "web_model" ? (
                       <div className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300">

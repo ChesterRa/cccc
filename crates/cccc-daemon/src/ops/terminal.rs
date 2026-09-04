@@ -156,11 +156,6 @@ fn since(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"history": page}))
 }
 
-#[cfg(test)]
-fn is_interrupt_input(data: &str) -> bool {
-    data.as_bytes().contains(&0x03) || data == "\u{1b}"
-}
-
 fn authorize_transcript(
     home: &HomeLayout,
     request: &DaemonRequest,
@@ -293,7 +288,3 @@ fn active_session_error(error: cccc_runtime::RuntimeError) -> OpError {
 #[cfg(all(test, unix))]
 #[path = "terminal_io_tests.rs"]
 mod io_tests;
-
-#[cfg(all(test, unix))]
-#[path = "terminal_hook_tests.rs"]
-mod hook_tests;

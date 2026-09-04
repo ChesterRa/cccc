@@ -78,7 +78,7 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if actor.runtime == ActorRuntime::WebModel {
         require_single_web_model_actor(home, &group_id, &actor.id)?;
     }
-    actor_runtime::normalize_managed_session(&mut actor);
+    actor.normalize_runtime_constraints();
     actor.default_scope_key = normalize_default_scope_key(&group, &actor.default_scope_key)?;
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
@@ -161,6 +161,13 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         });
+    if patch.remove("runner").is_some() {
+        return Err(OpError::new(
+            "unsupported_field",
+            "runner is derived from the Runtime and cannot be selected",
+        ));
+    }
+    patch.remove("runtime_state_source");
     if let Some(value) = patch.get("default_scope_key") {
         let reference = value
             .as_str()
@@ -198,7 +205,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         patched_preview
     };
     final_preview.role = None;
-    actor_runtime::normalize_managed_session(&mut final_preview);
+    final_preview.normalize_runtime_constraints();
     if final_preview.runtime == ActorRuntime::WebModel {
         require_single_web_model_actor(home, &group_id, &actor_id)?;
     }
@@ -235,7 +242,6 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             };
             final_actor.role = None;
             final_actor.normalize_runtime_constraints();
-            actor_runtime::normalize_managed_session(&mut final_actor);
             let index = doc
                 .actors
                 .iter()
@@ -451,16 +457,42 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         web_model_delivery_preference(&group, &actor_id).cloned();
     let original_runtime_state = runtime_state(&group, &actor_id).cloned();
     let original_secrets = actor_secrets::values(home, &group_id, &actor_id)?;
-    store(home)?
+    let runtime_was_running = actor_process_running(&group, &original_actor);
+    actor_delivery::shutdown_actor(&group_id, &actor_id);
+    if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
+        actor_delivery::dispatch_group_unread(home, &group);
+        return Err(error);
+    }
+    if let Err(error) =
+        super::codex_voice_analyst::remove_claude_actor_settings(home, &group_id, &actor_id)
+    {
+        return Err(restart_after_failed_remove(
+            home,
+            &group,
+            &original_actor,
+            runtime_was_running,
+            OpError::io(error),
+        ));
+    }
+    if let Err(error) = store(home)?
         .mutate(&group_id, |doc| {
             actors::remove(doc, &actor_id)?;
             Ok(())
         })
-        .map_err(OpError::invalid)?;
+        .map_err(OpError::invalid)
+    {
+        return Err(restart_after_failed_remove(
+            home,
+            &group,
+            &original_actor,
+            runtime_was_running,
+            error,
+        ));
+    }
     let retired_connectors = match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
         Ok(entries) => entries,
         Err(error) => {
-            return Err(super::actor_saga::restore_removed(
+            return Err(restore_removed_and_runtime(
                 home,
                 &group_id,
                 super::actor_saga::RemovedActorSnapshot {
@@ -472,6 +504,8 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     connector_entries: Vec::new(),
                     secrets: original_secrets,
                 },
+                &group,
+                runtime_was_running,
                 OpError::io(error),
             ));
         }
@@ -486,10 +520,12 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         secrets: original_secrets,
     };
     if let Err(error) = actor_secrets::remove(home, &group_id, &actor_id) {
-        return Err(super::actor_saga::restore_removed(
+        return Err(restore_removed_and_runtime(
             home,
             &group_id,
             removal_snapshot,
+            &group,
+            runtime_was_running,
             error,
         ));
     }
@@ -502,23 +538,16 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     ) {
         Ok(event) => event,
         Err(error) => {
-            return Err(super::actor_saga::restore_removed(
+            return Err(restore_removed_and_runtime(
                 home,
                 &group_id,
                 removal_snapshot,
+                &group,
+                runtime_was_running,
                 error,
             ));
         }
     };
-    actor_delivery::shutdown_actor(&group_id, &actor_id);
-    if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
-        tracing::warn!(
-            message = %error.message,
-            %group_id,
-            %actor_id,
-            "post-commit actor runtime stop failed"
-        );
-    }
     if let Err(error) = remove_persisted_headless_state(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit headless state cleanup failed");
     }
@@ -526,6 +555,57 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit runtime session cleanup failed");
     }
     object(json!({"actor_id": actor_id, "event": event}))
+}
+
+fn restore_removed_and_runtime(
+    home: &HomeLayout,
+    group_id: &str,
+    snapshot: super::actor_saga::RemovedActorSnapshot,
+    original_group: &GroupDoc,
+    runtime_was_running: bool,
+    original: OpError,
+) -> OpError {
+    let actor_id = snapshot.actor.id.clone();
+    let restored = super::actor_saga::restore_removed(home, group_id, snapshot, original);
+    if restored.code == "rollback_failed" {
+        return restored;
+    }
+    restart_after_failed_remove(
+        home,
+        original_group,
+        original_group
+            .actors
+            .iter()
+            .find(|actor| actor.id == actor_id)
+            .expect("removed actor belongs to the original group"),
+        runtime_was_running,
+        restored,
+    )
+}
+
+fn restart_after_failed_remove(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    runtime_was_running: bool,
+    original: OpError,
+) -> OpError {
+    if !runtime_was_running {
+        return original;
+    }
+    match actor_runtime::apply(home, group, &actor.id, "actor.start") {
+        Ok(_) => {
+            actor_delivery::dispatch_group_unread(home, group);
+            original
+        }
+        Err(error) => OpError::new(
+            "rollback_failed",
+            format!(
+                "{}; rollback failed to restart removed Actor: {}",
+                original.message, error.message
+            ),
+        ),
+    }
 }
 
 fn web_model_target<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Value> {
@@ -764,7 +844,19 @@ fn rollback_actor_lifecycle(
 
 fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
     if let Some(value) = request.args.get("actor") {
+        if value.get("runner").is_some() {
+            return Err(OpError::new(
+                "unsupported_field",
+                "runner is derived from the Runtime and cannot be selected",
+            ));
+        }
         return serde_json::from_value(value.clone()).map_err(OpError::invalid);
+    }
+    if request.args.contains_key("runner") {
+        return Err(OpError::new(
+            "unsupported_field",
+            "runner is derived from the Runtime and cannot be selected",
+        ));
     }
     let id = required_arg(request, "actor_id")?;
     let mut value = serde_json::to_value(Actor::new(id)).map_err(OpError::invalid)?;
@@ -772,7 +864,10 @@ fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
         .as_object_mut()
         .ok_or_else(|| OpError::new("internal_error", "invalid actor"))?;
     for (key, item) in &request.args {
-        if !matches!(key.as_str(), "group_id" | "actor_id" | "by" | "env_private") {
+        if !matches!(
+            key.as_str(),
+            "group_id" | "actor_id" | "by" | "env_private" | "runtime_state_source"
+        ) {
             object.insert(key.clone(), item.clone());
         }
     }

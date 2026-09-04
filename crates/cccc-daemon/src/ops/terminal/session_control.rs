@@ -18,13 +18,12 @@ pub(super) fn attachment_status(request: &DaemonRequest) -> OpResult {
     object(json!({"terminal_writable": writable}))
 }
 
-pub(super) fn write(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+pub(super) fn write(_home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
     let data = string_arg(request, "data")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| OpError::new("invalid_args", "data is required"))?;
     cccc_runtime::write(&group_id, &actor_id, data.as_bytes()).map_err(runtime_error)?;
-    super::super::runtime_hook_input::observe(home, &group_id, &actor_id, data.as_bytes());
     object(json!({"written": data.len()}))
 }
 

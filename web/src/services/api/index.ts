@@ -7,7 +7,6 @@ export * from "./context";
 export * from "./tasks";
 export * from "./system";
 export * from "./messaging";
-export * from "./runtimeActivity";
 export * from "./im";
 export * from "./webAccess";
 export * from "./webModel";

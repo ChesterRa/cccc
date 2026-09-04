@@ -36,6 +36,7 @@ impl AnalystRuntime {
                             tracing::warn!(%error, "failed to persist materialized Voice Analyst");
                         }
                     }
+                    AnalystLifecycleEvent::Associated { .. } => runtime.mark_working(),
                     AnalystLifecycleEvent::Completed { status, result, .. } => {
                         if status == "completed" && !result.trim().is_empty() {
                             runtime.mark_result(&result);

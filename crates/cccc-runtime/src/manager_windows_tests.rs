@@ -8,13 +8,14 @@ use std::time::Duration;
 fn npm_style_batch_actor_survives_utf8_message_delivery() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().expect("tempdir");
-    std::fs::write(temp.path().join("actor"), "not a Win32 executable")
+    let actor_dir = temp.path().join("batch actor");
+    std::fs::create_dir(&actor_dir).expect("batch actor directory");
+    std::fs::write(actor_dir.join("actor"), "not a Win32 executable")
         .expect("extensionless npm shim");
-    std::fs::write(temp.path().join("actor.cmd"), "@echo off\r\ncmd.exe /Q\r\n")
-        .expect("batch shim");
-    let path = std::env::join_paths(std::iter::once(temp.path().to_path_buf()).chain(
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
-    ))
+    std::fs::write(actor_dir.join("actor.cmd"), "@echo off\r\ncmd.exe /Q\r\n").expect("batch shim");
+    let path = std::env::join_paths(std::iter::once(actor_dir).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
     .expect("PATH")
     .to_string_lossy()
     .into_owned();

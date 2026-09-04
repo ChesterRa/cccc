@@ -3,7 +3,6 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 impl AnalystSession {
@@ -143,7 +142,6 @@ impl AnalystSession {
             native_tui_command: None,
             cleanup_paths: Vec::new(),
             runtime: cccc_contracts::ActorRuntime::Codex,
-            thread_materialized: AtomicBool::new(thread_resumed),
             thread_resumed,
             delegations: tokio::sync::Mutex::new(delegations),
         })

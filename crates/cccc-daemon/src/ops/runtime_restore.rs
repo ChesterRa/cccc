@@ -3,7 +3,7 @@ use cccc_core::{GroupStore, HomeLayout};
 
 use crate::dispatch::OpError;
 use crate::dispatch_concurrency::DispatchLocks;
-use crate::ops::{actor_delivery, actor_runtime, local_headless};
+use crate::ops::{actor_delivery, actor_runtime};
 
 pub fn spawn(home: HomeLayout, locks: DispatchLocks) {
     let result = std::thread::Builder::new()
@@ -102,7 +102,8 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
 }
 
 fn should_restore_actor(state: GroupState, actor: &Actor) -> bool {
-    actor.enabled && !(state == GroupState::Paused && local_headless::supports(actor))
+    actor.enabled
+        && !(state == GroupState::Paused && actor.runner == cccc_contracts::RunnerKind::Headless)
 }
 
 fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, actor: &Actor) -> bool {
@@ -113,18 +114,19 @@ fn deepseek_restore_blocked(home: &HomeLayout, group: &cccc_core::GroupDoc, acto
 #[cfg(test)]
 mod tests {
     use super::{deepseek_restore_blocked, should_restore_actor};
-    use cccc_contracts::{Actor, ActorRuntime, GroupState, RunnerKind};
+    use cccc_contracts::{Actor, ActorRuntime, GroupState};
     use cccc_core::{GroupStore, HomeLayout};
 
     #[test]
-    fn paused_groups_restore_retained_ptys_but_not_headless_runtimes() {
+    fn paused_groups_restore_terminal_runtimes_but_not_non_terminal_runtimes() {
         let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Claude;
-        actor.runner = RunnerKind::Headless;
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.normalize_runtime_constraints();
         assert!(!should_restore_actor(GroupState::Paused, &actor));
         assert!(should_restore_actor(GroupState::Active, &actor));
 
-        actor.runner = RunnerKind::Pty;
+        actor.runtime = ActorRuntime::Claude;
+        actor.normalize_runtime_constraints();
         assert!(should_restore_actor(GroupState::Paused, &actor));
     }
 

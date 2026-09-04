@@ -22,7 +22,7 @@
   "chatFilters": "Chat filters",
   "chatMessages": "Chat messages",
   "liveWorkTitle": "Live work",
-  "liveWorkHint": "Headless runtime output appears here while work is in progress. Formal replies are sent through message tools.",
+  "liveWorkHint": "Structured runtime activity appears here while work is in progress. Formal replies are sent through message tools.",
   "runtimeDockOpenLiveWork": "Open live work for {{name}}",
   "runtimeDockOpenTerminal": "Open terminal for {{name}}",
   "runtimeInspectorTitle": "Runtime inspector",

@@ -139,6 +139,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Verify Windows PTY UTF-8 message delivery
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc-pair-runtime --lib --locked
+          manager_windows_tests::npm_style_batch_actor_survives_utf8_message_delivery
+          -- --test-threads=1
+
+      - name: Verify Windows console UTF-8 encoding lifecycle
+        timeout-minutes: 10
+        run: >-
+          cargo test --package cccc --bin cccc --locked
+          console_encoding::tests::console_uses_utf8_for_cli_lifetime_and_restores_both_original_pages
+          -- --test-threads=1
+
       - name: Verify combined Web startup failure releases its daemon
         timeout-minutes: 10
         run: >-

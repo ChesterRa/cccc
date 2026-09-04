@@ -16,13 +16,16 @@ cccc attach .
 
 This binds the current directory as a "scope" and creates a working group.
 
-## Step 3: Configure MCP for Your Runtime
+## Step 3: Prepare the Runtime Integration
 
 ```bash
 cccc setup --runtime claude   # or codex, droid, grok, kimi
 ```
 
-This configures the MCP (Model Context Protocol) so agents can interact with CCCC.
+This prepares or reports the runtime's CCCC MCP integration. Direct Claude Code,
+Codex, Grok Build, and OpenCode managed sessions receive their scoped MCP entry
+automatically when CCCC starts them; other runtimes may use persistent or
+prompt-assisted setup.
 
 ## Step 4: Add Your First Agent
 

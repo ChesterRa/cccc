@@ -8,8 +8,9 @@ use super::permissions::permission_response;
 use super::{
     AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy, PromptCompletion,
 };
+use crate::ops::codex_voice_analyst::{MANAGED_AGENT_DELEGATION_ATTACHED_METHOD, native_input};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::process::ChildStdin;
 use std::sync::{Arc, Mutex};
@@ -47,6 +48,7 @@ pub(super) async fn run(
     let mut active: Option<ActiveTurn> = None;
     let mut cancelling_turn_id: Option<String> = None;
     let mut tool_calls = HashMap::<String, ToolCall>::new();
+    let mut native_inputs = VecDeque::new();
     let settle_timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
     tokio::pin!(settle_timer);
     let mut deferred_settlement: Option<DeferredSettlement> = None;
@@ -217,38 +219,66 @@ pub(super) async fn run(
                         }
                     }
                 }
-                Some(AcpCommand::ObservedUserText { session_id: observed, text }) => {
-                    if observed != session_id || session_id.is_empty() {
-                        continue;
-                    }
-                    let message = json!({
-                        "method":"session/update",
-                        "params":{
-                            "sessionId":session_id,
-                            "update":{
-                                "sessionUpdate":"user_message_chunk",
-                                "content":{"type":"text","text":text},
+                Some(AcpCommand::ObservedUserText { session_id: observed, text, response }) => {
+                    let result = if observed != session_id || session_id.is_empty() {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "observed ACP user text targets a different session",
+                        ))
+                    } else {
+                        let message = json!({
+                            "method":"session/update",
+                            "params":{
+                                "sessionId":session_id,
+                                "update":{
+                                    "sessionUpdate":"user_message_chunk",
+                                    "content":{"type":"text","text":text},
+                                }
                             }
-                        }
-                    });
-                    if let Some(turn_id) = admit_matching_prompt(
-                        &message,
-                        &mut pending,
-                        &mut active,
-                        &events,
-                        &generation,
-                        &session_id,
-                    ) {
-                        flush_buffered_notifications(
-                            &turn_id,
+                        });
+                        let (controlled_echo, admitted_turn) = admit_matching_prompt(
+                            &message,
                             &mut pending,
+                            &mut active,
                             &events,
                             &generation,
                             &session_id,
-                            &mut active,
-                            &mut tool_calls,
                         );
-                    }
+                        if let Some(turn_id) = admitted_turn {
+                            flush_buffered_notifications(
+                                &turn_id,
+                                &mut pending,
+                                &events,
+                                &generation,
+                                &session_id,
+                                &mut active,
+                                &mut tool_calls,
+                            );
+                        }
+                        if !controlled_echo {
+                            admit_matching_native_input(
+                                &message,
+                                &mut native_inputs,
+                                &mut active,
+                                &events,
+                                &generation,
+                                &session_id,
+                            );
+                        }
+                        Ok(!controlled_echo)
+                    };
+                    let _ = response.send(result);
+                }
+                Some(AcpCommand::RegisterNativeInput { delegation_id, text, response }) => {
+                    let _ = response.send(native_input::register(
+                        &mut native_inputs,
+                        delegation_id,
+                        text,
+                    ));
+                }
+                Some(AcpCommand::ForgetNativeInput { delegation_id, response }) => {
+                    native_input::forget(&mut native_inputs, &delegation_id);
+                    let _ = response.send(());
                 }
                 Some(AcpCommand::ExternalDisconnected { reason }) => break reason,
                 Some(AcpCommand::Close) | None => break "managed ACP client closed".to_owned(),
@@ -291,14 +321,15 @@ pub(super) async fn run(
                         continue;
                     }
                     if loading_request_id.is_none() {
-                        if let Some(turn_id) = admit_matching_prompt(
+                        let (controlled_echo, admitted_turn) = admit_matching_prompt(
                             &message,
                             &mut pending,
                             &mut active,
                             &events,
                             &generation,
                             &session_id,
-                        ) {
+                        );
+                        if let Some(turn_id) = admitted_turn {
                             flush_buffered_notifications(
                                 &turn_id,
                                 &mut pending,
@@ -307,6 +338,16 @@ pub(super) async fn run(
                                 &session_id,
                                 &mut active,
                                 &mut tool_calls,
+                            );
+                        }
+                        if !controlled_echo {
+                            admit_matching_native_input(
+                                &message,
+                                &mut native_inputs,
+                                &mut active,
+                                &events,
+                                &generation,
+                                &session_id,
                             );
                         }
                         match buffer_unadmitted_notification(&message, frame.len(), &mut pending, active.as_ref()) {
@@ -604,7 +645,7 @@ fn admit_matching_prompt(
     events: &broadcast::Sender<AnalystEvent>,
     generation: &str,
     session_id: &str,
-) -> Option<String> {
+) -> (bool, Option<String>) {
     if message.get("method").and_then(Value::as_str) != Some("session/update")
         || message.pointer("/params/sessionId").and_then(Value::as_str) != Some(session_id)
         || message
@@ -612,16 +653,22 @@ fn admit_matching_prompt(
             .and_then(Value::as_str)
             != Some("user_message_chunk")
     {
-        return None;
+        return (false, None);
     }
-    let chunk = message
+    let Some(chunk) = message
         .pointer("/params/update/content/text")
-        .and_then(Value::as_str)?;
-    let turn_id = active
+        .and_then(Value::as_str)
+    else {
+        return (false, None);
+    };
+    let Some(turn_id) = active
         .as_ref()
         .filter(|turn| !turn.external && !turn.admitted)
-        .map(|turn| turn.turn_id.clone())?;
-    let prompt = pending.values_mut().find_map(|kind| match kind {
+        .map(|turn| turn.turn_id.clone())
+    else {
+        return (false, None);
+    };
+    let Some(prompt) = pending.values_mut().find_map(|kind| match kind {
         PendingKind::Prompt {
             turn_id: pending_turn_id,
             expected_user_text,
@@ -636,7 +683,9 @@ fn admit_matching_prompt(
             delegation_id.clone(),
         )),
         _ => None,
-    })?;
+    }) else {
+        return (false, None);
+    };
     let (expected, observed, response, delegation_id) = prompt;
     let combined = format!("{observed}{chunk}");
     if expected.starts_with(&combined) {
@@ -645,10 +694,10 @@ fn admit_matching_prompt(
         *observed = chunk.to_owned();
     } else {
         observed.clear();
-        return None;
+        return (false, None);
     }
     if observed != expected {
-        return None;
+        return (true, None);
     }
     let response = response.take().expect("checked pending ACP admission");
     mark_admitted(active, &turn_id);
@@ -660,7 +709,59 @@ fn admit_matching_prompt(
         Some(delegation_id),
     );
     let _ = response.send(Ok(turn_id.clone()));
-    Some(turn_id)
+    (true, Some(turn_id))
+}
+
+fn admit_matching_native_input(
+    message: &Value,
+    native_inputs: &mut VecDeque<native_input::PendingNativeInput>,
+    active: &mut Option<ActiveTurn>,
+    events: &broadcast::Sender<AnalystEvent>,
+    generation: &str,
+    session_id: &str,
+) {
+    if message.get("method").and_then(Value::as_str) != Some("session/update")
+        || message.pointer("/params/sessionId").and_then(Value::as_str) != Some(session_id)
+        || message
+            .pointer("/params/update/sessionUpdate")
+            .and_then(Value::as_str)
+            != Some("user_message_chunk")
+    {
+        return;
+    }
+    let Some(text) = message
+        .pointer("/params/update/content/text")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let Some(delegation_id) = native_input::observe(native_inputs, text) else {
+        return;
+    };
+    if let Some(turn_id) = active.as_ref().map(|turn| turn.turn_id.clone()) {
+        let _ = events.send(AnalystEvent {
+            generation: generation.to_owned(),
+            message: json!({
+                "method":MANAGED_AGENT_DELEGATION_ATTACHED_METHOD,
+                "params":{"threadId":session_id,"turnId":turn_id}
+            }),
+            requested_delegation_id: Some(delegation_id),
+        });
+        return;
+    }
+    let turn_id = format!("acp-tui-{}", uuid::Uuid::new_v4().simple());
+    *active = Some(ActiveTurn {
+        turn_id: turn_id.clone(),
+        external: true,
+        admitted: true,
+    });
+    publish_started(
+        events,
+        generation,
+        session_id,
+        &turn_id,
+        Some(delegation_id),
+    );
 }
 
 fn mark_admitted(active: &mut Option<ActiveTurn>, turn_id: &str) {
@@ -707,8 +808,8 @@ fn prompt_admission_error(error: io::Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PENDING_NOTIFICATION_BYTES, admit_matching_prompt, buffer_unadmitted_notification,
-        prompt_admission_error,
+        MAX_PENDING_NOTIFICATION_BYTES, admit_matching_native_input, admit_matching_prompt,
+        buffer_unadmitted_notification, prompt_admission_error,
     };
     use crate::ops::codex_voice_analyst::acp::events::ActiveTurn;
     use crate::ops::codex_voice_analyst::acp::pending::PendingKind;
@@ -837,5 +938,161 @@ mod tests {
         let event = event_receiver.try_recv().expect("turn started");
         assert_eq!(event.message["method"], "turn/started");
         assert_eq!(event.requested_delegation_id.as_deref(), Some("delivery-1"));
+    }
+
+    #[test]
+    fn native_input_echo_attaches_to_the_active_turn_without_starting_another() {
+        let mut native_inputs = std::collections::VecDeque::new();
+        crate::ops::codex_voice_analyst::native_input::register(
+            &mut native_inputs,
+            "voice-2".into(),
+            "new constraint".into(),
+        )
+        .expect("register native input");
+        let mut active = Some(ActiveTurn {
+            turn_id: "turn-1".into(),
+            external: false,
+            admitted: true,
+        });
+        let (events, mut receiver) = broadcast::channel(4);
+        let message = json!({
+            "method":"session/update",
+            "params":{
+                "sessionId":"session-1",
+                "update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"new constraint"},
+                }
+            }
+        });
+
+        admit_matching_native_input(
+            &message,
+            &mut native_inputs,
+            &mut active,
+            &events,
+            "generation-1",
+            "session-1",
+        );
+
+        assert_eq!(active.as_ref().expect("active").turn_id, "turn-1");
+        let associated = receiver.try_recv().expect("association event");
+        assert_eq!(
+            associated.message["method"],
+            crate::ops::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD
+        );
+        assert_eq!(associated.message["params"]["turnId"], "turn-1");
+        assert_eq!(
+            associated.requested_delegation_id.as_deref(),
+            Some("voice-2")
+        );
+        assert!(native_inputs.is_empty());
+    }
+
+    #[test]
+    fn queued_native_input_becomes_voice_owned_when_the_runtime_dequeues_it() {
+        let mut native_inputs = std::collections::VecDeque::new();
+        crate::ops::codex_voice_analyst::native_input::register(
+            &mut native_inputs,
+            "voice-queued".into(),
+            "next investigation".into(),
+        )
+        .expect("register native input");
+        let mut active = None;
+        let (events, mut receiver) = broadcast::channel(4);
+        let message = json!({
+            "method":"session/update",
+            "params":{
+                "sessionId":"session-1",
+                "update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"next investigation"},
+                }
+            }
+        });
+
+        admit_matching_native_input(
+            &message,
+            &mut native_inputs,
+            &mut active,
+            &events,
+            "generation-1",
+            "session-1",
+        );
+
+        let turn = active.as_ref().expect("dequeued Runtime turn");
+        assert!(turn.external);
+        assert!(turn.admitted);
+        let started = receiver.try_recv().expect("Voice-owned turn start");
+        assert_eq!(started.message["method"], "turn/started");
+        assert_eq!(started.message["params"]["turn"]["id"], turn.turn_id);
+        assert_eq!(
+            started.requested_delegation_id.as_deref(),
+            Some("voice-queued")
+        );
+        assert!(native_inputs.is_empty());
+    }
+
+    #[test]
+    fn controlled_echo_cannot_consume_an_identical_queued_native_input() {
+        let (response, _receipt) = oneshot::channel();
+        let mut pending = HashMap::from([(
+            7,
+            PendingKind::Prompt {
+                turn_id: "turn-1".into(),
+                delegation_id: "voice-1".into(),
+                expected_user_text: "repeat this".into(),
+                observed_user_text: String::new(),
+                buffered_notifications: Vec::new(),
+                buffered_bytes: 0,
+                response: Some(response),
+            },
+        )]);
+        let mut native_inputs = std::collections::VecDeque::new();
+        crate::ops::codex_voice_analyst::native_input::register(
+            &mut native_inputs,
+            "voice-2".into(),
+            "repeat this".into(),
+        )
+        .expect("register native input");
+        let mut active = Some(ActiveTurn {
+            turn_id: "turn-1".into(),
+            external: false,
+            admitted: false,
+        });
+        let (events, _receiver) = broadcast::channel(4);
+        let message = json!({
+            "method":"session/update",
+            "params":{
+                "sessionId":"session-1",
+                "update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"repeat this"},
+                }
+            }
+        });
+
+        let (controlled_echo, admitted_turn) = admit_matching_prompt(
+            &message,
+            &mut pending,
+            &mut active,
+            &events,
+            "generation-1",
+            "session-1",
+        );
+        if !controlled_echo {
+            admit_matching_native_input(
+                &message,
+                &mut native_inputs,
+                &mut active,
+                &events,
+                "generation-1",
+                "session-1",
+            );
+        }
+
+        assert_eq!(admitted_turn.as_deref(), Some("turn-1"));
+        assert_eq!(native_inputs.len(), 1);
+        assert_eq!(native_inputs[0].delegation_id, "voice-2");
     }
 }

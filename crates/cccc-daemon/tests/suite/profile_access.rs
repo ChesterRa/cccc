@@ -183,7 +183,6 @@ fn force_delete_converts_linked_actor_with_profile_secrets_intact() {
             "profile_id":"detach-profile",
             "name":"Detach Profile",
             "runtime":"codex",
-            "runner":"headless"
         }),
     );
     call(
@@ -240,7 +239,7 @@ fn force_delete_converts_linked_actor_with_profile_secrets_intact() {
     assert_eq!(actor["profile_scope"], "global");
     assert_eq!(actor["profile_owner"], "");
     assert_eq!(actor["runtime"], "codex");
-    assert_eq!(actor["runner"], "headless");
+    assert_eq!(actor["runner"], "pty");
     let keys = call(
         &home,
         "actor_env_private_keys",

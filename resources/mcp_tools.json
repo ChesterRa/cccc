@@ -1327,7 +1327,7 @@
   },
   {
     "name": "cccc_actor",
-    "description": "Actor operations: list/profile_list/add/remove/start/stop/restart. Actor creation follows the caller's allowed runner/profile surface.",
+    "description": "Actor operations: list/profile_list/add/remove/start/stop/restart. Actor creation follows the caller's allowed Runtime/Profile surface.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1358,14 +1358,6 @@
         "runtime": {
           "type": "string",
           "default": "codex"
-        },
-        "runner": {
-          "type": "string",
-          "enum": [
-            "pty",
-            "headless"
-          ],
-          "default": "pty"
         },
         "title": {
           "type": "string"

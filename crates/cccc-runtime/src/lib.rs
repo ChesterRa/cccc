@@ -50,7 +50,7 @@ pub use history_access::{
 };
 pub use manager::{
     reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
-    submit_interruptible, submit_sequence_interruptible, write,
+    submit_interruptible, submit_sequence_interruptible, wait_for_input_ready, write,
 };
 pub use output::HistoryPage;
 pub use session::{LaunchSpec, SessionStatus};

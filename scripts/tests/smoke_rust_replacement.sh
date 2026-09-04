@@ -31,8 +31,7 @@ group_id="$(sed -n 's/.*"group_id": "\([^"]*\)".*/\1/p' <<<"$group_json" | head 
 test -n "$group_id"
 "$BINARY" actor add web-smoke \
   --group "$group_id" \
-  --runtime web_model \
-  --runner headless >/dev/null
+  --runtime web_model >/dev/null
 
 mcp_output="$(
   printf '%s\n' \

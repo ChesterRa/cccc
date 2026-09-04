@@ -94,43 +94,6 @@ pub(super) fn command_output_state(
     expected: &[String],
 ) -> Report {
     match runtime {
-        ActorRuntime::Claude => {
-            let entry = parse_key_values(output);
-            if entry.is_empty() {
-                return Report::new(State::Missing);
-            }
-            let transport_ok = matches!(
-                entry
-                    .get("transport")
-                    .map(String::as_str)
-                    .unwrap_or("stdio"),
-                "" | "stdio" | "local"
-            );
-            let command = entry.get("command").map(String::as_str).unwrap_or_default();
-            let args = entry
-                .get("args")
-                .map(|value| {
-                    value
-                        .split_whitespace()
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let source = entry
-                .get("scope")
-                .or_else(|| entry.get("source"))
-                .cloned()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            Report {
-                state: if transport_ok && command_matches(command, &args, expected) {
-                    State::Ready
-                } else {
-                    State::Stale
-                },
-                source,
-            }
-        }
         ActorRuntime::Copilot => {
             let Ok(document) = serde_json::from_str::<Value>(output) else {
                 return Report::new(State::Missing);
@@ -629,10 +592,6 @@ mod tests {
     fn cli_backed_runtime_outputs_match_supported_parsers() {
         let expected = ["/opt/cccc".into(), "mcp".into()];
         let fixtures = [
-            (
-                ActorRuntime::Claude,
-                "Transport: stdio\nCommand: /opt/cccc\nArgs: mcp\nScope: User config",
-            ),
             (
                 ActorRuntime::Copilot,
                 r#"{"cccc":{"command":"/opt/cccc","args":["mcp"],"source":"user","tools":["*"]}}"#,

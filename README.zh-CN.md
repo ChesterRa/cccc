@@ -123,7 +123,7 @@ cccc daemon status     # 显式查看 daemon 生命周期状态
 ```bash
 cd /path/to/your/repo
 cccc attach .                              # 绑定当前目录为 scope
-cccc setup --runtime claude                # 配置运行时的 MCP
+cccc setup --runtime claude                # 确认由 CCCC 按会话注入 MCP
 cccc actor add foreman --runtime claude    # 第一个 actor 自动成为 foreman
 cccc actor add implementer --runtime codex # 添加 peer
 cccc group start                           # 启动所有 actor
@@ -195,8 +195,8 @@ graph TB
         RG2["另一台机器/团队"]
     end
 
-    A1 <-->|MCP 工具<br/>PTY/headless| Daemon
-    A2 <-->|MCP 工具<br/>PTY/headless| Daemon
+    A1 <-->|原生终端<br/>MCP + 精准协议| Daemon
+    A2 <-->|原生终端<br/>MCP + 精准协议| Daemon
     A3 <-->|浏览器投递<br/>远程 MCP| Daemon
     A4 <-->|MCP 工具| Daemon
     A5 <-->|MCP 工具| Daemon
@@ -221,7 +221,7 @@ CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 
 | 运行时 | 接入方式 | 入口 / 表面 |
 |---------|----------|-------------|
-| Claude Code | 自动 MCP 配置 | `claude` |
+| Claude Code | 托管 Agent View 会话 + 原生 TUI；按会话注入 MCP | `claude` |
 | Cline CLI | 自动 MCP 配置 | `cline` |
 | Codex CLI | 自动 MCP 配置 | `codex` |
 | GitHub Copilot CLI | 自动 MCP 配置 | `copilot` |
@@ -231,20 +231,20 @@ CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 | Kilo Code CLI | 提示词辅助 MCP 配置 | `kilo` |
 | Antigravity CLI | 提示词辅助 MCP 配置 | `agy` |
 | ChatGPT Web | 远程 MCP + 浏览器投递 | `chatgpt.com` 对话 |
-| Grok Build | 自动 MCP 配置 | `grok` |
+| Grok Build | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `grok` |
 | Hermes Agent | 自动 MCP 配置 | `hermes` |
 | Droid | 自动 MCP 配置 | `droid` |
 | Amp | 自动 MCP 配置 | `amp` |
 | Auggie | 自动 MCP 配置 | `auggie` |
 | Kimi CLI | 自动 MCP 配置 | `kimi` |
-| OpenCode | 通过运行时配置自动 MCP 配置 | `opencode` |
+| OpenCode | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `opencode` |
 | Custom | 手动配置 | 任意命令 |
 
 这里列的是稳定的运行时入口或使用表面。CCCC 会自动套用各运行时的启动默认设置；actor/profile 的命令可在设置中查看和自定义。[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)列出了默认 autonomy flags，包括 `agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` 等跳过审批模式。
 
 ```bash
-cccc setup --runtime claude       # 自动配置该运行时的 MCP
-cccc setup --runtime cline        # 为 Cline PTY TUI 自动配置 MCP
+cccc setup --runtime claude       # 确认由 CCCC 按会话注入 MCP
+cccc setup --runtime cline        # 为 Cline 原生 TUI 自动配置 MCP
 cccc setup --runtime cursor       # 显示提示词辅助 MCP 配置协议
 cccc setup --runtime kilo         # 显示提示词辅助 MCP 配置协议
 cccc setup --runtime antigravity  # 显示提示词辅助 MCP 配置协议
@@ -252,11 +252,11 @@ cccc runtime list --all           # 列出所有可用运行时
 cccc doctor                       # 检查环境和运行时可用性
 ```
 
-Rust daemon 在创建自动管理的 PTY actor 会话前，会检查对应 runtime 的 `cccc` MCP 是否仍指向当前公共入口；缺失或可安全替换的旧配置会自动修复并再次验证。Codex 保留 actor 级启动配置，因此从 Python 切换到 Rust、旧入口被删除或符号链接失效时，新会话不会继续锁定无效工具列表。项目级等非用户作用域冲突不会被静默覆盖，而会返回可操作的错误。
+Rust daemon 在创建 actor 会话前，会检查对应 runtime 的 `cccc` MCP 是否仍指向当前公共入口；缺失或可安全替换的旧配置会自动修复并再次验证。Codex 保留 actor 级启动配置，因此从 Python 切换到 Rust、旧入口被删除或符号链接失效时，新会话不会继续锁定无效工具列表。项目级等非用户作用域冲突不会被静默覆盖，而会返回可操作的错误。
 
-Actor 可以以 **PTY**（嵌入式终端）或 **headless**（无终端的结构化 I/O）模式运行。Claude Code 和 Codex CLI 支持两种模式；headless 模式下 daemon 对投递和流式传输具有更精细的控制。
+用户只需选择 Runtime，CCCC 会自动确定其交互表面。CLI Actor 始终提供原生可写终端；Claude Code、Codex CLI、Grok Build 和 OpenCode 还会在同一个 provider session 上配对后台精准协议，使用户保留直接操作能力，同时让 CCCC 获得可靠的生命周期状态。Actor 消息会立即进入原生终端，steer 或 queue 由接收 Runtime 自己决定。
 
-每个支持运行时的 setup 命令、runner mode 指引和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
+每个支持 Runtime 的 setup 命令、交互说明和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
 
 ### ChatGPT Web / GPT-5.x 作为本地开发 actor
 

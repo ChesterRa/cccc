@@ -3,7 +3,9 @@ use super::super::{
     acp::{PermissionPolicy, PromptCompletion},
     grok, process,
 };
-use crate::ops::codex_voice_lifecycle::{AnalystLifecycle, AnalystLifecycleEvent};
+use crate::ops::codex_voice_lifecycle::{
+    AnalystLifecycle, AnalystLifecycleEvent, VoiceDelegationAdmission,
+};
 use cccc_contracts::ActorRuntime;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
@@ -11,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::Arc;
 use std::time::Duration;
 
 const FAKE_SESSION_ID: &str = "01a0623c-19b3-7ec3-b777-95e24279ec67";
@@ -106,7 +108,9 @@ async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
     let mut events = analyst.subscribe();
     let lifecycle = match &analyst.protocol {
         ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
-        ManagedProtocol::Codex(_) => panic!("expected ACP protocol"),
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+            panic!("expected ACP protocol")
+        }
     };
 
     lifecycle
@@ -148,6 +152,91 @@ async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
         turn_id
     );
     analyst.stop("generation-tui").await.expect("stop analyst");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn busy_runtime_accepts_voice_input_for_its_native_steer_or_queue_policy() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
+    home.initialize().expect("initialize");
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    let executable = fake_grok(temp.path());
+    let launched = launch(
+        &home,
+        &workspace,
+        &[executable.to_string_lossy().into_owned()],
+        &BTreeMap::new(),
+        None,
+        "generation-voice-busy",
+    )
+    .await
+    .expect("managed session");
+    let session = Arc::new(analyst_from_grok(
+        launched,
+        &workspace,
+        "generation-voice-busy",
+    ));
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    let control = match &session.protocol {
+        ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+            panic!("expected ACP protocol")
+        }
+    };
+
+    control
+        .status(FAKE_SESSION_ID, true)
+        .await
+        .expect("external busy");
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .expect("started event timeout")
+            .expect("started event"),
+        AnalystLifecycleEvent::Started {
+            origin: crate::ops::codex_voice_lifecycle::AnalystTurnOrigin::Terminal,
+            ..
+        }
+    ));
+
+    let admission = tokio::time::timeout(
+        Duration::from_millis(250),
+        lifecycle.admit_voice("voice-during-terminal", "do not hide this input"),
+    )
+    .await
+    .expect("busy delegation admission must not wait")
+    .expect("native input registration");
+    assert_eq!(
+        admission,
+        VoiceDelegationAdmission::NativeInput {
+            delegation_id: "voice-during-terminal".into(),
+            text: "do not hide this input".into(),
+        }
+    );
+    assert!(
+        control
+            .user_text(FAKE_SESSION_ID, "do not hide this input")
+            .await
+            .expect("authoritative native input echo")
+    );
+    assert!(matches!(
+        events.recv().await.expect("association event"),
+        AnalystLifecycleEvent::Associated {
+            origin: crate::ops::codex_voice_lifecycle::AnalystTurnOrigin::Voice,
+            ..
+        }
+    ));
+
+    control
+        .status(FAKE_SESSION_ID, false)
+        .await
+        .expect("external idle");
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop session");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -200,6 +289,72 @@ async fn provider_busy_before_prompt_admission_remains_retryable() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn voice_admission_falls_back_to_the_native_runtime_after_a_busy_race() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
+    home.initialize().expect("initialize");
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    let executable = fake_grok_busy_once(temp.path());
+    let launched = launch(
+        &home,
+        &workspace,
+        &[executable.to_string_lossy().into_owned()],
+        &BTreeMap::new(),
+        None,
+        "generation-voice-busy-race",
+    )
+    .await
+    .expect("managed session");
+    let session = Arc::new(analyst_from_grok(
+        launched,
+        &workspace,
+        "generation-voice-busy-race",
+    ));
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    let control = match &session.protocol {
+        ManagedProtocol::Acp(protocol) => protocol.lifecycle_control(),
+        ManagedProtocol::Codex(_) | ManagedProtocol::Claude(_) => {
+            panic!("expected ACP protocol")
+        }
+    };
+
+    assert_eq!(
+        lifecycle
+            .admit_voice("voice-busy-race", "preserve this follow-up")
+            .await
+            .expect("native fallback admission"),
+        VoiceDelegationAdmission::NativeInput {
+            delegation_id: "voice-busy-race".into(),
+            text: "preserve this follow-up".into(),
+        }
+    );
+    assert!(
+        control
+            .user_text(FAKE_SESSION_ID, "preserve this follow-up")
+            .await
+            .expect("authoritative native input echo")
+    );
+    assert!(matches!(
+        events.recv().await.expect("Voice turn start"),
+        AnalystLifecycleEvent::Started {
+            ref receipt,
+            origin: crate::ops::codex_voice_lifecycle::AnalystTurnOrigin::Voice,
+        } if receipt.delegation_id == "voice-busy-race"
+    ));
+
+    control
+        .status(FAKE_SESSION_ID, false)
+        .await
+        .expect("external idle");
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop session");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prompt_without_a_user_echo_replays_buffered_output_after_acceptance() {
     let temp = tempfile::tempdir().expect("tempdir");
     let executable = fake_acp_without_user_echo(temp.path(), false);
@@ -209,10 +364,13 @@ async fn prompt_without_a_user_echo_replays_buffered_output_after_acceptance() {
     let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
     let mut events = lifecycle.subscribe();
 
-    let turn = lifecycle
-        .begin_voice("delivery-no-echo", "owned prompt")
+    let admission = lifecycle
+        .admit_voice("delivery-no-echo", "owned prompt")
         .await
         .expect("prompt accepted without a user echo");
+    let VoiceDelegationAdmission::Turn(turn) = admission else {
+        panic!("idle Runtime must accept the controlled prompt")
+    };
     let result = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let AnalystLifecycleEvent::Completed {
@@ -247,10 +405,13 @@ async fn response_fenced_provider_cannot_silently_complete_before_its_result() {
     let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
     let mut events = lifecycle.subscribe();
 
-    let turn = lifecycle
-        .begin_voice("delivery-late-result", "owned prompt")
+    let admission = lifecycle
+        .admit_voice("delivery-late-result", "owned prompt")
         .await
         .expect("prompt response accepted");
+    let VoiceDelegationAdmission::Turn(turn) = admission else {
+        panic!("idle Runtime must accept the controlled prompt")
+    };
     let result = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let AnalystLifecycleEvent::Completed {
@@ -317,6 +478,32 @@ async fn provider_specific_bounded_drain_can_preserve_immediately_late_output() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lifecycle_control_updates_the_managed_acp_model() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (executable, observed_request) = fake_acp_config_option(temp.path());
+    let (protocol, process) =
+        launch_fake_acp(temp.path(), &executable, PromptCompletion::Response).await;
+
+    protocol
+        .lifecycle_control()
+        .set_config_option(FAKE_SESSION_ID, "model", "anthropic/claude-sonnet-4/high")
+        .await
+        .expect("update managed ACP model");
+
+    let request: Value = serde_json::from_str(
+        &std::fs::read_to_string(observed_request).expect("recorded config request"),
+    )
+    .expect("config request JSON");
+    assert_eq!(request["method"], "session/set_config_option");
+    assert_eq!(request["params"]["sessionId"], FAKE_SESSION_ID);
+    assert_eq!(request["params"]["configId"], "model");
+    assert_eq!(request["params"]["value"], "anthropic/claude-sonnet-4/high");
+
+    protocol.close().await;
+    process.stop().expect("stop fake ACP");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cccc_cancel_intent_normalizes_an_end_turn_response() {
     let temp = tempfile::tempdir().expect("tempdir");
     let executable = fake_acp_cancel_as_end_turn(temp.path());
@@ -330,12 +517,13 @@ async fn cccc_cancel_intent_normalizes_an_end_turn_response() {
         lifecycle
             .user_text(FAKE_SESSION_ID, "cancel me")
             .await
-            .expect("authoritative backend user message");
+            .expect("authoritative backend user message")
     };
-    let (turn_id, ()) = tokio::join!(
+    let (turn_id, native_input) = tokio::join!(
         protocol.start_prompt(FAKE_SESSION_ID, "delivery-cancel", "cancel me"),
         admission,
     );
+    assert!(!native_input);
     let turn_id = turn_id.expect("prompt admitted from backend user message");
     assert_eq!(
         next_method(&mut events, "turn/started").await.message["params"]["turn"]["id"],
@@ -358,7 +546,10 @@ async fn launch_fake_acp(
     executable: &Path,
     prompt_completion: PromptCompletion,
 ) -> (AcpClient, process::ChildOwner) {
-    let command = [executable.to_string_lossy().into_owned()];
+    // These fixtures are shell source, not Runtime executables. Reading them
+    // via sh avoids ETXTBSY when another concurrently spawned test process
+    // briefly inherits a just-written fixture descriptor before exec.
+    let command = ["/bin/sh".into(), executable.to_string_lossy().into_owned()];
     let (process, stdin, stdout) =
         process::spawn_piped(&command, root, &BTreeMap::new(), "fake-acp").expect("spawn fake ACP");
     let protocol = AcpClient::new(
@@ -401,7 +592,6 @@ fn fake_analyst_session(
         auxiliary_processes: Vec::new(),
         native_tui_command: None,
         cleanup_paths: Vec::new(),
-        thread_materialized: AtomicBool::new(true),
         thread_resumed: false,
         delegations: tokio::sync::Mutex::new(HashMap::new()),
     }
@@ -427,7 +617,6 @@ fn analyst_from_grok(
         auxiliary_processes: launched.auxiliary_processes,
         native_tui_command: Some(launched.tui_command),
         cleanup_paths: launched.cleanup_paths,
-        thread_materialized: AtomicBool::new(true),
         thread_resumed: launched.resumed,
         delegations: tokio::sync::Mutex::new(HashMap::new()),
     }
@@ -649,4 +838,38 @@ done
     permissions.set_mode(0o700);
     std::fs::set_permissions(&path, permissions).expect("executable");
     path
+}
+
+fn fake_acp_config_option(root: &Path) -> (PathBuf, PathBuf) {
+    let directory = root.join("config-option");
+    std::fs::create_dir(&directory).expect("fake ACP directory");
+    let path = directory.join("fake-acp");
+    let observed_request = directory.join("request.json");
+    std::fs::write(
+        &path,
+        format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"{FAKE_SESSION_ID}"}}}}'
+      ;;
+    *'"method":"session/set_config_option"'*)
+      printf '%s\n' "$line" > '{}'
+      printf '%s\n' '{{"jsonrpc":"2.0","id":3,"result":{{}}}}'
+      ;;
+  esac
+done
+"#,
+            observed_request.display(),
+        ),
+    )
+    .expect("fake config ACP script");
+    let mut permissions = path.metadata().expect("metadata").permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&path, permissions).expect("executable");
+    (path, observed_request)
 }

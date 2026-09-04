@@ -67,9 +67,11 @@ async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
 
 #[tokio::test]
 async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() {
-    let unavailable = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+    let unavailable = tokio::net::TcpSocket::new_v4().expect("socket");
+    unavailable
+        .bind("127.0.0.1:0".parse().expect("address"))
+        .expect("bind unavailable endpoint");
     let endpoint = format!("http://{}", unavailable.local_addr().expect("address"));
-    drop(unavailable);
 
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

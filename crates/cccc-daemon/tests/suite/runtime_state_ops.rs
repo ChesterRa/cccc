@@ -3,7 +3,7 @@ use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 
 #[test]
-fn headless_actor_uses_structured_turns_without_a_pty() {
+fn web_model_actor_uses_the_structured_turn_contract_without_a_terminal() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(&home, "group_create", json!({"title":"runtime state"}));
@@ -13,38 +13,28 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     call(
         &home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"headless1","runtime":"custom","runner":"headless","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
     );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"user"}),
-    );
-    assert!(cccc_runtime::status(group_id, "headless1").is_err());
-    call(
-        &home,
-        "headless_set_status",
-        json!({"group_id":group_id,"actor_id":"headless1","status":"working","task_id":"task-1"}),
-    );
-    let state = call(
-        &home,
-        "headless_status",
-        json!({"group_id":group_id,"actor_id":"headless1"}),
-    );
-    assert_eq!(state.result["state"]["status"], "working");
-    assert_eq!(state.result["state"]["task_id"], "task-1");
+    GroupStore::new(home.clone())
+        .expect("group store")
+        .mutate(group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("enable structured runtime fixture");
+    assert!(cccc_runtime::status(group_id, "web1").is_err());
 
     for text in ["first", "second"] {
         call(
             &home,
             "send",
-            json!({"group_id":group_id,"by":"user","to":["headless1"],"text":text,"message_mode":"send"}),
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":text,"message_mode":"send"}),
         );
     }
     let turn = call(
         &home,
         "runtime_wait_next_turn",
-        json!({"group_id":group_id,"actor_id":"","by":"headless1"}),
+        json!({"group_id":group_id,"actor_id":"","by":"web1"}),
     );
     assert_eq!(turn.result["status"], "work_available");
     assert_eq!(
@@ -54,7 +44,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let coalesced = turn.result["turn"]["coalesced_text"]
         .as_str()
         .expect("coalesced text");
-    assert!(coalesced.contains("[cccc] user → headless1 [event_id="));
+    assert!(coalesced.contains("[cccc] user → web1 [event_id="));
     assert!(coalesced.contains("]: first"));
     assert!(coalesced.contains("]: second"));
     assert!(!coalesced.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE));
@@ -62,7 +52,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         turn.result["turn"]["system_prompt"]
             .as_str()
             .is_some_and(|prompt| {
-                prompt.contains("headless1")
+                prompt.contains("web1")
                     && prompt.contains(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE)
                     && prompt.contains(cccc_core::system_prompt::EXISTING_MESSAGE_REPLY_GUIDANCE)
             })
@@ -82,7 +72,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let rejected = raw_call(
         &home,
         "runtime_complete_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1","status":"done","turn_id":turn_id,"event_ids":[event_ids[1].clone()]}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","status":"done","turn_id":turn_id,"event_ids":[event_ids[1].clone()]}),
     );
     assert!(!rejected.ok);
     assert_eq!(
@@ -92,7 +82,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let stale = raw_call(
         &home,
         "runtime_complete_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1","status":"done","turn_id":"wrong-turn","event_ids":event_ids}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","status":"done","turn_id":"wrong-turn","event_ids":event_ids}),
     );
     assert!(!stale.ok);
     assert_eq!(
@@ -103,14 +93,14 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let completed = call(
         &home,
         "runtime_complete_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1","status":"done","event_ids":event_ids}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1","status":"done","event_ids":event_ids}),
     );
     assert!(completed.result.get("cursor_committed").is_none());
     assert_eq!(completed.result["turn_id"], turn_id);
     let inbox = call(
         &home,
         "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
     );
     assert_eq!(
         inbox.result["messages"],
@@ -120,9 +110,41 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let idle = call(
         &home,
         "runtime_wait_next_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
+        json!({"group_id":group_id,"actor_id":"web1","by":"web1"}),
     );
     assert_eq!(idle.result["status"], "idle");
+}
+
+#[test]
+fn managed_terminal_actor_exposes_daemon_owned_structured_status() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"managed status"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"codex-1","runtime":"codex","by":"user"}),
+    );
+
+    let status = call(
+        &home,
+        "headless_status",
+        json!({"group_id":group_id,"actor_id":"codex-1","by":"user"}),
+    );
+    assert_eq!(status.result["state"]["status"], "idle");
+
+    let write = raw_call(
+        &home,
+        "headless_set_status",
+        json!({"group_id":group_id,"actor_id":"codex-1","status":"working","by":"user"}),
+    );
+    assert_eq!(
+        write.error.as_ref().map(|error| error.code.as_str()),
+        Some("provider_managed_headless")
+    );
 }
 #[test]
 fn runtime_wait_rejects_an_unknown_explicit_transport_without_claiming_work() {
@@ -137,7 +159,7 @@ fn runtime_wait_rejects_an_unknown_explicit_transport_without_claiming_work() {
         "actor_add",
         json!({
             "group_id":group_id,"actor_id":"web1","runtime":"web_model",
-            "runner":"headless","by":"user"
+            "by":"user"
         }),
     );
     GroupStore::new(home.clone())
@@ -181,7 +203,7 @@ fn runtime_wait_rejects_an_unknown_explicit_transport_without_claiming_work() {
 
 #[cfg(unix)]
 #[test]
-fn local_headless_requires_an_attached_project_scope() {
+fn terminal_actor_requires_an_attached_project_scope() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(&home, "group_create", json!({"title":"headless scope"}));
@@ -193,9 +215,8 @@ fn local_headless_requires_an_attached_project_scope() {
         "actor_add",
         json!({
             "group_id":group_id,
-            "actor_id":"codex-headless",
+            "actor_id":"codex-terminal",
             "runtime":"codex",
-            "runner":"headless",
             "command":["sh","-c","while IFS= read -r line; do :; done"],
             "by":"user"
         }),
@@ -204,488 +225,16 @@ fn local_headless_requires_an_attached_project_scope() {
     let started = raw_call(
         &home,
         "actor_start",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"codex-terminal","by":"user"}),
     );
 
     assert!(
         !started.ok,
-        "scope-less headless actor unexpectedly started"
+        "scope-less terminal actor unexpectedly started"
     );
     assert_eq!(
         started.error.as_ref().map(|error| error.code.as_str()),
         Some("missing_project_root")
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn codex_headless_restores_working_after_waiting_flags_clear() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let waiting_log = temp.path().join("waiting");
-    let active_log = temp.path().join("active");
-    let created = call(&home, "group_create", json!({"title":"codex waiting"}));
-    let group_id = created.result["group"]["group_id"]
-        .as_str()
-        .expect("group id");
-    call(
-        &home,
-        "attach",
-        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
-    );
-    let fake_app_server = r#"
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
-      ;;
-    *'"method":"thread/start"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
-      ;;
-    *'"method":"turn/start"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id"
-      printf '{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"active","activeFlags":["waitingOnUserInput"]}}}\n'
-      : > "$CCCC_WAITING_LOG"
-      sleep 1
-      printf '{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"active","activeFlags":[]}}}\n'
-      : > "$CCCC_ACTIVE_LOG"
-      sleep 1
-      printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"completed"}}}\n' "$id"
-      ;;
-  esac
-done
-"#;
-    call(
-        &home,
-        "actor_add",
-        json!({
-            "group_id":group_id,
-            "actor_id":"codex-headless",
-            "runtime":"codex",
-            "runner":"headless",
-            "command":["sh","-c",fake_app_server],
-            "env":{
-                "CCCC_WAITING_LOG":waiting_log,
-                "CCCC_ACTIVE_LOG":active_log
-            },
-            "by":"user"
-        }),
-    );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while !waiting_log.is_file() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "waiting status not emitted"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    loop {
-        let state = call(
-            &home,
-            "headless_status",
-            json!({"group_id":group_id,"actor_id":"codex-headless"}),
-        );
-        if state.result["state"]["status"] == "waiting" {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "waiting state not observed"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while !active_log.is_file() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "active status not emitted"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    loop {
-        let state = call(
-            &home,
-            "headless_status",
-            json!({"group_id":group_id,"actor_id":"codex-headless"}),
-        );
-        if state.result["state"]["status"] == "working" {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "working state not restored"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-
-    call(
-        &home,
-        "actor_stop",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn codex_headless_starts_a_provider_and_delivers_messages() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let resume_log = temp.path().join("resume-attempted");
-    let server_request_log = temp.path().join("server-request-response");
-    let created = call(&home, "group_create", json!({"title":"codex headless"}));
-    let group_id = created.result["group"]["group_id"]
-        .as_str()
-        .expect("group id");
-    call(
-        &home,
-        "attach",
-        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
-    );
-    let fake_app_server = r#"
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
-      ;;
-    *'"method":"thread/start"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
-      ;;
-    *'"method":"thread/resume"'*)
-      printf 'attempted' > "$CCCC_RESUME_LOG"
-      printf '{"jsonrpc":"2.0","id":%s,"error":{"message":"saved thread unavailable"}}\n' "$id"
-      ;;
-    *'"method":"turn/start"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id"
-      printf '{"jsonrpc":"2.0","id":"input-1","method":"item/tool/requestUserInput","params":{"turnId":"turn-%s"}}\n' "$id"
-      case "$line" in
-        *'fail this turn'*)
-          printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"failed","error":{"message":"provider failed"}}}}\n' "$id"
-          ;;
-        *)
-          printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"completed"}}}\n' "$id"
-          ;;
-      esac
-      ;;
-    *'"id":"input-1"'*)
-      printf '%s' "$line" > "$CCCC_SERVER_REQUEST_LOG"
-      ;;
-  esac
-done
-"#;
-    call(
-        &home,
-        "actor_add",
-        json!({
-            "group_id":group_id,
-            "actor_id":"codex-headless",
-            "runtime":"codex",
-            "runner":"headless",
-            "command":["sh","-c",fake_app_server],
-            "env":{
-                "CCCC_RESUME_LOG":resume_log,
-                "CCCC_SERVER_REQUEST_LOG":server_request_log
-            },
-            "by":"user"
-        }),
-    );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-    let running = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    assert_eq!(running.result["actors"][0]["running"], true);
-    assert!(running.result["actors"][0]["pid"].as_u64().is_some());
-
-    let sent = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"do the work","message_mode":"send"}),
-    );
-    assert_eq!(sent.result["message_mode"], "send");
-    let event_id = sent.result["event"]["id"].as_str().expect("event id");
-    let headless_events_path = home
-        .groups_dir()
-        .join(group_id)
-        .join("state/headless/events.jsonl");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    let headless_events = loop {
-        let events = std::fs::read_to_string(&headless_events_path)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .collect::<Vec<_>>();
-        let has_terminal = events.iter().any(|event| {
-            event["data"]["event_id"] == event_id
-                && matches!(
-                    event["type"].as_str(),
-                    Some("headless.turn.completed" | "headless.turn.failed")
-                )
-        });
-        if has_terminal {
-            break events;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "headless terminal event was not recorded"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
-    let started_index = headless_events
-        .iter()
-        .position(|event| {
-            event["type"] == "headless.turn.started" && event["data"]["event_id"] == event_id
-        })
-        .expect("turn started event");
-    let terminal_index = headless_events
-        .iter()
-        .position(|event| {
-            event["data"]["event_id"] == event_id
-                && matches!(
-                    event["type"].as_str(),
-                    Some("headless.turn.completed" | "headless.turn.failed")
-                )
-        })
-        .expect("turn terminal event");
-    assert!(
-        started_index < terminal_index,
-        "provider terminal event preceded turn acceptance: {headless_events:?}"
-    );
-    let inbox = call(
-        &home,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"codex-headless"}),
-    );
-    assert_eq!(
-        inbox.result["messages"],
-        json!([]),
-        "direct provider work must not enter the Mail Inbox"
-    );
-    assert!(headless_events.iter().any(|event| {
-        event["type"] == "headless.control.started" && event["data"]["control_kind"] == "bootstrap"
-    }));
-    assert!(headless_events.iter().any(|event| {
-        event["type"] == "headless.control.completed"
-            && event["data"]["control_kind"] == "bootstrap"
-    }));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while !server_request_log.is_file() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "headless provider server request received no response"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let server_response: Value = serde_json::from_str(
-        &std::fs::read_to_string(&server_request_log).expect("server request response"),
-    )
-    .expect("valid server request response");
-    assert_eq!(server_response["id"], "input-1");
-    assert_eq!(server_response["error"]["code"], -32601);
-
-    let failed = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"fail this turn","message_mode":"send"}),
-    );
-    let failed_event_id = failed.result["event"]["id"]
-        .as_str()
-        .expect("failed event id");
-    let succeeded = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"continue after failure","message_mode":"send"}),
-    );
-    let succeeded_event_id = succeeded.result["event"]["id"]
-        .as_str()
-        .expect("succeeded event id");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    let recovery_events = loop {
-        let events = std::fs::read_to_string(&headless_events_path)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .collect::<Vec<_>>();
-        let failed_recorded = events.iter().any(|event| {
-            event["type"] == "headless.turn.failed" && event["data"]["event_id"] == failed_event_id
-        });
-        let success_recorded = events.iter().any(|event| {
-            event["type"] == "headless.turn.completed"
-                && event["data"]["event_id"] == succeeded_event_id
-        });
-        if failed_recorded && success_recorded {
-            break events;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "later headless turn did not progress after provider failure: {events:?}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
-    let failed_index = recovery_events
-        .iter()
-        .position(|event| {
-            event["type"] == "headless.turn.failed" && event["data"]["event_id"] == failed_event_id
-        })
-        .expect("failed terminal event");
-    let success_index = recovery_events
-        .iter()
-        .position(|event| {
-            event["type"] == "headless.turn.completed"
-                && event["data"]["event_id"] == succeeded_event_id
-        })
-        .expect("later completed event");
-    assert!(failed_index < success_index);
-    let state = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    assert_eq!(
-        state.result["actors"][0]["effective_working_reason"],
-        "provider_headless_session"
-    );
-
-    call(
-        &home,
-        "actor_stop",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while !resume_log.is_file() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "headless restart did not attempt provider-thread resume"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let restarted = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    assert_eq!(restarted.result["actors"][0]["running"], true);
-    assert_eq!(
-        restarted.result["actors"][0]["runtime_session_status"],
-        "usable"
-    );
-    call(
-        &home,
-        "actor_stop",
-        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
-    );
-    let stopped = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    assert_eq!(stopped.result["actors"][0]["running"], false);
-}
-
-#[cfg(unix)]
-#[test]
-fn claude_headless_stream_json_stops_with_its_group() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let created = call(&home, "group_create", json!({"title":"claude headless"}));
-    let group_id = created.result["group"]["group_id"]
-        .as_str()
-        .expect("group id");
-    call(
-        &home,
-        "attach",
-        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
-    );
-    let fake_claude = r#"
-while IFS= read -r line; do
-  printf '{"type":"assistant","message":{"id":"message-1","content":[{"type":"text","text":"done"}]}}\n'
-  printf '{"type":"result","subtype":"success"}\n'
-done
-"#;
-    call(
-        &home,
-        "actor_add",
-        json!({
-            "group_id":group_id,
-            "actor_id":"claude-headless",
-            "runtime":"claude",
-            "runner":"headless",
-            "command":["sh","-c",fake_claude],
-            "by":"user"
-        }),
-    );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"claude-headless","by":"user"}),
-    );
-    let sent = call(
-        &home,
-        "send",
-        json!({"group_id":group_id,"by":"user","to":["claude-headless"],"text":"do the work","message_mode":"send"}),
-    );
-    assert_eq!(sent.result["message_mode"], "send");
-    let event_id = sent.result["event"]["id"].as_str().expect("event id");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    loop {
-        let statuses = call(
-            &home,
-            "ledger_statuses",
-            json!({"group_id":group_id,"event_ids":[event_id]}),
-        );
-        if statuses.result["statuses"][event_id]["obligation_status"]["claude-headless"]["delivery_state"]
-            == "accepted"
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "Claude headless message was not accepted by the runtime"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let inbox = call(
-        &home,
-        "inbox_peek",
-        json!({"group_id":group_id,"actor_id":"claude-headless","by":"claude-headless"}),
-    );
-    assert_eq!(
-        inbox.result["messages"],
-        json!([]),
-        "direct provider work must not enter the Mail Inbox"
-    );
-    call(
-        &home,
-        "group_stop",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    let stopped = call(
-        &home,
-        "actor_list",
-        json!({"group_id":group_id,"by":"user"}),
-    );
-    assert_eq!(stopped.result["actors"][0]["running"], false);
-    assert_eq!(
-        stopped.result["actors"][0]["effective_working_state"],
-        "stopped"
     );
 }
 

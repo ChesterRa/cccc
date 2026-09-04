@@ -146,7 +146,7 @@ impl ProfileStore {
             return Ok(None);
         };
         let runtime = parse_profile_field(&profile, "runtime", ActorRuntime::default())?;
-        let runner = parse_profile_field(&profile, "runner", RunnerKind::default())?;
+        let runner = runtime.runner();
         let submit = parse_profile_field(&profile, "submit", ActorSubmit::default())?;
         let command = parse_profile_command(&profile)?;
         let environment = self.secret_values_ref(profile_id, scope, owner_id)?;
@@ -219,7 +219,15 @@ impl ProfileStore {
         profile.insert("scope".into(), json!(scope));
         profile.insert("owner_id".into(), json!(owner_id));
         profile.entry("runtime").or_insert_with(|| json!("codex"));
-        profile.entry("runner").or_insert_with(|| json!("pty"));
+        let runtime = parse_profile_field(
+            &Value::Object(profile.clone()),
+            "runtime",
+            ActorRuntime::default(),
+        )?;
+        profile.insert(
+            "runner".into(),
+            serde_json::to_value(runtime.runner()).map_err(io::Error::other)?,
+        );
         let command = parse_profile_command_value(profile.get("command"))?;
         profile.insert(
             "command".into(),
@@ -532,6 +540,16 @@ impl ProfileStore {
                 }
                 let mut extracted = Vec::new();
                 for profile in profiles.profiles.values_mut() {
+                    if let Ok(runtime) =
+                        parse_profile_field(profile, "runtime", ActorRuntime::default())
+                    {
+                        let runner =
+                            serde_json::to_value(runtime.runner()).map_err(io::Error::other)?;
+                        if profile.get("runner") != Some(&runner) {
+                            profile["runner"] = runner;
+                            changed = true;
+                        }
+                    }
                     let Some(env) = profile.get("env").and_then(Value::as_object).cloned() else {
                         continue;
                     };

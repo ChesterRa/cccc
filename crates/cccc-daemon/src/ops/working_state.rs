@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime};
+use cccc_contracts::Actor;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -13,47 +13,19 @@ pub fn runtime_actor_fields(
     } else {
         "pty"
     };
-    let pid = running
-        .then(|| super::actor_runtime::status(group_id, &actor.id))
-        .flatten()
-        .and_then(|status| status.pid);
-    fields(home, actor, group_id, running, runner_effective, pid)
+    fields(home, actor, group_id, running, runner_effective)
 }
 
 pub(super) fn fields(
-    home: &HomeLayout,
+    _home: &HomeLayout,
     actor: &Actor,
     group_id: &str,
     running: bool,
     runner_effective: &str,
-    pid: Option<u32>,
 ) -> Map<String, Value> {
+    let managed_session = super::local_headless::uses_managed_session(actor);
     let local_state = (running && super::local_headless::supports(actor))
         .then(|| super::local_headless::status(group_id, &actor.id))
-        .flatten();
-    let hook_runtime = match actor.runtime {
-        ActorRuntime::Codex => Some("codex"),
-        ActorRuntime::Claude => Some("claude"),
-        _ => None,
-    };
-    let capability = hook_runtime.and_then(|runtime| {
-        super::runtime_hook_session::validated(home, runtime, group_id, &actor.id, pid)
-    });
-    let direct_pty_compatibility = actor.runtime == ActorRuntime::Codex
-        && actor.runner == cccc_contracts::RunnerKind::Pty
-        && local_state.is_none();
-    let hook_state = (running
-        && (!super::local_headless::supports(actor) || direct_pty_compatibility))
-        .then(|| {
-            hook_runtime.and_then(|runtime| {
-                cccc_core::codex_hook_state::read_runtime(home, runtime, group_id, &actor.id)
-                    .filter(|state| {
-                        capability
-                            .as_ref()
-                            .is_some_and(|current| current.launch_token == state.launch_token)
-                    })
-            })
-        })
         .flatten();
     let (state, reason, updated_at, active_task_id) = if !running {
         (
@@ -73,27 +45,10 @@ pub(super) fn fields(
             Some(local_state.updated_at),
             local_state.task_id,
         )
-    } else if let Some(hook_state) = hook_state {
-        let reason = if hook_state.v == 2 {
-            format!(
-                "{}_hook_legacy_unfenced_{}",
-                hook_state.runtime, hook_state.event
-            )
-        } else if hook_state.observation == "pty_fail_closed" {
-            format!("claude_pty_fail_closed_{}", hook_state.event)
-        } else {
-            format!("{}_hook_{}", hook_state.runtime, hook_state.event)
-        };
-        (
-            hook_state.status,
-            reason,
-            Some(hook_state.updated_at),
-            hook_state.turn_id,
-        )
-    } else if hook_runtime.is_some() && runner_effective == "pty" {
+    } else if managed_session {
         (
             "waiting".to_owned(),
-            format!("{}_hook_pending", hook_runtime.unwrap_or_default()),
+            "managed_agent_session_pending".to_owned(),
             None,
             None,
         )

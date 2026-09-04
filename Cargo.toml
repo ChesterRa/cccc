@@ -10,6 +10,7 @@ members = [
   "crates/cccc-mcp",
   "crates/cccc-notebooklm",
   "crates/cccc-web",
+  "crates/cccc-windows-console",
   "crates/cccc-cli",
 ]
 exclude = [
@@ -87,6 +88,7 @@ nix = { version = "0.28", features = ["signal"] }
 uuid = { version = "1.17", features = ["v4", "serde"] }
 unicode-width = "0.2"
 windows-sys = "0.61"
+same-file = "1.0.6"
 win32job = "2.0.3"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 hound = "3.5"

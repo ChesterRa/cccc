@@ -9,4 +9,3 @@ export { useFormStore } from "./useFormStore";
 export { useObservabilityStore } from "./useObservabilityStore";
 export { useBrandingStore } from "./useBrandingStore";
 export { useTerminalSignalsStore, getTerminalSignalKey } from "./useTerminalSignalsStore";
-export { useRuntimeActivityStore } from "./useRuntimeActivityStore";

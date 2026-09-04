@@ -8,7 +8,7 @@ const CONTEXT_CHUNK_BYTES: usize = 500;
 #[derive(Debug, Default)]
 pub(super) struct SpeakableProgress {
     buffer: String,
-    streamed: bool,
+    emitted: String,
 }
 
 #[derive(Debug, Default)]
@@ -31,10 +31,19 @@ pub struct FinalProjection {
 
 impl SpeakableProgress {
     pub(super) fn push(&mut self, delta: &str) -> Result<Vec<String>> {
+        if self
+            .emitted
+            .len()
+            .saturating_add(self.buffer.len())
+            .saturating_add(delta.len())
+            > MAX_SPEAKABLE_RESULT_BYTES
+        {
+            bail!("Voice Analyst progress exceeds {MAX_SPEAKABLE_RESULT_BYTES} bytes");
+        }
         self.buffer.push_str(delta);
         let mut ready = Vec::new();
         loop {
-            let boundary = if self.streamed {
+            let boundary = if self.streamed() {
                 paragraph_boundary(&self.buffer)
             } else {
                 second_sentence_boundary(&self.buffer)
@@ -44,27 +53,23 @@ impl SpeakableProgress {
             };
             let remainder = self.buffer.split_off(boundary);
             let chunk = std::mem::replace(&mut self.buffer, remainder);
+            self.emitted.push_str(&chunk);
             let chunk = chunk.trim();
             if !chunk.is_empty() {
                 ready.push(chunk.to_owned());
-                self.streamed = true;
             }
-        }
-        if self.buffer.len() > MAX_SPEAKABLE_RESULT_BYTES {
-            bail!("Voice Analyst progress buffer exceeds {MAX_SPEAKABLE_RESULT_BYTES} bytes");
         }
         Ok(ready)
     }
 
     pub(super) fn finish(&mut self, fallback: &str) -> Vec<String> {
-        let value = if self.streamed {
-            std::mem::take(&mut self.buffer)
-        } else {
-            self.buffer.clear();
-            fallback.to_owned()
-        };
-        self.streamed = false;
-        let value = value.trim();
+        // Only an exact prefix proves which part of the authoritative final was
+        // already projected. A final-only message or correction may differ from
+        // the deltas; replaying that final is safer than silently losing it.
+        let emitted = std::mem::take(&mut self.emitted);
+        self.buffer.clear();
+        let value = fallback.trim();
+        let value = value.strip_prefix(emitted.trim()).unwrap_or(value).trim();
         if value.is_empty() {
             Vec::new()
         } else {
@@ -73,7 +78,7 @@ impl SpeakableProgress {
     }
 
     pub(super) fn streamed(&self) -> bool {
-        self.streamed
+        !self.emitted.is_empty()
     }
 }
 

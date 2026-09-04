@@ -10,7 +10,6 @@ import {
   fetchCodexVoiceAnalystSettings,
   listActorProfiles,
   upsertActorProfile,
-  updateCodexVoiceAnalystSettings,
   updateProfilePrivateEnv,
 } from "../../services/api";
 import type { ActorProfile } from "../../types";
@@ -18,14 +17,15 @@ import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/act
 import type { RuntimeConfigurationMode } from "../../components/modals/RuntimeProfileControls";
 import type { CodexVoiceSessionController } from "./useCodexVoiceSessionController";
 import {
-  analystIdentityEnvironmentKeys,
   bindVoiceAnalystProfile,
   defaultAnalystRuntimeCommand,
   emptyVoiceAnalystSettings,
   managedAnalystRuntimes,
   normalizeVoiceAnalystSettings,
+  voiceAnalystIdentityChanged,
   type VoiceAnalystDraftSettings,
 } from "./codexVoiceAnalystSettingsModel";
+import { saveVoiceAnalystSettingsWithConsent } from "./codexVoiceAnalystSettingsSave";
 
 export function useCodexVoiceAnalystSettings(
   active: boolean,
@@ -52,7 +52,8 @@ export function useCodexVoiceAnalystSettings(
 
   const settingsError = useCallback(
     (code: string, detail: string) => {
-      if (code === "codex_voice_settings_busy") return t("codexVoiceAnalystSettingsBusy");
+      if (code === "codex_voice_call_active") return t("codexVoiceAnalystSettingsCallActive");
+      if (code === "codex_voice_settings_busy") return t("codexVoiceAnalystSettingsWorkActive");
       if (code === "codex_voice_settings_unavailable") {
         return t("codexVoiceAnalystSettingsUnavailable");
       }
@@ -131,11 +132,12 @@ export function useCodexVoiceAnalystSettings(
       Object.keys(environmentSaveChanges.setVars).length > 0);
   const hasChanges =
     JSON.stringify(settings) !== JSON.stringify(loadedSettings) || hasEnvironmentChanges;
-  const blocked = controller.isEngaged || controller.analyst?.phase === "working";
+  const callActive = controller.isEngaged;
+  const analystBusy = controller.analyst?.phase === "working";
   const editingDisabled = loading || saving || profileSaving;
   const profileInvalid = mode === "profile" && (!selectedProfile || profilesLoadFailed);
   const saveDisabled =
-    blocked || editingDisabled || settingsLoadFailed || profileInvalid || !hasChanges;
+    callActive || editingDisabled || settingsLoadFailed || profileInvalid || !hasChanges;
 
   const changeMode = (nextMode: RuntimeConfigurationMode) => {
     setMode(nextMode);
@@ -184,36 +186,44 @@ export function useCodexVoiceAnalystSettings(
     const identityCandidates = environmentSaveChanges.clear
       ? environmentKeys
       : [...Object.keys(environmentSaveChanges.setVars), ...environmentSaveChanges.unsetKeys];
-    const changesAnalystIdentity =
-      settings.runtime !== loadedSettings.runtime ||
-      settings.profile_id !== loadedSettings.profile_id ||
-      settings.profile_scope !== loadedSettings.profile_scope ||
-      settings.profile_owner !== loadedSettings.profile_owner ||
-      (mode === "custom" &&
-        identityCandidates.some((key) => analystIdentityEnvironmentKeys.has(key)));
-    if (
-      changesAnalystIdentity &&
-      controller.analyst?.tui_ready &&
-      !window.confirm(t("codexVoiceAnalystIdentityChangeConfirm"))
-    ) {
-      return;
-    }
+    const changesAnalystIdentity = voiceAnalystIdentityChanged(
+      settings,
+      loadedSettings,
+      mode,
+      identityCandidates,
+      hasEnvironmentChanges,
+    );
     setSaving(true);
     setError("");
     setSaved("");
-    const response = await updateCodexVoiceAnalystSettings({
-      settings,
-      environmentSet: mode === "custom" ? environmentSaveChanges.setVars : {},
-      environmentUnset: mode === "custom" ? environmentSaveChanges.unsetKeys : [],
-      environmentClear: mode === "custom" && environmentSaveChanges.clear,
+    const outcome = await saveVoiceAnalystSettingsWithConsent({
+      request: {
+        settings,
+        environmentSet: mode === "custom" ? environmentSaveChanges.setVars : {},
+        environmentUnset: mode === "custom" ? environmentSaveChanges.unsetKeys : [],
+        environmentClear: mode === "custom" && environmentSaveChanges.clear,
+      },
+      analystBusy,
+      identityConfirmationRequired:
+        changesAnalystIdentity && Boolean(controller.analyst?.tui_ready),
+      confirm: (message) => window.confirm(message),
+      discardConfirmation: t("codexVoiceAnalystSettingsDiscardConfirm"),
+      identityConfirmation: t("codexVoiceAnalystIdentityChangeConfirm"),
     });
+    if (outcome.cancelled) {
+      setSaving(false);
+      return;
+    }
+    const response = outcome.response;
     if (response.ok) {
       setSaved(
-        response.result.started_new_session
-          ? t("codexVoiceAnalystSettingsNewSession")
-          : response.result.restarted
-            ? t("codexVoiceAnalystSettingsRestarted")
-            : t("codexVoiceAnalystSettingsSaved"),
+        response.result.discarded_work
+          ? t("codexVoiceAnalystSettingsDiscarded")
+          : response.result.started_new_session
+            ? t("codexVoiceAnalystSettingsNewSession")
+            : response.result.restarted
+              ? t("codexVoiceAnalystSettingsRestarted")
+              : t("codexVoiceAnalystSettingsSaved"),
       );
       await load();
       await controller.refresh(false);
@@ -260,7 +270,6 @@ export function useCodexVoiceAnalystSettings(
       const response = await upsertActorProfile({
         name: name.trim(),
         runtime: settings.runtime,
-        runner: "pty",
         command: settings.command.trim(),
         submit: "enter",
         env: {},
@@ -338,7 +347,8 @@ export function useCodexVoiceAnalystSettings(
     profileSaving,
     error,
     saved,
-    blocked,
+    callActive,
+    analystBusy,
     editingDisabled,
     saveDisabled,
     changeMode,

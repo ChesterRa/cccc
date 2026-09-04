@@ -6,14 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dispatch::OpError;
 
-const CONTROLLED_FIELDS: &[&str] = &[
-    "runtime",
-    "runner",
-    "command",
-    "submit",
-    "env",
-    "capability_autoload",
-];
+const CONTROLLED_FIELDS: &[&str] = &["runtime", "command", "submit", "env", "capability_autoload"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDefaults {
@@ -36,10 +29,13 @@ pub fn link(home: &HomeLayout, actor: &Actor, profile_id: &str) -> Result<Actor,
 }
 
 pub fn resolve(home: &HomeLayout, actor: &Actor) -> Result<Actor, OpError> {
-    if actor.profile_id.is_empty() {
-        return Ok(actor.clone());
-    }
-    apply(home, actor, &actor.profile_id)
+    let mut resolved = if actor.profile_id.is_empty() {
+        actor.clone()
+    } else {
+        apply(home, actor, &actor.profile_id)?
+    };
+    resolved.normalize_runtime_constraints();
+    Ok(resolved)
 }
 
 pub fn profile_secrets(
@@ -108,10 +104,11 @@ fn apply(home: &HomeLayout, actor: &Actor, profile_id: &str) -> Result<Actor, Op
     let profile = runtime_profile(home, actor, profile_id)?;
     let mut resolved = actor.clone();
     resolved.runtime = profile.runtime;
-    resolved.runner = profile.runner;
+    resolved.runner = profile.runtime.runner();
     resolved.submit = profile.submit;
     resolved.command = profile.command;
     resolved.profile_revision_applied = profile.revision;
+    resolved.normalize_runtime_constraints();
     Ok(resolved)
 }
 

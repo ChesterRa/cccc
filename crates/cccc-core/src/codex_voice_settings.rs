@@ -5,8 +5,10 @@ use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::io;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 mod validation;
 
@@ -26,7 +28,25 @@ impl ResolvedAgentRuntime {
 
     #[must_use]
     pub fn identity_fingerprint(&self) -> String {
+        if self.runtime == ActorRuntime::Claude {
+            // Claude Agent View persists launch flags and provider environment
+            // in the background job. Resuming the exact session cannot apply
+            // changed launch configuration, so any resolved setting change
+            // intentionally selects a fresh session.
+            let encoded = serde_json::to_vec(self).expect("resolved Claude runtime serializes");
+            return format!("{:x}", Sha256::digest(encoded));
+        }
         identity_fingerprint(self.runtime, &self.environment)
+    }
+
+    pub fn identity_fingerprint_at(&self, cwd: &Path) -> io::Result<String> {
+        if self.runtime != ActorRuntime::Claude {
+            return Ok(self.identity_fingerprint());
+        }
+        let files = claude_launch_file_fingerprints(&self.command, cwd)?;
+        let encoded =
+            serde_json::to_vec(&(self, files)).expect("resolved Claude runtime serializes");
+        Ok(format!("{:x}", Sha256::digest(encoded)))
     }
 }
 
@@ -80,7 +100,7 @@ pub fn resolve(
     };
     if !matches!(
         resolved.runtime,
-        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+        ActorRuntime::Claude | ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
     ) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -158,8 +178,9 @@ pub fn runtime_identity_changed(
 
 fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, String>) -> String {
     if runtime == ActorRuntime::Codex {
-        // Keep the v0.4.37 receipt format byte-for-byte stable so adding other
-        // managed Runtimes does not discard an existing Codex conversation.
+        // A Codex thread is resumable only under the same effective credential
+        // and session-store roots. Launch arguments are fenced separately by
+        // the runtime-session command fingerprint.
         let effective = ["CODEX_HOME", "HOME", "USERPROFILE"].map(|key| {
             let value = environment.get(key).cloned().or_else(|| {
                 std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
@@ -171,6 +192,7 @@ fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, St
         return format!("{:x}", Sha256::digest(encoded));
     }
     let provider_keys: &[&str] = match runtime {
+        ActorRuntime::Claude => unreachable!("Claude fingerprints the full resolved launch"),
         ActorRuntime::Grok => &["GROK_HOME", "HOME", "USERPROFILE"],
         ActorRuntime::Opencode => &[
             "HOME",
@@ -195,6 +217,109 @@ fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, St
     let encoded = serde_json::to_vec(&(runtime, effective))
         .expect("managed Runtime identity environment serializes");
     format!("{:x}", Sha256::digest(encoded))
+}
+
+fn claude_launch_file_fingerprints(
+    command: &[String],
+    cwd: &Path,
+) -> io::Result<Vec<(String, String, String)>> {
+    const SINGLE_FILE_FLAGS: &[&str] = &[
+        "--settings",
+        "--system-prompt-file",
+        "--append-system-prompt-file",
+    ];
+    let mut files = Vec::new();
+    let mut index = 1usize;
+    while index < command.len() {
+        let argument = &command[index];
+        let (flag, inline) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(flag, value)| {
+                (flag, Some(value))
+            });
+        if !SINGLE_FILE_FLAGS.contains(&flag) && flag != "--mcp-config" {
+            index += 1;
+            continue;
+        }
+        let (values, consumed) = if let Some(value) = inline {
+            (vec![value], 1)
+        } else if flag == "--mcp-config" {
+            let values = command[index + 1..]
+                .iter()
+                .take_while(|value| !value.starts_with('-'))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let consumed = values.len().saturating_add(1);
+            (values, consumed)
+        } else {
+            (
+                command
+                    .get(index + 1)
+                    .map(String::as_str)
+                    .into_iter()
+                    .collect(),
+                2,
+            )
+        };
+        for value in values
+            .into_iter()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if matches!(flag, "--settings" | "--mcp-config")
+                && matches!(value.as_bytes().first().copied(), Some(b'{') | Some(b'['))
+            {
+                continue;
+            }
+            files.push(claude_launch_file_fingerprint(flag, value, cwd)?);
+        }
+        index += consumed;
+    }
+    Ok(files)
+}
+
+fn claude_launch_file_fingerprint(
+    flag: &str,
+    value: &str,
+    cwd: &Path,
+) -> io::Result<(String, String, String)> {
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    };
+    let canonical = path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to resolve Claude launch input {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let metadata = std::fs::metadata(&canonical)?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Claude launch input is not a file: {}", canonical.display()),
+        ));
+    }
+    let mut file = File::open(&canonical)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok((
+        flag.to_owned(),
+        canonical.to_string_lossy().into_owned(),
+        format!("{:x}", digest.finalize()),
+    ))
 }
 
 pub fn workdir(home: &HomeLayout) -> io::Result<PathBuf> {

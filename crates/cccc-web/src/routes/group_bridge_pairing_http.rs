@@ -284,9 +284,11 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_peer_reports_connect_failure() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
-        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
-        drop(listener);
+        let unavailable = tokio::net::TcpSocket::new_v4().expect("socket");
+        unavailable
+            .bind("127.0.0.1:0".parse().expect("address"))
+            .expect("bind unavailable endpoint");
+        let endpoint = format!("http://{}", unavailable.local_addr().expect("address"));
 
         let (value, error) = send_remote(
             Method::GET,

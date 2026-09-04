@@ -248,12 +248,6 @@ off by default. Mail and reply notices are bounded delivery semantics, not
 periodic automation: paused/stopped actors are not woken, notices never include
 message bodies, and no universal runtime-idle detector is assumed.
 
-### Delivery Policy
-
-| Config | Default | Description |
-|--------|---------|-------------|
-| `min_interval_seconds` | `0` | Optional per-actor spacing between runtime handoffs; `0` disables throttling |
-
 Runtime handoff and Inbox read are separate facts. A successful
 `runtime.delivery` never advances the Inbox cursor.
 
@@ -345,7 +339,7 @@ Recommended options:
 | amp | `amp` | Amp |
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
-| cline | `cline` | Cline CLI PTY TUI |
+| cline | `cline` | Cline CLI native TUI |
 | codex | `codex` | Codex CLI |
 | copilot | `copilot` | GitHub Copilot CLI |
 | cursor | `cursor-agent` | Cursor CLI |
@@ -368,7 +362,7 @@ CCCC first-class runtime support is the named runtimes above. `custom` remains t
 ### Setup Commands
 
 ```bash
-cccc setup --runtime claude   # Configure MCP (auto)
+cccc setup --runtime claude   # Report CCCC-owned per-session MCP
 cccc setup --runtime cline
 cccc setup --runtime codex
 cccc setup --runtime droid

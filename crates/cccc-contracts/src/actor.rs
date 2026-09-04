@@ -61,6 +61,32 @@ pub enum ActorRuntime {
     Custom,
 }
 
+impl ActorRuntime {
+    /// The runner is an implementation detail derived from the Runtime, not a
+    /// user-selectable execution mode. CLI runtimes always expose their native
+    /// terminal; runtimes with their own non-terminal surface keep the
+    /// structured runner internally.
+    #[must_use]
+    pub const fn runner(self) -> RunnerKind {
+        match self {
+            Self::Deepseek | Self::WebModel => RunnerKind::Headless,
+            _ => RunnerKind::Pty,
+        }
+    }
+
+    /// Runtime state authority is derived from the Runtime adapter. It is not
+    /// a user-selectable execution mode.
+    #[must_use]
+    pub const fn state_source(self) -> RuntimeStateSource {
+        match self {
+            Self::Claude | Self::Codex | Self::Grok | Self::Opencode => {
+                RuntimeStateSource::ManagedSession
+            }
+            _ => RuntimeStateSource::Terminal,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum GroupState {
@@ -149,13 +175,10 @@ impl Actor {
     }
 
     pub fn normalize_runtime_constraints(&mut self) {
-        match self.runtime {
-            ActorRuntime::Deepseek => self.runner = RunnerKind::Headless,
-            ActorRuntime::WebModel => {
-                self.runner = RunnerKind::Headless;
-                self.command.clear();
-            }
-            _ => {}
+        self.runner = self.runtime.runner();
+        self.runtime_state_source = self.runtime.state_source();
+        if self.runtime == ActorRuntime::WebModel {
+            self.command.clear();
         }
     }
 }
@@ -195,12 +218,31 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_runtime_normalizes_to_headless_at_the_contract_boundary() {
+    fn execution_surface_is_derived_from_runtime_at_the_contract_boundary() {
         let mut actor = Actor::new("deepseek");
         actor.runtime = ActorRuntime::Deepseek;
         actor.runner = RunnerKind::Pty;
+        actor.runtime_state_source = RuntimeStateSource::ManagedSession;
         actor.normalize_runtime_constraints();
         assert_eq!(actor.runner, RunnerKind::Headless);
+        assert_eq!(actor.runtime_state_source, RuntimeStateSource::Terminal);
+
+        actor.runtime = ActorRuntime::Codex;
+        actor.runner = RunnerKind::Headless;
+        actor.runtime_state_source = RuntimeStateSource::Terminal;
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Pty);
+        assert_eq!(
+            actor.runtime_state_source,
+            RuntimeStateSource::ManagedSession
+        );
+
+        actor.runtime = ActorRuntime::Custom;
+        actor.runner = RunnerKind::Headless;
+        actor.runtime_state_source = RuntimeStateSource::ManagedSession;
+        actor.normalize_runtime_constraints();
+        assert_eq!(actor.runner, RunnerKind::Pty);
+        assert_eq!(actor.runtime_state_source, RuntimeStateSource::Terminal);
     }
 
     #[test]

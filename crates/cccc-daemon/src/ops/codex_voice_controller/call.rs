@@ -57,6 +57,7 @@ impl CodexVoiceCall {
         self.lease.heartbeat()
     }
 
+    #[cfg(test)]
     pub async fn begin_provider_event(
         &self,
         expected_generation: &str,
@@ -71,6 +72,40 @@ impl CodexVoiceCall {
             .map(Some)
     }
 
+    pub async fn route_provider_event(
+        &self,
+        expected_generation: &str,
+        event: &Value,
+    ) -> Result<Option<VoiceDelegationAdmission>> {
+        self.require_generation(expected_generation)?;
+        let Some(delegation) = parse_provider_delegation(event)? else {
+            return Ok(None);
+        };
+        validate_delegation(&delegation)?;
+        let admission = self
+            .analyst
+            .lifecycle
+            .admit_voice(&delegation.id, &delegation.text)
+            .await?;
+        if let VoiceDelegationAdmission::Turn(receipt) = &admission {
+            self.follow_analyst_turn(receipt).await;
+        }
+        Ok(Some(admission))
+    }
+
+    pub async fn reject_native_delegation(
+        &self,
+        expected_generation: &str,
+        delegation_id: &str,
+    ) -> Result<bool> {
+        self.require_generation(expected_generation)?;
+        self.analyst
+            .lifecycle
+            .reject_native_voice(delegation_id)
+            .await
+    }
+
+    #[cfg(test)]
     pub(super) async fn begin_delegation(
         &self,
         expected_generation: &str,
@@ -78,11 +113,25 @@ impl CodexVoiceCall {
     ) -> Result<TurnReceipt> {
         self.require_generation(expected_generation)?;
         validate_delegation(delegation)?;
-        let turn = self
+        let admission = self
             .analyst
             .lifecycle
-            .begin_voice(&delegation.id, &delegation.text)
+            .admit_voice(&delegation.id, &delegation.text)
             .await?;
+        let turn = match admission {
+            VoiceDelegationAdmission::Turn(turn) => turn,
+            VoiceDelegationAdmission::NativeInput { delegation_id, .. } => {
+                let _ = self
+                    .analyst
+                    .lifecycle
+                    .reject_native_voice(&delegation_id)
+                    .await?;
+                bail!("test caller cannot deliver a native Runtime Voice input")
+            }
+            VoiceDelegationAdmission::NativeInputPending => {
+                bail!("test caller cannot replay a pending native Runtime Voice input")
+            }
+        };
         self.follow_analyst_turn(&turn).await;
         Ok(turn)
     }
@@ -203,6 +252,7 @@ impl CodexVoiceCall {
             return Ok(false);
         }
         projection.projected = true;
+        projection.progress = Default::default();
         Ok(true)
     }
 

@@ -1,8 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::Ordering as AtomicOrdering;
-use std::time::Duration;
 
 pub(super) const ANALYST_INSTRUCTIONS: &str = r#"You are the Voice Analyst behind CCCC Realtime Voice. In delegated speech, references such as 'the analyst', 'ask the analyst', or 'have the analyst check' refer to you: perform that investigation directly with your own tools. Never use runtime collaboration or sub-agent tools in this role. When additional execution is genuinely needed, coordinate an existing CCCC Group Foreman or peer through CCCC tools instead of creating an untracked second analyst. Investigate material claims with tools before answering.
 
@@ -33,6 +31,18 @@ impl AnalystSession {
                     env,
                     config.resume_thread_id,
                     SessionPurpose::VoiceAnalyst,
+                )
+                .await
+            }
+            cccc_contracts::ActorRuntime::Claude => {
+                Self::launch_claude(
+                    home,
+                    binding,
+                    config.command,
+                    config.environment,
+                    config.resume_thread_id,
+                    SessionPurpose::VoiceAnalyst,
+                    None,
                 )
                 .await
             }
@@ -72,6 +82,18 @@ impl AnalystSession {
         config: ActorLaunchConfig,
     ) -> io::Result<Self> {
         let binding = bind_workspace(&config.workdir)?;
+        if config.runtime == cccc_contracts::ActorRuntime::Claude {
+            return Self::launch_claude(
+                home,
+                binding,
+                config.command,
+                config.environment,
+                None,
+                SessionPurpose::Actor,
+                Some((&config.group_id, &config.actor_id)),
+            )
+            .await;
+        }
         if config.runtime == cccc_contracts::ActorRuntime::Grok {
             return Self::launch_grok(
                 home,
@@ -80,7 +102,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id, config.runner)),
+                Some((&config.group_id, &config.actor_id)),
             )
             .await;
         }
@@ -92,7 +114,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id, config.runner)),
+                Some((&config.group_id, &config.actor_id)),
             )
             .await;
         }
@@ -108,12 +130,14 @@ impl AnalystSession {
         let mut env = config.environment;
         let prepared = super::launch_command::prepare(&config.command, &env)?;
         let session_command = prepared.app_server.clone();
+        let identity_environment = env.clone();
         let resume_thread_id = super::super::runtime_session::prepare_codex_app_thread(
             home,
             &config.group_id,
             &config.actor_id,
             &binding.root,
             &session_command,
+            &identity_environment,
             &prepared.model,
         )?;
         let mut command = prepared.app_server;
@@ -144,10 +168,10 @@ impl AnalystSession {
             &config.actor_id,
             &config.workdir,
             &session_command,
+            &identity_environment,
             super::super::runtime_session::CodexAppThread {
                 id: session.thread_id(),
                 resumed: session.thread_resumed,
-                runner: config.runner,
             },
         ) {
             tracing::warn!(
@@ -184,10 +208,19 @@ impl AnalystSession {
 
     #[cfg(test)]
     pub(crate) fn publish_event_for_test(&self, message: Value) {
+        self.publish_event_with_delegation_for_test(message, None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publish_event_with_delegation_for_test(
+        &self,
+        message: Value,
+        requested_delegation_id: Option<String>,
+    ) {
         self.protocol.publish_for_test(AnalystEvent {
             generation: self.generation.clone(),
             message,
-            requested_delegation_id: None,
+            requested_delegation_id,
         });
     }
 
@@ -215,18 +248,15 @@ impl AnalystSession {
     }
 
     pub(crate) fn tui_ready(&self) -> bool {
-        self.thread_materialized.load(AtomicOrdering::Acquire)
-    }
-
-    pub(crate) fn mark_thread_materialized(&self) {
-        self.thread_materialized
-            .store(true, AtomicOrdering::Release);
+        true
     }
 
     pub(crate) fn process_running(&self) -> bool {
-        self.process
-            .as_ref()
-            .is_none_or(|process| process.running())
+        self.protocol.running()
+            && self
+                .process
+                .as_ref()
+                .is_none_or(|process| process.running())
             && self
                 .auxiliary_processes
                 .iter()
@@ -235,15 +265,6 @@ impl AnalystSession {
 
     pub(crate) fn process_id(&self) -> Option<u32> {
         self.process.as_ref().and_then(|process| process.id())
-    }
-
-    pub(crate) async fn request(
-        &self,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-    ) -> io::Result<Value> {
-        self.protocol.request(method, params, timeout).await
     }
 
     pub(crate) async fn respond_error(&self, id: Value, error: Value) -> io::Result<()> {

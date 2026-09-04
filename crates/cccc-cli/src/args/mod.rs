@@ -131,18 +131,7 @@ pub enum CommandKind {
     Version,
     Home,
     Mcp,
-    #[command(hide = true)]
-    Hook {
-        #[command(subcommand)]
-        action: HookAction,
-    },
     Web(WebArgs),
-}
-
-#[derive(Debug, Subcommand)]
-pub enum HookAction {
-    CodexState,
-    ClaudeState,
 }
 
 #[derive(Debug, Clone, Copy, Subcommand)]

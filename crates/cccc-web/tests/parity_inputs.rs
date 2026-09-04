@@ -191,7 +191,6 @@ async fn actor_command_uses_shell_quoting_like_python() {
                     json!({
                         "actor_id":"quoted",
                         "runtime":"claude",
-                        "runner":"pty",
                         "role":"peer",
                         "command":"claude --model \"model with spaces\""
                     })

@@ -139,8 +139,6 @@ describe("ActorConfigModal secret manager integration", () => {
           runtimes={[]}
           runtime="codex"
           onChangeRuntime={() => undefined}
-          runner="pty"
-          onChangeRunner={() => undefined}
           command="codex"
           onChangeCommand={() => undefined}
           title=""
@@ -190,8 +188,6 @@ describe("ActorConfigModal secret manager integration", () => {
           runtimes={[]}
           runtime="codex"
           onChangeRuntime={() => undefined}
-          runner="pty"
-          onChangeRunner={() => undefined}
           command="codex"
           onChangeCommand={() => undefined}
           useDefaultCommand

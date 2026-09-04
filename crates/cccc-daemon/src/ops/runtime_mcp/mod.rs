@@ -33,7 +33,7 @@ pub(super) fn prepare(
     // pipeline. Do not mutate a provider-global MCP registry for these runtimes.
     if matches!(
         runtime,
-        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+        ActorRuntime::Claude | ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
     ) {
         return Ok(());
     }
@@ -49,7 +49,10 @@ pub(super) fn prepare(
     );
 
     match runtime {
-        ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode => {
+        ActorRuntime::Claude
+        | ActorRuntime::Codex
+        | ActorRuntime::Grok
+        | ActorRuntime::Opencode => {
             unreachable!("managed runtime returned early")
         }
         ActorRuntime::Hermes => {
@@ -84,10 +87,8 @@ fn ensure_persistent(
     if report.state == State::Ready {
         return Ok(());
     }
-    if matches!(
-        runtime,
-        ActorRuntime::Claude | ActorRuntime::Copilot | ActorRuntime::Kiro
-    ) && report.state == State::Stale
+    if matches!(runtime, ActorRuntime::Copilot | ActorRuntime::Kiro)
+        && report.state == State::Stale
         && !report.source.is_empty()
         && !report.source.contains("user")
     {
@@ -150,13 +151,6 @@ fn inspect(
     expected: &[String],
 ) -> Result<Report, OpError> {
     match runtime {
-        ActorRuntime::Claude => inspect_cli(
-            runtime,
-            &["claude", "mcp", "get", "cccc"],
-            cwd,
-            env,
-            expected,
-        ),
         ActorRuntime::Copilot => inspect_cli(
             runtime,
             &["copilot", "mcp", "get", "cccc", "--json"],
@@ -271,62 +265,4 @@ fn run_checked(
             }
         ),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn stale_claude_user_entry_is_replaced_and_verified_before_launch() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let bin = temp.path().join("bin");
-        std::fs::create_dir(&bin).expect("bin");
-        let claude = bin.join("claude");
-        let state = temp.path().join("claude-mcp-state");
-        std::fs::write(&state, "/missing/cccc").expect("state");
-        std::fs::write(
-            &claude,
-            r#"#!/bin/sh
-state=$CCCC_TEST_MCP_STATE
-case "$1 $2 $3" in
-  "mcp get cccc")
-    command=
-    IFS= read -r command < "$state" || :
-    printf 'Transport: stdio\nCommand: %s\nArgs: mcp\nScope: User config\n' "$command"
-    ;;
-  "mcp remove cccc")
-    : > "$state"
-    ;;
-  "mcp add -s")
-    shift 6
-    printf '%s' "$1" > "$state"
-    ;;
-  *) exit 2 ;;
-esac
-"#,
-        )
-        .expect("script");
-        let mut permissions = std::fs::metadata(&claude).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&claude, permissions).expect("permissions");
-        let env = BTreeMap::from([
-            ("PATH".into(), bin.to_string_lossy().into_owned()),
-            (
-                "CCCC_TEST_MCP_STATE".into(),
-                state.to_string_lossy().into_owned(),
-            ),
-        ]);
-        ensure_persistent(
-            ActorRuntime::Claude,
-            temp.path(),
-            &env,
-            Path::new("/opt/cccc"),
-        )
-        .expect("repair");
-        assert_eq!(std::fs::read_to_string(state).expect("state"), "/opt/cccc");
-    }
 }

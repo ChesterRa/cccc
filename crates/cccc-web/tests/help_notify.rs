@@ -14,7 +14,13 @@ async fn changed_help_notifies_only_running_actors() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
-    let created = call(&home, "group_create", json!({"title":"help notify"}));
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    let created = call(
+        &home,
+        "group_create_with_scope",
+        json!({"title":"help notify","path":project}),
+    );
     let group_id = created["group"]["group_id"]
         .as_str()
         .expect("group id")
@@ -23,7 +29,7 @@ async fn changed_help_notifies_only_running_actors() {
         call(
             &home,
             "actor_add",
-            json!({"group_id":group_id,"actor_id":actor_id,"runtime":"custom","runner":"headless","role":"peer","by":"user"}),
+            json!({"group_id":group_id,"actor_id":actor_id,"runtime":"custom","command":["sh"],"role":"peer","by":"user"}),
         );
     }
     call(
@@ -65,6 +71,11 @@ async fn changed_help_notifies_only_running_actors() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["result"]["notified_actor_ids"], json!(["running"]));
     assert_eq!(payload["result"]["notification_failures"], json!([]));
+    call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"running","by":"user"}),
+    );
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> Value {

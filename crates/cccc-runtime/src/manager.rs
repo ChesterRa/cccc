@@ -222,6 +222,35 @@ pub fn submit_sequence_interruptible(
     Ok(true)
 }
 
+/// Wait for the native TUI to advertise its input mode, not for a turn to finish.
+/// Creating a PTY alone leaves its canonical buffer liable to truncate a paste.
+pub fn wait_for_input_ready(
+    group_id: &str,
+    actor_id: &str,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<bool, RuntimeError> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        if !status(group_id, actor_id)?.running {
+            return Ok(false);
+        }
+        if crate::bracketed_paste_enabled(group_id, actor_id)? {
+            return Ok(true);
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        if !wait_interruptibly(remaining.min(Duration::from_millis(25)), cancelled) {
+            return Ok(false);
+        }
+    }
+}
+
 fn input_gate(
     group_id: &str,
     actor_id: &str,

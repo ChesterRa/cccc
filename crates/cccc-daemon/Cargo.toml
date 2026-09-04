@@ -23,6 +23,7 @@ mime_guess.workspace = true
 nix.workspace = true
 percent-encoding.workspace = true
 regex.workspace = true
+same-file.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

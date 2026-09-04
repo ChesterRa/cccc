@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { RUNTIME_INFO, type ActorProfile } from "../../types";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
@@ -16,6 +17,22 @@ function modeButtonClass(selected: boolean): string {
       ? "border-[var(--color-text-primary)] bg-[var(--color-text-primary)] text-[var(--color-bg-primary)] hover:bg-[var(--color-text-primary)] hover:text-[var(--color-bg-primary)] hover:opacity-90"
       : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
   ].join(" ");
+}
+
+export function OpenCodeManagedModelHint({ runtime }: { runtime?: string | null }) {
+  const { t } = useTranslation("actors");
+  if (
+    String(runtime || "")
+      .trim()
+      .toLowerCase() !== "opencode"
+  )
+    return null;
+  return (
+    <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium leading-5 text-orange-700 dark:text-orange-300">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0">{t("opencodeManagedModelHint")}</span>
+    </p>
+  );
 }
 
 export function RuntimeConfigurationModePicker({
@@ -65,7 +82,6 @@ export function RuntimeProfilePicker({
   emptyHint,
   hostNote,
   detailsLabel,
-  showRunner = true,
   onChange,
 }: {
   value: string;
@@ -75,7 +91,6 @@ export function RuntimeProfilePicker({
   emptyHint?: string;
   hostNote?: string;
   detailsLabel?: string;
-  showRunner?: boolean;
   onChange: (value: string) => void;
 }) {
   const { t } = useTranslation("actors");
@@ -102,6 +117,7 @@ export function RuntimeProfilePicker({
           ]}
           searchable
         />
+        <OpenCodeManagedModelHint runtime={selected?.runtime} />
         {!busy && profiles.length === 0 && emptyHint ? (
           <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">{emptyHint}</p>
         ) : null}
@@ -123,11 +139,6 @@ export function RuntimeProfilePicker({
                 <span>{RUNTIME_INFO[String(selected.runtime)]?.label || selected.runtime}</span>
               </div>
             </div>
-            {showRunner ? (
-              <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {selected.runner === "headless" ? t("headless") : t("pty", { defaultValue: "PTY" })}
-              </span>
-            ) : null}
           </div>
           {selectedCommand || hostNote ? (
             <details className="mt-2 border-t border-[var(--glass-border-subtle)] pt-2">
@@ -154,11 +165,6 @@ export function RuntimeProfilePicker({
           <div className="mt-1">{runtimeProfileScopeLabel(selected, t)}</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span>{RUNTIME_INFO[String(selected.runtime)]?.label || selected.runtime}</span>
-            {showRunner ? (
-              <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {selected.runner === "headless" ? t("headless") : t("pty", { defaultValue: "PTY" })}
-              </span>
-            ) : null}
           </div>
           {selectedCommand ? (
             <div className="mt-1 break-all font-mono">{selectedCommand}</div>

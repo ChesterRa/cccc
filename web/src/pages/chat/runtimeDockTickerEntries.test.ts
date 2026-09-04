@@ -5,7 +5,7 @@ import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import type { RuntimeDockItem } from "./runtimeDockItems";
 
 describe("runtime dock ticker entries", () => {
-  it("keeps PTY activities when an actor already has preview sessions", () => {
+  it("keeps managed activities when an actor already has preview sessions", () => {
     const runtimeActivity: StreamingActivity = {
       id: "tool:runtime",
       kind: "tool",
@@ -22,7 +22,7 @@ describe("runtime dock ticker entries", () => {
       updatedAt: "2026-07-28T00:00:00Z",
       latestText: "Existing preview",
       transcriptBlocks: [],
-      activities: [],
+      activities: [runtimeActivity],
     } as HeadlessPreviewSession;
     const card = {
       actorId: "foreman",
@@ -33,7 +33,6 @@ describe("runtime dock ticker entries", () => {
       text: "",
       transcriptBlocks: [],
       activities: [runtimeActivity],
-      runtimeActivities: [runtimeActivity],
       previewSessions: [previewSession],
       updatedAt: runtimeActivity.ts || "",
       streamId: "",
@@ -78,7 +77,6 @@ describe("runtime dock ticker entries", () => {
       text: "",
       transcriptBlocks: [],
       activities: runtimeActivities,
-      runtimeActivities,
       previewSessions: [],
       updatedAt: "2026-07-28T00:00:02Z",
       streamId: "",
@@ -99,7 +97,7 @@ describe("runtime dock ticker entries", () => {
     ]);
   });
 
-  it("keeps a terminal runtime tool bubble without marking the card active", () => {
+  it("does not replay completed managed activity as live ticker work", () => {
     const runtimeActivity: StreamingActivity = {
       id: "tool:runtime",
       kind: "tool",
@@ -117,7 +115,6 @@ describe("runtime dock ticker entries", () => {
       text: "",
       transcriptBlocks: [],
       activities: [runtimeActivity],
-      runtimeActivities: [runtimeActivity],
       previewSessions: [],
       updatedAt: runtimeActivity.ts || "",
       streamId: "",
@@ -128,6 +125,6 @@ describe("runtime dock ticker entries", () => {
       buildRuntimeDockTickerEntries([
         { actorId: "foreman", actorLabel: "Foreman", liveWorkCard: card } as RuntimeDockItem,
       ]),
-    ).toEqual([expect.objectContaining({ kind: "activity", text: "Bash completed in 2s" })]);
+    ).toEqual([]);
   });
 });

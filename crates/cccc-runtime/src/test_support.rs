@@ -1,5 +1,8 @@
+#[cfg(unix)]
 use crate::LaunchSpec;
+#[cfg(unix)]
 use cccc_contracts::RunnerKind;
+#[cfg(unix)]
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -11,6 +14,7 @@ pub(crate) fn test_guard() -> MutexGuard<'static, ()> {
         .expect("test lock")
 }
 
+#[cfg(unix)]
 pub(crate) fn spec(
     temp: &tempfile::TempDir,
     group: &str,

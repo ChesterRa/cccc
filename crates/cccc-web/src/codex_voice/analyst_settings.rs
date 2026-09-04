@@ -11,6 +11,7 @@ impl CodexVoiceSessions {
         environment_set: BTreeMap<String, String>,
         environment_unset: Vec<String>,
         environment_clear: bool,
+        discard_current_work: bool,
     ) -> Result<AnalystSettingsOutcome> {
         let settings = cccc_core::codex_voice_settings::normalize(settings)
             .context("validate Voice Analyst launch settings")?;
@@ -52,18 +53,21 @@ impl CodexVoiceSessions {
                 analyst: state.analyst.as_ref().map(|analyst| analyst.info()),
                 restarted: false,
                 started_new_session: false,
+                discarded_work: false,
             });
         }
 
-        if state.active.is_some() {
-            bail!("Stop the active Codex Voice call before applying Analyst settings");
-        }
         let previous = state.analyst.clone();
-        if let Some(previous) = previous.as_ref()
-            && previous.analyst.is_busy().await
-        {
-            bail!(
-                "Wait for or cancel the current Voice Analyst investigation before applying settings"
+        let analyst_busy = if let Some(previous) = previous.as_ref() {
+            previous.analyst.is_busy().await
+        } else {
+            false
+        };
+        validate_replacement(state.active.is_some(), analyst_busy, discard_current_work)?;
+        if analyst_busy {
+            tracing::info!(
+                generation = %previous.as_ref().expect("busy Analyst exists").analyst.generation(),
+                "discarding unfinished Voice Analyst work before applying confirmed settings"
             );
         }
 
@@ -79,6 +83,7 @@ impl CodexVoiceSessions {
                 analyst: None,
                 restarted: false,
                 started_new_session: false,
+                discarded_work: false,
             });
         };
         // A referenced Runtime Profile can be deleted or become invalid while a warm Analyst is
@@ -177,6 +182,7 @@ impl CodexVoiceSessions {
             analyst: Some(info),
             restarted: true,
             started_new_session: identity_changed && materialized,
+            discarded_work: analyst_busy,
         })
     }
 }
@@ -209,4 +215,33 @@ fn restore_configuration(
     cccc_core::codex_voice_settings::save(home, settings)?;
     cccc_core::codex_voice_settings::replace_private_environment(home, environment)?;
     Ok(())
+}
+
+fn validate_replacement(
+    call_active: bool,
+    analyst_busy: bool,
+    discard_current_work: bool,
+) -> Result<()> {
+    if call_active {
+        bail!("Stop the active Codex Voice call before applying Analyst settings");
+    }
+    if analyst_busy && !discard_current_work {
+        bail!(
+            "Wait for or cancel the current Voice Analyst investigation before applying settings"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_replacement;
+
+    #[test]
+    fn replacement_requires_separate_call_and_work_consent_boundaries() {
+        assert!(validate_replacement(false, false, false).is_ok());
+        assert!(validate_replacement(false, true, false).is_err());
+        assert!(validate_replacement(false, true, true).is_ok());
+        assert!(validate_replacement(true, false, true).is_err());
+    }
 }

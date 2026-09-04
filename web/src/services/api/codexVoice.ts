@@ -119,11 +119,13 @@ export async function updateCodexVoiceAnalystSettings(args: {
   environmentSet: Record<string, string>;
   environmentUnset: string[];
   environmentClear: boolean;
+  discardCurrentWork: boolean;
 }) {
   return apiJson<{
     analyst: CodexVoiceAnalystInfo | null;
     restarted: boolean;
     started_new_session: boolean;
+    discarded_work: boolean;
   }>("/api/v1/codex_voice/analyst-settings", {
     method: "PUT",
     body: JSON.stringify({
@@ -131,6 +133,7 @@ export async function updateCodexVoiceAnalystSettings(args: {
       environment_set: args.environmentSet,
       environment_unset: args.environmentUnset,
       environment_clear: args.environmentClear,
+      discard_current_work: args.discardCurrentWork,
     }),
   });
 }

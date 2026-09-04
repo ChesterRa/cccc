@@ -117,7 +117,7 @@ pub(crate) fn setup(home: &HomeLayout) -> String {
     call(
         home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","runner":"headless","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
     );
     call(
         home,

@@ -1,5 +1,5 @@
 use super::{AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::io;
 use std::process::{ChildStdin, ChildStdout};
 use std::sync::Mutex;
@@ -18,6 +18,7 @@ const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 32;
 const FRAME_CAPACITY: usize = 256;
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
+const LIFECYCLE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct RpcRequest {
     method: String,
@@ -54,6 +55,16 @@ enum AcpCommand {
     ObservedUserText {
         session_id: String,
         text: String,
+        response: oneshot::Sender<io::Result<bool>>,
+    },
+    RegisterNativeInput {
+        delegation_id: String,
+        text: String,
+        response: oneshot::Sender<io::Result<()>>,
+    },
+    ForgetNativeInput {
+        delegation_id: String,
+        response: oneshot::Sender<()>,
     },
     ExternalDisconnected {
         reason: String,
@@ -89,14 +100,35 @@ impl AcpLifecycleControl {
             .map_err(|_| closed_error())
     }
 
-    pub(super) async fn user_text(&self, session_id: &str, text: &str) -> io::Result<()> {
+    /// Returns true when the observed text came from the native TUI rather than
+    /// echoing a CCCC-controlled ACP prompt.
+    pub(super) async fn user_text(&self, session_id: &str, text: &str) -> io::Result<bool> {
+        let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::ObservedUserText {
                 session_id: session_id.to_owned(),
                 text: text.to_owned(),
+                response: sender,
             })
             .await
-            .map_err(|_| closed_error())
+            .map_err(|_| closed_error())?;
+        receiver.await.map_err(|_| closed_error())?
+    }
+
+    pub(super) async fn set_config_option(
+        &self,
+        session_id: &str,
+        config_id: &str,
+        value: &str,
+    ) -> io::Result<()> {
+        send_request(
+            &self.commands,
+            "session/set_config_option",
+            json!({"sessionId":session_id,"configId":config_id,"value":value}),
+            LIFECYCLE_REQUEST_TIMEOUT,
+        )
+        .await
+        .map(|_| ())
     }
 
     pub(super) async fn disconnected(&self, reason: impl Into<String>) {
@@ -171,24 +203,7 @@ impl AcpClient {
         params: Value,
         timeout: Duration,
     ) -> io::Result<Value> {
-        let (sender, receiver) = oneshot::channel();
-        self.commands
-            .send(AcpCommand::Request(RpcRequest {
-                method: method.to_owned(),
-                params,
-                response: sender,
-            }))
-            .await
-            .map_err(|_| closed_error())?;
-        tokio::time::timeout(timeout, receiver)
-            .await
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("ACP request timed out: {method}"),
-                )
-            })?
-            .map_err(|_| closed_error())?
+        send_request(&self.commands, method, params, timeout).await
     }
 
     pub(super) async fn start_prompt(
@@ -208,6 +223,35 @@ impl AcpClient {
             .await
             .map_err(|_| closed_error())?;
         receiver.await.map_err(|_| closed_error())?
+    }
+
+    pub(super) async fn register_native_input(
+        &self,
+        delegation_id: &str,
+        text: &str,
+    ) -> io::Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.commands
+            .send(AcpCommand::RegisterNativeInput {
+                delegation_id: delegation_id.to_owned(),
+                text: text.to_owned(),
+                response: sender,
+            })
+            .await
+            .map_err(|_| closed_error())?;
+        receiver.await.map_err(|_| closed_error())?
+    }
+
+    pub(super) async fn forget_native_input(&self, delegation_id: &str) -> io::Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.commands
+            .send(AcpCommand::ForgetNativeInput {
+                delegation_id: delegation_id.to_owned(),
+                response: sender,
+            })
+            .await
+            .map_err(|_| closed_error())?;
+        receiver.await.map_err(|_| closed_error())
     }
 
     pub(super) async fn cancel(&self, session_id: &str) -> io::Result<()> {
@@ -251,6 +295,32 @@ impl AcpClient {
             let _ = task.await;
         }
     }
+}
+
+async fn send_request(
+    commands: &mpsc::Sender<AcpCommand>,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> io::Result<Value> {
+    let (sender, receiver) = oneshot::channel();
+    commands
+        .send(AcpCommand::Request(RpcRequest {
+            method: method.to_owned(),
+            params,
+            response: sender,
+        }))
+        .await
+        .map_err(|_| closed_error())?;
+    tokio::time::timeout(timeout, receiver)
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("ACP request timed out: {method}"),
+            )
+        })?
+        .map_err(|_| closed_error())?
 }
 
 impl Drop for AcpClient {

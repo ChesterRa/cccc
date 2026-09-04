@@ -16,7 +16,9 @@ pub(super) async fn launch_analyst(home: &HomeLayout) -> Result<AnalystRuntime> 
         .context("load Voice Analyst private environment")?;
     let runtime = cccc_core::codex_voice_settings::resolve(home, &settings, &custom_environment)
         .context("resolve Voice Analyst runtime configuration")?;
-    let identity_fingerprint = runtime.identity_fingerprint();
+    let identity_fingerprint = runtime
+        .identity_fingerprint_at(&workdir)
+        .context("fingerprint Voice Analyst launch inputs")?;
     let (resume_thread_id, warning) = resumable_thread(home, &workdir, &identity_fingerprint)?;
     if let Some(thread_id) = resume_thread_id {
         match launch_exact(
@@ -170,7 +172,10 @@ pub(super) fn persist_analyst(
             group_id: String::new(),
             root: analyst.workdir.to_string_lossy().into_owned(),
             thread_id: analyst.analyst.thread_id().to_owned(),
-            identity_fingerprint: analyst.launch_runtime().identity_fingerprint(),
+            identity_fingerprint: analyst
+                .launch_runtime()
+                .identity_fingerprint_at(&analyst.workdir)
+                .context("fingerprint Voice Analyst launch inputs")?,
             materialized,
             updated_at: cccc_contracts::utc_now(),
         },

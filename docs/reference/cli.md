@@ -136,7 +136,6 @@ cccc actor add <actor_id> --runtime custom --command "my-agent"
 Options:
 - `--runtime`: Agent runtime (claude, codex, web_model, droid, etc.)
 - `--command`: Custom command (for custom runtime)
-- `--runner`: Runner type (pty or headless; web_model is headless-only)
 - `--title`: Display title
 
 For the ChatGPT Web Model actor, create and start the actor from the target CCCC Web group, then finish ChatGPT sign-in, MCP URL, and chat binding in `Settings > Global > ChatGPT Web Model`.
@@ -346,11 +345,11 @@ The former `ccccd` executable is also retired. Scripts should use
 
 ### `cccc setup`
 
-Configure MCP for an agent runtime.
+Prepare or report the MCP integration for an agent runtime.
 
 ```bash
 cccc setup                         # Configure every supported runtime; unavailable CLIs are reported
-cccc setup --runtime claude        # Auto-configure for Claude Code
+cccc setup --runtime claude        # Report CCCC-owned per-session MCP for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
 cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
 cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI

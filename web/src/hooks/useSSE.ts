@@ -9,7 +9,7 @@ import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity 
 import { runReconnectCatchup, scheduleContextOverviewCatchup } from "./sseCatchup";
 import { getRecipientActorIdsForEvent } from "../utils/ledgerEventHandlers";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
-import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
+import { hasManagedRuntimeOutput } from "../utils/headlessRuntimeSupport";
 import { createSseConnectionRegistry } from "./sseConnectionRegistry";
 import {
   computeGroupRuntimeFromActorActivityUpdate,
@@ -356,7 +356,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const bucket = useGroupStore.getState().chatByGroup[targetGroupId];
     const liveActorIds = new Set<string>();
     for (const actor of actorsRef.current) {
-      if (!isHeadlessActorRunner(actor)) continue;
+      if (!hasManagedRuntimeOutput(actor)) continue;
       const actorId = String(actor.id || "").trim();
       if (!actorId) continue;
       const hasLiveStream =

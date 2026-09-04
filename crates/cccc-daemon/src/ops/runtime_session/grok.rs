@@ -63,7 +63,6 @@ pub fn record_managed(
     environment: &BTreeMap<String, String>,
     session_id: &str,
     resumed: bool,
-    runner: cccc_contracts::RunnerKind,
 ) -> std::io::Result<()> {
     if !resume_enabled() {
         return Ok(());
@@ -82,13 +81,6 @@ pub fn record_managed(
         ("group_id".into(), json!(group_id)),
         ("actor_id".into(), json!(actor_id)),
         ("runtime".into(), json!("grok")),
-        (
-            "runner".into(),
-            json!(match runner {
-                cccc_contracts::RunnerKind::Pty => "pty",
-                cccc_contracts::RunnerKind::Headless => "headless",
-            }),
-        ),
         ("workspace_path".into(), json!(workspace_path(cwd))),
         (
             "command_fingerprint".into(),

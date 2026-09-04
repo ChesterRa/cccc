@@ -1,6 +1,4 @@
-use super::turn_wait::{
-    for_settlement as wait_for_turn_settlement, until_ready as wait_until_ready,
-};
+use super::turn_wait::for_settlement as wait_for_turn_settlement;
 use super::*;
 #[cfg(test)]
 use anyhow::anyhow;
@@ -9,9 +7,75 @@ use anyhow::{Context, Result, bail};
 const MANAGED_CANCEL_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl AnalystLifecycle {
-    pub(crate) async fn begin_voice(&self, delegation_id: &str, text: &str) -> Result<TurnReceipt> {
-        self.begin(delegation_id, text, AnalystTurnOrigin::Voice)
+    pub(crate) async fn admit_voice(
+        &self,
+        delegation_id: &str,
+        text: &str,
+    ) -> Result<VoiceDelegationAdmission> {
+        let delegation_id = delegation_id.trim();
+        let text = text.trim();
+        if delegation_id.is_empty() || text.is_empty() {
+            bail!("Voice delegation id and text are required");
+        }
+        let mut state = self.state.lock().await;
+        if state.invalidated {
+            bail!("Voice Analyst lifecycle is no longer trustworthy");
+        }
+        if let Some(receipt) = state.delegations.get(delegation_id) {
+            return Ok(VoiceDelegationAdmission::Turn(receipt.clone()));
+        }
+        if state
+            .native_pending
+            .iter()
+            .any(|pending| pending.delegation_id == delegation_id)
+        {
+            return Ok(VoiceDelegationAdmission::NativeInputPending);
+        }
+        if let Some(turn_id) = state
+            .active
+            .as_ref()
+            .filter(|active| !active.cancelling && self.session.supports_steer())
+            .map(|active| active.turn_id.clone())
+        {
+            match self
+                .session
+                .steer(self.session.generation(), &turn_id, text)
+                .await
+            {
+                Ok(()) => {
+                    let active = state.active.as_mut().expect("locked active turn");
+                    active.latest_delegation_id = delegation_id.to_owned();
+                    active.origin = AnalystTurnOrigin::Voice;
+                    let receipt = TurnReceipt {
+                        delegation_id: delegation_id.to_owned(),
+                        thread_id: self.session.thread_id().to_owned(),
+                        turn_id,
+                    };
+                    state
+                        .delegations
+                        .insert(delegation_id.to_owned(), receipt.clone());
+                    return Ok(VoiceDelegationAdmission::Turn(receipt));
+                }
+                Err(error) if steer_rejection_can_use_native_input(&error) => {
+                    tracing::debug!(%error, "exact Voice Analyst steer was rejected; using native Runtime input");
+                }
+                Err(error) => return Err(error).context("steer active Voice Analyst delegation"),
+            }
+        }
+        if state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty() {
+            return self.register_native_voice(delegation_id, text, state).await;
+        }
+        match self
+            .start_new(delegation_id, text, AnalystTurnOrigin::Voice, state)
             .await
+        {
+            Ok(receipt) => Ok(VoiceDelegationAdmission::Turn(receipt)),
+            Err(error) if is_would_block(&error) => {
+                let state = self.state.lock().await;
+                self.register_native_voice(delegation_id, text, state).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) async fn begin_actor_result(
@@ -34,57 +98,58 @@ impl AnalystLifecycle {
         text: &str,
         origin: AnalystTurnOrigin,
     ) -> Result<TurnReceipt> {
-        let mut lifecycle_events = self.subscribe();
-        loop {
-            let mut state = self.state.lock().await;
-            if state.invalidated {
-                bail!("Voice Analyst lifecycle is no longer trustworthy");
-            }
-            if let Some(receipt) = state.delegations.get(delegation_id) {
-                return Ok(receipt.clone());
-            }
-            if let Some(active) = state.active.as_mut() {
-                if active.cancelling {
-                    bail!("Voice Analyst turn is cancelling");
-                }
-                if active.origin != AnalystTurnOrigin::Voice || origin != AnalystTurnOrigin::Voice {
-                    if self.session.supports_steer() {
-                        bail!("Voice Analyst is busy with another investigation");
-                    }
-                    drop(state);
-                    wait_until_ready(&mut lifecycle_events).await?;
-                    continue;
-                }
-                if !self.session.supports_steer() {
-                    drop(state);
-                    wait_until_ready(&mut lifecycle_events).await?;
-                    continue;
-                }
-                self.session
-                    .steer(self.session.generation(), &active.turn_id, text)
-                    .await
-                    .context("steer active Voice Analyst delegation")?;
-                active.latest_delegation_id = delegation_id.to_owned();
-                let receipt = TurnReceipt {
-                    delegation_id: delegation_id.to_owned(),
-                    thread_id: self.session.thread_id().to_owned(),
-                    turn_id: active.turn_id.clone(),
-                };
-                state
-                    .delegations
-                    .insert(delegation_id.to_owned(), receipt.clone());
-                return Ok(receipt);
-            }
-            if state.pending.is_some() {
-                bail!("Voice Analyst is starting another investigation");
-            }
-            state.pending = Some(PendingStart {
-                delegation_id: delegation_id.to_owned(),
-                origin,
-            });
-            state.settled_pending = None;
-            break;
+        let state = self.state.lock().await;
+        if state.invalidated {
+            bail!("Voice Analyst lifecycle is no longer trustworthy");
         }
+        if let Some(receipt) = state.delegations.get(delegation_id) {
+            return Ok(receipt.clone());
+        }
+        if state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty() {
+            return Err(busy("Voice Analyst is busy with another investigation"));
+        }
+        self.start_new(delegation_id, text, origin, state).await
+    }
+
+    async fn register_native_voice(
+        &self,
+        delegation_id: &str,
+        text: &str,
+        mut state: tokio::sync::MutexGuard<'_, LifecycleState>,
+    ) -> Result<VoiceDelegationAdmission> {
+        state.native_pending.push_back(PendingStart {
+            delegation_id: delegation_id.to_owned(),
+            origin: AnalystTurnOrigin::Voice,
+        });
+        drop(state);
+        if let Err(error) = self
+            .session
+            .register_native_input(self.session.generation(), delegation_id, text)
+            .await
+        {
+            let mut state = self.state.lock().await;
+            remove_native_pending(&mut state.native_pending, delegation_id);
+            return Err(error).context("register Voice delegation for native Runtime input");
+        }
+        Ok(VoiceDelegationAdmission::NativeInput {
+            delegation_id: delegation_id.to_owned(),
+            text: text.to_owned(),
+        })
+    }
+
+    async fn start_new(
+        &self,
+        delegation_id: &str,
+        text: &str,
+        origin: AnalystTurnOrigin,
+        mut state: tokio::sync::MutexGuard<'_, LifecycleState>,
+    ) -> Result<TurnReceipt> {
+        state.pending = Some(PendingStart {
+            delegation_id: delegation_id.to_owned(),
+            origin,
+        });
+        state.settled_pending = None;
+        drop(state);
 
         // A managed Runtime may publish `turn/started` before answering its start request; the
         // monitor must be able to record that authoritative event while the request is in flight.
@@ -168,6 +233,25 @@ impl AnalystLifecycle {
                 Err(error)
             }
         }
+    }
+
+    pub(crate) async fn reject_native_voice(&self, delegation_id: &str) -> Result<bool> {
+        let delegation_id = delegation_id.trim();
+        let removed = {
+            let mut state = self.state.lock().await;
+            remove_native_pending(&mut state.native_pending, delegation_id)
+        };
+        if !removed {
+            // The Runtime may have consumed the terminal write before its submit operation
+            // reported an error. In that case ownership is already authoritative and must not be
+            // rolled back or replayed.
+            return Ok(false);
+        }
+        self.session
+            .forget_native_input(self.session.generation(), delegation_id)
+            .await
+            .context("roll back undelivered native Voice input")?;
+        Ok(true)
     }
 
     pub(crate) async fn cancel_current(&self) -> Result<bool> {
@@ -266,15 +350,29 @@ impl AnalystLifecycle {
 
     pub(crate) async fn is_busy(&self) -> bool {
         let state = self.state.lock().await;
-        state.active.is_some() || state.pending.is_some()
+        state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty()
     }
 
     pub(crate) async fn terminal_input_allowed(&self) -> bool {
-        let state = self.state.lock().await;
-        !state.invalidated
-            && state.pending.is_none()
-            && (state.active.is_none() || self.session.supports_steer())
+        // The native terminal is part of the managed session, not a competing controller. Each
+        // admitted Runtime owns whether input typed while busy steers or queues; CCCC observes the
+        // resulting lifecycle instead of suppressing the user's keystrokes.
+        true
     }
+}
+
+fn remove_native_pending(
+    pending: &mut std::collections::VecDeque<PendingStart>,
+    delegation_id: &str,
+) -> bool {
+    let Some(index) = pending
+        .iter()
+        .position(|pending| pending.delegation_id == delegation_id)
+    else {
+        return false;
+    };
+    pending.remove(index);
+    true
 }
 
 fn active_from(receipt: &TurnReceipt, origin: AnalystTurnOrigin) -> ActiveTurn {
@@ -285,5 +383,25 @@ fn active_from(receipt: &TurnReceipt, origin: AnalystTurnOrigin) -> ActiveTurn {
         cancelling: false,
         deltas: String::new(),
         completed_text: String::new(),
+        result_overflowed: false,
     }
+}
+
+fn busy(message: &str) -> anyhow::Error {
+    std::io::Error::new(std::io::ErrorKind::WouldBlock, message).into()
+}
+
+fn steer_rejection_can_use_native_input(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Other | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::NotFound
+    )
+}
+
+fn is_would_block(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
+    })
 }

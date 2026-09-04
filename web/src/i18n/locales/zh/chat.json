@@ -22,7 +22,7 @@
   "chatFilters": "聊天过滤器",
   "chatMessages": "聊天消息",
   "liveWorkTitle": "实时工作",
-  "liveWorkHint": "Headless 运行中的过程输出会显示在这里，正式回复通过 message 工具发送。",
+  "liveWorkHint": "运行时的结构化过程输出会显示在这里，正式回复通过 message 工具发送。",
   "runtimeDockOpenLiveWork": "打开 {{name}} 的实时工作",
   "runtimeDockOpenTerminal": "打开 {{name}} 的终端",
   "runtimeInspectorTitle": "运行时检查器",

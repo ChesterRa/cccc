@@ -10,6 +10,75 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[test]
+fn cold_terminal_readiness_preserves_large_input() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_cold_input";
+    let actor = "peer1";
+    let payload = format!("{}TAIL_MARKER", "x".repeat(16_038));
+    start(spec(
+        &temp, group, actor,
+        &format!("sleep 0.2; stty raw -echo; printf '\\033[?2004h'; dd bs=1 count={} of=received 2>/dev/null; sleep 2", payload.len()),
+    )).expect("cold terminal");
+    let cancelled = AtomicBool::new(false);
+    assert!(
+        super::wait_for_input_ready(group, actor, Duration::from_secs(3), &cancelled)
+            .expect("input readiness")
+    );
+    let submitted = submit_sequence_interruptible(
+        group,
+        actor,
+        payload.as_bytes(),
+        &[],
+        Duration::ZERO,
+        Duration::ZERO,
+        &cancelled,
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::fs::metadata(temp.path().join("received")).map_or(0, |m| m.len())
+        < payload.len() as u64
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop(group, actor).expect("stop");
+    assert!(submitted.expect("submit"));
+    assert_eq!(
+        std::fs::read(temp.path().join("received")).expect("received"),
+        payload.as_bytes()
+    );
+}
+
+#[test]
+fn unready_terminal_timeout_and_cancel_do_not_write_input() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_unready_input";
+    let actor = "peer1";
+    start(spec(&temp, group, actor, "sleep 5")).expect("terminal");
+    assert!(
+        !super::wait_for_input_ready(
+            group,
+            actor,
+            Duration::from_millis(50),
+            &AtomicBool::new(false)
+        )
+        .expect("timeout")
+    );
+    assert!(
+        !super::wait_for_input_ready(group, actor, Duration::from_secs(5), &AtomicBool::new(true))
+            .expect("cancel")
+    );
+    assert!(
+        !history(group, actor, None, 1024)
+            .expect("history")
+            .data
+            .contains("bootstrap")
+    );
+    stop(group, actor).expect("stop");
+}
+
+#[test]
 fn captures_process_output() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().expect("tempdir");

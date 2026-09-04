@@ -41,10 +41,9 @@ cccc attach .
 2. Fill in the form:
    - **Actor ID**: e.g., `assistant`
    - **Runtime**: Select your installed CLI (e.g., Claude)
-   - **Runner**: PTY (terminal) or Headless
 3. Click **Create**
 
-## Step 5: Configure MCP (First Time Only)
+## Step 5: Prepare the Runtime Integration
 
 If this is your first time using CCCC with this runtime:
 
@@ -52,7 +51,9 @@ If this is your first time using CCCC with this runtime:
 cccc setup --runtime claude   # or codex, droid, etc.
 ```
 
-This configures the agent to communicate with CCCC.
+This prepares or reports how the runtime communicates with CCCC. Direct managed
+Claude Code, Codex, Grok Build, and OpenCode sessions receive their scoped MCP
+entry automatically when CCCC starts them.
 
 ## Step 6: Start the Agent
 

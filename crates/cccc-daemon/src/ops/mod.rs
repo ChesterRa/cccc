@@ -6,10 +6,6 @@ mod actor_delivery_worker;
 mod actor_listing;
 mod actor_profile_runtime;
 pub(crate) mod actor_runtime;
-#[cfg(test)]
-mod actor_runtime_managed_tests;
-#[cfg(test)]
-mod actor_runtime_mcp_tests;
 mod actor_runtime_status;
 #[cfg(test)]
 mod actor_runtime_status_tests;
@@ -24,7 +20,6 @@ mod automation_manage;
 mod automation_rule_access;
 pub(crate) mod automation_runtime;
 mod capabilities;
-mod claude_hooks;
 mod codex_mcp;
 pub(crate) mod codex_voice_analyst;
 pub(crate) mod codex_voice_controller;
@@ -66,8 +61,6 @@ mod profiles;
 mod remote_access;
 mod runtime_completion;
 pub(crate) mod runtime_delivery;
-pub(crate) mod runtime_hook_input;
-mod runtime_hook_session;
 mod runtime_mcp;
 pub(crate) mod runtime_restore;
 mod runtime_session;

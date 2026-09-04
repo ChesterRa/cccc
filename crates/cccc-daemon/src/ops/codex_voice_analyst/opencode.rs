@@ -12,6 +12,8 @@ use std::time::Duration;
 
 mod command;
 mod lifecycle;
+#[cfg(test)]
+mod model_sync_tests;
 mod session;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);

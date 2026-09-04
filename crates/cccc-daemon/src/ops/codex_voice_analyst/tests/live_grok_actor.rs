@@ -5,7 +5,9 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::live_support::wait_for_daemon;
+use super::live_support::{
+    assert_managed_actor_starts_idle, run_busy_actor_delivery_canary, wait_for_daemon,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_grok_group_actor_delivers_and_replies_when_explicitly_enabled() {
@@ -82,7 +84,7 @@ async fn live_grok_group_actor_delivers_and_replies_when_explicitly_enabled() {
     let stopped_group_id = group_id.clone();
     let stopped_actor_id = actor.id.clone();
     tokio::task::spawn_blocking(move || {
-        super::super::super::local_headless::stop(&stopped_group_id, &stopped_actor_id);
+        let _ = super::super::super::local_headless::stop(&stopped_group_id, &stopped_actor_id);
         assert!(!super::super::super::local_headless::running(
             &stopped_group_id,
             &stopped_actor_id
@@ -114,18 +116,10 @@ fn run_canary(
     actor: &Actor,
 ) -> io::Result<()> {
     super::super::super::local_headless::start(home, group, actor)?;
+    assert_managed_actor_starts_idle(store, group, actor)?;
     let event_path = store
         .state_dir(&group.group_id)?
         .join("headless/events.jsonl");
-    wait_for(Duration::from_secs(180), "bootstrap completion", || {
-        let events = headless_events(&event_path);
-        fail_if_stopped(&events)?;
-        Ok(events.iter().any(|event| {
-            event["actor_id"] == actor.id
-                && event["type"] == "headless.control.completed"
-                && event["data"]["control_kind"] == "bootstrap"
-        }))
-    })?;
 
     let mut source = Event::new("chat.message", &group.group_id);
     source.by = "user".into();
@@ -170,6 +164,9 @@ fn run_canary(
             "unexpected Grok managed receipt: {receipt}"
         )));
     }
+    let elapsed =
+        run_busy_actor_delivery_canary(home, store, group, actor, "GROK_BUSY_DELIVERY_REPLY")?;
+    eprintln!("Grok busy-state delivery reached the native TUI in {elapsed:?}");
     Ok(())
 }
 

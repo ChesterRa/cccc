@@ -44,7 +44,6 @@ async fn serializes_delivery_and_keeps_read_as_a_separate_fact() {
         json!({
             "group_id":group_id,
             "actor_id":"peer1",
-            "runner":"pty",
             "runtime":"custom",
             "submit":"newline",
             "command":["sh","-c","stty -echo -icanon min 1 time 0; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'PREAMBLE:%s\\nFIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$preamble\" \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 30"],
@@ -2154,7 +2153,7 @@ fn stopped_peer_group(home: &HomeLayout, title: &str) -> String {
         "actor_add",
         json!({
             "group_id":group_id,"actor_id":"peer1","runtime":"custom",
-            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
+            "command":["sh","-c","exit 0"],"by":"user"
         }),
     );
     group_id

@@ -22,7 +22,7 @@
   "chatFilters": "チャットフィルター",
   "chatMessages": "チャットメッセージ",
   "liveWorkTitle": "ライブ作業",
-  "liveWorkHint": "headless の実行中出力はここに表示されます。正式な返信は message ツールで送信されます。",
+  "liveWorkHint": "構造化されたランタイムの作業状況はここに表示されます。正式な返信は message ツールで送信されます。",
   "runtimeDockOpenLiveWork": "{{name}} のライブ作業を開く",
   "runtimeDockOpenTerminal": "{{name}} の端末を開く",
   "runtimeInspectorTitle": "ランタイムインスペクター",

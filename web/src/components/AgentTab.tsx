@@ -691,7 +691,6 @@ export function AgentTab({
                   )}
                 >
                   {rtInfo?.label || t("custom")} • {runtimeStatusText}
-                  {isHeadless && ` • ${t("headless")}`}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
                 <div

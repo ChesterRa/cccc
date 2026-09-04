@@ -124,6 +124,8 @@ fn realtime_instructions_pin_direct_and_delegated_routing_boundaries() {
     assert!(REALTIME_INSTRUCTIONS.contains("DO NOT delegate merely"));
     assert!(REALTIME_INSTRUCTIONS.contains("filler, a partial thought"));
     assert!(REALTIME_INSTRUCTIONS.contains("DELEGATE only a complete request"));
+    assert!(REALTIME_INSTRUCTIONS.contains("Do not hold or discard it"));
+    assert!(REALTIME_INSTRUCTIONS.contains("Runtime decides whether the input steers"));
 }
 
 #[test]
@@ -147,9 +149,80 @@ fn speakable_progress_waits_for_useful_multilingual_boundaries() {
         vec!["下一段尚未完成。"]
     );
     assert_eq!(
-        progress.finish("must not replay the complete result"),
+        progress.finish("查到了第一处。 第二处也已确认！下一段尚未完成。\n\n继续调查。"),
         vec!["继续调查。"]
     );
+}
+
+#[test]
+fn final_projection_reconciles_authoritative_text_instead_of_trusting_deltas() {
+    let progress_text = "Checking one source. Checking another source.";
+    for final_text in [
+        "The authoritative answer is 73.",
+        "Correction: the answer is 74, not 73.",
+    ] {
+        let mut progress = SpeakableProgress::default();
+        assert_eq!(
+            progress.push(progress_text).expect("project test progress"),
+            vec![progress_text]
+        );
+        assert_eq!(progress.finish(final_text), vec![final_text]);
+    }
+    let mut progress = SpeakableProgress::default();
+    progress.push(progress_text).expect("project test progress");
+    progress
+        .push(" Preliminary, incomplete conclusion")
+        .expect("project test progress");
+    assert_eq!(
+        progress.finish("Final conclusion."),
+        vec!["Final conclusion."]
+    );
+}
+
+#[test]
+fn progress_history_is_bounded_even_when_paragraphs_are_continuously_flushed() {
+    let mut progress = SpeakableProgress::default();
+    progress
+        .push("First sentence. Second sentence.")
+        .expect("project test progress");
+    for _ in 0..30 {
+        progress
+            .push(&format!("{}\n\n", "a".repeat(1000)))
+            .expect("project test progress");
+    }
+    assert!(progress.push(&"a".repeat(4000)).is_err());
+    assert_eq!(
+        progress.finish("A short authoritative final."),
+        vec!["A short authoritative final."]
+    );
+}
+
+#[test]
+fn final_projection_keeps_new_suffixes_but_does_not_repeat_delivered_results() {
+    let mut progress = SpeakableProgress::default();
+    progress
+        .push("结果一。结果二。")
+        .expect("project test progress");
+    assert_eq!(
+        progress.finish("结果一。结果二。结果三。"),
+        vec!["结果三。"]
+    );
+
+    let mut progress = SpeakableProgress::default();
+    progress
+        .push("调查进度一。调查进度二。\n\n最终答案。\n\n")
+        .expect("project test progress");
+    assert!(
+        progress
+            .finish("调查进度一。调查进度二。\n\n最终答案。")
+            .is_empty()
+    );
+
+    let mut progress = SpeakableProgress::default();
+    progress
+        .push("调查进度一。调查进度二。\n\n最终答案。")
+        .expect("project test progress");
+    assert_eq!(progress.finish("最终答案。"), vec!["最终答案。"]);
 }
 
 #[test]

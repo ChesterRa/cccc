@@ -125,6 +125,77 @@ fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_cred
 }
 
 #[test]
+fn claude_identity_tracks_every_launch_setting_that_agent_view_persists() {
+    let baseline = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Claude,
+        command: vec!["claude".into(), "--model".into(), "sonnet".into()],
+        environment: BTreeMap::from([
+            ("CLAUDE_CONFIG_DIR".into(), "/tmp/claude-a".into()),
+            ("ANTHROPIC_API_KEY".into(), "first".into()),
+        ]),
+    };
+
+    let mut changed_command = baseline.clone();
+    changed_command.command[2] = "opus".into();
+    assert_ne!(
+        baseline.identity_fingerprint(),
+        changed_command.identity_fingerprint(),
+        "an exact Agent View resume cannot reapply changed CLI flags"
+    );
+
+    let mut changed_environment = baseline.clone();
+    changed_environment
+        .environment
+        .insert("ANTHROPIC_API_KEY".into(), "second".into());
+    assert_ne!(
+        baseline.identity_fingerprint(),
+        changed_environment.identity_fingerprint(),
+        "an exact Agent View resume cannot reapply changed provider environment"
+    );
+}
+
+#[test]
+fn claude_path_aware_identity_tracks_all_local_launch_inputs() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    for (name, contents) in [
+        ("settings.json", "{}"),
+        ("prompt.txt", "first prompt"),
+        ("mcp-a.json", "{}"),
+        ("mcp-b.json", "{}"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("launch input");
+    }
+    let runtime = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Claude,
+        command: vec![
+            "claude".into(),
+            "--settings=settings.json".into(),
+            "--system-prompt-file".into(),
+            "prompt.txt".into(),
+            "--mcp-config".into(),
+            "mcp-a.json".into(),
+            "mcp-b.json".into(),
+            "--file".into(),
+            "file_abc:download.txt".into(),
+        ],
+        environment: BTreeMap::new(),
+    };
+    let baseline = runtime
+        .identity_fingerprint_at(temp.path())
+        .expect("baseline identity");
+
+    std::fs::write(temp.path().join("mcp-b.json"), r#"{"changed":true}"#)
+        .expect("updated MCP config");
+    assert_ne!(
+        baseline,
+        runtime
+            .identity_fingerprint_at(temp.path())
+            .expect("changed identity"),
+        "every local MCP config must participate in the resume identity"
+    );
+}
+
+#[test]
 fn codex_identity_keeps_the_legacy_receipt_format() {
     let runtime = ResolvedAgentRuntime {
         runtime: ActorRuntime::Codex,
@@ -223,10 +294,10 @@ fn rejects_a_profile_until_its_runtime_has_a_voice_adapter() {
         .expect("profiles")
         .upsert(
             json!({
-                "id":"claude",
-                "runtime":"claude",
+                "id":"cline",
+                "runtime":"cline",
                 "runner":"pty",
-                "command":["claude"],
+                "command":["cline"],
                 "submit":"enter"
             })
             .as_object()
@@ -238,7 +309,7 @@ fn rejects_a_profile_until_its_runtime_has_a_voice_adapter() {
     let error = resolve(
         &home,
         &CodexVoiceAnalystSettings {
-            profile_id: "claude".into(),
+            profile_id: "cline".into(),
             ..Default::default()
         },
         &BTreeMap::new(),

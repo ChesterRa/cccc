@@ -33,7 +33,6 @@ import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorP
 import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
-import { getEffectiveActorRunner, normalizeActorRunner } from "../utils/headlessRuntimeSupport";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import {
@@ -212,13 +211,11 @@ export function AppModals({
     setEditGroupTitle,
     setEditGroupTopic,
     editActorRuntime,
-    editActorRunner,
     editActorCommand,
     editActorTitle,
     editActorNotes,
     editActorCapabilityAutoloadText,
     setEditActorRuntime,
-    setEditActorRunner,
     setEditActorCommand,
     setEditActorTitle,
     setEditActorNotes,
@@ -226,7 +223,6 @@ export function AppModals({
     newActorId,
     newActorRole,
     newActorRuntime,
-    newActorRunner,
     newActorCommand,
     newActorUseDefaultCommand,
     newActorSecretsSetText,
@@ -238,7 +234,6 @@ export function AppModals({
     setNewActorId,
     setNewActorRole,
     setNewActorRuntime,
-    setNewActorRunner,
     setNewActorCommand,
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
@@ -774,7 +769,6 @@ export function AppModals({
       canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
 
     const currentRuntime = String(editingActor.runtime || "codex").trim();
-    const currentRunner = getEffectiveActorRunner(editingActor);
     const currentCommand = Array.isArray(editingActor.command)
       ? editingActor.command
           .filter((item) => typeof item === "string" && item.trim())
@@ -788,7 +782,6 @@ export function AppModals({
     const currentActorNotes = String(editActorNotesBaselineRef.current || "").trim();
     const nextActorNotes = String(editActorNotes || "").trim();
     const nextRuntime = String(editActorRuntime || "codex").trim();
-    const nextRunner = normalizeActorRunner(editActorRunner);
     const nextCommand = String(editActorCommand || "").trim();
     const nextTitle = String(editActorTitle || "").trim();
     const nextCapabilityAutoload = Array.isArray(payload.capabilityAutoload)
@@ -797,8 +790,6 @@ export function AppModals({
 
     const runtimeChanged =
       mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
-    const runnerChanged =
-      mode === "custom" && (!linkedBefore || convertToCustom) && nextRunner !== currentRunner;
     const commandChanged =
       mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
     const titleChanged = nextTitle !== currentTitle;
@@ -815,7 +806,6 @@ export function AppModals({
     const hasActorMutation =
       convertToCustom ||
       runtimeChanged ||
-      runnerChanged ||
       commandChanged ||
       titleChanged ||
       autoloadChanged ||
@@ -845,7 +835,6 @@ export function AppModals({
           actorId,
           undefined,
           undefined,
-          undefined,
           nextTitle,
           { profileAction: "convert_to_custom", capabilityAutoload: nextCapabilityAutoload },
         );
@@ -866,7 +855,6 @@ export function AppModals({
           const profileResp = await api.updateActor(
             selectedGroupId,
             actorId,
-            undefined,
             undefined,
             undefined,
             nextTitle,
@@ -895,13 +883,9 @@ export function AppModals({
               .join(" ")
               .trim()
           : currentCommand;
-        const snapshotRunner = getEffectiveActorRunner(
-          actorSnapshot as { runner?: unknown; runner_effective?: unknown },
-        );
         const snapshotTitle = String(actorSnapshot.title || "").trim();
         const needCustomPatch =
           nextRuntime !== snapshotRuntime ||
-          nextRunner !== snapshotRunner ||
           nextCommand !== snapshotCommand ||
           nextTitle !== snapshotTitle ||
           autoloadChanged;
@@ -910,7 +894,6 @@ export function AppModals({
             selectedGroupId,
             actorId,
             editActorRuntime,
-            nextRunner,
             editActorCommand,
             nextTitle,
             { capabilityAutoload: nextCapabilityAutoload },
@@ -996,7 +979,6 @@ export function AppModals({
     (actor: Record<string, unknown>) => {
       const runtime = String(actor.runtime || "").trim();
       setEditActorRuntime((runtime || "codex") as SupportedRuntime);
-      setEditActorRunner(getEffectiveActorRunner(actor));
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
       setEditActorTitle(String(actor.title || ""));
       setEditActorNotes("");
@@ -1008,7 +990,6 @@ export function AppModals({
     },
     [
       setEditActorRuntime,
-      setEditActorRunner,
       setEditActorCommand,
       setEditActorTitle,
       setEditActorNotes,
@@ -1039,7 +1020,6 @@ export function AppModals({
       Number(editingActor.profile_revision_applied || 0) !==
         Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
-      getEffectiveActorRunner(editingActor) !== getEffectiveActorRunner(latest) ||
       String(editingActor.title || "") !== String(latest.title || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
         String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||
@@ -1079,7 +1059,6 @@ export function AppModals({
       const resp = await api.upsertActorProfile({
         name: name.trim(),
         runtime: editActorRuntime,
-        runner: editActorRunner,
         command: editActorCommand.trim(),
         submit: String(editingActor.submit || "enter"),
         env: editingActor.env && typeof editingActor.env === "object" ? editingActor.env : {},
@@ -1186,7 +1165,6 @@ export function AppModals({
         actorId,
         newActorRole,
         newActorUseProfile ? String(selectedProfile?.runtime || "codex") : newActorRuntime,
-        newActorUseProfile ? normalizeActorRunner(selectedProfile?.runner) : newActorRunner,
         commandToUse,
         newActorUseProfile
           ? undefined
@@ -1266,7 +1244,6 @@ export function AppModals({
       const resp = await api.upsertActorProfile({
         name: name.trim(),
         runtime: newActorRuntime,
-        runner: newActorRunner,
         command: commandToUse,
         submit: "enter",
         env: {},
@@ -1959,8 +1936,6 @@ export function AppModals({
         runtimes={runtimes}
         runtime={editActorRuntime}
         onChangeRuntime={setEditActorRuntime}
-        runner={editActorRunner}
-        onChangeRunner={setEditActorRunner}
         command={editActorCommand}
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
@@ -2032,8 +2007,6 @@ export function AppModals({
         onRequestActorProfiles={loadActorProfiles}
         runtime={newActorRuntime}
         onChangeRuntime={setNewActorRuntime}
-        runner={newActorRunner}
-        onChangeRunner={setNewActorRunner}
         command={newActorCommand}
         onChangeCommand={setNewActorCommand}
         useDefaultCommand={newActorUseDefaultCommand}

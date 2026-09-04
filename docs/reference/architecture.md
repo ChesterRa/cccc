@@ -16,7 +16,7 @@
 
 - **Foreman**: Coordinator + Executor (the first enabled actor automatically becomes foreman)
 - **Peer**: Independent expert (other actors)
-- Supports PTY (terminal), Headless (MCP-only), and Web Model browser/remote-MCP delivery paths
+- CLI Runtimes expose their native terminal; capable Runtimes pair it with a structured background protocol on the same session. Web Model uses browser/remote-MCP delivery.
 
 ### Ledger
 
@@ -274,7 +274,7 @@ crates/
 ├── cccc-contracts/        # Versioned wire types
 ├── cccc-core/             # Durable state and kernel
 ├── cccc-daemon/           # Single-writer daemon and delivery
-├── cccc-runtime/          # PTY/headless provider runtimes
+├── cccc-runtime/          # Native terminal and managed provider sessions
 ├── cccc-web/              # Native Web API and embedded UI
 ├── cccc-mcp/              # MCP server
 └── cccc-cli/              # Public cccc executable

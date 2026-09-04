@@ -7,8 +7,7 @@ import type {
   LedgerEvent,
   StreamingActivity,
 } from "../../types";
-import { isHeadlessActorRunner } from "../../utils/headlessRuntimeSupport";
-import { resolveRuntimeActivityPhase } from "./runtimeActivityPhase";
+import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
 
 export type LiveWorkPhase = "pending" | "streaming" | "completed" | "failed";
 
@@ -21,16 +20,11 @@ export type LiveWorkCard = {
   text: string;
   transcriptBlocks: HeadlessPreviewBlock[];
   activities: StreamingActivity[];
-  runtimeActivities?: StreamingActivity[];
   previewSessions?: HeadlessPreviewSession[];
   updatedAt: string;
   streamId: string;
   pendingEventId: string;
 };
-
-function isHeadlessActor(actor: Actor): boolean {
-  return isHeadlessActorRunner(actor);
-}
 
 function normalizeActivities(value: unknown): StreamingActivity[] {
   if (!Array.isArray(value)) return [];
@@ -49,6 +43,7 @@ function normalizeSessionTime(updatedAt: number | undefined): string {
 function resolvePhase(args: {
   session: StreamingReplySession | undefined;
   event: LedgerEvent | undefined;
+  previewPhase?: string;
   pendingPlaceholder: boolean;
   hasRenderableContent: boolean;
 }): LiveWorkPhase {
@@ -65,6 +60,17 @@ function resolvePhase(args: {
   }
   if (args.event?._streaming) {
     return args.pendingPlaceholder && !args.hasRenderableContent ? "pending" : "streaming";
+  }
+  const previewPhase = String(args.previewPhase || "")
+    .trim()
+    .toLowerCase();
+  if (
+    previewPhase === "pending" ||
+    previewPhase === "streaming" ||
+    previewPhase === "completed" ||
+    previewPhase === "failed"
+  ) {
+    return previewPhase;
   }
   if (args.pendingPlaceholder && !args.hasRenderableContent) {
     return "pending";
@@ -93,7 +99,6 @@ export function buildLiveWorkCards(args: {
   previewSessionsByActorId?: Record<string, HeadlessPreviewSession[]>;
   latestActorTextByActorId: Record<string, string>;
   latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
-  runtimeActivitiesByActorId?: Record<string, StreamingActivity[]>;
   replySessionsByPendingEventId: Record<string, StreamingReplySession>;
 }): LiveWorkCard[] {
   const latestEventByActorId = new Map<string, LedgerEvent>();
@@ -119,13 +124,10 @@ export function buildLiveWorkCards(args: {
   for (const actor of Array.isArray(args.actors) ? args.actors : []) {
     const actorId = String(actor.id || "").trim();
     if (!actorId) continue;
-    const runtimeActivities = Array.isArray(args.runtimeActivitiesByActorId?.[actorId])
-      ? args.runtimeActivitiesByActorId?.[actorId] || []
-      : [];
-    const headless = isHeadlessActor(actor);
+    const headless = hasManagedRuntimeOutput(actor);
     const event = latestEventByActorId.get(actorId);
     const session = latestSessionByActorId.get(actorId);
-    if ((!headless || (!event && !session)) && runtimeActivities.length <= 0) continue;
+    if (!headless) continue;
     const previewSessions = Array.isArray(args.previewSessionsByActorId?.[actorId])
       ? (args.previewSessionsByActorId?.[actorId] || []).filter(Boolean)
       : [];
@@ -133,6 +135,7 @@ export function buildLiveWorkCards(args: {
       previewSessions.length > 0
         ? previewSessions[previewSessions.length - 1]
         : args.latestActorPreviewByActorId?.[actorId];
+    if (!event && !session && !preview) continue;
 
     const data =
       event?.data && typeof event.data === "object"
@@ -153,18 +156,17 @@ export function buildLiveWorkCards(args: {
         ? args.latestActorActivitiesByActorId[actorId]
         : normalizeActivities(data?.activities);
     const activities = Array.from(
-      new Map(
-        [...headlessActivities, ...runtimeActivities].map((activity) => [activity.id, activity]),
-      ).values(),
+      new Map(headlessActivities.map((activity) => [activity.id, activity])).values(),
     );
     const pendingPlaceholder = Boolean(data?.pending_placeholder);
     const basePhase = resolvePhase({
       session,
       event,
+      previewPhase: preview?.phase,
       pendingPlaceholder,
       hasRenderableContent: Boolean(text) || transcriptBlocks.length > 0 || activities.length > 0,
     });
-    const phase = resolveRuntimeActivityPhase(basePhase, runtimeActivities);
+    const phase = basePhase;
     if (!text && transcriptBlocks.length === 0 && activities.length === 0 && phase === "completed")
       continue;
 
@@ -179,12 +181,11 @@ export function buildLiveWorkCards(args: {
       text,
       transcriptBlocks,
       activities,
-      runtimeActivities,
       previewSessions,
       updatedAt:
         String(preview?.updatedAt || event?.ts || "").trim() ||
         normalizeSessionTime(session?.updatedAt) ||
-        String(runtimeActivities[runtimeActivities.length - 1]?.ts || "").trim(),
+        String(activities[activities.length - 1]?.ts || "").trim(),
       streamId: String(
         preview?.currentStreamId || data?.stream_id || session?.currentStreamId || "",
       ).trim(),

@@ -15,16 +15,7 @@ pub fn reap_exited() -> Result<Vec<SessionStatus>, OpError> {
 fn reconciliable_exits(exited: Vec<SessionStatus>) -> Vec<SessionStatus> {
     exited
         .into_iter()
-        .filter(|status| {
-            super::super::runtime_hook_session::with_launch_lock(
-                &status.group_id,
-                &status.actor_id,
-                || {
-                    !super::resume_verification::is_monitoring(status)
-                        && !has_running_replacement(status)
-                },
-            )
-        })
+        .filter(|status| !has_running_replacement(status))
         .collect()
 }
 
@@ -35,11 +26,7 @@ fn has_running_replacement(status: &SessionStatus) -> bool {
 pub fn reconcile_exited(home: &HomeLayout, exited: Vec<SessionStatus>) -> Result<(), OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     for status in exited {
-        let group_id = status.group_id.clone();
-        let actor_id = status.actor_id.clone();
-        super::super::runtime_hook_session::with_launch_lock(&group_id, &actor_id, || {
-            reconcile_one(&store, status)
-        })?;
+        reconcile_one(&store, status)?;
     }
     Ok(())
 }
@@ -48,8 +35,6 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     if has_running_replacement(&status) {
         return Ok(());
     }
-    super::super::runtime_hook_session::revoke(&status.group_id, &status.actor_id);
-    super::super::runtime_hook_input::reset(&status.group_id, &status.actor_id);
     let Ok(group) = store.load(&status.group_id) else {
         return Ok(());
     };
@@ -61,7 +46,8 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
         return Ok(());
     };
     if super::super::local_headless::supports(actor) {
-        super::super::local_headless::stop(&status.group_id, &status.actor_id);
+        super::super::local_headless::stop(&status.group_id, &status.actor_id)
+            .map_err(OpError::io)?;
     }
     // Preserve desired lifecycle after a provider exit. A later user-directed
     // message follows the same wake path whether the process exited or was stopped.
@@ -110,7 +96,7 @@ mod tests {
     use cccc_runtime::{LaunchSpec, SessionStatus};
     use std::collections::BTreeMap;
 
-    use super::{reconcile_exited, reconciliable_exits};
+    use super::reconcile_exited;
 
     #[test]
     fn app_server_exit_is_recorded_without_disabling_actor() {
@@ -189,22 +175,6 @@ mod tests {
         assert_eq!(event.kind, "actor.stop");
         assert_eq!(event.by, "system");
         assert_eq!(event.data["reason"], "process_exit");
-    }
-
-    #[test]
-    fn resume_verifier_owns_early_exit_reconciliation() {
-        let status = SessionStatus {
-            group_id: "g_resume_verification".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Pty,
-            running: false,
-            pid: Some(42),
-            started_at: "2026-08-07T00:00:00Z".into(),
-            exit_code: Some(1),
-        };
-        let _registration = super::super::resume_verification::register_for_test(&status);
-
-        assert!(reconciliable_exits(vec![status.clone()]).is_empty());
     }
 
     #[test]
