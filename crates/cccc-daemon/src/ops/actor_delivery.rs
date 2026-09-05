@@ -76,7 +76,10 @@ pub(super) fn submit_terminal_text(
 pub(super) fn terminal_submit_sequence(actor: &Actor) -> &'static [&'static [u8]] {
     match actor.submit {
         ActorSubmit::Enter
-            if matches!(actor.runtime, ActorRuntime::Codex | ActorRuntime::Copilot) =>
+            if matches!(
+                actor.runtime,
+                ActorRuntime::Codex | ActorRuntime::Copilot | ActorRuntime::Kimi
+            ) =>
         {
             &[b"\r", b"\r"]
         }

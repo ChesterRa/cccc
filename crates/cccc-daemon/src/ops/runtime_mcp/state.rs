@@ -472,8 +472,70 @@ fn kiro_home(env: &BTreeMap<String, String>) -> PathBuf {
     configured_path(env, "KIRO_HOME").unwrap_or_else(|| home_dir(env).join(".kiro"))
 }
 
+/// Kimi Code (the current `kimi` CLI) keeps its config, including `mcp.json`,
+/// under `~/.kimi-code`; the older Kimi CLI used `~/.kimi`. Honor an explicit
+/// `KIMI_SHARE_DIR`, then prefer whichever default directory exists.
 fn kimi_home(env: &BTreeMap<String, String>) -> PathBuf {
-    configured_path(env, "KIMI_SHARE_DIR").unwrap_or_else(|| home_dir(env).join(".kimi"))
+    if let Some(path) = configured_path(env, "KIMI_SHARE_DIR") {
+        return path;
+    }
+    let home = home_dir(env);
+    let kimi_code = home.join(".kimi-code");
+    if kimi_code.is_dir() {
+        return kimi_code;
+    }
+    let legacy = home.join(".kimi");
+    if legacy.is_dir() {
+        return legacy;
+    }
+    kimi_code
+}
+
+/// Kimi Code has no `kimi mcp add`; its MCP servers are declared in
+/// `<kimi home>/mcp.json`. Upsert the CCCC entry there and return the path.
+pub(super) fn write_kimi_entry(
+    env: &BTreeMap<String, String>,
+    expected: &[String],
+) -> std::io::Result<PathBuf> {
+    let path = kimi_home(env).join("mcp.json");
+    let mut document = match std::fs::read_to_string(&path) {
+        Ok(source) => serde_json::from_str::<Value>(&source).map_err(|error| {
+            std::io::Error::other(format!("{} is not valid JSON: {error}", path.display()))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Value::Object(serde_json::Map::new())
+        }
+        Err(error) => return Err(error),
+    };
+    let root = document.as_object_mut().ok_or_else(|| {
+        std::io::Error::other(format!("{} top level is not an object", path.display()))
+    })?;
+    let servers = root
+        .entry("mcpServers")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if servers.is_null() {
+        *servers = Value::Object(serde_json::Map::new());
+    }
+    let servers = servers.as_object_mut().ok_or_else(|| {
+        std::io::Error::other(format!("{} mcpServers is not an object", path.display()))
+    })?;
+    let mut entry = serde_json::Map::new();
+    entry.insert(
+        "command".into(),
+        Value::String(expected.first().cloned().unwrap_or_default()),
+    );
+    entry.insert(
+        "args".into(),
+        Value::Array(expected.iter().skip(1).cloned().map(Value::String).collect()),
+    );
+    if let Some(home) = env.get("CCCC_HOME") {
+        let mut entry_env = serde_json::Map::new();
+        entry_env.insert("CCCC_HOME".into(), Value::String(home.clone()));
+        entry.insert("env".into(), Value::Object(entry_env));
+    }
+    servers.insert("cccc".into(), Value::Object(entry));
+    cccc_core::fs::write_json(&path, &document)?;
+    Ok(path)
 }
 
 fn configured_path(env: &BTreeMap<String, String>, key: &str) -> Option<PathBuf> {
@@ -488,6 +550,36 @@ fn configured_path(env: &BTreeMap<String, String>, key: &str) -> Option<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kimi_entry_is_written_directly_into_mcp_json() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path();
+        let env = BTreeMap::from([
+            ("HOME".to_owned(), home.to_string_lossy().into_owned()),
+            (
+                "KIMI_SHARE_DIR".to_owned(),
+                home.join("kimi").to_string_lossy().into_owned(),
+            ),
+            ("CCCC_HOME".to_owned(), "/opt/cccc-home".to_owned()),
+        ]);
+        let expected: Vec<String> = vec!["/opt/cccc".into(), "mcp".into()];
+        assert_eq!(
+            json_state(ActorRuntime::Kimi, home, &env, &expected).state,
+            State::Missing
+        );
+        let path = write_kimi_entry(&env, &expected).expect("write entry");
+        assert_eq!(path, home.join("kimi/mcp.json"));
+        assert_eq!(
+            json_state(ActorRuntime::Kimi, home, &env, &expected).state,
+            State::Ready
+        );
+        let document: Value = cccc_core::fs::read_json(&path).expect("document");
+        assert_eq!(
+            document["mcpServers"]["cccc"]["env"]["CCCC_HOME"],
+            "/opt/cccc-home"
+        );
+    }
     use serde_json::json;
 
     #[test]

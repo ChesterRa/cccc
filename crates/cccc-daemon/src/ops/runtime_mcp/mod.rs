@@ -87,6 +87,27 @@ fn ensure_persistent(
     if report.state == State::Ready {
         return Ok(());
     }
+    if runtime == ActorRuntime::Kimi {
+        // Kimi Code ships no `kimi mcp add`; declare the server in its mcp.json directly.
+        let path = state::write_kimi_entry(env, &expected).map_err(|error| {
+            OpError::new(
+                "runtime_mcp_setup_failed",
+                format!("failed to write the Kimi Code MCP entry: {error}"),
+            )
+        })?;
+        let verified = inspect(runtime, cwd, env, &expected)?;
+        if verified.state != State::Ready {
+            return Err(OpError::new(
+                "runtime_mcp_verification_failed",
+                format!(
+                    "kimi MCP entry written to {} but it did not match {} mcp",
+                    path.display(),
+                    executable.display()
+                ),
+            ));
+        }
+        return Ok(());
+    }
     if matches!(runtime, ActorRuntime::Copilot | ActorRuntime::Kiro)
         && report.state == State::Stale
         && !report.source.is_empty()
