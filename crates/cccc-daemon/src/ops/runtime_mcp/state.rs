@@ -78,12 +78,6 @@ pub(super) fn json_state(
             expected,
             EntryShape::Common,
         ),
-        ActorRuntime::Kimi => entry_at(
-            &kimi_home(env).join("mcp.json"),
-            &["mcpServers", "cccc"],
-            expected,
-            EntryShape::Common,
-        ),
         _ => Report::new(State::Missing),
     }
 }
@@ -472,10 +466,6 @@ fn kiro_home(env: &BTreeMap<String, String>) -> PathBuf {
     configured_path(env, "KIRO_HOME").unwrap_or_else(|| home_dir(env).join(".kiro"))
 }
 
-fn kimi_home(env: &BTreeMap<String, String>) -> PathBuf {
-    configured_path(env, "KIMI_SHARE_DIR").unwrap_or_else(|| home_dir(env).join(".kimi"))
-}
-
 fn configured_path(env: &BTreeMap<String, String>, key: &str) -> Option<PathBuf> {
     match env.get(key) {
         Some(value) => (!value.trim().is_empty()).then(|| PathBuf::from(value.trim())),
@@ -541,10 +531,6 @@ mod tests {
                 "KIRO_HOME".into(),
                 home.join("kiro").to_string_lossy().into_owned(),
             ),
-            (
-                "KIMI_SHARE_DIR".into(),
-                home.join("kimi").to_string_lossy().into_owned(),
-            ),
         ]);
         let fixtures = [
             (ActorRuntime::Cline, home.join("cline.json"), true),
@@ -564,7 +550,6 @@ mod tests {
                 home.join(".augment/settings.json"),
                 false,
             ),
-            (ActorRuntime::Kimi, home.join("kimi/mcp.json"), false),
         ];
         for (runtime, path, nested_cline) in fixtures {
             std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");

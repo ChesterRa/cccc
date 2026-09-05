@@ -9,7 +9,7 @@ Frequently asked questions about CCCC.
 **vs. native agent teams (Claude Code subagents/agent teams and similar single-vendor features).**
 Native teams give you the smoothest experience inside one vendor and one session — if you only run Claude Code and your work fits in a session, they are a great default. CCCC adds what a single vendor structurally cannot:
 
-- **Cross-vendor groups** — Claude Code, Codex CLI, Grok Build, Kimi CLI, ChatGPT Web, and more in one group, so you can route work to whichever model or subscription fits each role.
+- **Cross-vendor groups** — Claude Code, Codex CLI, Grok Build, Kimi Code, ChatGPT Web, and more in one group, so you can route work to whichever model or subscription fits each role.
 - **Durable state** — groups, messages, delivery/read/reply facts, and tasks live in an append-only ledger owned by a daemon. Restarting a terminal (or your machine) does not dissolve the team.
 - **Remote operations** — check, pause, resume, and redirect a running group from Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or Weixin.
 - **An audit trail** — every message and its delivery state is replayable for review and debugging.
@@ -158,7 +158,7 @@ fails browser startup when Xvfb is missing instead of silently falling back to t
 - Droid (`droid`)
 - Grok Build (`grok`)
 - Hermes Agent (`hermes`)
-- Kimi CLI (`kimi`)
+- Kimi Code (`kimi`)
 - OpenCode (`opencode`)
 - Amp (`amp`)
 - Auggie (`auggie`)

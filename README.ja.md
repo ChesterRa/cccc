@@ -237,7 +237,7 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 | Droid | MCP 自動設定 | `droid` |
 | Amp | MCP 自動設定 | `amp` |
 | Auggie | MCP 自動設定 | `auggie` |
-| Kimi CLI | MCP 自動設定 | `kimi` |
+| Kimi Code | MCP 自動設定 | `kimi` |
 | OpenCode | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `opencode` |
 | Custom | 手動設定 | 任意のコマンド |
 

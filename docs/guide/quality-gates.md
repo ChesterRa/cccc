@@ -124,6 +124,16 @@ archives and dependency-free platform wheels. It does not build an sdist,
 universal wheel, importable CCCC Python package, fallback engine, or second Rust
 registry distribution.
 
+The Pages build uses its workflow token to resolve complete stable/RC releases,
+then publishes `releases.json` alongside the stable-pinned installers. It must
+fail before deployment if resolution fails or VitePress does not preserve that
+index. For the first rollout, deploy Pages and verify
+`https://chesterra.github.io/cccc/releases.json` before distributing the CLI that
+uses it. Subsequent successful release workflows refresh Pages automatically;
+`Deploy Docs` can also be rerun manually. Older clients blocked by API rate
+limits can upgrade through the original installation command after the fixed
+release is published. Installation and checksum verification remain unchanged.
+
 ## Design Boundary
 
 - Formatting, linting, type checks, tests, and builds validate the current tree.

@@ -243,7 +243,7 @@ CCCC orchestrates agents across 17 first-class runtimes, with `custom` available
 | Droid | Auto MCP setup | `droid` |
 | Amp | Auto MCP setup | `amp` |
 | Auggie | Auto MCP setup | `auggie` |
-| Kimi CLI | Auto MCP setup | `kimi` |
+| Kimi Code | Auto MCP setup | `kimi` |
 | OpenCode | Managed ACP session + native TUI; per-session MCP | `opencode` |
 | Custom | Manual | Any command |
 

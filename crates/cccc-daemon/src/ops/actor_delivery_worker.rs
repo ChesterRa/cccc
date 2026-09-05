@@ -9,6 +9,10 @@ use crate::ops::actor_runtime;
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(test)]
+#[path = "actor_delivery_live_tests.rs"]
+mod live_tests;
+
 pub fn process_batch(
     jobs: &[DeliveryJob],
     preamble_session: &mut String,

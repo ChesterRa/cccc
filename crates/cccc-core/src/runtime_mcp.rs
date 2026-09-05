@@ -2,6 +2,9 @@ use cccc_contracts::ActorRuntime;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+mod kimi;
+pub use kimi::ensure as ensure_kimi;
+
 #[must_use]
 pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
     matches!(
@@ -156,17 +159,6 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
         ]),
         ActorRuntime::Amp => common(&["amp", "mcp", "add", "cccc", &cccc, "mcp"]),
         ActorRuntime::Auggie => common(&["auggie", "mcp", "add", "cccc", "--", &cccc, "mcp"]),
-        ActorRuntime::Kimi => common(&[
-            "kimi",
-            "mcp",
-            "add",
-            "--transport",
-            "stdio",
-            "cccc",
-            "--",
-            &cccc,
-            "mcp",
-        ]),
         _ => return None,
     })
 }
@@ -183,7 +175,6 @@ pub fn remove_command(runtime: ActorRuntime) -> Option<Vec<String>> {
         ActorRuntime::Droid => &["droid", "mcp", "remove", "cccc"],
         ActorRuntime::Amp => &["amp", "mcp", "remove", "cccc"],
         ActorRuntime::Auggie => &["auggie", "mcp", "remove", "cccc"],
-        ActorRuntime::Kimi => &["kimi", "mcp", "remove", "cccc"],
         _ => return None,
     };
     Some(parts.iter().map(|part| (*part).to_owned()).collect())

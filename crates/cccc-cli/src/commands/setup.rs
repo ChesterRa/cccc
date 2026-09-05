@@ -159,6 +159,16 @@ fn setup_one(
             "mcp":"injected_per_session"
         }));
     }
+    if runtime == "kimi" {
+        let mut environment = std::env::vars().collect::<std::collections::BTreeMap<_, _>>();
+        environment.insert(
+            "CCCC_HOME".into(),
+            home.root().to_string_lossy().into_owned(),
+        );
+        let path =
+            cccc_core::runtime_mcp::ensure_kimi(&absolute(&args.path)?, &environment, executable)?;
+        return Ok(json!({"runtime":runtime,"mode":"auto","status":"ready","path":path}));
+    }
     let command = add_command(runtime, executable)?;
     let cwd = absolute(&args.path)?;
     let mut output = run_command(&command, &cwd, home)?;

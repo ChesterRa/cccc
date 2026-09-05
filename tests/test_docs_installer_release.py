@@ -6,6 +6,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RESOLVER = "scripts/resolve_docs_installer_version.mjs"
@@ -31,13 +33,137 @@ def _release(version: str, *, complete: bool) -> dict[str, object]:
     }
 
 
-def _resolve(metadata: Path) -> subprocess.CompletedProcess[str]:
+def _resolve(metadata: Path, output: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["node", RESOLVER, "--metadata", str(metadata)],
+        ["node", RESOLVER, "--metadata", str(metadata)]
+        + (["--output", str(output)] if output is not None else []),
         cwd=ROOT,
+        env={**os.environ, "GITHUB_REPOSITORY": "ChesterRa/cccc"},
         capture_output=True,
         text=True,
     )
+
+
+def test_release_index_publishes_only_complete_channels_from_the_same_snapshot(tmp_path: Path) -> None:
+    metadata = tmp_path / "input.json"
+    output = tmp_path / "public/releases.json"
+    draft = {**_release("1.3.0", complete=True), "draft": True}
+    mislabeled = {**_release("1.3.1", complete=True), "prerelease": True}
+    uploading = _release("1.4.0", complete=True)
+    uploading["assets"][0]["state"] = "new"
+    metadata.write_text(json.dumps([
+        _release("1.1.0", complete=True),
+        _release("1.2.0-rc10", complete=True),
+        _release("1.2.0-rc2", complete=True),
+        _release("1.2.0-rc11", complete=False),
+        _release("1.2.0", complete=True),
+        _release("1.3.0-rc1", complete=False),
+        _release("1.3.0", complete=False),
+        draft, mislabeled, uploading,
+    ]), encoding="utf-8")
+
+    resolved = _resolve(metadata, output)
+
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout.strip() == "1.2.0"
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "repository": "ChesterRa/cccc",
+        "channels": {"stable": resolved.stdout.strip(), "rc": "1.2.0-rc10"},
+    }
+    assert list(output.parent.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize(("versions", "expected"), [
+    (["1.0.0-rc2", "1.0.0-rc10"], "1.0.0-rc10"),
+    (["1.0.0-beta20", "1.0.0-rc1", "1.0.0-alpha100"], "1.0.0-rc1"),
+    (["1.0.0-rc.9", "1.0.0-rc10", "1.0.0-rc.11"], "1.0.0-rc.11"),
+    (["1.0.0-test.9", "1.0.0-test.10", "1.0.0-test.10.1"], "1.0.0-test.10.1"),
+    (["1.0.0-1", "1.0.0-alpha"], "1.0.0-alpha"),
+    (["1.0.0-rc999", "1.0.1-alpha1"], "1.0.1-alpha1"),
+    (["01.0.0-rc1", "1.0.0-01", "18446744073709551616.0.0-rc1"], None),
+    ([], None),
+])
+def test_release_index_orders_supported_prerelease_versions(
+    tmp_path: Path, versions: list[str], expected: str | None,
+) -> None:
+    metadata = tmp_path / "input.json"
+    output = tmp_path / "releases.json"
+    releases = [_release("0.9.0", complete=True)]
+    releases.extend(_release(version, complete=True) for version in versions)
+    for ordered in (releases, list(reversed(releases))):
+        metadata.write_text(json.dumps(ordered), encoding="utf-8")
+        resolved = _resolve(metadata, output)
+        assert resolved.returncode == 0, resolved.stderr
+        assert json.loads(output.read_text(encoding="utf-8"))["channels"]["rc"] == expected
+
+
+@pytest.mark.parametrize("metadata_text", [
+    "{", "[]", json.dumps([_release("1.0.0", complete=False)]),
+    json.dumps([_release("1.0.0-rc1", complete=True)]),
+])
+def test_failed_resolution_preserves_the_previous_index(tmp_path: Path, metadata_text: str) -> None:
+    metadata = tmp_path / "input.json"
+    output = tmp_path / "releases.json"
+    metadata.write_text(metadata_text, encoding="utf-8")
+    previous = '{"previous": "published snapshot"}\n'
+    output.write_text(previous, encoding="utf-8")
+
+    resolved = _resolve(metadata, output)
+
+    assert resolved.returncode != 0
+    assert resolved.stdout.strip() == ""
+    assert output.read_text(encoding="utf-8") == previous
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("failed_page", [None, 1, 2])
+def test_release_index_uses_authenticated_paginated_ci_metadata(
+    tmp_path: Path, failed_page: int | None,
+) -> None:
+    output = tmp_path / "releases.json"
+    previous = '{"previous": "published snapshot"}\n'
+    output.write_text(previous, encoding="utf-8")
+    pages = [
+        [_release("1.1.0-rc1", complete=True), _release("1.2.0", complete=False)],
+        [_release("1.0.0", complete=True)],
+    ]
+    # Simulate GitHub without consuming API quota or reading real credentials.
+    script = f"""
+      import assert from 'node:assert/strict';
+      const pages = {json.dumps(pages)};
+      const failedPage = {json.dumps(failed_page)};
+      let calls = 0;
+      process.argv = ['node', {json.dumps(RESOLVER)}, '--output', {json.dumps(str(output))}];
+      globalThis.fetch = async (url, options) => {{
+        calls += 1;
+        assert.equal(url, `https://api.github.com/repos/ChesterRa/cccc/releases?per_page=100&page=${{calls}}`);
+        assert.equal(options.headers.Authorization, 'Bearer fixture-token');
+        assert.ok(options.signal instanceof AbortSignal);
+        if (calls === failedPage) return new Response('rate limited', {{status: 403}});
+        assert.ok(calls <= pages.length);
+        return new Response(JSON.stringify(pages[calls - 1]), {{
+          headers: calls < pages.length ? {{Link: '<https://api.github.com/next>; rel="next"'}} : {{}},
+        }});
+      }};
+      await import('./{RESOLVER}');
+      assert.equal(calls, 2);
+    """
+    resolved = subprocess.run(
+        ["node", "--input-type=module", "--eval", script], cwd=ROOT,
+        env={**os.environ, "GITHUB_REPOSITORY": "ChesterRa/cccc", "GITHUB_TOKEN": "fixture-token"},
+        capture_output=True, text=True,
+    )
+    if failed_page is None:
+        assert resolved.returncode == 0, resolved.stderr
+        assert resolved.stdout.strip() == "1.0.0"
+        assert json.loads(output.read_text(encoding="utf-8"))["channels"] == {
+            "stable": "1.0.0", "rc": "1.1.0-rc1",
+        }
+    else:
+        assert resolved.returncode != 0
+        assert "Could not list GitHub Releases (403)" in resolved.stderr
+        assert output.read_text(encoding="utf-8") == previous
 
 
 def test_docs_installer_renderer_accepts_a_released_version_override() -> None:

@@ -418,7 +418,7 @@ const fn display_name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Droid => "Factory Droid",
         ActorRuntime::Grok => "Grok",
         ActorRuntime::Hermes => "Hermes",
-        ActorRuntime::Kimi => "Kimi CLI",
+        ActorRuntime::Kimi => "Kimi Code",
         ActorRuntime::Opencode => "OpenCode",
         ActorRuntime::WebModel => "Web Model",
         ActorRuntime::Custom => "Custom",

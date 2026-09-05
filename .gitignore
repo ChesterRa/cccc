@@ -50,6 +50,7 @@ graphify-out
 /docs/.vitepress/dist/
 /docs/public/install.sh
 /docs/public/install.ps1
+/docs/public/releases.json
 /docs/_archive_local/
 /docs/voice-secretary/**
 

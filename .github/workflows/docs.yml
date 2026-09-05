@@ -54,11 +54,13 @@ jobs:
         run: npm ci
         working-directory: docs
 
-      - name: Resolve latest complete stable installer release
+      - name: Resolve complete release channels and stable installer version
         id: installer-release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: echo "version=$(node scripts/resolve_docs_installer_version.mjs)" >> "$GITHUB_OUTPUT"
+        run: |
+          version="$(node scripts/resolve_docs_installer_version.mjs --output docs/public/releases.json)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build with VitePress
         env:
@@ -66,7 +68,10 @@ jobs:
         run: npm run build
         working-directory: docs
 
-      - name: Upload artifact
+      - name: Verify published release index
+        run: cmp docs/public/releases.json docs/.vitepress/dist/releases.json
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/.vitepress/dist

@@ -236,7 +236,7 @@ CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 | Droid | 自动 MCP 配置 | `droid` |
 | Amp | 自动 MCP 配置 | `amp` |
 | Auggie | 自动 MCP 配置 | `auggie` |
-| Kimi CLI | 自动 MCP 配置 | `kimi` |
+| Kimi Code | 自动 MCP 配置 | `kimi` |
 | OpenCode | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `opencode` |
 | Custom | 手动配置 | 任意命令 |
 

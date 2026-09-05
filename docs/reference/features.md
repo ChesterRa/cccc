@@ -350,7 +350,7 @@ Recommended options:
 | droid | `droid` | Droid |
 | grok | `grok` | Grok Build |
 | hermes | `hermes` | Hermes Agent |
-| kimi | `kimi` | Kimi CLI |
+| kimi | `kimi` | Kimi Code |
 | opencode | `opencode` | OpenCode |
 | web_model | ChatGPT Web conversation | ChatGPT Web conversation with CCCC MCP access; optional experimental GPT Pro delivery attaches a tiny blank PNG but does not select the model or guarantee connector availability |
 | custom | Any command | Any command |

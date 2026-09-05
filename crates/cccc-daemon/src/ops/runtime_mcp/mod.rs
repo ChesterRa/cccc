@@ -82,6 +82,11 @@ fn ensure_persistent(
     env: &BTreeMap<String, String>,
     executable: &Path,
 ) -> Result<(), OpError> {
+    if runtime == ActorRuntime::Kimi {
+        return cccc_core::runtime_mcp::ensure_kimi(cwd, env, executable)
+            .map(|_| ())
+            .map_err(|error| OpError::new("runtime_mcp_setup_failed", error.to_string()));
+    }
     let expected = cccc_core::runtime_mcp::expected_command(executable);
     let report = inspect(runtime, cwd, env, &expected)?;
     if report.state == State::Ready {
@@ -265,4 +270,68 @@ fn run_checked(
             }
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kimi_actor_setup_uses_the_code_config_without_invoking_a_cli() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("project");
+        let config = temp.path().join("kimi-code");
+        let home = temp.path().join("cccc-home");
+        let env = BTreeMap::from([
+            ("KIMI_CODE_HOME".into(), config.display().to_string()),
+            ("CCCC_HOME".into(), home.display().to_string()),
+            ("PATH".into(), String::new()),
+        ]);
+        ensure_persistent(ActorRuntime::Kimi, &cwd, &env, Path::new("/opt/cccc"))
+            .expect("setup without kimi mcp command");
+        let config: serde_json::Value =
+            cccc_core::fs::read_json(&config.join("mcp.json")).expect("config");
+        assert_eq!(config["mcpServers"]["cccc"]["command"], "/opt/cccc");
+        assert_eq!(
+            config["mcpServers"]["cccc"]["env"]["CCCC_HOME"],
+            home.display().to_string()
+        );
+    }
+
+    #[test]
+    fn kimi_actor_setup_inherits_the_daemon_environment() {
+        const CANARY: &str = "CCCC_KIMI_SETUP_CANARY";
+        if let Some(root) = std::env::var_os(CANARY) {
+            let root = std::path::PathBuf::from(root);
+            // No HOME/KIMI_CODE_HOME override on the Actor itself.
+            let overrides =
+                BTreeMap::from([("CCCC_HOME".into(), root.join("cccc").display().to_string())]);
+            ensure_persistent(
+                ActorRuntime::Kimi,
+                &root.join("project"),
+                &overrides,
+                Path::new("/opt/cccc"),
+            )
+            .expect("inherited Kimi Code home");
+            assert!(root.join("kimi-code/mcp.json").is_file());
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "ops::runtime_mcp::tests::kimi_actor_setup_inherits_the_daemon_environment",
+                "--nocapture",
+            ])
+            .env(CANARY, temp.path())
+            .env("KIMI_CODE_HOME", temp.path().join("kimi-code"))
+            .output()
+            .expect("isolated test process");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

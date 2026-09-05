@@ -23,7 +23,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Auggie (Augment) | `auggie` | `auggie` | Auto |
 | Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Injected into each managed session |
 | Hermes Agent | `hermes` | `hermes` | Auto through the user's Hermes profile |
-| Kimi CLI | `kimi` | `kimi` | Auto |
+| Kimi Code | `kimi` | Native TUI | Auto through Kimi Code's MCP config |
 | OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | ChatGPT Web Model | `web_model` | Bound ChatGPT Web conversation | Browser delivery + remote MCP connector |
 
@@ -47,7 +47,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `droid` | `droid --auto high` | Starts Droid in high-autonomy mode. |
 | `grok` | `grok --always-approve` | Starts Grok Build with approval prompts bypassed. |
 | `hermes` | `hermes --tui --yolo` | Starts Hermes in TUI YOLO mode. |
-| `kimi` | `kimi --yolo` | Starts Kimi in YOLO mode. |
+| `kimi` | `kimi --yolo` | Ask When Needed: routine actions are automatic; risky actions and questions can still ask. Use an explicit `kimi --auto` command for Never Ask mode. |
 | `opencode` | `opencode --auto` | CCCC owns the ACP permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
 | `amp` | `amp` | No extra CCCC launch flag; Amp's current CLI default is already direct tool execution. |
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
@@ -100,6 +100,36 @@ Actor messages still enter those four Runtimes through their native terminal. CC
 
 Cline currently opens a fresh native terminal on each start. CCCC does not persist or reuse Cline's `--id` session identifier.
 
+### Kimi Code
+
+The `kimi` runtime targets [Kimi Code](https://github.com/MoonshotAI/kimi-code)
+(`@moonshot-ai/kimi-code`), not the former Python `kimi-cli`. Install the current
+client and launch CCCC from a new terminal if its installer changed your `PATH`.
+Actor commands, Runtime Profiles, and private environment variables remain the
+normal configuration surface; this adapter does not enable Kimi as a Voice Analyst.
+
+Actor startup and `cccc setup --runtime kimi` use the same MCP setup implementation.
+It updates only `mcpServers.cccc` in `$KIMI_CODE_HOME/mcp.json`, defaulting to
+`~/.kimi-code/mcp.json`, without replacing other servers or malformed files.
+It never guesses a data root from a leftover `.kimi` directory or calls the
+removed `kimi mcp add` command. A project-level `.kimi-code/mcp.json` takes
+precedence: a conflicting `cccc` entry must be corrected or removed by the
+operator, and is not silently overwritten or reported as ready.
+
+On first use, complete Kimi's workspace trust and login/model setup in its native
+terminal **before sending CCCC messages**. Enabling bracketed paste does not prove
+that Kimi has left those dialogs. CCCC does not pre-approve trust or detect
+completion of these dialogs; input sent too early may be consumed by a dialog. An
+initialized Kimi Code 0.41.0 TUI accepts the normal single Enter submit, including
+multiline input. CCCC does not add a second Enter based on older client behavior.
+
+To resume a specific Kimi session, use `kimi --session <id> --yolo` in the Actor's
+custom command or Runtime Profile. CCCC preserves that command but does not yet
+capture Kimi session IDs or automatically resume them. Avoid adding `--continue`
+to a shared profile: it selects the most recent session in the working directory,
+which may belong to another Actor. Use Kimi's own `/new` command or remove the
+explicit resume argument to start a new provider conversation.
+
 ### Delivery and recovery
 
 A successful Send means that CCCC durably appended the message. For each
@@ -146,7 +176,14 @@ creates a new one. Voice Analyst uses this same Codex host/remote-TUI substrate,
 with a global user MCP identity and its own warm lifecycle instead of Actor
 identity and Group lifecycle.
 
-Direct Claude Code Actors require Claude Code 2.1.259 or newer. CCCC owns one
+Direct Claude Code Actors require Claude Code 2.1.259 or newer. Before first use,
+accept Claude's bypass-mode disclaimer interactively with
+`claude --dangerously-skip-permissions` under the same Claude configuration.
+If it has not been accepted, the managed launch returns Claude's actionable
+error before opening an Actor terminal; CCCC does not write workspace trust or
+disclaimer acceptance into the user's global configuration.
+
+CCCC owns one
 Agent View background session, launches `claude attach` against that exact
 session, and derives turn ownership, tool results, completion, cancellation,
 and provider errors from Claude's append-only transcript. Actor deliveries go

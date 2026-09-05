@@ -355,7 +355,7 @@ cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
 cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI
 cccc setup --runtime devin         # Auto-configure for Devin CLI
 cccc setup --runtime kiro          # Auto-configure for Kiro CLI
-cccc setup --runtime kimi          # Auto-configure for Kimi CLI
+cccc setup --runtime kimi          # Auto-configure for Kimi Code
 cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
 cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
 ```
@@ -379,6 +379,30 @@ Notes:
 - A stable build defaults to `stable`; a prerelease build defaults to `rc`.
 - Website-installer installations reuse the GitHub Pages installer and preserve
   their current install directory.
+- Update discovery reads `https://chesterra.github.io/cccc/releases.json`, a small
+  static file published with the installers, rather than querying the GitHub
+  Releases API on each user's machine. No GitHub token is required. Archives
+  still come from GitHub Releases and retain the installer's checksum checks.
+- The Pages workflow selects only published releases with the complete installer
+  asset set. Its versioned document has the shape
+  `{"schema_version":1,"repository":"ChesterRa/cccc","channels":{"stable":"0.4.37","rc":null}}`.
+  `rc` contains the latest complete prerelease, or `null` when none exists. The
+  installer default and `stable` are generated from the same release snapshot;
+  a discovery/build failure must not replace the live Pages deployment.
+- Version selection follows release precedence, with CCCC's `alphaN`, `betaN`,
+  and `rcN` suffixes compared numerically (for example, `rc10` follows `rc2`).
+  A same-version update is a no-op. Ordinary updates never install an older
+  version, including when Pages is briefly stale. An explicit switch to the
+  other channel, such as `--channel stable` from an RC build, may install an
+  older release of that channel. Missing channels and invalid metadata fail
+  before invoking the installer; there is no fallback to the rate-limited API.
+- Fork distributors using `CCCC_GITHUB_REPOSITORY` must also set
+  `CCCC_RELEASE_INDEX_URL` to their HTTPS static index. The index's `repository`
+  must match the configured repository. The standard installation needs neither
+  setting; these values never carry credentials.
+- Older installed versions still use their old discovery code. Once a fixed
+  release is published, rerun the original installation command to upgrade an
+  installation whose old `cccc update` is blocked by API rate limits.
 - Pip-owned, source-tree, and other markerless executables are not updated by
   this command. Pip users run
   `python -m pip install -U "cccc-pair>=0.4.36"`; the wheel contains the same

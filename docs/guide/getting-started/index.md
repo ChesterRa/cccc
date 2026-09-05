@@ -53,7 +53,7 @@ Macs.
   - [Kiro CLI](https://kiro.dev/docs/cli/)
   - [Kilo Code CLI](https://kilo.ai/docs/code-with-ai/platforms/cli)
   - [Antigravity CLI](https://antigravity.google/docs/cli-overview)
-  - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+  - [Kimi Code](https://github.com/MoonshotAI/kimi-code)
 - Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
 - Or a custom runtime command if you wire MCP manually
 

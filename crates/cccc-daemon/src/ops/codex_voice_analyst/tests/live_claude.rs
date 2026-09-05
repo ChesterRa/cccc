@@ -32,6 +32,11 @@ async fn live_claude_cold_terminal_preserves_large_first_delivery() {
     std::fs::create_dir_all(&root).expect("project");
     let config_dir = temp.path().join("claude");
     configure_isolated_claude(&config_dir);
+    // PR #97: this fresh directory has never been trusted. The managed
+    // background session and its attach must still capture the first input.
+    let before: serde_json::Value =
+        cccc_core::fs::read_json(&config_dir.join(".claude.json")).expect("config");
+    assert!(before.get("projects").is_none());
     let mut config = LaunchConfig::new(&root);
     config.runtime = ActorRuntime::Claude;
     config.environment.extend([
@@ -127,6 +132,58 @@ async fn live_claude_cold_terminal_preserves_large_first_delivery() {
     stopped.expect("stop owned Claude job");
     terminal_stopped.expect("stop owned terminal");
     assert_eq!(observed.expect("captured input"), text);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_claude_requires_bypass_ack_before_creating_a_managed_session() {
+    if std::env::var("CCCC_CLAUDE_TERMINAL_LIVE").as_deref() != Ok("1") {
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let root = temp.path().join("project");
+    let config_dir = temp.path().join("claude");
+    std::fs::create_dir_all(&root).expect("project");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    cccc_core::fs::write_json(
+        &config_dir.join(".claude.json"),
+        &serde_json::json!({"hasCompletedOnboarding":true}),
+    )
+    .expect("onboarding without trust or bypass acknowledgement");
+    let mut config = LaunchConfig::new(&root);
+    config.runtime = ActorRuntime::Claude;
+    config.environment.extend([
+        (
+            "CLAUDE_CONFIG_DIR".into(),
+            config_dir.to_string_lossy().into_owned(),
+        ),
+        ("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:9".into()),
+        (
+            "ANTHROPIC_AUTH_TOKEN".into(),
+            "cccc-local-input-test".into(),
+        ),
+    ]);
+    let error = match AnalystSession::launch(&home, config).await {
+        Ok(session) => {
+            session
+                .stop(session.generation())
+                .await
+                .expect("stop unexpected job");
+            panic!("unacknowledged bypass mode must not create a managed session");
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("accepting the disclaimer first"),
+        "{error}"
+    );
+    let jobs = config_dir.join("jobs");
+    assert!(!jobs.exists() || std::fs::read_dir(jobs).expect("jobs").next().is_none());
+    let config: serde_json::Value =
+        cccc_core::fs::read_json(&config_dir.join(".claude.json")).expect("config");
+    assert!(config.get("projects").is_none());
+    assert_ne!(config["bypassPermissionsModeAccepted"], true);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

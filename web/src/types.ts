@@ -1488,7 +1488,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Managed delivery in the same native Grok TUI" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
-  kimi: { label: "Kimi CLI", desc: "" },
+  kimi: { label: "Kimi Code", desc: "" },
   opencode: { label: "OpenCode", desc: "Managed delivery in the same native OpenCode TUI" },
   web_model: {
     label: "ChatGPT Web Model",

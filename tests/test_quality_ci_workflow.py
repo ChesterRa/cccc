@@ -514,7 +514,22 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     )
     assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
     docs_runs = _runs(docs_workflow["jobs"]["build"])
-    assert "node scripts/resolve_docs_installer_version.mjs" in docs_runs
+    resolver_command = "node scripts/resolve_docs_installer_version.mjs --output docs/public/releases.json"
+    assert f'version="$({resolver_command})"' in docs_runs
+    assert 'echo "version=$version" >> "$GITHUB_OUTPUT"' in docs_runs
+    resolver = next(
+        step for step in docs_workflow["jobs"]["build"]["steps"]
+        if step.get("id") == "installer-release"
+    )
+    assert resolver["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    verification = "cmp docs/public/releases.json docs/.vitepress/dist/releases.json"
+    assert docs_runs.index(resolver_command) < docs_runs.index("npm run build") < docs_runs.index(verification)
+    steps = docs_workflow["jobs"]["build"]["steps"]
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-pages-artifact"))
+    verify = next(step for step in steps if step.get("run") == verification)
+    assert steps.index(verify) < steps.index(upload)
+    assert upload["with"]["path"] == "docs/.vitepress/dist"
+    assert docs_workflow["jobs"]["deploy"]["needs"] == "build"
     build = next(
         step
         for step in docs_workflow["jobs"]["build"]["steps"]
