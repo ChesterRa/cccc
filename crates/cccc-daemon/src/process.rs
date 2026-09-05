@@ -16,6 +16,9 @@ pub enum StartOutcome {
     Started(u32),
 }
 
+#[cfg(windows)]
+const DETACHED_CREATION_FLAGS: u32 = 0x0000_0200 | 0x0000_0008;
+
 pub struct DetachedDaemon {
     executable: PathBuf,
     run_args: Vec<OsString>,
@@ -44,6 +47,25 @@ impl DetachedDaemon {
     /// handle. Owners that must later stop exactly the process they created
     /// should use this instead of relying on a reusable PID.
     pub async fn start_owned(&self, home: &HomeLayout) -> Result<Option<Child>> {
+        Ok(self.start_inner(home, false).await?.map(|(child, _)| child))
+    }
+
+    /// Start a Web-owned daemon with a tree registered before readiness waits.
+    pub async fn start_supervised(
+        &self,
+        home: &HomeLayout,
+    ) -> Result<Option<(Child, cccc_runtime::OwnedProcessTree)>> {
+        Ok(self
+            .start_inner(home, true)
+            .await?
+            .map(|(child, tree)| (child, tree.expect("supervised spawn owns a tree"))))
+    }
+
+    async fn start_inner(
+        &self,
+        home: &HomeLayout,
+        supervised: bool,
+    ) -> Result<Option<(Child, Option<cccc_runtime::OwnedProcessTree>)>> {
         home.initialize()?;
         if ping(home).await {
             return Ok(None);
@@ -56,20 +78,42 @@ impl DetachedDaemon {
             .open(&paths.log)?;
         let error_log = log.try_clone()?;
         let mut command = self.command(home);
-        let mut child = command
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(error_log))
-            .current_dir(home.root())
-            .spawn()
-            .with_context(|| format!("spawn Rust daemon via {}", self.executable.display()))?;
+            .current_dir(home.root());
+        let (mut child, tree) = if supervised {
+            #[cfg(unix)]
+            let spawned = cccc_runtime::OwnedProcessTree::spawn(&mut command);
+            #[cfg(windows)]
+            let spawned = cccc_runtime::OwnedProcessTree::spawn_with_creation_flags(
+                &mut command,
+                DETACHED_CREATION_FLAGS,
+            );
+            let (child, tree) = spawned
+                .with_context(|| format!("spawn Rust daemon via {}", self.executable.display()))?;
+            (child, Some(tree))
+        } else {
+            (
+                command.spawn().with_context(|| {
+                    format!("spawn Rust daemon via {}", self.executable.display())
+                })?,
+                None,
+            )
+        };
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
             if ping(home).await {
-                return Ok(Some(child));
+                return Ok(Some((child, tree)));
             }
-            if let Some(status) = child.try_wait().context("poll Rust daemon process")? {
+            let status = match &tree {
+                Some(tree) => tree.try_wait(|| child.try_wait()),
+                None => child.try_wait(),
+            }
+            .context("poll Rust daemon process")?;
+            if let Some(status) = status {
                 anyhow::bail!(
                     "Rust daemon exited before becoming ready with {status}; see {}",
                     paths.log.display()
@@ -81,6 +125,9 @@ impl DetachedDaemon {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
+        if let Some(tree) = &tree {
+            let _ = tree.terminate();
+        }
         let _ = child.kill();
         let _ = child.wait();
         anyhow::bail!(
@@ -120,68 +167,11 @@ fn detached_command(executable: &Path) -> Command {
 #[cfg(windows)]
 fn detached_command(executable: &Path) -> Command {
     use std::os::windows::process::CommandExt;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
     let mut command = Command::new(executable);
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    command.creation_flags(DETACHED_CREATION_FLAGS);
     command
 }
 
 #[cfg(test)]
-mod tests {
-    use super::DetachedDaemon;
-    use cccc_core::HomeLayout;
-    use std::ffi::OsStr;
-    use std::path::Path;
-    use std::time::Duration;
-
-    #[test]
-    fn builds_cli_self_launch_command() {
-        let home = HomeLayout::from_path(Path::new("test-home").to_path_buf()).expect("home");
-        let launch = DetachedDaemon::new("cccc", ["daemon", "run"]);
-        let command = launch.command(&home);
-        let args = command.get_args().collect::<Vec<_>>();
-
-        #[cfg(unix)]
-        {
-            assert_eq!(command.get_program(), OsStr::new("nohup"));
-            assert_eq!(
-                args,
-                [OsStr::new("cccc"), OsStr::new("daemon"), OsStr::new("run")]
-            );
-        }
-        #[cfg(windows)]
-        {
-            assert_eq!(command.get_program(), OsStr::new("cccc"));
-            assert_eq!(args, [OsStr::new("daemon"), OsStr::new("run")]);
-        }
-
-        assert!(command.get_envs().any(|(key, value)| {
-            key == OsStr::new("CCCC_HOME") && value == Some(home.root().as_os_str())
-        }));
-    }
-
-    #[tokio::test]
-    async fn reports_a_child_that_exits_before_becoming_ready() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let result = tokio::time::timeout(Duration::from_secs(3), failing_daemon().start(&home))
-            .await
-            .expect("failed child must be reported without waiting for the ready timeout");
-        let error = result.expect_err("failed child must not be reported as started");
-        let detail = format!("{error:#}");
-        assert!(detail.contains("exited before becoming ready"), "{detail}");
-        assert!(detail.contains("23"), "{detail}");
-    }
-
-    #[cfg(unix)]
-    fn failing_daemon() -> DetachedDaemon {
-        DetachedDaemon::new("/bin/sh", ["-c", "exit 23"])
-    }
-
-    #[cfg(windows)]
-    fn failing_daemon() -> DetachedDaemon {
-        let command = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
-        DetachedDaemon::new(command, ["/C", "exit 23"])
-    }
-}
+#[path = "process_tests.rs"]
+mod tests;

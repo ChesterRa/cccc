@@ -38,6 +38,7 @@ pub enum SupervisorError {
 #[derive(Debug)]
 pub struct DeepSeekSupervisor {
     child: Option<Child>,
+    process_tree: Option<crate::OwnedProcessTree>,
     queue: VecDeque<(u64, String)>,
     generation: u64,
     next_request_id: u64,
@@ -55,6 +56,7 @@ impl Default for DeepSeekSupervisor {
     fn default() -> Self {
         Self {
             child: None,
+            process_tree: None,
             queue: VecDeque::with_capacity(MAX_PENDING_REQUESTS),
             generation: 0,
             next_request_id: 1,
@@ -171,9 +173,11 @@ impl DeepSeekSupervisor {
     }
 
     pub fn is_running(&mut self) -> bool {
-        self.child
-            .as_mut()
-            .is_some_and(|child| child.try_wait().ok().flatten().is_none())
+        self.child.as_mut().is_some_and(|child| {
+            self.process_tree
+                .as_ref()
+                .is_some_and(|tree| tree.try_wait(|| child.try_wait()).ok().flatten().is_none())
+        })
     }
 
     pub fn append_stderr(&mut self, bytes: &[u8]) {

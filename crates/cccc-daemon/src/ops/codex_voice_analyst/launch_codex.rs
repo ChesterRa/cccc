@@ -14,9 +14,12 @@ impl AnalystSession {
         resume_thread_id: Option<String>,
         purpose: SessionPurpose,
     ) -> io::Result<Self> {
-        let (process, lines) = process::spawn_app_server(&command, &binding.root, &env)?;
+        let (process, lines) = lifecycle_timing::run_sync("codex.spawn", || {
+            process::spawn_app_server(&command, &binding.root, &env)
+        })?;
         let process = Arc::new(process);
-        let endpoint = process::wait_for_endpoint(lines).await?;
+        let endpoint =
+            lifecycle_timing::run("codex.endpoint", process::wait_for_endpoint(lines)).await?;
         let generation = uuid::Uuid::new_v4().simple().to_string();
         let result = Self::connect(ConnectConfig {
             binding,
@@ -49,7 +52,8 @@ impl AnalystSession {
             purpose,
         } = config;
         process::validate_loopback_endpoint(&endpoint)?;
-        let socket = protocol::connect_with_retry(&endpoint).await?;
+        let socket =
+            lifecycle_timing::run("codex.connect", protocol::connect_with_retry(&endpoint)).await?;
         let protocol = ProtocolClient::new(socket, generation.clone());
         protocol
             .request(

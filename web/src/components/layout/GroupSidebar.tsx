@@ -17,7 +17,7 @@ import { useBrandingStore } from "../../stores";
 import { resolveThemeAwareLogoUrl } from "../../utils/branding";
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
-import { canReorderSidebarGroups, groupSidebarScrollClass } from "./groupSidebarModel";
+import { getSidebarReorderActivation, groupSidebarScrollClass } from "./groupSidebarModel";
 import { CodexVoiceSidebarDock } from "../../features/codexVoice/CodexVoiceShellSurfaces";
 import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
@@ -31,7 +31,6 @@ export interface GroupSidebarProps {
   isCollapsed: boolean;
   sidebarWidth: number;
   isDark: boolean;
-  isSmallScreen: boolean;
   readOnly?: boolean;
   codexVoice: CodexVoiceShellState;
   onSelectGroup: (groupId: string) => void;
@@ -53,7 +52,6 @@ export function GroupSidebar({
   isCollapsed,
   sidebarWidth,
   isDark,
-  isSmallScreen,
   readOnly,
   codexVoice,
   onSelectGroup,
@@ -162,8 +160,7 @@ export function GroupSidebar({
         setArchivedOpen(true);
         onArchiveGroup(gid);
       };
-
-      if (canReorderSidebarGroups({ isSmallScreen, isCollapsed, readOnly })) {
+      if (getSidebarReorderActivation({ isCollapsed, readOnly }) !== "disabled") {
         return (
           <GroupSidebarSortableList
             groups={groups}
@@ -174,7 +171,7 @@ export function GroupSidebar({
             readOnly={readOnly}
             menuActionLabel={menuActionLabel}
             menuAriaLabel={t("groupActions")}
-            dragHandleLabel={t("reorderGroup")}
+            reorderInstructions={t("reorderWithKeyboard")}
             onMenuAction={handleMenuAction}
             onReorderSection={onReorderSection}
             onSelectGroup={onSelectGroup}
@@ -183,7 +180,6 @@ export function GroupSidebar({
           />
         );
       }
-
       return (
         <div className={classNames(isCollapsed ? "flex flex-col items-center gap-2" : "space-y-1")}>
           {groups.map((g) => {
@@ -212,7 +208,6 @@ export function GroupSidebar({
     [
       isCollapsed,
       isDark,
-      isSmallScreen,
       onArchiveGroup,
       onClose,
       onReorderSection,

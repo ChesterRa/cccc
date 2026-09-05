@@ -30,6 +30,7 @@ describe("diagnostics terminal history api", () => {
 
     const resp = await fetchTerminalHistory("g 1", "actor/1", {
       before: 12,
+      renderBefore: 24,
       limitBytes: 4096,
       stripAnsi: false,
       compact: false,
@@ -41,6 +42,7 @@ describe("diagnostics terminal history api", () => {
     expect(url).toContain("/api/v1/groups/g%201/terminal/history?");
     expect(url).toContain("actor_id=actor%2F1");
     expect(url).toContain("before=12");
+    expect(url).toContain("render_before=24");
     expect(url).toContain("limit_bytes=4096");
     expect(url).toContain("strip_ansi=false");
     expect(url).toContain("compact=false");

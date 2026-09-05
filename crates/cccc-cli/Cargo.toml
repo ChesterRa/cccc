@@ -30,6 +30,7 @@ cccc-web = { package = "cccc-pair-web", version = "=0.4.37", path = "../cccc-web
 clap.workspace = true
 fs2.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
@@ -38,6 +39,9 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cccc-windows-console = { path = "../cccc-windows-console" }

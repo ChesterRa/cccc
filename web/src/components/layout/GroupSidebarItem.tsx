@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { GroupMeta } from "../../types";
-import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { MoreIcon } from "../Icons";
-import { IconButton } from "../ui/icon-button";
+import { classNames } from "../../utils/classNames";
+import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 import { GroupMenuAction } from "./GroupMenuAction";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
@@ -110,26 +109,12 @@ export function GroupSidebarItem({
 
         {onMenuAction && menuActionLabel && (
           <div className="relative shrink-0">
-            <IconButton
-              type="button"
-              variant="ghost"
-              size="sm"
+            <GroupItemMenuTrigger
+              isActive={isActive}
               label={menuAriaLabel || menuActionLabel}
-              className={classNames(
-                "text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
-                menuOpen &&
-                  "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
-                !menuOpen && isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-                !menuOpen &&
-                  "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
-              )}
-              onClick={(event) => {
-                event.stopPropagation();
-                setMenuOpen((prev) => !prev);
-              }}
-            >
-              <MoreIcon size={16} />
-            </IconButton>
+              open={menuOpen}
+              onToggle={() => setMenuOpen((prev) => !prev)}
+            />
             {menuOpen && (
               <div className="absolute right-0 top-full z-20 mt-2 min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel">
                 <GroupMenuAction

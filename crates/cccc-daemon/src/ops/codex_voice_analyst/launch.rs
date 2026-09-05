@@ -131,15 +131,17 @@ impl AnalystSession {
         let prepared = super::launch_command::prepare(&config.command, &env)?;
         let session_command = prepared.app_server.clone();
         let identity_environment = env.clone();
-        let resume_thread_id = super::super::runtime_session::prepare_codex_app_thread(
-            home,
-            &config.group_id,
-            &config.actor_id,
-            &binding.root,
-            &session_command,
-            &identity_environment,
-            &prepared.model,
-        )?;
+        let resume_thread_id = lifecycle_timing::run_sync("codex.resume_lookup", || {
+            super::super::runtime_session::prepare_codex_app_thread(
+                home,
+                &config.group_id,
+                &config.actor_id,
+                &binding.root,
+                &session_command,
+                &identity_environment,
+                &prepared.model,
+            )
+        })?;
         let mut command = prepared.app_server;
         if !super::super::codex_mcp::configure_mcp_only(
             home,
@@ -162,18 +164,20 @@ impl AnalystSession {
             SessionPurpose::Actor,
         )
         .await?;
-        if let Err(error) = super::super::runtime_session::record_codex_app_thread(
-            home,
-            &config.group_id,
-            &config.actor_id,
-            &config.workdir,
-            &session_command,
-            &identity_environment,
-            super::super::runtime_session::CodexAppThread {
-                id: session.thread_id(),
-                resumed: session.thread_resumed,
-            },
-        ) {
+        if let Err(error) = lifecycle_timing::run_sync("codex.resume_record", || {
+            super::super::runtime_session::record_codex_app_thread(
+                home,
+                &config.group_id,
+                &config.actor_id,
+                &config.workdir,
+                &session_command,
+                &identity_environment,
+                super::super::runtime_session::CodexAppThread {
+                    id: session.thread_id(),
+                    resumed: session.thread_resumed,
+                },
+            )
+        }) {
             tracing::warn!(
                 %error,
                 group_id = %config.group_id,

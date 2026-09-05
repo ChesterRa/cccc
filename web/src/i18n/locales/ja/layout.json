@@ -28,7 +28,7 @@
   "workingGroups": "作業グループ",
   "archivedGroups": "アーカイブ",
   "groupActions": "グループ操作",
-  "reorderGroup": "グループを並べ替え",
+  "reorderWithKeyboard": "Alt+↑ または Alt+↓ でこのグループを移動します。",
   "archiveGroup": "アーカイブ",
   "restoreGroup": "戻す",
   "noGroupsYet": "まだ作業グループがありません",

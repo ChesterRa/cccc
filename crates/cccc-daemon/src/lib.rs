@@ -20,6 +20,7 @@ pub use dispatch::dispatch as handle_request;
 pub use paths::DaemonPaths;
 pub use process::{DetachedDaemon, StartOutcome};
 pub use server::run;
+pub use server_lifecycle::stop_every_runtime;
 
 /// Return the recorded Web binding only when its process and signed readiness
 /// endpoint still match the persisted runtime identity.

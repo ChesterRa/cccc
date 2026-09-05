@@ -1,4 +1,5 @@
 use anyhow::Result;
+use cccc_core::HomeLayout;
 use std::fs::File;
 
 use crate::paths::DaemonPaths;
@@ -34,20 +35,28 @@ impl DaemonLifecycle {
             return Ok(Vec::new());
         }
         self.active = false;
-        let _ = crate::runtime_start_gate::prevent(&self.paths.home);
-        crate::ops::actor_delivery::shutdown_all();
-        let managed = crate::ops::local_headless::stop_all();
-        let runtimes = crate::ops::actor_runtime::stop_all();
+        let result = stop_every_runtime(&self.paths.home);
         cleanup_stale(&self.paths);
         self.lock.take();
-        match (managed, runtimes) {
-            (Ok(()), Ok(statuses)) => Ok(statuses),
-            (Err(error), Ok(_)) => Err(error.into()),
-            (Ok(()), Err(error)) => Err(error.into()),
-            (Err(managed), Err(runtimes)) => Err(anyhow::anyhow!(
-                "{managed}; native runtime cleanup also failed: {runtimes}"
-            )),
-        }
+        result
+    }
+}
+
+/// Gracefully stop every runtime this daemon started, closing the start gate.
+/// Forced launcher exit uses cccc_runtime::force_terminate_owned instead: this
+/// path may wait for protocol closure, session locks and output draining.
+pub fn stop_every_runtime(home: &HomeLayout) -> Result<Vec<cccc_runtime::SessionStatus>> {
+    let _ = crate::runtime_start_gate::prevent(home);
+    crate::ops::actor_delivery::shutdown_all();
+    let managed = crate::ops::local_headless::stop_all();
+    let runtimes = crate::ops::actor_runtime::stop_all();
+    match (managed, runtimes) {
+        (Ok(()), Ok(statuses)) => Ok(statuses),
+        (Err(error), Ok(_)) => Err(error.into()),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Err(managed), Err(runtimes)) => Err(anyhow::anyhow!(
+            "{managed}; native runtime cleanup also failed: {runtimes}"
+        )),
     }
 }
 

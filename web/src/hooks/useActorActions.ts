@@ -6,6 +6,7 @@ import type { Actor, SupportedRuntime } from "../types";
 import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
+import { useShallow } from "zustand/react/shallow";
 
 function latestActorHasResumeFailure(actorId: string): boolean {
   const aid = String(actorId || "").trim();
@@ -21,16 +22,43 @@ function latestActorHasResumeFailure(actorId: string): boolean {
 }
 
 export function useActorActions(groupId: string) {
-  const { refreshActors, refreshGroups, loadGroup, clearStreamingEventsForActor } = useGroupStore();
-  const { setBusy, setActiveTab, showError } = useUIStore();
-  const { openModal, setEditingActor } = useModalStore();
-  const { setInboxActorId, setInboxMessages } = useInboxStore();
+  const { refreshActors, refreshGroups, loadGroup, clearStreamingEventsForActor } = useGroupStore(
+    useShallow((s) => ({
+      refreshActors: s.refreshActors,
+      refreshGroups: s.refreshGroups,
+      loadGroup: s.loadGroup,
+      clearStreamingEventsForActor: s.clearStreamingEventsForActor,
+    })),
+  );
+  const { setBusy, setActiveTab, showError } = useUIStore(
+    useShallow((s) => ({
+      setBusy: s.setBusy,
+      setActiveTab: s.setActiveTab,
+      showError: s.showError,
+    })),
+  );
+  const { openModal, setEditingActor } = useModalStore(
+    useShallow((s) => ({ openModal: s.openModal, setEditingActor: s.setEditingActor })),
+  );
+  const { setInboxActorId, setInboxMessages } = useInboxStore(
+    useShallow((s) => ({
+      setInboxActorId: s.setInboxActorId,
+      setInboxMessages: s.setInboxMessages,
+    })),
+  );
   const {
     setEditActorRuntime,
     setEditActorCommand,
     setEditActorTitle,
     setEditActorCapabilityAutoloadText,
-  } = useFormStore();
+  } = useFormStore(
+    useShallow((s) => ({
+      setEditActorRuntime: s.setEditActorRuntime,
+      setEditActorCommand: s.setEditActorCommand,
+      setEditActorTitle: s.setEditActorTitle,
+      setEditActorCapabilityAutoloadText: s.setEditActorCapabilityAutoloadText,
+    })),
+  );
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});

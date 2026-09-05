@@ -110,7 +110,7 @@ export function ModalFrame({
         {children}
 
         {footerActions && (
-          <div className="border-t px-4 py-3 sm:px-6 sm:py-4 safe-area-inset-bottom border-[var(--glass-border-subtle)] glass-header flex-shrink-0">
+          <div className="flex-shrink-0 border-t border-[var(--glass-border-subtle)] glass-header px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:px-6 sm:pt-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
             {footerActions}
           </div>
         )}

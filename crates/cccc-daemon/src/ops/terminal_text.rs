@@ -1,4 +1,9 @@
+mod history;
+pub(super) use history::render as render_history;
+
+use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
+type Rows = VecDeque<Vec<char>>;
 
 const MAX_SCREEN_ROWS: usize = 4_096;
 const MAX_SCREEN_COLS: usize = 1_024;
@@ -11,11 +16,13 @@ pub(super) fn render(text: &str, compact: bool) -> String {
 
 #[derive(Default)]
 struct Screen {
-    rows: Vec<Vec<char>>,
+    history: Option<history::Frames>,
+    dirty: bool,
+    rows: Rows,
     row: usize,
     col: usize,
     saved_cursor: (usize, usize),
-    main_screen: Option<(Vec<Vec<char>>, usize, usize)>,
+    main_screen: Option<(Rows, usize, usize)>,
 }
 
 impl Screen {
@@ -26,16 +33,16 @@ impl Screen {
             match input[index] {
                 '\u{1b}' => index = self.escape(&input, index),
                 '\n' => {
-                    self.row = bounded_row(self.row.saturating_add(1));
-                    self.col = 0;
-                    self.ensure_row();
+                    self.line_feed();
                     index += 1;
                 }
                 '\r' => {
+                    self.checkpoint();
                     self.col = 0;
                     index += 1;
                 }
                 '\u{8}' => {
+                    self.checkpoint();
                     self.col = self.col.saturating_sub(1);
                     index += 1;
                 }
@@ -68,6 +75,7 @@ impl Screen {
                 index + 2
             }
             '8' => {
+                self.checkpoint();
                 (self.row, self.col) = self.saved_cursor;
                 self.ensure_row();
                 index + 2
@@ -95,6 +103,9 @@ impl Screen {
             return final_index + 1;
         }
 
+        if history::is_redraw(final_char, &params, (self.row, self.col)) {
+            self.checkpoint();
+        }
         let first = || params.first().copied().unwrap_or(1).max(1);
         match final_char {
             'H' | 'f' => {
@@ -130,6 +141,7 @@ impl Screen {
         if !params.contains(&1049) {
             return;
         }
+        self.checkpoint();
         match final_char {
             'h' if self.main_screen.is_none() => {
                 self.main_screen = Some((self.rows.clone(), self.row, self.col));
@@ -152,7 +164,7 @@ impl Screen {
 
     fn ensure_row(&mut self) {
         while self.rows.len() <= self.row {
-            self.rows.push(Vec::new());
+            self.rows.push_back(Vec::new());
         }
     }
 
@@ -164,6 +176,7 @@ impl Screen {
     }
 
     fn set_char(&mut self, character: char) {
+        self.dirty = true;
         self.ensure_col(self.col);
         self.rows[self.row][self.col] = character;
     }
@@ -276,28 +289,4 @@ fn normalized_line(line: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::render;
-
-    #[test]
-    fn renders_csi_and_osc_sequences_instead_of_leaking_them() {
-        let raw = "\u{1b}[2J\u{1b}[1;1HWorking\u{1b}[49m\u{1b}]0;⠴ wechat-agent\u{7}\r\nready";
-        assert_eq!(render(raw, false), "Working\nready");
-    }
-
-    #[test]
-    fn cursor_positioning_overwrites_previous_tui_frame() {
-        let raw = "\u{1b}[1;1Hold frame\u{1b}[1;1H\u{1b}[2Knew frame";
-        assert_eq!(render(raw, true), "new frame");
-    }
-
-    #[test]
-    fn carriage_return_overwrites_the_current_line() {
-        assert_eq!(render("old\rnew", true), "new");
-    }
-
-    #[test]
-    fn wide_characters_keep_terminal_cursor_columns_aligned() {
-        assert_eq!(render("你好\u{1b}[1;5HX", true), "你好X");
-    }
-}
+mod tests;

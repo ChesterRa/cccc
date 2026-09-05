@@ -86,6 +86,19 @@ impl ProtocolClient {
         params: Value,
         timeout: Duration,
     ) -> io::Result<Value> {
+        let work = self.request_inner(method, params, timeout);
+        match super::lifecycle_timing::request_phase(method) {
+            Some(phase) => super::lifecycle_timing::run(phase, work).await,
+            None => work.await,
+        }
+    }
+
+    async fn request_inner(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> io::Result<Value> {
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(ProtocolCommand::Request(RpcRequest {

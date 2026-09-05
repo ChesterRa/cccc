@@ -4380,7 +4380,7 @@ later live page.
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; by?: string; before?: number; limit_bytes?: number; strip_ansi?: boolean; compact?: boolean }
+{ group_id: string; actor_id: string; by?: string; before?: number; render_before?: number; limit_bytes?: number; strip_ansi?: boolean; compact?: boolean }
 ```
 
 Result:
@@ -4397,6 +4397,24 @@ Result:
   cursor_expired: boolean
 }
 ```
+
+For backward paging of rendered text, pin the first response's `end_cursor` as
+`render_before` on subsequent requests. `before` and `limit_bytes` select the next
+older page's start, while the returned range extends through `render_before`.
+The server renders that contiguous range once; clients replace their previous
+rendering rather than concatenate independently rendered pages. The cumulative
+range is limited to 50 MB and excludes output written after the pinned end.
+Omitting `render_before` preserves the existing per-page contract.
+With `strip_ansi=true`, history text preserves inferred pre-redraw frames in
+chronological order (blank-line separated), including overwritten and erased
+screens. Identical consecutive frames are collapsed; these are inferred terminal
+states, not timestamped captures. Rendered frames are bounded to 50 MB; exceeding
+that display budget inserts an explicit omission marker before the retained
+newest frames. Scrolled-off history lines are retained separately from the 4,096-row screen,
+so expanding a cumulative range MUST NOT silently discard previously returned
+newer lines. This scrollback uses the same display budget and omission marker.
+This does not modify raw `history.data`, cursor semantics,
+`terminal_tail`, or live snapshots.
 
 #### `terminal_since`
 

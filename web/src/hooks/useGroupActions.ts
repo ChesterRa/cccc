@@ -2,11 +2,22 @@
 import { useCallback } from "react";
 import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
+import { useShallow } from "zustand/react/shallow";
 
 export function useGroupActions() {
-  const { selectedGroupId, groupDoc, setGroupDoc, refreshGroups, refreshActors } = useGroupStore();
+  const { selectedGroupId, groupDoc, setGroupDoc, refreshGroups, refreshActors } = useGroupStore(
+    useShallow((s) => ({
+      selectedGroupId: s.selectedGroupId,
+      groupDoc: s.groupDoc,
+      setGroupDoc: s.setGroupDoc,
+      refreshGroups: s.refreshGroups,
+      refreshActors: s.refreshActors,
+    })),
+  );
 
-  const { setBusy, showError } = useUIStore();
+  const { setBusy, showError } = useUIStore(
+    useShallow((s) => ({ setBusy: s.setBusy, showError: s.showError })),
+  );
 
   // Start group
   const handleStartGroup = useCallback(async () => {

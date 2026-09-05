@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod network_environment;
+
 const MIN_VERSION: (u64, u64, u64) = (2, 1, 259);
 const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -53,6 +55,7 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
         None => Map::new(),
     };
     merge_environment(&mut settings, environment)?;
+    network_environment::inherit(&mut settings, std::env::vars())?;
     let config_dir = config_dir(environment)?;
     let settings_root = home.daemon_dir().join("claude-managed");
     std::fs::create_dir_all(&settings_root)?;
@@ -62,6 +65,8 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Keep one stable, owner-scoped file so stop/start can resume the same
     // session while still allowing actor removal to erase the private copy.
     let settings_path = settings_root.join(format!("{}.json", &settings_digest[..24]));
+    let mut launch_environment = launcher_environment(environment);
+    network_environment::extend_launcher(&mut launch_environment, &settings);
     cccc_core::fs::write_secret_json(&settings_path, &Value::Object(settings))?;
 
     let mut arguments = parsed.arguments;
@@ -76,7 +81,6 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     }
     arguments.push("--dangerously-skip-permissions".into());
 
-    let launch_environment = launcher_environment(environment);
     Ok(PreparedClaude {
         executable: executable.to_string_lossy().into_owned(),
         arguments,

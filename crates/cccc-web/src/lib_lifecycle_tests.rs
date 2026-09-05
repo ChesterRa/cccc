@@ -1,6 +1,19 @@
 use super::*;
 
 #[tokio::test]
+async fn building_the_standalone_web_app_installs_a_tls_provider() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+
+    let _router = app(home);
+
+    assert!(
+        rustls::crypto::CryptoProvider::get_default().is_some(),
+        "the Web crate must initialize TLS without relying on the CLI binary"
+    );
+}
+
+#[tokio::test]
 async fn windows_reserved_port_retries_with_zero_and_returns_the_effective_listener() {
     let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = std::sync::Arc::clone(&attempts);

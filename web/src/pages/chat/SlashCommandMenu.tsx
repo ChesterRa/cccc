@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import { useComposerMenuHeight } from "./useComposerMenuHeight";
 import { classNames } from "../../utils/classNames";
 import { slashCommandDisplayKind, type SlashCommandItem } from "../../utils/slashCommands";
 
@@ -24,6 +25,7 @@ export function SlashCommandMenu(props: {
   } = props;
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  useComposerMenuHeight(menuRef, suggestions.length > 0);
 
   useLayoutEffect(() => {
     const item = itemRefs.current[selectedIndex];

@@ -79,15 +79,18 @@ export function createComposerAgentMentionToken({
   };
 }
 
-export function pruneComposerGroupMentionTokens({
-  text,
-  tokens,
-}: {
-  text: string;
-  tokens: ComposerGroupMentionToken[];
-}): ComposerGroupMentionToken[] {
+// Drop tokens whose text range no longer matches the composer text.
+//
+// Returns the input array itself when nothing was dropped: callers feed the
+// result straight into React state, and a fresh array on every keystroke
+// would re-render the whole chat tab for a change that is not one.
+function keepLiveMentionTokens<T extends { start: number; end: number; token: string }>(
+  text: string,
+  tokens: T[],
+): T[] {
   const source = String(text || "");
-  return (tokens || []).filter((token) => {
+  const input = tokens || [];
+  const live = input.filter((token) => {
     const start = Number.isFinite(token.start) ? Math.max(0, Math.floor(token.start)) : -1;
     const end = Number.isFinite(token.end) ? Math.max(start, Math.floor(token.end)) : -1;
     if (start < 0 || end <= start || end > source.length) return false;
@@ -97,6 +100,17 @@ export function pruneComposerGroupMentionTokens({
       isTokenBoundary(source[end] || "")
     );
   });
+  return live.length === input.length ? input : live;
+}
+
+export function pruneComposerGroupMentionTokens({
+  text,
+  tokens,
+}: {
+  text: string;
+  tokens: ComposerGroupMentionToken[];
+}): ComposerGroupMentionToken[] {
+  return keepLiveMentionTokens(text, tokens);
 }
 
 export function pruneComposerAgentMentionTokens({
@@ -106,17 +120,7 @@ export function pruneComposerAgentMentionTokens({
   text: string;
   tokens: ComposerAgentMentionToken[];
 }): ComposerAgentMentionToken[] {
-  const source = String(text || "");
-  return (tokens || []).filter((token) => {
-    const start = Number.isFinite(token.start) ? Math.max(0, Math.floor(token.start)) : -1;
-    const end = Number.isFinite(token.end) ? Math.max(start, Math.floor(token.end)) : -1;
-    if (start < 0 || end <= start || end > source.length) return false;
-    return (
-      source.slice(start, end) === token.token &&
-      isTokenBoundary(source[start - 1] || "") &&
-      isTokenBoundary(source[end] || "")
-    );
-  });
+  return keepLiveMentionTokens(text, tokens);
 }
 
 export function resolveSelectedComposerGroupMention({

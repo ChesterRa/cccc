@@ -3,6 +3,7 @@ use cccc_contracts::utc_now;
 use serde_json::Value;
 use std::io;
 use std::sync::atomic::Ordering;
+use tracing::Instrument;
 
 impl Session {
     pub(super) fn running(&self) -> bool {
@@ -20,7 +21,9 @@ impl Session {
         if self.stopped.load(Ordering::Acquire) {
             return Ok(false);
         }
-        block_on_managed(self.managed.stop(self.managed.generation()))?;
+        block_on_managed(self.managed.stop(self.managed.generation()).instrument(
+            tracing::info_span!("actor_runtime_stop", group_id = %self.group_id, actor_id = %self.actor_id),
+        ))?;
         if self.has_terminal.load(Ordering::Acquire) {
             match cccc_runtime::stop(&self.group_id, &self.actor_id) {
                 Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}

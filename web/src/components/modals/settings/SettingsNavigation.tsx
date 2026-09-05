@@ -1,3 +1,4 @@
+import { useActiveSettingsTab } from "./useActiveSettingsTab";
 import { useTranslation } from "react-i18next";
 import { InfoIcon } from "../../Icons";
 import { ScrollFade } from "../../ScrollFade";
@@ -34,6 +35,7 @@ export function SettingsNavigation({
   onTabChange,
 }: SettingsNavigationProps) {
   const { t } = useTranslation("settings");
+  const activeMobileTabRef = useActiveSettingsTab(scope, activeTab);
   const globalScopeTitle = globalEnabled
     ? t("navigation.globalScopeTitle")
     : t("navigation.globalLockedTitle");
@@ -220,6 +222,8 @@ export function SettingsNavigation({
           {tabs.map((tab) => (
             <button
               key={tab.id}
+              ref={activeTab === tab.id ? activeMobileTabRef : undefined}
+              aria-current={activeTab === tab.id ? "page" : undefined}
               onClick={() => onTabChange(tab.id)}
               className={`${settingsWorkspaceSoftPanelClass(isDark)} flex-shrink-0 px-4 py-2.5 text-xs font-medium whitespace-nowrap ${
                 activeTab === tab.id

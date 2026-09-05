@@ -118,8 +118,8 @@ impl AnalystSession {
 
     pub(crate) async fn stop(&self, expected_generation: &str) -> io::Result<()> {
         self.require_generation(expected_generation)?;
-        self.protocol.close().await?;
-        self.cleanup_owned_resources()
+        lifecycle_timing::run("runtime.protocol_close", self.protocol.close()).await?;
+        lifecycle_timing::run_sync("runtime.process_cleanup", || self.cleanup_owned_resources())
     }
 
     fn cleanup_owned_resources(&self) -> io::Result<()> {

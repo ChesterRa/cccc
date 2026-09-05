@@ -10,5 +10,6 @@ mod live_opencode_actor;
 mod live_session;
 mod live_support;
 mod session;
+mod startup_readiness;
 mod support;
 mod unit;

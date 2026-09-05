@@ -58,6 +58,7 @@ export async function fetchTerminalHistory(
   actorId: string,
   opts?: {
     before?: number | string | null;
+    renderBefore?: number | null;
     limitBytes?: number;
     stripAnsi?: boolean;
     compact?: boolean;
@@ -70,6 +71,7 @@ export async function fetchTerminalHistory(
     compact: String(opts?.compact ?? false),
   });
   const before = opts?.before;
+  if (opts?.renderBefore != null) params.set("render_before", String(opts.renderBefore));
   if (before !== null && before !== undefined && String(before).trim()) {
     params.set("before", String(before));
   }

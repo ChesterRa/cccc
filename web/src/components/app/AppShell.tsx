@@ -238,7 +238,6 @@ export function AppShell({
         isCollapsed={sidebarCollapsed}
         sidebarWidth={sidebarWidth}
         isDark={isDark}
-        isSmallScreen={isSmallScreen}
         readOnly={webReadOnly}
         codexVoice={codexVoice}
         onSelectGroup={onSelectGroup}

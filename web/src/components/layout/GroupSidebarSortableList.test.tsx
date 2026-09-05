@@ -40,7 +40,6 @@ describe("GroupSidebarSortableList mobile controls", () => {
           isCollapsed={false}
           menuActionLabel="Archive"
           menuAriaLabel="Actions"
-          dragHandleLabel="Reorder"
           onMenuAction={onMenuAction}
           onReorderSection={vi.fn()}
           onSelectGroup={onSelectGroup}
@@ -49,9 +48,9 @@ describe("GroupSidebarSortableList mobile controls", () => {
       ),
     );
 
-    const handle = host.querySelector<HTMLButtonElement>('button[aria-label="Reorder · Alpha"]');
-    expect(handle?.className).toContain("touch-none");
-    expect(handle?.style.touchAction).toBe("none");
+    // Rows carry no drag handle any more, so every button in the list is an
+    // action-menu trigger — one per group, and nothing else.
+    expect(host.querySelectorAll("button")).toHaveLength(groups.length);
 
     const actions = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]');
     await act(async () => actions?.click());
@@ -62,5 +61,42 @@ describe("GroupSidebarSortableList mobile controls", () => {
     await act(async () => archive?.click());
     expect(onMenuAction).toHaveBeenCalledWith("g_alpha");
     expect(onSelectGroup).not.toHaveBeenCalled();
+  });
+
+  it("reorders within the section from the keyboard and clamps at the edges", async () => {
+    const onReorderSection = vi.fn();
+    await act(async () =>
+      root.render(
+        <GroupSidebarSortableList
+          groups={groups}
+          section="working"
+          selectedGroupId="g_alpha"
+          isDark
+          isCollapsed={false}
+          reorderInstructions="Press Alt+Up or Alt+Down to move this group."
+          onReorderSection={onReorderSection}
+          onSelectGroup={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      ),
+    );
+
+    const rows = host.querySelectorAll<HTMLElement>('[role="button"][aria-keyshortcuts]');
+    expect(rows).toHaveLength(groups.length);
+    const press = (row: HTMLElement, key: string) =>
+      act(async () => {
+        row.dispatchEvent(
+          new KeyboardEvent("keydown", { key, altKey: true, bubbles: true, cancelable: true }),
+        );
+      });
+
+    await press(rows[0], "ArrowDown");
+    expect(onReorderSection).toHaveBeenCalledWith("working", 0, 1);
+    await press(rows[0], "ArrowUp");
+    await press(rows[1], "ArrowDown");
+    // The first row cannot move up and the last cannot move down.
+    expect(onReorderSection).toHaveBeenCalledTimes(1);
+    // dnd-kit's default "press space to pick up" hint would be wrong here.
+    expect(document.body.textContent).toContain("Press Alt+Up or Alt+Down");
   });
 });

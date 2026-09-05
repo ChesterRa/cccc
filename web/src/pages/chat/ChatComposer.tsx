@@ -70,7 +70,11 @@ import {
   startComposerHistory,
   type ComposerHistorySession,
 } from "./chatComposerHistory";
-import { normalizeReplyMessageMode, type ComposerMessageMode } from "../../stores/useComposerStore";
+import {
+  normalizeReplyMessageMode,
+  useComposerStore,
+  type ComposerMessageMode,
+} from "../../stores/useComposerStore";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
@@ -145,7 +149,6 @@ export interface ChatComposerProps {
 
   // Text input
   composerRef: RefObject<HTMLTextAreaElement | null>;
-  composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
   messageMode: ComposerMessageMode;
   setMessageMode: (mode: ComposerMessageMode) => void;
@@ -201,7 +204,6 @@ export function ChatComposer({
   appendComposerFiles,
   fileInputRef,
   composerRef,
-  composerText,
   setComposerText,
   messageMode,
   setMessageMode,
@@ -221,6 +223,9 @@ export function ChatComposer({
   setComposerAgentMentionTokens,
   slashCommands,
 }: ChatComposerProps) {
+  // The draft text is owned here, not by ChatTab: only the composer needs a
+  // re-render per keystroke.
+  const composerText = useComposerStore((s) => s.composerText);
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -928,8 +933,10 @@ export function ChatComposer({
   return (
     <footer
       className={classNames(
-        "relative z-40 flex-shrink-0 border-t px-2 py-1.5 safe-area-bottom-compact transition-colors sm:px-2.5 sm:py-2",
-        "border-[var(--glass-border)] bg-[var(--glass-panel-bg)] backdrop-blur-md",
+        "relative z-40 flex-shrink-0 border-t px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px)*0.6)] transition-colors sm:px-2.5 sm:pt-2 sm:pb-[calc(0.5rem+env(safe-area-inset-bottom,0px)*0.6)]",
+        // The panel background is 90%+ opaque: a backdrop blur under it is
+        // invisible but still re-filters the whole footer on every frame.
+        "border-[var(--glass-border)] bg-[var(--glass-panel-bg)]",
       )}
     >
       {/* Reply indicator */}

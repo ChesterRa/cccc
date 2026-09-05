@@ -34,11 +34,12 @@ function focusFirst(modal: HTMLDivElement): void {
   modal.focus();
 }
 
-function focusTopModal(): void {
+function focusTopModal(previous?: HTMLElement | null): void {
   if (modalStack.length === 0) return;
   const topId = modalStack[modalStack.length - 1];
   const topModal = modalElements.get(topId);
-  if (topModal) focusFirst(topModal);
+  if (topModal && previous && topModal.contains(previous)) previous.focus();
+  else if (topModal) focusFirst(topModal);
 }
 
 function lockBodyScroll(): void {
@@ -170,7 +171,8 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
           previous.focus();
         }
       } else {
-        requestAnimationFrame(() => focusTopModal());
+        const previous = previousFocusRef.current;
+        requestAnimationFrame(() => focusTopModal(previous));
       }
     };
   }, [isOpen, instanceId, handleEscape, handleTab]);

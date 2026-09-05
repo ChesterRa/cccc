@@ -69,6 +69,7 @@ graphify-out
 AGENTS.md
 .graphifyignore
 .claude/skills
+/.claude/worktrees/
 .shared/
 .agents/
 .codex/

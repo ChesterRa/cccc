@@ -230,7 +230,6 @@ export function ChatTab({
     needsStart,
 
     // Composer state
-    composerText,
     setComposerText,
     composerGroupMentionTokens,
     setComposerGroupMentionTokens,
@@ -1115,7 +1114,6 @@ export function ChatTab({
             appendComposerFiles={appendComposerFiles}
             fileInputRef={fileInputRef}
             composerRef={composerRef}
-            composerText={composerText}
             setComposerText={setComposerText}
             composerGroupMentionTokens={composerGroupMentionTokens}
             setComposerGroupMentionTokens={setComposerGroupMentionTokens}

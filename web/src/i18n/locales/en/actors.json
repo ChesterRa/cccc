@@ -270,5 +270,14 @@
   "headlessControlStalled": "Control task is waiting",
   "headlessControlCompleted": "Control task completed",
   "headlessControlFailed": "Control task failed",
-  "headlessControlUpdated": "Control task updated"
+  "headlessControlUpdated": "Control task updated",
+  "terminalHistory": "Terminal history",
+  "openTerminalHistory": "View terminal history",
+  "historyLoading": "Loading history…",
+  "historyLoadFailed": "Could not load terminal history.",
+  "historyLoadOlder": "Load older history",
+  "historyRetry": "Retry",
+  "historyStart": "Beginning of retained history",
+  "historyEmpty": "No terminal history retained for this agent yet.",
+  "historyTruncated": "Older output has already been discarded from the backlog."
 }

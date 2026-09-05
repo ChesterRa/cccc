@@ -58,6 +58,7 @@ import {
   TextScale,
   Theme,
 } from "../types";
+import { useShallow } from "zustand/react/shallow";
 
 const ContextModal = lazy(() =>
   import("./ContextModal/index").then((module) => ({ default: module.ContextModal })),
@@ -157,7 +158,31 @@ export function AppModals({
     loadGroup,
     openChatWindow,
     mergeEventStatuses,
-  } = useGroupStore();
+  } = useGroupStore(
+    useShallow((s) => ({
+      groups: s.groups,
+      selectedGroupId: s.selectedGroupId,
+      groupDoc: s.groupDoc,
+      events: s.events,
+      chatWindow: s.chatWindow,
+      actors: s.actors,
+      groupContext: s.groupContext,
+      groupSettings: s.groupSettings,
+      groupPresentation: s.groupPresentation,
+      runtimes: s.runtimes,
+      setSelectedGroupId: s.setSelectedGroupId,
+      setGroupDoc: s.setGroupDoc,
+      setGroupContext: s.setGroupContext,
+      setGroupSettings: s.setGroupSettings,
+      setGroupPresentation: s.setGroupPresentation,
+      refreshGroups: s.refreshGroups,
+      refreshSettings: s.refreshSettings,
+      refreshActors: s.refreshActors,
+      loadGroup: s.loadGroup,
+      openChatWindow: s.openChatWindow,
+      mergeEventStatuses: s.mergeEventStatuses,
+    })),
+  );
 
   const {
     busy,
@@ -170,7 +195,20 @@ export function AppModals({
     setChatMobileSurface,
     setChatPresentationDockOpen,
     setChatPresentationDisplayMode,
-  } = useUIStore();
+  } = useUIStore(
+    useShallow((s) => ({
+      busy: s.busy,
+      isSmallScreen: s.isSmallScreen,
+      chatSessions: s.chatSessions,
+      setBusy: s.setBusy,
+      showError: s.showError,
+      showNotice: s.showNotice,
+      setActiveTab: s.setActiveTab,
+      setChatMobileSurface: s.setChatMobileSurface,
+      setChatPresentationDockOpen: s.setChatPresentationDockOpen,
+      setChatPresentationDisplayMode: s.setChatPresentationDisplayMode,
+    })),
+  );
 
   const {
     modals,
@@ -189,11 +227,36 @@ export function AppModals({
     clearPresentationSlotAttention,
     setEditingActor,
     clearContextTask,
-  } = useModalStore();
+  } = useModalStore(
+    useShallow((s) => ({
+      modals: s.modals,
+      recipientsEventId: s.recipientsEventId,
+      relayEventId: s.relayEventId,
+      relaySource: s.relaySource,
+      presentationViewer: s.presentationViewer,
+      presentationPin: s.presentationPin,
+      editingActor: s.editingActor,
+      openModal: s.openModal,
+      closeModal: s.closeModal,
+      setRecipientsModal: s.setRecipientsModal,
+      setRelayModal: s.setRelayModal,
+      setPresentationViewer: s.setPresentationViewer,
+      setPresentationPin: s.setPresentationPin,
+      clearPresentationSlotAttention: s.clearPresentationSlotAttention,
+      setEditingActor: s.setEditingActor,
+      clearContextTask: s.clearContextTask,
+    })),
+  );
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
 
-  const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore();
+  const { inboxActorId, inboxMessages, setInboxMessages } = useInboxStore(
+    useShallow((s) => ({
+      inboxActorId: s.inboxActorId,
+      inboxMessages: s.inboxMessages,
+      setInboxMessages: s.setInboxMessages,
+    })),
+  );
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
   const [messageActionBusy, setMessageActionBusy] = useState("");
@@ -253,7 +316,57 @@ export function AppModals({
     setCreateGroupPath,
     setCreateGroupName,
     resetCreateGroupForm,
-  } = useFormStore();
+  } = useFormStore(
+    useShallow((s) => ({
+      editGroupTitle: s.editGroupTitle,
+      editGroupTopic: s.editGroupTopic,
+      setEditGroupTitle: s.setEditGroupTitle,
+      setEditGroupTopic: s.setEditGroupTopic,
+      editActorRuntime: s.editActorRuntime,
+      editActorCommand: s.editActorCommand,
+      editActorTitle: s.editActorTitle,
+      editActorNotes: s.editActorNotes,
+      editActorCapabilityAutoloadText: s.editActorCapabilityAutoloadText,
+      setEditActorRuntime: s.setEditActorRuntime,
+      setEditActorCommand: s.setEditActorCommand,
+      setEditActorTitle: s.setEditActorTitle,
+      setEditActorNotes: s.setEditActorNotes,
+      setEditActorCapabilityAutoloadText: s.setEditActorCapabilityAutoloadText,
+      newActorId: s.newActorId,
+      newActorRole: s.newActorRole,
+      newActorRuntime: s.newActorRuntime,
+      newActorCommand: s.newActorCommand,
+      newActorUseDefaultCommand: s.newActorUseDefaultCommand,
+      newActorSecretsSetText: s.newActorSecretsSetText,
+      newActorCapabilityAutoloadText: s.newActorCapabilityAutoloadText,
+      newActorNotes: s.newActorNotes,
+      newActorUseProfile: s.newActorUseProfile,
+      newActorProfileId: s.newActorProfileId,
+      addActorError: s.addActorError,
+      setNewActorId: s.setNewActorId,
+      setNewActorRole: s.setNewActorRole,
+      setNewActorRuntime: s.setNewActorRuntime,
+      setNewActorCommand: s.setNewActorCommand,
+      setNewActorUseDefaultCommand: s.setNewActorUseDefaultCommand,
+      setNewActorSecretsSetText: s.setNewActorSecretsSetText,
+      setNewActorCapabilityAutoloadText: s.setNewActorCapabilityAutoloadText,
+      setNewActorNotes: s.setNewActorNotes,
+      setNewActorUseProfile: s.setNewActorUseProfile,
+      setNewActorProfileId: s.setNewActorProfileId,
+      setAddActorError: s.setAddActorError,
+      resetAddActorForm: s.resetAddActorForm,
+      createGroupPath: s.createGroupPath,
+      createGroupName: s.createGroupName,
+      dirItems: s.dirItems,
+      dirSuggestions: s.dirSuggestions,
+      currentDir: s.currentDir,
+      parentDir: s.parentDir,
+      showDirBrowser: s.showDirBrowser,
+      setCreateGroupPath: s.setCreateGroupPath,
+      setCreateGroupName: s.setCreateGroupName,
+      resetCreateGroupForm: s.resetCreateGroupForm,
+    })),
+  );
 
   const directoryBrowser = useCreateGroupDirectoryBrowser();
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);

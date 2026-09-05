@@ -1,0 +1,28 @@
+/* Follow the visible viewport when the keyboard reduces or pans the screen. */
+.mobile-menu-viewport {
+  top: var(--app-viewport-offset-top, 0px);
+  height: var(--app-viewport-height, 100dvh);
+  bottom: auto;
+}
+
+/* Override glass-modal's relative positioning without changing other dialogs. */
+.mobile-menu-panel.glass-modal {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - max(16px, env(safe-area-inset-top, 0px)));
+}
+
+.mobile-menu-panel > :not(.mobile-menu-content) {
+  flex-shrink: 0;
+}
+
+.mobile-menu-panel > .mobile-menu-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}

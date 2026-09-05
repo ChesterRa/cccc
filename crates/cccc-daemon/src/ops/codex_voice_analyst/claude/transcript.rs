@@ -1,10 +1,11 @@
 use super::super::{AnalystEvent, MANAGED_AGENT_DELEGATION_ATTACHED_METHOD};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use tokio::sync::broadcast;
 
 const INTERRUPTION_MARKER: &str = "[Request interrupted by user]";
+const TOOL_INTERRUPTION_MARKER: &str = "[Request interrupted by user for tool use]";
 
 pub(super) struct PendingPrompt<'a> {
     pub(super) delegation_id: &'a str,
@@ -33,7 +34,7 @@ struct ToolCall {
 #[derive(Debug)]
 struct ActiveTurn {
     turn_id: String,
-    prompt_id: String,
+    prompt_ids: HashSet<String>,
     text: String,
     error: Option<String>,
     tools: HashMap<String, ToolCall>,
@@ -98,6 +99,9 @@ impl TranscriptState {
         {
             return invalid("Claude transcript record belongs to a different session");
         }
+        if super::transcript_ack::is_resume_ack(record) {
+            return Ok(IngestOutcome::None);
+        }
         match record.get("type").and_then(Value::as_str) {
             Some("user") => self.ingest_user(record, controlled, native),
             Some("assistant") => {
@@ -126,12 +130,12 @@ impl TranscriptState {
             return Ok(IngestOutcome::None);
         }
         let text = text_content(content);
-        if text.trim() == INTERRUPTION_MARKER {
+        if matches!(text.trim(), INTERRUPTION_MARKER | TOOL_INTERRUPTION_MARKER) {
             let prompt_id = required_prompt_id(record)?;
             if self
                 .active
                 .as_ref()
-                .is_some_and(|turn| turn.prompt_id == prompt_id)
+                .is_some_and(|turn| turn.prompt_ids.contains(prompt_id))
             {
                 self.settle("cancelled", None);
                 return Ok(IngestOutcome::None);
@@ -142,6 +146,18 @@ impl TranscriptState {
             return Ok(IngestOutcome::None);
         }
         if let Some(active_turn_id) = self.active_turn_id().map(str::to_owned) {
+            if let Some(prompt_id) = record
+                .get("promptId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                self.active
+                    .as_mut()
+                    .expect("active turn")
+                    .prompt_ids
+                    .insert(prompt_id.to_owned());
+            }
             if let Some(native) = native.filter(|native| native.text == text) {
                 self.publish(
                     json!({
@@ -180,7 +196,7 @@ impl TranscriptState {
         };
         self.active = Some(ActiveTurn {
             turn_id: turn_id.clone(),
-            prompt_id,
+            prompt_ids: HashSet::from([prompt_id]),
             text: String::new(),
             error: None,
             tools: HashMap::new(),
@@ -415,7 +431,7 @@ fn invalid<T>(message: impl Into<String>) -> io::Result<T> {
 mod tests {
     use super::*;
 
-    fn harness() -> (TranscriptState, broadcast::Receiver<AnalystEvent>) {
+    pub(super) fn harness() -> (TranscriptState, broadcast::Receiver<AnalystEvent>) {
         let (events, receiver) = broadcast::channel(32);
         (
             TranscriptState::new("generation-1".into(), "session-1".into(), events),
@@ -721,3 +737,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_resume_ack_tests.rs"]
+mod resume_ack_tests;
+
+#[cfg(test)]
+#[path = "transcript_interrupt_tests.rs"]
+mod interrupt_tests;

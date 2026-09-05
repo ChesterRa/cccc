@@ -212,6 +212,12 @@ counter is still empty. Existing input, output, nonzero usage, or a published
 transcript keeps the strict history checks. Do not delete `.claude` or `.codex`
 to troubleshoot a managed-session startup failure.
 
+If a saved transcript path no longer exists after a worktree move, initial
+recovery searches the configured Claude project store for the same session ID.
+Only a unique, validated regular file is accepted. The recovered file is pinned
+for the running session; later relocation, replacement, or ambiguous candidates
+fail explicitly rather than replaying or switching history.
+
 Direct Grok Actors use the same managed-session contract through Grok's native
 topology: CCCC owns one private leader, connects an ACP observer, and attaches
 the native writable Grok TUI to the exact same provider session. Structured ACP

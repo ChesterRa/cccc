@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 mod child;
+use cccc_runtime::OwnedProcessTree;
 pub(super) use child::ChildOwner;
-use child::configure_process_group;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -28,8 +28,7 @@ pub(super) fn spawn_app_server(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_group(&mut process);
-    let mut child = process.spawn()?;
+    let (mut child, process_tree) = OwnedProcessTree::spawn(&mut process)?;
     let stdout = child
         .stdout
         .take()
@@ -41,7 +40,7 @@ pub(super) fn spawn_app_server(
     let (sender, receiver) = std::sync::mpsc::channel();
     spawn_output_reader(stdout, sender.clone(), "stdout")?;
     spawn_output_reader(stderr, sender, "stderr")?;
-    Ok((ChildOwner::new(child), receiver))
+    Ok((ChildOwner::new(child, process_tree), receiver))
 }
 
 pub(super) fn spawn_background(
@@ -61,15 +60,14 @@ pub(super) fn spawn_background(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_group(&mut process);
-    let mut child = process.spawn()?;
+    let (mut child, process_tree) = OwnedProcessTree::spawn(&mut process)?;
     if let Some(stdout) = child.stdout.take() {
         spawn_log_reader(stdout, label)?;
     }
     if let Some(stderr) = child.stderr.take() {
         spawn_log_reader(stderr, label)?;
     }
-    Ok(ChildOwner::new(child))
+    Ok(ChildOwner::new(child, process_tree))
 }
 
 pub(super) fn spawn_piped(
@@ -89,8 +87,7 @@ pub(super) fn spawn_piped(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_group(&mut process);
-    let mut child = process.spawn()?;
+    let (mut child, process_tree) = OwnedProcessTree::spawn(&mut process)?;
     let stdin = child
         .stdin
         .take()
@@ -102,7 +99,7 @@ pub(super) fn spawn_piped(
     if let Some(stderr) = child.stderr.take() {
         spawn_log_reader(stderr, label)?;
     }
-    Ok((ChildOwner::new(child), stdin, stdout))
+    Ok((ChildOwner::new(child, process_tree), stdin, stdout))
 }
 
 fn spawn_output_reader(

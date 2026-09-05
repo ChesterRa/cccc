@@ -27,7 +27,9 @@ import {
   EditIcon,
   TerminalIcon,
   PlusIcon,
+  ClockIcon,
 } from "./Icons";
+import { TerminalHistoryPanel } from "./agentTerminal/TerminalHistoryPanel";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
@@ -189,6 +191,7 @@ export function AgentTab({
     scrollbackLines: terminalScrollbackLines,
   });
   const [activated, setActivated] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   const [stoppedTerminalText, setStoppedTerminalText] = useState("");
@@ -1027,6 +1030,20 @@ export function AgentTab({
               </button>
             </>
           )}
+          {!isHeadless ? (
+            // A runtime that repaints in place leaves xterm's scrollback empty,
+            // so scrolling the terminal cannot reach earlier output. The bytes
+            // live on the server either way; this reads them from there.
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
+              aria-label={t("openTerminalHistory")}
+              title={t("openTerminalHistory")}
+            >
+              <ClockIcon size={16} />
+              {!isSmallScreen && t("terminalHistory")}
+            </button>
+          ) : null}
           <button
             onClick={onInbox}
             className={classNames(
@@ -1069,6 +1086,15 @@ export function AgentTab({
             {!isSmallScreen && t("common:remove")}
           </button>
         </ScrollFade>
+      ) : null}
+      {historyOpen ? (
+        <TerminalHistoryPanel
+          groupId={groupId}
+          actorId={actor.id}
+          actorTitle={actor.title || actor.id}
+          isDark={isDark}
+          onClose={() => setHistoryOpen(false)}
+        />
       ) : null}
     </div>
   );

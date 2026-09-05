@@ -1,5 +1,6 @@
+use cccc_runtime::OwnedProcessTree;
 use std::io;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -7,31 +8,40 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(in crate::ops::codex_voice_analyst) struct ChildOwner {
     child: Mutex<Option<Child>>,
+    process_tree: OwnedProcessTree,
 }
 
 impl ChildOwner {
-    pub(in crate::ops::codex_voice_analyst) fn new(child: Child) -> Self {
+    pub(in crate::ops::codex_voice_analyst) fn new(
+        child: Child,
+        process_tree: OwnedProcessTree,
+    ) -> Self {
         Self {
             child: Mutex::new(Some(child)),
+            process_tree,
         }
     }
 
     pub(in crate::ops::codex_voice_analyst) fn stop(&self) -> io::Result<()> {
-        let Some(mut child) = self
+        self.stop_with(stop_child)
+    }
+
+    fn stop_with(
+        &self,
+        operation: impl FnOnce(&mut Child, &OwnedProcessTree) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut guard = self
             .child
             .lock()
-            .map_err(|_| io::Error::other("managed Agent child lock poisoned"))?
-            .take()
-        else {
+            .map_err(|_| io::Error::other("managed Agent child lock poisoned"))?;
+        let Some(child) = guard.as_mut() else {
             return Ok(());
         };
-        if child.try_wait()?.is_none() {
-            terminate_process_group(&mut child);
-            if !wait_bounded(&mut child, STOP_TIMEOUT)? {
-                kill_process_group(&mut child);
-            }
-        }
-        let _ = child.wait();
+        // Keep ownership on every failure, including signal, poll and reap
+        // errors. Concurrent stop calls cannot mistake an in-flight stop for
+        // success. The emergency registry never needs this child mutex.
+        operation(child, &self.process_tree)?;
+        guard.take();
         Ok(())
     }
 
@@ -39,7 +49,11 @@ impl ChildOwner {
         self.child
             .lock()
             .ok()
-            .and_then(|mut child| child.as_mut().map(|child| child.try_wait()))
+            .and_then(|mut child| {
+                child
+                    .as_mut()
+                    .map(|child| self.process_tree.try_wait(|| child.try_wait()))
+            })
             .is_some_and(|status| status.ok().flatten().is_none())
     }
 
@@ -55,18 +69,27 @@ impl Drop for ChildOwner {
     fn drop(&mut self) {
         let child = self.child.get_mut().ok().and_then(Option::take);
         if let Some(mut child) = child {
-            if child.try_wait().ok().flatten().is_none() {
-                kill_process_group(&mut child);
-            }
+            let _ = self.process_tree.terminate();
             let _ = child.wait();
         }
     }
 }
 
-fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
+fn stop_child(child: &mut Child, tree: &OwnedProcessTree) -> io::Result<()> {
+    if tree.try_wait(|| child.try_wait())?.is_none() {
+        tree.request_stop()?;
+        if !wait_bounded(child, tree, STOP_TIMEOUT)? {
+            tree.terminate()?;
+        }
+    }
+    child.wait()?;
+    Ok(())
+}
+
+fn wait_bounded(child: &mut Child, tree: &OwnedProcessTree, timeout: Duration) -> io::Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
+        if tree.try_wait(|| child.try_wait())?.is_some() {
             return Ok(true);
         }
         if Instant::now() >= deadline {
@@ -76,57 +99,6 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
     }
 }
 
-#[cfg(unix)]
-pub(super) fn configure_process_group(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-pub(super) fn configure_process_group(_command: &mut Command) {}
-
-#[cfg(unix)]
-fn terminate_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGTERM);
-}
-
-#[cfg(unix)]
-fn kill_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGKILL);
-    let _ = child.kill();
-}
-
-#[cfg(unix)]
-fn signal_process_group(child: &Child, signal: nix::sys::signal::Signal) {
-    use nix::sys::signal::killpg;
-    use nix::unistd::Pid;
-    if let Ok(group_id) = i32::try_from(child.id()) {
-        let _ = killpg(Pid::from_raw(group_id), signal);
-    }
-}
-
-#[cfg(windows)]
-fn terminate_process_group(child: &mut Child) {
-    kill_process_group(child);
-}
-
-#[cfg(windows)]
-fn kill_process_group(child: &mut Child) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    let _ = child.kill();
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn terminate_process_group(child: &mut Child) {
-    let _ = child.kill();
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn kill_process_group(child: &mut Child) {
-    let _ = child.kill();
-}
+#[cfg(all(test, unix))]
+#[path = "child_tests.rs"]
+mod tests;

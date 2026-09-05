@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Added
+
 - **Claude Code now provides the same visible, precisely observed session to Group Actors and Voice Analyst.** CCCC observes authoritative turns and tool results from Claude Agent View and attaches the native writable Claude TUI to that exact session; ordinary stop/start resumes the validated provider conversation.
 
 ### Changed
@@ -14,6 +15,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Actors no longer expose PTY versus Headless as a configuration choice.** CCCC derives the Runtime surface automatically: CLI Actors retain their native writable terminal, while Codex, Claude Code, Grok Build, and OpenCode pair it with structured lifecycle observation on the same session. Incoming Actor messages are handed to that native terminal without CCCC waiting for provider idleness or choosing queue-versus-steer semantics.
 
 ### Fixed
+- **Forced launcher exit terminates owned process trees independently of normal shutdown.** PTY, managed providers, DeepSeek and Web-owned daemon launches register OS resources at spawn; the second interrupt or normal-shutdown deadline terminates those resources without protocol/session locks or another cleanup timeout. Unix exit polling revokes ownership before reaping to avoid reused PID/PGID targets.
+- **Group action menus no longer activate mouse sorting.** Menu mouse-down events stay inside the trigger while row dragging remains available.
+- **Long terminal history no longer loses newer lines when older pages are loaded.** Scrolled-off lines have a separate bounded history buffer with explicit truncation reporting.
+- **Windows managed processes join their Job before executing.** Standard launches remain suspended through Job assignment, preserving detached launch flags and cleaning up failed starts.
+- **Failed managed-process stops retain retryable ownership.** Child handles remain owned until confirmed exit and reaping, including signal and wait failures.
+- **Sidebar group reordering updates immediately.** The rendered list now subscribes to order changes, preventing drag snap-back and subsequent moves based on stale row positions.
+- **Claude resume recovers stale transcript paths after worktree moves.** Missing published paths are resolved to a unique retained transcript for the same session only during initial recovery; history offsets and active-file identity checks remain intact, and missing-history errors identify the path and session.
+- **Daemon takeover validates the actual CLI subcommand before targeting a PID.** Global options no longer cause one-shot commands to be mistaken for daemon hosts.
+- **Terminal history preserves ANSI state across backward pages and remains keyboard accessible.** Rendering preserves inferred frames before repainting within a fixed cumulative range. Short pages require explicit loading, errors pause automatic loading, and the nested dialog traps focus and restores its opener.
+- **Managed Claude sessions retain host proxy and CA settings.** HTTP/HTTPS/ALL/NO proxy aliases and custom CA paths survive the cleared launcher environment and are included in the private settings used for session respawn. Explicit network overrides, including empty proxy values, take precedence.
+- **Managed Claude and Codex sessions recover before their first completed turn.** Claude can locate its exact validated transcript before Agent View publishes `linkScanPath`, preserving the resume read boundary. New Codex threads materialize metadata and pass a same-thread resume check before CCCC exposes the native terminal; startup does not inject a model prompt.
 - **Managed terminal startup no longer accepts truncated first messages.** Actor and Voice Analyst native input waits for the TUI's input mode before writing, without injecting startup work or waiting for the current model turn to finish.
 - **Claude sessions stop and resume reliably across empty starts and observer failures.** Verified empty sessions retain their conversation ID without requiring nonexistent history; observer failures use confirmed background-task shutdown, and normal closure releases event readers. Transcript replacement checks now use file handles supported by stable Rust on Windows.
 - **Native Windows Actors now start and receive messages reliably.** Runtime launch resolves executables in the configured PATHEXT order without restoring excluded extensions or selecting extensionless npm shell shims, routes `.cmd`/`.bat` through the Windows command processor, preserves backslashes in `actor --command`, and uses the last stable `portable-pty` ConPTY behavior. A Windows-only regression test delivers UTF-8 text through an npm-style batch shim and verifies that the Actor stays alive.

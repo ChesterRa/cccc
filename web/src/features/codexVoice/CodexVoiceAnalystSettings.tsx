@@ -124,7 +124,7 @@ export function CodexVoiceAnalystSettings({
         ) : null}
       </div>
 
-      <div className="sticky bottom-0 mt-auto flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 py-4 backdrop-blur-xl safe-area-inset-bottom sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="sticky bottom-0 mt-auto flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div className="min-w-0 text-xs">
           {form.error ? (
             <p className="text-rose-500" role="alert">

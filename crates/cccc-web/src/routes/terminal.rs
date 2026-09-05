@@ -11,6 +11,7 @@ use crate::api::{ApiResult, body_object, call, object};
 struct TerminalQuery {
     actor_id: String,
     before: Option<String>,
+    render_before: Option<u64>,
     max_chars: Option<u64>,
     limit_bytes: Option<u64>,
     #[serde(default)]
@@ -75,6 +76,7 @@ async fn history(
             "group_id": group_id,
             "actor_id": query.actor_id,
             "before": query.before,
+            "render_before": query.render_before,
             "limit_bytes": query.limit_bytes.unwrap_or(64_000),
             "strip_ansi": query.strip_ansi,
             "compact": query.compact,
@@ -134,10 +136,12 @@ mod tests {
             "actor_id": "peer1",
             "strip_ansi": true,
             "compact": true,
+            "render_before": 128_000,
         }))
         .expect("terminal query");
 
         assert!(query.strip_ansi);
         assert!(query.compact);
+        assert_eq!(query.render_before, Some(128_000));
     }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import "./MobileMenuSheet.css";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
@@ -203,7 +204,7 @@ export function MobileMenuSheet({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 md:hidden animate-fade-in">
+    <div className="mobile-menu-viewport fixed inset-0 z-50 md:hidden animate-fade-in">
       <div
         className="absolute inset-0 glass-overlay"
         onPointerDown={(e) => {
@@ -214,7 +215,7 @@ export function MobileMenuSheet({
 
       <div
         ref={modalRef}
-        className="absolute bottom-0 left-0 right-0 rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
+        className="mobile-menu-panel rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
         role="dialog"
         aria-modal="true"
         aria-label={t("menu")}
@@ -251,7 +252,7 @@ export function MobileMenuSheet({
           </button>
         </div>
 
-        <div className="p-4 space-y-4 safe-area-inset-bottom">
+        <div className="mobile-menu-content p-4 space-y-4">
           {!selectedGroupId && (
             <div className={classNames("text-sm px-1 pb-2", "text-[var(--color-text-tertiary)]")}>
               {t("selectGroupToEnable")}

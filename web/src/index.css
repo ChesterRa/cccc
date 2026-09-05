@@ -1008,16 +1008,11 @@ select {
   overflow: hidden;
 }
 
-/* Safe area insets for mobile */
-.safe-area-inset-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0);
-}
-
-/* Compact bottom safe area - reduces visual padding while maintaining touch safety */
-.safe-area-bottom-compact {
-  padding-bottom: calc(env(safe-area-inset-bottom, 0) * 0.6);
-}
-
+/* Safe area insets for mobile.
+   There is deliberately no bottom counterpart: an unlayered class here beats
+   every Tailwind padding utility and zeroed the bottom padding of footers on
+   desktop. Add the inset inline instead, on top of the base padding:
+   pb-[calc(1rem+env(safe-area-inset-bottom,0px))]. */
 .safe-area-inset-top {
   padding-top: max(1rem, env(safe-area-inset-top, 0));
 }
@@ -1270,11 +1265,12 @@ select {
   opacity: 0.8;
 }
 
-/* Glass sidebar - enhanced */
+/* Glass sidebar - enhanced.
+   No backdrop-filter: the sidebar background is opaque in light mode and
+   85%+ opaque in dark mode, so the blur was invisible while costing a full
+   viewport-height readback on every frame. */
 .glass-sidebar {
   background: var(--color-sidebar-bg);
-  backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
-  -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   box-shadow: none;
   position: relative;
 }
@@ -1293,11 +1289,10 @@ select {
   background: linear-gradient(180deg, rgba(10, 10, 10, 0.85) 0%, rgba(0, 0, 0, 0.75) 100%);
 }
 
-/* Glass header - enhanced */
+/* Glass header - enhanced. No backdrop-filter: the background is 90%+ opaque,
+   which hides the blur but not its cost. */
 .glass-header {
   background: var(--color-chat-bg);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border-bottom: 1px solid var(--glass-border-subtle);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
 }
@@ -1554,6 +1549,23 @@ select {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   border: 1px solid var(--glass-panel-border);
   box-shadow: var(--glass-shadow), var(--glass-inner-glow);
+}
+
+/* Users who ask for less transparency get none of the blur cost either. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-lg,
+  .glass-card,
+  .glass-btn,
+  .glass-btn-accent,
+  .glass-input,
+  .glass-modal,
+  .glass-panel,
+  .glass-overlay,
+  .frosted {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* Glass tab item */

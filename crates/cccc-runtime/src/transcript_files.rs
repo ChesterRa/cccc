@@ -23,7 +23,7 @@ pub(crate) fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> 
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        return fs::rename(source, target);
+        fs::rename(source, target)
     }
     #[cfg(not(windows))]
     match fs::rename(source, target) {

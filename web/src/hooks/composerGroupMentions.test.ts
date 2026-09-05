@@ -113,6 +113,21 @@ describe("composer group mention tokens", () => {
     ).toBeNull();
   });
 
+  it("returns the same token array when nothing needs pruning", () => {
+    const groupTokens = [{ token: "#alpha", groupId: "g_alpha", start: 0, end: 6 }];
+    expect(pruneComposerGroupMentionTokens({ text: "#alpha hi", tokens: groupTokens })).toBe(
+      groupTokens,
+    );
+    const empty: never[] = [];
+    expect(pruneComposerGroupMentionTokens({ text: "typing", tokens: empty })).toBe(empty);
+    const agentTokens = [
+      { token: "@peer", actorId: "peer", start: 0, end: 5, scope: "selected" as const },
+    ];
+    expect(pruneComposerAgentMentionTokens({ text: "@peer hi", tokens: agentTokens })).toBe(
+      agentTokens,
+    );
+  });
+
   it("keeps only menu-selected agent tokens that still match the text range", () => {
     const text = "ask @target to help";
     const token = createComposerAgentMentionToken({

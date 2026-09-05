@@ -28,7 +28,7 @@
   "workingGroups": "工作组",
   "archivedGroups": "已归档",
   "groupActions": "工作组操作",
-  "reorderGroup": "拖动排序工作组",
+  "reorderWithKeyboard": "按 Alt+↑ 或 Alt+↓ 移动该工作组。",
   "archiveGroup": "归档",
   "restoreGroup": "恢复",
   "noGroupsYet": "还没有工作组",

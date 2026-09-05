@@ -17,6 +17,7 @@ mod launch_codex;
 mod launch_command;
 mod launch_grok;
 mod launch_opencode;
+pub(crate) mod lifecycle_timing;
 mod native_input;
 mod opencode;
 mod process;

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useComposerMenuHeight } from "./useComposerMenuHeight";
 import { useTranslation } from "react-i18next";
 
 import { classNames } from "../../utils/classNames";
@@ -24,6 +25,8 @@ export function ChatMentionMenu({
   onHover,
 }: ChatMentionMenuProps) {
   const { t } = useTranslation("chat");
+  const menuRef = useRef<HTMLDivElement>(null);
+  useComposerMenuHeight(menuRef);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
@@ -34,6 +37,7 @@ export function ChatMentionMenu({
 
   return (
     <div
+      ref={menuRef}
       className={classNames(
         "glass-panel absolute bottom-full left-2 right-2 sm:left-auto sm:right-auto mb-3 w-auto sm:w-80 max-w-[calc(100vw-1rem)] max-h-60 overflow-auto scrollbar-subtle rounded-2xl border shadow-2xl z-30 animate-in fade-in zoom-in-95 duration-200",
       )}

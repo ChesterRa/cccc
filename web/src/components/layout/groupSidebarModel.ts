@@ -1,15 +1,31 @@
 export interface SidebarReorderState {
-  isSmallScreen: boolean;
   isCollapsed: boolean;
   readOnly?: boolean;
 }
 
-export function canReorderSidebarGroups({
-  isSmallScreen: _isSmallScreen,
+// The whole row is the drag activator on every viewport; there is no separate
+// drag handle. Reordering is off only where the row cannot host the gesture.
+export type SidebarReorderActivation = "disabled" | "row";
+
+export function getSidebarReorderActivation({
   isCollapsed,
   readOnly,
-}: SidebarReorderState): boolean {
-  return !isCollapsed && !readOnly;
+}: SidebarReorderState): SidebarReorderActivation {
+  return isCollapsed || readOnly ? "disabled" : "row";
+}
+
+export interface SidebarSensorActivationConstraints {
+  mouse: { distance: number };
+  touch: { delay: number; tolerance: number };
+}
+
+// Mouse and touch are separate sensors on purpose. A single pointer sensor
+// receives touch input too, so a distance constraint on it would start a drag
+// from the first few pixels of a scroll gesture and the list would stop
+// scrolling. Touch therefore requires a long press; a mouse drag can start
+// from a short distance because it never competes with scrolling.
+export function getSidebarSensorActivationConstraints(): SidebarSensorActivationConstraints {
+  return { mouse: { distance: 4 }, touch: { delay: 250, tolerance: 8 } };
 }
 
 export function groupSidebarScrollClass(isCollapsed: boolean): string {

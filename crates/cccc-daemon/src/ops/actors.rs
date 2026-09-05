@@ -652,6 +652,10 @@ fn remove_persisted_headless_state(
 fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let actor_id = required_arg(request, "actor_id")?;
+    let _timing_span = tracing::info_span!(
+        "actor_lifecycle", group_id = %group_id, actor_id = %actor_id, action = kind
+    )
+    .entered();
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     let action = match kind {
         "actor.start" => ActorAction::Start,
@@ -675,7 +679,11 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
         runtime_session::remove(home, &group_id, &actor_id).map_err(OpError::io)?;
     }
     if kind != "actor.start" || !runtime_was_running {
-        actor_delivery::shutdown_actor(&group_id, &actor_id);
+        super::codex_voice_analyst::lifecycle_timing::run_sync("actor.delivery_shutdown", || {
+            actor_delivery::shutdown_actor(&group_id, &actor_id);
+            Ok(())
+        })
+        .map_err(OpError::io)?;
     }
     let enabled = kind != "actor.stop";
     let status = match actor_runtime::apply(home, &group, &actor_id, kind) {

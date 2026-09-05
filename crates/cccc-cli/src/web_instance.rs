@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use cccc_core::HomeLayout;
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, IsTerminal, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 const LOCK_FILE: &str = "cccc-web.lock";
@@ -54,32 +54,15 @@ pub fn try_claim(home: &HomeLayout) -> Result<Claim> {
 }
 
 pub fn confirm_stop(home: &HomeLayout, pid: Option<u32>) -> Result<bool> {
-    if !io::stdin().is_terminal() {
-        return Ok(false);
-    }
-    confirm_stop_with(home, pid, &mut io::stdin().lock(), &mut io::stderr().lock())
+    crate::confirm::ask(&stop_question(home, pid))
 }
 
-fn confirm_stop_with(
-    home: &HomeLayout,
-    pid: Option<u32>,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
-) -> Result<bool> {
+fn stop_question(home: &HomeLayout, pid: Option<u32>) -> String {
     let process = pid.map_or_else(|| "unknown PID".into(), |pid| format!("PID {pid}"));
-    write!(
-        output,
-        "CCCC is already running for CCCC_HOME={} ({process}). Stop it and continue? [y/N] ",
+    format!(
+        "CCCC is already running for CCCC_HOME={} ({process}). Stop it and continue?",
         home.root().display()
-    )?;
-    output.flush()?;
-
-    let mut answer = String::new();
-    input.read_line(&mut answer)?;
-    Ok(matches!(
-        answer.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes"
-    ))
+    )
 }
 
 fn read_pid(file: &mut File) -> Option<u32> {
@@ -97,6 +80,26 @@ impl Drop for WebInstance {
     fn drop(&mut self) {
         let _ = self.file.set_len(0);
         let _ = FileExt::unlock(&self.file);
+    }
+}
+
+/// Claim the Web instance once whoever holds it now has let go.
+pub async fn wait_until_free(
+    home: &HomeLayout,
+    timeout: std::time::Duration,
+) -> Result<WebInstance> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Claim::Acquired(instance) = try_claim(home)? {
+            return Ok(instance);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "existing CCCC process did not stop within {} seconds",
+                timeout.as_secs()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -125,18 +128,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_only_explicit_yes() {
+    fn the_stop_question_names_the_home_and_the_owner() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut output = Vec::new();
 
+        let question = stop_question(&home, Some(42));
+        assert!(question.contains("PID 42"), "{question}");
         assert!(
-            confirm_stop_with(&home, Some(42), &mut "yes\n".as_bytes(), &mut output).expect("yes")
+            question.contains(&home.root().display().to_string()),
+            "{question}"
         );
-        assert!(
-            !confirm_stop_with(&home, Some(42), &mut "\n".as_bytes(), &mut output)
-                .expect("default no")
-        );
+        assert!(stop_question(&home, None).contains("unknown PID"));
     }
 
     #[test]

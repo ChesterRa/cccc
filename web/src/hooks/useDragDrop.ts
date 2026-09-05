@@ -1,6 +1,7 @@
 // Drag-and-drop file handling.
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useUIStore, useComposerStore } from "../stores";
+import { useShallow } from "zustand/react/shallow";
 
 const WEB_MAX_FILE_MB = 100;
 const WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024;
@@ -28,8 +29,13 @@ interface UseDragDropOptions {
 }
 
 export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
-  const { showError } = useUIStore();
-  const { appendComposerFiles, composerFiles } = useComposerStore();
+  const { showError } = useUIStore(useShallow((s) => ({ showError: s.showError })));
+  const { appendComposerFiles, composerFiles } = useComposerStore(
+    useShallow((s) => ({
+      appendComposerFiles: s.appendComposerFiles,
+      composerFiles: s.composerFiles,
+    })),
+  );
 
   const [dropOverlayOpen, setDropOverlayOpen] = useState(false);
   const dragDepthRef = useRef<number>(0);

@@ -1,7 +1,7 @@
 use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::output_reader::OutputReader;
-use crate::process_tree::ProcessTreeGuard;
+use crate::process_tree::OwnedProcessTree;
 use crate::session_history::SessionHistory;
 use crate::terminal_attach::{
     AttachmentRegistry, TerminalAttachMode, TerminalAttachOptions, TerminalAttachment,
@@ -42,7 +42,7 @@ pub struct Session {
     status: SessionStatus,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
-    process_tree: ProcessTreeGuard,
+    process_tree: OwnedProcessTree,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     input_gate: Arc<Mutex<()>>,
     attachments: AttachmentRegistry,
@@ -78,21 +78,11 @@ impl Session {
         command.env("CCCC_ACTOR_ID", &spec.actor_id);
         command.env("CCCC_RUNNER", runner_name(spec.runner));
         command.env("TERM", "xterm-256color");
-        let mut child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let process_tree = match ProcessTreeGuard::attach(child.as_ref()) {
-            Ok(process_tree) => process_tree,
-            Err(error) => {
-                // A failed attachment must not orphan the PTY child.  The
-                // process-tree guard does not exist yet, so terminate and
-                // reap the child explicitly before returning the error.
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.into());
-            }
-        };
+        let (child, process_tree) = OwnedProcessTree::spawn_pty(|| {
+            pair.slave
+                .spawn_command(command)
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })?;
         let pid = child.process_id();
         let reader = pair
             .master
@@ -140,17 +130,17 @@ impl Session {
 
     pub fn status(&mut self) -> SessionStatus {
         if self.status.running
-            && let Ok(Some(exit)) = self.child.try_wait()
+            && let Ok(Some(exit)) = self.process_tree.try_wait(|| self.child.try_wait())
         {
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
-            self.process_tree.terminate();
+            let _ = self.process_tree.terminate();
         }
         self.status.clone()
     }
 
     pub fn stop(&mut self) -> Result<SessionStatus, RuntimeError> {
-        self.process_tree.terminate();
+        self.process_tree.terminate()?;
         if self.status.running {
             self.child
                 .kill()
@@ -289,7 +279,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.process_tree.terminate();
+        let _ = self.process_tree.terminate();
         if self.status.running {
             let _ = self.child.kill();
             let _ = self.child.wait();

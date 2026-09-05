@@ -28,7 +28,7 @@
   "workingGroups": "Working Groups",
   "archivedGroups": "Archived",
   "groupActions": "Group actions",
-  "reorderGroup": "Reorder group",
+  "reorderWithKeyboard": "Press Alt+Up or Alt+Down to move this group.",
   "archiveGroup": "Archive",
   "restoreGroup": "Restore",
   "noGroupsYet": "No working groups yet",

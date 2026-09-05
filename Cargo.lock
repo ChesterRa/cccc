@@ -476,8 +476,10 @@ dependencies = [
  "cccc-windows-console",
  "clap",
  "fs2",
+ "nix 0.28.0",
  "openssl-sys",
  "reqwest 0.12.28",
+ "rustls 0.23.37",
  "semver",
  "serde_json",
  "shell-words",
@@ -614,9 +616,11 @@ name = "cccc-pair-runtime"
 version = "0.4.37"
 dependencies = [
  "cccc-pair-contracts",
+ "cccc-windows-process",
  "nix 0.28.0",
  "portable-pty",
  "retach",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -703,6 +707,13 @@ dependencies = [
 
 [[package]]
 name = "cccc-windows-console"
+version = "0.4.37"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cccc-windows-process"
 version = "0.4.37"
 dependencies = [
  "windows-sys 0.61.2",

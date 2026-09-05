@@ -270,5 +270,14 @@
   "headlessControlStalled": "控制任务等待中",
   "headlessControlCompleted": "控制任务处理完成",
   "headlessControlFailed": "控制任务处理失败",
-  "headlessControlUpdated": "控制任务更新"
+  "headlessControlUpdated": "控制任务更新",
+  "terminalHistory": "终端历史",
+  "openTerminalHistory": "查看终端历史",
+  "historyLoading": "正在加载历史…",
+  "historyLoadFailed": "终端历史加载失败。",
+  "historyLoadOlder": "加载更早历史",
+  "historyRetry": "重试",
+  "historyStart": "已到保留历史的起点",
+  "historyEmpty": "该智能体暂无保留的终端历史。",
+  "historyTruncated": "更早的输出已从缓冲区中淘汰。"
 }

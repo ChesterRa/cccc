@@ -1,3 +1,4 @@
+use super::super::codex_voice_analyst::lifecycle_timing;
 use super::{HeadlessStatus, Session, managed_reader, managed_runtime, poisoned, provider_cli};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
@@ -6,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
+use tracing::Instrument;
 
 type Key = (String, String);
 
@@ -83,7 +85,10 @@ fn start_managed_agent(
                 command: provider_cli::base_command(actor),
                 environment: env,
             },
-        ),
+        )
+        .instrument(tracing::info_span!(
+            "actor_runtime_start", group_id = %group.group_id, actor_id = %actor.id
+        )),
     )?;
     let app = Arc::new(app);
     let prompt = cccc_core::system_prompt::render_session(home, group, actor);
@@ -117,22 +122,25 @@ fn start_managed_agent(
             return Err(cleanup_failed_start(&item, error));
         }
     };
-    let terminal = match cccc_runtime::start_with_history(
-        cccc_runtime::LaunchSpec {
-            group_id: group.group_id.clone(),
-            actor_id: actor.id.clone(),
-            runner: RunnerKind::Pty,
-            command: app.actor_tui_command(),
-            cwd: cwd.clone(),
-            env: app.tui_environment(),
-            cols: 120,
-            rows: 40,
-        },
-        history,
-    ) {
+    let terminal = match lifecycle_timing::run_sync("runtime.terminal_attach", || {
+        cccc_runtime::start_with_history(
+            cccc_runtime::LaunchSpec {
+                group_id: group.group_id.clone(),
+                actor_id: actor.id.clone(),
+                runner: RunnerKind::Pty,
+                command: app.actor_tui_command(),
+                cwd: cwd.clone(),
+                env: app.tui_environment(),
+                cols: 120,
+                rows: 40,
+            },
+            history,
+        )
+        .map_err(io::Error::other)
+    }) {
         Ok(status) => status,
         Err(error) => {
-            return Err(cleanup_failed_start(&item, io::Error::other(error)));
+            return Err(cleanup_failed_start(&item, error));
         }
     };
     item.attach_terminal(terminal.pid);

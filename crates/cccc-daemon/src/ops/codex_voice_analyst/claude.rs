@@ -14,6 +14,9 @@ use tokio::task::JoinHandle;
 mod command;
 mod control;
 mod transcript;
+mod transcript_ack;
+mod transcript_buffer;
+mod transcript_path;
 
 pub(super) use command::prepare;
 
@@ -1079,6 +1082,8 @@ struct TranscriptFollower {
     partial: Vec<u8>,
     partial_since: Option<tokio::time::Instant>,
     skip_existing: bool,
+    discovered_from_store: bool,
+    stale_published_path: Option<PathBuf>,
 }
 
 impl TranscriptFollower {
@@ -1098,6 +1103,8 @@ impl TranscriptFollower {
             partial: Vec::new(),
             partial_since: None,
             skip_existing,
+            discovered_from_store: false,
+            stale_published_path: None,
         }
     }
 
@@ -1162,26 +1169,8 @@ impl TranscriptFollower {
         file.take(wanted).read_to_end(&mut bytes).await?;
         self.offset = self.offset.saturating_add(bytes.len() as u64);
         self.partial.extend(bytes);
-        if self.partial.len() > MAX_TRANSCRIPT_LINE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Claude transcript record exceeded its limit",
-            ));
-        }
-        let mut records = Vec::new();
-        while let Some(newline) = self.partial.iter().position(|byte| *byte == b'\n') {
-            let line = self.partial.drain(..=newline).collect::<Vec<_>>();
-            let line = &line[..line.len().saturating_sub(1)];
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            records.push(serde_json::from_slice(line).map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Claude transcript record is invalid: {error}"),
-                )
-            })?);
-        }
+        let records =
+            transcript_buffer::take_records(&mut self.partial, MAX_TRANSCRIPT_LINE_BYTES)?;
         self.partial_since = (!self.partial.is_empty()).then(tokio::time::Instant::now);
         Ok(records)
     }
@@ -1219,21 +1208,26 @@ impl TranscriptFollower {
             // retry on the next poll before declaring transcript corruption.
             return Ok(());
         };
-        let Some(value) = state
+        let published = state
             .get("linkScanPath")
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            if self.path.is_some() {
+            .filter(|value| !value.is_empty());
+        let path = if let Some(value) = published {
+            PathBuf::from(value)
+        } else {
+            if self.path.is_some() && !self.discovered_from_store {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Claude Agent View stopped publishing the active transcript",
                 ));
             }
-            return Ok(());
+            let Some(path) = transcript_path::find(&self.config_dir, &self.session_id)? else {
+                return Ok(());
+            };
+            self.discovered_from_store = true;
+            path
         };
-        let path = PathBuf::from(value);
         let filename = path
             .file_name()
             .and_then(|value| value.to_str())
@@ -1244,6 +1238,15 @@ impl TranscriptFollower {
                 "Claude Agent View state referenced a different transcript identity",
             ));
         }
+        let path = transcript_path::recover_missing(
+            &self.config_dir,
+            &self.session_id,
+            path,
+            self.path.as_deref(),
+            &mut self.stale_published_path,
+            self.skip_existing,
+        )
+        .await?;
         let metadata = tokio::fs::symlink_metadata(&path).await?;
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return Err(io::Error::new(
@@ -1687,23 +1690,29 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn agent_view_launch_control_transcript_and_stop_share_one_session() {
-        exercise_managed_session(false, true).await;
+        exercise_managed_session(false, true, false).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn transcript_failure_stops_the_owned_background_job() {
-        exercise_managed_session(true, false).await;
+        exercise_managed_session(true, false, false).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn actor_transcript_failure_stops_job_and_releases_reader() {
-        exercise_managed_session(true, true).await;
+        exercise_managed_session(true, true, false).await;
     }
 
     #[cfg(unix)]
-    async fn exercise_managed_session(fail_transcript: bool, actor_reader: bool) {
+    #[tokio::test]
+    async fn resume_ack_keeps_managed_control_and_delivery_alive() {
+        exercise_managed_session(false, true, true).await;
+    }
+
+    #[cfg(unix)]
+    async fn exercise_managed_session(fail_transcript: bool, actor_reader: bool, resume_ack: bool) {
         use sha2::{Digest, Sha256};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1818,7 +1827,16 @@ mod tests {
                         let transcript_release = Arc::clone(&server_transcript_release);
                         tokio::spawn(async move {
                             transcript_release.notified().await;
-                            let records = [
+                            let mut records = Vec::new();
+                            if resume_ack {
+                                records.extend([
+                                    json!({"type":"user","sessionId":session_id,"isMeta":true,
+                                        "message":{"content":"Continue from where you left off."}}),
+                                    json!({"type":"assistant","sessionId":session_id,"isApiErrorMessage":false,
+                                        "message":{"model":"<synthetic>","content":[{"type":"text","text":"No response requested."}]}}),
+                                ]);
+                            }
+                            records.extend([
                                 json!({
                                     "type":"user",
                                     "sessionId":session_id,
@@ -1835,7 +1853,7 @@ mod tests {
                                     "sessionId":session_id,
                                     "subtype":"turn_duration",
                                 }),
-                            ];
+                            ]);
                             tokio::fs::write(&transcript_path, [])
                                 .await
                                 .expect("create transcript");
@@ -1995,3 +2013,7 @@ mod tests {
             .expect("server");
     }
 }
+
+#[cfg(test)]
+#[path = "claude/transcript_buffer_tests.rs"]
+mod transcript_buffer_tests;

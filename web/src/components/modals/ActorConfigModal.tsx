@@ -36,6 +36,11 @@ import {
 } from "./actorSecretManagerModel";
 import { ModalFrame } from "./ModalFrame";
 
+// Centered with equal breathing room above and below: the frame already pads
+// the viewport by 1rem on each side, so this leaves 3rem clear top and bottom.
+const ACTOR_MODAL_PANEL_CLASS =
+  "w-full h-full sm:h-auto sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem] sm:max-h-[calc(100dvh-6rem)]";
+
 type ConfigMode = "custom" | "profile";
 type AdvancedTabId = "connection" | "environment" | "capabilities" | "profile";
 
@@ -346,7 +351,7 @@ function CreateActorConfigModal({
         </div>
       }
       closeAriaLabel={t("common:close")}
-      panelClassName="w-full h-full sm:h-auto sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem] sm:mt-6 sm:max-h-[calc(100vh-5rem)]"
+      panelClassName={ACTOR_MODAL_PANEL_CLASS}
       modalRef={modalRef}
       footerActions={
         <>
@@ -369,7 +374,7 @@ function CreateActorConfigModal({
             </div>
           ) : null}
 
-          <div className="flex flex-col-reverse gap-3 pb-2 sm:flex-row sm:justify-end">
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
             <Button
               type="button"
               variant="secondary"
@@ -1194,7 +1199,7 @@ function EditActorConfigModal({
         </div>
       }
       closeAriaLabel={t("common:close")}
-      panelClassName="w-full h-full sm:h-auto sm:w-[min(100vw-2rem,72rem)] sm:max-w-[72rem] sm:mt-6 sm:max-h-[calc(100vh-5rem)]"
+      panelClassName={ACTOR_MODAL_PANEL_CLASS}
       modalRef={modalRef}
       footerActions={
         <>

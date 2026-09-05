@@ -19,11 +19,7 @@ impl DeepSeekSupervisor {
         if command.is_empty() {
             return Err(SupervisorError::EmptyCommand);
         }
-        if self
-            .child
-            .as_mut()
-            .is_some_and(|child| child.try_wait().ok().flatten().is_none())
-        {
+        if self.is_running() {
             return Ok(self.generation);
         }
         let mut process = Command::new(&command[0]);
@@ -34,8 +30,9 @@ impl DeepSeekSupervisor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_process_group(&mut process);
-        self.child = Some(process.spawn()?);
+        let (child, tree) = crate::OwnedProcessTree::spawn(&mut process)?;
+        self.child = Some(child);
+        self.process_tree = Some(tree);
         let stdout = self
             .child
             .as_mut()
@@ -149,10 +146,14 @@ impl DeepSeekSupervisor {
             return Ok(());
         };
         close_stdin(&mut child);
-        terminate_process_group(&mut child);
-        if !wait_bounded(&mut child, Duration::from_millis(750))? {
-            kill_process_group(&mut child);
-            let _ = wait_bounded(&mut child, Duration::from_millis(750));
+        let tree = self
+            .process_tree
+            .take()
+            .expect("started child owns its process tree");
+        tree.request_stop()?;
+        if !wait_bounded(&mut child, &tree, Duration::from_millis(750))? {
+            tree.terminate()?;
+            let _ = wait_bounded(&mut child, &tree, Duration::from_millis(750));
         }
         self.stdout_rx.take();
         if let Some(thread) = self.stdout_thread.take() {
@@ -217,22 +218,18 @@ fn discard_frame_remainder(reader: &mut BufReader<impl std::io::Read>) -> io::Re
     }
 }
 
-#[cfg(unix)]
-fn configure_process_group(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-#[cfg(not(unix))]
-fn configure_process_group(_command: &mut Command) {}
-
 fn close_stdin(child: &mut Child) {
     child.stdin.take();
 }
 
-fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
+fn wait_bounded(
+    child: &mut Child,
+    tree: &crate::OwnedProcessTree,
+    timeout: Duration,
+) -> io::Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
+        if tree.try_wait(|| child.try_wait())?.is_some() {
             return Ok(true);
         }
         if Instant::now() >= deadline {
@@ -240,37 +237,6 @@ fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<bool> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-#[cfg(unix)]
-fn terminate_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGTERM);
-}
-#[cfg(unix)]
-fn kill_process_group(child: &mut Child) {
-    signal_process_group(child, nix::sys::signal::Signal::SIGKILL);
-    let _ = child.kill();
-}
-#[cfg(unix)]
-fn signal_process_group(child: &Child, signal: nix::sys::signal::Signal) {
-    use nix::sys::signal::killpg;
-    use nix::unistd::Pid;
-
-    if let Ok(group_id) = i32::try_from(child.id()) {
-        let _ = killpg(Pid::from_raw(group_id), signal);
-    }
-}
-#[cfg(windows)]
-fn kill_process_group(child: &mut Child) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .status();
-}
-#[cfg(windows)]
-fn terminate_process_group(child: &mut Child) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .status();
 }
 
 #[cfg(test)]

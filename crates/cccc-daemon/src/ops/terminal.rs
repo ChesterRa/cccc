@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 use crate::ops::terminal_text;
 
+mod history_page;
 mod session_control;
 
 #[cfg(all(test, unix))]
@@ -115,11 +116,11 @@ fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         _ => None,
     });
     let limit = integer(request, "limit_bytes", 64_000).clamp(1, 2_000_000);
-    let page = super::terminal_history_source::page(home, &group_id, &actor_id, before, limit)
-        .map_err(runtime_error)?;
+    let render_before = request.args.get("render_before").and_then(Value::as_u64);
+    let page = history_page::read(home, &group_id, &actor_id, before, limit, render_before)?;
     let strip_ansi = bool_arg(request, "strip_ansi", false);
     let text = if strip_ansi {
-        terminal_text::render(&page.data, bool_arg(request, "compact", false))
+        terminal_text::render_history(&page.data, bool_arg(request, "compact", false))
     } else {
         page.data.clone()
     };

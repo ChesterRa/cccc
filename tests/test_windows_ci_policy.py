@@ -41,3 +41,31 @@ def test_windows_smoke_keeps_focused_native_checks() -> None:
     assert not any(item.startswith("actions/setup-python") for item in uses)
     assert "npm " not in runs
     assert "python " not in runs.lower()
+
+
+def test_windows_smoke_executes_owned_process_regressions() -> None:
+    import shlex
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    commands = [
+        shlex.split(step["run"])
+        for step in workflow["jobs"]["windows-smoke"]["steps"]
+        if "run" in step
+    ]
+    for package, test_filter in [
+        ("cccc-windows-process", None),
+        ("cccc-pair-runtime", "process_tree::windows_tests::"),
+    ]:
+        matching = [
+            args for args in commands
+            if args[:2] == ["cargo", "test"]
+            and args[args.index("--package") + 1] == package
+            and (test_filter is None or test_filter in args)
+        ]
+        assert len(matching) == 1, (package, test_filter)
+        args = matching[0]
+        assert "--lib" in args and "--locked" in args
+        assert args[args.index("--") + 1:] == ["--test-threads=1"]

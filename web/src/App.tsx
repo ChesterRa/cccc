@@ -13,6 +13,7 @@ import { useSelectedGroupRuntime } from "./hooks/useSelectedGroupRuntime";
 import { useSSE } from "./hooks/useSSE";
 import { useDragDrop } from "./hooks/useDragDrop";
 import { useGroupActions } from "./hooks/useGroupActions";
+import { useOrderedGroups } from "./hooks/useOrderedGroups";
 import { useSwipeNavigation } from "./hooks/useSwipeNavigation";
 import { useCrossGroupRecipients } from "./hooks/useCrossGroupRecipients";
 import { useDeepLink } from "./hooks/useDeepLink";
@@ -37,6 +38,7 @@ import { publishCapabilityChanged } from "./utils/capabilityEvents";
 import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 import { getEffectiveComposerDestGroupId } from "./stores/useComposerStore";
 import { buildReplyComposerState } from "./utils/chatReply";
+import { useShallow } from "zustand/react/shallow";
 
 // ============ Main App Component ============
 
@@ -72,7 +74,6 @@ export default function App() {
   const reorderGroupsInSection = useGroupStore((state) => state.reorderGroupsInSection);
   const archiveGroup = useGroupStore((state) => state.archiveGroup);
   const restoreGroup = useGroupStore((state) => state.restoreGroup);
-  const getOrderedGroups = useGroupStore((state) => state.getOrderedGroups);
 
   const busy = useUIStore((s) => s.busy);
   const errorMsg = useUIStore((s) => s.errorMsg);
@@ -124,9 +125,25 @@ export default function App() {
     setDestGroupId,
     setReplyTarget,
     setReplyToText,
-  } = useComposerStore();
+  } = useComposerStore(
+    useShallow((s) => ({
+      activeGroupId: s.activeGroupId,
+      destGroupId: s.destGroupId,
+      composerFiles: s.composerFiles,
+      replyTarget: s.replyTarget,
+      setDestGroupId: s.setDestGroupId,
+      setReplyTarget: s.setReplyTarget,
+      setReplyToText: s.setReplyToText,
+    })),
+  );
 
-  const { setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore();
+  const { setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore(
+    useShallow((s) => ({
+      setEditGroupTitle: s.setEditGroupTitle,
+      setEditGroupTopic: s.setEditGroupTopic,
+      setDirSuggestions: s.setDirSuggestions,
+    })),
+  );
   const clearAllOutbox = useChatOutboxStore((state) => state.clearAll);
 
   // Actor actions hook
@@ -326,7 +343,7 @@ export default function App() {
     groupDoc,
     actors,
   });
-  const orderedGroups = getOrderedGroups();
+  const orderedGroups = useOrderedGroups();
 
   const groupLabelById = useMemo(() => {
     const out: Record<string, string> = {};
