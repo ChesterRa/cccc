@@ -47,7 +47,15 @@ async fn fake_analyst_server_inner(
             }
             let id = request["id"].as_u64().expect("id");
             match request["method"].as_str().expect("method") {
-                "initialize" => send_result(&mut socket, id, json!({})).await,
+                "initialize" | "thread/name/set" => send_result(&mut socket, id, json!({})).await,
+                "thread/read" => {
+                    send_result(
+                        &mut socket,
+                        id,
+                        json!({"thread":{"id":"thread-controller","turns":[]}}),
+                    )
+                    .await
+                }
                 "thread/start" => {
                     send_result(
                         &mut socket,
@@ -120,7 +128,15 @@ pub(super) async fn fake_disconnecting_analyst_server() -> (String, JoinHandle<(
             let request: Value = serde_json::from_str(&text).expect("request");
             let id = request["id"].as_u64().expect("id");
             match request["method"].as_str().expect("method") {
-                "initialize" => send_result(&mut socket, id, json!({})).await,
+                "initialize" | "thread/name/set" => send_result(&mut socket, id, json!({})).await,
+                "thread/read" => {
+                    send_result(
+                        &mut socket,
+                        id,
+                        json!({"thread":{"id":"thread-disconnect","turns":[]}}),
+                    )
+                    .await
+                }
                 "thread/start" => {
                     send_result(
                         &mut socket,

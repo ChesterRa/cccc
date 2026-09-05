@@ -176,6 +176,12 @@ creates a new one. Voice Analyst uses this same Codex host/remote-TUI substrate,
 with a global user MCP identity and its own warm lifecycle instead of Actor
 identity and Group lifecycle.
 
+A new Codex thread is made durable through native metadata operations before
+the TUI attaches; an ID or planned rollout path alone is not a resumable history.
+Starting or restarting an idle Actor does not submit a bootstrap prompt or run
+the model. An empty thread can be stopped and resumed without first sending a
+message.
+
 Direct Claude Code Actors require Claude Code 2.1.259 or newer. Before first use,
 accept Claude's bypass-mode disclaimer interactively with
 `claude --dangerously-skip-permissions` under the same Claude configuration.
@@ -199,6 +205,12 @@ provider environment. CCCC-owned background, attach, session, MCP, autonomy,
 and resume flags cannot be supplied by the user. Wrappers, renamed binaries,
 prompt tails, print mode, and user-owned session topology fail explicitly;
 there is no Hook, PTY-paste, or `claude -p` fallback.
+
+A Claude session stopped before its first input can also resume the same ID
+without a transcript. CCCC requires positive empty-job evidence; a zero output-token
+counter is still empty. Existing input, output, nonzero usage, or a published
+transcript keeps the strict history checks. Do not delete `.claude` or `.codex`
+to troubleshoot a managed-session startup failure.
 
 Direct Grok Actors use the same managed-session contract through Grok's native
 topology: CCCC owns one private leader, connects an ACP observer, and attaches

@@ -524,8 +524,9 @@ async fn test_session() -> (AnalystSession, JoinHandle<()>) {
                 continue;
             };
             let result = match request["method"].as_str().expect("method") {
-                "initialize" => json!({}),
+                "initialize" | "thread/name/set" => json!({}),
                 "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
                 method => panic!("unexpected lifecycle test method: {method}"),
             };
             socket
@@ -575,8 +576,9 @@ async fn test_session_with_delayed_interrupt() -> (
                 continue;
             };
             let result = match request["method"].as_str().expect("method") {
-                "initialize" => json!({}),
+                "initialize" | "thread/name/set" => json!({}),
                 "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
                 "turn/interrupt" => {
                     interrupt_seen_tx
                         .take()
@@ -633,8 +635,9 @@ async fn test_session_with_fast_completion() -> (AnalystSession, JoinHandle<()>,
                 continue;
             };
             let result = match request["method"].as_str().expect("method") {
-                "initialize" => json!({}),
+                "initialize" | "thread/name/set" => json!({}),
                 "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
                 "turn/start" => {
                     for event in [
                         json!({
@@ -705,8 +708,9 @@ async fn test_session_with_competing_tui_start() -> (AnalystSession, JoinHandle<
                 continue;
             };
             let result = match request["method"].as_str().expect("method") {
-                "initialize" => json!({}),
+                "initialize" | "thread/name/set" => json!({}),
                 "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
                 "turn/start" => {
                     socket
                         .send(Message::Text(
@@ -790,8 +794,9 @@ async fn test_session_with_retryable_interrupt()
                     .expect("signal second interrupt");
             }
             let result = match method {
-                "initialize" => json!({}),
+                "initialize" | "thread/name/set" => json!({}),
                 "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
                 "turn/interrupt" => json!({}),
                 method => panic!("unexpected lifecycle test method: {method}"),
             };

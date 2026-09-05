@@ -233,11 +233,13 @@ fn known_empty_session(config_dir: &Path, session_id: &str) -> io::Result<bool> 
         found = true;
         // Positive empty-job evidence, not just a missing transcript. Any
         // prompt, output, consumed bytes or published path requires history.
+        // Agent View can initialize its output-token counter to zero; zero
+        // usage is not evidence of a conversation. Retain nonzero/unknown usage.
         if state["intent"].as_str() != Some("")
             || state["linkScanOffset"].as_u64() != Some(0)
             || !state["linkScanPath"].is_null()
             || state.get("output") != Some(&Value::Null)
-            || !state["tokens"].is_null()
+            || !(state["tokens"].is_null() || state["tokens"].as_f64() == Some(0.0))
         {
             return Ok(false);
         }
@@ -1580,12 +1582,19 @@ mod tests {
         cccc_core::fs::write_json(&job.join("state.json"), &empty).expect("empty state");
         assert!(known_empty_session(temp.path(), id).expect("empty"));
         assert!(!known_empty_session(temp.path(), "other").expect("unknown"));
+        let mut counted_empty = empty.clone();
+        counted_empty["tokens"] = json!(0);
+        cccc_core::fs::write_json(&job.join("state.json"), &counted_empty)
+            .expect("initialized empty counter");
+        assert!(known_empty_session(temp.path(), id).expect("zero usage is still empty"));
         for (field, value) in [
             ("intent", json!("first prompt")),
             ("linkScanOffset", json!(42)),
             ("linkScanPath", json!("missing-history.jsonl")),
             ("output", json!("answer")),
             ("tokens", json!(1)),
+            ("tokens", json!("0")),
+            ("tokens", json!(-1)),
         ] {
             let mut state = empty.clone();
             state[field] = value;

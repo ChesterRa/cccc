@@ -7,6 +7,87 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 #[tokio::test]
+async fn new_codex_sessions_fail_before_attach_if_durable_history_is_unavailable() {
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio_tungstenite::tungstenite::Message;
+
+    for purpose in [SessionPurpose::Actor, SessionPurpose::VoiceAnalyst] {
+        for failure in [
+            "thread/name/set",
+            "thread/read",
+            "mismatched history",
+            "missing history",
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener");
+            let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut socket = tokio_tungstenite::accept_async(stream)
+                    .await
+                    .expect("websocket");
+                for method in [
+                    "initialize",
+                    "thread/start",
+                    "thread/name/set",
+                    "thread/read",
+                ] {
+                    let Message::Text(text) = socket.next().await.expect("frame").expect("text")
+                    else {
+                        panic!("expected request");
+                    };
+                    let request: Value = serde_json::from_str(&text).expect("request");
+                    assert_eq!(request["method"], method);
+                    let response = if method == failure {
+                        json!({"id":request["id"],"error":{"code":-32600,"message":"rollout unavailable"}})
+                    } else {
+                        let result = match method {
+                            "thread/start" => {
+                                json!({"thread":{"id":"empty-thread","path":"planned-only.jsonl"}})
+                            }
+                            "thread/read" if failure == "mismatched history" => {
+                                json!({"thread":{"id":"other-thread","turns":[]}})
+                            }
+                            "thread/read" => json!({"thread":{"id":"empty-thread"}}),
+                            _ => json!({}),
+                        };
+                        json!({"id":request["id"],"result":result})
+                    };
+                    socket
+                        .send(Message::Text(response.to_string().into()))
+                        .await
+                        .expect("response");
+                    if method == failure {
+                        break;
+                    }
+                }
+            });
+            let result = AnalystSession::connect(ConnectConfig {
+                binding: WorkspaceBinding {
+                    root: std::env::current_dir().expect("cwd"),
+                },
+                generation: "failed-persistence".into(),
+                endpoint,
+                remote_tui_prefix: vec!["codex".into()],
+                environment: Default::default(),
+                resume_thread_id: None,
+                process: None,
+                delegations: HashMap::new(),
+                purpose,
+            })
+            .await;
+            assert!(
+                result.is_err(),
+                "{purpose:?}: {failure} must not expose an attachable session"
+            );
+            server.await.expect("server");
+        }
+    }
+}
+
+#[tokio::test]
 async fn one_delegation_maps_to_one_turn_and_supports_steer_interrupt_and_tui() {
     let (endpoint, server, turn_starts, elicitation_response) = fake_app_server().await;
     let binding = WorkspaceBinding {

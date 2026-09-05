@@ -128,6 +128,38 @@ impl AnalystSession {
                 "Codex app-server resumed a different thread",
             ));
         }
+        if !thread_resumed {
+            // thread/start reserves an id/path but does not persist an empty
+            // rollout. Native TUI resume needs that rollout, even on the same
+            // app-server. Naming the new thread materializes it without a model
+            // turn or synthetic conversation item; never rename resumed history.
+            let name = match purpose {
+                SessionPurpose::Actor => "CCCC Actor",
+                SessionPurpose::VoiceAnalyst => "CCCC Voice Analyst",
+            };
+            protocol
+                .request(
+                    "thread/name/set",
+                    json!({"threadId":thread_id,"name":name}),
+                    Duration::from_secs(20),
+                )
+                .await?;
+            let persisted = protocol
+                .request(
+                    "thread/read",
+                    json!({"threadId":thread_id,"includeTurns":true}),
+                    Duration::from_secs(20),
+                )
+                .await?;
+            if persisted["thread"]["id"].as_str() != Some(thread_id.as_str())
+                || !persisted["thread"]["turns"].is_array()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Codex did not expose the new thread's durable history for terminal resume",
+                ));
+            }
+        }
         Ok(Self {
             #[cfg(test)]
             binding,

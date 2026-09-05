@@ -23,6 +23,7 @@ pub(super) async fn fake_app_server() -> (
         for connection in 0..2 {
             let (stream, _) = listener.accept().await.expect("accept");
             let mut socket = accept_async(stream).await.expect("websocket");
+            let mut materialized = connection > 0;
             while let Some(frame) = socket.next().await {
                 let frame = match frame {
                     Ok(frame) => frame,
@@ -60,6 +61,23 @@ pub(super) async fn fake_app_server() -> (
                         );
                         send_result(&mut socket, id, json!({"thread":{"id":"thread-1"}})).await;
                     }
+                    "thread/name/set" => {
+                        assert_eq!(connection, 0, "resumed threads must not be renamed");
+                        assert_eq!(request["params"]["threadId"], "thread-1");
+                        assert_eq!(request["params"]["name"], "CCCC Voice Analyst");
+                        materialized = true;
+                        send_result(&mut socket, id, json!({})).await;
+                    }
+                    "thread/read" => {
+                        assert!(materialized, "a reserved thread id is not durable history");
+                        assert_eq!(request["params"]["includeTurns"], true);
+                        send_result(
+                            &mut socket,
+                            id,
+                            json!({"thread":{"id":"thread-1","turns":[]}}),
+                        )
+                        .await;
+                    }
                     "thread/resume" => {
                         assert_eq!(connection, 1);
                         assert_eq!(request["params"]["threadId"], "thread-1");
@@ -73,6 +91,7 @@ pub(super) async fn fake_app_server() -> (
                         send_result(&mut socket, id, json!({"thread":{"id":"thread-1"}})).await;
                     }
                     "turn/start" => {
+                        assert!(materialized);
                         let turn_number = counter.fetch_add(1, Ordering::SeqCst) + 1;
                         let turn_id = format!("turn-{turn_number}");
                         assert_eq!(request["params"]["threadId"], "thread-1");
@@ -144,6 +163,15 @@ pub(super) async fn fake_disconnecting_app_server() -> (String, JoinHandle<()>, 
                 "initialize" => send_result(&mut socket, id, json!({})).await,
                 "thread/start" => {
                     send_result(&mut socket, id, json!({"thread":{"id":"thread-drop"}})).await;
+                }
+                "thread/name/set" => send_result(&mut socket, id, json!({})).await,
+                "thread/read" => {
+                    send_result(
+                        &mut socket,
+                        id,
+                        json!({"thread":{"id":"thread-drop","turns":[]}}),
+                    )
+                    .await;
                 }
                 "turn/start" => {
                     counter.fetch_add(1, Ordering::SeqCst);
