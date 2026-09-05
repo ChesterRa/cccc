@@ -80,6 +80,9 @@ allocation per blank line.
 Short or control-only pages do not automatically scan the retained archive. Use
 **Load older history** to continue; scrolling to the top of scrollable content
 also loads an older page. Errors pause automatic loading until an explicit retry.
+If retention or a terminal clear overtakes the pinned snapshot, paging stops
+with an expired-history notice and keeps the text already displayed. Reopen
+history to capture the current retained output.
 
 When a second Ctrl-C or the launcher's normal-shutdown deadline forces exit,
 the launcher terminates registered OS process trees directly. This path does not

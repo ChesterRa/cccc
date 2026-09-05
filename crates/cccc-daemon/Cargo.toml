@@ -42,6 +42,7 @@ uuid.workspace = true
 win32job.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 tempfile.workspace = true
 
 [lints]

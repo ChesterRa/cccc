@@ -100,7 +100,11 @@ pub fn resolve(
     };
     if !matches!(
         resolved.runtime,
-        ActorRuntime::Claude | ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+        ActorRuntime::Claude
+            | ActorRuntime::Codex
+            | ActorRuntime::Grok
+            | ActorRuntime::Opencode
+            | ActorRuntime::Kilo
     ) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -194,6 +198,15 @@ fn identity_fingerprint(runtime: ActorRuntime, environment: &BTreeMap<String, St
     let provider_keys: &[&str] = match runtime {
         ActorRuntime::Claude => unreachable!("Claude fingerprints the full resolved launch"),
         ActorRuntime::Grok => &["GROK_HOME", "HOME", "USERPROFILE"],
+        ActorRuntime::Kilo => &[
+            "HOME",
+            "USERPROFILE",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "KILO_CONFIG",
+            "KILO_CONFIG_DIR",
+            "KILO_DB",
+        ],
         ActorRuntime::Opencode => &[
             "HOME",
             "USERPROFILE",

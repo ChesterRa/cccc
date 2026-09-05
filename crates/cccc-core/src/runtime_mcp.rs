@@ -21,6 +21,7 @@ pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
             | ActorRuntime::Grok
             | ActorRuntime::Hermes
             | ActorRuntime::Kimi
+            | ActorRuntime::Kilo
             | ActorRuntime::Opencode
     )
 }
@@ -199,6 +200,7 @@ mod tests {
             ActorRuntime::Grok,
             ActorRuntime::Hermes,
             ActorRuntime::Kimi,
+            ActorRuntime::Kilo,
             ActorRuntime::Opencode,
         ];
         assert!(runtimes.into_iter().all(is_auto_managed));

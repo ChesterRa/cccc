@@ -68,9 +68,9 @@ async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
 }
 
 #[tokio::test]
-async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() {
-    // Port zero fails at connect on every supported OS; a bound, unlistened
-    // socket can instead time out on macOS.
+async fn remote_pairing_transport_failure_is_persisted_with_actionable_category() {
+    // Port zero cannot serve a peer. Depending on OS/network policy, the
+    // connection is refused or times out; both must persist an actionable error.
     let endpoint = "http://127.0.0.1:0";
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -104,7 +104,8 @@ async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() 
     assert_eq!(outbound["status"], "failed");
     let error = outbound["last_error"].as_str().expect("last error");
     assert!(
-        error.contains("remote pairing request failed (connect)"),
+        error.contains("remote pairing request failed (connect)")
+            || error.contains("remote pairing request failed (timeout after 15s)"),
         "{error}"
     );
     assert!(!error.contains("error sending request for url"));

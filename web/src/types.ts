@@ -1477,10 +1477,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   },
   devin: { label: "Devin CLI", desc: "Uses Devin's native terminal with CCCC MCP" },
   kiro: { label: "Kiro CLI", desc: "Uses Kiro's native terminal with CCCC MCP" },
-  kilo: {
-    label: "Kilo Code CLI",
-    desc: "Uses an idempotent MCP setup prompt in Kilo's native terminal",
-  },
+  kilo: { label: "Kilo Code CLI", desc: "Managed delivery in the same native Kilo TUI" },
   antigravity: {
     label: "Antigravity CLI",
     desc: "Uses an idempotent MCP setup prompt in Antigravity's native terminal",

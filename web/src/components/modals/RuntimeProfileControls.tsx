@@ -22,9 +22,11 @@ function modeButtonClass(selected: boolean): string {
 export function OpenCodeManagedModelHint({ runtime }: { runtime?: string | null }) {
   const { t } = useTranslation("actors");
   if (
-    String(runtime || "")
-      .trim()
-      .toLowerCase() !== "opencode"
+    !["opencode", "kilo"].includes(
+      String(runtime || "")
+        .trim()
+        .toLowerCase(),
+    )
   )
     return null;
   return (

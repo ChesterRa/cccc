@@ -8,23 +8,36 @@ async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
     if std::env::var("CCCC_OPENCODE_MODEL_SYNC_LIVE").as_deref() != Ok("1") {
         return;
     }
+    submitted_model_reaches_acp("opencode", "OPENCODE").await;
+}
+
+#[tokio::test]
+async fn live_kilo_submitted_model_reaches_acp_when_enabled() {
+    if std::env::var("CCCC_KILO_MODEL_SYNC_LIVE").as_deref() != Ok("1") {
+        return;
+    }
+    submitted_model_reaches_acp("kilo", "KILO").await;
+}
+
+async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
     let temp = tempfile::tempdir().expect("isolated home");
     let root = temp.path();
     let port = lifecycle::reserve_loopback_port().expect("port");
     let endpoint = format!("http://127.0.0.1:{port}");
     let password = uuid::Uuid::new_v4().to_string();
     let executable =
-        std::env::var("CCCC_OPENCODE_EXECUTABLE").unwrap_or_else(|_| "opencode".into());
+        std::env::var(format!("CCCC_{prefix}_EXECUTABLE")).unwrap_or_else(|_| runtime.into());
     let environment = BTreeMap::from([
         ("HOME".into(), root.to_string_lossy().into_owned()),
         ("XDG_CONFIG_HOME".into(), root.join("config").to_string_lossy().into_owned()),
         ("XDG_DATA_HOME".into(), root.join("data").to_string_lossy().into_owned()),
         ("XDG_STATE_HOME".into(), root.join("state").to_string_lossy().into_owned()),
         ("XDG_CACHE_HOME".into(), root.join("cache").to_string_lossy().into_owned()),
-        ("OPENCODE_DB".into(), root.join("opencode.db").to_string_lossy().into_owned()),
-        ("OPENCODE_SERVER_USERNAME".into(), "opencode".into()),
-        ("OPENCODE_SERVER_PASSWORD".into(), password.clone()),
-        ("OPENCODE_CONFIG_CONTENT".into(), json!({
+        (format!("{prefix}_DB"), root.join("provider.db").to_string_lossy().into_owned()),
+        (format!("{prefix}_SERVER_USERNAME"), runtime.into()),
+        (format!("{prefix}_SERVER_PASSWORD"), password.clone()),
+        (format!("{prefix}_NO_DAEMON"), "1".into()),
+        (format!("{prefix}_CONFIG_CONTENT"), json!({
             "model":"cccc-probe/first",
             "provider":{"cccc-probe":{
                 "npm":"@ai-sdk/openai-compatible",
@@ -50,14 +63,14 @@ async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
         process::spawn_piped(&command, root, &environment, "model-sync-test")
             .expect("start OpenCode");
     let owner = Arc::new(owner);
-    lifecycle::wait_for_authenticated_backend(&endpoint, "opencode", &password, Arc::clone(&owner))
+    lifecycle::wait_for_authenticated_backend(&endpoint, runtime, &password, Arc::clone(&owner))
         .await
         .expect("authenticated backend");
     let protocol = AcpClient::new(
         stdin,
         stdout,
         "model-sync-test".into(),
-        "opencode",
+        runtime,
         PermissionPolicy::Reject,
         PromptCompletion::Response,
     )
@@ -79,8 +92,9 @@ async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
         .await
         .expect("session");
     let id = created["sessionId"].as_str().expect("session id");
+    let mode = option(&created, "mode").expect("current native mode");
     assert_eq!(option(&created, "model"), Some("cccc-probe/first"));
-    lifecycle::attach(&protocol, &endpoint, "opencode", &password, id)
+    lifecycle::attach(&protocol, &endpoint, runtime, &password, id)
         .await
         .expect("SSE bridge");
     let client = reqwest::Client::builder()
@@ -96,7 +110,7 @@ async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
     ] {
         let submitted = client
             .post(format!("{endpoint}/session/{id}/message"))
-            .basic_auth("opencode", Some(&password))
+            .basic_auth(runtime, Some(&password))
             .json(&json!({
                 "model":{"providerID":"cccc-probe","modelID":model},
                 "variant":variant,
@@ -116,7 +130,7 @@ async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
                 let config = protocol
                     .request(
                         "session/set_config_option",
-                        json!({"sessionId":id,"configId":"mode","value":"build"}),
+                        json!({"sessionId":id,"configId":"mode","value":mode}),
                         Duration::from_secs(5),
                     )
                     .await

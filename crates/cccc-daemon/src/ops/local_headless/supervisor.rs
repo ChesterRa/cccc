@@ -55,7 +55,11 @@ pub fn supports(actor: &Actor) -> bool {
 pub(super) fn uses_managed_session(actor: &Actor) -> bool {
     matches!(
         actor.runtime,
-        ActorRuntime::Claude | ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+        ActorRuntime::Claude
+            | ActorRuntime::Codex
+            | ActorRuntime::Grok
+            | ActorRuntime::Opencode
+            | ActorRuntime::Kilo
     )
 }
 

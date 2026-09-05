@@ -61,6 +61,7 @@ fn analyst_runtime_executable(
             cccc_contracts::ActorRuntime::Claude => "claude",
             cccc_contracts::ActorRuntime::Grok => "grok",
             cccc_contracts::ActorRuntime::Opencode => "opencode",
+            cccc_contracts::ActorRuntime::Kilo => "kilo",
             _ => "codex",
         })
 }
@@ -223,6 +224,7 @@ mod tests {
             (ActorRuntime::Claude, "claude"),
             (ActorRuntime::Grok, "grok"),
             (ActorRuntime::Opencode, "opencode"),
+            (ActorRuntime::Kilo, "kilo"),
         ] {
             let resolved = ResolvedAgentRuntime {
                 runtime,

@@ -143,14 +143,14 @@ fn setup_one(
             "runtime":runtime,"mode":"manual","status":"requires_action","config":config
         }));
     }
-    if matches!(runtime, "cursor" | "kilo" | "antigravity") {
+    if matches!(runtime, "cursor" | "antigravity") {
         return Ok(json!({
             "runtime":runtime,"mode":"prompt_assisted","status":"requires_action",
             "project_path":absolute(&args.path)?,"config":config,
             "instruction":"Add or replace the stdio MCP server named cccc with this configuration, then verify it is enabled."
         }));
     }
-    if matches!(runtime, "claude" | "grok" | "opencode") {
+    if matches!(runtime, "claude" | "grok" | "opencode" | "kilo") {
         return Ok(json!({
             "runtime":runtime,
             "mode":"managed_session",

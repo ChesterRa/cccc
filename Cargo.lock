@@ -542,6 +542,7 @@ name = "cccc-pair-daemon"
 version = "0.4.37"
 dependencies = [
  "anyhow",
+ "axum",
  "base64",
  "cccc-pair-client",
  "cccc-pair-contracts",

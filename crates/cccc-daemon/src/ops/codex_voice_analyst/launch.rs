@@ -58,8 +58,9 @@ impl AnalystSession {
                 )
                 .await
             }
-            cccc_contracts::ActorRuntime::Opencode => {
+            cccc_contracts::ActorRuntime::Opencode | cccc_contracts::ActorRuntime::Kilo => {
                 Self::launch_opencode(
+                    config.runtime,
                     home,
                     binding,
                     config.command,
@@ -106,8 +107,12 @@ impl AnalystSession {
             )
             .await;
         }
-        if config.runtime == cccc_contracts::ActorRuntime::Opencode {
+        if matches!(
+            config.runtime,
+            cccc_contracts::ActorRuntime::Opencode | cccc_contracts::ActorRuntime::Kilo
+        ) {
             return Self::launch_opencode(
+                config.runtime,
                 home,
                 binding,
                 config.command,

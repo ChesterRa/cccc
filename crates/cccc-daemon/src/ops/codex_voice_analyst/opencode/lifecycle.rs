@@ -241,6 +241,10 @@ fn observed_user_text(
             }
             part.get("text")
                 .and_then(Value::as_str)
+                // Native paste placeholders can add a trailing separator. This is a complete
+                // stored text part, not an ACP delta; use the same outer-whitespace boundary
+                // as the submitted Voice input without changing any interior content.
+                .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned)
         }
@@ -325,14 +329,14 @@ mod tests {
                         "sessionID":"session-owned",
                         "messageID":"message-user",
                         "type":"text",
-                        "text":"owned prompt",
+                        "text":" \nowned  prompt \n",
                     }}
                 }),
                 "session-owned",
                 &mut user_message,
             )
             .as_deref(),
-            Some("owned prompt")
+            Some("owned  prompt")
         );
         assert_eq!(
             observed_user_text(

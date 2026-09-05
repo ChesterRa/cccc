@@ -41,6 +41,13 @@ afterEach(() => {
 
 for (const candidate of [
   {
+    runtime: "kilo",
+    id: "voice-kilo",
+    name: "Voice Kilo",
+    label: "Kilo Code CLI",
+    command: "kilo --model openai/gpt-5",
+  },
+  {
     runtime: "claude",
     id: "voice-claude",
     name: "Voice Claude",
@@ -120,7 +127,7 @@ for (const candidate of [
     );
     expect(host.textContent).toContain(candidate.name);
     expect(host.textContent).toContain(candidate.label);
-    if (candidate.runtime === "opencode") {
+    if (candidate.runtime === "opencode" || candidate.runtime === "kilo") {
       expect(host.textContent).toContain("opencodeManagedModelHint");
     } else {
       expect(host.textContent).not.toContain("opencodeManagedModelHint");

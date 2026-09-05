@@ -15,7 +15,6 @@ import {
   waitForIceGathering,
 } from "./codexVoiceMedia";
 import {
-  asRecord,
   boundedDelta,
   boundedText,
   failure,
@@ -23,6 +22,7 @@ import {
   normalizedErrorCode,
   RealtimeTranscriptAccumulator,
   realtimeTranscriptUpdate,
+  realtimeProviderError,
   shouldForwardProviderEvent,
 } from "./codexVoiceProtocol";
 import { CodexVoiceProviderChannel } from "./codexVoiceProviderChannel";
@@ -277,12 +277,12 @@ export class CodexVoiceBrowserSession {
       this.callbacks.onPhase("analysing");
       this.sendServerMessage({ type: "provider_event", event });
     }
-    const record = asRecord(event);
-    if (record?.type === "error") {
-      const detail = asRecord(record.error);
-      void this.fail(
-        normalizedErrorCode(detail?.code) || normalizedErrorCode(record.code) || "provider_error",
-      );
+    const providerError = realtimeProviderError(event);
+    if (providerError && !this.stopping) {
+      const { message, ...diagnostic } = providerError;
+      console.warn("Codex Realtime Voice provider error", { ...diagnostic, message });
+      this.sendServerMessage({ type: "provider_error", error: diagnostic });
+      await this.fail("provider_error", providerError.code || undefined);
     }
   }
 
@@ -294,9 +294,9 @@ export class CodexVoiceBrowserSession {
     return this.eventSocket?.send(message) || false;
   }
 
-  private async fail(code: string): Promise<void> {
+  private async fail(code: string, providerCode?: string): Promise<void> {
     if (this.stopping) return;
-    this.callbacks.onError(normalizedErrorCode(code) || "unknown");
+    this.callbacks.onError(normalizedErrorCode(code) || "unknown", providerCode);
     this.callbacks.onPhase("failed");
     await this.stop({ notifyPhase: false });
   }

@@ -20,5 +20,5 @@ export type CodexVoiceSessionCallbacks = {
   onAnalystProgress(text: string): void;
   onAnalystResult(text: string): void;
   onPlaybackBlocked(blocked: boolean): void;
-  onError(code: string): void;
+  onError(code: string, providerCode?: string): void;
 };

@@ -1,7 +1,73 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
 pub(super) const VOICE_ANALYST_AGENT: &str = "cccc-voice-analyst";
+
+pub(super) fn launch_prefix(
+    executable: &Path,
+    name: &str,
+    environment: &BTreeMap<String, String>,
+) -> io::Result<Vec<String>> {
+    let filename = executable
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if filename.eq_ignore_ascii_case(name) || filename.eq_ignore_ascii_case(&format!("{name}.exe"))
+    {
+        return Ok(vec![executable.to_string_lossy().into_owned()]);
+    }
+    if name == "kilo" && filename.eq_ignore_ascii_case("kilo.cmd") {
+        let bin = executable.parent().expect("resolved executable has parent");
+        // npm global: <prefix>/kilo.cmd -> node_modules/@kilocode/cli/bin/kilo
+        // npm local: node_modules/.bin/kilo.cmd -> ../@kilocode/cli/bin/kilo
+        let modules = if bin.file_name().is_some_and(|name| name == ".bin") {
+            bin.parent().unwrap_or(bin).to_owned()
+        } else {
+            bin.join("node_modules")
+        };
+        let script = modules.join("@kilocode/cli/bin/kilo");
+        if !script.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "Kilo npm entrypoint is missing: {}. Reinstall @kilocode/cli or configure a direct kilo.exe path.",
+                    script.display()
+                ),
+            ));
+        }
+        // Match npm's node selection, but bypass cmd.exe. The official JS
+        // launcher still owns CPU/binary selection, KILO_BIN_PATH, resources,
+        // and signal forwarding. Node and its children stay in CCCC's Job.
+        let local_node = bin.join("node.exe");
+        let node = if local_node.is_file() {
+            local_node.to_string_lossy().into_owned()
+        } else {
+            let resolved =
+                cccc_runtime::resolve_command_executable(&["node.exe".into()], environment);
+            let node = &resolved[0];
+            if !Path::new(node).is_absolute() || !Path::new(node).is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Kilo npm launch requires node.exe alongside its shim or in PATH",
+                ));
+            }
+            node.clone()
+        };
+        return Ok(vec![node, script.to_string_lossy().into_owned()]);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "{name} managed sessions require its direct executable{}; custom wrappers and renamed binaries are not supported",
+            if name == "kilo" {
+                " or official npm kilo.cmd entrypoint"
+            } else {
+                ""
+            }
+        ),
+    ))
+}
 
 #[derive(Debug, Default)]
 pub(super) struct ParsedArguments {
@@ -63,8 +129,16 @@ pub(super) fn parse_arguments(arguments: &[String]) -> io::Result<ParsedArgument
     Ok(parsed)
 }
 
-pub(super) fn write_voice_analyst_agent(cwd: &Path, instructions: &str) -> io::Result<()> {
-    let directory = cwd.join(".opencode/agents");
+pub(super) fn write_voice_analyst_agent(
+    cwd: &Path,
+    instructions: &str,
+    runtime: cccc_contracts::ActorRuntime,
+) -> io::Result<()> {
+    let directory = cwd.join(if runtime == cccc_contracts::ActorRuntime::Kilo {
+        ".kilo/agents"
+    } else {
+        ".opencode/agents"
+    });
     std::fs::create_dir_all(&directory)?;
     let content =
         format!("---\ndescription: CCCC Voice Analyst\nmode: primary\n---\n{instructions}\n");

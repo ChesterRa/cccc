@@ -123,8 +123,8 @@ export function useCodexVoiceSessionController(enabled = true) {
         onPlaybackBlocked: (blocked) => {
           if (mountedRef.current) setPlaybackBlocked(blocked);
         },
-        onError: (code) => {
-          if (mountedRef.current) setError(codexVoiceErrorText(t, code));
+        onError: (code, providerCode) => {
+          if (mountedRef.current) setError(codexVoiceErrorText(t, code, providerCode));
         },
       },
     });

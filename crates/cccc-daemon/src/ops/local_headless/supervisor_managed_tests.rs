@@ -77,6 +77,13 @@ fn admitted_runtimes_use_one_managed_session_and_always_expose_their_terminal() 
     opencode.runner = RunnerKind::Headless;
     assert!(supports(&opencode));
     assert!(uses_managed_session(&opencode));
+
+    let mut kilo = Actor::new("kilo");
+    kilo.runtime = ActorRuntime::Kilo;
+    kilo.command = vec!["kilo".into()];
+    assert!(supports(&kilo));
+    assert!(uses_managed_session(&kilo));
+    assert!(super::provider_cli::uses_managed_provider_cli(&kilo));
 }
 
 #[tokio::test]

@@ -75,7 +75,7 @@
   "commandOverride": "Command Override",
   "commandOverrideOptional": "Command Override (optional)",
   "useRuntimeDefaultCommand": "Use runtime default command",
-  "opencodeManagedModelHint": "After switching models, send a message in the OpenCode TUI so later CCCC requests use that model. Alternatively, set --model provider/model in the launch command.",
+  "opencodeManagedModelHint": "After switching models, send a message in the runtime TUI so later CCCC requests use that model. Alternatively, set --model provider/model in the launch command.",
   "usingRuntimeDefaultCommand": "Using runtime default command:",
   "enterCommand": "Enter command...",
   "default": "Default:",

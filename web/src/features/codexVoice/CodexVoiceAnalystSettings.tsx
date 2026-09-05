@@ -74,6 +74,7 @@ export function CodexVoiceAnalystSettings({
                       { value: "claude", label: RUNTIME_INFO.claude.label },
                       { value: "grok", label: RUNTIME_INFO.grok.label },
                       { value: "opencode", label: RUNTIME_INFO.opencode.label },
+                      { value: "kilo", label: RUNTIME_INFO.kilo.label },
                     ]}
                   />
                   <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">

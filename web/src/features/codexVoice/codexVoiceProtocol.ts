@@ -64,6 +64,28 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+export function realtimeProviderError(
+  value: unknown,
+): { code: string; type: string; event_id: string; param: string; message: string } | null {
+  const event = asRecord(value);
+  if (event?.type !== "error") return null;
+  const detail = asRecord(event.error) || event;
+  return {
+    code: providerErrorIdentifier(detail.code) || providerErrorIdentifier(event.code),
+    type: providerErrorIdentifier(detail.type === "error" ? "" : detail.type),
+    event_id: providerErrorIdentifier(detail.event_id) || providerErrorIdentifier(event.event_id),
+    param: providerErrorIdentifier(detail.param),
+    // Explanations can quote user input. Keep them bounded and in the browser,
+    // never in the server diagnostic log.
+    message: typeof detail.message === "string" ? detail.message.slice(0, 2_048) : "",
+  };
+}
+
+function providerErrorIdentifier(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return /^[a-zA-Z0-9_.:[\]-]{1,128}$/.test(text) ? text : "";
+}
+
 export function boundedText(value: unknown): string {
   if (typeof value !== "string") return "";
   const text = value.trim();

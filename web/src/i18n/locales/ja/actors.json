@@ -75,7 +75,7 @@
   "commandOverride": "コマンドオーバーライド",
   "commandOverrideOptional": "コマンドオーバーライド（任意）",
   "useRuntimeDefaultCommand": "ランタイム既定コマンドを使う",
-  "opencodeManagedModelHint": "モデル切り替え後、OpenCode TUI でメッセージを 1 件送信すると、以降の CCCC リクエストにも反映されます。起動引数 --model provider/model でも指定できます。",
+  "opencodeManagedModelHint": "モデル切り替え後、Runtime の TUI でメッセージを 1 件送信すると、以降の CCCC リクエストにも反映されます。起動引数 --model provider/model でも指定できます。",
   "usingRuntimeDefaultCommand": "現在はランタイム既定コマンドを使用中：",
   "enterCommand": "コマンドを入力してください…",
   "default": "デフォルト：",

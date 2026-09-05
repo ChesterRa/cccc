@@ -19,16 +19,18 @@ pub(super) fn read(
     let Some(end) = render_before else {
         return Ok(older);
     };
-    let length = end
-        .checked_sub(older.start_cursor)
-        .filter(|length| *length <= MAX_RENDER_BYTES)
-        .ok_or_else(|| {
-            OpError::new(
-                "invalid_args",
-                "render_before must bound a retained history range of at most 50 MB",
-            )
-        })?;
-    if end < older.end_cursor {
+    // Expiry can advance the retained start beyond a valid pinned end. That
+    // is an exhausted snapshot, not a malformed range from the caller.
+    let length = end.saturating_sub(older.start_cursor);
+    if length > MAX_RENDER_BYTES {
+        return Err(OpError::new(
+            "invalid_args",
+            "render_before must bound a retained history range of at most 50 MB",
+        ));
+    }
+    if before.is_some_and(|cursor| cursor > end)
+        || (end < older.end_cursor && !older.cursor_expired)
+    {
         return Err(OpError::new(
             "invalid_args",
             "render_before precedes the requested page end",
@@ -38,6 +40,10 @@ pub(super) fn read(
         terminal_history_source::page(home, group_id, actor_id, Some(end), length as usize)
             .map_err(super::runtime_error)?;
     cumulative.cursor_expired |= older.cursor_expired;
+    // Both memory and durable readers return an empty expired page at the
+    // retained start. Pin its cursors too, including expiry between the reads.
+    cumulative.start_cursor = cumulative.start_cursor.min(end);
+    cumulative.end_cursor = cumulative.end_cursor.min(end);
     Ok(cumulative)
 }
 
@@ -125,6 +131,31 @@ mod tests {
         for line in recent_text.lines().skip(1) {
             assert!(text.lines().any(|candidate| candidate == line));
         }
+    }
+
+    #[test]
+    fn expired_snapshot_stops_paging_without_reading_new_output() {
+        let (_temp, home, group, file) = fixture("old output");
+        let first = read(&home, &group, "peer", None, 4, None).expect("first page");
+        // Retention or terminal clear advances past the browser's pinned range.
+        let mut bytes = b"CCCCPTY1".to_vec();
+        bytes.extend((first.end_cursor + 10).to_le_bytes());
+        bytes.extend(b"new output outside the snapshot");
+        std::fs::write(file, bytes).expect("advance retained history");
+        let expired = read(
+            &home,
+            &group,
+            "peer",
+            Some(first.start_cursor),
+            4,
+            Some(first.end_cursor),
+        )
+        .expect("retention expiry is not an invalid request");
+        assert!(expired.cursor_expired);
+        assert!(!expired.has_more);
+        assert!(expired.data.is_empty());
+        assert_eq!(expired.end_cursor, first.end_cursor);
+        assert!(expired.start_cursor >= first.start_cursor);
     }
 
     #[test]

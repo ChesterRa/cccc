@@ -46,7 +46,7 @@ The two visible roles are one product flow:
 - **Voice Analyst** is the backing managed agent session. It handles file inspection, tools, current CCCC facts,
   and substantial analysis, then returns useful progress and the final result to the same spoken
   conversation. Under local user authority it can list all Groups and query an explicitly named Group.
-  Codex, Claude Code, Grok Build, and OpenCode are the currently admitted Analyst runtimes.
+  Codex, Claude Code, Grok Build, OpenCode, and Kilo are the currently admitted Analyst runtimes.
 
 CCCC starts the Analyst in one stable neutral directory at
 `CCCC_HOME/state/codex_voice/analyst-workdir/`. It is not a repository, Working Group, implicit MCP
@@ -63,15 +63,15 @@ console header to mute the microphone, resume browser-blocked playback, or stop 
 Analyst uses the same trusted-local YOLO boundary as the corresponding CCCC Actor runtime. Its
 authentication and model provider are independent from the Realtime login: the default launch
 inherits the normal Codex configuration, while Custom or Runtime Profile settings can select Codex,
-Claude Code, Grok, or OpenCode and configure that runtime's provider home, model provider, or API key without
+Claude Code, Grok, OpenCode, or Kilo and configure that runtime's provider home, model provider, or API key without
 changing the Realtime credential path. The two sides exchange only
 delegations, progress, and results through the CCCC controller.
 
 The Analyst **Runtime Setup** uses the same Custom / Runtime Profile model as Actor editing. Custom
-mode accepts a direct Codex, Claude Code, Grok, or OpenCode command, including supported provider/model options, plus
+mode accepts a direct Codex, Claude Code, Grok, OpenCode, or Kilo command (including Kilo's official Windows npm entrypoint), supported provider/model options, and
 write-only private environment values, and it can save that complete configuration as a reusable
 Runtime Profile without revealing secrets to Web. Runtime Profile mode resolves a compatible Codex,
-Claude Code, Grok, or OpenCode Profile's command and private environment from the shared profile store;
+Claude Code, Grok, OpenCode, or Kilo Profile's command and private environment from the shared profile store;
 the Actor-only submit field does not alter the Voice host. Historical Profiles with a string command are accepted
 and normalized to the canonical argument array when next saved.
 
@@ -81,10 +81,11 @@ For Codex, CCCC removes conflicting host flags and pins app-server,
 Grok, CCCC accepts a direct root command with supported global provider/model options, then owns the
 private leader socket, ACP controller, native TUI attachment, YOLO policy, workspace, and per-session
 MCP binding. Grok subcommands, wrappers, prompt tails, and user-owned topology/session flags are
-rejected rather than routed through a second PTY path. For OpenCode, CCCC owns the ACP process,
+rejected rather than routed through a second PTY path. For OpenCode and Kilo, CCCC owns the ACP process,
 generation-scoped authenticated loopback backend, session/load boundary, one-time permission policy,
-per-session MCP injection, and native `opencode attach` command. It preserves supported model, agent,
-pure-mode, and logging choices. OpenCode wrappers, subcommands, prompt tails, and user-owned topology
+per-session MCP injection, and native `opencode attach` or `kilo attach` command. It preserves supported model, agent,
+pure-mode, and logging choices. Kilo's official Windows npm entrypoint uses Node and the installed
+launcher for both ACP and TUI. Custom wrappers, subcommands, prompt tails, and user-owned topology
 or session flags likewise fail explicitly. CCCC validates the live ACP and authenticated backend
 behavior during startup instead of maintaining a separate legacy-version compatibility branch.
 These CCCC-owned values cannot be overridden.
@@ -104,14 +105,21 @@ app-server and remote TUI receive the same executable, model, Profile, supported
 policy, and private environment. Claude's Agent View controller, transcript follower, and native TUI
 share one background session and one effective launch identity. Grok's leader, ACP client, and TUI share one resolved provider
 configuration, private environment, and exact session; CCCC adds topology arguments only to the
-processes that accept them. OpenCode's stdio ACP controller and authenticated native TUI attach share
+processes that accept them. OpenCode and Kilo each use a stdio ACP controller and authenticated native TUI attach sharing
 one provider backend and exact session. CCCC injects the scoped MCP binding when it creates the
 managed session,
 so the model reached from either client has the same CCCC tools. Opening the embedded terminal
 therefore observes and controls the existing Analyst session instead of starting another model
 conversation.
 
-Ordinary Codex, Claude Code, Grok, and OpenCode Actors use the same runtime-specific managed adapter
+If Realtime Voice reports a provider error, its error code is shown separately
+from Analyst failures. The browser console retains a bounded error explanation;
+CCCC's server log records only bounded code/type/event/parameter identifiers and
+the call generation, not the explanation or conversation content. A stopped
+audio call does not discard the warm Analyst session. Provider diagnostics do
+not retry requests or change the existing disconnect policy.
+
+Ordinary Codex, Claude Code, Grok, OpenCode, and Kilo Actors use the same runtime-specific managed adapter
 as Voice Analyst and always attach the Runtime's native writable TUI. Actor controllers
 are bound to a concrete Group and Actor MCP identity, while Voice Analyst uses the global user
 identity and its neutral workspace. These are separate roles over the same adapter, not divergent
@@ -135,7 +143,7 @@ command/environment change replaces the warm host at the next voice start while 
 session when its runtime identity is unchanged; name, submit, and capability-only edits do not
 restart this host. Changing the selected runtime, any effective Claude launch setting or private environment,
 `CODEX_HOME`, `GROK_HOME`, OpenCode's storage/config
-roots (including `OPENCODE_DB`), `HOME`, or `USERPROFILE` changes that identity and starts a new session after explicit
+roots (including `OPENCODE_DB`), Kilo's storage/config roots (including `KILO_DB`), `HOME`, or `USERPROFILE` changes that identity and starts a new session after explicit
 confirmation in Custom mode. A failed candidate launch restores the prior settings and runtime, but
 work explicitly discarded before the switch cannot be recovered. Browser-local audio choices apply
 to the next call.
@@ -153,7 +161,7 @@ result from the exact still-active call generation may become speech. A later ca
 Analyst. The console embeds the selected runtime's genuine TUI for that same Analyst session using the existing
 terminal transport; it stays available after the call stops and does not create an Actor or a second
 Analyst. Codex creates its resumable rollout lazily, so its terminal appears when the first real
-investigation starts; Claude, Grok, and OpenCode managed TUIs can attach as soon as their sessions are ready. CCCC does not
+investigation starts; Claude, Grok, OpenCode, and Kilo managed TUIs can attach as soon as their sessions are ready. CCCC does not
 create a token-consuming placeholder task. **New Analyst session** is the explicit reset action and is
 available only after the call stops. Raw local paths, provider session IDs, loopback endpoints, and
 external terminal commands are deliberately not part of the product surface.

@@ -91,6 +91,26 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     assert "npm -C web run lint" not in runs
 
 
+def test_native_empty_session_smoke_is_enabled_without_provider_secrets() -> None:
+    steps = _workflow()["jobs"]["rust-linux"]["steps"]
+    install = next(step for step in steps if step.get("name") == "Install verified native CLI versions")
+    assert "@openai/codex@0.153.2" in install["run"]
+    assert "@anthropic-ai/claude-code@2.1.261" in install["run"]
+    assert "@kilocode/cli@7.5.14" in install["run"]
+    smoke = next(step for step in steps if step.get("name") == "Verify native sessions without external model access")
+    assert smoke["timeout-minutes"] == "5"
+    assert smoke["env"]["CCCC_CODEX_EMPTY_LIVE"] == "1"
+    assert smoke["env"]["CCCC_CLAUDE_EMPTY_LIVE"] == "1"
+    assert smoke["env"]["CCCC_KILO_MANAGED_LIVE"] == "1"
+    assert smoke["env"]["CCCC_KILO_MODEL_SYNC_LIVE"] == "1"
+    assert smoke["env"]["CCCC_LAUNCHER_PATH"].endswith("/target/debug/cccc")
+    assert "cargo build --package cccc --bin cccc --locked" in smoke["run"]
+    assert "live_codex_empty_actor_and_analyst_resume_with_native_terminal" in smoke["run"]
+    assert "live_claude_empty_session_resumes_without_a_prompt" in smoke["run"]
+    assert "live_kilo -- --test-threads=1" in smoke["run"]
+    assert "secrets." not in json.dumps(smoke)
+
+
 def test_windows_installer_job_is_a_nightly_native_fixture() -> None:
     installer = _nightly_workflow()["jobs"]["windows-installer"]
     runs = _runs(installer)

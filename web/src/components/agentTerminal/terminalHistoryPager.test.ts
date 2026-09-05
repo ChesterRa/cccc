@@ -84,6 +84,21 @@ describe("terminalHistoryPager", () => {
     expect(second.expired).toBe(true);
   });
 
+  it("retains visible text and stops when retention overtakes the pinned snapshot", () => {
+    const first = appendOlderPage(
+      EMPTY_TERMINAL_HISTORY,
+      page({ text: "already visible", start_cursor: 80, end_cursor: 200 }),
+    );
+    const expired = appendOlderPage(
+      first,
+      page({ text: "", start_cursor: 200, end_cursor: 200, cursor_expired: true, has_more: false }),
+    );
+    expect(historyText(expired)).toBe("already visible");
+    expect(expired.endCursor).toBe(200);
+    expect(expired.expired).toBe(true);
+    expect(canLoadOlder(expired, false)).toBe(false);
+  });
+
   it("never blocks loading while a request is already in flight", () => {
     expect(canLoadOlder(EMPTY_TERMINAL_HISTORY, true)).toBe(false);
     expect(canLoadOlder(EMPTY_TERMINAL_HISTORY, false)).toBe(true);

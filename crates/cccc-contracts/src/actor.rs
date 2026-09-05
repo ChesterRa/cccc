@@ -79,7 +79,7 @@ impl ActorRuntime {
     #[must_use]
     pub const fn state_source(self) -> RuntimeStateSource {
         match self {
-            Self::Claude | Self::Codex | Self::Grok | Self::Opencode => {
+            Self::Claude | Self::Codex | Self::Grok | Self::Opencode | Self::Kilo => {
                 RuntimeStateSource::ManagedSession
             }
             _ => RuntimeStateSource::Terminal,

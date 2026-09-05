@@ -18,7 +18,7 @@ export const emptyVoiceAnalystSettings: VoiceAnalystDraftSettings = {
   profile_owner: "",
 };
 
-export const managedAnalystRuntimes = new Set(["codex", "claude", "grok", "opencode"]);
+export const managedAnalystRuntimes = new Set(["codex", "claude", "grok", "opencode", "kilo"]);
 export const analystIdentityEnvironmentKeys = new Set([
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
@@ -30,12 +30,16 @@ export const analystIdentityEnvironmentKeys = new Set([
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_DB",
+  "KILO_CONFIG",
+  "KILO_CONFIG_DIR",
+  "KILO_DB",
 ]);
 
 export function defaultAnalystRuntimeCommand(runtime: string): string {
   if (runtime === "claude") return "claude";
   if (runtime === "grok") return "grok";
   if (runtime === "opencode") return "opencode";
+  if (runtime === "kilo") return "kilo";
   return "codex";
 }
 

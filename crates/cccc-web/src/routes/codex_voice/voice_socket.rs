@@ -129,6 +129,9 @@ pub(super) async fn serve(
                     }
                 };
                 match value["type"].as_str().unwrap_or_default() {
+                    "provider_error" => {
+                        log_provider_error(&generation, &value["error"]);
+                    }
                     "provider_receipt" => {
                         // Browser transport diagnostics only: these counters neither
                         // authorize Analyst work nor prove that every fact was spoken.
@@ -333,6 +336,33 @@ async fn send_provider_command(socket: &mut WebSocket, command: Value) -> bool {
     send_json(socket, json!({"type":"provider_command","message":command})).await
 }
 
+fn log_provider_error(generation: &str, error: &Value) {
+    // Browser-reported transport diagnostics, not Analyst lifecycle authority.
+    // Never log the provider explanation: it can quote user input or secrets.
+    tracing::warn!(
+        %generation,
+        provider_code = provider_error_identifier(&error["code"]),
+        provider_error_type = provider_error_identifier(&error["type"]),
+        provider_event_id = provider_error_identifier(&error["event_id"]),
+        provider_param = provider_error_identifier(&error["param"]),
+        "Codex Realtime Voice provider error"
+    );
+}
+
+fn provider_error_identifier(value: &Value) -> &str {
+    let text = value.as_str().unwrap_or_default().trim();
+    if !text.is_empty()
+        && text.len() <= 128
+        && text.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'[' | b']' | b'-')
+        })
+    {
+        text
+    } else {
+        ""
+    }
+}
+
 async fn send_error(socket: &mut WebSocket, code: &str, message: &str) -> bool {
     send_json(
         socket,
@@ -351,8 +381,66 @@ async fn send_json(socket: &mut WebSocket, value: Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Seek};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
+
+    #[test]
+    fn provider_error_log_has_call_identity_but_no_explanation_or_extra_payload() {
+        let mut output = tempfile::tempfile().expect("diagnostic capture");
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.try_clone().expect("capture writer"))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            log_provider_error(
+                "voice-call-1",
+                &json!({
+                    "code":"rate_limit_exceeded",
+                    "type":"invalid_request_error",
+                    "event_id":"event-1",
+                    "message":"private provider explanation",
+                    "authorization":"private-token"
+                }),
+            );
+        });
+        output.rewind().expect("rewind diagnostic");
+        let mut text = String::new();
+        output.read_to_string(&mut text).expect("read diagnostic");
+        for expected in [
+            "voice-call-1",
+            "rate_limit_exceeded",
+            "invalid_request_error",
+            "event-1",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        assert!(!text.contains("private"));
+    }
+
+    #[test]
+    fn provider_error_identifiers_are_bounded_and_cannot_inject_log_lines() {
+        for text in [
+            "rate_limit_exceeded",
+            "HTTP:429",
+            "content[0].text",
+            "event-ab_cd",
+        ] {
+            let value = json!(text);
+            assert_eq!(provider_error_identifier(&value), text);
+        }
+        for value in [
+            Value::Null,
+            json!({"code":"nested"}),
+            json!("x".repeat(129)),
+            json!("bad\ninjected"),
+            json!("Bearer private-value"),
+            json!("https://example.com/?token=private-value"),
+        ] {
+            assert_eq!(provider_error_identifier(&value), "");
+        }
+    }
 
     #[tokio::test]
     async fn recording_lease_heartbeat_keeps_running_while_socket_work_waits() {

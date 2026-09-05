@@ -5,6 +5,7 @@ use std::io;
 impl AnalystSession {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn launch_opencode(
+        runtime: ActorRuntime,
         home: &HomeLayout,
         binding: WorkspaceBinding,
         command: Vec<String>,
@@ -17,7 +18,7 @@ impl AnalystSession {
         let cccc = super::super::codex_mcp::configure_actor_cli(&mut env).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                "CCCC executable is unavailable for OpenCode MCP binding",
+                "CCCC executable is unavailable for OpenCode/Kilo MCP binding",
             )
         })?;
         env.insert(
@@ -35,9 +36,10 @@ impl AnalystSession {
         }
         let mcp_server = acp_mcp_server(home, &cccc, group_id, actor_id, tool_profile);
         let session_command = command.clone();
-        let prepared = opencode::prepare(&command, &env)?;
+        let prepared = opencode::prepare(&command, &env, runtime)?;
         let resume_session_id = if let Some((group_id, actor_id)) = actor {
             super::super::runtime_session::prepare_opencode_managed_session(
+                runtime,
                 home,
                 group_id,
                 actor_id,
@@ -60,6 +62,7 @@ impl AnalystSession {
         .await?;
         if let Some((group_id, actor_id)) = actor
             && let Err(error) = super::super::runtime_session::record_opencode_managed_session(
+                runtime,
                 home,
                 group_id,
                 actor_id,
@@ -70,13 +73,13 @@ impl AnalystSession {
                 launched.resumed,
             )
         {
-            tracing::warn!(%error, %group_id, %actor_id, "failed to persist OpenCode managed session");
+            tracing::warn!(%error, %group_id, %actor_id, ?runtime, "failed to persist managed ACP session");
         }
         Ok(Self {
             #[cfg(test)]
             binding,
             generation,
-            runtime: cccc_contracts::ActorRuntime::Opencode,
+            runtime,
             endpoint: String::new(),
             thread_id: launched.session_id,
             remote_tui_prefix: Vec::new(),

@@ -75,7 +75,7 @@
   "commandOverride": "命令覆盖",
   "commandOverrideOptional": "命令覆盖（可选）",
   "useRuntimeDefaultCommand": "使用 runtime 默认命令",
-  "opencodeManagedModelHint": "切换模型后，请先在 OpenCode TUI 中发送一条消息，CCCC 后续请求才会使用该模型。也可通过启动参数 --model provider/model 指定。",
+  "opencodeManagedModelHint": "切换模型后，请先在 Runtime TUI 中发送一条消息，CCCC 后续请求才会使用该模型。也可通过启动参数 --model provider/model 指定。",
   "usingRuntimeDefaultCommand": "当前使用 runtime 默认命令：",
   "enterCommand": "输入命令…",
   "default": "默认：",

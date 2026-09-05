@@ -125,6 +125,38 @@ fn runtime_identity_tracks_provider_storage_roots_and_runtime_but_not_model_cred
 }
 
 #[test]
+fn kilo_identity_tracks_its_own_storage_not_transient_server_credentials() {
+    let baseline = ResolvedAgentRuntime {
+        runtime: ActorRuntime::Kilo,
+        command: vec!["kilo".into()],
+        environment: BTreeMap::from([("KILO_DB".into(), "/tmp/kilo-a.db".into())]),
+    };
+    let mut changed = baseline.clone();
+    changed
+        .environment
+        .insert("KILO_SERVER_PASSWORD".into(), "new-session-secret".into());
+    assert_eq!(
+        baseline.identity_fingerprint(),
+        changed.identity_fingerprint()
+    );
+    changed
+        .environment
+        .insert("KILO_DB".into(), "/tmp/kilo-b.db".into());
+    assert!(runtime_identity_changed(&baseline, &changed));
+    assert!(
+        normalize(CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Kilo,
+            ..Default::default()
+        })
+        .is_ok()
+    );
+    assert!(
+        validate_private_environment(&BTreeMap::from([("KILO_DB".into(), "relative.db".into())]))
+            .is_err()
+    );
+}
+
+#[test]
 fn claude_identity_tracks_every_launch_setting_that_agent_view_persists() {
     let baseline = ResolvedAgentRuntime {
         runtime: ActorRuntime::Claude,

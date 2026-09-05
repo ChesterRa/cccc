@@ -22,6 +22,12 @@ describe("OpenCode model selection hint", () => {
     );
   });
 
+  it("also explains model synchronization for Kilo", () => {
+    expect(renderToStaticMarkup(<OpenCodeManagedModelHint runtime="kilo" />)).toContain(
+      "opencodeManagedModelHint",
+    );
+  });
+
   it("does not warn for other runtimes or an empty selection", () => {
     for (const runtime of ["codex", "claude", "grok", "", null, undefined]) {
       expect(renderToStaticMarkup(<OpenCodeManagedModelHint runtime={runtime} />)).toBe("");

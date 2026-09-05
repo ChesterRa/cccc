@@ -179,6 +179,17 @@ jobs:
           process_tree::tests::abrupt_daemon_exit_reaps_child_and_grandchild_without_deleting_history
           -- --test-threads=1
 
+      - name: Set up Node for Windows npm entrypoint tests
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+
+      - name: Verify Windows Kilo npm managed launch
+        timeout-minutes: 3
+        run: >-
+          cargo test --package cccc-pair-daemon --lib --locked
+          opencode::launch_tests:: -- --test-threads=1
+
   rust-linux:
     needs: web
     runs-on: ubuntu-latest
@@ -213,6 +224,28 @@ jobs:
         run: >-
           cargo test --package cccc --test integration --locked
           daemon_self_launch:: -- --test-threads=1
+      - name: Set up Node for offline native-runtime smoke tests
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+      - name: Install verified native CLI versions
+        run: npm install --global @openai/codex@0.153.2 @anthropic-ai/claude-code@2.1.261 @kilocode/cli@7.5.14
+      - name: Verify native sessions without external model access
+        timeout-minutes: 5
+        env:
+          CCCC_LAUNCHER_PATH: ${{ github.workspace }}/target/debug/cccc
+          CCCC_CODEX_EMPTY_LIVE: "1"
+          CCCC_CLAUDE_EMPTY_LIVE: "1"
+          CCCC_KILO_MANAGED_LIVE: "1"
+          CCCC_KILO_MODEL_SYNC_LIVE: "1"
+        run: |
+          cargo build --package cccc --bin cccc --locked
+          cargo test --package cccc-pair-daemon --lib --locked \
+            live_codex_empty_actor_and_analyst_resume_with_native_terminal -- --test-threads=1
+          cargo test --package cccc-pair-daemon --lib --locked \
+            live_claude_empty_session_resumes_without_a_prompt -- --test-threads=1
+          cargo test --package cccc-pair-daemon --lib --locked \
+            live_kilo -- --test-threads=1
 
   ci-required:
     if: always()

@@ -60,9 +60,10 @@ async fn stalled_peer_reports_timeout_and_budget() {
 }
 
 #[tokio::test]
-async fn unavailable_peer_reports_connect_failure() {
-    // Port zero cannot host a listener. A bound-but-not-listening socket
-    // can time out on macOS instead of producing a connection error.
+async fn unavailable_peer_reports_a_transport_failure() {
+    // Port zero cannot host a listener, but the OS/network may either reject
+    // it or silently drop the connection (including on WSL). Exact error
+    // classification is covered separately by transport_failures_keep_actionable_categories.
     let endpoint = "http://127.0.0.1:0";
 
     let (value, error) = send_remote(
@@ -80,7 +81,8 @@ async fn unavailable_peer_reports_connect_failure() {
 
     assert_eq!(value, json!({}));
     assert!(
-        error.contains("remote pairing status failed (connect)"),
+        error.contains("remote pairing status failed (connect)")
+            || error.contains("remote pairing status failed (timeout after 400ms)"),
         "{error}"
     );
 }

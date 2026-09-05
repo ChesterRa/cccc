@@ -37,7 +37,17 @@ def test_windows_smoke_keeps_focused_native_checks() -> None:
         in runs
     )
     assert "-- --test-threads=1" in runs
-    assert not any(item.startswith("actions/setup-node") for item in uses)
+    # Node runs the offline npm entrypoint fixture; Web is still prebuilt and
+    # this focused job does not download model runtimes or install npm packages.
+    steps = windows["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node"))
+    smoke = next(step for step in steps if step.get("name") == "Verify Windows Kilo npm managed launch")
+    assert setup["with"]["node-version"] == "24.19.0"
+    assert steps.index(setup) < steps.index(smoke)
+    assert smoke["timeout-minutes"] == "3"
+    assert "cargo test --package cccc-pair-daemon --lib --locked" in smoke["run"]
+    assert "opencode::launch_tests:: -- --test-threads=1" in smoke["run"]
+    assert "secrets." not in str(smoke)
     assert not any(item.startswith("actions/setup-python") for item in uses)
     assert "npm " not in runs
     assert "python " not in runs.lower()

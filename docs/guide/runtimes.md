@@ -16,7 +16,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Cursor CLI | `cursor` | `cursor-agent` | Prompt-assisted |
 | Devin CLI | `devin` | `devin` | Auto |
 | Kiro CLI | `kiro` | `kiro-cli` | Auto |
-| Kilo Code CLI | `kilo` | `kilo` | Prompt-assisted |
+| Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | Antigravity CLI | `antigravity` | `agy` | Prompt-assisted |
 | Droid CLI | `droid` | `droid` | Auto |
 | Amp | `amp` | `amp` | Auto |
@@ -51,7 +51,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `opencode` | `opencode --auto` | CCCC owns the ACP permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
 | `amp` | `amp` | No extra CCCC launch flag; Amp's current CLI default is already direct tool execution. |
 | `auggie` | `auggie` | Use Auggie permissions or settings for per-tool approval policy; CCCC does not inject a broad wildcard permission rule. |
-| `kilo` | `kilo` | Use Kilo's `kilo.jsonc` permission settings or Auto Approve UI for broad approval policy. |
+| `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
 
@@ -74,6 +74,7 @@ cccc setup --runtime grok
 cccc setup --runtime hermes
 cccc setup --runtime kimi
 cccc setup --runtime opencode
+cccc setup --runtime kilo
 ```
 
 DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
@@ -82,7 +83,6 @@ Prompt-assisted runtimes print an idempotent setup prompt or contract that you r
 
 ```bash
 cccc setup --runtime cursor
-cccc setup --runtime kilo
 cccc setup --runtime antigravity
 ```
 
@@ -94,11 +94,54 @@ cccc actor add worker --runtime custom --command "my-agent --with-flags"
 
 ## Runtime interaction
 
-Users choose a Runtime, not a runner mode. CLI runtimes expose their native terminal so the user can inspect and operate the Actor. Codex, Claude Code, Grok Build, and OpenCode additionally run a structured background protocol against the same provider session; CCCC uses that protocol for identity, lifecycle, progress, completion, and cancellation.
+Users choose a Runtime, not a runner mode. CLI runtimes expose their native terminal so the user can inspect and operate the Actor. Codex, Claude Code, Grok Build, OpenCode, and Kilo additionally run a structured background protocol against the same provider session; CCCC uses that protocol for identity, lifecycle, progress, completion, and cancellation.
 
-Actor messages still enter those four Runtimes through their native terminal. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. DeepSeek Harness has only a structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
+Actor messages still enter those managed Runtimes through their native terminal. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. DeepSeek Harness has only a structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
 
 Cline currently opens a fresh native terminal on each start. CCCC does not persist or reuse Cline's `--id` session identifier.
+
+#### Admission evidence (2026-09-05)
+
+Kilo 7.5.14 was checked with the installed native CLI, isolated provider homes,
+and a loopback test model. The shared Actor/Analyst probe covers idle startup,
+empty and populated session resume, consecutive results, native TUI cancellation,
+and a busy-state follow-up exceeding 16,000 characters. A second probe checks
+that a submitted native model/variant selection reaches ACP. These probes do not
+use real provider credentials or paid inference. They do not establish native
+Windows or macOS behavior; those remain platform validation boundaries.
+
+Windows npm installs (`npm install -g @kilocode/cli`, or a project-local install)
+expose `kilo.cmd`. CCCC resolves that official entrypoint to Node plus the
+installed Kilo launcher for both ACP and TUI; no manual `kilo.exe` path is needed.
+Node must be available beside the npm shim or on the configured `PATH`.
+Windows CI separately exercises npm installation layouts, literal arguments and
+environment, owned stdio launch, and native terminal launch with an offline fixture.
+That fixture does not substitute for full real-Kilo platform validation.
+
+Cline 3.0.61 is **not** admitted as a managed Analyst. Its ACP `session/new`
+returns an ID before the core/session history exists; immediately loading that
+empty ID reproducibly returns `Resource not found`. The
+[upstream ACP implementation](https://github.com/cline/cline/blob/dac3b35/apps/cli/src/acp/acpAgent.ts)
+starts its core lazily on a prompt. A shared native TUI/controller would need
+additional Hub/session lifecycle work, not simply the existing ACP adapter.
+CCCC keeps its current terminal Actor support instead of creating a synthetic
+startup prompt or a second Analyst-only session path.
+
+The Linux CI runs the real Codex/Claude empty-session probes and both Kilo probes
+against pinned CLI versions. To repeat the Kilo checks locally after building
+the current `cccc` binary:
+
+```bash
+CCCC_LAUNCHER_PATH="$PWD/target/debug/cccc" \
+CCCC_KILO_MANAGED_LIVE=1 CCCC_KILO_MODEL_SYNC_LIVE=1 \
+  cargo test -p cccc-pair-daemon --lib --locked live_kilo -- --test-threads=1
+```
+
+Codex 0.153.2 Esc was also checked through CCCC against a local test model. The
+interrupted turn published `turn_aborted`; an already queued follow-up could then
+start a new turn. This is not evidence that CCCC swallowed Esc, so the keyboard
+and cancellation paths were not changed. Do not discard queued user messages
+merely to make the terminal appear idle.
 
 ### Kimi Code
 
@@ -159,7 +202,7 @@ also carries the pending startup instructions; a rejected delivery leaves them
 pending. Human terminal input is likewise real work, but lifecycle operations
 alone are not.
 
-### Managed Codex/Claude/Grok/OpenCode sessions
+### Managed Codex/Claude/Grok/OpenCode/Kilo sessions
 
 For every Codex Actor, CCCC creates one
 daemon-owned app-server thread and opens Codex's writable remote TUI against
@@ -254,7 +297,17 @@ Runtime command when the model must be selected at launch instead.
 
 The Rust daemon also owns the lifetime of every process-backed actor. On Windows, the daemon host and each terminal actor use non-breakaway Job Objects with `KILL_ON_JOB_CLOSE`; Codex and actor-launched MCP descendants inherit containment when they are created, so an abrupt daemon or combined Web-process exit cannot leave them orphaned. On POSIX, each terminal actor is a separate session and normal stop/reap terminates its entire process group. Process cleanup never removes `group.yaml`, `ledger.jsonl`, or retained terminal history.
 
-Codex, Claude, Grok, and OpenCode always pair their native terminal with the
+Kilo shares the OpenCode ACP/HTTP adapter for both Actors and Voice Analyst.
+CCCC owns a private `kilo acp` backend and attaches `kilo attach` to that exact
+session; it does not reuse an unrelated global Kilo daemon. Kilo receives
+session-scoped MCP injection, and no setup or bootstrap prompt is sent merely
+because it starts. Its settings use `KILO_*` rather than `OPENCODE_*`, including
+`KILO_DB` for the durable session store. The same model-selection rule applies:
+submit one message after changing the native TUI model, or set
+`--model provider/model` in the launch command. Existing terminal-only receipts
+are not adopted; subsequent managed stop/start preserves the new session.
+
+Codex, Claude, Grok, OpenCode, and Kilo always pair their native terminal with the
 managed background session described above. DeepSeek uses ACP NDJSON through
 CCCC's fixed composition and has no terminal surface. Provider health determines
 the Actor's `running` value, and stopping the Actor or Group closes the owned
@@ -363,7 +416,7 @@ Common checks:
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, Grok, and OpenCode receive an Actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Prompt-assisted runtimes (`cursor`, `kilo`, and `antigravity`) retain their startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup --runtime claude`, `cccc setup --runtime grok`, and `cccc setup --runtime opencode` therefore report session ownership instead of mutating provider-global configuration.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, Grok, OpenCode, and Kilo receive an Actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Prompt-assisted runtimes (`cursor` and `antigravity`) retain their startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, Grok, OpenCode, and Kilo therefore reports session ownership instead of mutating provider-global configuration.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 

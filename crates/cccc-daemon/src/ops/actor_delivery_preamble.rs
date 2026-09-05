@@ -6,7 +6,7 @@ pub fn render(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> String {
     let prompt = system_prompt::render_session(home, group, actor);
     if !matches!(
         actor.runtime,
-        ActorRuntime::Antigravity | ActorRuntime::Cursor | ActorRuntime::Kilo
+        ActorRuntime::Antigravity | ActorRuntime::Cursor
     ) {
         return prompt;
     }
@@ -20,7 +20,6 @@ fn setup_prompt(home: &HomeLayout, runtime: ActorRuntime) -> String {
     let runtime_label = match runtime {
         ActorRuntime::Antigravity => "Antigravity",
         ActorRuntime::Cursor => "Cursor CLI",
-        ActorRuntime::Kilo => "Kilo Code CLI",
         _ => "this runtime",
     };
     let contract = json!({
@@ -57,5 +56,19 @@ mod tests {
         assert!(prompt.contains("Do not reinstall just to verify the config"));
         assert!(prompt.contains("\"CCCC_HOME\""));
         assert!(prompt.contains("[CCCC] You are cursor1"));
+    }
+
+    #[test]
+    fn managed_kilo_does_not_ask_the_model_to_install_mcp() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("test", "").expect("group");
+        let mut actor = Actor::new("kilo-1");
+        actor.runtime = ActorRuntime::Kilo;
+        assert_eq!(
+            render(&home, &group, &actor),
+            system_prompt::render_session(&home, &group, &actor)
+        );
     }
 }

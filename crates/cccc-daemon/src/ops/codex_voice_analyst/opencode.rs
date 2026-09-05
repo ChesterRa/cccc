@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod command;
+#[cfg(test)]
+mod launch_tests;
 mod lifecycle;
 #[cfg(test)]
 mod model_sync_tests;
@@ -22,7 +24,8 @@ const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const MIN_MANAGED_VERSION: (u64, u64, u64) = (1, 18, 14);
 
 pub(super) struct PreparedOpenCode {
-    executable: String,
+    runtime: super::ActorRuntime,
+    launch_prefix: Vec<String>,
     acp_arguments: Vec<String>,
     tui_arguments: Vec<String>,
     model: Option<String>,
@@ -41,28 +44,25 @@ pub(super) struct LaunchedOpenCode {
 pub(super) fn prepare(
     configured: &[String],
     environment: &BTreeMap<String, String>,
+    runtime: super::ActorRuntime,
 ) -> io::Result<PreparedOpenCode> {
-    let default_command = ["opencode".to_owned()];
+    let name = if runtime == super::ActorRuntime::Kilo {
+        "kilo"
+    } else {
+        "opencode"
+    };
+    let default_command = [name.to_owned()];
     let configured = if configured.is_empty() {
         &default_command[..]
     } else {
         configured
     };
     let executable = launch_command::resolve_runtime_executable(&configured[0], environment)?;
-    let filename = executable
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !matches!(filename.as_str(), "opencode" | "opencode.exe") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "OpenCode managed sessions require the direct opencode executable; wrappers and renamed binaries are not supported",
-        ));
-    }
+    let launch_prefix = command::launch_prefix(&executable, name, environment)?;
     let parsed = command::parse_arguments(&configured[1..])?;
     Ok(PreparedOpenCode {
-        executable: executable.to_string_lossy().into_owned(),
+        runtime,
+        launch_prefix,
         acp_arguments: parsed.acp_arguments,
         tui_arguments: parsed.tui_arguments,
         model: parsed.model,
@@ -79,9 +79,16 @@ pub(super) async fn launch(
     resume_session_id: Option<&str>,
     mcp_server: Value,
 ) -> io::Result<LaunchedOpenCode> {
-    require_supported_version(&prepared.executable, cwd, &base_environment).await?;
+    // Kilo shares this ACP/HTTP topology, not OpenCode's release numbering.
+    if prepared.runtime == super::ActorRuntime::Opencode {
+        require_supported_version(&prepared.launch_prefix[0], cwd, &base_environment).await?;
+    }
     if purpose == SessionPurpose::VoiceAnalyst {
-        command::write_voice_analyst_agent(cwd, super::launch::ANALYST_INSTRUCTIONS)?;
+        command::write_voice_analyst_agent(
+            cwd,
+            super::launch::ANALYST_INSTRUCTIONS,
+            prepared.runtime,
+        )?;
     }
     let mut last_error = None;
     for _ in 0..START_ATTEMPTS {
@@ -91,12 +98,18 @@ pub(super) async fn launch(
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        let username = "opencode";
+        let is_kilo = prepared.runtime == super::ActorRuntime::Kilo;
+        let username = if is_kilo { "kilo" } else { "opencode" };
+        let prefix = if is_kilo { "KILO" } else { "OPENCODE" };
         let endpoint = format!("http://127.0.0.1:{port}");
         let mut environment = base_environment.clone();
-        environment.insert("OPENCODE_SERVER_USERNAME".into(), username.into());
-        environment.insert("OPENCODE_SERVER_PASSWORD".into(), password.clone());
-        let mut acp_command = vec![prepared.executable.clone(), "acp".into()];
+        environment.insert(format!("{prefix}_SERVER_USERNAME"), username.into());
+        environment.insert(format!("{prefix}_SERVER_PASSWORD"), password.clone());
+        if is_kilo {
+            environment.insert("KILO_NO_DAEMON".into(), "1".into());
+        }
+        let mut acp_command = prepared.launch_prefix.clone();
+        acp_command.push("acp".into());
         acp_command.extend(prepared.acp_arguments.clone());
         acp_command.extend([
             "--hostname".into(),
@@ -106,8 +119,12 @@ pub(super) async fn launch(
             "--cwd".into(),
             cwd.to_string_lossy().into_owned(),
         ]);
-        let (owner, stdin, stdout) =
-            process::spawn_piped(&acp_command, cwd, &environment, "opencode-acp")?;
+        let (owner, stdin, stdout) = process::spawn_piped(
+            &acp_command,
+            cwd,
+            &environment,
+            if is_kilo { "kilo-acp" } else { "opencode-acp" },
+        )?;
         let owner = Arc::new(owner);
         if let Err(error) = lifecycle::wait_for_authenticated_backend(
             &endpoint,
@@ -125,7 +142,7 @@ pub(super) async fn launch(
             stdin,
             stdout,
             generation.to_owned(),
-            "opencode",
+            username,
             PermissionPolicy::AllowOnce,
             PromptCompletion::Response,
         )?;
@@ -153,7 +170,7 @@ pub(super) async fn launch(
                 let _ = owner.stop();
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "OpenCode ACP does not advertise protocol v1 with loadSession support",
+                    "OpenCode/Kilo ACP does not advertise protocol v1 with loadSession support",
                 ));
             }
             Err(error) => {
@@ -193,7 +210,8 @@ pub(super) async fn launch(
             let _ = owner.stop();
             return Err(error);
         }
-        let mut tui_command = vec![prepared.executable.clone(), "attach".into(), endpoint];
+        let mut tui_command = prepared.launch_prefix.clone();
+        tui_command.extend(["attach".into(), endpoint]);
         tui_command.extend(prepared.tui_arguments.clone());
         tui_command.extend([
             "--session".into(),
@@ -213,7 +231,7 @@ pub(super) async fn launch(
     Err(io::Error::new(
         io::ErrorKind::AddrInUse,
         format!(
-            "OpenCode authenticated backend could not start: {}",
+            "OpenCode/Kilo authenticated backend could not start: {}",
             last_error.unwrap_or_else(|| "no loopback port was available".into())
         ),
     ))

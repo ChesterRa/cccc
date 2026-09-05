@@ -33,7 +33,11 @@ pub(super) fn prepare(
     // pipeline. Do not mutate a provider-global MCP registry for these runtimes.
     if matches!(
         runtime,
-        ActorRuntime::Claude | ActorRuntime::Codex | ActorRuntime::Grok | ActorRuntime::Opencode
+        ActorRuntime::Claude
+            | ActorRuntime::Codex
+            | ActorRuntime::Grok
+            | ActorRuntime::Opencode
+            | ActorRuntime::Kilo
     ) {
         return Ok(());
     }
@@ -52,6 +56,7 @@ pub(super) fn prepare(
         ActorRuntime::Claude
         | ActorRuntime::Codex
         | ActorRuntime::Grok
+        | ActorRuntime::Kilo
         | ActorRuntime::Opencode => {
             unreachable!("managed runtime returned early")
         }
