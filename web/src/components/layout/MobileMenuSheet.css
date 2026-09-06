@@ -26,3 +26,15 @@
   overscroll-behavior-y: contain;
   padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
 }
+
+@media (min-width: 768px) {
+  .mobile-menu-panel.glass-modal {
+    top: 64px;
+    bottom: auto;
+    left: auto;
+    right: 16px;
+    width: min(420px, calc(100% - 32px));
+    max-height: calc(100% - 80px);
+    border-radius: 24px;
+  }
+}

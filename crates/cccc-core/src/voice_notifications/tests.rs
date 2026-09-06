@@ -900,3 +900,141 @@ fn stale_revision_and_invalid_source_are_atomic_failures() {
         before
     );
 }
+
+#[test]
+fn speech_keeps_host_source_names_and_detailed_material_through_preflight() {
+    let f = Fixture::new();
+    f.subscribe(NotificationScope::AllChat);
+    let details =
+        "长春 25°C，体感 26°C，17–26°C；湿度 63%，东南风 8 km/h，来源 wttr.in；尚未独立核验。";
+    let mut event = f.event("worker", "user", details, None);
+    event.data.insert("sender_title".into(), json!("管理员"));
+    event.data.insert(
+        "attachments".into(),
+        json!([{"name":"weather.pdf","path":"secret-fixture-path"}]),
+    );
+    f.append(&event);
+    let prompt =
+        notification_prompt(&f.home, &event, VoiceVerbosity::Detailed).expect("Analyst input");
+    let source: serde_json::Value = serde_json::from_str(
+        prompt
+            .split("Source JSON:\n")
+            .nth(1)
+            .expect("source JSON section"),
+    )
+    .expect("source data");
+    assert_eq!(source["group_name"], "Voice test");
+    assert_eq!(source["sender_name"], "管理员");
+    assert_eq!(source["text"], details);
+    assert!(
+        prompt.contains("numbers and units") && prompt.contains("incoming Actor notifications")
+    );
+    assert!(!prompt.contains("secret-fixture-path"));
+    scan(&f.home).expect("scan");
+    let source_ref = f.reference(&event);
+    reserve(&f.home, &source_ref, "analyst").expect("reserve");
+    processed(
+        &f.home,
+        &[source_ref.correlation_id()],
+        "analyst",
+        "turn",
+        details,
+    )
+    .expect("result");
+    reserve_output(&f.home, "analyst:turn", "call").expect("output");
+    // Removing/renaming the Actor must not replace the historical sender snapshot.
+    let mut group = f.store.load(&f.group).expect("group");
+    group.actors.clear();
+    f.store.save(&group).expect("removed actor");
+    let text = prepare_output(&f.home, "analyst:turn", "call")
+        .expect("prepare")
+        .expect("speech");
+    assert!(text.contains("Voice test") && text.contains("管理员"));
+    assert!(
+        text.ends_with(details),
+        "material text stays intact, not a second summary"
+    );
+    assert!(!text.contains("Briefly summarize"));
+    mark_viewed(&f.home, &[source_ref]).expect("viewed");
+    assert!(
+        prepare_output(&f.home, "analyst:turn", "call")
+            .expect("recheck")
+            .is_none()
+    );
+}
+
+#[test]
+fn multiple_groups_keep_distinct_attribution_and_exclude_viewed_source_names() {
+    let f = Fixture::new();
+    let mut second = f.store.create("Second Group", "").expect("second group");
+    second.actors = f.store.load(&f.group).expect("fixture group").actors;
+    second.actors[0].title = "Shared Name".into();
+    f.store.save(&second).expect("second actor");
+    let mut first = f.store.load(&f.group).expect("fixture group");
+    first.actors[0].title = "Shared Name".into();
+    f.store.save(&first).expect("first actor");
+    let mut prefs = preferences(&f.home).expect("fixture preferences");
+    for id in [&f.group, &second.group_id] {
+        prefs.groups.insert(id.clone(), NotificationScope::AllChat);
+    }
+    save_preferences(&f.home, prefs).expect("subscribe");
+    let event1 = f.event("worker", "user", "First private result", None);
+    let mut event2 = f.event("worker", "user", "Second result", None);
+    event2.group_id = second.group_id.clone();
+    for event in [&event1, &event2] {
+        ledger::append(
+            &f.store
+                .ledger_path(&event.group_id)
+                .expect("fixture ledger"),
+            event,
+        )
+        .expect("append");
+    }
+    scan(&f.home).expect("scan");
+    let refs = [
+        VoiceMessageRef {
+            group_id: f.group.clone(),
+            event_id: event1.id,
+        },
+        VoiceMessageRef {
+            group_id: second.group_id,
+            event_id: event2.id,
+        },
+    ];
+    for source in &refs {
+        reserve(&f.home, source, "analyst").expect("reserve");
+    }
+    processed(
+        &f.home,
+        &refs
+            .iter()
+            .map(VoiceMessageRef::correlation_id)
+            .collect::<Vec<_>>(),
+        "analyst",
+        "turn",
+        "First private result and second result",
+    )
+    .expect("result");
+    reserve_output(&f.home, "analyst:turn", "call").expect("output");
+    let prepare = || {
+        prepare_output(&f.home, "analyst:turn", "call")
+            .expect("prepare")
+            .expect("remaining notice")
+    };
+    let text = prepare();
+    assert!(text.contains("Voice test") && text.contains("Second Group"));
+    assert_eq!(text.matches("Shared Name").count(), 2);
+    mark_viewed(&f.home, &refs[..1]).expect("viewed first source");
+    let text = prepare();
+    assert!(!text.contains("Voice test") && !text.contains("First private result"));
+    assert!(text.contains("Second Group") && text.contains("Shared Name"));
+}
+
+#[test]
+fn source_name_falls_back_to_actor_id_when_no_title_is_available() {
+    let f = Fixture::new();
+    let event = f.event("deleted-actor", "user", "Result", None);
+    let prompt = notification_prompt(&f.home, &event, VoiceVerbosity::Concise).expect("prompt");
+    assert!(prompt.contains("\"sender_name\":\"deleted-actor\""));
+    assert!(prompt.contains("Always identify the Group and sender"));
+}

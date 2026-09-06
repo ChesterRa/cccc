@@ -184,6 +184,7 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
     );
     let call_generation = call.generation().to_owned();
     let session = Arc::new(ActiveSession {
+        verbosity: Default::default(),
         notification_paused: tokio::sync::watch::channel(false).0,
         call,
         analyst: Arc::clone(&runtime),

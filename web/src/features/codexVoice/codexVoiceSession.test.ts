@@ -13,6 +13,49 @@ afterEach(() => {
 });
 
 describe("Codex Voice realtime event model", () => {
+  it("ignores provider data decoded after stop and late Analyst messages", async () => {
+    const onPhase = vi.fn();
+    const onAssistantTranscript = vi.fn();
+    const onAnalystProgress = vi.fn();
+    const session = new CodexVoiceBrowserSession({
+      audio: { pause: vi.fn() } as unknown as HTMLAudioElement,
+      preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+      callbacks: {
+        onPhase,
+        onCall: vi.fn(),
+        onAnalyst: vi.fn(),
+        onUserTranscript: vi.fn(),
+        onAssistantTranscript,
+        onAnalystProgress,
+        onAnalystResult: vi.fn(),
+        onPlaybackBlocked: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+    let finish: ((value: string) => void) | undefined;
+    const blob = new Blob();
+    vi.spyOn(blob, "text").mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const transport = session as unknown as {
+      handleProviderMessage(value: unknown): Promise<void>;
+      handleServerMessage(value: Record<string, unknown>): void;
+    };
+    const pending = transport.handleProviderMessage(blob);
+    await session.stop();
+    onPhase.mockClear();
+    finish?.(
+      JSON.stringify({ type: "turn.done", turn: { role: "assistant", transcript: "Late." } }),
+    );
+    await pending;
+    transport.handleServerMessage({ type: "analyst_progress", text: "Late progress." });
+    expect(onPhase).not.toHaveBeenCalled();
+    expect(onAssistantTranscript).not.toHaveBeenCalled();
+    expect(onAnalystProgress).not.toHaveBeenCalled();
+  });
+
   it("reports all positively unsent IDs in bounded frames before overflow teardown", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const frames: Record<string, unknown>[] = [];

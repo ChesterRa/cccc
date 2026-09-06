@@ -1,130 +1,110 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { HeadlessPreviewSession, StreamingActivity } from "../../types";
-import type { LiveWorkCard } from "./liveWorkCards";
+import type { HeadlessStreamEvent } from "../../types";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import type { RuntimeDockItem } from "./runtimeDockItems";
+import {
+  createRuntimeDockTickerCache,
+  upsertRuntimeDockTickerCache,
+  pruneRuntimeDockTickerCache,
+  hasRuntimeDockTickerWork,
+} from "./runtimeDockTickerCache";
 
-describe("runtime dock ticker entries", () => {
-  it("keeps managed activities when an actor already has preview sessions", () => {
-    const runtimeActivity: StreamingActivity = {
-      id: "tool:runtime",
-      kind: "tool",
-      status: "started",
-      summary: "Calling Bash",
-      ts: "2026-07-28T00:00:01Z",
-    };
-    const previewSession = {
-      actorId: "foreman",
-      pendingEventId: "message:1",
-      currentStreamId: "stream:1",
-      phase: "streaming",
-      streamPhase: "streaming",
-      updatedAt: "2026-07-28T00:00:00Z",
-      latestText: "Existing preview",
-      transcriptBlocks: [],
-      activities: [runtimeActivity],
-    } as HeadlessPreviewSession;
-    const card = {
-      actorId: "foreman",
-      actorLabel: "Foreman",
-      runtime: "codex",
-      phase: "streaming",
-      streamPhase: "streaming",
-      text: "",
-      transcriptBlocks: [],
-      activities: [runtimeActivity],
-      previewSessions: [previewSession],
-      updatedAt: runtimeActivity.ts || "",
-      streamId: "",
-      pendingEventId: "",
-    } satisfies LiveWorkCard;
-    const item = {
-      actorId: "foreman",
-      actorLabel: "Foreman",
-      liveWorkCard: card,
-    } as RuntimeDockItem;
+function event(id: string, text: string, receivedAt?: number): HeadlessStreamEvent {
+  return {
+    id,
+    actor_id: "a",
+    type: "headless.message.completed",
+    ts: "2026-09-04T00:00:00Z",
+    data: { stream_id: "turn-1", text },
+    _receivedAt: receivedAt,
+  };
+}
+const item = { actorId: "a", actorLabel: "Manager", liveWorkCard: null } as RuntimeDockItem;
+function entries(events: HeadlessStreamEvent[]) {
+  return buildRuntimeDockTickerEntries([item], { a: events });
+}
 
-    expect(buildRuntimeDockTickerEntries([item])).toEqual([
-      expect.objectContaining({ kind: "activity", actorId: "foreman", text: "Calling Bash" }),
-    ]);
+describe("live runtime progress bubbles", () => {
+  it.each(["claude", "codex", "grok", "opencode", "kilo"])(
+    "never turns %s restored history into new bubbles",
+    (runtime) => {
+      const actorItem = { ...item, runtime };
+      expect(
+        buildRuntimeDockTickerEntries([actorItem], { a: [event("old", "Old completed results")] }),
+      ).toEqual([]);
+    },
+  );
+  it("keeps a single current excerpt instead of replaying a long completed transcript", () => {
+    const cache = createRuntimeDockTickerCache();
+    const text = Array.from({ length: 29 }, (_, i) => `Progress paragraph ${i}.`).join("\n");
+    const visible = upsertRuntimeDockTickerCache(cache, entries([event("new", text, 1000)]), 1000);
+    expect(visible.map((e) => e.text)).toEqual(["Progress paragraph 28."]);
+    expect(pruneRuntimeDockTickerCache(cache, 7100)).toEqual([]);
+    expect(hasRuntimeDockTickerWork(cache)).toBe(false);
   });
-
-  it("coalesces equivalent tool states from parallel operations", () => {
-    const runtimeActivities: StreamingActivity[] = [
-      {
-        id: "tool:1",
-        kind: "tool",
-        status: "completed",
-        summary: "Bash completed in 1s",
-        tool_name: "Bash",
-        ts: "2026-07-28T00:00:01Z",
-      },
-      {
-        id: "tool:2",
-        kind: "tool",
-        status: "completed",
-        summary: "Bash completed in 2s",
-        tool_name: "Bash",
-        ts: "2026-07-28T00:00:02Z",
-      },
-    ];
-    const card = {
-      actorId: "foreman",
-      actorLabel: "Foreman",
-      runtime: "codex",
-      phase: "streaming",
-      streamPhase: "streaming",
-      text: "",
-      transcriptBlocks: [],
-      activities: runtimeActivities,
-      previewSessions: [],
-      updatedAt: "2026-07-28T00:00:02Z",
-      streamId: "",
-      pendingEventId: "",
-    } satisfies LiveWorkCard;
-    const item = {
-      actorId: "foreman",
-      actorLabel: "Foreman",
-      liveWorkCard: card,
-    } as RuntimeDockItem;
-
-    expect(buildRuntimeDockTickerEntries([item])).toEqual([
-      expect.objectContaining({
-        kind: "activity",
-        actorId: "foreman",
-        text: "Bash completed in 2s",
-      }),
-    ]);
+  it("cannot revive expired progress after a fresh cache or a group eviction", () => {
+    const data = entries([event("old", "Already shown", 1000)]);
+    expect(upsertRuntimeDockTickerCache(createRuntimeDockTickerCache(), data, 9000)).toEqual([]);
   });
-
-  it("does not replay completed managed activity as live ticker work", () => {
-    const runtimeActivity: StreamingActivity = {
-      id: "tool:runtime",
-      kind: "tool",
-      status: "completed",
-      summary: "Bash completed in 2s",
-      tool_name: "Bash",
-      ts: "2026-07-28T00:00:02Z",
-    };
-    const card = {
-      actorId: "foreman",
-      actorLabel: "Foreman",
-      runtime: "codex",
-      phase: "completed",
-      streamPhase: "",
-      text: "",
-      transcriptBlocks: [],
-      activities: [runtimeActivity],
-      previewSessions: [],
-      updatedAt: runtimeActivity.ts || "",
-      streamId: "",
-      pendingEventId: "",
-    } satisfies LiveWorkCard;
-
+  it("coalesces a completion echo without extending visibility", () => {
+    const cache = createRuntimeDockTickerCache();
+    upsertRuntimeDockTickerCache(cache, entries([event("delta", "Complete result", 1000)]), 1000);
+    upsertRuntimeDockTickerCache(cache, entries([event("done", "Complete result", 6500)]), 6500);
+    expect(pruneRuntimeDockTickerCache(cache, 7001)).toEqual([]);
+  });
+  it("permits identical prose from a new turn and replaces previous prose in place", () => {
+    const cache = createRuntimeDockTickerCache();
+    upsertRuntimeDockTickerCache(cache, entries([event("one", "Passed", 1000)]), 1000);
+    const next = event("two", "Passed", 9000);
+    next.data!.stream_id = "turn-2";
+    expect(upsertRuntimeDockTickerCache(cache, entries([next]), 9000)).toHaveLength(1);
     expect(
-      buildRuntimeDockTickerEntries([
-        { actorId: "foreman", actorLabel: "Foreman", liveWorkCard: card } as RuntimeDockItem,
-      ]),
-    ).toEqual([]);
+      upsertRuntimeDockTickerCache(
+        cache,
+        entries([event("three", "Changed result", 9100)]),
+        9100,
+      ).map((e) => e.text),
+    ).toEqual(["Changed result"]);
+  });
+  it("shows at most two actors, with at most one bubble for each", () => {
+    const cache = createRuntimeDockTickerCache();
+    const data = entries([event("new", "Progress", 1000)])[0]!;
+    const visible = upsertRuntimeDockTickerCache(
+      cache,
+      [
+        data,
+        { ...data, actorId: "b", id: "b", receivedAt: 1100 },
+        { ...data, actorId: "c", id: "c", receivedAt: 1200 },
+      ],
+      1300,
+    );
+    expect(visible.map((e) => e.actorId)).toEqual(["b", "c"]);
+  });
+  it("preserves complete Unicode characters in a bounded excerpt", () => {
+    const cache = createRuntimeDockTickerCache();
+    const visible = upsertRuntimeDockTickerCache(
+      cache,
+      entries([event("new", "📌".repeat(200), 1000)]),
+      1000,
+    );
+    expect(Array.from(visible[0]!.text)).toHaveLength(120);
+    expect(visible[0]!.text).toBe("…" + "📌".repeat(119));
+  });
+  it("waits for a matching delta projection rather than showing old text as fresh", () => {
+    const live = event("delta", "", 1000);
+    live.type = "headless.message.delta";
+    live.data = { stream_id: "turn-1", delta: " new" };
+    expect(entries([live])).toEqual([]);
+    const projected = {
+      ...item,
+      liveWorkCard: {
+        transcriptBlocks: [
+          { streamId: "turn-1", streamPhase: "", updatedAt: live.ts, text: "Current new" },
+        ],
+      },
+    } as RuntimeDockItem;
+    expect(buildRuntimeDockTickerEntries([projected], { a: [live] }).map((e) => e.text)).toEqual([
+      "Current new",
+    ]);
   });
 });

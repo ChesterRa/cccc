@@ -1,3 +1,4 @@
+import { useUIStore } from "./useUIStore";
 import type { Actor, GroupContext, GroupDoc, LedgerEvent } from "../types";
 import * as api from "../services/api";
 import { mergeLedgerEvents, projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
@@ -677,6 +678,7 @@ export function createGroupStoreAsyncActions(
       const gid = String(groupId || "").trim();
       const eid = String(centerEventId || "").trim();
       if (!gid || !eid) return;
+      useUIStore.getState().setGroupWorkView(gid, "messages");
       const epoch = beginGroupRequestEpoch(chatWindowRequestEpochByGroup, gid);
 
       set(

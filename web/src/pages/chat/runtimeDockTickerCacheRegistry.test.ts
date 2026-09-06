@@ -14,6 +14,7 @@ function messageEntry(id: string): RuntimeDockTickerEntry {
     actorId: "actor-1",
     actorLabel: "Actor 1",
     text: "Old completed response.",
+    receivedAt: 1000,
     updatedAt: "2026-08-26T00:00:00.000Z",
     sourceId: id,
     completed: true,

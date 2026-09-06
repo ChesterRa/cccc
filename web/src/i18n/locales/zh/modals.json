@@ -21,11 +21,9 @@
     "sources": "消息来源",
     "pending": "{{count}} 条等待 Analyst 结果",
     "unconfirmed": "{{count}} 条交付待确认",
-    "queued": "{{count}} 条等待播报",
-    "wait_conversation": "等待当前对话结束",
-    "wait_speech_start": "等待语音响应",
-    "wait_preparing": "正在准备播报",
-    "wait_retrying": "正在重试播报准备",
+    "queued": "{{count}} 条等待交给语音",
+    "wait_preparing": "正在检查通知",
+    "wait_retrying": "正在重试通知检查",
     "wait_connection": "等待语音连接",
     "sourceHint": "打开原始消息，不会结束通话。",
     "sourceError": "无法加载消息来源。",
@@ -35,7 +33,7 @@
     "enabledGroups": "当前监听 {{count}} 个 Group",
     "suppressed": "{{count}} 条已跳过",
     "status_processing": "等待分析",
-    "status_ready": "等待播报",
+    "status_ready": "等待交给语音",
     "status_unconfirmed": "提交尚未确认",
     "status_submitted": "已交给语音",
     "status_suppressed": "按通知规则跳过",
@@ -43,7 +41,8 @@
     "suppressed_policy": "已按通知设置跳过",
     "suppressed_source_unavailable": "已跳过：来源已不可用",
     "deliveryHint": "“已交给语音”不代表已播报或已听见。",
-    "paused": "消息通知已暂停。原消息仍在各 Group 中；重新开始通话后会重试监听。"
+    "paused": "消息通知已暂停。原消息仍在各 Group 中；重新开始通话后会重试监听。",
+    "wait_backpressure": "等待语音连接恢复发送"
   },
   "createGroup": {
     "title": "创建工作组",
@@ -588,12 +587,13 @@
     "analyst_result_too_large": "分析结果过长，无法完整返回语音。请在 Analyst 终端查看全文，或让它提供简短总结。",
     "provider_error": "Codex Realtime Voice 服务返回了错误。",
     "provider_error_with_code": "实时语音服务报错（{{code}}）。Analyst 会话已保留，详情可在浏览器控制台查看。",
-    "provider_context_unconfirmed": "部分分析结果的语音反馈尚未确认。通话仍保持连接，请在 Analyst 终端查看完整结果。",
-    "notification_output_prepare_failed": "无法完成播报准备，通话已停止。原消息仍保留，可在消息来源中查看。",
+    "provider_context_unconfirmed": "部分更新尚未收到语音端的交付回执。通话仍保持连接，请在 Analyst 终端查看完整结果。",
+    "notification_output_prepare_failed": "无法完成通知检查，通话已停止。原消息仍保留，可在消息来源中查看。",
     "provider_event_channel_failed": "Codex Realtime Voice 事件通道发生故障。",
     "provider_event_channel_closed": "Codex Realtime Voice 事件通道意外关闭。",
     "provider_command_overflow": "等待返回给 Realtime Voice 的分析更新过多。",
-    "provider_command_failed": "分析更新无法发送给 Realtime Voice。"
+    "provider_command_failed": "分析更新无法发送给 Realtime Voice。",
+    "provider_output_stalled": "语音连接无法继续接收更新。请重新开始语音；Analyst 会话已保留。"
   },
   "codexVoiceWarnings": {
     "unknown": "Voice Analyst 需要处理。",

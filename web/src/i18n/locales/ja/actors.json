@@ -279,5 +279,9 @@
   "historyRetry": "再試行",
   "historyStart": "保持されている履歴の先頭です",
   "historyEmpty": "このエージェントの保持されたターミナル履歴はまだありません。",
-  "historyTruncated": "古い出力はバッファから破棄済みです。"
+  "historyTruncated": "古い出力はバッファから破棄済みです。",
+  "actorControls": "{{actor}} の操作",
+  "takeControl": "操作権を取得",
+  "readOnlyConnection": "読み取り専用",
+  "terminalReadOnlyNotice": "この端末は読み取り専用です。入力するには操作権を取得してください。"
 }

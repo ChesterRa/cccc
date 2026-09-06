@@ -204,7 +204,7 @@ export function MobileMenuSheet({
   if (!isOpen) return null;
 
   return (
-    <div className="mobile-menu-viewport fixed inset-0 z-50 md:hidden animate-fade-in">
+    <div className="mobile-menu-viewport fixed inset-0 z-50 animate-fade-in">
       <div
         className="absolute inset-0 glass-overlay"
         onPointerDown={(e) => {
@@ -220,11 +220,11 @@ export function MobileMenuSheet({
         aria-modal="true"
         aria-label={t("menu")}
       >
-        <div className="flex justify-center pt-3 pb-1" onClick={onClose}>
+        <div className="flex justify-center pt-3 pb-1 md:hidden" onClick={onClose}>
           <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" />
         </div>
 
-        <div className="px-6 pb-4 flex items-center justify-between gap-3">
+        <div className="px-6 pb-4 md:pt-5 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div
               className={classNames(

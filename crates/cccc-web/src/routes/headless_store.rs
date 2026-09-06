@@ -48,8 +48,10 @@ impl HeadlessEventTail {
             Err(error) => return Err(error),
         };
         let offset = file.metadata()?.len();
+        let (pending, dropping_oversized_line) = unfinished_tail(&mut file, offset)?;
+        let replay_end = offset.saturating_sub(pending.len() as u64);
         let events = if replay {
-            replay_events_from_file(&mut file, offset, REPLAY_LINE_LIMIT)?
+            replay_events_from_file(&mut file, replay_end, REPLAY_LINE_LIMIT)?
         } else {
             Vec::new()
         };
@@ -57,8 +59,8 @@ impl HeadlessEventTail {
             Self {
                 path,
                 offset,
-                pending: Vec::new(),
-                dropping_oversized_line: false,
+                pending,
+                dropping_oversized_line,
             },
             events,
         ))
@@ -110,6 +112,35 @@ impl HeadlessEventTail {
         let complete = self.pending.drain(..complete_len).collect::<Vec<_>>();
         Ok(parse_json_lines(&complete))
     }
+}
+
+// A writer can be between its JSON and newline writes when a subscriber opens.
+// Keep that unfinished record for the live tail instead of losing its prefix.
+fn unfinished_tail(file: &mut File, end: u64) -> io::Result<(Vec<u8>, bool)> {
+    let mut position = end;
+    let mut chunks = Vec::new();
+    let mut length = 0;
+    while position > 0 {
+        let size = position.min(REVERSE_READ_CHUNK_BYTES as u64) as usize;
+        position -= size as u64;
+        file.seek(SeekFrom::Start(position))?;
+        let mut chunk = vec![0; size];
+        file.read_exact(&mut chunk)?;
+        let newline = chunk.iter().rposition(|byte| *byte == b'\n');
+        if let Some(index) = newline {
+            chunk.drain(..=index);
+        }
+        length += chunk.len();
+        if length > MAX_EVENT_LINE_BYTES {
+            return Ok((Vec::new(), true));
+        }
+        chunks.push(chunk);
+        if newline.is_some() {
+            break;
+        }
+    }
+    chunks.reverse();
+    Ok((chunks.concat(), false))
 }
 
 fn replay_events_from_file(file: &mut File, end: u64, limit: usize) -> io::Result<Vec<Value>> {
@@ -271,6 +302,57 @@ mod tests {
         assert_eq!(events[0]["actor_id"], "b");
         assert_eq!(events[1]["data"]["turn"], 2);
         assert_eq!(events[2]["data"]["text"], "new");
+    }
+
+    #[test]
+    fn opening_between_json_and_newline_retains_the_unfinished_record() {
+        let dir = tempfile::tempdir().expect("temporary group");
+        let path = dir.path().join("events.jsonl");
+        append(
+            &path,
+            &json!({"id":"start","actor_id":"a","type":"headless.turn.started"}),
+        );
+        let pending = json!({"id":"next","actor_id":"a","type":"headless.message.delta","data":{"delta":"hello"}}).to_string();
+        let midpoint = pending.len() / 2;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("headless boundary fixture");
+        file.write_all(&pending.as_bytes()[..midpoint])
+            .expect("headless boundary fixture");
+        let (mut tail, snapshot) =
+            HeadlessEventTail::open(path, true).expect("headless boundary fixture");
+        assert_eq!(snapshot.len(), 1);
+        file.write_all(&pending.as_bytes()[midpoint..])
+            .expect("headless boundary fixture");
+        assert!(tail.read_new().expect("read incremental tail").is_empty());
+        file.write_all(b"\n").expect("headless boundary fixture");
+        let live = tail.read_new().expect("read incremental tail");
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0]["id"], "next");
+        assert!(tail.read_new().expect("read incremental tail").is_empty());
+    }
+
+    #[test]
+    fn snapshot_and_incremental_tail_share_one_boundary() {
+        let dir = tempfile::tempdir().expect("temporary group");
+        let path = dir.path().join("events.jsonl");
+        append(
+            &path,
+            &json!({"id":"old","actor_id":"a","type":"headless.turn.started"}),
+        );
+        let (mut tail, snapshot) =
+            HeadlessEventTail::open(path.clone(), true).expect("headless boundary fixture");
+        append(
+            &path,
+            &json!({"id":"new","actor_id":"a","type":"headless.message.delta"}),
+        );
+        assert_eq!(snapshot[0]["id"], "old");
+        assert_eq!(
+            tail.read_new().expect("read incremental tail")[0]["id"],
+            "new"
+        );
+        assert!(tail.read_new().expect("read incremental tail").is_empty());
     }
 
     #[test]

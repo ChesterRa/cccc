@@ -567,5 +567,21 @@
   "presentationBrowserViewerReasonUnsupportedPlatform": "未対応プラットフォーム",
   "presentationBrowserViewerReasonStartupTimeout": "VNC 起動タイムアウト",
   "presentationBrowserViewerIsolationXvfb": "Xvfb で分離",
-  "presentationBrowserViewerTooltipIsolationXvfb": "ブラウザーはホストのデスクトップではなく、CCCC 専用の仮想ディスプレイ上で実行されています。"
+  "presentationBrowserViewerTooltipIsolationXvfb": "ブラウザーはホストのデスクトップではなく、CCCC 専用の仮想ディスプレイ上で実行されています。",
+  "workView": {
+    "label": "Group の表示",
+    "messages": "メッセージ",
+    "terminals": "ターミナル",
+    "pages": "ターミナルのページ",
+    "previous": "前のページ",
+    "next": "次のページ",
+    "otherAttention": "他のページに要確認 {{count}} 件",
+    "unread": "未読メッセージ {{count}} 件",
+    "maximize": "{{actor}} を最大化",
+    "restore": "拡大した Actor 表示を閉じる",
+    "loading": "Actor を読み込み中…",
+    "empty": "この Group にはまだ Actor がいません。",
+    "connecting": "接続中…",
+    "switchTo": "{{view}}に切り替え"
+  }
 }

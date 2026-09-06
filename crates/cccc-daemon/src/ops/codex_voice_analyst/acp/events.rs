@@ -9,6 +9,10 @@ pub(super) struct ActiveTurn {
     pub(super) turn_id: String,
     pub(super) external: bool,
     pub(super) admitted: bool,
+    /// Learned from live provider activity, never from a terminal broadcast.
+    pub(super) provider_prompt_id: Option<String>,
+    /// Grok's persisted user record precedes its first promptId-bearing activity.
+    pub(super) provider_start_sequence: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +48,38 @@ pub(super) fn handle_notification(
     }
     if method == "session/update" {
         let update = &message["params"]["update"];
+        let sequence = provider_sequence(message, session_id);
+        if let Some(turn) = active.as_mut().filter(|turn| turn.admitted) {
+            if turn
+                .provider_start_sequence
+                .zip(sequence)
+                .is_some_and(|(start, observed)| observed < start)
+            {
+                return;
+            }
+            if update["sessionUpdate"] == "user_message_chunk"
+                && turn.provider_start_sequence.is_none()
+            {
+                turn.provider_start_sequence = sequence;
+            }
+        }
+        if update["sessionUpdate"] != "turn_completed"
+            && let Some(turn) = active.as_mut().filter(|turn| turn.admitted)
+            && let Some(prompt_id) = message
+                .pointer("/params/_meta/promptId")
+                .and_then(Value::as_str)
+        {
+            if turn
+                .provider_prompt_id
+                .as_deref()
+                .is_some_and(|id| id != prompt_id)
+            {
+                // Delayed activity from another provider turn cannot become this
+                // turn's result (or overwrite its completion identity).
+                return;
+            }
+            turn.provider_prompt_id = Some(prompt_id.to_owned());
+        }
         match update["sessionUpdate"].as_str().unwrap_or_default() {
             "user_message_chunk" => {
                 if active.is_none() {
@@ -52,6 +88,11 @@ pub(super) fn handle_notification(
                         turn_id: turn_id.clone(),
                         external: true,
                         admitted: true,
+                        provider_prompt_id: message
+                            .pointer("/params/_meta/promptId")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        provider_start_sequence: sequence,
                     });
                     publish_started(events, generation, session_id, &turn_id, None);
                 }
@@ -79,23 +120,36 @@ pub(super) fn handle_notification(
                     }
                 }
             }
-            "turn_completed" => settle_from_update(update, events, generation, session_id, active),
+            "turn_completed" => settle_from_update(message, events, generation, session_id, active),
             _ => {}
         }
         return;
     }
     if matches!(
         method,
-        "_x.ai/session_notification" | "x.ai/session_notification"
+        "_x.ai/session/update" | "_x.ai/session_notification" | "x.ai/session_notification"
     ) {
         let update = &message["params"]["update"];
         if update["sessionUpdate"] == "turn_completed" {
-            settle_from_update(update, events, generation, session_id, active);
+            settle_from_update(message, events, generation, session_id, active);
         }
     }
     // Grok emits `prompt_complete` as a fire-and-forget duplicate of the
     // persisted `turn_completed` update. It can arrive after the next turn has
     // started and carries no CCCC turn id, so it must never settle `active`.
+}
+
+// Grok's persisted event IDs are session-scoped monotonically increasing
+// offsets. Use their causal order for a turn that ends before any promptId-
+// bearing activity, never wall-clock timing or an uncorrelated terminal.
+fn provider_sequence(message: &Value, session_id: &str) -> Option<u64> {
+    message
+        .pointer("/params/_meta/eventId")?
+        .as_str()?
+        .strip_prefix(session_id)?
+        .strip_prefix('-')?
+        .parse()
+        .ok()
 }
 
 fn publish_agent_delta(
@@ -129,19 +183,37 @@ fn publish_agent_delta(
 }
 
 fn settle_from_update(
-    update: &Value,
+    message: &Value,
     events: &broadcast::Sender<AnalystEvent>,
     generation: &str,
     session_id: &str,
     active: &mut Option<ActiveTurn>,
 ) {
-    // A CCCC-owned prompt is correlated by its JSON-RPC response in the
-    // protocol loop. Provider broadcasts carry only provider prompt ids and
-    // could otherwise settle a later CCCC turn. Durable terminal updates are
-    // used here only for turns started from the attached native TUI.
+    // Grok send_now durably ends the old turn before echoing the new input.
+    // Its RPC response may arrive later, including during the next turn. A
+    // matching provider completion must release either kind of turn now;
+    // the late RPC remains fenced by its original local turn id.
+    let update = &message["params"]["update"];
+    let prompt_id = update.get("prompt_id").and_then(Value::as_str);
+    let sequence = provider_sequence(message, session_id);
     let Some(turn_id) = active
         .as_ref()
-        .filter(|turn| turn.external)
+        .filter(|turn| {
+            turn.admitted
+                && match (turn.provider_prompt_id.as_deref(), prompt_id) {
+                    (Some(expected), Some(observed)) => expected == observed,
+                    // An immediately cancelled/empty Grok turn can have no
+                    // activity. Its persisted terminal must follow the user
+                    // record; a duplicate from before that record cannot end it.
+                    (None, Some(_)) => turn
+                        .provider_start_sequence
+                        .zip(sequence)
+                        .is_some_and(|(start, end)| end > start),
+                    // Other ACP runtimes still settle their native turns by status.
+                    (None, None) => turn.external,
+                    _ => false,
+                }
+        })
         .map(|turn| turn.turn_id.clone())
     else {
         return;

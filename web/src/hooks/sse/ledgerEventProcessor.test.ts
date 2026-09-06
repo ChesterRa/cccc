@@ -1,3 +1,4 @@
+import { useUIStore } from "../../stores/useUIStore";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { LedgerEvent } from "../../types";
@@ -102,5 +103,26 @@ describe("processLedgerEvent obligation facts", () => {
 
     expect(updateObligationStatus).toHaveBeenCalledWith("message-1", { cancelled: true }, "g1");
     expect(appendEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("Group work view unread state", () => {
+  it("counts replies while the message viewport is hidden even if it was at the bottom", () => {
+    const { deps } = processorDeps();
+    deps.incrementChatUnread = vi.fn();
+    useUIStore.setState({ activeTab: "chat", chatSessions: {}, isSmallScreen: false });
+    const event = {
+      id: "reply-1",
+      kind: "chat.message",
+      by: "actor-1",
+      data: { text: "Work finished", to: ["user"], message_mode: "send" },
+    } as LedgerEvent;
+    useUIStore.getState().setGroupWorkView("g1", "terminals");
+    processLedgerEvent("g1", event, deps);
+    expect(deps.incrementChatUnread).toHaveBeenCalledWith("g1");
+    vi.mocked(deps.incrementChatUnread).mockClear();
+    useUIStore.getState().setGroupWorkView("g1", "messages");
+    processLedgerEvent("g1", { ...event, id: "reply-2" }, deps);
+    expect(deps.incrementChatUnread).not.toHaveBeenCalled();
   });
 });

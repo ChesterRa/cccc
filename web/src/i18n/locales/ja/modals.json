@@ -21,11 +21,9 @@
     "sources": "メッセージの出典",
     "pending": "{{count}} 件の Analyst 結果待ち",
     "unconfirmed": "{{count}} 件の配信が保留または未確認",
-    "queued": "{{count}} 件が読み上げ待ち",
-    "wait_conversation": "会話が一区切りするのを待っています",
-    "wait_speech_start": "Voice の応答を待っています",
-    "wait_preparing": "読み上げを準備中",
-    "wait_retrying": "読み上げ準備を再試行中",
+    "queued": "{{count}} 件を Voice に送信待ち",
+    "wait_preparing": "通知を確認中",
+    "wait_retrying": "通知の確認を再試行中",
     "wait_connection": "音声接続を待っています",
     "sourceHint": "通話を続けたまま元のメッセージを開きます。",
     "sourceError": "出典を読み込めませんでした。",
@@ -35,7 +33,7 @@
     "enabledGroups": "{{count}} 個の Group を通知対象にしています",
     "suppressed": "{{count}} 件をスキップ",
     "status_processing": "分析待ち",
-    "status_ready": "読み上げ待ち",
+    "status_ready": "Voice に送信待ち",
     "status_unconfirmed": "送信の確認待ち",
     "status_submitted": "音声に送信済み",
     "status_suppressed": "通知ルールによりスキップ",
@@ -43,7 +41,8 @@
     "suppressed_policy": "通知設定によりスキップ",
     "suppressed_source_unavailable": "スキップ：参照元を利用できません",
     "deliveryHint": "送信済みでも、読み上げや聞き取りの完了を示すものではありません。",
-    "paused": "メッセージ通知は一時停止中です。元のメッセージは各 Group に残っています。通話を再開すると通知を再試行します。"
+    "paused": "メッセージ通知は一時停止中です。元のメッセージは各 Group に残っています。通話を再開すると通知を再試行します。",
+    "wait_backpressure": "音声接続が送信を再開するのを待っています"
   },
   "createGroup": {
     "title": "作業グループを作成",
@@ -588,12 +587,13 @@
     "analyst_result_too_large": "Analyst の結果が長すぎるため、音声にすべて返せません。ターミナルで全文を確認するか、短い要約を依頼してください。",
     "provider_error": "Codex Realtime Voice プロバイダーからエラーが返されました。",
     "provider_error_with_code": "リアルタイム音声サービスでエラーが発生しました（{{code}}）。Analyst セッションは保持されています。詳細はブラウザーのコンソールで確認できます。",
-    "provider_context_unconfirmed": "一部の分析結果に対する Voice の応答はまだ確認できていません。通話は接続中です。Analyst のターミナルで全文を確認してください。",
-    "notification_output_prepare_failed": "読み上げを準備できなかったため、通話を停止しました。元のメッセージは引き続き確認できます。",
+    "provider_context_unconfirmed": "一部の更新は Voice からの受信確認がありません。通話は接続中です。結果の全文は Analyst のターミナルで確認できます。",
+    "notification_output_prepare_failed": "通知の確認に失敗し、通話が停止しました。元のメッセージは引き続き確認できます。",
     "provider_event_channel_failed": "Codex Realtime Voice のイベントチャネルで障害が発生しました。",
     "provider_event_channel_closed": "Codex Realtime Voice のイベントチャネルが予期せず閉じました。",
     "provider_command_overflow": "Realtime Voice への Analyst 更新が滞留しすぎました。",
-    "provider_command_failed": "Analyst 更新を Realtime Voice に送信できませんでした。"
+    "provider_command_failed": "Analyst 更新を Realtime Voice に送信できませんでした。",
+    "provider_output_stalled": "音声接続が更新を受信できなくなりました。音声を再開してください。Analyst セッションは保持されています。"
   },
   "codexVoiceWarnings": {
     "unknown": "Voice Analyst の確認が必要です。",

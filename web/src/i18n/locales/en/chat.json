@@ -567,5 +567,21 @@
   "presentationBrowserViewerReasonUnsupportedPlatform": "Unsupported platform",
   "presentationBrowserViewerReasonStartupTimeout": "VNC startup timeout",
   "presentationBrowserViewerIsolationXvfb": "Xvfb isolated",
-  "presentationBrowserViewerTooltipIsolationXvfb": "The browser is running on a CCCC-owned virtual display, not the host desktop."
+  "presentationBrowserViewerTooltipIsolationXvfb": "The browser is running on a CCCC-owned virtual display, not the host desktop.",
+  "workView": {
+    "label": "Group view",
+    "messages": "Messages",
+    "terminals": "Terminals",
+    "pages": "Terminal pages",
+    "previous": "Previous page",
+    "next": "Next page",
+    "otherAttention": "{{count}} on other pages need attention",
+    "unread": "{{count}} unread messages",
+    "maximize": "Maximize {{actor}}",
+    "restore": "Close expanded Actor view",
+    "loading": "Loading Actors…",
+    "empty": "No Actors in this Group yet.",
+    "connecting": "Connecting…",
+    "switchTo": "Switch to {{view}}"
+  }
 }

@@ -79,8 +79,10 @@ async fn stream(
                 return;
             }
         };
-        for item in replay_events {
-            yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
+        if query.replay {
+            // A snapshot restores state atomically. Its events are not new activity.
+            // The same tail owns the following increments, so there is no GET/stream gap.
+            yield Ok(Event::default().event("headless.snapshot").json_data(json!({"events":replay_events})).unwrap_or_default());
         }
         loop {
             tokio::select! {

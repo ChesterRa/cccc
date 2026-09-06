@@ -92,6 +92,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: true,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         };
         let mut calls = HashMap::from([(
             "call-1".into(),
@@ -132,6 +134,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: true,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         };
         let mut calls = HashMap::from([(
             "call-1".into(),

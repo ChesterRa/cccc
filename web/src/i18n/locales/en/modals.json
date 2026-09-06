@@ -21,11 +21,9 @@
     "sources": "Message sources",
     "pending": "{{count}} awaiting Analyst result",
     "unconfirmed": "Awaiting delivery confirmation: {{count}}",
-    "queued": "{{count}} waiting to speak",
-    "wait_conversation": "Waiting for the conversation to pause",
-    "wait_speech_start": "Waiting for Voice to respond",
-    "wait_preparing": "Preparing this update",
-    "wait_retrying": "Retrying preparation",
+    "queued": "{{count}} waiting for Voice delivery",
+    "wait_preparing": "Checking this notification",
+    "wait_retrying": "Retrying the notification check",
     "wait_connection": "Waiting for the voice connection",
     "sourceHint": "Open the original message without ending the call.",
     "sourceError": "Could not load message sources.",
@@ -35,7 +33,7 @@
     "enabledGroups": "Listening to {{count}} Groups",
     "suppressed": "{{count}} skipped",
     "status_processing": "Waiting for analysis",
-    "status_ready": "Waiting to speak",
+    "status_ready": "Ready for Voice",
     "status_unconfirmed": "Submission unconfirmed",
     "status_submitted": "Sent to Voice",
     "status_suppressed": "Skipped by notification rules",
@@ -43,7 +41,8 @@
     "suppressed_policy": "Skipped by notification settings",
     "suppressed_source_unavailable": "Skipped: source no longer available",
     "deliveryHint": "Sent to Voice does not confirm that it was spoken or heard.",
-    "paused": "Message notifications are paused. Original messages remain in their Groups. Starting a new call retries listening."
+    "paused": "Message notifications are paused. Original messages remain in their Groups. Starting a new call retries listening.",
+    "wait_backpressure": "Waiting for the voice connection to catch up"
   },
   "createGroup": {
     "title": "Create Working Group",
@@ -588,12 +587,13 @@
     "analyst_result_too_large": "The Analyst result is too long for Voice. Read the full result in its terminal or ask for a shorter summary.",
     "provider_error": "The Codex Realtime Voice provider reported an error.",
     "provider_error_with_code": "The Realtime Voice service reported an error ({{code}}). The Analyst session is retained. Details are available in the browser console.",
-    "provider_context_unconfirmed": "Some Analyst updates have no confirmed Voice response yet. The call remains connected; check the Analyst terminal for the full result.",
-    "notification_output_prepare_failed": "The update could not be prepared for speech. The call has stopped; you can still open the source messages.",
+    "provider_context_unconfirmed": "Some updates have no delivery receipt from Voice yet. The call remains connected; check the Analyst terminal for the full result.",
+    "notification_output_prepare_failed": "The update could not be prepared for Voice. The call has stopped; you can still open the source messages.",
     "provider_event_channel_failed": "The Codex Realtime Voice event channel failed.",
     "provider_event_channel_closed": "The Codex Realtime Voice event channel closed unexpectedly.",
     "provider_command_overflow": "Too many Analyst updates were waiting for Realtime Voice.",
-    "provider_command_failed": "An Analyst update could not be sent to Realtime Voice."
+    "provider_command_failed": "An Analyst update could not be sent to Realtime Voice.",
+    "provider_output_stalled": "The voice connection stopped accepting updates. Restart voice to continue. The Analyst session is retained."
   },
   "codexVoiceWarnings": {
     "unknown": "The Voice Analyst needs attention.",

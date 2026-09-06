@@ -153,6 +153,79 @@ async fn shutdown_closes_active_sse_response() {
 }
 
 #[tokio::test]
+async fn headless_stream_restores_a_snapshot_before_live_increments() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("headless snapshot fixture");
+    let token = AccessTokenStore::new(home.clone())
+        .expect("headless snapshot fixture")
+        .create("admin", Vec::new(), true, None)
+        .expect("headless snapshot fixture");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("headless snapshot fixture");
+    let group = store
+        .create("snapshot fixture", "")
+        .expect("headless snapshot fixture");
+    let path = store
+        .state_dir(&group.group_id)
+        .expect("headless snapshot fixture")
+        .join("headless/events.jsonl");
+    std::fs::create_dir_all(path.parent().expect("headless snapshot fixture"))
+        .expect("headless snapshot fixture");
+    std::fs::write(
+        &path,
+        "{\"id\":\"old\",\"actor_id\":\"a\",\"type\":\"headless.turn.started\"}\n",
+    )
+    .expect("headless snapshot fixture");
+    let (shutdown, _) = broadcast::channel(1);
+    let response = app_with_shutdown(
+        home,
+        shutdown.clone(),
+        WebMode::Normal,
+        None,
+        LiveBinding::from_env(),
+        new_web_runtime_id(),
+    )
+    .0
+    .oneshot(
+        axum::http::Request::builder()
+            .uri(format!("/api/v1/groups/{}/headless/stream", group.group_id))
+            .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+            .body(Body::empty())
+            .expect("headless snapshot fixture"),
+    )
+    .await
+    .expect("headless snapshot fixture");
+    let mut body = response.into_body().into_data_stream();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
+        .await
+        .expect("headless snapshot fixture")
+        .expect("headless snapshot fixture")
+        .expect("headless snapshot fixture");
+    let first = std::str::from_utf8(&first).expect("headless snapshot fixture");
+    assert!(first.contains("event: headless.snapshot"));
+    assert!(first.contains("\"id\":\"old\""));
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("headless snapshot fixture");
+    writeln!(
+        file,
+        "{{\"id\":\"new\",\"actor_id\":\"a\",\"type\":\"headless.message.delta\"}}"
+    )
+    .expect("headless snapshot fixture");
+    let next = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
+        .await
+        .expect("headless snapshot fixture")
+        .expect("headless snapshot fixture")
+        .expect("headless snapshot fixture");
+    let next = std::str::from_utf8(&next).expect("headless snapshot fixture");
+    assert!(next.contains("event: headless\n"));
+    assert!(next.contains("\"id\":\"new\""));
+    assert!(!next.contains("\"id\":\"old\""));
+    shutdown.send(()).expect("headless snapshot fixture");
+}
+
+#[tokio::test]
 async fn shutdown_closes_headless_sse_response() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

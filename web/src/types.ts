@@ -235,6 +235,8 @@ export type HeadlessStreamEvent = {
   actor_id?: string;
   type?: string;
   data?: Record<string, unknown>;
+  /** Browser receipt time for live increments only; restored history has no timestamp. */
+  _receivedAt?: number;
 };
 
 export type LedgerEventStatusPayload = {

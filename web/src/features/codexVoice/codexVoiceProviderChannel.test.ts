@@ -27,7 +27,6 @@ describe("Realtime context delivery receipts", () => {
       const channel = new CodexVoiceProviderChannel(vi.fn(), failed, () => false, vi.fn());
       const wire = { readyState: "open", send: vi.fn(), close: vi.fn() };
       channel.bind(wire as unknown as RTCDataChannel);
-      if (stage === "queued") channel.observe(turn("turn.created", "user", "user"));
       for (let i = 0; i <= 1024; i++) {
         channel.send(speakable("Result"), `result-${i}`);
         if (stage === "unconfirmed") {
@@ -49,7 +48,7 @@ describe("Realtime context delivery receipts", () => {
     },
   );
 
-  it("rechecks queued output, strips host metadata, and yields if the user starts during the check", async () => {
+  it("checks policy and strips host metadata even when a user turn starts during the check", async () => {
     vi.useFakeTimers();
     let resolve: ((value: unknown) => void) | undefined;
     const prepare = vi.fn(
@@ -74,13 +73,8 @@ describe("Realtime context delivery receipts", () => {
     expect(channel.unsentResultIds()).toEqual(["result-1"]);
     channel.observe(turn("turn.created", "user", "user"));
     resolve?.(speakable("Latest permitted text"));
-    await Promise.resolve();
-    expect(wire.send).not.toHaveBeenCalled();
-    channel.observe(turn("turn.done", "user", "user"));
-    vi.advanceTimersByTime(150);
-    resolve?.(speakable("Latest permitted text"));
-    await Promise.resolve();
-    expect(prepare).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(JSON.parse(wire.send.mock.calls[0][0])).toEqual(speakable("Latest permitted text"));
     expect(submitted).toHaveBeenCalledWith("result-1");
     expect(channel.unsentResultIds()).toEqual([]);
@@ -109,14 +103,14 @@ describe("Realtime context delivery receipts", () => {
     channel.send(speakable("Viewed"), "result-1");
     vi.advanceTimersByTime(150);
     resolve?.(null);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(channel.unsentResultIds()).toEqual([]);
     channel.send(speakable("Not sent before stopping"), "result-2");
     vi.advanceTimersByTime(150);
     expect(channel.unsentResultIds()).toEqual(["result-2"]);
     channel.close();
     resolve?.(speakable("Too late"));
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(wire.send).not.toHaveBeenCalled();
   });
   const speakable = (text: string, delegation?: string) => ({
@@ -138,35 +132,36 @@ describe("Realtime context delivery receipts", () => {
       vi.advanceTimersByTime(150);
       if (acknowledged) channel.observe({ type: "session.context.appended" });
       channel.send(speakable("New group result."), "new-result");
-      vi.advanceTimersByTime(29_999);
+      vi.advanceTimersByTime(149);
       expect(wire.send).toHaveBeenCalledTimes(1);
-      vi.advanceTimersByTime(151);
+      vi.advanceTimersByTime(1);
       expect(wire.send).toHaveBeenCalledTimes(2);
       expect(wire.send.mock.calls.map(([value]) => JSON.parse(value).content[0].text)).toEqual([
         "Earlier context.",
         "New group result.",
       ]);
       expect(channel.unsentResultIds()).toEqual([]);
-      expect(channel.receipt().speech_start_timeouts).toBe(1);
       expect(channel.receipt().speech_turns_completed).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(wire.send).toHaveBeenCalledTimes(2);
       expect(unconfirmed).toHaveBeenCalled();
       channel.close();
     },
   );
 
-  it("lets user speech and a late assistant response retain priority after the start deadline", () => {
+  it("keeps delivery independent of interrupted user and assistant turn observations", () => {
     const { channel, wire } = fixture();
     channel.send(speakable("First."));
     vi.advanceTimersByTime(150);
     channel.send(speakable("Second."));
     channel.observe(turn("turn.created", "user", "user"));
     vi.advanceTimersByTime(30_000);
-    expect(channel.outputStatus()).toEqual({ queued: 1, blocked: "conversation" });
+    expect(channel.outputStatus()).toEqual({ queued: 0, blocked: null });
     channel.observe(turn("turn.done", "user", "user"));
-    // A response arrives just before the next queued context would be sent.
+    // Late turn observations must not replay either submitted context.
     channel.observe(turn("turn.created", "late"));
     vi.advanceTimersByTime(60_000);
-    expect(wire.send).toHaveBeenCalledTimes(1);
+    expect(wire.send).toHaveBeenCalledTimes(2);
     channel.observe(turn("turn.done", "late"));
     vi.advanceTimersByTime(150);
     expect(wire.send).toHaveBeenCalledTimes(2);
@@ -371,7 +366,7 @@ describe("Realtime context delivery receipts", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("retains mid-speech results and sends them after that speech ends", () => {
+  it("delivers mid-speech updates as complete coalesced context", () => {
     const { channel, wire, failed } = fixture();
     channel.send(speakable("Amber 17."));
     vi.advanceTimersByTime(150);
@@ -379,9 +374,9 @@ describe("Realtime context delivery receipts", () => {
     channel.send(speakable("Birch 29. "));
     channel.send(speakable("Coral 43."));
     channel.observe({ type: "session.context.appended" });
-    vi.advanceTimersByTime(60_000);
-    expect(wire.send).toHaveBeenCalledTimes(1);
-    expect(channel.receipt().queued).toBe(2);
+    vi.advanceTimersByTime(150);
+    expect(wire.send).toHaveBeenCalledTimes(2);
+    expect(channel.receipt().queued).toBe(0);
     channel.observe(turn("turn.done", "first"));
     vi.advanceTimersByTime(150);
     expect(wire.send).toHaveBeenCalledTimes(2);
@@ -390,25 +385,26 @@ describe("Realtime context delivery receipts", () => {
     channel.close();
   });
 
-  it("keeps the user's active turn ahead of unsent output without blocking other commands", () => {
+  it("does not turn user speech into a barrier for context or control commands", () => {
     const { channel, wire } = fixture();
     channel.observe(turn("turn.created", "user-1", "user"));
     channel.send(speakable("A result."));
     channel.send({ type: "unrelated_control" });
-    vi.advanceTimersByTime(150);
     expect(wire.send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(150);
+    expect(wire.send).toHaveBeenCalledTimes(2);
     channel.observe(turn("turn.done", "user-1", "user"));
-    // The provider begins its answer during the small batching window.
+    // The provider controls speech without changing the delivered context.
     channel.observe(turn("turn.created", "answer"));
     vi.advanceTimersByTime(150);
-    expect(wire.send).toHaveBeenCalledTimes(1);
+    expect(wire.send).toHaveBeenCalledTimes(2);
     channel.observe(turn("turn.done", "answer"));
     vi.advanceTimersByTime(150);
     expect(wire.send).toHaveBeenCalledTimes(2);
     channel.close();
   });
 
-  it("does not release later results on receipts or duplicate old completion events", () => {
+  it("preserves delegation targets and does not replay results on duplicate completion events", () => {
     const { channel, wire, unconfirmed } = fixture();
     channel.send(speakable("First.", "request-1"));
     vi.advanceTimersByTime(150);
@@ -420,9 +416,9 @@ describe("Realtime context delivery receipts", () => {
     channel.observe({ type: "delegation.context.appended" });
     channel.observe({ type: "delegation.context.appended" });
     channel.observe(turn("turn.done", "old"));
-    vi.advanceTimersByTime(30_000);
-    expect(wire.send).toHaveBeenCalledTimes(2);
-    expect(channel.receipt().queued).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    expect(wire.send).toHaveBeenCalledTimes(3);
+    expect(channel.receipt().queued).toBe(0);
     expect(unconfirmed).toHaveBeenCalledTimes(1);
     expect(JSON.parse(wire.send.mock.calls[1][0]).delegation_item_id).toBe("request-2");
     channel.close();
@@ -432,7 +428,7 @@ describe("Realtime context delivery receipts", () => {
     const { channel, wire, unconfirmed } = fixture("connecting");
     channel.send(speakable("The Am"));
     channel.send(speakable("ber 是 17。"));
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(10_000);
     expect(unconfirmed).not.toHaveBeenCalled();
     expect(wire.send).not.toHaveBeenCalled();
     wire.readyState = "open";
@@ -498,7 +494,7 @@ describe("Realtime context delivery receipts", () => {
   it("starts receipt timeout only when the command is sent and cancels it on close", () => {
     const { wire, channel, unconfirmed } = fixture("connecting");
     channel.send({ type: "session.context.append" });
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(10_000);
     expect(unconfirmed).not.toHaveBeenCalled();
     expect(channel.receipt().sent).toBe(0);
     wire.readyState = "open";

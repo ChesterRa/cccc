@@ -56,6 +56,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     setReconnectTrigger,
     buildCustomWebSocketUrl,
     inspectActorTail = true,
+    takeoverOnAttach = true,
   } = args;
 
   const [connectionStatus, setConnectionStatus] =
@@ -72,6 +73,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   const terminalAttachNoRetryRef = useRef(false);
   const terminalAttachStartupRaceRef = useRef(false);
   const lastTermEpochRef = useRef(termEpoch);
+  const takeoverRequestedRef = useRef(false);
 
   const isRunningRef = useRef(isRunning);
   const runtimeRef = useRef(actorRuntime);
@@ -124,11 +126,16 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   }, [setReconnectTrigger]);
 
   const sendInterrupt = useCallback(() => {
-    if (!canControlRef.current) return;
+    if (!canControlRef.current || !terminalWritableRef.current) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(encodeTerminalInputFrame("\x03"));
   }, []);
+
+  const requestTakeover = useCallback(() => {
+    takeoverRequestedRef.current = true;
+    requestReconnect();
+  }, [requestReconnect]);
 
   const terminalConnectionKey = buildTerminalConnectionKey({
     activated,
@@ -201,12 +208,14 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           actorId,
           since: isFirstAttach ? null : cursors.deliveredCursor,
           mode: canControlRef.current ? "control" : "viewer",
-          takeover: canControlRef.current,
+          takeover: canControlRef.current && (takeoverOnAttach || takeoverRequestedRef.current),
           outputFlowControl: "ack_v1",
           bootstrap: "snapshot_v1",
           cols: canControlRef.current ? fittedTerm?.cols : undefined,
           rows: canControlRef.current ? fittedTerm?.rows : undefined,
         });
+        // An explicit takeover authorizes one attempt, not every future reconnect.
+        takeoverRequestedRef.current = false;
         const wsUrl = resolveTerminalConnectionUrl(standardWsUrl, buildCustomWebSocketUrl);
 
         const ws = new WebSocket(withAuthToken(wsUrl));
@@ -244,13 +253,6 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
               setSignal: (signal) => setTerminalSignalRef.current(groupId, actorId, signal),
               clearSignal: () => clearTerminalSignalRef.current(groupId, actorId),
             });
-          }
-
-          if (canControlRef.current) {
-            const term = terminalRef.current;
-            if (term && term.cols >= 10 && term.rows >= 2) {
-              ws.send(encodeTerminalResizeFrame(term.cols, term.rows));
-            }
           }
         };
 
@@ -310,7 +312,21 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           isCurrentGeneration: () => generation === connectionGeneration,
           canControl: () => canControlRef.current,
           onDecoded: handleDecoded,
-          setWritable: updateTerminalWritable,
+          setWritable: (writable) => {
+            const gainedControl = writable && !terminalWritableRef.current;
+            updateTerminalWritable(writable);
+            const term = terminalRef.current;
+            if (
+              gainedControl &&
+              canControlRef.current &&
+              term &&
+              ws.readyState === WebSocket.OPEN
+            ) {
+              fitBeforeAttach?.();
+              if (term.cols >= 10 && term.rows >= 2)
+                ws.send(encodeTerminalResizeFrame(term.cols, term.rows));
+            }
+          },
           setServerResponseOwnership: (owned) => {
             serverOwnsTerminalResponses = owned;
           },
@@ -432,15 +448,20 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
           });
 
           resizeDisposable = term.onResize(({ cols, rows }) => {
-            if (ws.readyState === WebSocket.OPEN && cols >= 10 && rows >= 2) {
+            if (
+              ws.readyState === WebSocket.OPEN &&
+              terminalWritableRef.current &&
+              cols >= 10 &&
+              rows >= 2
+            ) {
               ws.send(encodeTerminalResizeFrame(cols, rows));
             }
           });
         }
       };
 
-      // Fit once so the initial resize frame (sent on open) matches the visible
-      // size and the resize SIGWINCH prompts the runtime to repaint correctly.
+      // Measure before attaching; only a confirmed writer sends the resize that
+      // prompts the runtime to repaint for the visible terminal.
       fitBeforeAttach?.();
       openWebSocket(cursors.deliveredCursor === null);
     };
@@ -480,6 +501,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     fitBeforeAttach,
     buildCustomWebSocketUrl,
     inspectActorTail,
+    takeoverOnAttach,
     terminalConnectionKey,
     terminalRef,
     updateTerminalWritable,
@@ -498,6 +520,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     terminalReady,
     terminalWritable,
     requestReconnect,
+    requestTakeover,
     sendInterrupt,
   };
 }

@@ -141,6 +141,8 @@ pub(super) async fn run(
                                 turn_id,
                                 external: false,
                                 admitted: false,
+                                provider_prompt_id: None,
+                                provider_start_sequence: None,
                             });
                         }
                         Err(error) => {
@@ -192,6 +194,8 @@ pub(super) async fn run(
                                 turn_id: turn_id.clone(),
                                 external: true,
                                 admitted: true,
+                                provider_prompt_id: None,
+                                provider_start_sequence: None,
                             });
                             publish_started(&events, &generation, &session_id, &turn_id, None);
                         }
@@ -320,7 +324,9 @@ pub(super) async fn run(
                         }
                         continue;
                     }
-                    if loading_request_id.is_none() {
+                    if loading_request_id.is_none()
+                        && message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) != Some(true)
+                    {
                         let (controlled_echo, admitted_turn) = admit_matching_prompt(
                             &message,
                             &mut pending,
@@ -364,6 +370,11 @@ pub(super) async fn run(
                             &mut active,
                             &mut tool_calls,
                         );
+                        if active.is_none() {
+                            deferred_settlement = None;
+                            cancelling_turn_id = None;
+                            tool_calls.clear();
+                        }
                         if extend_deferred_settlement(
                             &message,
                             active.as_ref(),
@@ -477,6 +488,9 @@ pub(super) async fn run(
                                         cancelling_turn_id = None;
                                     }
                                 } else {
+                                    if active.as_ref().is_none_or(|turn| turn.turn_id != turn_id) {
+                                        continue;
+                                    }
                                     let now = Instant::now();
                                     deferred_settlement = Some(DeferredSettlement {
                                         turn_id,
@@ -754,6 +768,8 @@ fn admit_matching_native_input(
         turn_id: turn_id.clone(),
         external: true,
         admitted: true,
+        provider_prompt_id: None,
+        provider_start_sequence: None,
     });
     publish_started(
         events,
@@ -850,6 +866,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: false,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         };
         let message = json!({
             "method":"session/update",
@@ -884,6 +902,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: false,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         });
         let (events, mut event_receiver) = broadcast::channel(4);
         let update = |text: &str| {
@@ -953,6 +973,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: true,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         });
         let (events, mut receiver) = broadcast::channel(4);
         let message = json!({
@@ -1059,6 +1081,8 @@ mod tests {
             turn_id: "turn-1".into(),
             external: false,
             admitted: false,
+            provider_prompt_id: None,
+            provider_start_sequence: None,
         });
         let (events, _receiver) = broadcast::channel(4);
         let message = json!({

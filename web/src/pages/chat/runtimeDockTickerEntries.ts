@@ -1,6 +1,4 @@
-import { dedupeStreamingActivities } from "../../stores/chatStreamingSessions";
-import type { HeadlessPreviewBlock, HeadlessPreviewSession, StreamingActivity } from "../../types";
-import type { LiveWorkCard } from "./liveWorkCards";
+import type { HeadlessStreamEvent } from "../../types";
 import type { RuntimeDockItem } from "./runtimeDockItems";
 
 export type RuntimeDockTickerEntry = {
@@ -10,240 +8,68 @@ export type RuntimeDockTickerEntry = {
   actorLabel: string;
   text: string;
   updatedAt: string;
+  receivedAt: number;
   sourceId?: string;
   completed?: boolean;
 };
 
-const TICKER_ENTRY_LIMIT = 80;
-
-function isLiveWorkCardActive(card: LiveWorkCard | null | undefined): boolean {
-  if (!card) return false;
-  return card.phase === "pending" || card.phase === "streaming";
-}
-
-function hasTickerTranscript(previewSessions: HeadlessPreviewSession[]): boolean {
-  return previewSessions.some(
-    (session) =>
-      Array.isArray(session.transcriptBlocks) &&
-      session.transcriptBlocks.some((block) => normalizeTickerText(block?.text)),
-  );
-}
-
-function shouldIncludeTickerPreview(
-  card: LiveWorkCard,
-  previewSessions: HeadlessPreviewSession[],
-): boolean {
-  if (isLiveWorkCardActive(card)) return true;
-  if (card.phase !== "completed" && card.phase !== "failed") return false;
-  // A completed transcript may need one final flush into the short-lived UI
-  // cache. Completed activities are retained preview history, not live work;
-  // replaying them here makes stale tool calls reappear on every projection.
-  return hasTickerTranscript(previewSessions);
-}
-
-function isSubstantiveActivity(activity: StreamingActivity): boolean {
-  const summary = String(activity.summary || "").trim();
-  const kind = String(activity.kind || "")
-    .trim()
-    .toLowerCase();
-  return Boolean(summary) && !(kind === "queued" && summary.toLowerCase() === "queued");
-}
-
-function getActivityTimestamp(activity: StreamingActivity, fallback: string): string {
-  return String(activity.ts || fallback || "").trim();
-}
-
-function normalizeTickerText(value: unknown): string {
-  return String(value || "")
-    .replace(/\r\n/g, "\n")
-    .trim();
-}
-
-function getPreviewSessionKey(session: HeadlessPreviewSession, fallback: string): string {
-  return String(session.pendingEventId || session.currentStreamId || fallback || "").trim();
-}
-
-function getTickerPreviewSessions(
-  item: RuntimeDockItem,
-  card: LiveWorkCard,
-): HeadlessPreviewSession[] {
-  const previewSessions = Array.isArray(card.previewSessions)
-    ? card.previewSessions.filter(Boolean)
-    : [];
-  if (previewSessions.length > 0) {
-    return previewSessions.map((session) => ({
-      ...session,
-      activities: dedupeStreamingActivities(session.activities || []),
-    }));
-  }
-
-  const text = normalizeTickerText(card.text);
-  const transcriptBlocks = Array.isArray(card.transcriptBlocks)
-    ? card.transcriptBlocks.filter((block) => normalizeTickerText(block?.text))
-    : [];
-  const activities = Array.isArray(card.activities) ? card.activities.filter(Boolean) : [];
-  if (!text && transcriptBlocks.length <= 0 && activities.length <= 0) return [];
-
-  const sessionKey = String(card.pendingEventId || card.streamId || item.actorId || "").trim();
-  const fallbackBlock =
-    text && transcriptBlocks.length <= 0
-      ? [
-          {
-            id: "latest",
-            streamId: String(card.streamId || sessionKey || "").trim(),
-            streamPhase: String(card.streamPhase || "")
-              .trim()
-              .toLowerCase(),
-            text,
-            updatedAt: String(card.updatedAt || "").trim(),
-            completed: card.phase === "completed",
-            transient: card.phase !== "completed",
-          } satisfies HeadlessPreviewBlock,
-        ]
-      : [];
-
-  return [
-    {
-      actorId: item.actorId,
-      pendingEventId: sessionKey || item.actorId,
-      currentStreamId: String(card.streamId || sessionKey || "").trim(),
-      phase: card.phase,
-      streamPhase: String(card.streamPhase || "")
-        .trim()
-        .toLowerCase(),
-      updatedAt: String(card.updatedAt || "").trim(),
-      latestText: text,
-      transcriptBlocks: transcriptBlocks.length > 0 ? transcriptBlocks : fallbackBlock,
-      activities,
-    },
-  ];
-}
-
-function buildMessageEntry(args: {
-  item: RuntimeDockItem;
-  session: HeadlessPreviewSession;
-  block: HeadlessPreviewBlock;
-  sessionKey: string;
-}): RuntimeDockTickerEntry | null {
-  const text = normalizeTickerText(args.block.text);
-  if (!text) return null;
-  const sourceId = ["message", args.item.actorId, args.sessionKey].join(":");
-  const updatedAt = String(args.block.updatedAt || args.session.updatedAt || "").trim();
-  return {
-    id: sourceId,
-    kind: "message",
-    actorId: args.item.actorId,
-    actorLabel: args.item.actorLabel,
-    text,
-    updatedAt,
-    sourceId,
-    completed: Boolean(args.block.completed),
-  };
-}
-
-function getLatestTranscriptBlock(session: HeadlessPreviewSession): HeadlessPreviewBlock | null {
-  const blocks = Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : [];
-  let latest: HeadlessPreviewBlock | null = null;
-  for (const block of blocks) {
-    if (!normalizeTickerText(block?.text)) continue;
-    if (!latest) {
-      latest = block;
-      continue;
-    }
-    const latestTs = String(latest.updatedAt || "").trim();
-    const currentTs = String(block.updatedAt || "").trim();
-    if (currentTs && (!latestTs || currentTs >= latestTs)) {
-      latest = block;
-    }
-  }
-  return latest;
-}
-
-function buildActivityEntry(args: {
-  item: RuntimeDockItem;
-  session: HeadlessPreviewSession;
-  activity: StreamingActivity;
-  sessionKey: string;
-}): RuntimeDockTickerEntry | null {
-  if (!isSubstantiveActivity(args.activity)) return null;
-  const text = normalizeTickerText(args.activity.summary);
-  if (!text) return null;
-  const activityKey = [
-    String(args.activity.kind || "activity")
-      .trim()
-      .toLowerCase(),
-    String(args.activity.status || "updated")
-      .trim()
-      .toLowerCase(),
-    String(args.activity.tool_name || args.activity.raw_item_type || text)
-      .trim()
-      .toLowerCase(),
-  ].join(":");
-  return {
-    id: ["activity", args.item.actorId, args.sessionKey, activityKey].join(":"),
-    kind: "activity",
-    actorId: args.item.actorId,
-    actorLabel: args.item.actorLabel,
-    text,
-    updatedAt: getActivityTimestamp(args.activity, String(args.session.updatedAt || "").trim()),
-  };
-}
-
-function compareTickerEntriesDescending(
-  left: RuntimeDockTickerEntry,
-  right: RuntimeDockTickerEntry,
-): number {
-  const leftTs = String(left.updatedAt || "").trim();
-  const rightTs = String(right.updatedAt || "").trim();
-  if (leftTs && rightTs && leftTs !== rightTs) return rightTs.localeCompare(leftTs);
-  if (leftTs && !rightTs) return -1;
-  if (!leftTs && rightTs) return 1;
-  return right.id.localeCompare(left.id);
-}
-
+/** Preview history is for inspection. Only observed live events may become bubbles. */
 export function buildRuntimeDockTickerEntries(
   items: RuntimeDockItem[],
-  limit = TICKER_ENTRY_LIMIT,
+  eventsByActor: Record<string, HeadlessStreamEvent[]> = {},
 ): RuntimeDockTickerEntry[] {
   const entries: RuntimeDockTickerEntry[] = [];
-  const seen = new Set<string>();
-  for (const item of Array.isArray(items) ? items : []) {
-    const card = item.liveWorkCard;
-    if (!card) continue;
-    const previewSessions = getTickerPreviewSessions(item, card);
-    if (!shouldIncludeTickerPreview(card, previewSessions)) continue;
-    const includeActivities = isLiveWorkCardActive(card);
-    for (const session of previewSessions) {
-      const sessionKey = getPreviewSessionKey(
-        session,
-        card.pendingEventId || card.streamId || item.actorId,
-      );
-      const latestBlock = getLatestTranscriptBlock(session);
-      const messageEntry = latestBlock
-        ? buildMessageEntry({ item, session, block: latestBlock, sessionKey })
-        : null;
-      if (messageEntry && !seen.has(messageEntry.id)) {
-        seen.add(messageEntry.id);
-        entries.push(messageEntry);
+  for (const item of items) {
+    const events = eventsByActor[item.actorId] || [];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (!event?._receivedAt) continue;
+      const data = event.data || {};
+      const type = String(event.type || "");
+      const streamId = String(data.stream_id || "");
+      const phase = String(data.phase || "");
+      const isMessage = type === "headless.message.delta" || type === "headless.message.completed";
+      const isActivity = type.startsWith("headless.activity.");
+      if (!isMessage && !isActivity) continue;
+      let text = String(isMessage ? data.text || "" : data.summary || "").trim();
+      if (isMessage && !text) {
+        const card = item.liveWorkCard;
+        const blocks = [
+          ...(card?.previewSessions || []).flatMap((session) => session.transcriptBlocks),
+          ...(card?.transcriptBlocks || []),
+        ];
+        const block = [...blocks]
+          .reverse()
+          .find(
+            (candidate) =>
+              candidate.streamId === streamId &&
+              candidate.streamPhase === phase &&
+              candidate.updatedAt === event.ts,
+          );
+        // Delta receipt precedes the batched preview update. Wait for its projection.
+        if (!block) break;
+        text = block.text.trim();
       }
-
-      if (!includeActivities) continue;
-      for (const activity of dedupeStreamingActivities(session.activities || [])) {
-        const entry = buildActivityEntry({ item, session, activity, sessionKey });
-        if (!entry) continue;
-        const existingIndex = entries.findIndex((candidate) => candidate.id === entry.id);
-        if (existingIndex < 0) {
-          seen.add(entry.id);
-          entries.push(entry);
-          continue;
-        }
-        const existing = entries[existingIndex];
-        if (existing && compareTickerEntriesDescending(entry, existing) < 0) {
-          entries[existingIndex] = entry;
-        }
-      }
+      if (!text) continue;
+      const sourceId = [
+        item.actorId,
+        isMessage ? "message" : "activity",
+        streamId || data.event_id || "",
+        isMessage ? phase : data.activity_id || data.id || event.id,
+      ].join(":");
+      entries.push({
+        id: item.actorId,
+        kind: isMessage ? "message" : "activity",
+        actorId: item.actorId,
+        actorLabel: item.actorLabel,
+        text,
+        sourceId,
+        updatedAt: String(event.ts || ""),
+        receivedAt: event._receivedAt,
+        completed: type.endsWith(".completed"),
+      });
+      break;
     }
   }
-
-  return entries.sort(compareTickerEntriesDescending).slice(0, Math.max(0, limit));
+  return entries.sort((a, b) => a.receivedAt - b.receivedAt);
 }

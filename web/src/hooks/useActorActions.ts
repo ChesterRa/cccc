@@ -30,9 +30,9 @@ export function useActorActions(groupId: string) {
       clearStreamingEventsForActor: s.clearStreamingEventsForActor,
     })),
   );
-  const { setBusy, setActiveTab, showError } = useUIStore(
+  const { changeActorBusy, setActiveTab, showError } = useUIStore(
     useShallow((s) => ({
-      setBusy: s.setBusy,
+      changeActorBusy: s.changeActorBusy,
       setActiveTab: s.setActiveTab,
       showError: s.showError,
     })),
@@ -69,9 +69,9 @@ export function useActorActions(groupId: string) {
     async (actor: Actor, runningOverride?: boolean) => {
       if (!actor || !groupId) return;
       const isRunning = resolveActorLifecycleRunning(actor, runningOverride);
-      const actionKey = `actor-lifecycle:${actor.id}`;
+      const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
-      setBusy(`actor-${isRunning ? "stop" : "start"}:${actor.id}`);
+      changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = isRunning
           ? await api.stopActor(groupId, actor.id)
@@ -87,19 +87,26 @@ export function useActorActions(groupId: string) {
         await Promise.all([refreshActors(), refreshGroups()]);
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
-        setBusy("");
+        changeActorBusy(groupId, actor.id, -1);
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor],
+    [
+      groupId,
+      changeActorBusy,
+      showError,
+      refreshActors,
+      refreshGroups,
+      clearStreamingEventsForActor,
+    ],
   );
 
   // Restart actor
   const relaunchActor = useCallback(
     async (actor: Actor) => {
       if (!groupId || !actor) return;
-      const actionKey = `actor-lifecycle:${actor.id}`;
+      const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
-      setBusy(`actor-relaunch:${actor.id}`);
+      changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.restartActor(groupId, actor.id);
         if (!resp.ok) {
@@ -110,22 +117,22 @@ export function useActorActions(groupId: string) {
         } else {
           await Promise.all([refreshActors(), refreshGroups()]);
         }
-        setTermEpochByActor((prev) => ({ ...prev, [actor.id]: (prev[actor.id] || 0) + 1 }));
+        setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
-        setBusy("");
+        changeActorBusy(groupId, actor.id, -1);
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups],
+    [groupId, changeActorBusy, showError, refreshActors, refreshGroups],
   );
 
   // Start a fresh runtime session with the actor's current settings.
   const startNewActorSession = useCallback(
     async (actor: Actor) => {
       if (!groupId || !actor) return;
-      const actionKey = `actor-lifecycle:${actor.id}`;
+      const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
-      setBusy(`actor-new-session:${actor.id}`);
+      changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.newActorSession(groupId, actor.id);
         if (!resp.ok) {
@@ -135,13 +142,20 @@ export function useActorActions(groupId: string) {
           clearStreamingEventsForActor(actor.id, groupId);
           await Promise.all([refreshActors(), refreshGroups()]);
         }
-        setTermEpochByActor((prev) => ({ ...prev, [actor.id]: (prev[actor.id] || 0) + 1 }));
+        setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
-        setBusy("");
+        changeActorBusy(groupId, actor.id, -1);
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor],
+    [
+      groupId,
+      changeActorBusy,
+      showError,
+      refreshActors,
+      refreshGroups,
+      clearStreamingEventsForActor,
+    ],
   );
 
   // Edit actor (initialize form state and open modal).
@@ -170,7 +184,7 @@ export function useActorActions(groupId: string) {
     async (actor: Actor, currentActiveTab: string) => {
       if (!actor || !groupId) return;
       if (!window.confirm(`Remove actor "${actor.title || actor.id}"?`)) return;
-      setBusy(`actor-remove:${actor.id}`);
+      changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.removeActor(groupId, actor.id);
         if (!resp.ok) {
@@ -184,12 +198,12 @@ export function useActorActions(groupId: string) {
         await Promise.all([refreshActors(), refreshGroups()]);
         await loadGroup(groupId);
       } finally {
-        setBusy("");
+        changeActorBusy(groupId, actor.id, -1);
       }
     },
     [
       groupId,
-      setBusy,
+      changeActorBusy,
       showError,
       refreshActors,
       refreshGroups,
@@ -203,7 +217,7 @@ export function useActorActions(groupId: string) {
   const openActorInbox = useCallback(
     async (actor: Actor) => {
       if (!actor || !groupId) return;
-      setBusy(`inbox:${actor.id}`);
+      changeActorBusy(groupId, actor.id, 1);
       try {
         setInboxActorId(actor.id);
         setInboxMessages([]);
@@ -215,16 +229,16 @@ export function useActorActions(groupId: string) {
         }
         setInboxMessages(resp.result.messages || []);
       } finally {
-        setBusy("");
+        changeActorBusy(groupId, actor.id, -1);
       }
     },
-    [groupId, setBusy, showError, setInboxActorId, setInboxMessages, openModal],
+    [groupId, changeActorBusy, showError, setInboxActorId, setInboxMessages, openModal],
   );
 
   // Get actor termEpoch
   const getTermEpoch = useCallback(
-    (actorId: string) => termEpochByActor[actorId] || 0,
-    [termEpochByActor],
+    (actorId: string) => termEpochByActor[JSON.stringify([groupId, actorId])] || 0,
+    [groupId, termEpochByActor],
   );
 
   return {

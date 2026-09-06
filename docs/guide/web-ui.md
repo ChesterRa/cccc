@@ -20,9 +20,49 @@ The Web UI has these main areas:
 
 - **Header**: Group selector, settings, theme toggle
 - **Sidebar**: Group list, navigation, and the persistent Codex Voice control
-- **Tabs**: Chat tab + one tab per agent
-- **Main Area**: Chat messages or terminal view
+- **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
+
+### Group message and terminal views
+
+Use **Messages / Terminals** in the Group header to switch the current Group's work view.
+On narrow headers, the view icon switches between these views. Presentation also opens from
+the header. Switching views only replaces the history area; the message composer stays in place.
+Each Group remembers its view and terminal page in this browser, including after a page reload. Message drafts and
+the message reading position survive switching between views.
+
+The terminal view shows up to four Actors per page, in the Group's existing order. Narrow areas
+show one Actor per page. Page arrows appear only when there is more than one page, in the
+Group header or the single Actor title bar on mobile. Resizing keeps the focused Actor visible,
+or preserves the first visible Actor when no terminal has focus. Removing Actors displays a
+valid page without discarding the saved preference during loading.
+Indicators can point to waiting or stuck Actors on other pages without moving the current page.
+
+Each visible terminal accepts input directly. Click its content to choose the keyboard target;
+the focused pane is outlined, and new output does not take focus. The bottom composer still
+sends Group messages, independently of terminal input. Maximize opens the existing Actor controls
+using the same terminal instance; close the expanded view to return to the grid. Escape and Tab
+remain terminal keys while the terminal has focus. Existing access and single-writer rules apply:
+a read-only user cannot type. Opening a view leaves any existing writer in control; use
+**Take control** to take over explicitly. An ordinary reconnect does not take control away
+from another writer. With no existing writer, the terminal accepts input immediately.
+
+Each Actor title bar keeps its status, common terminal actions and maximize control together.
+Use **More** for history, session, configuration, inbox and lifecycle actions. Unavailable
+actions are disabled; stopping and restarting use the same operations as the expanded view.
+Different Actors have independent pending-operation indicators.
+
+Paging or hiding the terminal view detaches hidden terminal connections; it does not stop or
+restart Actors. Returning attaches to their current output. Actors without a TUI use their existing
+runtime activity display, and stopped Actors are explicitly identified. Hidden Group messages do
+not clear the message unread count or count as viewed for Voice suppression. Following a message
+source link returns to Messages and locates the original event.
+
+The Runtime Dock's progress bubbles show the latest short live update for each Actor, with up to
+two Actors visible at once. Updates from the same Actor replace the previous excerpt. Open the
+Actor to inspect the complete output. Restoring a Group or reconnecting its activity stream
+restores history without replaying it as new bubbles; ordinary message unread indicators are
+independent of these brief progress previews. The same rules apply to every managed Runtime.
 
 ### Codex Voice (Experimental)
 
@@ -49,6 +89,9 @@ Its tabs are **Voice & audio**, **Message notifications**, and **Voice Analyst**
 microphone and supported speaker choices remain in Voice & audio, alongside response detail
 (concise / standard / detailed) and speaking style (natural / direct / patient). Expression defaults
 save automatically for the instance and apply to the next call, without restarting the Analyst.
+Detail applies to incoming Actor notifications as well as answers. Voice is instructed to identify
+each notification's Group and sender. Detailed asks it to retain substantive findings, numbers,
+conditions, qualifications and next steps in natural speech; raw tool traces remain in the Analyst terminal.
 Speaking voice and device choices are saved in this browser and also apply to the next call. Spoken
 instructions can override them. The host must already be signed in through `codex login`, and the browser must
 allow microphone access. That host login belongs only to the Realtime provider call.
@@ -70,12 +113,17 @@ read or explain a message still takes priority.
 
 The console's compact **Message sources** section opens the original chat without stopping voice.
 Pending and unconfirmed counts describe delivery observations, not task completion or proof that
-you heard a result. During your call, queued output is shown as **waiting to speak**; expand the
-section to see whether it is waiting for the conversation, a Voice response, or a pre-submission
-check. Each source also shows the associated result's delivery state. Fully skipped output identifies
+you heard a result. During your call, queued output is shown as **waiting for Voice delivery**;
+expand the section to see whether it is waiting for the connection or a notification check.
+Updates continue reaching Voice during conversation; Voice handles speaking and interruptions.
+An unfinished earlier turn cannot block later delivery. If the connection stops accepting updates,
+the call stops with an explanation; restarting voice can deliver known unsent notifications while
+the Analyst retains its context. Each source also shows the associated result's delivery state. Fully skipped output identifies
 whether it was already viewed, excluded by policy, or unavailable at the submission check. The
 recorded skip reason survives later preference changes. “Submitted” describes delivery to Voice,
-not completed playback or proof of hearing. Delivery uncertainty can remain for earlier updates
+not completed playback or proof of hearing. The experimental provider can omit details or fail to
+resume a report after an interruption even after receiving its context; the Analyst and source links
+remain available to inspect it. Delivery uncertainty can remain for earlier updates
 while new ones proceed. If notification consumption pauses, a call-wide notice explains that source
 messages are retained and starting a new call retries consumption; voice and Analyst state remain
 separate.
@@ -205,12 +253,14 @@ work explicitly discarded before the switch cannot be recovered. Browser-local a
 to the next call.
 
 User requests and source-message updates enter the same Runtime admission path immediately; the
-Runtime owns steer/queue behavior. Unsent **speech output**, separately, waits for the active user
-or assistant speech turn to finish. Adjacent fragments of the same result are combined without
-losing text. Provider receipt alone does not release the next speech output.
-If no assistant speech starts within 30 seconds of submission, that update remains unconfirmed;
-new, unsent output may proceed once no user or assistant turn is active. The earlier update is
-not replayed. Active speech is never ended merely because that deadline passed.
+Runtime owns steer/queue behavior. Analyst results are delivered to Realtime in order, including
+while someone is speaking. Realtime owns speech timing and yielding to interruptions; missing
+speech-turn events cannot block later result delivery. Adjacent fragments of the same result
+are combined without losing text and split to the provider limit before sending. Delivery waits
+only for connection readiness, send-buffer capacity, and pre-submission policy checks. If the
+connection or send buffer does not recover within 15 seconds, the call stops with an explanation
+and positively unsent results remain available for a later call. Previously submitted output is
+not automatically replayed.
 Pre-submission checks have a 10-second deadline and retry transient connection failures up to
 three times with increasing delays. A failed check never permits unchecked content to be spoken.
 If checking still fails, the call stops with an explanation and positively unsent results remain

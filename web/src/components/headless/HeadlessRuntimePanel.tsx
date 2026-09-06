@@ -11,6 +11,7 @@ type HeadlessRuntimePanelProps = {
   rawEvents: HeadlessStreamEvent[];
   emptyLabel: string;
   isDark: boolean;
+  compact?: boolean;
 };
 
 export function HeadlessRuntimePanel({
@@ -21,7 +22,9 @@ export function HeadlessRuntimePanel({
   rawEvents,
   emptyLabel,
   isDark,
+  compact = false,
 }: HeadlessRuntimePanelProps) {
+  const minHeight = compact ? "min-h-0" : "min-h-[420px]";
   const latestPreview =
     previewSessions.length > 0 ? previewSessions[previewSessions.length - 1] : null;
   const hasLiveTrace =
@@ -31,12 +34,12 @@ export function HeadlessRuntimePanel({
 
   if (!hasLiveTrace && rawEvents.length > 0) {
     return (
-      <div className="flex h-full min-h-[420px] flex-col">
+      <div className={`flex h-full ${minHeight} flex-col`}>
         <HeadlessRawTrace
           events={rawEvents}
           emptyLabel={emptyLabel}
           isDark={isDark}
-          className="h-full min-h-[420px] text-left text-[var(--color-text-secondary)]"
+          className={`h-full ${minHeight} text-left text-[var(--color-text-secondary)]`}
         />
       </div>
     );
@@ -58,12 +61,13 @@ export function HeadlessRuntimePanel({
         .toLowerCase()}
       emptyLabel={emptyLabel}
       isDark={isDark}
-      density="expanded"
+      density={compact ? "compact" : "expanded"}
       className={classNames(
-        "h-full min-h-[420px] overflow-y-auto scrollbar-hide text-left text-[var(--color-text-secondary)]",
+        "h-full overflow-y-auto scrollbar-hide text-left text-[var(--color-text-secondary)]",
+        minHeight,
       )}
     />
   );
 
-  return <div className="flex h-full min-h-[420px] flex-col">{liveTrace}</div>;
+  return <div className={`flex h-full ${minHeight} flex-col`}>{liveTrace}</div>;
 }

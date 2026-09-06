@@ -15,6 +15,7 @@ type PresentationRailProps = {
   attentionSlots?: Record<string, boolean>;
   onOpenSlot: (slotId: string) => void;
   onPinSlot?: (slotId: string) => void;
+  hideTrigger?: boolean;
 };
 
 function formatUpdatedAt(value: string | undefined, locale: string): string {
@@ -167,6 +168,7 @@ export function PresentationRail({
   attentionSlots,
   onOpenSlot,
   onPinSlot,
+  hideTrigger = false,
 }: PresentationRailProps) {
   const { t, i18n } = useTranslation("chat");
   const [hoveredSlotId, setHoveredSlotId] = useState("");
@@ -463,53 +465,55 @@ export function PresentationRail({
       className="pointer-events-none absolute right-4 top-4 z-30 flex flex-col items-end gap-2"
       aria-label={t("presentationTitle", { defaultValue: "Presentation" })}
     >
-      <button
-        type="button"
-        onClick={() => onOpenChange?.(!isOpen)}
-        className={classNames(
-          "pointer-events-auto group relative flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35",
-          isDark
-            ? "border-white/10 bg-slate-950/62 text-slate-100 shadow-[0_20px_48px_-28px_rgba(2,6,23,0.72)]"
-            : "border-black/10 bg-white/78 text-gray-900 shadow-[0_20px_48px_-28px_rgba(15,23,42,0.18)]",
-          hasCards &&
-            !hasAttention &&
-            (isDark
-              ? "border-white/12 bg-white/[0.07] text-white"
-              : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"),
-          isOpen
-            ? isDark
-              ? "border-white/18 bg-slate-950/84"
-              : "border-black/14 bg-white/92"
-            : isDark
-              ? "hover:border-white/16 hover:bg-slate-900/82"
-              : "hover:border-black/14 hover:bg-white/92",
-          hasAttention &&
-            (isDark
-              ? "presentation-slot-attention presentation-slot-attention-dark"
-              : "presentation-slot-attention presentation-slot-attention-light"),
-        )}
-        title={
-          isOpen
-            ? t("presentationCloseDockAction", { defaultValue: "Hide presentation" })
-            : t("presentationOpenDockAction", { defaultValue: "Open presentation" })
-        }
-        aria-label={
-          isOpen
-            ? t("presentationCloseDockAction", { defaultValue: "Hide presentation" })
-            : t("presentationOpenDockAction", { defaultValue: "Open presentation" })
-        }
-        aria-expanded={isOpen}
-      >
-        <span className="relative flex items-center justify-center">
-          <BookmarkIcon
-            size={18}
-            className={classNames(
-              "drop-shadow-[0_1px_1px_rgba(15,23,42,0.18)] transition-transform duration-200",
-              isOpen ? "scale-[1.04]" : "scale-[1.02] group-hover:scale-[1.06]",
-            )}
-          />
-        </span>
-      </button>
+      {!hideTrigger ? (
+        <button
+          type="button"
+          onClick={() => onOpenChange?.(!isOpen)}
+          className={classNames(
+            "pointer-events-auto group relative flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35",
+            isDark
+              ? "border-white/10 bg-slate-950/62 text-slate-100 shadow-[0_20px_48px_-28px_rgba(2,6,23,0.72)]"
+              : "border-black/10 bg-white/78 text-gray-900 shadow-[0_20px_48px_-28px_rgba(15,23,42,0.18)]",
+            hasCards &&
+              !hasAttention &&
+              (isDark
+                ? "border-white/12 bg-white/[0.07] text-white"
+                : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"),
+            isOpen
+              ? isDark
+                ? "border-white/18 bg-slate-950/84"
+                : "border-black/14 bg-white/92"
+              : isDark
+                ? "hover:border-white/16 hover:bg-slate-900/82"
+                : "hover:border-black/14 hover:bg-white/92",
+            hasAttention &&
+              (isDark
+                ? "presentation-slot-attention presentation-slot-attention-dark"
+                : "presentation-slot-attention presentation-slot-attention-light"),
+          )}
+          title={
+            isOpen
+              ? t("presentationCloseDockAction", { defaultValue: "Hide presentation" })
+              : t("presentationOpenDockAction", { defaultValue: "Open presentation" })
+          }
+          aria-label={
+            isOpen
+              ? t("presentationCloseDockAction", { defaultValue: "Hide presentation" })
+              : t("presentationOpenDockAction", { defaultValue: "Open presentation" })
+          }
+          aria-expanded={isOpen}
+        >
+          <span className="relative flex items-center justify-center">
+            <BookmarkIcon
+              size={18}
+              className={classNames(
+                "drop-shadow-[0_1px_1px_rgba(15,23,42,0.18)] transition-transform duration-200",
+                isOpen ? "scale-[1.04]" : "scale-[1.02] group-hover:scale-[1.06]",
+              )}
+            />
+          </span>
+        </button>
+      ) : null}
 
       {isOpen ? (
         <div

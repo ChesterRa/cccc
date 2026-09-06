@@ -81,6 +81,7 @@ pub(crate) struct AnalystRuntime {
 }
 
 pub(crate) struct ActiveSession {
+    verbosity: cccc_contracts::voice_notifications::VoiceVerbosity,
     notification_paused: tokio::sync::watch::Sender<bool>,
     call: Arc<CodexVoiceCall>,
     analyst: Arc<AnalystRuntime>,

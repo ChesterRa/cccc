@@ -1,4 +1,6 @@
 #[cfg(unix)]
+mod grok_redirect;
+#[cfg(unix)]
 mod grok_session;
 mod live_claude;
 mod live_codex_claude_actor;

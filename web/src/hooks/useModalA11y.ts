@@ -103,7 +103,12 @@ function unlockBodyScroll(): void {
  * 2. Focus is trapped inside the top-most modal (Tab/Shift+Tab cycle)
  * 3. Body scroll is locked while any modal is open
  */
-export function useModalA11y(isOpen: boolean, onClose: () => void) {
+export function useModalA11y(
+  isOpen: boolean,
+  onClose: () => void,
+  options?: { preserveTerminalKeys?: boolean },
+) {
+  const preserveTerminalKeys = options?.preserveTerminalKeys === true;
   const instanceId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -117,16 +122,18 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
     (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (!isTopModal(instanceId)) return;
+      if (preserveTerminalKeys && e.target instanceof Element && e.target.closest(".xterm")) return;
       e.preventDefault();
       e.stopPropagation();
       onCloseRef.current();
     },
-    [instanceId],
+    [instanceId, preserveTerminalKeys],
   );
 
   const handleTab = useCallback(
     (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
+      if (preserveTerminalKeys && e.target instanceof Element && e.target.closest(".xterm")) return;
       if (!isTopModal(instanceId)) return;
 
       const modal = modalRef.current;
@@ -157,7 +164,7 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
         first.focus();
       }
     },
-    [instanceId],
+    [instanceId, preserveTerminalKeys],
   );
 
   useEffect(() => {

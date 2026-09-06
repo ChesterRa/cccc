@@ -4,6 +4,7 @@ import { ModalFrame } from "./ModalFrame";
 
 export function RuntimeInspectorModal({
   isOpen,
+  inline = false,
   isDark,
   onClose,
   titleId,
@@ -11,16 +12,18 @@ export function RuntimeInspectorModal({
   children,
 }: {
   isOpen: boolean;
+  inline?: boolean;
   isDark: boolean;
   onClose: () => void;
   titleId: string;
   closeAriaLabel: string;
   children: ReactNode;
 }) {
-  const { modalRef } = useModalA11y(isOpen, onClose);
+  const { modalRef } = useModalA11y(isOpen && !inline, onClose, { preserveTerminalKeys: true });
   return (
     <ModalFrame
       isOpen={isOpen}
+      inline={inline}
       isDark={isDark}
       onClose={onClose}
       titleId={titleId}

@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { useGroupStore, useUIStore } from "../../stores";
 import {
   CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  groupMessagesVisible,
   type ChatScrollSnapshot,
 } from "../../stores/useUIStore";
 import type { Actor, GroupMeta, LedgerEvent } from "../../types";
@@ -153,6 +154,7 @@ export function useChatMessageActions(input: {
 
   const handleScrollChange = useCallback(
     (isAtBottom: boolean) => {
+      if (!groupMessagesVisible(input.selectedGroupId, useUIStore.getState())) return;
       input.setChatAtBottom(isAtBottom);
       if (!input.selectedGroupId) return;
       input.setShowScrollButton(input.selectedGroupId, !isAtBottom);
@@ -165,7 +167,8 @@ export function useChatMessageActions(input: {
     (snapshot: ChatScrollSnapshot, overrideGroupId?: string) => {
       if (inChatWindow && !overrideGroupId) return;
       const groupId = String(overrideGroupId || selectedGroupId || "").trim();
-      if (groupId) setChatScrollSnapshot(groupId, snapshot);
+      if (groupId && groupMessagesVisible(groupId, useUIStore.getState()))
+        setChatScrollSnapshot(groupId, snapshot);
     },
     [inChatWindow, selectedGroupId, setChatScrollSnapshot],
   );

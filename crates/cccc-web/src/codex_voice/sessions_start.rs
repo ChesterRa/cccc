@@ -107,6 +107,7 @@ impl CodexVoiceSessions {
                 }
             };
         let session = Arc::new(ActiveSession {
+            verbosity: realtime.preferences.verbosity,
             notification_paused: tokio::sync::watch::channel(false).0,
             call: Arc::new(call),
             analyst,

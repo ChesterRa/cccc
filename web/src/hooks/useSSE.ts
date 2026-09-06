@@ -376,15 +376,22 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  function handleHeadlessEvent(groupId: string, ev: HeadlessStreamEvent) {
+  function handleHeadlessEvent(groupId: string, ev: HeadlessStreamEvent, live = true) {
     try {
       const actorId = String(ev.actor_id || "").trim();
       const eventType = String(ev.type || "").trim();
+      if (!actorId || !eventType || !ev.id?.trim() || (ev.group_id && ev.group_id !== groupId))
+        return;
+      const previous =
+        useGroupStore.getState().chatByGroup[groupId]?.rawHeadlessEventsByActorId[actorId] || [];
+      // The retained per-Actor trace covers the server's bounded replay window.
+      // Deduplicate before applying deltas or lifecycle effects, not just in the raw trace.
+      if (previous.some((event) => event.id === ev.id)) return;
       const data = ev.data && typeof ev.data === "object" ? ev.data : {};
       const streamId = typeof data.stream_id === "string" ? data.stream_id.trim() : "";
       const pendingEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
       if (!actorId || !eventType) return;
-      appendHeadlessEvent(ev, groupId);
+      appendHeadlessEvent({ ...ev, _receivedAt: live ? Date.now() : undefined }, groupId);
 
       function updateHeadlessActorRuntime(update: ActorActivityUpdate) {
         const storeState = useGroupStore.getState();
@@ -739,13 +746,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  async function hydrateHeadlessSnapshot(groupId: string) {
-    const resp = await api.fetchHeadlessSnapshot(groupId, { noCache: true });
-    if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
-    const events = Array.isArray(resp.result.events) ? resp.result.events : [];
+  function hydrateHeadlessSnapshot(groupId: string, events: HeadlessStreamEvent[]) {
     reconcileHydratedHeadlessLiveOutput(groupId, events);
     replayHeadlessSnapshotEvents(events, (event) => {
-      handleHeadlessEvent(groupId, event);
+      handleHeadlessEvent(groupId, event, false);
     });
     flushPendingHeadlessActivities(groupId);
     flushPendingHeadlessMessages(groupId);
@@ -800,6 +804,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         handleHeadlessEvent(groupId, JSON.parse(String(msg.data || "{}")) as HeadlessStreamEvent);
       } catch {
         /* ignore parse errors */
+      }
+    });
+    headlessEs.addEventListener("headless.snapshot", (e) => {
+      if (!sseRegistryRef.current.isCurrent(headlessToken)) return;
+      try {
+        const snapshot = JSON.parse(String((e as MessageEvent).data || "{}"));
+        if (Array.isArray(snapshot.events)) hydrateHeadlessSnapshot(groupId, snapshot.events);
+      } catch {
+        /* ignore malformed snapshots */
       }
     });
     headlessEventSourceRef.current = headlessEs;
@@ -912,15 +925,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     });
     eventSourceRef.current = es;
 
-    void hydrateHeadlessSnapshot(groupId)
-      .catch(() => {
-        /* ignore snapshot hydration failures */
-      })
-      .finally(() => {
-        if (selectedGroupIdRef.current === groupId) {
-          connectHeadlessStream(groupId, { replay: false });
-        }
-      });
+    connectHeadlessStream(groupId);
   }
 
   function disconnectGroupStreams(options?: { resetConnected?: boolean }) {
@@ -931,7 +936,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
     closeLedgerStream();
     closeHeadlessStream();
-    const flushBeforeClearing = options?.resetConnected === false;
     if (pendingHeadlessMessageFlushRef.current != null) {
       window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);
       pendingHeadlessMessageFlushRef.current = null;
@@ -940,10 +944,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.cancelAnimationFrame(pendingHeadlessActivityFlushRef.current);
       pendingHeadlessActivityFlushRef.current = null;
     }
-    if (flushBeforeClearing) {
-      flushPendingHeadlessActivities();
-      flushPendingHeadlessMessages();
-    }
+    // Received IDs survive disconnects in the Group cache. Apply their buffered
+    // projections to the original Groups before replay can deduplicate them.
+    flushPendingHeadlessActivities();
+    flushPendingHeadlessMessages();
     pendingHeadlessMessagesRef.current.clear();
     pendingHeadlessActivitiesRef.current.clear();
     headlessThreadIdByActorRef.current.clear();
@@ -975,15 +979,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
       if (!headlessEventSourceRef.current) {
-        void hydrateHeadlessSnapshot(gid)
-          .catch(() => {
-            /* ignore snapshot hydration failures */
-          })
-          .finally(() => {
-            if (selectedGroupIdRef.current === gid && !headlessEventSourceRef.current) {
-              connectHeadlessStream(gid, { replay: false });
-            }
-          });
+        connectHeadlessStream(gid);
       }
     }
 

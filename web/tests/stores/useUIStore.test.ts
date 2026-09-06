@@ -144,3 +144,50 @@ describe("useUIStore sidebar width", () => {
     });
   });
 });
+
+describe("Group work view preferences", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    localStorageMock.clear();
+  });
+  it("restores independent views and pages after a browser reload", async () => {
+    let mod = await import("../../src/stores/useUIStore");
+    mod.useUIStore.getState().setGroupWorkView("g1", "terminals");
+    mod.useUIStore.getState().setGroupTerminalPage("g1", 2);
+    mod.useUIStore.getState().setGroupWorkView("g2", "messages");
+    mod.useUIStore.getState().setGroupTerminalPage("g2", 1);
+    vi.resetModules();
+    mod = await import("../../src/stores/useUIStore");
+    expect(mod.getChatSession("g1", mod.useUIStore.getState().chatSessions)).toMatchObject({
+      workView: "terminals",
+      terminalPage: 2,
+    });
+    expect(mod.getChatSession("g2", mod.useUIStore.getState().chatSessions)).toMatchObject({
+      workView: "messages",
+      terminalPage: 1,
+    });
+    expect(mod.groupMessagesVisible("g1", mod.useUIStore.getState())).toBe(false);
+    expect(mod.groupMessagesVisible("g2", mod.useUIStore.getState())).toBe(true);
+  });
+  it("ignores malformed preferences and never treats hidden messages as visible", async () => {
+    localStorageMock.setItem(
+      "cccc-chat-sessions",
+      JSON.stringify({
+        g1: { workView: {}, terminalPage: -8 },
+        g2: { workView: "terminals", terminalPage: 1.5 },
+      }),
+    );
+    const mod = await import("../../src/stores/useUIStore");
+    expect(mod.getChatSession("g1", mod.useUIStore.getState().chatSessions)).toMatchObject({
+      workView: "messages",
+      terminalPage: 0,
+    });
+    expect(mod.getChatSession("g2", mod.useUIStore.getState().chatSessions).terminalPage).toBe(0);
+    mod.useUIStore.getState().setSmallScreen(true);
+    mod.useUIStore.getState().setChatMobileSurface("g1", "presentation");
+    expect(mod.groupMessagesVisible("g1", mod.useUIStore.getState())).toBe(false);
+    mod.useUIStore.getState().setSmallScreen(false);
+    mod.useUIStore.getState().setActiveTab("actor-1");
+    expect(mod.groupMessagesVisible("g1", mod.useUIStore.getState())).toBe(false);
+  });
+});

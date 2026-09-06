@@ -567,5 +567,21 @@
   "presentationBrowserViewerReasonUnsupportedPlatform": "当前平台不支持",
   "presentationBrowserViewerReasonStartupTimeout": "VNC 启动超时",
   "presentationBrowserViewerIsolationXvfb": "Xvfb 隔离",
-  "presentationBrowserViewerTooltipIsolationXvfb": "浏览器运行在 CCCC 专用的虚拟显示器上，而非宿主机桌面。"
+  "presentationBrowserViewerTooltipIsolationXvfb": "浏览器运行在 CCCC 专用的虚拟显示器上，而非宿主机桌面。",
+  "workView": {
+    "label": "Group 视图",
+    "messages": "消息",
+    "terminals": "终端",
+    "pages": "终端分页",
+    "previous": "上一页",
+    "next": "下一页",
+    "otherAttention": "其他页有 {{count}} 项待关注",
+    "unread": "{{count}} 条未读消息",
+    "maximize": "放大 {{actor}}",
+    "restore": "关闭放大的 Actor 视图",
+    "loading": "正在加载 Actor…",
+    "empty": "此 Group 暂无 Actor。",
+    "connecting": "连接中…",
+    "switchTo": "切换到{{view}}"
+  }
 }

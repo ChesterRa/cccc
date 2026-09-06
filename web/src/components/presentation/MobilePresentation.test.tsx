@@ -4,13 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { GroupPresentation } from "../../types";
-import { MobilePresentationTrigger } from "./MobilePresentationTrigger";
+import { PresentationTrigger } from "./PresentationTrigger";
 import { MobilePresentationSurface } from "./MobilePresentationSurface";
 import { PresentationRail } from "./PresentationRail";
-import {
-  resolveMobilePresentationHighlight,
-  shouldShowMobilePresentationTrigger,
-} from "./mobilePresentationModel";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -54,28 +50,31 @@ describe("mobile presentation entry", () => {
     host.remove();
   });
 
-  it("stays discoverable on every selected mobile chat, including empty presentations", () => {
-    expect(
-      shouldShowMobilePresentationTrigger({
-        isSmallScreen: true,
-        hasChatWindow: false,
-        groupId: "g_demo",
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowMobilePresentationTrigger({
-        isSmallScreen: false,
-        hasChatWindow: false,
-        groupId: "g_demo",
-      }),
-    ).toBe(false);
+  it("keeps the header entry usable for an empty presentation", async () => {
+    const onOpen = vi.fn();
+    await act(async () =>
+      root.render(
+        <PresentationTrigger
+          presentation={null}
+          attentionSlots={{}}
+          isDark={false}
+          onOpen={onOpen}
+        />,
+      ),
+    );
+    const button = host.querySelector("button");
+    expect(button?.getAttribute("aria-label")).toBe("Open presentation");
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => button?.click());
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the highlighted slot and remains pointer-interactive", async () => {
+  it("announces the highlighted slot and opens it from the header", async () => {
     const onOpen = vi.fn();
     await act(async () => {
       root.render(
-        <MobilePresentationTrigger
+        <PresentationTrigger
+          mobile
           presentation={presentation}
           attentionSlots={{ "slot-1": true }}
           isDark={false}
@@ -85,10 +84,9 @@ describe("mobile presentation entry", () => {
     });
 
     const button = host.querySelector("button");
-    expect(resolveMobilePresentationHighlight(presentation)?.slot_id).toBe("slot-1");
     expect(button?.textContent).toContain("Presentation");
-    expect(button?.textContent).toContain("1");
-    expect(button?.className).toContain("pointer-events-auto");
+    expect(button?.getAttribute("aria-label")).toContain("slot 1: Mobile preview");
+    expect(button?.hasAttribute("data-group-presentation-trigger")).toBe(true);
     expect(button?.dataset.mobilePresentationTrigger).toBe("true");
 
     await act(async () => button?.click());

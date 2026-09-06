@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
@@ -51,6 +51,7 @@ export interface AppHeaderProps {
   canAccessAccount: boolean;
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
+  workControlsRef?: Ref<HTMLDivElement>;
 }
 
 export function AppHeader({
@@ -78,6 +79,7 @@ export function AppHeader({
   onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
+  workControlsRef,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
@@ -195,8 +197,8 @@ export function AppHeader({
     handleLaunchClick();
   };
   return (
-    <header className="absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:relative md:inset-auto md:px-5">
-      <div className="flex min-w-0 items-center gap-2">
+    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center gap-2 px-3 glass-header md:relative md:inset-auto md:px-5">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <IconButton
           type="button"
           variant="secondary"
@@ -221,7 +223,11 @@ export function AppHeader({
                 title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
               />
             )}
-            {selectedStatus && <GroupStatusIndicator status={selectedStatus} variant="badge" />}
+            {selectedStatus && (
+              <span className="hidden shrink-0 @min-[480px]/group-header:inline-flex">
+                <GroupStatusIndicator status={selectedStatus} variant="badge" />
+              </span>
+            )}
           </div>
 
           {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
@@ -229,7 +235,7 @@ export function AppHeader({
               type="button"
               variant="ghost"
               size="sm"
-              className="hidden text-[var(--color-text-tertiary)] md:inline-flex"
+              className="hidden text-[var(--color-text-tertiary)] @min-[760px]/group-header:inline-flex"
               onClick={onOpenGroupEdit}
               label={t("editGroup")}
             >
@@ -239,12 +245,18 @@ export function AppHeader({
         </div>
       </div>
 
+      <div
+        ref={workControlsRef}
+        className="flex shrink-0 items-center gap-1"
+        data-group-work-controls-host
+      />
+
       {/* Right Actions */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}
-            <div className="mr-1 hidden items-center gap-1.5 md:flex">
+            <div className="mr-1 hidden items-center gap-1.5 @min-[760px]/group-header:flex">
               <div className={headerRailClass}>
                 <IconButton
                   type="button"
@@ -298,7 +310,7 @@ export function AppHeader({
                 </IconButton>
               </div>
 
-              <div className={headerUtilityRailClass}>
+              <div className={`${headerUtilityRailClass} hidden @min-[1050px]/group-header:flex`}>
                 <ThemeToggleCompact
                   theme={theme}
                   onThemeChange={onThemeChange}
@@ -356,7 +368,7 @@ export function AppHeader({
             <IconButton
               type="button"
               variant="secondary"
-              className="text-[var(--color-text-secondary)] md:hidden"
+              className="text-[var(--color-text-secondary)] @min-[1050px]/group-header:hidden"
               onClick={onOpenMobileMenu}
               label={t("menu")}
             >

@@ -186,12 +186,9 @@ pub(super) async fn serve(
                             pending = value["pending"].as_u64(),
                             speech_turns_completed = value["speech_turns_completed"].as_u64(),
                             queued = value["queued"].as_u64(),
-                            active_user_turns = value["active_user_turns"].as_u64(),
-                            active_assistant_turns = value["active_assistant_turns"].as_u64(),
-                            awaiting_speech_start = value["awaiting_speech_start"].as_bool(),
-                            speech_start_timeouts = value["speech_start_timeouts"].as_u64(),
+                            buffered_bytes = value["buffered_bytes"].as_u64(),
                             prepare_failures = value["prepare_failures"].as_u64(),
-                            blocked = value["blocked"].as_str().filter(|reason| matches!(*reason, "conversation" | "speech_start" | "preparing" | "retrying" | "connection")),
+                            blocked = value["blocked"].as_str().filter(|reason| matches!(*reason, "preparing" | "retrying" | "connection" | "backpressure")),
                             "Codex Voice provider delivery receipt"
                         );
                     }

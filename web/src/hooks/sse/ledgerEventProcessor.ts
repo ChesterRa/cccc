@@ -1,4 +1,5 @@
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
+import { groupMessagesVisible } from "../../stores/useUIStore";
 import type { Actor, ChatMessageData, LedgerEvent } from "../../types";
 import {
   extractMailReadData,
@@ -166,7 +167,13 @@ export function processLedgerEvent(
     }
   }
 
-  if (shouldIncrementUnread(nextEvent, deps.activeTab === "chat", deps.chatAtBottom)) {
+  if (
+    shouldIncrementUnread(
+      nextEvent,
+      deps.activeTab === "chat" && groupMessagesVisible(groupId, useUIStore.getState()),
+      deps.chatAtBottom,
+    )
+  ) {
     deps.incrementChatUnread(groupId);
   }
   const refreshMode = getActorRefreshMode(nextEvent);

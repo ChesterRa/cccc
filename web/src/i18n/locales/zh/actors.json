@@ -279,5 +279,9 @@
   "historyRetry": "重试",
   "historyStart": "已到保留历史的起点",
   "historyEmpty": "该智能体暂无保留的终端历史。",
-  "historyTruncated": "更早的输出已从缓冲区中淘汰。"
+  "historyTruncated": "更早的输出已从缓冲区中淘汰。",
+  "actorControls": "{{actor}} 的操作",
+  "takeControl": "接管",
+  "readOnlyConnection": "只读",
+  "terminalReadOnlyNotice": "此终端当前只读，接管后可以输入。"
 }

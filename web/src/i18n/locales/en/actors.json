@@ -279,5 +279,9 @@
   "historyRetry": "Retry",
   "historyStart": "Beginning of retained history",
   "historyEmpty": "No terminal history retained for this agent yet.",
-  "historyTruncated": "Older output has already been discarded from the backlog."
+  "historyTruncated": "Older output has already been discarded from the backlog.",
+  "actorControls": "Controls for {{actor}}",
+  "takeControl": "Take control",
+  "readOnlyConnection": "Read only",
+  "terminalReadOnlyNotice": "This terminal is read-only. Take control to type here."
 }

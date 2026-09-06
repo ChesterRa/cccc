@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useUIStore } from "../stores";
+import { groupMessagesVisible } from "../stores/useUIStore";
 import type { Actor } from "../types";
 
 export function isChatViewportAtBottom(
@@ -72,6 +74,8 @@ export function useAppTabState({
   const actorsRef = useRef<Actor[]>([]);
   const [mountedActorIds, setMountedActorIds] = useState<string[]>([]);
 
+  const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
+
   const allTabs = useMemo(() => ["chat"], []);
 
   const handleTabChange = React.useCallback(
@@ -86,7 +90,7 @@ export function useAppTabState({
 
   useEffect(() => {
     activeTabRef.current = activeTab;
-    if (activeTab !== "chat") return;
+    if (!messagesVisible) return;
     if (!selectedGroupId) return;
     const el = eventContainerRef.current;
     if (!el) return;
@@ -95,13 +99,13 @@ export function useAppTabState({
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
-  }, [activeTab, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
+  }, [activeTab, messagesVisible, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
 
   useEffect(() => {
-    if (activeTab !== "chat") return;
+    if (!messagesVisible) return;
     if (isSmallScreen) return;
     requestAnimationFrame(() => composerRef.current?.focus());
-  }, [activeTab, isSmallScreen]);
+  }, [activeTab, messagesVisible, isSmallScreen]);
 
   useEffect(() => {
     actorsRef.current = runtimeActors;

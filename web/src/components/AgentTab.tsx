@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type CSSProperties,
+} from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -14,7 +21,12 @@ import {
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
-import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
+import {
+  useGroupStore,
+  useObservabilityStore,
+  useTerminalSignalsStore,
+  useUIStore,
+} from "../stores";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
 import {
@@ -29,6 +41,7 @@ import {
   PlusIcon,
   ClockIcon,
 } from "./Icons";
+import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
 import { TerminalHistoryPanel } from "./agentTerminal/TerminalHistoryPanel";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
@@ -92,6 +105,10 @@ interface AgentTabProps {
   termEpoch?: number;
   agentState: AgentState | null;
   isVisible: boolean;
+  compact?: boolean;
+  suspendWhenHidden?: boolean;
+  onExpand?: () => void;
+  navigation?: ReactNode;
   readOnly?: boolean;
   actorStatusProvisional: boolean;
   onQuit: () => void;
@@ -114,6 +131,10 @@ export function AgentTab({
   termEpoch = 0,
   agentState,
   isVisible,
+  compact = false,
+  suspendWhenHidden = false,
+  onExpand,
+  navigation,
   readOnly,
   actorStatusProvisional,
   onQuit,
@@ -145,7 +166,10 @@ export function AgentTab({
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
-  const isBusy = busy.includes(actor.id);
+  const actorBusy = useUIStore(
+    (state) => (state.actorBusy[JSON.stringify([groupId, actor.id])] || 0) > 0,
+  );
+  const isBusy = actorBusy || busy.includes(actor.id);
   const latestHeadlessText = useGroupStore((state) => {
     const bucket = state.chatByGroup[String(groupId || "").trim()];
     if (!bucket) return "";
@@ -211,7 +235,7 @@ export function AgentTab({
   }, [canControl]);
 
   // Activate the terminal only after the user has visited this actor tab at least once.
-  // Once activated, keep the PTY session connected even when the tab is hidden to avoid backlog replay and scroll jumps.
+  // Keep the xterm instance; tiled views suspend the browser connection while hidden.
   useEffect(() => {
     if (!isVisible) return;
     const timer = window.setTimeout(() => setActivated(true), 0);
@@ -342,7 +366,8 @@ export function AgentTab({
 
   const runtimeStatusText = (() => {
     if (!isRunning) return t("stopped");
-    if (workingState === "working") return t("working");
+    if (workingState === "working" || workingState === "waiting" || workingState === "stuck")
+      return t(workingState);
     return t("running");
   })();
   const handleNewSession = () => {
@@ -535,9 +560,11 @@ export function AgentTab({
     terminalReady,
     terminalWritable,
     requestReconnect,
+    requestTakeover,
     sendInterrupt,
   } = useAgentTerminalConnection({
-    activated,
+    takeoverOnAttach: false,
+    activated: activated && (!suspendWhenHidden || isVisible),
     isRunning,
     isHeadless,
     groupId,
@@ -595,12 +622,12 @@ export function AgentTab({
       if (resizeTimeout) clearTimeout(resizeTimeout);
       for (const timer of initialTimers) window.clearTimeout(timer);
     };
-  }, [actor.id, groupId, isRunning, isVisible]);
+  }, [activated, actor.id, groupId, isHeadless, isRunning, isVisible]);
 
   // UX: when the user switches to an agent tab (ops mode), focus the terminal automatically.
   // This avoids "typing into nowhere" if the chat composer was previously focused.
   useEffect(() => {
-    if (!canControl) return;
+    if (!canControl || compact) return;
     if (!isVisible) return;
     if (!terminalReady || !terminalWritable) return;
     if (isSmallScreen) return;
@@ -614,7 +641,7 @@ export function AgentTab({
       }
     }, 0);
     return () => clearTimeout(t);
-  }, [canControl, isVisible, isSmallScreen, terminalReady, terminalWritable]);
+  }, [canControl, compact, isVisible, isSmallScreen, terminalReady, terminalWritable]);
 
   const stateHeadline =
     String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() ||
@@ -627,11 +654,78 @@ export function AgentTab({
   const actorGroupRole = normalizeActorGroupRole(actor.role);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="@container/actor-view flex min-h-0 min-w-0 flex-col h-full">
+      {compact ? (
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--glass-border-subtle)] px-2 text-xs">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${statusTone.dotClass}`}
+            role="img"
+            aria-label={runtimeStatusText}
+            title={runtimeStatusText}
+          />
+          <span
+            id={`runtime-inspector-${actor.id}`}
+            className="min-w-0 flex-1 truncate font-semibold"
+            title={actor.title || actor.id}
+          >
+            {actor.title || actor.id}
+          </span>
+          <span
+            className={`${navigation ? "hidden @min-[480px]/actor-view:inline" : ""} shrink-0 text-[var(--color-text-tertiary)]`}
+            title={actor.effective_working_reason}
+          >
+            {runtimeStatusText}
+          </span>
+          {!isHeadless &&
+          isRunning &&
+          connectionStatus === "connected" &&
+          terminalReady &&
+          !terminalWritable ? (
+            <span className="hidden shrink-0 text-[10px] text-amber-700 dark:text-amber-300 @min-[480px]/actor-view:inline">
+              {t("readOnlyConnection")}
+            </span>
+          ) : null}
+          {!isHeadless && isRunning && connectionStatus !== "connected" ? (
+            <span
+              className={`${navigation ? "hidden @min-[480px]/actor-view:inline" : ""} text-[var(--color-text-tertiary)]`}
+            >
+              {t(
+                connectionStatus !== "disconnected" ? "chat:workView.connecting" : "connectionLost",
+              )}
+            </span>
+          ) : null}
+          {navigation}
+          <ActorQuickControls
+            key={String(isVisible)}
+            actorTitle={actor.title || actor.id}
+            running={isRunning}
+            busy={isBusy}
+            readOnly={!canControl}
+            hasTerminal={!isHeadless}
+            writable={terminalWritable}
+            connected={terminalReady && connectionStatus === "connected"}
+            connectionFailed={connectionFailed}
+            canStartNewSession={canStartNewSession}
+            unreadCount={unreadCount}
+            onInterrupt={sendInterrupt}
+            onLaunch={onLaunch}
+            onReconnect={requestReconnect}
+            onTakeover={requestTakeover}
+            onHistory={() => setHistoryOpen(true)}
+            onNewSession={handleNewSession}
+            onRestart={onRelaunch}
+            onStop={onQuit}
+            onEdit={onEdit}
+            onInbox={onInbox}
+            onRemove={onRemove}
+            onExpand={onExpand}
+          />
+        </div>
+      ) : null}
       {/* Agent Header */}
       <div
         className={classNames(
-          "border-b px-4 py-2 sm:px-5",
+          compact ? "hidden" : "border-b px-4 py-2 sm:px-5",
           isDark
             ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
             : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]",
@@ -678,7 +772,10 @@ export function AgentTab({
             <div className="flex min-w-0 items-center gap-3">
               <div className="min-w-0 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">
+                  <span
+                    id={compact ? undefined : `runtime-inspector-${actor.id}`}
+                    className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]"
+                  >
                     {actor.title || actor.id}
                   </span>
                   <span className={actorGroupRoleBadgeClass(actorGroupRole)}>
@@ -792,9 +889,11 @@ export function AgentTab({
           <div
             className={classNames(
               "flex h-full min-h-0 flex-col",
-              isWebModel
-                ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4"
-                : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
+              compact
+                ? "p-2"
+                : isWebModel
+                  ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4"
+                  : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
             )}
           >
             <div
@@ -816,7 +915,9 @@ export function AgentTab({
               {!isWebModel ? (
                 <div className="min-h-0 flex-1">
                   {resumeFailureNotice && !isRunning ? (
-                    <div className="flex h-full min-h-[420px] items-center justify-center">
+                    <div
+                      className={`flex h-full ${compact ? "min-h-0 overflow-y-auto" : "min-h-[420px]"} items-center justify-center`}
+                    >
                       {resumeFailureNotice}
                     </div>
                   ) : (
@@ -830,6 +931,7 @@ export function AgentTab({
                         defaultValue: "There is no streaming output to show yet.",
                       })}
                       isDark={isDark}
+                      compact={compact}
                     />
                   )}
                 </div>
@@ -854,7 +956,9 @@ export function AgentTab({
             {connectionStatus === "disconnected" && !terminalReady && (
               <div
                 className={classNames(
-                  "absolute inset-0 flex flex-col items-center justify-center p-8",
+                  compact
+                    ? "absolute inset-0 flex flex-col items-center overflow-y-auto p-2 text-xs"
+                    : "absolute inset-0 flex flex-col items-center justify-center p-8",
                   "text-[var(--color-text-tertiary)] bg-[var(--glass-panel-bg)]",
                 )}
               >
@@ -881,14 +985,16 @@ export function AgentTab({
                 )}
               </div>
             )}
-            {canControl &&
+            {!compact &&
+            canControl &&
             connectionStatus === "connected" &&
             terminalReady &&
             !terminalWritable ? (
               <div className="absolute right-4 top-4 z-10 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-200">
-                {t("terminalReadOnlyNotice", {
-                  defaultValue: "Terminal is connected read-only. Reconnect to take control.",
-                })}
+                {t("terminalReadOnlyNotice", { defaultValue: "Terminal is connected read-only." })}
+                <button type="button" className="ml-2 underline" onClick={requestTakeover}>
+                  {t("takeControl")}
+                </button>
               </div>
             ) : null}
           </>
@@ -896,7 +1002,9 @@ export function AgentTab({
           // Stopped agent
           <div
             className={classNames(
-              "flex flex-col items-center h-full p-8 overflow-y-auto",
+              compact
+                ? "flex flex-col items-center h-full p-3 overflow-y-auto"
+                : "flex flex-col items-center h-full p-8 overflow-y-auto",
               "text-[var(--color-text-tertiary)]",
             )}
           >
@@ -942,7 +1050,7 @@ export function AgentTab({
       </div>
 
       {/* Action Buttons - Scrollable on mobile with fade edges */}
-      {canControl ? (
+      {canControl && !compact ? (
         <ScrollFade
           className={classNames("border-t select-none", "glass-header")}
           innerClassName="flex items-center gap-2 px-4 py-3 sm:px-5"

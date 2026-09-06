@@ -11,6 +11,7 @@ import {
   useState,
   type MutableRefObject,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { InfoIcon } from "../../components/Icons";
 import {
@@ -23,6 +24,7 @@ import {
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
+import { GroupWorkArea, type RuntimeActorView } from "./GroupWorkArea";
 import { RuntimeDock } from "./RuntimeDock";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from "react-i18next";
@@ -33,6 +35,7 @@ import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
 import { clampPresentationSplitWidth } from "../../utils/presentationSplitLayout";
 import {
+  MOBILE_APP_HEADER_HEIGHT_PX,
   getMobileFloatingControlsTopInsetPx,
   getMobileMessageTopInsetPx,
 } from "../../utils/responsiveLayout";
@@ -47,9 +50,8 @@ import {
 } from "../../utils/chatGptAppPermissionHint";
 import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
 import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
-import { MobilePresentationTrigger } from "../../components/presentation/MobilePresentationTrigger";
+import { PresentationTrigger } from "../../components/presentation/PresentationTrigger";
 import { MobilePresentationSurface } from "../../components/presentation/MobilePresentationSurface";
-import { shouldShowMobilePresentationTrigger } from "../../components/presentation/mobilePresentationModel";
 
 const PresentationRail = lazy(() =>
   import("../../components/presentation/PresentationRail").then((module) => ({
@@ -125,6 +127,9 @@ export interface ChatTabProps {
   actors: Actor[];
   runtimeActors: Actor[];
   activeRuntimeActorId?: string;
+  renderedActorIds: string[];
+  renderRuntimeActor: (actorId: string, view: RuntimeActorView) => ReactNode;
+  workControlsHost?: HTMLElement | null;
 
   // Recipient actors for cross-group messaging
   recipientActors: Actor[];
@@ -173,6 +178,9 @@ export function ChatTab({
   actors,
   runtimeActors,
   activeRuntimeActorId,
+  renderedActorIds,
+  renderRuntimeActor,
+  workControlsHost = null,
   recipientActors,
   recipientActorsBusy,
   destGroupScopeLabel,
@@ -664,15 +672,9 @@ export function ChatTab({
     ["request_reply", t("filterNeedReply")],
   ];
   const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
-  const showMobilePresentationAction = shouldShowMobilePresentationTrigger({
-    isSmallScreen,
-    hasChatWindow: !!chatWindowProps,
-    groupId: selectedGroupId,
-  });
-  const showMobileFloatingControls =
-    isSmallScreen && (showMessageFilters || showMobilePresentationAction);
+  const showMobileFloatingControls = isSmallScreen && showMessageFilters;
   const mobileMessageTopInsetPx = isSmallScreen
-    ? getMobileMessageTopInsetPx(showMobileFloatingControls, mobileAppHeaderReserved)
+    ? getMobileMessageTopInsetPx(showMobileFloatingControls, true)
     : 0;
 
   return (
@@ -750,213 +752,246 @@ export function ChatTab({
         )}
       </header>
 
-      {/* 2. Body Area: messages stay primary; presentation is a secondary surface */}
+      {/* 2. Body Area: Group work view and the secondary Presentation surface */}
       <main className="flex flex-1 min-h-0 flex-col">
         <div ref={splitLayoutRef} className="relative flex min-h-0 flex-1">
           {!isSmallScreen || mobileSurface === "messages" ? (
-            <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              {showMobileFloatingControls && (
-                <div
-                  className="pointer-events-none absolute inset-x-0 z-30 px-3"
-                  style={{ top: getMobileFloatingControlsTopInsetPx(mobileAppHeaderReserved) }}
-                >
-                  <div className="flex items-center gap-3">
-                    {showMessageFilters ? (
-                      <div
-                        className="pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide"
-                        role="tablist"
-                        aria-label={t("chatFilters")}
-                      >
-                        <div
-                          className={classNames(
-                            "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
-                            isDark ? "border-white/10 bg-black/10" : "border-black/10 bg-white/35",
-                          )}
-                        >
-                          {filterOptions.map(([key, label]) => {
-                            const active = chatFilter === key;
-                            return (
-                              <button
-                                key={key}
-                                type="button"
-                                className={classNames(
-                                  "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
-                                  active
-                                    ? isDark
-                                      ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                                      : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                                    : isDark
-                                      ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                      : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
-                                )}
-                                onClick={() => setChatFilter(key)}
-                                aria-pressed={active}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="min-w-0 flex-1" aria-hidden="true" />
-                    )}
-
-                    {showMobilePresentationAction ? (
-                      <MobilePresentationTrigger
-                        presentation={groupPresentation}
-                        attentionSlots={presentationAttention}
-                        isDark={isDark}
-                        onOpen={() =>
-                          selectedGroupId && setChatMobileSurface(selectedGroupId, "presentation")
-                        }
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              )}
-
-              {showMessageFilters && (
-                <div
-                  className="hidden md:block absolute top-4 left-4 z-20 pointer-events-none"
-                  style={{ width: "calc(100% - 32px)" }}
-                >
+            <section
+              className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+              style={{
+                paddingTop:
+                  isSmallScreen && !mobileAppHeaderReserved
+                    ? MOBILE_APP_HEADER_HEIGHT_PX
+                    : undefined,
+              }}
+            >
+              <GroupWorkArea
+                key={selectedGroupId}
+                groupId={selectedGroupId}
+                actors={runtimeActors}
+                renderedActorIds={renderedActorIds}
+                activeActorId={activeRuntimeActorId}
+                isDark={isDark}
+                isVisible={!isSmallScreen || mobileSurface === "messages"}
+                loading={selectedGroupActorsHydrating}
+                onInspectActor={onOpenRuntimeActor}
+                renderActor={renderRuntimeActor}
+                workControlsHost={workControlsHost}
+                isSmallScreen={isSmallScreen}
+                headerEnd={
+                  selectedGroupId && (!isSmallScreen || !chatWindowProps) ? (
+                    <PresentationTrigger
+                      mobile={isSmallScreen}
+                      presentation={groupPresentation}
+                      attentionSlots={presentationAttention}
+                      isDark={isDark}
+                      isOpen={showDesktopSplitPresentation || presentationDockOpen}
+                      onOpen={() => {
+                        if (isSmallScreen) setChatMobileSurface(selectedGroupId, "presentation");
+                        else if (showDesktopSplitPresentation) {
+                          setPresentationViewer(null);
+                          setPresentationDockOpen(false);
+                        } else setPresentationDockOpen(!presentationDockOpen);
+                      }}
+                    />
+                  ) : undefined
+                }
+              >
+                {showMobileFloatingControls && (
                   <div
-                    className={classNames(
-                      "inline-flex items-center gap-1 xl:gap-2 rounded-full border p-1 sm:p-1.5 shadow-xl pointer-events-auto backdrop-blur-xl transition-all duration-300",
-                      isDark
-                        ? "border-white/10 bg-slate-900/60 shadow-black/40 ring-1 ring-white/5"
-                        : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5",
-                    )}
-                    role="tablist"
-                    aria-label={t("chatFilters")}
+                    className="pointer-events-none absolute inset-x-0 z-30 px-3"
+                    style={{ top: getMobileFloatingControlsTopInsetPx(true) }}
                   >
-                    {filterOptions.map(([key, label]) => {
-                      const active = chatFilter === key;
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          className={classNames(
-                            "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
-                            active
-                              ? isDark
-                                ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                                : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                              : isDark
-                                ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
-                          )}
-                          onClick={() => setChatFilter(key)}
-                          aria-pressed={active}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {isBusinessEmptyState && showSetupCard ? (
-                <div
-                  ref={scrollRef}
-                  className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
-                  role="log"
-                  aria-label={t("chatMessages")}
-                >
-                  <div className="flex h-full flex-col items-center justify-center text-center pb-20">
-                    <div
-                      className={classNames(
-                        "w-full max-w-md",
-                        isDark ? "text-slate-200" : "text-gray-800",
-                      )}
-                    >
-                      {readOnly ? (
+                    <div className="flex items-center gap-3">
+                      {showMessageFilters ? (
                         <div
-                          className={classNames(
-                            "text-sm",
-                            isDark ? "text-slate-400" : "text-gray-600",
-                          )}
+                          className="pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide"
+                          role="tablist"
+                          aria-label={t("chatFilters")}
                         >
-                          {t("noMessagesYet")}
+                          <div
+                            className={classNames(
+                              "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
+                              isDark
+                                ? "border-white/10 bg-black/10"
+                                : "border-black/10 bg-white/35",
+                            )}
+                          >
+                            {filterOptions.map(([key, label]) => {
+                              const active = chatFilter === key;
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  className={classNames(
+                                    "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
+                                    active
+                                      ? isDark
+                                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
+                                      : isDark
+                                        ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
+                                        : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
+                                  )}
+                                  onClick={() => setChatFilter(key)}
+                                  aria-pressed={active}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       ) : (
-                        <Suspense fallback={<ChatLazyFallback />}>
-                          <SetupChecklist
-                            isDark={isDark}
-                            selectedGroupId={selectedGroupId}
-                            busy={busy}
-                            needsScope={needsScope}
-                            needsActors={needsActors}
-                            needsStart={needsStart}
-                            onAddAgent={addAgent}
-                            onStartGroup={onStartGroup}
-                            variant="full"
-                          />
-                        </Suspense>
+                        <div className="min-w-0 flex-1" aria-hidden="true" />
                       )}
                     </div>
                   </div>
-                </div>
-              ) : (
-                <VirtualMessageList
-                  messages={chatMessages}
-                  actors={actors}
-                  agentStates={agentStates}
-                  taskById={taskById}
-                  isDark={isDark}
-                  readOnly={readOnly}
-                  groupId={selectedGroupId}
-                  groupLabelById={messageGroupLabelById}
-                  webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
-                  viewKey={chatViewKey}
-                  followOnViewChangeKey={chatFilter}
-                  initialScrollTargetId={chatInitialScrollTargetId}
-                  initialScrollAnchorId={chatInitialScrollAnchorId}
-                  initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
-                  initialScrollOffsetPx={chatInitialScrollOffsetPx}
-                  highlightEventId={chatHighlightEventId}
-                  scrollRef={scrollRef}
-                  topInsetPx={mobileMessageTopInsetPx}
-                  onReply={startReply}
-                  onShowRecipients={showRecipients}
-                  onCopyLink={copyMessageLink}
-                  onCopyContent={copyMessageText}
-                  onRelay={relayMessage}
-                  onOpenSource={openSourceMessage}
-                  onOpenPresentationRef={openPresentationRef}
-                  onOpenTaskRef={openTaskRef}
-                  showScrollButton={showScrollButton}
-                  onScrollButtonClick={handleScrollButtonClick}
-                  chatUnreadCount={chatUnreadCount}
-                  sendScrollRequest={sendScrollRequest}
-                  onSendScrollRequestConsumed={consumeSendScrollRequest}
-                  onScrollChange={handleScrollChange}
-                  onScrollSnapshot={handleScrollSnapshot}
-                  isLoadingHistory={listIsLoadingHistory}
-                  hasMoreHistory={listHasMoreHistory}
-                  isFilteredEmpty={isFilteredEmptyState}
-                  onLoadMore={loadMoreHistory}
-                />
-              )}
+                )}
 
-              {!chatWindowProps && runtimeActors.length > 0 ? (
-                <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
-                  <RuntimeDock
-                    groupId={selectedGroupId}
-                    runtimeActors={runtimeActors}
-                    liveWorkCards={liveWorkCards}
-                    activeRuntimeActorId={activeRuntimeActorId}
+                {showMessageFilters && (
+                  <div
+                    className="hidden md:block absolute top-4 left-4 z-20 pointer-events-none"
+                    style={{ width: "calc(100% - 32px)" }}
+                  >
+                    <div
+                      className={classNames(
+                        "inline-flex items-center gap-1 xl:gap-2 rounded-full border p-1 sm:p-1.5 shadow-xl pointer-events-auto backdrop-blur-xl transition-all duration-300",
+                        isDark
+                          ? "border-white/10 bg-slate-900/60 shadow-black/40 ring-1 ring-white/5"
+                          : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5",
+                      )}
+                      role="tablist"
+                      aria-label={t("chatFilters")}
+                    >
+                      {filterOptions.map(([key, label]) => {
+                        const active = chatFilter === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            className={classNames(
+                              "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
+                              active
+                                ? isDark
+                                  ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                                  : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
+                                : isDark
+                                  ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
+                                  : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
+                            )}
+                            onClick={() => setChatFilter(key)}
+                            aria-pressed={active}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {isBusinessEmptyState && showSetupCard ? (
+                  <div
+                    ref={scrollRef}
+                    className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
+                    role="log"
+                    aria-label={t("chatMessages")}
+                  >
+                    <div className="flex h-full flex-col items-center justify-center text-center pb-20">
+                      <div
+                        className={classNames(
+                          "w-full max-w-md",
+                          isDark ? "text-slate-200" : "text-gray-800",
+                        )}
+                      >
+                        {readOnly ? (
+                          <div
+                            className={classNames(
+                              "text-sm",
+                              isDark ? "text-slate-400" : "text-gray-600",
+                            )}
+                          >
+                            {t("noMessagesYet")}
+                          </div>
+                        ) : (
+                          <Suspense fallback={<ChatLazyFallback />}>
+                            <SetupChecklist
+                              isDark={isDark}
+                              selectedGroupId={selectedGroupId}
+                              busy={busy}
+                              needsScope={needsScope}
+                              needsActors={needsActors}
+                              needsStart={needsStart}
+                              onAddAgent={addAgent}
+                              onStartGroup={onStartGroup}
+                              variant="full"
+                            />
+                          </Suspense>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <VirtualMessageList
+                    messages={chatMessages}
+                    actors={actors}
+                    agentStates={agentStates}
+                    taskById={taskById}
                     isDark={isDark}
-                    isSmallScreen={isSmallScreen}
                     readOnly={readOnly}
-                    actorStatusProvisional={selectedGroupActorStatusProvisional}
-                    onAddAgent={!readOnly ? addAgent : undefined}
-                    onOpenRuntimeActor={onOpenRuntimeActor}
+                    groupId={selectedGroupId}
+                    groupLabelById={messageGroupLabelById}
+                    webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
+                    viewKey={chatViewKey}
+                    followOnViewChangeKey={chatFilter}
+                    initialScrollTargetId={chatInitialScrollTargetId}
+                    initialScrollAnchorId={chatInitialScrollAnchorId}
+                    initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
+                    initialScrollOffsetPx={chatInitialScrollOffsetPx}
+                    highlightEventId={chatHighlightEventId}
+                    scrollRef={scrollRef}
+                    topInsetPx={mobileMessageTopInsetPx}
+                    onReply={startReply}
+                    onShowRecipients={showRecipients}
+                    onCopyLink={copyMessageLink}
+                    onCopyContent={copyMessageText}
+                    onRelay={relayMessage}
+                    onOpenSource={openSourceMessage}
+                    onOpenPresentationRef={openPresentationRef}
+                    onOpenTaskRef={openTaskRef}
+                    showScrollButton={showScrollButton}
+                    onScrollButtonClick={handleScrollButtonClick}
+                    chatUnreadCount={chatUnreadCount}
+                    sendScrollRequest={sendScrollRequest}
+                    onSendScrollRequestConsumed={consumeSendScrollRequest}
+                    onScrollChange={handleScrollChange}
+                    onScrollSnapshot={handleScrollSnapshot}
+                    isLoadingHistory={listIsLoadingHistory}
+                    hasMoreHistory={listHasMoreHistory}
+                    isFilteredEmpty={isFilteredEmptyState}
+                    onLoadMore={loadMoreHistory}
                   />
-                </div>
-              ) : null}
+                )}
+
+                {!chatWindowProps && runtimeActors.length > 0 ? (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
+                    <RuntimeDock
+                      groupId={selectedGroupId}
+                      runtimeActors={runtimeActors}
+                      liveWorkCards={liveWorkCards}
+                      runtimeEvents={liveWorkBucket?.rawHeadlessEventsByActorId}
+                      activeRuntimeActorId={activeRuntimeActorId}
+                      isDark={isDark}
+                      isSmallScreen={isSmallScreen}
+                      readOnly={readOnly}
+                      actorStatusProvisional={selectedGroupActorStatusProvisional}
+                      onAddAgent={!readOnly ? addAgent : undefined}
+                      onOpenRuntimeActor={onOpenRuntimeActor}
+                    />
+                  </div>
+                ) : null}
+              </GroupWorkArea>
             </section>
           ) : null}
 
@@ -1028,6 +1063,7 @@ export function ChatTab({
             <Suspense fallback={<ChatLazyFallback className="w-0" />}>
               <PresentationRail
                 mode="dock"
+                hideTrigger
                 presentation={groupPresentation}
                 isDark={isDark}
                 readOnly={readOnly}

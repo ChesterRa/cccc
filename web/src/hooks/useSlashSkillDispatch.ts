@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 
 import * as api from "../services/api";
+import { useUIStore, groupMessagesVisible } from "../stores/useUIStore";
 import type { ChatFilter } from "../stores/useUIStore";
 import type { LedgerEvent, ReplyTarget } from "../types";
 import { formatSendMessageError, type ChatTFunction } from "../utils/chatSend";
@@ -105,7 +106,8 @@ export function useSlashSkillDispatch(args: {
       }
 
       clearDraft(selectedGroupId);
-      setChatUnreadCount(selectedGroupId, 0);
+      if (groupMessagesVisible(selectedGroupId, useUIStore.getState()))
+        setChatUnreadCount(selectedGroupId, 0);
       setChatFilter(selectedGroupId, "all");
       setChatMobileSurface(selectedGroupId, "messages");
       onMessageSent?.();

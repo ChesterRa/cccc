@@ -1,3 +1,4 @@
+import { groupMessagesVisible } from "../stores/useUIStore";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -461,8 +462,10 @@ export function useChatTab({
   });
 
   const shouldFollowCurrentSend = useCallback(
-    () => shouldFollowChatSendFromViewport(scrollRef?.current, chatMessages.length),
-    [chatMessages.length, scrollRef],
+    () =>
+      groupMessagesVisible(selectedGroupId, useUIStore.getState()) &&
+      shouldFollowChatSendFromViewport(scrollRef?.current, chatMessages.length),
+    [chatMessages.length, scrollRef, selectedGroupId],
   );
 
   useEffect(() => {
@@ -827,7 +830,8 @@ export function useChatTab({
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
       if (selectedGroupId) {
-        setChatUnreadCount(selectedGroupId, 0);
+        if (groupMessagesVisible(selectedGroupId, useUIStore.getState()))
+          setChatUnreadCount(selectedGroupId, 0);
         setChatFilter(selectedGroupId, "all");
         setChatMobileSurface(selectedGroupId, "messages");
       }

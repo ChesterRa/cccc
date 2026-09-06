@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, AgentState } from "../types";
 
@@ -15,6 +15,10 @@ export interface ActorTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
   isVisible: boolean;
+  compact?: boolean;
+  suspendWhenHidden?: boolean;
+  onExpand?: () => void;
+  navigation?: ReactNode;
   readOnly?: boolean;
   actorStatusProvisional: boolean;
   onToggleEnabled: (isRunning: boolean) => void;
@@ -36,6 +40,10 @@ export function ActorTab({
   isDark,
   isSmallScreen,
   isVisible,
+  compact,
+  suspendWhenHidden,
+  onExpand,
+  navigation,
   readOnly,
   actorStatusProvisional,
   onToggleEnabled,
@@ -72,6 +80,10 @@ export function ActorTab({
         termEpoch={termEpoch}
         agentState={agentState}
         isVisible={isVisible}
+        compact={compact}
+        suspendWhenHidden={suspendWhenHidden}
+        onExpand={onExpand}
+        navigation={navigation}
         readOnly={readOnly}
         actorStatusProvisional={actorStatusProvisional}
         onQuit={() => onToggleEnabled(true)}

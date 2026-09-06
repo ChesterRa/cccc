@@ -30,7 +30,11 @@ export interface ChatScrollSnapshot {
   updatedAt: number;
 }
 
+export type GroupWorkView = "messages" | "terminals";
+
 export interface ChatSessionState {
+  workView: GroupWorkView;
+  terminalPage: number;
   showScrollButton: boolean;
   chatUnreadCount: number;
   chatFilter: ChatFilter;
@@ -41,6 +45,8 @@ export interface ChatSessionState {
 }
 
 const DEFAULT_CHAT_SESSION: ChatSessionState = {
+  workView: "messages",
+  terminalPage: 0,
   showScrollButton: false,
   chatUnreadCount: 0,
   chatFilter: "all",
@@ -72,12 +78,14 @@ interface UIState {
   isSmallScreen: boolean;
   presentationSplitWidth: number;
   chatSessions: Record<string, ChatSessionState>;
+  actorBusy: Record<string, number>;
   webReadOnly: boolean;
   sseStatus: "connected" | "connecting" | "disconnected";
 
   // Actions
   setActiveTab: (tab: string) => void;
   setBusy: (busy: string) => void;
+  changeActorBusy: (groupId: string, actorId: string, delta: 1 | -1) => void;
   setError: (msg: string) => void;
   showError: (msg: string) => void;
   dismissError: () => void;
@@ -95,6 +103,8 @@ interface UIState {
   setPresentationSplitWidth: (v: number) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
+  setGroupWorkView: (groupId: string, view: GroupWorkView) => void;
+  setGroupTerminalPage: (groupId: string, page: number) => void;
   setChatMobileSurface: (groupId: string, v: "messages" | "presentation") => void;
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
   setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
@@ -173,6 +183,22 @@ function savePresentationSplitWidth(width: number): void {
   }
 }
 
+function sanitizeTerminalPage(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+export function groupMessagesVisible(
+  groupId: string,
+  state: Pick<UIState, "activeTab" | "chatSessions" | "isSmallScreen">,
+): boolean {
+  const session = getChatSession(groupId, state.chatSessions);
+  return (
+    state.activeTab === "chat" &&
+    session.workView !== "terminals" &&
+    (!state.isSmallScreen || session.mobileSurface !== "presentation")
+  );
+}
+
 function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> {
   if (!value || typeof value !== "object") return {};
   const input = value as Record<string, unknown>;
@@ -181,6 +207,8 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     const gid = String(groupId || "").trim();
     if (!gid || !raw || typeof raw !== "object") continue;
     const session = raw as {
+      workView?: unknown;
+      terminalPage?: unknown;
       chatFilter?: unknown;
       mobileSurface?: unknown;
       presentationDockOpen?: unknown;
@@ -188,6 +216,8 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     };
     next[gid] = {
       ...DEFAULT_CHAT_SESSION,
+      workView: session.workView === "terminals" ? "terminals" : "messages",
+      terminalPage: sanitizeTerminalPage(session.terminalPage),
       chatFilter:
         session.chatFilter === "user" ||
         session.chatFilter === "mail" ||
@@ -220,6 +250,8 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
       Object.entries(sessions).map(([groupId, session]) => [
         groupId,
         {
+          workView: session.workView,
+          terminalPage: session.terminalPage,
           chatFilter: session.chatFilter,
           mobileSurface: session.mobileSurface,
           presentationDockOpen: session.presentationDockOpen,
@@ -261,6 +293,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Initial state
   activeTab: "chat",
   busy: "",
+  actorBusy: {},
   errorMsg: "",
   notice: null,
   isTransitioning: false,
@@ -276,6 +309,15 @@ export const useUIStore = create<UIState>((set) => ({
   // Actions
   setActiveTab: (tab) => set({ activeTab: tab }),
   setBusy: (busy) => set({ busy }),
+  changeActorBusy: (groupId, actorId, delta) =>
+    set((state) => {
+      const key = JSON.stringify([groupId, actorId]);
+      const actorBusy = { ...state.actorBusy };
+      const count = (actorBusy[key] || 0) + delta;
+      if (count > 0) actorBusy[key] = count;
+      else delete actorBusy[key];
+      return { actorBusy };
+    }),
   setError: (msg) => set({ errorMsg: msg }),
 
   showError: (msg) => {
@@ -366,6 +408,22 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => {
       const chatSessions = updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap });
       if (chatSessions === state.chatSessions) return state;
+      return { chatSessions };
+    }),
+  setGroupWorkView: (groupId, workView) =>
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { workView });
+      if (chatSessions === state.chatSessions) return state;
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
+  setGroupTerminalPage: (groupId, page) =>
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        terminalPage: sanitizeTerminalPage(page),
+      });
+      if (chatSessions === state.chatSessions) return state;
+      saveChatSessions(chatSessions);
       return { chatSessions };
     }),
   setChatMobileSurface: (groupId, v) =>

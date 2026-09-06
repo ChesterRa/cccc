@@ -5,7 +5,7 @@ import { ActorAvatar } from "../../components/ActorAvatar";
 import { PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import { ShineBorder } from "@/registry/magicui/shine-border";
-import type { Actor } from "../../types";
+import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
@@ -340,6 +340,7 @@ export interface RuntimeDockProps {
   groupId: string;
   runtimeActors: Actor[];
   liveWorkCards: LiveWorkCard[];
+  runtimeEvents?: Record<string, HeadlessStreamEvent[]>;
   activeRuntimeActorId?: string;
   isDark: boolean;
   isSmallScreen: boolean;
@@ -353,6 +354,7 @@ export function RuntimeDock({
   groupId,
   runtimeActors,
   liveWorkCards,
+  runtimeEvents,
   activeRuntimeActorId,
   isDark,
   isSmallScreen,
@@ -367,7 +369,10 @@ export function RuntimeDock({
     () => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }),
     [runtimeActors, liveWorkCards],
   );
-  const tickerEntries = useMemo(() => buildRuntimeDockTickerEntries(items), [items]);
+  const tickerEntries = useMemo(
+    () => buildRuntimeDockTickerEntries(items, runtimeEvents),
+    [items, runtimeEvents],
+  );
 
   if (items.length <= 0) return null;
 
@@ -380,6 +385,13 @@ export function RuntimeDock({
             isSmallScreen ? "max-w-[calc(100vw-2.5rem)]" : "",
           )}
         >
+          <RuntimeDockTicker
+            key={groupId}
+            groupId={groupId}
+            entries={tickerEntries}
+            isDark={isDark}
+            suppressed={Boolean(activeRuntimeActorId)}
+          />
           <div
             className={classNames(
               "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
@@ -391,13 +403,6 @@ export function RuntimeDock({
             <div
               className={classNames("relative flex items-end", isSmallScreen ? "gap-2" : "gap-2.5")}
             >
-              <RuntimeDockTicker
-                key={groupId}
-                groupId={groupId}
-                entries={tickerEntries}
-                isDark={isDark}
-                suppressed={Boolean(activeRuntimeActorId)}
-              />
               {items.map((item) => (
                 <RuntimeDockActorButton
                   key={item.actorId}

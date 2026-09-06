@@ -237,6 +237,7 @@ export class CodexVoiceBrowserSession {
   }
 
   private handleServerMessage(message: CodexVoiceServerMessage): void {
+    if (this.stopping) return;
     switch (message.type) {
       case "notification_status":
         this.callbacks.onNotificationPaused?.(message.paused === true);
@@ -292,6 +293,9 @@ export class CodexVoiceBrowserSession {
     else if (data instanceof Blob) text = await data.text();
     else if (data instanceof ArrayBuffer) text = new TextDecoder().decode(data);
     else return;
+    // Blob decoding can finish after orderly stop. A late event must not
+    // overwrite the stopped/failed call's status or the next call's UI.
+    if (this.stopping) return;
     let event: unknown;
     try {
       event = JSON.parse(text);

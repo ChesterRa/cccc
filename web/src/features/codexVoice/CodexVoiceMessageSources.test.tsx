@@ -33,7 +33,7 @@ vi.mock("../../services/api/codexVoice", () => ({
   true;
 
 describe("Voice notification delivery status", () => {
-  it("shows known queued speech separately from delivery uncertainty and preserves source access", async () => {
+  it("shows queued delivery separately from receipt uncertainty and preserves source access", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
     const open = vi.fn();
@@ -42,7 +42,7 @@ describe("Voice notification delivery status", () => {
         <CodexVoiceMessageSources
           active
           onOpenSource={open}
-          outputStatus={{ queued: 1, blocked: "conversation" }}
+          outputStatus={{ queued: 1, blocked: "backpressure" }}
         />,
       ),
     );
@@ -55,7 +55,7 @@ describe("Voice notification delivery status", () => {
       "voicePreferences.unconfirmed",
     );
     expect(host.querySelector('[role="status"]')?.textContent).toContain(
-      "voicePreferences.wait_conversation",
+      "voicePreferences.wait_backpressure",
     );
     expect(host.querySelector('[role="status"]')?.textContent).toContain(
       "voicePreferences.unconfirmed",
