@@ -50,6 +50,7 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod voice_notifications;
 pub mod voice_recording_lease;
 pub mod web_bootstrap;
 pub mod web_login_grants;

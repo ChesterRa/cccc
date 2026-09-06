@@ -7,6 +7,61 @@ use cccc_core::{GroupStore, HomeLayout, ledger};
 use serde_json::{Map, Value, json};
 
 #[test]
+fn voice_origin_is_registered_at_canonical_send_and_reply_without_public_metadata() {
+    use cccc_core::voice_notifications as voice;
+    let temp = tempfile::tempdir().expect("home");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("Voice source", "").expect("group");
+    let mut actor = cccc_contracts::Actor::new("worker");
+    actor.runtime = cccc_contracts::ActorRuntime::WebModel;
+    group.actors.push(actor);
+    store.save(&group).expect("save");
+    let token = "b".repeat(32);
+    voice::register_origin(
+        &home,
+        &token,
+        "analyst",
+        "thread",
+        cccc_contracts::ActorRuntime::Codex,
+    )
+    .expect("origin");
+    let first = call(
+        &home,
+        "send",
+        json!({"group_id":group.group_id,"by":"user","to":["worker"],"text":"Investigate","message_mode":"send","_voice_origin":token}),
+    );
+    let correction = call(
+        &home,
+        "reply",
+        json!({"group_id":group.group_id,"by":"user","to":["worker"],"text":"Also inspect the second case","reply_to":first.result["event"]["id"],"_voice_origin":token}),
+    );
+    for source in [&first, &correction] {
+        assert!(
+            source.result["event"]["data"]
+                .get("_voice_origin")
+                .is_none()
+        );
+        for text in ["Received", "Finished"] {
+            call(
+                &home,
+                "reply",
+                json!({"group_id":group.group_id,"by":"worker","to":["user"],"text":text,"reply_to":source.result["event"]["id"]}),
+            );
+        }
+    }
+    voice::scan(&home).expect("scan canonical replies");
+    assert_eq!(voice::snapshot(&home).expect("snapshot").messages.len(), 4);
+    let ledger =
+        ledger::read_all(&store.ledger_path(&group.group_id).expect("path")).expect("ledger");
+    assert!(
+        !serde_json::to_string(&ledger)
+            .expect("JSON")
+            .contains(&token)
+    );
+}
+
+#[test]
 fn duplicate_client_id_returns_the_original_event() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

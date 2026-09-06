@@ -270,6 +270,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn voice_polling_during_actor_start_does_not_block_nested_mcp_discovery() {
+        use std::future::{Future, poll_fn};
+        use std::task::Poll;
+
+        for op in ["voice_preferences_get", "voice_notifications_get"] {
+            let locks = DispatchLocks::default();
+            let _startup = locks
+                .acquire(&request("actor_start", json!({"group_id":"g_one"})))
+                .await;
+            let poll_request = request(op, json!({}));
+            let polling = locks.acquire(&poll_request);
+            tokio::pin!(polling);
+            let mut poll_permit = None;
+            // Poll once before discovery: a misclassified GET queues a writer,
+            // which prevents the startup's nested read from making progress.
+            poll_fn(|cx| {
+                if let Poll::Ready(permit) = polling.as_mut().poll(cx) {
+                    poll_permit = Some(permit);
+                }
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                locks.acquire(&request(
+                    "capability_state",
+                    json!({
+                        "group_id":"g_one", "actor_id":"worker", "view":"mcp_catalog"
+                    }),
+                )),
+            )
+            .await
+            .expect("Voice polling must not create an actor-start/MCP lock cycle");
+            assert!(matches!(
+                poll_permit,
+                Some(DispatchPermit::GlobalRead { .. })
+            ));
+        }
+        for op in ["voice_preferences_set", "voice_messages_viewed"] {
+            assert!(matches!(
+                access(&request(op, json!({}))),
+                Access::GlobalWrite
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn capability_catalog_can_be_read_while_runtime_start_holds_the_group_lock() {
         let locks = DispatchLocks::default();
         let _runtime_start = locks.group_write("g_one").await;

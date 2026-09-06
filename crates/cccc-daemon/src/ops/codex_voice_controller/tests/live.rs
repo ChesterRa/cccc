@@ -59,6 +59,7 @@ async fn live_realtime_delegation_runs_through_the_global_analyst_when_enabled()
             base_url: std::env::var("CCCC_CODEX_VOICE_BASE_URL")
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex".into()),
             voice: "cove".into(),
+            preferences: Default::default(),
         },
         &offer,
     )
@@ -153,6 +154,7 @@ async fn live_realtime_identity_question_stays_in_voice_when_enabled() {
             base_url: std::env::var("CCCC_CODEX_VOICE_BASE_URL")
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex".into()),
             voice: "cove".into(),
+            preferences: Default::default(),
         },
         &offer,
     )

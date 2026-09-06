@@ -14,6 +14,8 @@ import { codexVoiceErrorText, codexVoiceWarningText } from "./codexVoiceControll
 import { useCodexVoicePolling } from "./useCodexVoicePolling";
 import { useCodexVoicePreferencesState } from "./useCodexVoicePreferencesState";
 import { useCodexVoiceWindowLifecycle } from "./useCodexVoiceWindowLifecycle";
+import type { VoiceConversationTurn } from "./codexVoiceProtocol";
+import type { CodexVoiceOutputStatus } from "./codexVoiceProviderChannel";
 
 const ENGAGED_PHASES: CodexVoicePhase[] = ["preparing", "connecting", "stopping"];
 
@@ -28,11 +30,15 @@ export function useCodexVoiceSessionController(enabled = true) {
   const [analyst, setAnalyst] = useState<CodexVoiceAnalystInfo | null>(null);
   const [owned, setOwned] = useState(false);
   const [checking, setChecking] = useState(enabled);
-  const [userTranscript, setUserTranscript] = useState("");
-  const [assistantTranscript, setAssistantTranscript] = useState("");
+  const [conversation, setConversation] = useState<VoiceConversationTurn[]>([]);
+  const [notificationPaused, setNotificationPaused] = useState(false);
   const [microphoneMuted, setMicrophoneMuted] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [error, setError] = useState("");
+  const [outputStatus, setOutputStatus] = useState<CodexVoiceOutputStatus>({
+    queued: 0,
+    blocked: null,
+  });
   const { preferences, supportedVoices, updatePreferences, acceptSupportedVoices } =
     useCodexVoicePreferencesState();
   const [readiness, setReadiness] = useState<CodexVoiceReadiness | null>(null);
@@ -88,10 +94,11 @@ export function useCodexVoiceSessionController(enabled = true) {
     refreshGenerationRef.current += 1;
     setChecking(false);
     setError("");
-    setUserTranscript("");
-    setAssistantTranscript("");
+    setConversation([]);
+    setNotificationPaused(false);
     setMicrophoneMuted(false);
     setPlaybackBlocked(false);
+    setOutputStatus({ queued: 0, blocked: null });
 
     const session = new CodexVoiceBrowserSession({
       audio,
@@ -112,16 +119,21 @@ export function useCodexVoiceSessionController(enabled = true) {
           if (!mountedRef.current) return;
           setAnalyst(next);
         },
-        onUserTranscript: (text) => {
-          if (mountedRef.current) setUserTranscript(text);
+        onUserTranscript: () => undefined,
+        onAssistantTranscript: () => undefined,
+        onConversation: (turns) => {
+          if (mountedRef.current) setConversation(turns);
         },
-        onAssistantTranscript: (text) => {
-          if (mountedRef.current) setAssistantTranscript(text);
+        onNotificationPaused: (paused) => {
+          if (mountedRef.current) setNotificationPaused(paused);
         },
         onAnalystProgress: () => undefined,
         onAnalystResult: () => undefined,
         onPlaybackBlocked: (blocked) => {
           if (mountedRef.current) setPlaybackBlocked(blocked);
+        },
+        onOutputStatus: (status) => {
+          if (mountedRef.current) setOutputStatus(status);
         },
         onError: (code, providerCode) => {
           if (mountedRef.current) setError(codexVoiceErrorText(t, code, providerCode));
@@ -217,10 +229,11 @@ export function useCodexVoiceSessionController(enabled = true) {
       analyst,
       owned,
       checking,
-      userTranscript,
-      assistantTranscript,
+      conversation,
+      notificationPaused,
       microphoneMuted,
       playbackBlocked,
+      outputStatus,
       error,
       preferences,
       supportedVoices,
@@ -242,7 +255,8 @@ export function useCodexVoiceSessionController(enabled = true) {
     }),
     [
       analyst,
-      assistantTranscript,
+      conversation,
+      notificationPaused,
       call,
       checking,
       cancelInvestigation,
@@ -254,6 +268,7 @@ export function useCodexVoiceSessionController(enabled = true) {
       phase,
       preferences,
       playbackBlocked,
+      outputStatus,
       refresh,
       readiness,
       resumeAudio,
@@ -261,7 +276,6 @@ export function useCodexVoiceSessionController(enabled = true) {
       startNewAnalyst,
       supportedVoices,
       toggleMicrophone,
-      userTranscript,
       updatePreferences,
       t,
     ],

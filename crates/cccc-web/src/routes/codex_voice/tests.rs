@@ -10,6 +10,110 @@ use serde_json::json;
 use tower::ServiceExt;
 
 #[test]
+fn connected_voice_principal_loses_authority_when_its_token_is_revoked() {
+    let temp = tempfile::tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let store = AccessTokenStore::new(home.clone()).expect("tokens");
+    let token = store.create("admin", vec![], true, None).expect("admin");
+    store
+        .create("remaining-admin", vec![], true, None)
+        .expect("retain another administrator");
+    let principal = crate::auth::Principal {
+        user_id: token.user_id.clone(),
+        allowed_groups: vec![],
+        is_admin: true,
+        raw_token: token.token.clone(),
+    };
+    assert!(principal.current_voice_admin(&home).expect("current"));
+    store.delete(&token.token_id()).expect("revoke");
+    assert!(!principal.current_voice_admin(&home).expect("revoked"));
+    assert!(
+        principal.is_admin,
+        "the initial WebSocket identity alone is insufficient"
+    );
+}
+
+#[tokio::test]
+async fn exhibit_cannot_read_or_mutate_voice_notification_state_even_as_admin() {
+    let temp = tempfile::tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize");
+    let token = AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("admin", vec![], true, None)
+        .expect("admin");
+    let router = app_with_mode(home.clone(), WebMode::Exhibit);
+    for (method, path) in [
+        ("GET", "preferences"),
+        ("PUT", "preferences"),
+        ("GET", "notifications"),
+        ("POST", "messages/viewed"),
+        ("POST", "calls/fake/notification-output"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/api/v1/codex_voice/{path}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    assert!(
+        !home
+            .root()
+            .join("state/codex_voice/notifications.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn scoped_users_cannot_read_or_mutate_global_voice_notification_state() {
+    let temp = tempfile::tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("home");
+    let token = AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("scoped", vec!["g_one".into()], false, None)
+        .expect("token");
+    let router = app_with_mode(home.clone(), WebMode::Normal);
+    for (method, path) in [
+        ("GET", "preferences"),
+        ("PUT", "preferences"),
+        ("GET", "notifications"),
+        ("POST", "messages/viewed"),
+        ("POST", "calls/fake/notification-output"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/api/v1/codex_voice/{path}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    assert!(
+        !home
+            .root()
+            .join("state/codex_voice/notifications.json")
+            .exists()
+    );
+}
+
+#[test]
 fn public_voice_payloads_do_not_expose_local_paths_or_codex_commands() {
     let value = info_value(SessionInfo {
         generation: "voice-1".into(),

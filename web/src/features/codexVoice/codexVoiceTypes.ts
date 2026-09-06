@@ -1,4 +1,6 @@
 import type { CodexVoiceAnalystInfo, CodexVoiceCallInfo } from "../../services/api";
+import type { CodexVoiceOutputStatus } from "./codexVoiceProviderChannel";
+import type { VoiceConversationTurn } from "./codexVoiceProtocol";
 
 export type CodexVoicePhase =
   | "idle"
@@ -20,5 +22,8 @@ export type CodexVoiceSessionCallbacks = {
   onAnalystProgress(text: string): void;
   onAnalystResult(text: string): void;
   onPlaybackBlocked(blocked: boolean): void;
+  onOutputStatus?(status: CodexVoiceOutputStatus): void;
+  onConversation?(turns: VoiceConversationTurn[]): void;
+  onNotificationPaused?(paused: boolean): void;
   onError(code: string, providerCode?: string): void;
 };

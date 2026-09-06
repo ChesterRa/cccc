@@ -1,8 +1,23 @@
 const MAX_VISIBLE_TRANSCRIPT_CHARS = 4_000;
 
-export type RealtimeTranscriptUpdate = { role: "user" | "assistant"; text: string; final: boolean };
+export type RealtimeTranscriptUpdate = {
+  role: "user" | "assistant";
+  text: string;
+  final: boolean;
+  turnId?: string;
+};
+export type VoiceConversationTurn = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  final: boolean;
+};
+export const MAX_CONVERSATION_TURNS = 40;
 
 export class RealtimeTranscriptAccumulator {
+  private turns: VoiceConversationTurn[] = [];
+  private readonly activeIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
+  private nextId = 0;
   private activeRole: RealtimeTranscriptUpdate["role"] | null = null;
   private readonly text: Record<RealtimeTranscriptUpdate["role"], string> = {
     user: "",
@@ -13,8 +28,46 @@ export class RealtimeTranscriptAccumulator {
     assistant: true,
   };
 
+  observeTurn(event: unknown): void {
+    const record = asRecord(event);
+    const turn = asRecord(record?.turn);
+    if (
+      record?.type !== "turn.created" ||
+      typeof turn?.id !== "string" ||
+      (turn.role !== "user" && turn.role !== "assistant")
+    )
+      return;
+    this.activeIds[turn.role] = turn.id;
+    this.ensureTurn(turn.id, turn.role);
+  }
+
+  history(): VoiceConversationTurn[] {
+    return this.turns.filter((turn) => turn.text.trim()).map((turn) => ({ ...turn }));
+  }
+
+  private ensureTurn(id: string, role: RealtimeTranscriptUpdate["role"]): VoiceConversationTurn {
+    let turn = this.turns.find((candidate) => candidate.id === id);
+    if (!turn) {
+      turn = { id, role, text: "", final: false };
+      this.turns.push(turn);
+      this.turns = this.turns.slice(-MAX_CONVERSATION_TURNS);
+    }
+    return turn;
+  }
+
   apply(update: RealtimeTranscriptUpdate): string {
     const role = update.role;
+    const id = update.turnId || this.activeIds[role] || `local-${++this.nextId}`;
+    const turn = this.ensureTurn(id, role);
+    turn.text = update.final
+      ? boundedText(update.text)
+      : boundedDelta(`${turn.text}${update.text}`);
+    turn.final = update.final;
+    if (update.final) {
+      if (this.activeIds[role] === id) delete this.activeIds[role];
+    } else {
+      this.activeIds[role] = id;
+    }
     if (update.final) {
       this.text[role] = boundedText(update.text);
       this.final[role] = true;
@@ -51,7 +104,9 @@ export function realtimeTranscriptUpdate(value: unknown): RealtimeTranscriptUpda
   const turn = asRecord(event.turn);
   const role = turn?.role === "user" ? "user" : turn?.role === "assistant" ? "assistant" : null;
   const text = boundedText(turn?.transcript);
-  return role && typeof turn?.transcript === "string" ? { role, text, final: true } : null;
+  return role && typeof turn?.transcript === "string"
+    ? { role, text, final: true, ...(typeof turn.id === "string" ? { turnId: turn.id } : {}) }
+    : null;
 }
 
 export function eventStreamCloseCode(lastServerErrorCode: string): string {

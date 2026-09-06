@@ -15,7 +15,12 @@ pub(super) async fn serve(
     state: AppState,
     session: Arc<crate::codex_voice::AnalystRuntime>,
     query: TerminalQuery,
+    principal: crate::auth::Principal,
 ) {
+    if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     let mode = if query.mode.trim().eq_ignore_ascii_case("viewer") {
         cccc_runtime::TerminalAttachMode::Viewer
     } else {
@@ -44,6 +49,10 @@ pub(super) async fn serve(
             return;
         }
     };
+    if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     let attachment_id = attachment.attachment_id();
     let mut attachment_writable = attachment.terminal_writable();
     let analyst_input_allowed = session.analyst().terminal_input_allowed().await;
@@ -105,6 +114,8 @@ pub(super) async fn serve(
     let input = attachment.input();
     let mut shutdown = state.shutdown.subscribe();
     let mut writable_poll = tokio::time::interval(Duration::from_millis(100));
+    let mut authorization_poll = tokio::time::interval(Duration::from_secs(1));
+    authorization_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     writable_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
@@ -112,6 +123,12 @@ pub(super) async fn serve(
             _ = shutdown.recv() => {
                 let _ = socket.send(Message::Close(None)).await;
                 break;
+            }
+            _ = authorization_poll.tick() => {
+                if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
             }
             _ = writable_poll.tick(), if mode == cccc_runtime::TerminalAttachMode::Control => {
                 let Ok(next_attachment_writable) = session.terminal_writable(attachment_id) else { continue; };
@@ -127,6 +144,10 @@ pub(super) async fn serve(
                 }
             }
             message = socket.recv() => {
+                if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
                 let Some(Ok(message)) = message else { break; };
                 if let Some(cursor) = output_ack_cursor(&message) {
                     output_flow.acknowledge(cursor);
@@ -148,6 +169,10 @@ pub(super) async fn serve(
                 if output_flow.can_send(TERMINAL_OUTPUT_PAGE_BYTES) => {
                 match output {
                     Ok(Some(output)) => {
+                        if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                            let _ = socket.send(Message::Close(None)).await;
+                            break;
+                        }
                         if !send_output_frame(
                             &mut socket, b'1', &output.data, output.end_cursor, &mut output_flow,
                         ).await {

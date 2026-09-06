@@ -88,6 +88,63 @@ async function renderSettings(sessionController = controller()) {
 }
 
 describe("CodexVoiceAnalystSettings", () => {
+  it("refreshes a clean form on return so another settings change does not stay hidden", async () => {
+    api.fetchSettings
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { settings: customSettings, environment_keys: [] },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { settings: { ...customSettings, runtime: "claude" }, environment_keys: [] },
+      });
+    api.listProfiles.mockResolvedValue({ ok: true, result: { profiles: [] } });
+    const sessionController = controller();
+    const { host, root } = await renderSettings(sessionController);
+    await act(async () =>
+      root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
+    );
+    await act(async () =>
+      root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
+    );
+    expect(api.fetchSettings).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[role="combobox"]')?.textContent).toContain("Claude");
+    expect(host.textContent).not.toContain("codexVoiceUnsavedChanges");
+    await act(async () => root.unmount());
+  });
+  it.each([true, false])(
+    "preserves unsaved drafts across tab changes (profiles loaded: %s) until discarded",
+    async (profilesOk) => {
+      api.fetchSettings.mockResolvedValue({
+        ok: true,
+        result: { settings: customSettings, environment_keys: [] },
+      });
+      api.listProfiles.mockResolvedValue(
+        profilesOk
+          ? { ok: true, result: { profiles: [] } }
+          : { ok: false, error: { message: "unavailable" } },
+      );
+      const sessionController = controller();
+      const { host, root } = await renderSettings(sessionController);
+      const toggle = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      await act(async () => toggle.click());
+      expect(toggle.checked).toBe(false);
+      await act(async () =>
+        root.render(<CodexVoiceAnalystSettings active={false} controller={sessionController} />),
+      );
+      await act(async () =>
+        root.render(<CodexVoiceAnalystSettings active controller={sessionController} />),
+      );
+      expect(api.fetchSettings).toHaveBeenCalledOnce();
+      expect(toggle.checked).toBe(false);
+      expect(host.textContent).toContain("codexVoiceUnsavedChanges");
+      expect(api.updateSettings).not.toHaveBeenCalled();
+      await act(async () => buttonWithText(host, "codexVoiceDiscardChanges").click());
+      expect(toggle.checked).toBe(true);
+      expect(host.textContent).not.toContain("codexVoiceUnsavedChanges");
+      await act(async () => root.unmount());
+    },
+  );
   it("allows an explicit runtime switch while Analyst work is still active", async () => {
     api.fetchSettings.mockResolvedValue({
       ok: true,

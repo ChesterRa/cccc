@@ -9,6 +9,7 @@ import {
   CodexVoiceOverlays,
 } from "../../features/codexVoice/CodexVoiceShellSurfaces";
 import { useCodexVoiceShell } from "../../features/codexVoice/useCodexVoiceShell";
+import { useVoiceViewedMessages } from "../../features/codexVoice/useVoiceViewedMessages";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
 import type {
@@ -23,6 +24,8 @@ import { getSidebarWidthCssValue, SIDEBAR_COLLAPSED_WIDTH } from "../../stores/u
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
 type AppShellProps = {
+  canUseVoice?: boolean;
+  onOpenVoiceSource?: (groupId: string, eventId: string) => void;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
   selectedGroupId: string;
@@ -121,6 +124,8 @@ function areMountedRuntimeActorSnapshotsEqual(
 }
 
 export function AppShell({
+  canUseVoice = false,
+  onOpenVoiceSource,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -208,7 +213,12 @@ export function AppShell({
   } as CSSProperties;
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
-  const codexVoice = useCodexVoiceShell(!webReadOnly);
+  const codexVoice = useCodexVoiceShell(!webReadOnly && canUseVoice);
+  useVoiceViewedMessages(
+    contentRef,
+    selectedGroupId,
+    !webReadOnly && canUseVoice && activeTab === "chat",
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -239,7 +249,7 @@ export function AppShell({
         sidebarWidth={sidebarWidth}
         isDark={isDark}
         readOnly={webReadOnly}
-        codexVoice={codexVoice}
+        codexVoice={canUseVoice ? codexVoice : undefined}
         onSelectGroup={onSelectGroup}
         onWarmGroup={onWarmGroup}
         onCreateGroup={onCreateGroup}
@@ -279,7 +289,7 @@ export function AppShell({
           onOpenMobileMenu={onOpenMobileMenu}
         />
 
-        {!webReadOnly ? <CodexVoiceMobileDock voice={codexVoice} /> : null}
+        {!webReadOnly && canUseVoice ? <CodexVoiceMobileDock voice={codexVoice} /> : null}
 
         <div
           ref={contentRef}
@@ -386,7 +396,12 @@ export function AppShell({
         </div>
       </main>
 
-      <CodexVoiceOverlays voice={codexVoice} isDark={isDark} isSmallScreen={isSmallScreen} />
+      <CodexVoiceOverlays
+        voice={codexVoice}
+        isDark={isDark}
+        isSmallScreen={isSmallScreen}
+        onOpenSource={onOpenVoiceSource}
+      />
     </div>
   );
 }

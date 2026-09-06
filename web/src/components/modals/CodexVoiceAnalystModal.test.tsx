@@ -28,10 +28,11 @@ function controller(
     analyst: null,
     owned: false,
     checking: false,
-    userTranscript: "",
-    assistantTranscript: "",
+    conversation: [],
+    notificationPaused: false,
     microphoneMuted: false,
     playbackBlocked: false,
+    outputStatus: { queued: 0, blocked: null },
     error: "",
     isStarting: false,
     isEngaged: false,
@@ -141,8 +142,10 @@ describe("CodexVoiceAnalystModal", () => {
         isDark={false}
         isSmallScreen={false}
         controller={controller({
-          userTranscript: "今天天气怎么样",
-          assistantTranscript: "我来帮你查一下。",
+          conversation: [
+            { id: "user", role: "user", text: "今天天气怎么样", final: true },
+            { id: "assistant", role: "assistant", text: "我来帮你查一下。", final: true },
+          ],
         })}
         onClose={vi.fn()}
       />,

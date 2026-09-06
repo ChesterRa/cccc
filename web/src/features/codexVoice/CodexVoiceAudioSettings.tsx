@@ -71,9 +71,6 @@ export function CodexVoiceAudioSettings({
             </option>
           ))}
         </select>
-        <span className="mt-1.5 block text-[11px] leading-4 text-[var(--color-text-muted)]">
-          {controller.isEngaged ? t("codexVoiceVoiceNextCall") : t("codexVoiceVoiceHint")}
-        </span>
       </label>
 
       <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
@@ -135,6 +132,9 @@ export function CodexVoiceAudioSettings({
           </Button>
         </div>
       </div>
+      <p className="col-span-full text-xs leading-5 text-[var(--color-text-muted)]">
+        {t("codexVoiceAudioPreferencesHint")}
+      </p>
     </div>
   );
 }

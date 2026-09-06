@@ -300,6 +300,12 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     }
     delivery_data.remove("transport");
+    if let Some(origin) = request.args.get(cccc_core::voice_notifications::ORIGIN_ARG) {
+        delivery_data.insert(
+            cccc_core::voice_notifications::ORIGIN_ARG.into(),
+            origin.clone(),
+        );
+    }
     delivery_data.remove("dst_group_id");
     delivery_data.remove("to_group_id");
     super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;
@@ -902,11 +908,22 @@ pub(super) fn append(
     group_id: &str,
     kind: &str,
     by: &str,
-    data: Map<String, Value>,
+    mut data: Map<String, Value>,
 ) -> Result<Event, OpError> {
+    let origin = data.remove(cccc_core::voice_notifications::ORIGIN_ARG);
     let mut event = Event::new(kind, group_id);
     event.by = by.into();
     event.data = data;
+    if let Some(origin) = origin {
+        let token = origin
+            .as_str()
+            .ok_or_else(|| OpError::new("invalid_voice_origin", "invalid Voice origin"))?;
+        // Source copies never establish a second request or notification.
+        if !event.data.contains_key("dst_group_id") {
+            cccc_core::voice_notifications::register_request(home, token, &event)
+                .map_err(OpError::io)?;
+        }
+    }
     cccc_core::ledger::append(
         &store(home)?.ledger_path(group_id).map_err(OpError::io)?,
         &event,

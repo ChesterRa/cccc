@@ -40,7 +40,6 @@ impl CodexVoiceSessions {
                 .take()
                 .expect("checked active Codex Voice call")
         };
-        session.analyst.set_call_generation(None);
         session
             .call
             .stop(generation)
@@ -75,7 +74,6 @@ impl CodexVoiceSessions {
                 .take()
                 .expect("checked active Codex Voice call")
         };
-        session.analyst.set_call_generation(None);
         session
             .call
             .stop(generation)
@@ -109,7 +107,7 @@ impl CodexVoiceSessions {
                 .await
                 .context("start a new Voice Analyst session")?,
         );
-        replacement.start_monitor(home.clone(), self.ledger_events.clone());
+        replacement.start_monitor(home.clone());
         persistence::persist_analyst(home, &replacement, false)?;
         state.analyst = Some(Arc::clone(&replacement));
         previous.stop_terminal();
@@ -128,7 +126,6 @@ impl CodexVoiceSessions {
                 .connection_state
                 .store(CONNECTION_CLOSING, Ordering::Release);
             let generation = session.call.generation().to_owned();
-            session.analyst.set_call_generation(None);
             if let Err(error) = session.call.stop(&generation).await {
                 first_error = Some(error.context("stop Codex Voice audio call during shutdown"));
             }
@@ -152,7 +149,6 @@ impl Default for CodexVoiceSessions {
     fn default() -> Self {
         Self {
             state: Mutex::new(ManagedState::default()),
-            ledger_events: None,
         }
     }
 }

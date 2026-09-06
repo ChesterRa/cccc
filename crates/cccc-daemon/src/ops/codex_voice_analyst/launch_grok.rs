@@ -32,7 +32,8 @@ impl AnalystSession {
         if let Some(profile) = tool_profile {
             env.insert("CCCC_MCP_TOOL_PROFILE".into(), profile.into());
         }
-        let mcp_server = acp_mcp_server(home, &cccc, group_id, actor_id, tool_profile);
+        let mut mcp_server = acp_mcp_server(home, &cccc, group_id, actor_id, tool_profile);
+        add_voice_mcp_origin(&mut mcp_server, &env, purpose);
         let session_command = command.clone();
         let prepared = grok::prepare(home, &command, &env, &generation)?;
         let resume_session_id = if let Some((group_id, actor_id)) = actor {

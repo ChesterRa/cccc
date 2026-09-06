@@ -167,9 +167,17 @@ impl CodexVoiceCall {
         state
             .projections
             .entry(receipt.turn_id.clone())
-            .and_modify(|projection| projection.delegation_id = receipt.delegation_id.clone())
+            .and_modify(|projection| {
+                projection.delegation_id = receipt.delegation_id.clone();
+                if !projection.delegation_ids.contains(&receipt.delegation_id) {
+                    projection
+                        .delegation_ids
+                        .push(receipt.delegation_id.clone());
+                }
+            })
             .or_insert_with(|| CallProjection {
                 delegation_id: receipt.delegation_id.clone(),
+                delegation_ids: vec![receipt.delegation_id.clone()],
                 ..CallProjection::default()
             });
     }
@@ -220,7 +228,7 @@ impl CodexVoiceCall {
         let target = projection.delegation_id.clone();
         let had_progress = projection.progress.streamed();
         let remaining = projection.progress.finish(result);
-        let commands = if had_progress {
+        let commands = if had_progress || projection.delegation_ids.len() > 1 {
             remaining
                 .into_iter()
                 .flat_map(|chunk| session_context_commands(&chunk))
@@ -234,6 +242,7 @@ impl CodexVoiceCall {
         projection.projected = true;
         Ok(Some(FinalProjection {
             delegation_id: target,
+            delegation_ids: projection.delegation_ids.clone(),
             commands,
         }))
     }

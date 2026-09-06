@@ -38,6 +38,22 @@ impl Principal {
     pub fn allows(&self, group_id: &str) -> bool {
         self.is_admin || self.allowed_groups.iter().any(|item| item == group_id)
     }
+
+    /// Long-lived global Voice work must not outlive a revoked remote token.
+    pub(crate) fn current_voice_admin(
+        &self,
+        home: &cccc_core::HomeLayout,
+    ) -> std::io::Result<bool> {
+        if !self.is_admin {
+            return Ok(false);
+        }
+        if self.raw_token.is_empty() {
+            return Ok(self.user_id == "local");
+        }
+        Ok(AccessTokenStore::new(home.clone())?
+            .lookup(&self.raw_token)?
+            .is_some_and(|token| token.is_admin && token.user_id == self.user_id))
+    }
 }
 
 pub async fn authorize(

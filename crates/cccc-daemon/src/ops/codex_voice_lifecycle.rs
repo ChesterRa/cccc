@@ -27,14 +27,16 @@ impl AnalystTurnOrigin {
     pub fn is_actor_result(self) -> bool {
         matches!(self, Self::ActorResult { .. })
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrackedWork {
-    pub group_id: String,
-    pub task_id: String,
-    pub source_event_id: String,
-    pub actor_id: String,
+    fn merged(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Voice, _) | (_, Self::Voice) => Self::Voice,
+            (Self::ActorResult { speakable: a }, Self::ActorResult { speakable: b }) => {
+                Self::ActorResult { speakable: a || b }
+            }
+            (Self::Terminal, origin) | (origin, Self::Terminal) => origin,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -55,11 +57,11 @@ pub enum AnalystLifecycleEvent {
     Completed {
         turn_id: String,
         delegation_id: String,
+        delegation_ids: Vec<String>,
         status: String,
         result: String,
         speakable: bool,
     },
-    TrackedWork(TrackedWork),
     NeedsAttention {
         code: &'static str,
     },
@@ -77,6 +79,7 @@ pub enum VoiceDelegationAdmission {
 struct ActiveTurn {
     turn_id: String,
     latest_delegation_id: String,
+    delegation_ids: Vec<String>,
     origin: AnalystTurnOrigin,
     cancelling: bool,
     deltas: String,

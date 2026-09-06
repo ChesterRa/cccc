@@ -12,6 +12,30 @@ impl AnalystLifecycle {
         delegation_id: &str,
         text: &str,
     ) -> Result<VoiceDelegationAdmission> {
+        self.admit_input(delegation_id, text, AnalystTurnOrigin::Voice)
+            .await
+    }
+
+    pub(crate) async fn begin_actor_result(
+        &self,
+        correlation_id: &str,
+        text: &str,
+        speakable: bool,
+    ) -> Result<VoiceDelegationAdmission> {
+        self.admit_input(
+            correlation_id,
+            text,
+            AnalystTurnOrigin::ActorResult { speakable },
+        )
+        .await
+    }
+
+    async fn admit_input(
+        &self,
+        delegation_id: &str,
+        text: &str,
+        origin: AnalystTurnOrigin,
+    ) -> Result<VoiceDelegationAdmission> {
         let delegation_id = delegation_id.trim();
         let text = text.trim();
         if delegation_id.is_empty() || text.is_empty() {
@@ -45,7 +69,8 @@ impl AnalystLifecycle {
                 Ok(()) => {
                     let active = state.active.as_mut().expect("locked active turn");
                     active.latest_delegation_id = delegation_id.to_owned();
-                    active.origin = AnalystTurnOrigin::Voice;
+                    active.delegation_ids.push(delegation_id.to_owned());
+                    active.origin = active.origin.merged(origin);
                     let receipt = TurnReceipt {
                         delegation_id: delegation_id.to_owned(),
                         thread_id: self.session.thread_id().to_owned(),
@@ -54,6 +79,10 @@ impl AnalystLifecycle {
                     state
                         .delegations
                         .insert(delegation_id.to_owned(), receipt.clone());
+                    let _ = self.events.send(AnalystLifecycleEvent::Associated {
+                        receipt: receipt.clone(),
+                        origin,
+                    });
                     return Ok(VoiceDelegationAdmission::Turn(receipt));
                 }
                 Err(error) if steer_rejection_can_use_native_input(&error) => {
@@ -63,63 +92,31 @@ impl AnalystLifecycle {
             }
         }
         if state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty() {
-            return self.register_native_voice(delegation_id, text, state).await;
+            return self
+                .register_native_input(delegation_id, text, origin, state)
+                .await;
         }
-        match self
-            .start_new(delegation_id, text, AnalystTurnOrigin::Voice, state)
-            .await
-        {
+        match self.start_new(delegation_id, text, origin, state).await {
             Ok(receipt) => Ok(VoiceDelegationAdmission::Turn(receipt)),
             Err(error) if is_would_block(&error) => {
                 let state = self.state.lock().await;
-                self.register_native_voice(delegation_id, text, state).await
+                self.register_native_input(delegation_id, text, origin, state)
+                    .await
             }
             Err(error) => Err(error),
         }
     }
 
-    pub(crate) async fn begin_actor_result(
-        &self,
-        correlation_id: &str,
-        text: &str,
-        speakable: bool,
-    ) -> Result<TurnReceipt> {
-        self.begin(
-            correlation_id,
-            text,
-            AnalystTurnOrigin::ActorResult { speakable },
-        )
-        .await
-    }
-
-    async fn begin(
+    async fn register_native_input(
         &self,
         delegation_id: &str,
         text: &str,
         origin: AnalystTurnOrigin,
-    ) -> Result<TurnReceipt> {
-        let state = self.state.lock().await;
-        if state.invalidated {
-            bail!("Voice Analyst lifecycle is no longer trustworthy");
-        }
-        if let Some(receipt) = state.delegations.get(delegation_id) {
-            return Ok(receipt.clone());
-        }
-        if state.active.is_some() || state.pending.is_some() || !state.native_pending.is_empty() {
-            return Err(busy("Voice Analyst is busy with another investigation"));
-        }
-        self.start_new(delegation_id, text, origin, state).await
-    }
-
-    async fn register_native_voice(
-        &self,
-        delegation_id: &str,
-        text: &str,
         mut state: tokio::sync::MutexGuard<'_, LifecycleState>,
     ) -> Result<VoiceDelegationAdmission> {
         state.native_pending.push_back(PendingStart {
             delegation_id: delegation_id.to_owned(),
-            origin: AnalystTurnOrigin::Voice,
+            origin,
         });
         drop(state);
         if let Err(error) = self
@@ -192,6 +189,7 @@ impl AnalystLifecycle {
                     }
                     if active.latest_delegation_id.is_empty() {
                         active.latest_delegation_id = delegation_id.to_owned();
+                        active.delegation_ids.push(delegation_id.to_owned());
                     }
                     false
                 } else {
@@ -379,16 +377,13 @@ fn active_from(receipt: &TurnReceipt, origin: AnalystTurnOrigin) -> ActiveTurn {
     ActiveTurn {
         turn_id: receipt.turn_id.clone(),
         latest_delegation_id: receipt.delegation_id.clone(),
+        delegation_ids: vec![receipt.delegation_id.clone()],
         origin,
         cancelling: false,
         deltas: String::new(),
         completed_text: String::new(),
         result_overflowed: false,
     }
-}
-
-fn busy(message: &str) -> anyhow::Error {
-    std::io::Error::new(std::io::ErrorKind::WouldBlock, message).into()
 }
 
 fn steer_rejection_can_use_native_input(error: &std::io::Error) -> bool {

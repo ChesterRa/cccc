@@ -32,7 +32,7 @@ export interface GroupSidebarProps {
   sidebarWidth: number;
   isDark: boolean;
   readOnly?: boolean;
-  codexVoice: CodexVoiceShellState;
+  codexVoice?: CodexVoiceShellState;
   onSelectGroup: (groupId: string) => void;
   onWarmGroup?: (groupId: string) => void;
   onCreateGroup?: () => void;
@@ -405,7 +405,9 @@ export function GroupSidebar({
           )}
         </div>
 
-        {!readOnly ? <CodexVoiceSidebarDock voice={codexVoice} collapsed={isCollapsed} /> : null}
+        {!readOnly && codexVoice ? (
+          <CodexVoiceSidebarDock voice={codexVoice} collapsed={isCollapsed} />
+        ) : null}
 
         {!isCollapsed && (
           <SidebarResizeHandle

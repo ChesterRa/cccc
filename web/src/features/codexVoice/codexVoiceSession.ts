@@ -1,6 +1,7 @@
 import {
   startCodexVoiceCall,
   stopCodexVoiceCall,
+  prepareCodexVoiceNotificationOutput,
   type CodexVoiceAnalystInfo,
   type CodexVoiceCallInfo,
 } from "../../services/api";
@@ -27,6 +28,10 @@ import {
 } from "./codexVoiceProtocol";
 import { CodexVoiceProviderChannel } from "./codexVoiceProviderChannel";
 import { CodexVoicePeerMonitor } from "./codexVoicePeerMonitor";
+
+// Leave room for JSON escaping of 256-byte managed result IDs inside the
+// server's 128 KiB frame limit, independently of its 1,024-ID observation limit.
+const UNSENT_OUTPUT_REPORT_BATCH_SIZE = 64;
 
 export {
   eventStreamCloseCode,
@@ -62,11 +67,35 @@ export class CodexVoiceBrowserSession {
     this.callbacks = args.callbacks;
     this.providerChannel = new CodexVoiceProviderChannel(
       (data) => void this.handleProviderMessage(data),
-      (code) => void this.fail(code),
+      (code) => {
+        console.warn("Codex Voice output failed", { code, ...this.providerChannel.receipt() });
+        void this.fail(code);
+      },
       () => this.stopping,
       () => {
+        // Bounded transport metadata only; no source text or credentials. Keep
+        // failure evidence in the browser even without a host tracing subscriber.
+        console.warn("Codex Voice output unconfirmed", this.providerChannel.receipt());
         this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
         this.callbacks.onError("provider_context_unconfirmed");
+      },
+      (resultId) => {
+        if (!this.sendServerMessage({ type: "notification_output_submitted", result_id: resultId }))
+          void this.fail("event_stream_disconnected");
+      },
+      async (resultId, signal) => {
+        if (!this.call || this.stopping) throw failure("event_stream_disconnected");
+        const response = await prepareCodexVoiceNotificationOutput(
+          this.call.generation,
+          resultId,
+          signal,
+        );
+        if (!response.ok) throw failure(response.error.code);
+        return response.result.message;
+      },
+      () => {
+        this.callbacks.onOutputStatus?.(this.providerChannel.outputStatus());
+        this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
       },
     );
   }
@@ -178,6 +207,13 @@ export class CodexVoiceBrowserSession {
     this.peerMonitor.close();
 
     const call = this.call;
+    const unsent = this.providerChannel.unsentResultIds();
+    for (let i = 0; i < unsent.length; i += UNSENT_OUTPUT_REPORT_BATCH_SIZE) {
+      this.sendServerMessage({
+        type: "notification_output_not_submitted",
+        result_ids: unsent.slice(i, i + UNSENT_OUTPUT_REPORT_BATCH_SIZE),
+      });
+    }
     this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
     this.sendServerMessage({ type: "stop" });
     this.eventSocket?.close();
@@ -202,8 +238,14 @@ export class CodexVoiceBrowserSession {
 
   private handleServerMessage(message: CodexVoiceServerMessage): void {
     switch (message.type) {
+      case "notification_status":
+        this.callbacks.onNotificationPaused?.(message.paused === true);
+        break;
       case "provider_command":
-        this.sendProviderCommand(message.message);
+        this.providerChannel.send(
+          message.message,
+          typeof message.result_id === "string" ? message.result_id : undefined,
+        );
         break;
       case "analyst_working":
         this.callbacks.onAnalystProgress("");
@@ -212,7 +254,6 @@ export class CodexVoiceBrowserSession {
           this.analyst = { ...this.analyst, tui_ready: true, phase: "working", warning: "" };
           this.callbacks.onAnalyst(this.analyst);
         }
-        this.callbacks.onPhase("analysing");
         break;
       case "analyst_progress":
         this.callbacks.onAnalystProgress(boundedDelta(message.text));
@@ -232,10 +273,8 @@ export class CodexVoiceBrowserSession {
           this.analyst = { ...this.analyst, phase: "ready" };
           this.callbacks.onAnalyst(this.analyst);
         }
-        this.callbacks.onPhase("listening");
         break;
       case "analyst_cancelling":
-        this.callbacks.onPhase("analysing");
         break;
       case "error":
         this.callbacks.onError(normalizedErrorCode(message.code) || "unknown");
@@ -262,9 +301,11 @@ export class CodexVoiceBrowserSession {
     if (this.providerChannel.observe(event)) {
       this.sendServerMessage({ type: "provider_receipt", ...this.providerChannel.receipt() });
     }
+    this.transcripts.observeTurn(event);
     const transcript = realtimeTranscriptUpdate(event);
     if (transcript) {
       const accumulatedText = this.transcripts.apply(transcript);
+      this.callbacks.onConversation?.(this.transcripts.history());
       if (transcript.role === "user") {
         this.callbacks.onUserTranscript(accumulatedText);
         if (transcript.final) this.callbacks.onPhase("responding");
@@ -274,7 +315,6 @@ export class CodexVoiceBrowserSession {
       }
     }
     if (shouldForwardProviderEvent(event)) {
-      this.callbacks.onPhase("analysing");
       this.sendServerMessage({ type: "provider_event", event });
     }
     const providerError = realtimeProviderError(event);
@@ -284,10 +324,6 @@ export class CodexVoiceBrowserSession {
       this.sendServerMessage({ type: "provider_error", error: diagnostic });
       await this.fail("provider_error", providerError.code || undefined);
     }
-  }
-
-  private sendProviderCommand(command: unknown): void {
-    this.providerChannel.send(command);
   }
 
   private sendServerMessage(message: unknown): boolean {

@@ -5,10 +5,15 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 #[tokio::test]
-async fn live_global_codex_uses_an_explicit_group_target_when_enabled() {
+async fn live_global_analyst_uses_an_explicit_group_target_when_enabled() {
     if std::env::var("CCCC_VOICE_ANALYST_MCP_LIVE").as_deref() != Ok("1") {
         return;
     }
+    let runtime = match std::env::var("CCCC_VOICE_ANALYST_MCP_RUNTIME").as_deref() {
+        Err(_) | Ok("codex") => cccc_contracts::ActorRuntime::Codex,
+        Ok("grok") => cccc_contracts::ActorRuntime::Grok,
+        _ => panic!("this opt-in canonical-source probe supports codex or grok"),
+    };
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -42,6 +47,10 @@ async fn live_global_codex_uses_an_explicit_group_target_when_enabled() {
         "--model".into(),
         model,
     ];
+    config.runtime = runtime;
+    if runtime == cccc_contracts::ActorRuntime::Grok {
+        config.command = vec!["grok".into()];
+    }
     let session = AnalystSession::launch(&home, config)
         .await
         .expect("launch MCP Analyst");
@@ -126,6 +135,23 @@ async fn live_global_codex_uses_an_explicit_group_target_when_enabled() {
         .expect("fixture actor reply");
     assert!(reply.ok, "fixture actor reply failed: {:?}", reply.error);
 
+    cccc_core::voice_notifications::scan(&home).expect("durable canonical reply scan");
+    let notifications = cccc_core::voice_notifications::snapshot(&home).expect("notifications");
+    assert_eq!(
+        notifications.messages.len(),
+        1,
+        "a nested runtime tool send must register its canonical source"
+    );
+    assert_eq!(
+        notifications.messages[0].source.event_id,
+        reply.result["event"]["id"]
+    );
+    assert!(
+        !serde_json::to_string(&events_in_ledger)
+            .expect("ledger JSON")
+            .contains("_voice_origin")
+    );
+
     let result_prompt = format!(
         "Use cccc_message_history with explicit group_id={} to read the fixture worker's reply to the tracked handoff. Reply with only the exact result text from that actor.",
         target_group.group_id
@@ -135,7 +161,13 @@ async fn live_global_codex_uses_an_explicit_group_target_when_enabled() {
         .await
         .expect("result query turn");
     let returned_text = wait_for_turn_text(&mut events, &returned.turn_id).await;
-    assert_eq!(returned_text.trim(), "ACTOR_RESULT_TOPAZ");
+    // ACP can retain a short pre-tool commentary in the completed assistant item.
+    // Verify the exact fixture result, not a provider-specific lack of preamble.
+    assert!(
+        returned_text.trim().ends_with("ACTOR_RESULT_TOPAZ"),
+        "missing exact Actor result: {returned_text}"
+    );
+    assert_eq!(returned_text.matches("ACTOR_RESULT_TOPAZ").count(), 1);
 
     session.stop(&generation).await.expect("stop MCP Analyst");
     let shutdown = client

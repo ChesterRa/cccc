@@ -15,6 +15,7 @@ pub(super) struct SpeakableProgress {
 pub(super) struct CallProjection {
     pub(super) progress: SpeakableProgress,
     pub(super) delegation_id: String,
+    pub(super) delegation_ids: Vec<String>,
     pub(super) projected: bool,
 }
 
@@ -26,6 +27,7 @@ pub(super) struct CallState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FinalProjection {
     pub delegation_id: String,
+    pub delegation_ids: Vec<String>,
     pub commands: Vec<Value>,
 }
 

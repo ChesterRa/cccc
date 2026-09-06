@@ -9,6 +9,8 @@ interface ModalFrameProps {
   closeAriaLabel: string;
   panelClassName: string;
   headerActions?: ReactNode;
+  headerClassName?: string;
+  closeIcon?: ReactNode;
   footerActions?: ReactNode;
   floatingCloseClassName?: string;
   floatingCloseButtonClassName?: string;
@@ -25,6 +27,8 @@ export function ModalFrame({
   closeAriaLabel,
   panelClassName,
   headerActions,
+  headerClassName = "",
+  closeIcon,
   footerActions,
   floatingCloseClassName = "",
   floatingCloseButtonClassName = "",
@@ -43,16 +47,18 @@ export function ModalFrame({
       } ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
-      <svg
-        className="h-4 w-4"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2.5}
-        aria-hidden="true"
-      >
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-      </svg>
+      {closeIcon || (
+        <svg
+          className="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2.5}
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      )}
     </button>
   );
 
@@ -89,7 +95,7 @@ export function ModalFrame({
               isDark
                 ? "bg-[linear-gradient(180deg,rgba(24,26,31,0.96),var(--color-sidebar-bg))]"
                 : "bg-[linear-gradient(180deg,rgba(255,255,255,0.995),var(--color-sidebar-bg))]"
-            }`}
+            } ${headerClassName}`}
           >
             <div id={titleId} className="min-w-0 flex-1 pr-3">
               {title}

@@ -35,6 +35,22 @@ pub(crate) fn configure_global_user_mcp(
         return false;
     };
     append_global_user_mcp_overrides(command, home.root(), &executable);
+    if let Some(origin) = env.get(cccc_core::voice_notifications::ORIGIN_ENV) {
+        let index = command
+            .iter()
+            .position(|arg| arg == "app-server")
+            .unwrap_or(command.len());
+        command.splice(
+            index..index,
+            [
+                "-c".into(),
+                format!(
+                    "mcp_servers.cccc.env.CCCC_VOICE_ORIGIN={}",
+                    serde_json::to_string(origin).expect("origin string")
+                ),
+            ],
+        );
+    }
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),

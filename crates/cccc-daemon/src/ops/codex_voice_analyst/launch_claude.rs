@@ -53,6 +53,14 @@ impl AnalystSession {
         if let Some(tool_profile) = tool_profile {
             mcp_environment.insert("CCCC_MCP_TOOL_PROFILE".into(), json!(tool_profile));
         }
+        if actor.is_none()
+            && let Some(origin) = environment.get(cccc_core::voice_notifications::ORIGIN_ENV)
+        {
+            mcp_environment.insert(
+                cccc_core::voice_notifications::ORIGIN_ENV.into(),
+                json!(origin),
+            );
+        }
         let mcp_server = json!({
             "command":cccc,
             "args":["mcp"],

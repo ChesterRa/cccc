@@ -11,6 +11,7 @@ use crate::api::{ApiError, ApiResult, success};
 use crate::codex_voice::StartOutcome;
 
 mod attach_deadline;
+pub(super) mod notifications;
 mod settings;
 pub(super) use settings::{analyst_settings, update_analyst_settings};
 
@@ -133,6 +134,7 @@ pub(super) async fn stop(
 
 pub(super) async fn upgrade(
     State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::auth::Principal>,
     Path(generation): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
@@ -149,11 +151,12 @@ pub(super) async fn upgrade(
                 json!({"generation":generation}),
             )
         })?;
-    Ok(ws.on_upgrade(move |socket| voice_socket::serve(socket, state, attachment)))
+    Ok(ws.on_upgrade(move |socket| voice_socket::serve(socket, state, attachment, principal)))
 }
 
 pub(super) async fn upgrade_terminal(
     State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::auth::Principal>,
     Path(generation): Path<String>,
     Query(query): Query<TerminalQuery>,
     ws: WebSocketUpgrade,
@@ -171,7 +174,7 @@ pub(super) async fn upgrade_terminal(
                 json!({"generation":generation}),
             )
         })?;
-    Ok(ws.on_upgrade(move |socket| terminal::serve(socket, state, session, query)))
+    Ok(ws.on_upgrade(move |socket| terminal::serve(socket, state, session, query, principal)))
 }
 
 fn require_interactive_web(state: &AppState) -> Result<(), ApiError> {

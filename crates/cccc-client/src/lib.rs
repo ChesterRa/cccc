@@ -70,8 +70,19 @@ impl DaemonClient {
     }
 
     pub async fn call(&self, request: &DaemonRequest) -> Result<DaemonResponse, ClientError> {
+        let mut request = request.clone();
+        if matches!(
+            request.op.as_str(),
+            "send" | "message_send" | "send_files" | "reply" | "tracked_send" | "send_cross_group"
+        ) && let Ok(origin) = std::env::var(cccc_core::voice_notifications::ORIGIN_ENV)
+        {
+            request.args.insert(
+                cccc_core::voice_notifications::ORIGIN_ARG.into(),
+                serde_json::Value::String(origin),
+            );
+        }
         let exchange_started = AtomicBool::new(false);
-        match tokio::time::timeout(self.timeout, self.call_inner(request, &exchange_started)).await
+        match tokio::time::timeout(self.timeout, self.call_inner(&request, &exchange_started)).await
         {
             Ok(result) => result,
             Err(_) if exchange_started.load(Ordering::Acquire) => {

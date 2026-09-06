@@ -99,6 +99,8 @@ pub(super) fn is_read_only(op: &str) -> bool {
                 | "terminal_status"
                 | "terminal_tail"
                 | "version"
+                | "voice_preferences_get"
+                | "voice_notifications_get"
                 | "web_model_delivery_preferences_get"
                 | "web_model_runtime_recover_turn"
         )

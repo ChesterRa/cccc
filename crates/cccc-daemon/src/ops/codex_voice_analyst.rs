@@ -168,6 +168,21 @@ fn acp_mcp_server(
     })
 }
 
+fn add_voice_mcp_origin(
+    server: &mut Value,
+    environment: &BTreeMap<String, String>,
+    purpose: SessionPurpose,
+) {
+    if purpose == SessionPurpose::VoiceAnalyst
+        && let Some(origin) = environment.get(cccc_core::voice_notifications::ORIGIN_ENV)
+        && let Some(env) = server["env"].as_array_mut()
+    {
+        env.push(
+            serde_json::json!({"name":cccc_core::voice_notifications::ORIGIN_ENV,"value":origin}),
+        );
+    }
+}
+
 impl ManagedProtocol {
     fn subscribe(&self) -> broadcast::Receiver<AnalystEvent> {
         match self {

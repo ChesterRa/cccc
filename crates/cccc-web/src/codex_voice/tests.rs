@@ -1,5 +1,4 @@
 use super::AnalystSnapshot;
-use super::analyst_runtime::actor_result_is_speakable;
 use super::persistence::{
     PersistedAnalyst, TEST_ANALYST_STATE_FILE, TEST_ANALYST_WORKSPACE_VERSION, resumable_thread,
     validate_client_session_id,
@@ -53,13 +52,6 @@ fn a_disconnected_analyst_is_replaced_before_the_next_call() {
         }
         .reusable_for_call()
     );
-}
-
-#[test]
-fn actor_results_return_to_the_analyst_but_only_the_matching_call_may_speak() {
-    assert!(actor_result_is_speakable(Some("call-2"), "call-2"));
-    assert!(!actor_result_is_speakable(Some("call-2"), "call-1"));
-    assert!(!actor_result_is_speakable(None, "call-1"));
 }
 
 #[test]

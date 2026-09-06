@@ -69,6 +69,7 @@ pub(super) async fn serve(
     mut socket: WebSocket,
     state: AppState,
     attachment: crate::codex_voice::SessionAttachment,
+    principal: crate::auth::Principal,
 ) {
     let session = Arc::clone(attachment.session());
     let info = session.info();
@@ -79,6 +80,10 @@ pub(super) async fn serve(
     // Analyst admission can outlast the recording TTL, so renewal must not share its event loop.
     let mut lease_heartbeat = RecordingLeaseHeartbeat::start(Arc::clone(&call), generation.clone());
     let mut socket_heartbeat = tokio::time::interval(RECORDING_LEASE_HEARTBEAT_INTERVAL);
+    let mut notification_output = tokio::time::interval(Duration::from_millis(500));
+    let mut notification_status = session.notification_status();
+    notification_output.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut output_failed = false;
     socket_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     if !send_json(
         &mut socket,
@@ -98,8 +103,30 @@ pub(super) async fn serve(
         }
     }
 
+    session.start_notifications(
+        state.home.clone(),
+        state.ledger_events.clone(),
+        principal.clone(),
+    );
     'session: loop {
         tokio::select! {
+            changed = notification_status.changed() => {
+                if changed.is_err() { break; }
+                let paused = *notification_status.borrow_and_update();
+                if !send_json(&mut socket, json!({"type":"notification_status", "paused":paused})).await { break; }
+            }
+            _ = notification_output.tick() => {
+                if !principal.current_voice_admin(&state.home).unwrap_or(false) { break; }
+                match send_notification_results(&mut socket, &state.home, &generation).await {
+                    Ok(()) => output_failed = false,
+                    Err(error) if !output_failed => {
+                        output_failed = true;
+                        tracing::warn!(%error, "Voice notification output failed; source references retained");
+                        let _ = send_error(&mut socket, "actor_result_return_failed", "A message update could not be returned. Its source message is retained.").await;
+                    }
+                    Err(_) => {}
+                }
+            }
             _ = shutdown.recv() => break,
             error = lease_heartbeat.failed() => {
                 tracing::warn!(%error, "Codex Voice recording lease heartbeat failed");
@@ -111,6 +138,7 @@ pub(super) async fn serve(
                 if !send_json(&mut socket, json!({"type":"heartbeat"})).await { break; }
             }
             browser = socket.recv() => {
+                if !principal.current_voice_admin(&state.home).unwrap_or(false) { break; }
                 let Some(Ok(browser)) = browser else { break; };
                 let text = match browser {
                     Message::Text(text) => text,
@@ -129,6 +157,22 @@ pub(super) async fn serve(
                     }
                 };
                 match value["type"].as_str().unwrap_or_default() {
+                    "notification_output_submitted" => {
+                        if let Some(id) = value["result_id"].as_str().filter(|id| id.len() <= 256)
+                            && let Err(error) = cccc_core::voice_notifications::output_submitted(&state.home, id, &generation)
+                        {
+                            tracing::warn!(%error, "invalid Voice output submission observation");
+                        } else if let Some(id) = value["result_id"].as_str().filter(|id| id.len() <= 256) {
+                            tracing::info!(%generation, result_id = id, "Voice notification submitted to provider");
+                        }
+                    }
+                    "notification_output_not_submitted" => {
+                        if let Ok(ids) = serde_json::from_value::<Vec<String>>(value["result_ids"].clone())
+                            && let Err(error) = cccc_core::voice_notifications::output_not_submitted(&state.home, &ids, &generation)
+                        {
+                            tracing::warn!(%error, "invalid unsent Voice output observation");
+                        }
+                    }
                     "provider_error" => {
                         log_provider_error(&generation, &value["error"]);
                     }
@@ -141,6 +185,13 @@ pub(super) async fn serve(
                             acknowledged = value["acknowledged"].as_u64(),
                             pending = value["pending"].as_u64(),
                             speech_turns_completed = value["speech_turns_completed"].as_u64(),
+                            queued = value["queued"].as_u64(),
+                            active_user_turns = value["active_user_turns"].as_u64(),
+                            active_assistant_turns = value["active_assistant_turns"].as_u64(),
+                            awaiting_speech_start = value["awaiting_speech_start"].as_bool(),
+                            speech_start_timeouts = value["speech_start_timeouts"].as_u64(),
+                            prepare_failures = value["prepare_failures"].as_u64(),
+                            blocked = value["blocked"].as_str().filter(|reason| matches!(*reason, "conversation" | "speech_start" | "preparing" | "retrying" | "connection")),
                             "Codex Voice provider delivery receipt"
                         );
                     }
@@ -254,7 +305,21 @@ pub(super) async fn serve(
                         }
                     }
                 }
-                Ok(AnalystLifecycleEvent::Completed { turn_id, delegation_id, status, result, speakable }) => {
+                Ok(AnalystLifecycleEvent::Completed { turn_id, delegation_id, delegation_ids, status, result, speakable }) => {
+                    // Source-bearing turns take one durable path, including mixed user answers.
+                    // The warm monitor also records them after a call stops; insertion is idempotent.
+                    let has_sources = delegation_ids.iter().any(|id| id.starts_with("voice-result:"));
+                    if has_sources {
+                        let text = if status == "completed" { result.clone() } else {
+                            format!("The Analyst did not complete this update ({status}). Check the source messages; do not report the work as completed.")
+                        };
+                        if let Err(error) = cccc_core::voice_notifications::processed(&state.home, &delegation_ids, call.analyst().generation(), &turn_id, &text) {
+                            tracing::warn!(%error, "failed to persist source-bearing Voice result");
+                            let _ = send_error(&mut socket, "actor_result_return_failed", "The message result could not be retained. Check its source messages.").await;
+                        }
+                        let _ = call.settle_without_projection(&generation, &turn_id).await;
+                    }
+                    let speakable = speakable && !has_sources;
                     if status == "completed" && !result.trim().is_empty() {
                         if speakable {
                             match call.take_final_projection(
@@ -303,7 +368,6 @@ pub(super) async fn serve(
                     let _ = send_error(&mut socket, "analyst_disconnected", "The Voice Analyst disconnected.").await;
                     break;
                 }
-                Ok(AnalystLifecycleEvent::TrackedWork(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     tracing::warn!(
                         skipped,
@@ -334,6 +398,31 @@ async fn finish(state: &AppState, attachment: crate::codex_voice::SessionAttachm
 
 async fn send_provider_command(socket: &mut WebSocket, command: Value) -> bool {
     send_json(socket, json!({"type":"provider_command","message":command})).await
+}
+
+async fn send_notification_results(
+    socket: &mut WebSocket,
+    home: &cccc_core::HomeLayout,
+    generation: &str,
+) -> anyhow::Result<()> {
+    use cccc_core::voice_notifications as store;
+    for result in store::snapshot(home)?.results {
+        if result.output_call.is_some() {
+            continue;
+        }
+        let Some(result) = store::reserve_output(home, &result.id, generation)? else {
+            continue;
+        };
+        let Some(text) = store::prepare_output(home, &result.id, generation)? else {
+            continue;
+        };
+        if !send_json(socket, json!({"type":"provider_command","result_id":result.id,
+            "message":{"type":"session.context.append","channel":"speakable","content":[{"type":"input_text","text":text}]}})).await {
+            anyhow::bail!("browser did not accept Voice output command");
+        }
+        tracing::info!(%generation, result_id = %result.id, "Voice notification sent to browser");
+    }
+    Ok(())
 }
 
 fn log_provider_error(generation: &str, error: &Value) {

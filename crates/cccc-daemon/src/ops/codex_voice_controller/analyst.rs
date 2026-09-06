@@ -50,10 +50,14 @@ impl CodexVoiceAnalyst {
         correlation_id: &str,
         text: &str,
         speakable: bool,
-    ) -> Result<TurnReceipt> {
+    ) -> Result<VoiceDelegationAdmission> {
         self.lifecycle
             .begin_actor_result(correlation_id, text, speakable)
             .await
+    }
+
+    pub async fn reject_native_input(&self, correlation_id: &str) -> Result<bool> {
+        self.lifecycle.reject_native_voice(correlation_id).await
     }
 
     pub async fn is_busy(&self) -> bool {

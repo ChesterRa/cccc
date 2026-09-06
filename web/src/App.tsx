@@ -301,7 +301,7 @@ export default function App() {
     ],
   );
 
-  const { parseUrlDeepLink } = useDeepLink({
+  const { parseUrlDeepLink, openMessageWindow } = useDeepLink({
     groups,
     selectedGroupId,
     setSelectedGroupId,
@@ -388,6 +388,8 @@ export default function App() {
       <AppBackground isDark={isDark} />
 
       <AppShell
+        canUseVoice={canManageGroups}
+        onOpenVoiceSource={openMessageWindow}
         orderedGroups={orderedGroups}
         archivedGroupIds={archivedGroupIds}
         selectedGroupId={selectedGroupId}

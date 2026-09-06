@@ -2929,7 +2929,7 @@ Result:
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
 - A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
-- A daemon-launched `claude` actor MUST use one CCCC-owned Claude Agent View background session and MUST start `claude attach` against that exact session. The resolved executable MUST report Claude Code 2.1.259 or newer; the supervisor MUST validate both the installed executable and the live worker version, the protocol-v1 control response shape, and the credential-file boundary. Version, protocol, or credential drift MUST fail closed. CCCC observes turn ownership and terminal settlement from the append-only provider transcript. A single retryable control-query failure MUST NOT invalidate a still-live session; sustained inability to verify liveness or confirmed job absence MUST disconnect it. CCCC owns background/session/attach, name, MCP identity, autonomy, and resume arguments. Runtime Profile environment values MUST be merged into one stable, owner-scoped, CCCC-protected settings file because Agent View deliberately strips arbitrary process environment from persisted jobs and stores that file path in its durable respawn metadata; raw values MUST NOT appear in the job record, terminal command, receipt, or logs. An ordinary process stop MUST retain this file while the durable session receipt remains resumable. The copy MUST be atomically replaced when that owner's effective settings change and removed when the managed session identity, Actor, or Group is retired. Stop MUST report success only after the Agent View job is confirmed absent. Start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, and the complete effective Claude launch identity, including content of file-backed settings and prompt inputs, still match. A live idle matching session MAY be re-adopted; an active, ambiguous, copied, or identity-mismatched session MUST fail or start fresh according to the existing receipt boundary and MUST NOT be guessed. Legacy Claude Hook and print-mode receipts MUST NOT be resumed.
+- A daemon-launched `claude` actor MUST use one CCCC-owned Claude Agent View background session and MUST start `claude attach` against that exact session. The resolved executable and each observed live worker MUST independently report Claude Code 2.1.259 or newer; their versions need not match. Agent View can retain older workers after upgrading the supervisor and migrate an idle session to a newer worker, so a supported version change alone MUST NOT invalidate the same managed session. CCCC MUST continue validating exact session identity, the protocol-v1 control response shape, and the credential-file boundary; unsupported or unverifiable versions, invalid protocol responses, and credential-boundary violations MUST fail closed. CCCC observes turn ownership and terminal settlement from the append-only provider transcript. A single retryable control-query failure MUST NOT invalidate a still-live session; sustained inability to verify liveness or confirmed job absence MUST disconnect it. CCCC owns background/session/attach, name, MCP identity, autonomy, and resume arguments. Runtime Profile environment values MUST be merged into one stable, owner-scoped, CCCC-protected settings file because Agent View deliberately strips arbitrary process environment from persisted jobs and stores that file path in its durable respawn metadata; raw values MUST NOT appear in the job record, terminal command, receipt, or logs. An ordinary process stop MUST retain this file while the durable session receipt remains resumable. The copy MUST be atomically replaced when that owner's effective settings change and removed when the managed session identity, Actor, or Group is retired. Stop MUST report success only after the Agent View job is confirmed absent. Start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, and the complete effective Claude launch identity, including content of file-backed settings and prompt inputs, still match. A live idle matching session MAY be re-adopted; an active, ambiguous, copied, or identity-mismatched session MUST fail or start fresh according to the existing receipt boundary and MUST NOT be guessed. Legacy Claude Hook and print-mode receipts MUST NOT be resumed.
 - A daemon-launched `grok` actor MUST use one CCCC-owned managed session. CCCC starts a dedicated private Grok leader, connects its ACP observer, and attaches the native writable Grok TUI to the same provider session. It injects the actor-scoped CCCC MCP server at session creation and treats structured lifecycle events as working/completion authority. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-terminal Grok receipts MUST NOT be resumed.
 - A daemon-launched `opencode` actor MUST use one CCCC-owned managed session. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, observes the ACP session over stdio, attaches `opencode attach` to that exact session, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer; older releases can return from `session/prompt` before their final output update and therefore cannot satisfy the completion fence. ACP updates and the authenticated session-status stream are lifecycle authority; a lost or malformed non-replayable stream invalidates the session. A model selection made in the native TUI becomes authoritative for later CCCC-managed prompts when the user submits the next TUI message; CCCC MUST mirror that message's exact provider/model and variant into the same ACP session. An explicit runtime-command `--model` remains the launch-time override. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-terminal OpenCode state MUST NOT be resumed.
 - Managed runtime startup MAY synchronously enumerate the injected actor-scoped CCCC MCP tools before its provider session becomes ready. That catalog discovery MUST use `capability_state` with `view="mcp_catalog"` so it cannot wait on the same Group lifecycle lock held by `actor_start`; ordinary capability reads remain serialized normally.
@@ -2942,6 +2942,7 @@ Notes:
 - Observer failure MUST NOT be treated as proof of provider process exit. Actor and Analyst teardown MUST use confirmed provider stop, and a failed stop MUST retain retryable ownership rather than mark the job stopped. Normal managed-client shutdown MUST explicitly terminate event readers even when the session still retains the event sender; observers MUST distinguish expected closure from a failure and MUST NOT emit duplicate stop events.
 - Managed protocol output received before a protocol-originated request is admitted MUST be buffered within fixed byte and event-count bounds. This rule applies to Voice Analyst and internal control requests; Actor message delivery uses the native-TUI rule above. Once the provider authoritatively accepts a protocol request, CCCC MUST publish buffered lifecycle updates in order. A bounded post-response drain MAY be enabled only as an explicit provider-specific normalization policy.
 - Voice result projection MUST reconcile the authoritative final with the exact already-projected prefix. A different final MUST NOT be discarded merely because progress was streamed. Result accumulation is bounded to 32 KiB; overflow without a bounded authoritative final MUST settle as `result_too_large`, not as successful truncated output. The Voice port MUST report that limitation without terminating the warm Analyst or the audio call. Context sends, provider context receipts, and completed speech turns MUST remain distinct observations; receipt absence MUST NOT trigger blind replay, and receipt presence MUST NOT be treated as proof that every fact was spoken.
+- Speakable output scheduling is separate from Runtime input admission. The browser MUST retain unsent speakable context while a user or assistant speech turn is active, and MUST NOT append a later result into an unfinished speech response. Adjacent unsent fragments with the same context/delegation envelope MAY be joined without truncation. A matching completed speech turn permits the next output, but does not prove that its source facts were all spoken. A missing speech transition MUST surface as unconfirmed delivery, not trigger a blind replay or discard unsent results. This output policy MUST NOT delay Analyst inputs or intercept provider delegations.
 - The browser Voice control socket MAY report `provider_error` with an `error` object containing bounded provider `code`, `type`, `event_id`, and `param` identifiers. This is transport diagnostics only: it MUST NOT start, cancel, or replay Analyst work. The Web port MUST validate these identifiers and correlate its diagnostic with the active call generation; it MUST NOT log arbitrary browser payloads, provider error messages, or credentials. The browser MUST distinguish a provider error from an Analyst failure and retain the provider code in its visible error when available. Error reporting alone MUST NOT change provider recovery policy.
 - Actor start, restart, new-session, and daemon restoration MUST NOT submit a model turn solely to initialize an Actor or materialize a provider session. They create or resume the daemon-owned control session and attach its native terminal while the model remains idle. Only real input—a pending CCCC delivery or human terminal input—may start model work. The CCCC startup prompt MUST be deferred to and combined with the first successfully accepted CCCC delivery, MUST NOT be sent as a standalone turn, and MUST remain pending if that delivery is not accepted. Recovery of an actual pending Send is a valid work trigger; lifecycle operations alone are not.
 - A newly created Codex thread MUST be durably resumable before CCCC records a usable receipt or attaches its native TUI. `thread/start` returning an ID and planned rollout path is insufficient. CCCC MUST materialize the empty thread through native metadata operations and verify full-history readability for that exact thread, without submitting a model turn or adding synthetic conversation items. Resumed conversations MUST retain their existing names and history.
@@ -2954,6 +2955,112 @@ Notes:
 - The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
 - Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response within the shared bounded timeout before its source cursor advances; timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
 - The managed `dsh-llm-deepseek` profile MUST set `maxTokens` to the shared `DEEPSEEK_MAX_OUTPUT_TOKENS` contract value (currently 65,536), preserving input/tool headroom instead of inheriting the upstream 256k output reservation. Credential absence and provider context-window overflow are permanent for the current runtime session: both MUST be normalized to stable, secret-free failed-turn errors and MUST stop automatic retries until a lifecycle start/restart successfully initializes the actor again.
+
+#### Voice notification state (trusted local user)
+
+Voice notification preferences and derived delivery observations are private instance state under
+`CCCC_HOME/state/codex_voice/notifications.json`, atomically replaced under one exclusive lock.
+The Group ledger remains the source of message bodies. These operations MUST NOT write `mail.read`,
+complete reply obligations, wake Actors, start a microphone, or imply user approval of Actor text.
+Web access MUST require the same administrator principal as the other global Voice routes.
+Long-lived calls, notification handoffs and Analyst terminal sockets MUST revalidate a remote
+administrator token. Revocation or administrator downgrade MUST stop input/output; terminal
+connections MUST also check while idle (one-second polling for both viewer and control attachments).
+Existing trusted-local identity is unchanged.
+
+- `voice_preferences_get`: read `VoicePreferences` only. This and `voice_notifications_get` MUST
+  be classified as read-only dispatcher operations so panel polling does not queue a global writer
+  ahead of MCP catalog discovery during Actor startup.
+- `voice_preferences_set`: `{preferences: {revision, groups: Record<group_id, "off"|"to_user"|"all_chat">,
+  suppress_viewed: boolean, verbosity: "concise"|"standard"|"detailed", style: "natural"|"direct"|"patient"}}`.
+  The supplied revision MUST match; successful updates increment it. Newly enabled message
+  categories begin at the ledger boundary at save time, not historical chat. Expression changes
+  apply to the next call and MUST NOT restart the Analyst.
+- `voice_messages_viewed`: `{messages: Array<{group_id, event_id}>}` (at most 128).
+  Exact formal-chat references only; idempotent, private, and independent of Actor unread state.
+  The Web observer MUST require an unobscured, foreground, fully visible expanded message with
+  at least 1.5 seconds of stable viewport exposure, not GET/SSE receipt or virtual-list mounting.
+- `voice_notifications_get`: read at most 128 recent source references plus `pending_count` and
+  `unconfirmed_count`, plus `suppressed_count` for skipped results among the visible references.
+  Each reference includes its associated result's `output_status` (`processing`, `ready`,
+  `unconfirmed`, `submitted`, `suppressed`) and optional `suppression_reason`
+  (`viewed`, `policy`, `source_unavailable`). Submitted is a browser submission observation, never
+  playback completion or confirmation that the user heard it. The GET MUST NOT scan, mark, consume
+  or start work. Full message text, origin tokens and stored Analyst result text MUST NOT appear in this UI projection.
+
+A notification consumer failure MUST retain durable references and publish
+`{type:"notification_status", paused:true}` to the connected call owner over the existing Voice
+control WebSocket. This state is independent of Analyst availability and audio state. The consumer
+stops for that call; a new call starts a fresh consumer. It MUST NOT silently reset corrupt state.
+
+Before submitting source-bearing output on the browser data channel, the host MUST recheck
+current policy and exact viewed references. `/api/v1/codex_voice/calls/{generation}/notification-output`
+accepts `{result_id}` only for the active connected call and its reserved result. A fully suppressed
+background result returns `{message:null}`. That decision and its reason MUST be stored atomically
+with the final policy/viewed check and remain idempotent even after later preference changes. A partly
+suppressed unstructured summary MUST NOT be sliced or spoken as if its sources were separable; an explicit user answer remains deliverable.
+The browser reports `notification_output_submitted` only after data-channel submission and reports
+`notification_output_not_submitted` for positively unsent result IDs at orderly stop. Queue or
+receipt-capacity overflow MUST retain the rejected result ID for this report before initiating
+teardown. Reports MUST precede the stop frame and fit both the 1,024-ID observation limit and the
+128 KiB WebSocket frame limit; the browser batches at most 64 managed result IDs per report.
+An ID already submitted to the provider MUST NOT be included merely because its receipt is missing. Disconnection,
+missing receipts, or timeout alone MUST NOT release a reserved result for automatic replay.
+The browser's wait for speech to start MUST be bounded independently of receipt tracking.
+Expiry MAY release only its local scheduling slot for new, unsubmitted output when there is
+no observed active user or assistant turn. It MUST NOT imply that the earlier context was spoken,
+clear delivery uncertainty, replay that context, or expire an active speech turn.
+Notification-output preflight MUST have a finite request deadline. Only transient preflight
+failures may be retried, with a bounded attempt count and backoff; each attempt MUST recheck policy.
+Suppression of the same call/result reservation MUST return `{message:null}` on subsequent checks,
+including when the original response was lost. Persistent or terminal preflight failure MUST stop
+the call explicitly and retain positively unsent results through the existing orderly-stop path.
+Browser scheduling diagnostics MAY report queue counts, wait reasons, active-turn counts,
+speech-start timeouts and preflight failures. They MUST NOT log message bodies or credentials,
+change source-processing state, or turn any speech observation into per-source heard confirmation.
+Each retained result MUST have a durable completion `sequence`, allocated exactly once from the
+instance's monotonic notification sequence under the same state lock. Output snapshots MUST sort
+results by this sequence, not opaque Runtime turn IDs, Analyst generations, or source arrival.
+Duplicate completion observations MUST preserve the original sequence and result; sequence
+exhaustion MUST fail atomically without marking sources processed. This order survives call and
+Analyst restarts and does not alter Runtime input admission or imply speech completion.
+
+The shared local client carries a host-owned Analyst origin on message-write operations. The
+daemon MUST validate that origin and persist an exact source-event/expected-recipient association
+before appending its canonical message. Expected recipients MUST snapshot the same inbox routing
+semantics as delivery, including `@foreman`, `@all`, `@peers` and internal-actor exclusions. Later
+role changes MUST NOT retarget this persisted reply association. Internal origin metadata MUST NOT enter public chat data.
+Ordinary Send, tracked Send, and nested code-mode calls use this same boundary. Failed appends may
+leave an inert source intent, but only an existing canonical ledger event can activate it.
+
+An active call consumes ledger increments in bounded pages and atomically registers candidate
+references before advancing cursors. Lost broadcasts MUST be recoverable from these cursors.
+The first acknowledgement does not terminate reply association. Only the expected Actor's exact
+reply association is a request result; subscription matching is independent and deduplicated by
+the canonical group/event pair. Attachment-only messages remain eligible; their contents MUST NOT
+be read automatically. Source copies of cross-group messages MUST NOT duplicate the destination.
+
+Before Runtime handoff, persist the source references and receiving Analyst generation. On an
+unproven post-handoff failure, retain unknown delivery rather than automatically executing again.
+An accepted but unfinished source belonging to a replaced Analyst generation MUST also remain
+visible as unconfirmed, rather than implying that the replacement is still working on it.
+All inputs consumed by one Runtime turn MUST survive in its completion association set. Active
+user answers MUST NOT be silenced by a concurrent non-speaking background update. No Runtime-busy
+wait queue or oldest-item eviction is permitted. Viewing or narrowing subscriptions suppresses
+unsubmitted background speech, not actual Group work or explicitly requested answers.
+
+The private version-1 state has a bounded 10,000-reference working set, 16 MiB encoded size,
+and a 256-event scan page per Group. Reads are size-bounded and incompatible state MUST NOT be
+silently reset. At most 128 completed notification references are retained for recent source links.
+Capacity exhaustion MUST stop scanning before losing references or advancing past unregistered
+events. Unknown handoffs MUST NOT be evicted to free capacity. Completed notification attempts may
+be compacted after their cursor has passed; Group deletion retires its derived references, never
+another Group with the same name. Source associations remain until their Group is retired; they
+are not synthetic permanently-running tasks. Voice-off MUST NOT cause notification model turns.
+Cancelling an unhanded background candidate because it was viewed or excluded by preferences
+MUST retire its viewed reference in the same transaction: scan has already passed that source.
+Viewed references ahead of the scan cursor, explicit request context, and handed-off observations
+MUST remain available for their existing consumption and output checks.
 
 #### `actor_new_session`
 

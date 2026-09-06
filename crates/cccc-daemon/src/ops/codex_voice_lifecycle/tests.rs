@@ -1,4 +1,4 @@
-use super::events::{normalized_completion_status, tracked_work};
+use super::events::normalized_completion_status;
 use super::*;
 use crate::ops::codex_voice_analyst::WorkspaceBinding;
 use futures_util::{SinkExt, StreamExt};
@@ -9,6 +9,74 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+#[tokio::test]
+async fn actor_results_and_voice_share_busy_native_admission_and_all_completion_sources() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    session.publish_event_for_test(json!({
+        "method":"turn/started", "params":{"threadId":"thread-lifecycle","turn":{"id":"mixed"}}
+    }));
+    events.recv().await.expect("started");
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active")
+        .cancelling = true;
+    assert!(matches!(
+        lifecycle
+            .admit_voice("voice-first", "user followup")
+            .await
+            .expect("voice"),
+        VoiceDelegationAdmission::NativeInput { .. }
+    ));
+    assert!(matches!(
+        lifecycle
+            .begin_actor_result("reply-second", "Actor data", false)
+            .await
+            .expect("reply"),
+        VoiceDelegationAdmission::NativeInput { .. }
+    ));
+    for id in ["voice-first", "reply-second"] {
+        session.publish_event_with_delegation_for_test(
+            json!({
+                "method":crate::ops::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD,
+                "params":{"threadId":"thread-lifecycle","turnId":"mixed"}
+            }),
+            Some(id.into()),
+        );
+        assert!(matches!(
+            events.recv().await.expect("association"),
+            AnalystLifecycleEvent::Associated { .. }
+        ));
+    }
+    session.publish_event_for_test(json!({
+        "method":"item/completed", "params":{"turnId":"mixed","item":{"type":"agentMessage","text":"Combined answer"}}
+    }));
+    session.publish_event_for_test(json!({
+        "method":"turn/completed", "params":{"turn":{"id":"mixed","status":"completed"}}
+    }));
+    let AnalystLifecycleEvent::Completed {
+        delegation_ids,
+        speakable,
+        ..
+    } = events.recv().await.expect("completed")
+    else {
+        panic!("completion required")
+    };
+    assert_eq!(delegation_ids, ["voice-first", "reply-second"]);
+    assert!(
+        speakable,
+        "a non-speaking background update must not silence the user answer"
+    );
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
 
 #[tokio::test]
 async fn oversized_results_are_explicit_and_a_bounded_authoritative_final_can_recover() {
@@ -446,53 +514,7 @@ async fn failed_interrupt_allows_a_real_retry() {
 }
 
 #[test]
-fn tracked_work_is_strict() {
-    let work = tracked_work(&json!({
-        "method":"item/completed",
-        "params":{"item":{
-            "type":"mcpToolCall",
-            "status":"completed",
-            "server":"cccc",
-            "result":{"structuredContent":{"tool_result":{
-                "task_id":"T007",
-                "event_id":"event-7",
-                "event":{"group_id":"g_target","data":{"to":["worker"]}}
-            }}}
-        }}
-    }))
-    .expect("tracked work");
-    assert_eq!(work.task_id, "T007");
-    assert_eq!(work.actor_id, "worker");
-    assert!(
-        tracked_work(&json!({
-            "method":"item/completed",
-            "params":{"item":{
-                "type":"mcpToolCall",
-                "status":"completed",
-                "server":"cccc",
-                "result":{"structuredContent":{"tool_result":{
-                    "task_id":"T008",
-                    "event_id":"event-8",
-                    "event":{"group_id":"g_target","data":{"to":["@all"]}}
-                }}}
-            }}
-        }))
-        .is_none()
-    );
-    assert!(
-        tracked_work(&json!({
-            "method":"item/completed",
-            "params":{"item":{
-                "type":"mcpToolCall",
-                "status":"failed",
-                "server":"cccc",
-                "result":{"structuredContent":{
-                    "task_id":"T007","event_id":"event-7","group_id":"g_target"
-                }}
-            }}
-        }))
-        .is_none()
-    );
+fn result_origin_and_completion_status_are_consistent() {
     assert!(!AnalystTurnOrigin::ActorResult { speakable: false }.speakable());
     assert!(AnalystTurnOrigin::ActorResult { speakable: true }.speakable());
     assert_eq!(

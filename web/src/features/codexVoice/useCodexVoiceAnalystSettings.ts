@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   buildActorSecretSaveChanges,
@@ -49,6 +49,8 @@ export function useCodexVoiceAnalystSettings(
   const [profileSaving, setProfileSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const dirty = useRef(false);
+  const loadInFlight = useRef(false);
 
   const settingsError = useCallback(
     (code: string, detail: string) => {
@@ -65,36 +67,47 @@ export function useCodexVoiceAnalystSettings(
     [t],
   );
 
-  const load = useCallback(async () => {
-    if (!active) return;
-    setLoading(true);
-    const [settingsResponse, profilesResponse] = await Promise.all([
-      fetchCodexVoiceAnalystSettings(),
-      listActorProfiles(),
-    ]);
-    if (settingsResponse.ok) {
-      const nextSettings = normalizeVoiceAnalystSettings(settingsResponse.result.settings);
-      setSettings(nextSettings);
-      setLoadedSettings(nextSettings);
-      setMode(nextSettings.profile_id ? "profile" : "custom");
-      setEnvironmentKeys(settingsResponse.result.environment_keys);
-      setEnvironmentChangesState(emptyActorSecretChanges());
-      setSettingsLoadFailed(false);
-      setError("");
-    } else {
-      setSettingsLoadFailed(true);
-      setError(settingsError(settingsResponse.error.code, settingsResponse.error.message));
-    }
-    if (profilesResponse.ok) {
-      setProfiles(profilesResponse.result.profiles);
-      setProfilesLoadFailed(false);
-    } else {
-      setProfiles([]);
-      setProfilesLoadFailed(true);
-      if (settingsResponse.ok) setError(t("codexVoiceAnalystProfilesUnavailable"));
-    }
-    setLoading(false);
-  }, [active, settingsError, t]);
+  const load = useCallback(
+    async (force = false) => {
+      if ((!force && (!active || dirty.current)) || loadInFlight.current) return;
+      loadInFlight.current = true;
+      setLoading(true);
+      try {
+        const [settingsResponse, profilesResponse] = await Promise.all([
+          fetchCodexVoiceAnalystSettings(),
+          listActorProfiles(),
+        ]);
+        if (settingsResponse.ok) {
+          const nextSettings = normalizeVoiceAnalystSettings(settingsResponse.result.settings);
+          setSettings(nextSettings);
+          setLoadedSettings(nextSettings);
+          setMode(nextSettings.profile_id ? "profile" : "custom");
+          setEnvironmentKeys(settingsResponse.result.environment_keys);
+          setEnvironmentChangesState(emptyActorSecretChanges());
+          setSettingsLoadFailed(false);
+          setError("");
+        } else {
+          setSettingsLoadFailed(true);
+          setError(settingsError(settingsResponse.error.code, settingsResponse.error.message));
+        }
+        if (profilesResponse.ok) {
+          setProfiles(profilesResponse.result.profiles);
+          setProfilesLoadFailed(false);
+        } else {
+          setProfiles([]);
+          setProfilesLoadFailed(true);
+          if (settingsResponse.ok) setError(t("codexVoiceAnalystProfilesUnavailable"));
+        }
+      } catch {
+        setSettingsLoadFailed(true);
+        setError(t("codexVoiceAnalystSettingsUnavailable"));
+      } finally {
+        loadInFlight.current = false;
+        setLoading(false);
+      }
+    },
+    [active, settingsError, t],
+  );
 
   useEffect(() => {
     void load();
@@ -132,6 +145,7 @@ export function useCodexVoiceAnalystSettings(
       Object.keys(environmentSaveChanges.setVars).length > 0);
   const hasChanges =
     JSON.stringify(settings) !== JSON.stringify(loadedSettings) || hasEnvironmentChanges;
+  dirty.current = hasChanges;
   const callActive = controller.isEngaged;
   const analystBusy = controller.analyst?.phase === "working";
   const editingDisabled = loading || saving || profileSaving;
@@ -225,7 +239,7 @@ export function useCodexVoiceAnalystSettings(
               ? t("codexVoiceAnalystSettingsRestarted")
               : t("codexVoiceAnalystSettingsSaved"),
       );
-      await load();
+      await load(true);
       await controller.refresh(false);
     } else {
       setError(settingsError(response.error.code, response.error.message));
@@ -333,7 +347,17 @@ export function useCodexVoiceAnalystSettings(
     setSaved("");
   };
 
+  const discard = () => {
+    setSettings(loadedSettings);
+    setMode(loadedSettings.profile_id ? "profile" : "custom");
+    setEnvironmentChangesState(emptyActorSecretChanges());
+    setSaved("");
+    setError("");
+  };
+
   return {
+    hasChanges,
+    discard,
     settings,
     mode,
     compatibleProfiles,

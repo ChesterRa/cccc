@@ -13,6 +13,23 @@ mod voice_socket;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/v1/codex_voice/preferences",
+            get(handlers::notifications::preferences)
+                .put(handlers::notifications::save_preferences),
+        )
+        .route(
+            "/api/v1/codex_voice/messages/viewed",
+            post(handlers::notifications::viewed),
+        )
+        .route(
+            "/api/v1/codex_voice/notifications",
+            get(handlers::notifications::notifications),
+        )
+        .route(
+            "/api/v1/codex_voice/calls/{generation}/notification-output",
+            post(handlers::notifications::prepare_output),
+        )
         .route("/api/v1/codex_voice/calls/active", get(handlers::active))
         .route("/api/v1/codex_voice/calls", post(handlers::start))
         .route(

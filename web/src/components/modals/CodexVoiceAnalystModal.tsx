@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CodexVoiceAnalystPane,
   CodexVoiceConversationPane,
 } from "../../features/codexVoice/CodexVoiceConsolePanes";
-import { CodexVoiceSettingsDrawer } from "../../features/codexVoice/CodexVoiceSettingsDrawer";
+import { CodexVoiceSplitLayout } from "../../features/codexVoice/CodexVoiceSplitLayout";
+import { CodexVoiceSettingsPanel } from "../../features/codexVoice/CodexVoiceSettingsPanel";
+import { CodexVoiceMessageSources } from "../../features/codexVoice/CodexVoiceMessageSources";
 import { voicePhaseDotClass } from "../../features/codexVoice/codexVoicePhase";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import {
   HeadphonesIcon,
+  ChevronDownIcon,
   MicrophoneIcon,
   MicrophoneOffIcon,
   SettingsIcon,
@@ -27,24 +30,11 @@ type Props = {
   isSmallScreen: boolean;
   controller: CodexVoiceSessionController;
   onClose: () => void;
+  onOpenSource?: (groupId: string, eventId: string) => void;
 };
 
 type MobilePane = "conversation" | "analyst";
 const VOICE_CONSOLE_SPLIT_MEDIA_QUERY = "(min-width: 1024px)";
-
-function codexVoiceTerminalShouldConnect({
-  isOpen,
-  tuiReady,
-  splitLayout,
-  mobilePane,
-}: {
-  isOpen: boolean;
-  tuiReady: boolean;
-  splitLayout: boolean;
-  mobilePane: MobilePane;
-}): boolean {
-  return isOpen && tuiReady && (splitLayout || mobilePane === "analyst");
-}
 
 export function CodexVoiceAnalystModal({
   isOpen,
@@ -52,11 +42,19 @@ export function CodexVoiceAnalystModal({
   isSmallScreen,
   controller,
   onClose,
+  onOpenSource,
 }: Props) {
   const { t } = useTranslation("modals");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  const [analystExpanded, setAnalystExpanded] = useState(true);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    requestAnimationFrame(() => settingsButton.current?.focus());
+  };
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
-  const { modalRef } = useModalA11y(isOpen, onClose);
+  const { modalRef } = useModalA11y(isOpen, () => (settingsOpen ? closeSettings() : onClose()));
   const [splitLayout, setSplitLayout] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return !isSmallScreen;
@@ -70,12 +68,10 @@ export function CodexVoiceAnalystModal({
       ? t("codexVoiceChecking")
       : t(`codexVoicePhase.${controller.phase}`);
   const analystPhase = analyst ? t(`codexVoiceAnalystPhase.${analyst.phase}`) : "";
-  const terminalVisible = codexVoiceTerminalShouldConnect({
-    isOpen,
-    tuiReady: Boolean(analyst?.tui_ready),
-    splitLayout,
-    mobilePane,
-  });
+  const terminalVisible =
+    isOpen &&
+    Boolean(analyst?.tui_ready) &&
+    (splitLayout ? analystExpanded : mobilePane === "analyst");
   const readinessProblem = !controller.readiness
     ? ""
     : !controller.readiness.analyst_runtime_available
@@ -112,11 +108,13 @@ export function CodexVoiceAnalystModal({
       onClose={onClose}
       titleId="codex-voice-analyst-title"
       closeAriaLabel={t("codexVoiceMinimize")}
+      closeIcon={<ChevronDownIcon size={18} aria-hidden="true" />}
+      headerClassName="!gap-2 !px-3 !py-3 sm:!px-5"
       panelClassName="h-full w-full overflow-hidden sm:h-[min(820px,92vh)] sm:w-[min(1180px,97vw)]"
       modalRef={modalRef}
       title={
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-2xl bg-[var(--glass-tab-bg-active)] text-[var(--color-accent-primary)]">
+          <div className="hidden h-10 w-10 flex-none sm:flex items-center justify-center rounded-2xl bg-[var(--glass-tab-bg-active)] text-[var(--color-accent-primary)]">
             <HeadphonesIcon size={20} aria-hidden="true" />
           </div>
           <div className="min-w-0">
@@ -144,13 +142,20 @@ export function CodexVoiceAnalystModal({
       headerActions={
         <>
           <IconButton
+            ref={settingsButton}
             type="button"
             variant={settingsOpen ? "secondary" : "ghost"}
             size="sm"
-            onClick={() => setSettingsOpen((open) => !open)}
+            onClick={() => {
+              if (settingsOpen) closeSettings();
+              else {
+                setSettingsMounted(true);
+                setSettingsOpen(true);
+              }
+            }}
             label={t("codexVoiceSettings")}
             aria-expanded={settingsOpen}
-            aria-controls="codex-voice-settings-drawer"
+            aria-controls="codex-voice-settings-page"
           >
             <SettingsIcon size={17} />
           </IconButton>
@@ -177,6 +182,9 @@ export function CodexVoiceAnalystModal({
                 type="button"
                 variant="secondary"
                 size="sm"
+                aria-label={
+                  controller.externalCall ? t("codexVoiceStopExisting") : t("codexVoiceStop")
+                }
                 onClick={() => void controller.disconnect()}
                 disabled={controller.phase === "stopping"}
                 className="text-rose-500"
@@ -191,6 +199,7 @@ export function CodexVoiceAnalystModal({
             <Button
               type="button"
               size="sm"
+              aria-label={t("codexVoiceStart")}
               onClick={startVoice}
               disabled={controller.checking || controller.isStarting}
             >
@@ -204,40 +213,49 @@ export function CodexVoiceAnalystModal({
       }
     >
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {controller.error ? (
+          <div
+            className="flex flex-none items-center justify-between gap-3 border-b border-rose-400/25 bg-rose-500/8 px-5 py-2.5 text-sm text-rose-500 sm:px-6"
+            role="alert"
+          >
+            <span>{controller.error}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={controller.clearError}>
+              {t("codexVoiceDismissError")}
+            </Button>
+          </div>
+        ) : null}
+
+        {controller.playbackBlocked && controller.owned ? (
+          <div className="flex flex-none items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-[var(--color-text-secondary)] sm:px-6">
+            <span>{t("codexVoicePlaybackBlocked")}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={controller.resumeAudio}>
+              <VolumeIcon size={15} />
+              {t("codexVoiceResumeAudio")}
+            </Button>
+          </div>
+        ) : null}
+
+        {!controller.isEngaged && startupProblem ? (
+          <div className="flex-none border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300 sm:px-6">
+            {startupProblem}
+          </div>
+        ) : null}
+
+        {controller.notificationPaused && controller.isEngaged ? (
+          <p
+            role="status"
+            className="border-b border-amber-400/25 bg-amber-400/8 px-5 py-3 text-sm text-amber-700 dark:text-amber-300"
+          >
+            {t("voicePreferences.paused")}
+          </p>
+        ) : null}
         <div
-          className="flex min-h-0 flex-1 flex-col"
+          className={`${settingsOpen ? "hidden" : "flex"} min-h-0 flex-1 flex-col`}
+          hidden={settingsOpen}
           data-codex-voice-console="true"
           inert={settingsOpen}
           aria-hidden={settingsOpen || undefined}
         >
-          {controller.error ? (
-            <div
-              className="flex flex-none items-center justify-between gap-3 border-b border-rose-400/25 bg-rose-500/8 px-5 py-2.5 text-sm text-rose-500 sm:px-6"
-              role="alert"
-            >
-              <span>{controller.error}</span>
-              <Button type="button" variant="ghost" size="sm" onClick={controller.clearError}>
-                {t("codexVoiceDismissError")}
-              </Button>
-            </div>
-          ) : null}
-
-          {controller.playbackBlocked && controller.owned ? (
-            <div className="flex flex-none items-center justify-between gap-3 border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-[var(--color-text-secondary)] sm:px-6">
-              <span>{t("codexVoicePlaybackBlocked")}</span>
-              <Button type="button" variant="ghost" size="sm" onClick={controller.resumeAudio}>
-                <VolumeIcon size={15} />
-                {t("codexVoiceResumeAudio")}
-              </Button>
-            </div>
-          ) : null}
-
-          {!controller.isEngaged && startupProblem ? (
-            <div className="flex-none border-b border-amber-400/25 bg-amber-400/8 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300 sm:px-6">
-              {startupProblem}
-            </div>
-          ) : null}
-
           <div className="flex flex-none border-b border-[var(--glass-border-subtle)] lg:hidden">
             {(["conversation", "analyst"] as const).map((pane) => (
               <button
@@ -255,27 +273,56 @@ export function CodexVoiceAnalystModal({
             ))}
           </div>
 
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.55fr)]">
-            <CodexVoiceConversationPane
-              controller={controller}
-              phaseLabel={phaseLabel}
-              visible={mobilePane === "conversation"}
-            />
-            <CodexVoiceAnalystPane
-              controller={controller}
-              analystPhase={analystPhase}
-              visible={mobilePane === "analyst"}
-              terminalVisible={terminalVisible}
-            />
-          </div>
+          <CodexVoiceSplitLayout
+            enabled={splitLayout && analystExpanded}
+            active={isOpen && !settingsOpen}
+            conversation={
+              <CodexVoiceConversationPane
+                controller={controller}
+                visible={splitLayout || mobilePane === "conversation"}
+                analystExpanded={analystExpanded}
+                onToggleAnalyst={() => setAnalystExpanded((expanded) => !expanded)}
+              >
+                <CodexVoiceMessageSources
+                  active={isOpen && !settingsOpen}
+                  outputStatus={controller.owned ? controller.outputStatus : undefined}
+                  onOpenSource={
+                    onOpenSource
+                      ? (groupId, eventId) => {
+                          onClose();
+                          onOpenSource(groupId, eventId);
+                        }
+                      : undefined
+                  }
+                />
+              </CodexVoiceConversationPane>
+            }
+            analyst={
+              <div className={splitLayout && !analystExpanded ? "hidden" : "contents"}>
+                <CodexVoiceAnalystPane
+                  controller={controller}
+                  analystPhase={analystPhase}
+                  visible={mobilePane === "analyst"}
+                  terminalVisible={terminalVisible}
+                />
+              </div>
+            }
+          />
         </div>
 
-        {settingsOpen ? (
-          <CodexVoiceSettingsDrawer
-            active={isOpen}
-            controller={controller}
-            onClose={() => setSettingsOpen(false)}
-          />
+        {settingsMounted ? (
+          <div
+            id="codex-voice-settings-page"
+            hidden={!settingsOpen}
+            inert={!settingsOpen}
+            className={settingsOpen ? "min-h-0 flex-1" : "hidden"}
+          >
+            <CodexVoiceSettingsPanel
+              active={isOpen && settingsOpen}
+              controller={controller}
+              onClose={closeSettings}
+            />
+          </div>
         ) : null}
       </div>
     </ModalFrame>

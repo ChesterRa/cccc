@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 mod network_environment;
 
-const MIN_VERSION: (u64, u64, u64) = (2, 1, 259);
+pub(super) const MIN_VERSION: Version = (2, 1, 259);
 const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(super) type Version = (u64, u64, u64);

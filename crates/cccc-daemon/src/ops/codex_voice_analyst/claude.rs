@@ -77,9 +77,8 @@ async fn launch_inner(
     purpose: SessionPurpose,
     requested_session_id: Option<&str>,
 ) -> io::Result<LaunchedClaude> {
-    let expected_version =
-        command::require_supported_version(&prepared.executable, cwd, &prepared.launch_environment)
-            .await?;
+    command::require_supported_version(&prepared.executable, cwd, &prepared.launch_environment)
+        .await?;
     // Inspect durable job metadata BEFORE respawn can replace it. A receipt
     // alone does not imply that this session ever received its first prompt.
     let skip_existing_transcript = match requested_session_id {
@@ -90,13 +89,12 @@ async fn launch_inner(
     if let Some(session_id) = requested_session_id {
         validate_session_id(session_id)?;
         if let Some((endpoint, job)) = find_live_job(&prepared.config_dir, session_id).await? {
-            validate_worker_version(&job, expected_version)?;
+            validate_worker_version(&job)?;
             validate_job_state(&prepared.config_dir, &job, cwd, true)?;
             return connect_launched(
                 prepared,
                 endpoint,
                 job,
-                expected_version,
                 generation,
                 true,
                 skip_existing_transcript,
@@ -171,7 +169,7 @@ async fn launch_inner(
             return Err(with_optional_cleanup_error(error, rollback.err()));
         }
     };
-    if let Err(error) = validate_worker_version(&job, expected_version) {
+    if let Err(error) = validate_worker_version(&job) {
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
@@ -194,7 +192,6 @@ async fn launch_inner(
         prepared,
         endpoint,
         job,
-        expected_version,
         generation,
         resumed,
         skip_existing_transcript,
@@ -277,7 +274,6 @@ async fn connect_launched(
     prepared: command::PreparedClaude,
     endpoint: control::Endpoint,
     job: Job,
-    expected_version: command::Version,
     generation: &str,
     resumed: bool,
     skip_existing_transcript: bool,
@@ -292,7 +288,6 @@ async fn connect_launched(
         endpoint,
         job.short.clone(),
         job.session_id.clone(),
-        expected_version,
         state_path,
         prepared.config_dir.clone(),
         generation.to_owned(),
@@ -511,7 +506,6 @@ fn observe_live_job(
     jobs: io::Result<Vec<Value>>,
     short: &str,
     session_id: &str,
-    expected_version: command::Version,
 ) -> io::Result<bool> {
     let jobs = jobs?;
     let matching = jobs
@@ -536,7 +530,7 @@ fn observe_live_job(
         ));
     };
     let job = parse_job_required(value)?;
-    validate_worker_version(&job, expected_version)?;
+    validate_worker_version(&job)?;
     Ok(!matches!(
         value.get("tempo").and_then(Value::as_str),
         None | Some("idle" | "blocked")
@@ -568,20 +562,23 @@ fn parse_job_required(value: &Value) -> io::Result<Job> {
     })
 }
 
-fn validate_worker_version(job: &Job, expected: command::Version) -> io::Result<()> {
-    if job.cli_version == expected {
+fn validate_worker_version(job: &Job) -> io::Result<()> {
+    // Agent View upgrades its supervisor independently of surviving workers,
+    // and can migrate idle sessions to a new worker without changing identity.
+    // Validate support, not equality with the launcher or a previous worker.
+    if job.cli_version >= command::MIN_VERSION {
         return Ok(());
     }
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         format!(
-            "Claude Agent View worker version {}.{}.{} does not match the selected Claude executable {}.{}.{}",
+            "Claude Agent View worker version {}.{}.{} is unsupported; the managed session requires {}.{}.{} or newer",
             job.cli_version.0,
             job.cli_version.1,
             job.cli_version.2,
-            expected.0,
-            expected.1,
-            expected.2,
+            command::MIN_VERSION.0,
+            command::MIN_VERSION.1,
+            command::MIN_VERSION.2,
         ),
     ))
 }
@@ -708,7 +705,6 @@ impl ClaudeClient {
         endpoint: control::Endpoint,
         short: String,
         session_id: String,
-        expected_version: command::Version,
         state_path: PathBuf,
         config_dir: PathBuf,
         generation: String,
@@ -729,7 +725,6 @@ impl ClaudeClient {
             endpoint.clone(),
             short.clone(),
             session_id,
-            expected_version,
             transcript,
             generation,
             events.clone(),
@@ -856,7 +851,6 @@ async fn run_client(
     endpoint: control::Endpoint,
     short: String,
     session_id: String,
-    expected_version: command::Version,
     mut transcript: TranscriptFollower,
     generation: String,
     events: broadcast::Sender<AnalystEvent>,
@@ -1008,7 +1002,6 @@ async fn run_client(
                     control::list(&endpoint).await,
                     &short,
                     &session_id,
-                    expected_version,
                 );
                 match observation {
                     Ok(active) => {
@@ -1393,7 +1386,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_job_requires_worker_version_and_exact_identity() {
+    fn managed_job_requires_a_supported_worker_version() {
         let value = json!({
             "short":"1234abcd",
             "sessionId":"52b41c61-e23c-4b7c-8b60-809c347451b5",
@@ -1401,10 +1394,12 @@ mod tests {
             "cliVersion":"2.1.260",
         });
         let job = parse_job_required(&value).expect("versioned job");
-        validate_worker_version(&job, (2, 1, 260)).expect("matching worker");
+        validate_worker_version(&job).expect("supported worker");
+        let mut outdated = job;
+        outdated.cli_version = (2, 1, 258);
         assert_eq!(
-            validate_worker_version(&job, (2, 1, 261))
-                .expect_err("version drift")
+            validate_worker_version(&outdated)
+                .expect_err("outdated worker")
                 .kind(),
             io::ErrorKind::Unsupported
         );
@@ -1423,11 +1418,43 @@ mod tests {
     }
 
     #[test]
+    fn liveness_accepts_supported_worker_upgrades_but_rejects_identity_changes() {
+        let short = "1234abcd";
+        let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+        let mut job = json!({
+            "short":short, "sessionId":session_id, "cwd":"/tmp/workspace",
+            "cliVersion":"2.1.261", "tempo":"idle",
+        });
+        for version in ["2.1.261", "2.1.263"] {
+            job["cliVersion"] = json!(version);
+            assert!(
+                !observe_live_job(Ok(vec![job.clone()]), short, session_id)
+                    .expect("same session survives supported worker upgrade")
+            );
+        }
+        let duplicate = observe_live_job(Ok(vec![job.clone(), job.clone()]), short, session_id)
+            .expect_err("ambiguous identity");
+        assert_eq!(duplicate.kind(), io::ErrorKind::InvalidData);
+        job["cliVersion"] = json!("2.1.258");
+        let outdated = observe_live_job(Ok(vec![job.clone()]), short, session_id)
+            .expect_err("unsupported replacement worker");
+        assert_eq!(outdated.kind(), io::ErrorKind::Unsupported);
+        assert!(!retryable_liveness_error(&outdated));
+        job["cliVersion"] = json!("2.1.263");
+        job["sessionId"] = json!("52b41c61-e23c-4b7c-8b60-809c347451b6");
+        assert_eq!(
+            observe_live_job(Ok(vec![job]), short, session_id)
+                .expect_err("same short ID cannot substitute another session")
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
     fn liveness_absence_is_retryable_but_protocol_drift_is_not() {
         let short = "1234abcd";
         let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
-        let missing = observe_live_job(Ok(Vec::new()), short, session_id, (2, 1, 260))
-            .expect_err("missing job");
+        let missing = observe_live_job(Ok(Vec::new()), short, session_id).expect_err("missing job");
         assert!(retryable_liveness_error(&missing));
 
         let malformed = observe_live_job(
@@ -1438,7 +1465,6 @@ mod tests {
             })]),
             short,
             session_id,
-            (2, 1, 260),
         )
         .expect_err("missing version");
         assert_eq!(malformed.kind(), io::ErrorKind::InvalidData);
@@ -1455,7 +1481,6 @@ mod tests {
                 })]),
                 short,
                 session_id,
-                (2, 1, 260),
             )
             .expect("active observation")
         );
@@ -1470,7 +1495,6 @@ mod tests {
                 })]),
                 short,
                 session_id,
-                (2, 1, 260),
             )
             .expect("idle observation")
         );
@@ -1690,29 +1714,47 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn agent_view_launch_control_transcript_and_stop_share_one_session() {
-        exercise_managed_session(false, true, false).await;
+        exercise_managed_session(false, true, false, ("2.1.259", "2.1.259"), false).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn transcript_failure_stops_the_owned_background_job() {
-        exercise_managed_session(true, false, false).await;
+        exercise_managed_session(true, false, false, ("2.1.259", "2.1.259"), false).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn actor_transcript_failure_stops_job_and_releases_reader() {
-        exercise_managed_session(true, true, false).await;
+        exercise_managed_session(true, true, false, ("2.1.259", "2.1.259"), false).await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn resume_ack_keeps_managed_control_and_delivery_alive() {
-        exercise_managed_session(false, true, true).await;
+        exercise_managed_session(false, true, true, ("2.1.259", "2.1.259"), false).await;
     }
 
     #[cfg(unix)]
-    async fn exercise_managed_session(fail_transcript: bool, actor_reader: bool, resume_ack: bool) {
+    #[tokio::test]
+    async fn upgraded_cli_can_start_with_a_supported_older_background_worker() {
+        exercise_managed_session(false, true, false, ("2.1.263", "2.1.261"), false).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upgraded_cli_can_readopt_and_use_a_supported_older_session() {
+        exercise_managed_session(false, true, false, ("2.1.263", "2.1.261"), true).await;
+    }
+
+    #[cfg(unix)]
+    async fn exercise_managed_session(
+        fail_transcript: bool,
+        actor_reader: bool,
+        resume_ack: bool,
+        versions: (&str, &'static str),
+        re_adopt: bool,
+    ) {
         use sha2::{Digest, Sha256};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1737,7 +1779,7 @@ mod tests {
         std::fs::create_dir(&workspace).expect("workspace");
         std::fs::write(
             &executable,
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '2.1.259 (Claude Code)\\n'\nelse\n  printf 'started · abcdef12\\n'\nfi\n",
+            format!("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '{} (Claude Code)\\n'\nelse\n  printf 'started · abcdef12\\n'\nfi\n", versions.0),
         )
         .expect("fake Claude");
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
@@ -1777,6 +1819,7 @@ mod tests {
                 "cwd":workspace,
                 "inFlight":{"tasks":0,"queued":0},
                 "tempo":"idle",
+                "intent":"", "linkScanOffset":0, "linkScanPath":null, "output":null, "tokens":null,
                 "outcome":null,
                 "detail":"(idle — send a prompt to start)",
             }),
@@ -1790,6 +1833,7 @@ mod tests {
         let server_workspace = workspace.clone();
         let reject_control = Arc::new(AtomicBool::new(false));
         let server_reject_control = Arc::clone(&reject_control);
+        let worker_version = versions.1;
         let server = tokio::spawn(async move {
             let mut stopped = false;
             loop {
@@ -1814,7 +1858,7 @@ mod tests {
                                     "short":short,
                                     "sessionId":session_id,
                                     "cwd":server_workspace,
-                                    "cliVersion":"2.1.259",
+                                    "cliVersion":worker_version,
                                 }],
                             })
                         }
@@ -1914,12 +1958,12 @@ mod tests {
             &workspace,
             "generation-12345678",
             SessionPurpose::Actor,
-            None,
+            re_adopt.then_some(session_id),
         )
         .await
         .expect("launch Agent View");
         assert_eq!(launched.session_id, session_id);
-        assert!(!launched.resumed);
+        assert_eq!(launched.resumed, re_adopt);
         assert_eq!(
             launched.tui_command,
             [

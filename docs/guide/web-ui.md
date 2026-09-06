@@ -33,12 +33,66 @@ collapsed sidebar and active-call mobile bar. Settings, mute, and the Analyst te
 separate Dock actions.
 
 The Voice console is one operational workspace. Call state, audio settings, mute, and Stop are in its
-top audio-control area. The left pane shows the current spoken turn and accumulates provider fragments
-until the authoritative final transcript arrives; the right pane embeds the selected Voice Analyst
-runtime's genuine writable TUI. On narrow screens, **Conversation** and **Voice Analyst** are tabs in the same console.
-Speaking voice, microphone, and (where supported) speaker choices expand inline rather than opening a
-second settings modal. The host must already be signed in through `codex login`, and the browser must
+top audio-control area. The conversation keeps up to 40 recent spoken entries from this call,
+updating streaming fragments with the final transcript. These entries stay in this browser's memory
+until the next call or page reload. The collapsible right pane embeds the selected Voice Analyst
+runtime's writable TUI; its work status is independent of the live audio status. On desktop, drag
+the divider to adjust the pane widths; focus it and use Left/Right or Home/End for keyboard control.
+Double-click the divider to restore the default ratio. This browser remembers the chosen ratio,
+while both panes retain a readable minimum width. Resizing does not reconnect the terminal. On narrow screens,
+**Conversation** and **Voice Analyst** switch between the two panes.
+Settings replace the console body inside the same panel; call controls stay available.
+**Back to conversation** or Escape returns to the console without disconnecting its terminal.
+Analyst drafts survive tab changes and panel minimization until explicitly saved or discarded.
+The minimize control keeps the call running; **Stop voice** ends live audio.
+Its tabs are **Voice & audio**, **Message notifications**, and **Voice Analyst**. Speaking voice,
+microphone and supported speaker choices remain in Voice & audio, alongside response detail
+(concise / standard / detailed) and speaking style (natural / direct / patient). Expression defaults
+save automatically for the instance and apply to the next call, without restarting the Analyst.
+Speaking voice and device choices are saved in this browser and also apply to the next call. Spoken
+instructions can override them. The host must already be signed in through `codex login`, and the browser must
 allow microphone access. That host login belongs only to the Realtime provider call.
+
+#### Message notifications and source links
+
+Notifications are off for every Group by default. In **Message notifications**, choose **To user**
+or **All chat messages** for the Groups you want to hear from; enabling a scope starts at the
+current ledger boundary, not old history. Explicit replies to work requested through Voice are
+followed independently of subscriptions. Both acknowledgements and later replies are retained,
+and only the expected Actor's reply to the exact source request counts as its response.
+
+**Do not repeat messages already viewed in Web** is on by default. It uses exact source IDs after
+at least 1.5 seconds of stable, fully visible, expanded display in a focused foreground page.
+Hidden, covered, folded, partially visible and virtual-list overscan rows do not count. This does
+not change Actor Mail unread state or reply obligations. A viewed explicit reply still updates
+the Analyst's context, but does not trigger a duplicate reading. A user's explicit request to
+read or explain a message still takes priority.
+
+The console's compact **Message sources** section opens the original chat without stopping voice.
+Pending and unconfirmed counts describe delivery observations, not task completion or proof that
+you heard a result. During your call, queued output is shown as **waiting to speak**; expand the
+section to see whether it is waiting for the conversation, a Voice response, or a pre-submission
+check. Each source also shows the associated result's delivery state. Fully skipped output identifies
+whether it was already viewed, excluded by policy, or unavailable at the submission check. The
+recorded skip reason survives later preference changes. “Submitted” describes delivery to Voice,
+not completed playback or proof of hearing. Delivery uncertainty can remain for earlier updates
+while new ones proceed. If notification consumption pauses, a call-wide notice explains that source
+messages are retained and starting a new call retries consumption; voice and Analyst state remain
+separate.
+If a result combines viewed and unviewed background messages, Voice can point
+to the remaining sources rather than inventing a separable summary. Attachments are identified
+without opening or uploading their contents. Notification text is source data, not authorization
+for an Actor action.
+
+Delivery references and cursors survive restarts in protected instance state. Unsent browser
+output can return on a later call only when it is positively known not to have been submitted;
+an uncertain handoff is retained and is not automatically replayed. Available results are returned
+in their recorded completion order, including catch-up on a later call. All new notification routes
+require trusted-local/admin access and are unavailable to scoped users and Exhibit viewers.
+Remote administrator tokens are rechecked during calls, notification handoff and Analyst terminal
+input/output. Revoking or downgrading one closes even an idle terminal connection within the next
+authorization poll (one second) and stops new Voice work on that connection. An unfinished update from a replaced
+Analyst remains unconfirmed rather than being silently executed again by its replacement.
 
 The two visible roles are one product flow:
 
@@ -90,7 +144,9 @@ or session flags likewise fail explicitly. CCCC validates the live ACP and authe
 behavior during startup instead of maintaining a separate legacy-version compatibility branch.
 These CCCC-owned values cannot be overridden.
 
-For Claude Code, CCCC requires version 2.1.259 or newer and owns the Agent View
+For Claude Code, CCCC requires both the launcher and background worker to report version 2.1.259
+or newer. Their versions can differ after a Claude update; an upgraded supervisor may retain older
+workers or migrate idle sessions without changing the managed session's identity. CCCC owns the Agent View
 background session, authenticated control channel, transcript lifecycle,
 native `claude attach`, session identity, MCP binding, autonomy, and resume
 arguments. Supported model, effort, agent, tool, plugin, and settings options
@@ -148,7 +204,17 @@ confirmation in Custom mode. A failed candidate launch restores the prior settin
 work explicitly discarded before the switch cannot be recovered. Browser-local audio choices apply
 to the next call.
 
-Analyst results are returned immediately, including updates arriving while Voice is speaking.
+User requests and source-message updates enter the same Runtime admission path immediately; the
+Runtime owns steer/queue behavior. Unsent **speech output**, separately, waits for the active user
+or assistant speech turn to finish. Adjacent fragments of the same result are combined without
+losing text. Provider receipt alone does not release the next speech output.
+If no assistant speech starts within 30 seconds of submission, that update remains unconfirmed;
+new, unsent output may proceed once no user or assistant turn is active. The earlier update is
+not replayed. Active speech is never ended merely because that deadline passed.
+Pre-submission checks have a 10-second deadline and retry transient connection failures up to
+three times with increasing delays. A failed check never permits unchecked content to be spoken.
+If checking still fails, the call stops with an explanation and positively unsent results remain
+available for a later call. A successfully suppressed result stays suppressed if its check is retried.
 If Realtime does not confirm receipt within 30 seconds, the console shows a notice without
 disconnecting or replaying the update. Results exceeding the 32 KiB Voice limit are reported
 explicitly: use the Analyst terminal for the full output or ask for a shorter summary. Neither
@@ -156,8 +222,9 @@ notice stops the Analyst. Provider receipts confirm receipt, not that every deta
 
 Realtime Call and Voice Analyst have separate lifecycles. Stopping voice disconnects browser audio
 and releases the microphone lease, but keeps the Analyst warm. Ongoing Analyst or linked
-Actor work continues, and its result returns to the Analyst session without waking audio; only a
-result from the exact still-active call generation may become speech. A later call reuses the warm
+Actor work continues. Completed Analyst results are retained without waking audio. Actor replies
+arriving while voice is off stay in the ledger and are consumed on the next explicit call; they do
+not start notification model work in the background. A later call reuses the warm
 Analyst. The console embeds the selected runtime's genuine TUI for that same Analyst session using the existing
 terminal transport; it stays available after the call stops and does not create an Actor or a second
 Analyst. Codex creates its resumable rollout lazily, so its terminal appears when the first real

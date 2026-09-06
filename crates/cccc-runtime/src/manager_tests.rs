@@ -404,9 +404,18 @@ fn submit_sequence_writes_each_key_in_order() {
         &temp,
         "g_submit_sequence",
         "peer1",
-        "stty raw -echo; dd bs=1 count=3 2>/dev/null | od -An -t x1",
+        "stty raw -echo; printf '\\033[?2004h'; dd bs=1 count=3 2>/dev/null | od -An -t x1",
     ))
     .expect("start");
+    assert!(
+        super::wait_for_input_ready(
+            "g_submit_sequence",
+            "peer1",
+            Duration::from_secs(3),
+            &AtomicBool::new(false),
+        )
+        .expect("raw terminal ready")
+    );
     assert!(
         submit_sequence_interruptible(
             "g_submit_sequence",
@@ -428,13 +437,14 @@ fn submit_sequence_writes_each_key_in_order() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    // Stop joins the output reader before inspecting the completed transcript.
+    stop("g_submit_sequence", "peer1").expect("cleanup");
     let output = history("g_submit_sequence", "peer1", None, 1024)
         .expect("history")
         .data;
     let tokens = output.split_ascii_whitespace().collect::<Vec<_>>();
     assert!(
-        tokens.windows(3).any(|items| items == ["78", "0a", "0a"]),
+        tokens.windows(3).any(|items| items == ["78", "0d", "0d"]),
         "{output:?}"
     );
-    stop("g_submit_sequence", "peer1").expect("cleanup");
 }

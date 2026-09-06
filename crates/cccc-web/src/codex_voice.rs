@@ -4,14 +4,12 @@ use cccc_daemon::experimental_codex_voice::{
     AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, LaunchConfig, RealtimeCallConfig,
     create_realtime_answer,
 };
-use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::codex_voice_actor_results::{self, ObservedActorResult};
 use crate::ledger_event_hub::LedgerEventHub;
 
 mod active_session;
@@ -19,9 +17,12 @@ mod analyst_events;
 mod analyst_runtime;
 mod analyst_settings;
 mod analyst_terminal;
+mod notifications;
 mod persistence;
 mod sessions_lifecycle;
 mod sessions_start;
+#[cfg(all(test, unix))]
+mod socket_tests;
 #[cfg(test)]
 mod tests;
 
@@ -77,13 +78,10 @@ pub(crate) struct AnalystRuntime {
     terminal_gate: Mutex<()>,
     snapshot: StdMutex<AnalystSnapshot>,
     monitor: StdMutex<Option<JoinHandle<()>>>,
-    call_generation: StdMutex<Option<String>>,
-    tracked_work: StdMutex<HashSet<String>>,
-    pending_results: StdMutex<VecDeque<(String, ObservedActorResult)>>,
-    actor_result_gate: Mutex<()>,
 }
 
 pub(crate) struct ActiveSession {
+    notification_paused: tokio::sync::watch::Sender<bool>,
     call: Arc<CodexVoiceCall>,
     analyst: Arc<AnalystRuntime>,
     client_session_id: String,
@@ -112,5 +110,4 @@ pub(crate) struct AnalystSettingsOutcome {
 
 pub(crate) struct CodexVoiceSessions {
     state: Mutex<ManagedState>,
-    ledger_events: Option<LedgerEventHub>,
 }

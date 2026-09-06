@@ -20,21 +20,6 @@ impl AnalystLifecycle {
         }
         let method = event.message["method"].as_str().unwrap_or_default();
         let params = &event.message["params"];
-        if let Some(work) = tracked_work(&event.message) {
-            let event_turn_id = params["turnId"].as_str().unwrap_or_default();
-            let belongs_to_voice_turn =
-                self.state
-                    .lock()
-                    .await
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| {
-                        active.origin == AnalystTurnOrigin::Voice && active.turn_id == event_turn_id
-                    });
-            if belongs_to_voice_turn {
-                let _ = self.events.send(AnalystLifecycleEvent::TrackedWork(work));
-            }
-        }
         if method == "mcpServer/elicitation/request" {
             let _ = self
                 .session
@@ -122,6 +107,11 @@ impl AnalystLifecycle {
             .unwrap_or_else(|| (String::new(), AnalystTurnOrigin::Terminal));
         state.active = Some(ActiveTurn {
             turn_id: turn_id.to_owned(),
+            delegation_ids: if delegation_id.is_empty() {
+                Vec::new()
+            } else {
+                vec![delegation_id.clone()]
+            },
             latest_delegation_id: delegation_id,
             origin,
             cancelling: false,
@@ -188,7 +178,12 @@ impl AnalystLifecycle {
                 let _ = self.events.send(AnalystLifecycleEvent::Progress {
                     turn_id: active.turn_id.clone(),
                     text: delta.to_owned(),
-                    speakable: active.origin.speakable(),
+                    // Source-bearing summaries are checked against current visibility at final output.
+                    speakable: active.origin.speakable()
+                        && !active
+                            .delegation_ids
+                            .iter()
+                            .any(|id| id.starts_with("voice-result:")),
                 });
             }
             return;
@@ -241,6 +236,7 @@ impl AnalystLifecycle {
         let _ = self.events.send(AnalystLifecycleEvent::Completed {
             turn_id: active.turn_id,
             delegation_id: active.latest_delegation_id,
+            delegation_ids: active.delegation_ids,
             status,
             result,
             speakable: active.origin.speakable(),
@@ -280,7 +276,8 @@ fn associate_native_delegation(
     };
     let active = state.active.as_mut().expect("checked active turn");
     active.latest_delegation_id = delegation_id.to_owned();
-    active.origin = pending.origin;
+    active.delegation_ids.push(delegation_id.to_owned());
+    active.origin = active.origin.merged(pending.origin);
     let receipt = TurnReceipt {
         delegation_id: delegation_id.to_owned(),
         thread_id: thread_id.to_owned(),
@@ -305,48 +302,4 @@ pub(super) fn normalized_completion_status(
     } else {
         status.to_owned()
     }
-}
-
-pub(super) fn tracked_work(message: &Value) -> Option<TrackedWork> {
-    let item = message.get("params")?.get("item")?;
-    if message.get("method")?.as_str()? != "item/completed"
-        || item.get("type")?.as_str()? != "mcpToolCall"
-        || item.get("status")?.as_str()? != "completed"
-        || item.get("server")?.as_str()? != "cccc"
-    {
-        return None;
-    }
-    let payload = item.get("result")?.get("structuredContent")?;
-    let payload = payload.get("tool_result").unwrap_or(payload);
-    let task_id = payload.get("task_id")?.as_str()?.trim();
-    let source_event_id = payload.get("event_id")?.as_str()?.trim();
-    let recipients = payload.get("event")?.get("data")?.get("to")?.as_array()?;
-    let [recipient] = recipients.as_slice() else {
-        return None;
-    };
-    let actor_id = recipient.as_str()?.trim();
-    let group_id = payload
-        .get("event")
-        .and_then(|event| event.get("group_id"))
-        .and_then(Value::as_str)
-        .or_else(|| payload.get("group_id").and_then(Value::as_str))
-        .or_else(|| {
-            item.get("arguments")?
-                .get("tool_arguments")?
-                .get("group_id")?
-                .as_str()
-        })?
-        .trim();
-    (!task_id.is_empty()
-        && !source_event_id.is_empty()
-        && !group_id.is_empty()
-        && !actor_id.is_empty()
-        && actor_id != "user"
-        && !actor_id.starts_with('@'))
-    .then(|| TrackedWork {
-        group_id: group_id.to_owned(),
-        task_id: task_id.to_owned(),
-        source_event_id: source_event_id.to_owned(),
-        actor_id: actor_id.to_owned(),
-    })
 }

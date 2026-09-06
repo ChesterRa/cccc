@@ -2,7 +2,30 @@
 import { useCallback, useEffect, useId, useRef } from "react";
 
 const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
+function focusableElements(modal: HTMLElement): HTMLElement[] {
+  return Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.tabIndex < 0 || element.closest('[hidden], [inert], [aria-hidden="true"]'))
+      return false;
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse"
+      )
+        return false;
+      if (
+        node instanceof HTMLDetailsElement &&
+        !node.open &&
+        !node.querySelector(":scope > summary")?.contains(element)
+      )
+        return false;
+    }
+    return true;
+  });
+}
 
 type BodyStyleSnapshot = { overflow: string; position: string; top: string; width: string };
 
@@ -25,7 +48,7 @@ function removeModal(id: string): void {
 }
 
 function focusFirst(modal: HTMLDivElement): void {
-  const first = modal.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+  const first = focusableElements(modal)[0];
   if (first) {
     first.focus();
     return;
@@ -109,7 +132,7 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
       const modal = modalRef.current;
       if (!modal) return;
 
-      const focusables = Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      const focusables = focusableElements(modal);
       if (focusables.length === 0) {
         e.preventDefault();
         modal.setAttribute("tabindex", "-1");

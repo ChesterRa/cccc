@@ -139,6 +139,14 @@ export function MessageRows({
             data-index={index}
             data-message-row="true"
             data-message-id={message.id ? String(message.id) : ""}
+            data-voice-viewable={
+              message.kind === "chat.message" &&
+              message.by !== "user" &&
+              !message._streaming &&
+              !readOnly
+                ? "true"
+                : undefined
+            }
             className={grouping.compactSpacing ? "pb-3" : "pb-6"}
           >
             <MessageBubble

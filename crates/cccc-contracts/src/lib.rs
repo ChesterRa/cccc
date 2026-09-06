@@ -4,6 +4,7 @@ pub mod deepseek;
 pub mod event;
 pub mod ipc;
 pub mod message;
+pub mod voice_notifications;
 
 pub use actor::{
     Actor, ActorRole, ActorRuntime, ActorSubmit, GroupState, RunnerKind, RuntimeStateSource,

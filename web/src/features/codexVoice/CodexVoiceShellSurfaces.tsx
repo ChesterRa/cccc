@@ -32,7 +32,11 @@ export function CodexVoiceMobileDock(props: SharedProps) {
 }
 
 export function CodexVoiceOverlays(
-  props: SharedProps & { isDark: boolean; isSmallScreen: boolean },
+  props: SharedProps & {
+    isDark: boolean;
+    isSmallScreen: boolean;
+    onOpenSource?: (groupId: string, eventId: string) => void;
+  },
 ) {
   const { voice, isDark, isSmallScreen } = props;
   return (
@@ -44,6 +48,7 @@ export function CodexVoiceOverlays(
         isSmallScreen={isSmallScreen}
         controller={voice.controller}
         onClose={voice.closeDetails}
+        onOpenSource={props.onOpenSource}
       />
     </>
   );

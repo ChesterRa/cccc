@@ -60,6 +60,14 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
       data-index={virtualRow.index}
       data-message-row="true"
       data-message-id={message.id ? String(message.id) : ""}
+      data-voice-viewable={
+        message.kind === "chat.message" &&
+        message.by !== "user" &&
+        !message._streaming &&
+        !messageBubbleProps.readOnly
+          ? "true"
+          : undefined
+      }
       ref={attachMeasuredRow}
       style={{
         position: "absolute",

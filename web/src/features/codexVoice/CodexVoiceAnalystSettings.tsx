@@ -125,8 +125,13 @@ export function CodexVoiceAnalystSettings({
         ) : null}
       </div>
 
-      <div className="sticky bottom-0 mt-auto flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] bg-[var(--color-sidebar-bg)] px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div className="min-w-0 text-xs">
+          {form.hasChanges ? (
+            <p className="mb-1 font-medium text-[var(--color-text-primary)]">
+              {t("codexVoiceUnsavedChanges")}
+            </p>
+          ) : null}
           {form.error ? (
             <p className="text-rose-500" role="alert">
               {form.error}
@@ -149,7 +154,17 @@ export function CodexVoiceAnalystSettings({
             </p>
           )}
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-wrap gap-2">
+          {form.hasChanges ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={form.editingDisabled}
+              onClick={form.discard}
+            >
+              {t("codexVoiceDiscardChanges")}
+            </Button>
+          ) : null}
           {form.mode === "custom" ? (
             <Button
               type="button"

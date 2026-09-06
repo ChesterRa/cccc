@@ -29,10 +29,6 @@ impl AnalystRuntime {
                 warning,
             }),
             monitor: StdMutex::new(None),
-            call_generation: StdMutex::new(None),
-            tracked_work: StdMutex::new(HashSet::new()),
-            pending_results: StdMutex::new(VecDeque::new()),
-            actor_result_gate: Mutex::new(()),
         }
     }
 
@@ -104,28 +100,6 @@ impl AnalystRuntime {
         snapshot.phase = "needs_attention".into();
         snapshot.warning = warning.trim().to_owned();
     }
-
-    pub(super) fn set_call_generation(&self, generation: Option<&str>) {
-        *self
-            .call_generation
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = generation.map(str::to_owned);
-    }
-
-    pub(crate) fn matches_call_generation(&self, generation: &str) -> bool {
-        let call_generation = self
-            .call_generation
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        actor_result_is_speakable(call_generation.as_deref(), generation)
-    }
-}
-
-pub(super) fn actor_result_is_speakable(
-    active_generation: Option<&str>,
-    source_generation: &str,
-) -> bool {
-    active_generation == Some(source_generation)
 }
 
 impl Drop for AnalystRuntime {

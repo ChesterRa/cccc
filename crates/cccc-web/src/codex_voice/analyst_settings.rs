@@ -144,7 +144,7 @@ impl CodexVoiceSessions {
                         "Voice Analyst candidate failed: {candidate_error}; previous runtime could not be restored: {restore_error}"
                     )
                 })?;
-                restored.start_monitor(home.clone(), self.ledger_events.clone());
+                restored.start_monitor(home.clone());
                 persistence::persist_analyst(home, &restored, materialized)?;
                 state.analyst = Some(restored);
                 return Err(candidate_error.context(
@@ -152,7 +152,7 @@ impl CodexVoiceSessions {
                 ));
             }
         };
-        replacement.start_monitor(home.clone(), self.ledger_events.clone());
+        replacement.start_monitor(home.clone());
         if let Err(error) =
             persistence::persist_analyst(home, &replacement, resume_thread_id.is_some())
         {
@@ -171,7 +171,7 @@ impl CodexVoiceSessions {
                 .await
                 .context("restore previous Voice Analyst after receipt persistence failed")?,
             );
-            restored.start_monitor(home.clone(), self.ledger_events.clone());
+            restored.start_monitor(home.clone());
             persistence::persist_analyst(home, &restored, materialized)?;
             state.analyst = Some(restored);
             return Err(error.context("persist replacement Voice Analyst receipt"));

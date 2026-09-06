@@ -10,6 +10,24 @@ vi.mock("react-i18next", () => {
   const t = (key: string) => key;
   return { useTranslation: () => ({ t }) };
 });
+vi.mock("../../services/api/codexVoice", () => ({
+  fetchVoicePreferences: vi.fn(async () => ({
+    ok: true,
+    result: {
+      preferences: {
+        revision: 0,
+        groups: {},
+        suppress_viewed: true,
+        verbosity: "standard",
+        style: "natural",
+      },
+    },
+  })),
+  fetchVoiceNotifications: vi.fn(async () => ({
+    ok: true,
+    result: { messages: [], pending_count: 0, unconfirmed_count: 0 },
+  })),
+}));
 vi.mock("../../features/codexVoice/VoiceAnalystTerminal", () => ({
   VoiceAnalystTerminal: ({ isVisible }: { isVisible: boolean }) => (
     <div data-visible={String(isVisible)}>embedded-analyst-terminal</div>
@@ -44,10 +62,11 @@ function controller(): CodexVoiceSessionController {
     },
     owned: true,
     checking: false,
-    userTranscript: "",
-    assistantTranscript: "",
+    conversation: [],
+    notificationPaused: false,
     microphoneMuted: false,
     playbackBlocked: false,
+    outputStatus: { queued: 0, blocked: null },
     error: "",
     isStarting: false,
     isEngaged: true,
@@ -79,8 +98,60 @@ function buttonByLabel(host: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
-describe("CodexVoiceAnalystModal settings drawer", () => {
-  it("overlays an inert console without remounting or disconnecting its terminal", async () => {
+describe("CodexVoiceAnalystModal settings navigation", () => {
+  it("disconnects a collapsed desktop terminal even after the Analyst phone tab was selected", async () => {
+    let desktop = false;
+    let changed = () => {};
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        get matches() {
+          return desktop;
+        },
+        addEventListener: (_: string, listener: () => void) => {
+          changed = listener;
+        },
+        removeEventListener: vi.fn(),
+      }),
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <CodexVoiceAnalystModal
+          isOpen
+          isDark={false}
+          isSmallScreen={false}
+          controller={controller()}
+          onClose={vi.fn()}
+        />,
+      ),
+    );
+    const terminal = host.querySelector("[data-visible]");
+    const clickText = async (text: string) => {
+      const button = [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === text,
+      );
+      if (!button) throw new Error(`Missing button: ${text}`);
+      await act(async () => button.click());
+    };
+    expect(terminal?.getAttribute("data-visible")).toBe("false");
+    await clickText("codexVoiceAnalystTitle");
+    expect(terminal?.getAttribute("data-visible")).toBe("true");
+    await act(async () => {
+      desktop = true;
+      changed();
+    });
+    await clickText("codexVoiceHideAnalyst");
+    expect(terminal?.getAttribute("data-visible")).toBe("false");
+    expect(host.querySelector("[data-visible]")).toBe(terminal);
+    await clickText("codexVoiceShowAnalyst");
+    expect(terminal?.getAttribute("data-visible")).toBe("true");
+    await act(async () => root.unmount());
+  });
+
+  it("opens settings in the same dialog without remounting or disconnecting its terminal", async () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -124,20 +195,11 @@ describe("CodexVoiceAnalystModal settings drawer", () => {
     const settingsButton = buttonByLabel(host, "codexVoiceSettings");
     await act(async () => settingsButton.click());
 
-    const drawer = host.querySelector("[data-codex-voice-settings-drawer='true']");
-    const overlay = host.querySelector("[data-codex-voice-settings-overlay='true']");
-    const backdrop = overlay?.querySelector("button");
+    const panel = host.querySelector("[data-codex-voice-settings-panel='true']");
     const consoleSurface = host.querySelector("[data-codex-voice-console='true']");
-    expect(drawer).not.toBeNull();
-    expect(drawer?.getAttribute("aria-modal")).toBe("true");
-    expect(drawer?.className).toContain("w-full");
-    expect(drawer?.className).toContain("bg-[var(--color-bg-primary)]");
-    expect(drawer?.className).not.toContain("glass-modal");
-    expect(drawer?.className).not.toContain("h-full");
-    expect(overlay?.className).toContain("absolute");
-    expect(overlay?.className).toContain("items-start");
-    expect(overlay?.className).not.toContain("justify-end");
-    expect(backdrop?.className).not.toContain("backdrop-blur");
+    expect(panel).not.toBeNull();
+    expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(consoleSurface?.hasAttribute("hidden")).toBe(true);
     expect(consoleSurface?.hasAttribute("inert")).toBe(true);
     expect(consoleSurface?.getAttribute("aria-hidden")).toBe("true");
     expect(host.querySelector("[data-visible='true']")).toBe(terminalBefore);
@@ -150,29 +212,24 @@ describe("CodexVoiceAnalystModal settings drawer", () => {
     expect(host.querySelector("[data-analyst-settings-active='true']")).not.toBeNull();
 
     const done = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "codexVoiceSettingsClose",
+      (button) => button.textContent?.trim() === "codexVoiceBackToConversation",
     );
     if (!(done instanceof HTMLButtonElement)) throw new Error("done button not found");
     await act(async () => done.click());
 
-    expect(host.querySelector("[data-codex-voice-settings-drawer='true']")).toBeNull();
+    expect(host.querySelector("#codex-voice-settings-page")?.hasAttribute("hidden")).toBe(true);
     expect(consoleSurface?.hasAttribute("inert")).toBe(false);
     expect(host.querySelector("[data-visible='true']")).toBe(terminalBefore);
     expect(document.activeElement).toBe(settingsButton);
 
     await act(async () => settingsButton.click());
-    const reopenedBackdrop = host.querySelector(
-      "[data-codex-voice-settings-overlay='true'] > button",
-    );
-    if (!(reopenedBackdrop instanceof HTMLButtonElement)) {
-      throw new Error("settings backdrop not found");
-    }
-    await act(async () => reopenedBackdrop.click());
-    expect(host.querySelector("[data-codex-voice-settings-drawer='true']")).toBeNull();
+    expect(analystTab.getAttribute("aria-selected")).toBe("true");
+    await act(async () => settingsButton.click());
+    expect(host.querySelector("#codex-voice-settings-page")?.hasAttribute("hidden")).toBe(true);
 
     await act(async () => settingsButton.click());
     await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
-    expect(host.querySelector("[data-codex-voice-settings-drawer='true']")).toBeNull();
+    expect(host.querySelector("#codex-voice-settings-page")?.hasAttribute("hidden")).toBe(true);
     expect(onClose).not.toHaveBeenCalled();
 
     await act(async () => root.unmount());

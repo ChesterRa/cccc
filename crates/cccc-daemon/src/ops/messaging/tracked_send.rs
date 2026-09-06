@@ -265,6 +265,7 @@ fn message_request(request: &DaemonRequest, client_id: &str) -> DaemonRequest {
         "insight",
         "require_peer_insight",
         "suggested_user_message",
+        cccc_core::voice_notifications::ORIGIN_ARG,
     ] {
         if let Some(value) = request.args.get(key) {
             args.insert(key.into(), value.clone());

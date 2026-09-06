@@ -2,6 +2,10 @@ use super::*;
 use anyhow::{Result, anyhow};
 
 impl ActiveSession {
+    pub(crate) fn notification_status(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.notification_paused.subscribe()
+    }
+
     pub(crate) fn call(&self) -> &Arc<CodexVoiceCall> {
         &self.call
     }

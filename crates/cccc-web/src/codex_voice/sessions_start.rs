@@ -4,10 +4,9 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 impl CodexVoiceSessions {
-    pub(crate) fn new(ledger_events: LedgerEventHub) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: Mutex::new(ManagedState::default()),
-            ledger_events: Some(ledger_events),
         }
     }
 
@@ -23,7 +22,8 @@ impl CodexVoiceSessions {
         let custom_environment = cccc_core::codex_voice_settings::private_environment(home)?;
         let analyst_runtime =
             cccc_core::codex_voice_settings::resolve(home, &analyst_settings, &custom_environment)?;
-        let realtime = RealtimeCallConfig::from_environment_with_voice(voice)?;
+        let mut realtime = RealtimeCallConfig::from_environment_with_voice(voice)?;
+        realtime.preferences = cccc_core::voice_notifications::preferences(home)?;
         let offer_digest: [u8; 32] = Sha256::digest(offer_sdp.as_bytes()).into();
         // The manager lock intentionally serializes the slow launch. Releasing it would require a
         // second reservation state and could create two provider calls for one microphone lease.
@@ -78,7 +78,7 @@ impl CodexVoiceSessions {
                     .await
                     .context("launch persistent Voice Analyst")?,
             );
-            analyst.start_monitor(home.clone(), self.ledger_events.clone());
+            analyst.start_monitor(home.clone());
             if let Err(error) =
                 persistence::persist_analyst(home, &analyst, analyst.analyst.tui_ready())
             {
@@ -107,6 +107,7 @@ impl CodexVoiceSessions {
                 }
             };
         let session = Arc::new(ActiveSession {
+            notification_paused: tokio::sync::watch::channel(false).0,
             call: Arc::new(call),
             analyst,
             client_session_id,
@@ -115,7 +116,6 @@ impl CodexVoiceSessions {
             voice: realtime.voice,
             connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
         });
-        session.analyst.set_call_generation(Some(&generation));
         state.active = Some(Arc::clone(&session));
         Ok(StartOutcome::Started(StartedSession {
             session,

@@ -2,7 +2,6 @@ mod api;
 mod auth;
 mod browser_surface;
 mod codex_voice;
-mod codex_voice_actor_results;
 mod im_runtime;
 mod ledger_event_hub;
 mod local_browser_auth;
@@ -171,7 +170,7 @@ fn app_with_shutdown(
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
     im_workers.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
     let browser_surfaces = Arc::new(browser_surface::BrowserSurfaces::default());
-    let codex_voice = Arc::new(codex_voice::CodexVoiceSessions::new(ledger_events.clone()));
+    let codex_voice = Arc::new(codex_voice::CodexVoiceSessions::new());
     let notebooklm_auth = Arc::new(notebooklm_auth::AuthFlowManager::default());
     spawn_notebooklm_auth_shutdown(
         Arc::clone(&notebooklm_auth),

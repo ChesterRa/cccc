@@ -70,6 +70,7 @@ mod task_list;
 mod terminal;
 mod terminal_history_source;
 mod terminal_text;
+mod voice_notifications;
 mod working_state;
 #[cfg(test)]
 mod working_state_tests;
@@ -104,6 +105,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpRes
         memory::handle,
         context::handle,
         settings::handle,
+        voice_notifications::handle,
         terminal::handle,
     ] {
         if let Some(result) = handler(home, request) {

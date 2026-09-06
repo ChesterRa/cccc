@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { StopIcon, TerminalIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
@@ -8,12 +8,16 @@ import { VoiceAnalystTerminal } from "./VoiceAnalystTerminal";
 
 export function CodexVoiceConversationPane({
   controller,
-  phaseLabel,
   visible,
+  children,
+  analystExpanded,
+  onToggleAnalyst,
 }: {
   controller: CodexVoiceSessionController;
-  phaseLabel: string;
   visible: boolean;
+  children?: ReactNode;
+  analystExpanded: boolean;
+  onToggleAnalyst(): void;
 }) {
   const { t } = useTranslation("modals");
   const conversationRef = useRef<HTMLDivElement | null>(null);
@@ -26,11 +30,12 @@ export function CodexVoiceConversationPane({
       if (container) container.scrollTop = container.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [controller.assistantTranscript, controller.userTranscript, visible]);
+  }, [controller.conversation, visible]);
 
   return (
     <section
-      className={`${visible ? "flex" : "hidden"} min-h-0 flex-col border-r border-[var(--glass-border-subtle)] lg:flex`}
+      className={`${visible ? "flex" : "hidden"} min-h-0 min-w-0 flex-col lg:flex`}
+      id="codex-voice-conversation-pane"
       aria-labelledby="codex-voice-conversation-heading"
     >
       <div className="hidden flex-none items-center justify-between border-b border-[var(--glass-border-subtle)] px-5 py-3 lg:flex">
@@ -40,8 +45,18 @@ export function CodexVoiceConversationPane({
         >
           {t("codexVoiceConversation")}
         </h3>
-        <span className="text-xs text-[var(--color-text-muted)]">{phaseLabel}</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onToggleAnalyst}
+          aria-expanded={analystExpanded}
+        >
+          <TerminalIcon size={15} />
+          {t(analystExpanded ? "codexVoiceHideAnalyst" : "codexVoiceShowAnalyst")}
+        </Button>
       </div>
+      {children}
       <div
         ref={conversationRef}
         className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5"
@@ -53,16 +68,14 @@ export function CodexVoiceConversationPane({
             element.scrollHeight - element.clientHeight - element.scrollTop < 80;
         }}
       >
-        {controller.userTranscript ? (
-          <TranscriptBlock label={t("codexVoiceYouSaid")} text={controller.userTranscript} />
-        ) : null}
-        {controller.assistantTranscript ? (
+        {controller.conversation.map((turn) => (
           <TranscriptBlock
-            label={t("codexVoiceAssistantSaid")}
-            text={controller.assistantTranscript}
+            key={turn.id}
+            label={t(turn.role === "user" ? "codexVoiceYouSaid" : "codexVoiceAssistantSaid")}
+            text={turn.text}
           />
-        ) : null}
-        {!controller.userTranscript && !controller.assistantTranscript ? (
+        ))}
+        {!controller.conversation.length ? (
           <div className="flex min-h-40 items-center justify-center text-center text-sm leading-6 text-[var(--color-text-muted)]">
             {controller.isEngaged
               ? t("codexVoiceConversationListening")
@@ -70,6 +83,11 @@ export function CodexVoiceConversationPane({
           </div>
         ) : null}
       </div>
+      {controller.conversation.length ? (
+        <p className="flex-none border-t border-[var(--glass-border-subtle)] px-5 py-2 text-[11px] text-[var(--color-text-muted)]">
+          {t("codexVoiceConversationHistoryHint")}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -92,27 +110,28 @@ export function CodexVoiceAnalystPane({
 
   return (
     <section
-      className={`${visible ? "flex" : "hidden"} min-h-0 flex-col lg:flex`}
+      className={`${visible ? "flex" : "hidden"} min-h-0 min-w-0 flex-col lg:flex`}
+      id="codex-voice-analyst-pane"
       aria-labelledby="codex-voice-analyst-heading"
     >
       <div className="flex flex-none items-center justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5">
-        <div className="flex min-w-0 items-center gap-2">
-          <TerminalIcon size={16} className="text-[var(--color-accent-primary)]" />
-          <h3
-            id="codex-voice-analyst-heading"
-            className="truncate text-sm font-semibold text-[var(--color-text-primary)]"
-          >
-            {t("codexVoiceAnalystTitle")}
-          </h3>
-          {runtimeLabel ? (
-            <span className="truncate text-xs text-[var(--color-text-muted)]">
-              · {runtimeLabel}
-            </span>
-          ) : null}
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <TerminalIcon size={16} className="flex-none text-[var(--color-accent-primary)]" />
+            <h3
+              id="codex-voice-analyst-heading"
+              className="flex-none whitespace-nowrap text-sm font-semibold text-[var(--color-text-primary)]"
+            >
+              {t("codexVoiceAnalystTitle")}
+            </h3>
+            {runtimeLabel ? (
+              <span className="truncate text-xs text-[var(--color-text-muted)]">
+                · {runtimeLabel}
+              </span>
+            ) : null}
+          </div>
           {analystPhase ? (
-            <span className="truncate text-xs text-[var(--color-text-muted)]">
-              · {analystPhase}
-            </span>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">{analystPhase}</p>
           ) : null}
         </div>
         <div className="flex flex-none items-center gap-1">
@@ -175,7 +194,7 @@ function TranscriptBlock({ label, text }: { label: string; text: string }) {
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
         {label}
       </div>
-      <div className="mt-1.5 whitespace-pre-wrap text-[15px] leading-7 text-[var(--color-text-primary)]">
+      <div className="mt-1.5 whitespace-pre-wrap break-words text-[15px] leading-7 text-[var(--color-text-primary)]">
         {text}
       </div>
     </div>

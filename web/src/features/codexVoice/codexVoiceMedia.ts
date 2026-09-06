@@ -26,7 +26,6 @@ export async function applyOutputDevice(
   audio: HTMLAudioElement,
   outputDeviceId: string,
 ): Promise<void> {
-  if (!outputDeviceId) return;
   const selectable = audio as HTMLAudioElement & {
     setSinkId?: (deviceId: string) => Promise<void>;
   };
