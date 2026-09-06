@@ -135,6 +135,7 @@ pub(super) async fn run(
                                 observed_user_text: String::new(),
                                 buffered_notifications: Vec::new(),
                                 buffered_bytes: 0,
+                                rpc_completed: false,
                                 response: Some(request.response),
                             });
                             active = Some(ActiveTurn {
@@ -183,7 +184,7 @@ pub(super) async fn run(
                         break error.to_string();
                     }
                 }
-                Some(AcpCommand::ExternalStatus { session_id: observed, busy }) => {
+                Some(AcpCommand::ExternalStatus { session_id: observed, busy, error }) => {
                     if observed != session_id || session_id.is_empty() {
                         continue;
                     }
@@ -201,11 +202,14 @@ pub(super) async fn run(
                         }
                     } else if let Some(turn_id) = active
                         .as_ref()
-                        .filter(|turn| turn.external)
+                        .filter(|turn| turn.admitted && (turn.external || prompt_completion == PromptCompletion::SessionEvents))
                         .map(|turn| turn.turn_id.clone())
                     {
-                        let status = if cancelling_turn_id.as_deref() == Some(turn_id.as_str()) {
+                        let status = if cancelling_turn_id.as_deref() == Some(turn_id.as_str())
+                            || error.as_ref().and_then(|error| error.get("name")).and_then(Value::as_str) == Some("MessageAbortedError") {
                             "cancelled"
+                        } else if error.is_some() {
+                            "failed"
                         } else {
                             "completed"
                         };
@@ -215,15 +219,23 @@ pub(super) async fn run(
                             &session_id,
                             &turn_id,
                             status,
-                            None,
+                            error.as_ref().and_then(|error| error.pointer("/data/message")).and_then(Value::as_str),
                             &mut active,
                         );
+                        tool_calls.clear();
                         if cancelling_turn_id.as_deref() == Some(turn_id.as_str()) {
                             cancelling_turn_id = None;
                         }
                     }
                 }
-                Some(AcpCommand::ObservedUserText { session_id: observed, text, response }) => {
+                Some(AcpCommand::SessionUpdate { session_id: observed, update }) => {
+                    if prompt_completion != PromptCompletion::SessionEvents || observed != session_id {
+                        continue;
+                    }
+                    let message = json!({"method":"session/update", "params":{"sessionId":session_id, "update":update}});
+                    handle_notification("session/update", &message, &events, &generation, &session_id, &mut active, &mut tool_calls);
+                }
+                Some(AcpCommand::ObservedUserText { session_id: observed, text, consumed, response }) => {
                     let result = if observed != session_id || session_id.is_empty() {
                         Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -259,7 +271,7 @@ pub(super) async fn run(
                                 &mut tool_calls,
                             );
                         }
-                        if !controlled_echo {
+                        if !controlled_echo && consumed {
                             admit_matching_native_input(
                                 &message,
                                 &mut native_inputs,
@@ -269,6 +281,7 @@ pub(super) async fn run(
                                 &session_id,
                             );
                         }
+                        pending.retain(|_, kind| !matches!(kind, PendingKind::Prompt { rpc_completed: true, response: None, .. }));
                         Ok(!controlled_echo)
                     };
                     let _ = response.send(result);
@@ -324,7 +337,8 @@ pub(super) async fn run(
                         }
                         continue;
                     }
-                    if loading_request_id.is_none()
+                    if prompt_completion != PromptCompletion::SessionEvents
+                        && loading_request_id.is_none()
                         && message.pointer("/params/_meta/isReplay").and_then(Value::as_bool) != Some(true)
                     {
                         let (controlled_echo, admitted_turn) = admit_matching_prompt(
@@ -393,7 +407,7 @@ pub(super) async fn run(
                 let Some(id) = message.get("id").and_then(Value::as_u64) else {
                     break "ACP response has an invalid id".to_owned();
                 };
-                let Some(kind) = pending.remove(&id) else {
+                let Some(mut kind) = pending.remove(&id) else {
                     break format!("ACP returned an unknown response id: {id}");
                 };
                 if loading_request_id == Some(id) {
@@ -404,6 +418,18 @@ pub(super) async fn run(
                 } else {
                     Ok(message.get("result").cloned().unwrap_or(Value::Null))
                 };
+                // A successful prompt RPC can overtake the independent SSE reader.
+                // Keep its admission receipt until the persisted user echo arrives;
+                // it cannot complete work observed on that stream.
+                if prompt_completion == PromptCompletion::SessionEvents && result.is_ok()
+                    && let PendingKind::Prompt { rpc_completed, response, .. } = &mut kind
+                {
+                    if response.is_some() {
+                        *rpc_completed = true;
+                        pending.insert(id, kind);
+                    }
+                    continue;
+                }
                 match kind {
                     PendingKind::Request { method, requested_session_id, response } => {
                         if let Ok(result) = &result
@@ -474,7 +500,7 @@ pub(super) async fn run(
                                         Err(error) => ("failed", Some(error.to_string())),
                                     }
                                 };
-                                if prompt_completion == PromptCompletion::Response {
+                                if prompt_completion != PromptCompletion::BoundedPostResponseDrain {
                                     settle_turn(
                                         &events,
                                         &generation,
@@ -859,6 +885,7 @@ mod tests {
                 observed_user_text: String::new(),
                 buffered_notifications: Vec::new(),
                 buffered_bytes: MAX_PENDING_NOTIFICATION_BYTES,
+                rpc_completed: false,
                 response: Some(response),
             },
         )]);
@@ -895,6 +922,7 @@ mod tests {
                 observed_user_text: String::new(),
                 buffered_notifications: Vec::new(),
                 buffered_bytes: 0,
+                rpc_completed: false,
                 response: Some(response),
             },
         )]);
@@ -1067,6 +1095,7 @@ mod tests {
                 observed_user_text: String::new(),
                 buffered_notifications: Vec::new(),
                 buffered_bytes: 0,
+                rpc_completed: false,
                 response: Some(response),
             },
         )]);

@@ -149,9 +149,22 @@ async fn launch_inner(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
+        let detail = nonempty_detail(&stderr, &stdout);
+        let guidance = if detail
+            .contains("--bg with bypassPermissions requires accepting the disclaimer first")
+        {
+            format!(
+                " For this session, run the configured executable '{}' interactively with \
+                 --dangerously-skip-permissions and CLAUDE_CONFIG_DIR set to '{}'. \
+                 After accepting the disclaimer, exit that session and retry in CCCC.",
+                prepared.executable,
+                prepared.config_dir.display(),
+            )
+        } else {
+            String::new()
+        };
         return Err(io::Error::other(format!(
-            "Claude Agent View launch failed: {}",
-            nonempty_detail(&stderr, &stdout)
+            "Claude Agent View launch failed: {detail}{guidance}"
         )));
     }
     let short = parse_short_id(&stdout)

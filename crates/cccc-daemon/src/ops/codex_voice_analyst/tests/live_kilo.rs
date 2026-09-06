@@ -12,6 +12,18 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
     if std::env::var("CCCC_KILO_MANAGED_LIVE").as_deref() != Ok("1") {
         return;
     }
+    shared_actor_and_analyst(ActorRuntime::Kilo, "KILO").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_opencode_shared_actor_and_analyst_with_local_model_when_enabled() {
+    if std::env::var("CCCC_OPENCODE_MANAGED_LOCAL").as_deref() != Ok("1") {
+        return;
+    }
+    shared_actor_and_analyst(ActorRuntime::Opencode, "OPENCODE").await;
+}
+
+async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind local model");
@@ -41,12 +53,12 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
             let mut environment = BTreeMap::from([
                 ("HOME".into(), temp.path().to_string_lossy().into_owned()),
                 (
-                    "KILO_DB".into(),
+                    format!("{prefix}_DB"),
                     temp.path().join("kilo.db").to_string_lossy().into_owned(),
                 ),
                 ("TERM".into(), "xterm-256color".into()),
                 (
-                    "KILO_CONFIG_CONTENT".into(),
+                    format!("{prefix}_CONFIG_CONTENT"),
                     json!({
                         "model":"cccc-test/first", "small_model":"cccc-test/first",
                         "provider":{"cccc-test":{
@@ -67,13 +79,16 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
                         .into_owned(),
                 );
             }
-            let command = vec![
-                std::env::var("CCCC_KILO_EXECUTABLE").unwrap_or_else(|_| "kilo".into()),
-                "--pure".into(),
+            let mut command = vec![
+                std::env::var(format!("CCCC_{prefix}_EXECUTABLE"))
+                    .unwrap_or_else(|_| prefix.to_ascii_lowercase()),
             ];
+            if runtime == ActorRuntime::Kilo {
+                command.push("--pure".into());
+            }
             let mut previous = None;
             for cycle in 0..3 {
-                eprintln!("Kilo {purpose:?} cycle {cycle}");
+                eprintln!("{runtime:?} {purpose:?} cycle {cycle}");
                 let session = match purpose {
                     SessionPurpose::Actor => {
                         AnalystSession::launch_actor(
@@ -82,7 +97,7 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
                                 workdir: root.clone(),
                                 group_id: group.group_id.clone(),
                                 actor_id: "kilo-test".into(),
-                                runtime: ActorRuntime::Kilo,
+                                runtime,
                                 command: command.clone(),
                                 environment: environment.clone(),
                             },
@@ -94,7 +109,7 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
                             &home,
                             LaunchConfig {
                                 workdir: root.clone(),
-                                runtime: ActorRuntime::Kilo,
+                                runtime,
                                 command: command.clone(),
                                 environment: environment.clone(),
                                 resume_thread_id: previous.clone(),
@@ -171,7 +186,7 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
 
                         // Busy Voice follow-ups use the same native input path as Actors.
                         // A long paste also verifies that readiness precedes payload delivery.
-                        session
+                        let busy_turn = session
                             .start_turn(session.generation(), "busy-probe", "QUEUE_SLOW")
                             .await
                             .expect("busy prompt");
@@ -211,11 +226,16 @@ async fn live_kilo_shared_actor_and_analyst_when_enabled() {
                         })
                         .await
                         .expect("native follow-up must be correlated");
-                        assert!(
-                            wait_for_turn_text(&mut events, &native_turn)
-                                .await
-                                .contains("KILO_NATIVE_FINAL"),
-                            "the correlated result must include the follow-up answer"
+                        if runtime == ActorRuntime::Kilo {
+                            assert_ne!(
+                                native_turn, busy_turn.turn_id,
+                                "queued input must own a new turn"
+                            );
+                        }
+                        let answer = wait_for_turn_text(&mut events, &native_turn).await;
+                        assert_eq!(
+                            answer, "KILO_NATIVE_FINAL",
+                            "follow-up must not inherit the previous answer"
                         );
                     }
                 })
@@ -258,6 +278,11 @@ async fn local_model(axum::Json(body): axum::Json<Value>) -> axum::response::Res
     let delta = json!({"id":"probe","object":"chat.completion.chunk","created":1,"model":"first","choices":[{"index":0,"delta":{"role":"assistant","content":content},"finish_reason":null}]});
     let end = json!({"id":"probe","object":"chat.completion.chunk","created":1,"model":"first","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]});
     let first = futures_util::stream::once(async move {
+        // Force the previous prompt RPC to finish before the queued answer starts.
+        // Without this gap a fast fixture can hide cross-turn result attribution.
+        if content == "KILO_NATIVE_FINAL" {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         Ok::<_, std::convert::Infallible>(format!("data: {delta}\n\n"))
     });
     let last = futures_util::stream::once(async move {

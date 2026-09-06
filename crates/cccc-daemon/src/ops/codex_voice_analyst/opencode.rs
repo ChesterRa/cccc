@@ -17,6 +17,7 @@ mod lifecycle;
 #[cfg(test)]
 mod model_sync_tests;
 mod session;
+pub(super) mod stream;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const START_ATTEMPTS: usize = 3;
@@ -144,7 +145,7 @@ pub(super) async fn launch(
             generation.to_owned(),
             username,
             PermissionPolicy::AllowOnce,
-            PromptCompletion::Response,
+            PromptCompletion::SessionEvents,
         )?;
         let initialized = protocol
             .request(
@@ -204,7 +205,7 @@ pub(super) async fn launch(
             }
         };
         if let Err(error) =
-            lifecycle::attach(&protocol, &endpoint, username, &password, &session_id).await
+            lifecycle::attach(&protocol, &endpoint, username, &password, &session_id, cwd).await
         {
             protocol.close().await;
             let _ = owner.stop();

@@ -15,6 +15,7 @@ pub(super) enum PendingKind {
         observed_user_text: String,
         buffered_notifications: Vec<Value>,
         buffered_bytes: usize,
+        rpc_completed: bool,
         response: Option<oneshot::Sender<io::Result<String>>>,
     },
 }

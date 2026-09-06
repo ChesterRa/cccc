@@ -388,6 +388,11 @@ Recipient chips are one-shot: a successful send clears the selection, and switch
 restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
 drafts.
 
+Broadcasts (`@all` and `@peers`, including the Group's default broadcast target) leave
+disabled Actors stopped and deliver to enabled recipients. To wake a disabled Actor,
+address it explicitly; `@foreman` also wakes the coordinator. An explicit target still
+wakes when combined with a broadcast. Mail leaves disabled Actors stopped.
+
 Messages larger than 64 KiB after UTF-8 encoding are sent as UTF-8 text attachments for
 same-group and remote Group Bridge targets. Local cross-group text remains inline because its two
 local ledgers cannot share one attachment path; the bounded daemon IPC limit covers that JSON route.

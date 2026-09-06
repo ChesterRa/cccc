@@ -178,6 +178,12 @@ async fn live_claude_requires_bypass_ack_before_creating_a_managed_session() {
         error.to_string().contains("accepting the disclaimer first"),
         "{error}"
     );
+    assert!(
+        error
+            .to_string()
+            .contains(config_dir.to_string_lossy().as_ref()),
+        "first-use guidance must identify the effective CLAUDE_CONFIG_DIR: {error}"
+    );
     let jobs = config_dir.join("jobs");
     assert!(!jobs.exists() || std::fs::read_dir(jobs).expect("jobs").next().is_none());
     let config: serde_json::Value =

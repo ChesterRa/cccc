@@ -2,13 +2,17 @@ use super::*;
 
 // Exercises the real OpenCode ACP/SSE bridge with isolated local models and
 // noReply submissions (the same committed user-message shape as native TUI).
+// Repeat fresh subscriptions: an immediately submitted first message used to
+// disappear through the lazily subscribed global endpoint.
 // No provider credentials or paid inference are required.
 #[tokio::test]
 async fn live_opencode_submitted_model_reaches_acp_when_enabled() {
     if std::env::var("CCCC_OPENCODE_MODEL_SYNC_LIVE").as_deref() != Ok("1") {
         return;
     }
-    submitted_model_reaches_acp("opencode", "OPENCODE").await;
+    for _ in 0..3 {
+        submitted_model_reaches_acp("opencode", "OPENCODE").await;
+    }
 }
 
 #[tokio::test]
@@ -16,7 +20,9 @@ async fn live_kilo_submitted_model_reaches_acp_when_enabled() {
     if std::env::var("CCCC_KILO_MODEL_SYNC_LIVE").as_deref() != Ok("1") {
         return;
     }
-    submitted_model_reaches_acp("kilo", "KILO").await;
+    for _ in 0..3 {
+        submitted_model_reaches_acp("kilo", "KILO").await;
+    }
 }
 
 async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
@@ -72,7 +78,7 @@ async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
         "model-sync-test".into(),
         runtime,
         PermissionPolicy::Reject,
-        PromptCompletion::Response,
+        PromptCompletion::SessionEvents,
     )
     .expect("ACP client");
     protocol
@@ -94,7 +100,7 @@ async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
     let id = created["sessionId"].as_str().expect("session id");
     let mode = option(&created, "mode").expect("current native mode");
     assert_eq!(option(&created, "model"), Some("cccc-probe/first"));
-    lifecycle::attach(&protocol, &endpoint, runtime, &password, id)
+    lifecycle::attach(&protocol, &endpoint, runtime, &password, id, root)
         .await
         .expect("SSE bridge");
     let client = reqwest::Client::builder()
@@ -124,6 +130,7 @@ async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
         let body = submitted.text().await.expect("submission response");
         assert!(status.is_success(), "native submission {status}: {body}");
         let expected = format!("cccc-probe/{model}");
+        let mut last_options = None;
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 // Setting mode returns all current options without changing the model.
@@ -135,6 +142,7 @@ async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
                     )
                     .await
                     .expect("inspect current ACP model");
+                last_options = Some((option(&config, "model").map(str::to_owned), option(&config, "effort").map(str::to_owned)));
                 if option(&config, "model") == Some(expected.as_str())
                     && (model == "first" || option(&config, "effort") == Some(variant))
                 {
@@ -144,7 +152,7 @@ async fn submitted_model_reaches_acp(runtime: &'static str, prefix: &str) {
             }
         })
         .await
-        .expect("submitted model/variant must reach ACP");
+        .unwrap_or_else(|_| panic!("submitted model/variant must reach ACP: expected={expected}/{variant}, observed={last_options:?}"));
     }
     protocol.close().await;
     owner.stop().expect("stop isolated OpenCode");

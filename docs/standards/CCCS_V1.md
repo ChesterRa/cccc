@@ -130,6 +130,11 @@ When a send request omits recipients or supplies an empty list, the daemon MUST 
 
 Internal assistants such as Voice Secretary are not members of `@all`, `@peers`, or `@foreman`; they MUST be addressed by their explicit actor ID.
 
+Selector membership describes the logical audience, not permission to start a runtime.
+A user broadcast to `@all` or `@peers` MUST NOT re-enable disabled actors. Explicitly
+targeted user wake actions follow the daemon IPC lifecycle contract; disabled recipients
+remain part of the message audience and history.
+
 **Compatibility**
 - Implementations MAY accept the literal token `"user"` as equivalent to `@user`.
 

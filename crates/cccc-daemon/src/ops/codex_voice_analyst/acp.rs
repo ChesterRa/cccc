@@ -51,10 +51,16 @@ enum AcpCommand {
     ExternalStatus {
         session_id: String,
         busy: bool,
+        error: Option<Value>,
+    },
+    SessionUpdate {
+        session_id: String,
+        update: Value,
     },
     ObservedUserText {
         session_id: String,
         text: String,
+        consumed: bool,
         response: oneshot::Sender<io::Result<bool>>,
     },
     RegisterNativeInput {
@@ -80,7 +86,10 @@ pub(super) enum PermissionPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PromptCompletion {
+    #[cfg(test)]
     Response,
+    /// OpenCode/Kilo use the ordered backend stream for output and completion.
+    SessionEvents,
     BoundedPostResponseDrain,
 }
 
@@ -90,11 +99,22 @@ pub(super) struct AcpLifecycleControl {
 }
 
 impl AcpLifecycleControl {
+    #[cfg(test)]
     pub(super) async fn status(&self, session_id: &str, busy: bool) -> io::Result<()> {
+        self.session_status(session_id, busy, None).await
+    }
+
+    pub(super) async fn session_status(
+        &self,
+        session_id: &str,
+        busy: bool,
+        error: Option<Value>,
+    ) -> io::Result<()> {
         self.commands
             .send(AcpCommand::ExternalStatus {
                 session_id: session_id.to_owned(),
                 busy,
+                error,
             })
             .await
             .map_err(|_| closed_error())
@@ -103,16 +123,36 @@ impl AcpLifecycleControl {
     /// Returns true when the observed text came from the native TUI rather than
     /// echoing a CCCC-controlled ACP prompt.
     pub(super) async fn user_text(&self, session_id: &str, text: &str) -> io::Result<bool> {
+        self.observe_user_text(session_id, text, true).await
+    }
+
+    pub(super) async fn observe_user_text(
+        &self,
+        session_id: &str,
+        text: &str,
+        consumed: bool,
+    ) -> io::Result<bool> {
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::ObservedUserText {
                 session_id: session_id.to_owned(),
                 text: text.to_owned(),
+                consumed,
                 response: sender,
             })
             .await
             .map_err(|_| closed_error())?;
         receiver.await.map_err(|_| closed_error())?
+    }
+
+    pub(super) async fn session_update(&self, session_id: &str, update: Value) -> io::Result<()> {
+        self.commands
+            .send(AcpCommand::SessionUpdate {
+                session_id: session_id.to_owned(),
+                update,
+            })
+            .await
+            .map_err(|_| closed_error())
     }
 
     pub(super) async fn set_config_option(

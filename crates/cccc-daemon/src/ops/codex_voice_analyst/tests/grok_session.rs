@@ -873,3 +873,7 @@ done
     std::fs::set_permissions(&path, permissions).expect("executable");
     (path, observed_request)
 }
+
+// Reuse the transport fixtures for the ordered OpenCode/Kilo observer.
+#[path = "session_stream.rs"]
+mod session_stream;

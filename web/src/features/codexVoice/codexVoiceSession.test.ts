@@ -13,6 +13,67 @@ afterEach(() => {
 });
 
 describe("Codex Voice realtime event model", () => {
+  it("publishes one conversation row per late-identified turn without forwarding transcript drafts", async () => {
+    const onConversation = vi.fn();
+    const frames: Record<string, unknown>[] = [];
+    const session = new CodexVoiceBrowserSession({
+      audio: { pause: vi.fn() } as unknown as HTMLAudioElement,
+      preferences: { voice: "cove", inputDeviceId: "", outputDeviceId: "" },
+      callbacks: {
+        onPhase: vi.fn(),
+        onCall: vi.fn(),
+        onAnalyst: vi.fn(),
+        onUserTranscript: vi.fn(),
+        onAssistantTranscript: vi.fn(),
+        onConversation,
+        onAnalystProgress: vi.fn(),
+        onAnalystResult: vi.fn(),
+        onPlaybackBlocked: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+    const transport = session as unknown as {
+      eventSocket: { send(value: Record<string, unknown>): boolean; close(): void };
+      handleProviderMessage(value: string): Promise<void>;
+    };
+    transport.eventSocket = {
+      send: (value) => {
+        frames.push(value);
+        return true;
+      },
+      close: vi.fn(),
+    };
+    try {
+      for (const event of [
+        { type: "input_transcript.added", item: { text: "帮我" } },
+        { type: "turn.created", turn: { id: "u1", role: "user", transcript: "帮我" } },
+        { type: "input_transcript.added", item: { text: "查天气" } },
+      ])
+        await transport.handleProviderMessage(JSON.stringify(event));
+      expect(onConversation).toHaveBeenLastCalledWith([
+        { id: "u1", role: "user", text: "帮我查天气", final: false },
+      ]);
+      for (const event of [
+        { type: "turn.done", turn: { id: "u1", role: "user", transcript: "帮我查天气。" } },
+        { type: "output_transcript.added", item: { text: "好的" } },
+        { type: "turn.done", turn: { id: "a1", role: "assistant", transcript: "好的，我来查。" } },
+      ])
+        await transport.handleProviderMessage(JSON.stringify(event));
+      expect(onConversation).toHaveBeenLastCalledWith([
+        { id: "u1", role: "user", text: "帮我查天气。", final: true },
+        { id: "a1", role: "assistant", text: "好的，我来查。", final: true },
+      ]);
+      expect(frames.filter((frame) => frame.type === "provider_event")).toEqual([]);
+      const delegation = { type: "delegation.created", item: { id: "d1", text: "查天气" } };
+      await transport.handleProviderMessage(JSON.stringify(delegation));
+      expect(frames.filter((frame) => frame.type === "provider_event")).toEqual([
+        { type: "provider_event", event: delegation },
+      ]);
+    } finally {
+      await session.stop();
+    }
+  });
+
   it("ignores provider data decoded after stop and late Analyst messages", async () => {
     const onPhase = vi.fn();
     const onAssistantTranscript = vi.fn();

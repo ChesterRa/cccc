@@ -9,9 +9,9 @@ use std::time::Duration;
 const SSE_BUFFER_LIMIT: usize = 512 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ObservedUserMessage {
-    id: String,
-    model: Option<String>,
+pub(super) struct ObservedUserMessage {
+    pub(super) id: String,
+    pub(super) model: Option<String>,
 }
 
 pub(super) fn reserve_loopback_port() -> io::Result<u16> {
@@ -81,13 +81,17 @@ pub(super) async fn attach(
     username: &str,
     password: &str,
     session_id: &str,
+    workdir: &std::path::Path,
 ) -> io::Result<()> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .build()
         .map_err(|error| io::Error::other(format!("build OpenCode event client: {error}")))?;
     let response = client
-        .get(format!("{endpoint}/global/event"))
+        // /event registers its listener before returning the response. The
+        // global endpoint subscribes lazily and can lose the first submission.
+        .get(format!("{endpoint}/event"))
+        .query(&[("directory", workdir.to_string_lossy().as_ref())])
         .header(
             reqwest::header::AUTHORIZATION,
             basic_authorization(username, password),
@@ -113,89 +117,52 @@ pub(super) async fn attach(
     let task = tokio::spawn(async move {
         let mut response = response;
         let mut buffer = Vec::new();
-        let mut current_user_message = None;
-        let mut synchronized_model = None;
-        let outcome: io::Result<()> = async {
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|error| io::Error::other(format!("read OpenCode lifecycle: {error}")))?
-            {
-                if buffer.len().saturating_add(chunk.len()) > SSE_BUFFER_LIMIT {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "OpenCode lifecycle event exceeded the bounded buffer",
-                    ));
-                }
-                buffer.extend_from_slice(&chunk);
-                while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let mut line = buffer.drain(..=end).collect::<Vec<_>>();
-                    while line
-                        .last()
-                        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-                    {
-                        line.pop();
-                    }
-                    let Ok(line) = std::str::from_utf8(&line) else {
+        let mut stream = super::stream::SessionStream::default();
+        let outcome: io::Result<()> =
+            async {
+                while let Some(chunk) = response.chunk().await.map_err(|error| {
+                    io::Error::other(format!("read OpenCode lifecycle: {error}"))
+                })? {
+                    if buffer.len().saturating_add(chunk.len()) > SSE_BUFFER_LIMIT {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "OpenCode lifecycle event was not UTF-8",
+                            "OpenCode lifecycle event exceeded the bounded buffer",
                         ));
-                    };
-                    let Some(data) = line.strip_prefix("data:") else {
-                        continue;
-                    };
-                    let value: Value = serde_json::from_str(data.trim()).map_err(|error| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("invalid OpenCode lifecycle JSON: {error}"),
-                        )
-                    })?;
-                    let payload = value.get("payload").unwrap_or(&value);
-                    if let Some(text) =
-                        observed_user_text(payload, &session_id, &mut current_user_message)
-                    {
-                        let native_input = control.user_text(&session_id, &text).await?;
-                        let observed_model = current_user_message
-                            .as_ref()
-                            .and_then(|message| message.model.as_deref());
-                        if native_input
-                            && observed_model.is_some()
-                            && observed_model != synchronized_model.as_deref()
-                        {
-                            let observed_model = observed_model.expect("checked OpenCode model");
-                            control
-                                .set_config_option(&session_id, "model", observed_model)
-                                .await?;
-                            synchronized_model = Some(observed_model.to_owned());
-                        }
                     }
-                    if payload.get("type").and_then(Value::as_str) == Some("session.status")
-                        && payload
-                            .pointer("/properties/sessionID")
-                            .and_then(Value::as_str)
-                            == Some(session_id.as_str())
-                    {
-                        match payload
-                            .pointer("/properties/status/type")
-                            .and_then(Value::as_str)
+                    buffer.extend_from_slice(&chunk);
+                    while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                        let mut line = buffer.drain(..=end).collect::<Vec<_>>();
+                        while line
+                            .last()
+                            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
                         {
-                            Some("busy") => control.status(&session_id, true).await?,
-                            Some("idle") => {
-                                control.status(&session_id, false).await?;
-                                current_user_message = None;
-                            }
-                            _ => {}
+                            line.pop();
                         }
+                        let Ok(line) = std::str::from_utf8(&line) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "OpenCode lifecycle event was not UTF-8",
+                            ));
+                        };
+                        let Some(data) = line.strip_prefix("data:") else {
+                            continue;
+                        };
+                        let value: Value = serde_json::from_str(data.trim()).map_err(|error| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("invalid OpenCode lifecycle JSON: {error}"),
+                            )
+                        })?;
+                        let payload = value.get("payload").unwrap_or(&value);
+                        stream.observe(payload, &session_id, &control).await?;
                     }
                 }
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "OpenCode lifecycle event stream ended",
+                ))
             }
-            Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "OpenCode lifecycle event stream ended",
-            ))
-        }
-        .await;
+            .await;
         if let Err(error) = outcome {
             control.disconnected(error.to_string()).await;
         }
@@ -204,7 +171,7 @@ pub(super) async fn attach(
     Ok(())
 }
 
-fn observed_user_text(
+pub(super) fn observed_user_text(
     payload: &Value,
     session_id: &str,
     current_user_message: &mut Option<ObservedUserMessage>,

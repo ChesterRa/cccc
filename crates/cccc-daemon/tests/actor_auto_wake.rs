@@ -9,6 +9,90 @@ use std::time::Duration;
 static DAEMON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
+async fn broadcast_delivers_to_enabled_actors_without_reenabling_disabled_recipients() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("broadcast-disabled-recipient", false).await;
+    call(
+        &client,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
+            "submit":"newline","command":["sh","-c","sleep 30"],"by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "group_settings_update",
+        json!({"group_id":group_id,"by":"user","patch":{"default_send_to":"broadcast"}}),
+    )
+    .await;
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = cccc_core::GroupStore::new(home).expect("store");
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    for (by, mode, to) in [
+        ("peer1", "send", json!(["@all"])),
+        ("user", "mail", json!(["@all"])),
+        ("user", "send", json!(["@all"])),
+        ("user", "send", json!([])),
+    ] {
+        let sent = call(
+            &client,
+            "send",
+            json!({"group_id":group_id,"by":by,"to":to,"text":"broadcast","message_mode":mode}),
+        )
+        .await;
+        let source_id = sent.result["event"]["id"].as_str().expect("event id");
+        assert_eq!(sent.result["event"]["data"]["to"], json!(["@all"]));
+        if by == "user" && mode == "send" {
+            wait_for_accepted_delivery(&ledger_path, source_id).await;
+        }
+        let group = store.load(&group_id).expect("persisted group");
+        let disabled = group
+            .actors
+            .iter()
+            .find(|actor| actor.id == "peer2")
+            .expect("peer2");
+        assert!(!disabled.enabled, "{by} {mode} to={to}");
+        let actors = call(
+            &client,
+            "actor_list",
+            json!({"group_id":group_id,"by":"user"}),
+        )
+        .await;
+        let disabled = actors.result["actors"]
+            .as_array()
+            .expect("actors")
+            .iter()
+            .find(|actor| actor["id"] == "peer2")
+            .expect("peer2 status");
+        assert_eq!(disabled["running"], false);
+        let events = ledger::read_all(&ledger_path).expect("ledger");
+        let source = events
+            .iter()
+            .find(|event| event.id == source_id)
+            .expect("source event");
+        assert!(
+            cccc_core::inbox::is_for_actor(&group, source, "peer2"),
+            "logical audience retained"
+        );
+        assert!(!events.iter().any(|event| {
+            event.kind == "runtime.delivery"
+                && event.data["source_event_id"] == source_id
+                && event.data["actor_id"] == "peer2"
+                && matches!(event.data["state"].as_str(), Some("claimed" | "accepted"))
+        }));
+    }
+    shutdown(&client, daemon).await;
+}
+
+#[tokio::test]
 async fn directed_message_restarts_an_actor_after_unexpected_process_exit() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("crash-auto-wake-test", false).await;

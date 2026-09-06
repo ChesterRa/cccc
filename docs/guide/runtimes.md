@@ -228,6 +228,10 @@ message.
 Direct Claude Code Actors require Claude Code 2.1.259 or newer. Before first use,
 accept Claude's bypass-mode disclaimer interactively with
 `claude --dangerously-skip-permissions` under the same Claude configuration.
+Use the Claude executable selected by the Actor or Analyst's Runtime Profile and
+the effective `CLAUDE_CONFIG_DIR` shown in the launch error. A confirmation under
+another profile's configuration does not satisfy this prerequisite. After accepting
+the disclaimer, exit the interactive session and start the Actor or Analyst again.
 If it has not been accepted, the managed launch returns Claude's actionable
 error before opening an Actor terminal; CCCC does not write workspace trust or
 disclaimer acceptance into the user's global configuration.
@@ -276,7 +280,8 @@ Direct OpenCode Actors use one
 authenticated loopback backend. CCCC injects the
 actor-scoped MCP server when it creates or loads the ACP session and attaches
 OpenCode's native writable TUI to that exact backend and session. CCCC observes
-authenticated `session.status` events for lifecycle state, while new Actor
+input, output, and `session.status` through the authenticated workdir event stream,
+whose listener is ready before connection succeeds. New Actor
 messages are handed to the native TUI without waiting for an active turn to settle.
 Losing that non-replayable lifecycle stream invalidates the session rather than
 guessing that it is idle. Stop/start validates and loads a version-2 OpenCode
@@ -286,10 +291,11 @@ model, agent, pure-mode, and logging options, but subcommands, wrappers, prompt
 tails, and user-owned topology/session flags fail explicitly with no raw-PTY
 fallback. OpenCode does not emit the accepted user prompt through ACP, so CCCC
 correlates protocol-originated requests on OpenCode's authenticated backend
-event stream before acknowledging admission. Pre-admission ACP updates remain
-bounded and are released only after that match. For supported OpenCode releases,
-the prompt response is the exact completion fence for those protocol requests;
-Grok retains its explicit bounded post-response normalization. OpenCode keeps a
+event stream before acknowledging admission. Native input is associated with the
+answer that consumes it, using the assistant message's parent user ID; queued
+input survives the preceding turn's completion. Text and terminal status follow
+the same ordered stream, so an earlier prompt's RPC response cannot complete a
+queued answer. Kilo shares these boundaries. OpenCode keeps a
 TUI model change local until that TUI submits its next message. CCCC observes the
 submitted message's provider, model, and variant and mirrors them into the same
 ACP session for later managed requests. Add `--model provider/model` to the

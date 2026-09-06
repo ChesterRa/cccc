@@ -17,6 +17,7 @@ export const MAX_CONVERSATION_TURNS = 40;
 export class RealtimeTranscriptAccumulator {
   private turns: VoiceConversationTurn[] = [];
   private readonly activeIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
+  private readonly provisionalIds: Partial<Record<RealtimeTranscriptUpdate["role"], string>> = {};
   private nextId = 0;
   private activeRole: RealtimeTranscriptUpdate["role"] | null = null;
   private readonly text: Record<RealtimeTranscriptUpdate["role"], string> = {
@@ -37,16 +38,31 @@ export class RealtimeTranscriptAccumulator {
       (turn.role !== "user" && turn.role !== "assistant")
     )
       return;
-    this.activeIds[turn.role] = turn.id;
-    this.ensureTurn(turn.id, turn.role);
+    const entry = this.ensureTurn(turn.id, turn.role, true);
+    if (!entry.final) this.activeIds[turn.role] = turn.id;
   }
 
   history(): VoiceConversationTurn[] {
     return this.turns.filter((turn) => turn.text.trim()).map((turn) => ({ ...turn }));
   }
 
-  private ensureTurn(id: string, role: RealtimeTranscriptUpdate["role"]): VoiceConversationTurn {
+  private ensureTurn(
+    id: string,
+    role: RealtimeTranscriptUpdate["role"],
+    adoptProvisional = false,
+  ): VoiceConversationTurn {
     let turn = this.turns.find((candidate) => candidate.id === id);
+    if (!turn && adoptProvisional) {
+      // The first transcript delta can precede turn.created (or only turn.done
+      // may arrive). Bind that draft in place instead of leaving a prefix row.
+      const provisionalId = this.provisionalIds[role];
+      turn = this.turns.find((candidate) => candidate.id === provisionalId && !candidate.final);
+      if (turn) {
+        turn.id = id;
+        if (this.activeIds[role] === provisionalId) this.activeIds[role] = id;
+      }
+      delete this.provisionalIds[role];
+    }
     if (!turn) {
       turn = { id, role, text: "", final: false };
       this.turns.push(turn);
@@ -57,14 +73,17 @@ export class RealtimeTranscriptAccumulator {
 
   apply(update: RealtimeTranscriptUpdate): string {
     const role = update.role;
-    const id = update.turnId || this.activeIds[role] || `local-${++this.nextId}`;
-    const turn = this.ensureTurn(id, role);
+    const activeId = this.activeIds[role];
+    const id = update.turnId || activeId || `local-${++this.nextId}`;
+    const turn = this.ensureTurn(id, role, !!update.turnId);
+    if (!update.turnId && !activeId) this.provisionalIds[role] = id;
     turn.text = update.final
       ? boundedText(update.text)
       : boundedDelta(`${turn.text}${update.text}`);
     turn.final = update.final;
     if (update.final) {
       if (this.activeIds[role] === id) delete this.activeIds[role];
+      if (this.provisionalIds[role] === id) delete this.provisionalIds[role];
     } else {
       this.activeIds[role] = id;
     }
