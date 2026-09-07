@@ -139,6 +139,9 @@ pub(crate) fn origin_allowed_with_proxy(
     origin: &str,
     trust_proxy: bool,
 ) -> bool {
+    if allow_any_origin() {
+        return true;
+    }
     let Some(origin) = cccc_core::web_login_grants::normalize_origin(origin) else {
         return false;
     };
@@ -146,6 +149,15 @@ pub(crate) fn origin_allowed_with_proxy(
         return true;
     }
     configured_origins().any(|allowed| allowed == origin)
+}
+
+pub(crate) fn allow_any_origin() -> bool {
+    std::env::var("CCCC_WEB_ALLOW_ANY_ORIGIN").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 pub fn cookie_csrf_allowed(state: &AppState, headers: &HeaderMap) -> bool {

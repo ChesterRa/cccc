@@ -534,6 +534,14 @@ fn environment_flag(name: &str) -> bool {
 }
 
 fn configured_cors_layer() -> Option<CorsLayer> {
+    if request_origin::allow_any_origin() {
+        return Some(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::any())
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
+    }
     let origins = std::env::var("CCCC_WEB_CORS_ORIGINS")
         .ok()?
         .split(',')
