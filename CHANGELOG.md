@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Kilo snapshot progress no longer leaks into Actor and Voice Analyst answers.** The shared stream adapter excludes text explicitly marked as transient UI progress while preserving ordinary answer text, including synthetic content. Native snapshot behavior and strict runtime result checks remain unchanged.
+
 ## [0.4.38] — 2026-09-07
 
 ### Added

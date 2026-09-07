@@ -32,6 +32,83 @@ fn status(busy: bool) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transient_progress_is_not_answer_text() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let executable = fake_acp_without_user_echo(temp.path(), true);
+    let (protocol, process) =
+        launch_fake_acp(temp.path(), &executable, PromptCompletion::SessionEvents).await;
+    let mut events = protocol.subscribe();
+    let control = protocol.lifecycle_control();
+    let mut stream = SessionStream::default();
+    protocol
+        .register_native_input("native", "hello")
+        .await
+        .expect("register native");
+    for event in user("u1", "hello") {
+        observe(&mut stream, &control, event).await;
+    }
+    observe(&mut stream, &control, status(true)).await;
+    observe(&mut stream, &control, assistant("a1", "u1")).await;
+
+    // Kilo 7.5.14 snapshot tracking emits a synthetic text part after 500ms,
+    // updates its spinner, then removes it. The lifecycle metadata, rather
+    // than the text or synthetic flag, identifies this temporary UI content.
+    for text in ["⠋ Initializing snapshot…", "⠙ Initializing snapshot…"] {
+        let mut progress = part("a1", text);
+        progress["properties"]["part"]["id"] = json!("progress");
+        progress["properties"]["part"]["synthetic"] = json!(true);
+        progress["properties"]["part"]["metadata"] = json!({"kilocode.lifecycle":"transient"});
+        observe(&mut stream, &control, progress).await;
+    }
+    observe(&mut stream, &control, json!({"type":"message.part.delta", "properties":{
+        "sessionID":FAKE_SESSION_ID,"messageID":"a1","partID":"progress","field":"text","delta":" still waiting"
+    }})).await;
+    observe(
+        &mut stream,
+        &control,
+        json!({"type":"message.part.removed", "properties":{
+            "sessionID":FAKE_SESSION_ID,"messageID":"a1","partID":"progress"
+        }}),
+    )
+    .await;
+
+    // The same words in a genuine answer, including synthetic non-transient
+    // output, must be retained. A stored snapshot must not repeat its delta.
+    let expected = "⠋ Initializing snapshot…KILO_FINAL";
+    let mut answer = part("a1", "⠋ Initializing snapshot…");
+    answer["properties"]["part"]["synthetic"] = json!(true);
+    observe(&mut stream, &control, answer).await;
+    observe(&mut stream, &control, json!({"type":"message.part.delta", "properties":{
+        "sessionID":FAKE_SESSION_ID,"messageID":"a1","partID":"a1-text","field":"text","delta":"KILO_FINAL"
+    }})).await;
+    observe(&mut stream, &control, part("a1", expected)).await;
+    observe(&mut stream, &control, status(false)).await;
+
+    let mut deltas = String::new();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.expect("projected event");
+            let params = &event.message["params"];
+            match event.message["method"].as_str() {
+                Some("item/agentMessage/delta") => {
+                    deltas.push_str(params["delta"].as_str().expect("delta text"));
+                }
+                Some("turn/completed") => {
+                    assert_eq!(params["turn"]["status"], "completed");
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("turn finishes");
+    protocol.close().await;
+    process.stop().expect("stop fake ACP");
+    assert_eq!(deltas, expected, "progress must never enter streamed text");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn queued_native_output_survives_early_rpc_and_previous_idle() {
     let temp = tempfile::tempdir().expect("tempdir");
     let executable = fake_acp_without_user_echo(temp.path(), true);

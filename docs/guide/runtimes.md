@@ -110,6 +110,12 @@ that a submitted native model/variant selection reaches ACP. These probes do not
 use real provider credentials or paid inference. They do not establish native
 Windows or macOS behavior; those remain platform validation boundaries.
 
+Kilo can publish temporary snapshot-initialization progress as text parts marked
+`metadata["kilocode.lifecycle"]="transient"`. CCCC leaves that progress in the
+native TUI and excludes it from Actor/Analyst answer text, including later
+streaming updates to the same part. Ordinary answer text is preserved even
+when synthetic or containing the same words as a progress label.
+
 Windows npm installs (`npm install -g @kilocode/cli`, or a project-local install)
 expose `kilo.cmd`. CCCC resolves that official entrypoint to Node plus the
 installed Kilo launcher for both ACP and TUI; no manual `kilo.exe` path is needed.

@@ -94,7 +94,13 @@ impl SessionStream {
                     return Ok(());
                 }
                 match part["type"].as_str().unwrap_or_default() {
-                    "text" if part["ignored"] != true => {
+                    // Kilo renders temporary UI progress as text parts. These
+                    // are later removed and must never enter an answer stream.
+                    // Synthetic alone does not mean temporary or non-answer.
+                    "text"
+                        if part["ignored"] != true
+                            && part["metadata"]["kilocode.lifecycle"] != "transient" =>
+                    {
                         let id = required_string(part, "id")?;
                         let text = required_string(part, "text")?;
                         if !self.text_parts.contains_key(id)
@@ -137,7 +143,7 @@ impl SessionStream {
                     return Ok(());
                 }
                 let id = required_string(properties, "partID")?;
-                // Reasoning, ignored and non-text parts have no entry.
+                // Reasoning, ignored, transient and non-text parts have no entry.
                 if let Some(text) = self.text_parts.get_mut(id) {
                     let delta = required_string(properties, "delta")?;
                     text.push_str(delta);
