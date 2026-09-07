@@ -6,31 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
-### Added
+## [0.4.38] — 2026-09-07
 
-- **Claude Code now provides the same visible, precisely observed session to Group Actors and Voice Analyst.** CCCC observes authoritative turns and tool results from Claude Agent View and attaches the native writable Claude TUI to that exact session; ordinary stop/start resumes the validated provider conversation.
+### Added
+- **Interactive tiled terminals show up to four Actors per page.** Each Group remembers its view and page; its header, composer, and Presentation controls remain available. Each tile supports direct input and expansion with independent focus and write ownership.
+- **Codex Voice can receive cross-Group Actor notifications.** Optional per-Group subscriptions, exact reply tracking, viewed-message suppression, and visible source/delivery states connect Actor results to the global voice conversation. Group and sender attribution accompanies each notification.
+- **Codex, Claude Code, Grok Build, OpenCode, and Kilo share managed session adapters across Actors and Voice Analyst.** Native writable TUIs and structured observation follow the same provider conversation within each role. Runtime Profiles support provider/model configuration and private environment settings.
+- **Cross-origin HTTP clients have explicit CORS configuration.** Named origins and optional wildcard mode preserve authentication, Cookie write-origin checks, and WebSocket origin checks; wildcard mode requires explicit Bearer authentication for cross-origin access.
 
 ### Changed
-- **Claude Code uses one strict managed-session path instead of separate Hook and `claude -p` implementations.** Runtime Profiles retain supported model, effort, tools, plugins, settings, and private environment while CCCC owns session topology, MCP identity, YOLO policy, cancellation, and resume. Unsupported wrappers, prompt tails, transport flags, and legacy receipts fail explicitly instead of falling back to a divergent session.
-- **Actors no longer expose PTY versus Headless as a configuration choice.** CCCC derives the Runtime surface automatically: CLI Actors retain their native writable terminal, while Codex, Claude Code, Grok Build, and OpenCode pair it with structured lifecycle observation on the same session. Incoming Actor messages are handed to that native terminal without CCCC waiting for provider idleness or choosing queue-versus-steer semantics.
+- **Codex Voice has a resizable Conversation/Analyst split and consolidated settings.** The Analyst uses a stable neutral workspace and may use any of the five admitted managed runtimes; Realtime audio continues to use the host's Codex login.
+- **Group and Actor toolbars prioritize frequent local actions.** Global preferences move into Settings, while Group controls remain directly accessible. Terminal History moves into the Actor's More menu.
+- **Runtime surfaces are selected automatically.** Supported CLI runtimes retain their native terminal; CCCC owns session topology, MCP identity, cancellation, and resume. Unsupported managed launch overrides fail explicitly.
+- **The native updater uses a published release index to avoid GitHub API rate limits.** Checksum verification and website-versus-pip installation ownership remain enforced.
+- **Voice Secretary preserves final transcript revisions without duplicate document input.** Complete final SenseVoice results supersede live Paraformer text while retaining revision history; mobile recording options and status are easier to reach.
 
 ### Fixed
-- **Forced launcher exit terminates owned process trees independently of normal shutdown.** PTY, managed providers, DeepSeek and Web-owned daemon launches register OS resources at spawn; the second interrupt or normal-shutdown deadline terminates those resources without protocol/session locks or another cleanup timeout. Unix exit polling revokes ownership before reaping to avoid reused PID/PGID targets.
-- **Group action menus no longer activate mouse sorting.** Menu mouse-down events stay inside the trigger while row dragging remains available.
-- **Long terminal history no longer loses newer lines when older pages are loaded.** Scrolled-off lines have a separate bounded history buffer with explicit truncation reporting.
-- **Windows managed processes join their Job before executing.** Standard launches remain suspended through Job assignment, preserving detached launch flags and cleaning up failed starts.
-- **Failed managed-process stops retain retryable ownership.** Child handles remain owned until confirmed exit and reaping, including signal and wait failures.
-- **Sidebar group reordering updates immediately.** The rendered list now subscribes to order changes, preventing drag snap-back and subsequent moves based on stale row positions.
-- **Claude resume recovers stale transcript paths after worktree moves.** Missing published paths are resolved to a unique retained transcript for the same session only during initial recovery; history offsets and active-file identity checks remain intact, and missing-history errors identify the path and session.
-- **Daemon takeover validates the actual CLI subcommand before targeting a PID.** Global options no longer cause one-shot commands to be mistaken for daemon hosts.
-- **Terminal history preserves ANSI state across backward pages and remains keyboard accessible.** Rendering preserves inferred frames before repainting within a fixed cumulative range. Short pages require explicit loading, errors pause automatic loading, and the nested dialog traps focus and restores its opener.
-- **Managed Claude sessions retain host proxy and CA settings.** HTTP/HTTPS/ALL/NO proxy aliases and custom CA paths survive the cleared launcher environment and are included in the private settings used for session respawn. Explicit network overrides, including empty proxy values, take precedence.
-- **Managed Claude and Codex sessions recover before their first completed turn.** Claude can locate its exact validated transcript before Agent View publishes `linkScanPath`, preserving the resume read boundary. New Codex threads materialize metadata and pass a same-thread resume check before CCCC exposes the native terminal; startup does not inject a model prompt.
-- **Managed terminal startup no longer accepts truncated first messages.** Actor and Voice Analyst native input waits for the TUI's input mode before writing, without injecting startup work or waiting for the current model turn to finish.
-- **Claude sessions stop and resume reliably across empty starts and observer failures.** Verified empty sessions retain their conversation ID without requiring nonexistent history; observer failures use confirmed background-task shutdown, and normal closure releases event readers. Transcript replacement checks now use file handles supported by stable Rust on Windows.
-- **Native Windows Actors now start and receive messages reliably.** Runtime launch resolves executables in the configured PATHEXT order without restoring excluded extensions or selecting extensionless npm shell shims, routes `.cmd`/`.bat` through the Windows command processor, preserves backslashes in `actor --command`, and uses the last stable `portable-pty` ConPTY behavior. A Windows-only regression test delivers UTF-8 text through an npm-style batch shim and verifies that the Actor stays alive.
-- **Claude managed-session settings no longer cross the Windows command-line quoting boundary as inline JSON.** CCCC merges the effective settings and Runtime Profile environment into a permission-protected JSON file under `CCCC_HOME` and passes only its path to Agent View, preventing invalid-JSON launch loops without exposing private values in process arguments.
-- **Windows Web startup and non-ASCII CLI output recover from platform defaults.** A reserved-port `WSAEACCES` (`10013`) retry uses an OS-assigned port and reports the effective address; later commands reuse that binding only while its recorded process and signed readiness identity remain live. The native CLI uses UTF-8 console code pages for its lifetime and restores the previous values on exit.
+- **Voice submission no longer waits indefinitely on stalled speech.** Context updates fit provider limits, queues and waits are bounded, and known-unsent results survive teardown, including overflow. Voice polling avoids an Actor-startup dispatcher lock cycle, and recipient aliases are resolved for tracked replies. Submission still does not guarantee complete spoken narration.
+- **Global Voice transcripts combine fragments from the same provider turn.** Opening words no longer appear as separate repeated or truncated entries in the affected event sequences.
+- **Voice Secretary completes final transcript processing before normal WebSocket closure.** Browser speech recovery is bounded and releases capture when retries are exhausted.
+- **Managed runtime startup and follow-up answers retain their session and turn identity.** Empty Codex/Claude sessions recover without synthetic prompts, initial terminal input waits for readiness, and Grok/OpenCode/Kilo result correlation handles early events and follow-up turns.
+- **Claude resumes through supported upgrades and workspace moves.** Supported launcher/Agent View worker version differences are accepted; relocated transcripts and empty sessions recover, proxy and custom CA settings are retained, and effective bypass-permissions configuration is clearer.
+- **Kimi Code setup follows its effective home and official MCP configuration.** Native trust/login prompts remain with the provider.
+- **Windows Actors launch and receive messages through native executable and npm batch paths.** Lookup respects PATHEXT order and exclusions, preserves command paths, and supports UTF-8 input. Claude settings use a private file to avoid inline JSON quoting failures; Web startup recovers from reserved-port errors and reports its effective address.
+- **Shutdown retains ownership of processes until exit is confirmed.** Forced exit terminates owned process trees, failed stops remain retryable, Windows children join their Job before execution, and daemon takeover validates the actual CLI command before targeting a PID.
+- **Runtime status bubbles no longer repeatedly display replayed output.** Buffered projections survive Group switches so snapshot deduplication cannot discard unapplied text. Broadcasts leave disabled Actors disabled.
+- **Long terminal history preserves newer lines, ANSI state, and keyboard navigation.** Truncation, loading failures, and expired snapshots are explicit. Read-only normal-buffer terminals retain local touch scrolling across mouse modes and write-permission handoffs.
+- **Group menus, sidebar ordering, and mobile controls remain in scope.** Menus do not initiate sorting, order changes render immediately, stale menus close on Group or layout changes, and nested surfaces restore keyboard focus. Composer sizing remains bounded across input methods.
+
+### Removed
+- **Intel Mac release artifacts are retired.** v0.4.37 is the final supported Intel Mac release; native packages now target Linux x86-64, Apple Silicon macOS, and Windows x86-64.
+- **The separate Claude Hook and `claude -p` session paths and Actor PTY/Headless selector are retired.** Managed runtimes use one observed provider session with a native TUI where supported.
 
 ## [0.4.37] — 2026-09-01
 
