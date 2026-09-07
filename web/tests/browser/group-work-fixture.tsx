@@ -3,6 +3,9 @@ import { createRef, useEffect, useState, type ComponentProps } from "react";
 import i18next from "../../src/i18n";
 import { MobileMenuSheet } from "../../src/components/layout/MobileMenuSheet";
 import { AppShell } from "../../src/components/app/AppShell";
+import { SettingsModal } from "../../src/components/SettingsModal";
+import { useTextScale } from "../../src/hooks/useTextScale";
+import { useTheme } from "../../src/hooks/useTheme";
 import {
   useGroupStore,
   useUIStore,
@@ -218,9 +221,12 @@ export function Fixture() {
   const activeTab = useUIStore((state) => state.activeTab);
   const [mounted, setMounted] = useState<string[]>([]);
   const [width, setWidth] = useState(innerWidth);
-  const [dark, setDark] = useState(false);
+  const { theme, setTheme, isDark: dark } = useTheme();
+  const { textScale, setTextScale } = useTextScale();
   const [readOnly, setReadOnly] = useState(false);
+  const [canAccessAccount, setCanAccessAccount] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     const update = () => {
       setWidth(innerWidth);
@@ -246,9 +252,10 @@ export function Fixture() {
           actors: state.actors.map((actor) => (actor.id === id ? { ...actor, ...patch } : actor)),
         })),
       setReadOnly,
+      setCanAccessAccount,
+      setTextScale,
       setDark: (value: boolean) => {
-        document.documentElement.classList.toggle("dark", value);
-        setDark(value);
+        setTheme(value ? "dark" : "light");
       },
       language: (lang: string) => i18next.changeLanguage(lang),
       ui: useUIStore,
@@ -258,6 +265,7 @@ export function Fixture() {
   });
   const props = {
     canUseVoice: true,
+    canAccessAccount,
     orderedGroups: groups,
     archivedGroupIds: [],
     selectedGroupId: groupId,
@@ -282,8 +290,8 @@ export function Fixture() {
     selectedGroupRuntimeStatus: null,
     selectedGroupActorsHydrating: false,
     selectedGroupActorStatusProvisional: false,
-    theme: dark ? "dark" : "light",
-    textScale: "normal",
+    theme,
+    textScale,
     sseStatus: "connected",
     groupLabelById: { g1: "Release workspace", g2: "Research workspace" },
     mentionSelectedIndex: 0,
@@ -338,6 +346,15 @@ export function Fixture() {
   ])
     Object.assign(props, { [name]: noop });
   props.onOpenMobileMenu = () => setMenuOpen(true);
+  props.onThemeChange = setTheme;
+  props.onTextScaleChange = setTextScale;
+  props.onOpenSettings = () => setSettingsOpen(true);
+  props.onOpenAccount = () => {
+    probe.actions.push("onOpenAccount");
+    setSettingsOpen(true);
+  };
+  props.onOpenGroupEdit = () => probe.actions.push("onOpenGroupEdit");
+  props.onOpenContext = () => probe.actions.push("onOpenContext");
   for (const name of [
     "onToggleActorEnabled",
     "onRelaunchActor",
@@ -353,25 +370,36 @@ export function Fixture() {
       <MobileMenuSheet
         isOpen={menuOpen}
         onClose={() => setMenuOpen(false)}
-        isDark={dark}
-        theme={dark ? "dark" : "light"}
-        textScale="normal"
+        theme={theme}
+        textScale={textScale}
         selectedGroupId={groupId}
         groupDoc={doc(groupId)}
         selectedGroupRunning
         actors={currentActors}
         busy=""
-        onThemeChange={noop}
-        onTextScaleChange={noop}
+        onThemeChange={setTheme}
+        onTextScaleChange={setTextScale}
         onOpenSearch={noop}
         onOpenContext={noop}
-        onOpenSettings={noop}
-        canAccessAccount
-        onOpenAccount={noop}
+        onOpenSettings={props.onOpenSettings}
+        canAccessAccount={canAccessAccount}
+        onOpenAccount={props.onOpenAccount}
         onStartGroup={noop}
         onStopGroup={noop}
         onSetGroupState={noop}
       />
+      {settingsOpen ? (
+        <SettingsModal
+          isOpen
+          onClose={() => setSettingsOpen(false)}
+          settings={null}
+          onUpdateSettings={async () => true}
+          busy={false}
+          isDark={dark}
+          groupId={groupId}
+          groupDoc={doc(groupId)}
+        />
+      ) : null}
     </div>
   );
 }

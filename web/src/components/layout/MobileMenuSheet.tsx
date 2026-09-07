@@ -10,16 +10,12 @@ import {
 } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
-import { LanguageSwitcher } from "../LanguageSwitcher";
-import { TextScaleSwitcher } from "../TextScaleSwitcher";
+import { AppearancePreferences } from "./AppearancePreferences";
 import {
   SearchIcon,
   ClipboardIcon,
   SettingsIcon,
   AccountIcon,
-  MonitorIcon,
-  SunIcon,
-  MoonIcon,
   EditIcon,
   PlayIcon,
   StopIcon,
@@ -30,7 +26,6 @@ import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 export interface MobileMenuSheetProps {
   isOpen: boolean;
-  isDark: boolean;
   theme: Theme;
   textScale: TextScale;
   selectedGroupId: string;
@@ -54,7 +49,6 @@ export interface MobileMenuSheetProps {
 
 export function MobileMenuSheet({
   isOpen,
-  isDark,
   theme,
   textScale,
   selectedGroupId,
@@ -111,10 +105,6 @@ export function MobileMenuSheet({
   const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
   const toggleLabel = isPauseAction ? t("pauseState") : t("runState");
   const isGroupBusy = busy.startsWith("group-");
-  const themeLabel =
-    theme === "system" ? t("themeSystem") : theme === "dark" ? t("themeDark") : t("themeLight");
-  const ThemeIcon = theme === "system" ? MonitorIcon : theme === "dark" ? MoonIcon : SunIcon;
-  const nextTheme: Theme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
   const runtimeHint =
     selectedStatusKey === "paused"
       ? t("runtimeHintPaused")
@@ -336,22 +326,12 @@ export function MobileMenuSheet({
           </section>
 
           <section className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t("appearanceSection")}</div>
-            <button className={rowButtonClass} onClick={() => onThemeChange(nextTheme)}>
-              <div className="flex items-center gap-3">
-                <ThemeIcon size={18} />
-                <span>{t("themeLabel")}</span>
-              </div>
-              <span className="text-[13px] font-medium text-[var(--color-text-tertiary)]">
-                {themeLabel}
-              </span>
-            </button>
-            <TextScaleSwitcher
+            <AppearancePreferences
+              theme={theme}
               textScale={textScale}
+              onThemeChange={onThemeChange}
               onTextScaleChange={onTextScaleChange}
-              variant="row"
             />
-            <LanguageSwitcher isDark={isDark} variant="row" />
           </section>
 
           <section className={sectionCardClass}>

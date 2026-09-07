@@ -18,12 +18,18 @@ Open http://127.0.0.1:8848/ in your browser.
 
 The Web UI has these main areas:
 
-- **Header**: Group selector, settings, theme toggle
+- **Header**: Group title and controls, work view switch, and settings menu
 - **Sidebar**: Group list, navigation, and the persistent Codex Voice control
 - **Main Area**: Group message history or a paginated terminal view
 - **Input**: Message composer with @mention support
 
 ### Group message and terminal views
+
+On desktop, Group editing, search, context and runtime controls stay directly in the header.
+**Settings and more** collects theme, text size, language, account and the full settings entry.
+Appearance choices show their current values and can be selected directly. Narrow headers use
+the existing overflow menu, with the same appearance choices and access rules.
+**Pause Delivery** pauses message delivery; **Stop All Agents** stops the Actors themselves.
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
 On narrow headers, the view icon switches between these views. Presentation also opens from
@@ -47,7 +53,11 @@ a read-only user cannot type. Opening a view leaves any existing writer in contr
 **Take control** to take over explicitly. An ordinary reconnect does not take control away
 from another writer. With no existing writer, the terminal accepts input immediately.
 
-Each Actor title bar keeps its status, common terminal actions and maximize control together.
+Each Actor title bar keeps its status dot, common terminal actions and maximize control together.
+Ordinary running/working states are available through the dot's label; stopped, waiting, stuck
+and terminal connection notices remain visible as short text, including in narrow panes.
+In narrow panes with pagination, the Actor name and notice occupy their own row above the
+page and terminal controls, so touch targets do not crowd out the Actor's identity.
 Use **More** for history, session, configuration, inbox and lifecycle actions. Unavailable
 actions are disabled; stopping and restarting use the same operations as the expanded view.
 Different Actors have independent pending-operation indicators.

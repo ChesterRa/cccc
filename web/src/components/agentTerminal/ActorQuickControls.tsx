@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Maximize2, MoreHorizontal, History, Play, RefreshCw, MousePointer2 } from "lucide-react";
+import { Maximize2, MoreHorizontal, Play, RefreshCw, MousePointer2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
 export function ActorQuickControls({
@@ -66,7 +66,10 @@ export function ActorQuickControls({
     action();
   };
   return (
-    <div className="flex shrink-0 items-center gap-0.5" data-actor-quick-controls>
+    <div
+      className="ml-auto flex shrink-0 items-center @min-[480px]/actor-view:gap-0.5"
+      data-actor-quick-controls
+    >
       {!readOnly && !running ? (
         <button
           className={button}
@@ -109,16 +112,6 @@ export function ActorQuickControls({
             ⌃C
           </button>
         )
-      ) : null}
-      {hasTerminal ? (
-        <button
-          className={`${button} hidden @min-[480px]/actor-view:inline-flex`}
-          onClick={onHistory}
-          title={t("openTerminalHistory")}
-          aria-label={t("openTerminalHistory")}
-        >
-          <History size={14} />
-        </button>
       ) : null}
       {!readOnly || hasTerminal ? (
         <Popover

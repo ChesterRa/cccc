@@ -199,7 +199,7 @@ with tempfile.TemporaryDirectory(
 
         def live():
             return js(
-                "groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor)"
+                "groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort()"
             )
 
         def tiled():
@@ -246,6 +246,106 @@ with tempfile.TemporaryDirectory(
             return js(
                 'Array.from(document.querySelectorAll("[data-runtime-actor-id]")).filter(e=>e.getBoundingClientRect().width>0).map(e=>e.dataset.runtimeActorId)'
             )
+
+        # Desktop preferences share controls with the narrow-header sheet.
+        settings_trigger = "[data-app-settings-trigger]"
+        settings_panel = "[data-app-settings-menu]"
+
+        def preference(index, value, container=settings_panel):
+            js(f'''(() => {{
+              const select = document.querySelector({json.dumps(container)}).querySelectorAll('select')[{index}];
+              select.value = {json.dumps(value)};
+              select.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            }})()''')
+            time.sleep(0.2)
+
+        def menu_bounds(selector):
+            bounds = rect(selector)
+            assert bounds["x"] >= 0 and bounds["y"] >= 0, bounds
+            assert bounds["right"] <= js("innerWidth") + 1, bounds
+            assert bounds["bottom"] <= js("innerHeight") + 1, bounds
+            assert js(f'''Array.from(document.querySelector({json.dumps(selector)}).querySelectorAll('select')).every(e => e.scrollWidth <= e.clientWidth + 1)''')
+
+        point_click('header [aria-label="Edit group"]')
+        point_click('header [aria-label="Context Panel"]')
+        assert js('groupWorkProbe.actions.includes("onOpenGroupEdit") && groupWorkProbe.actions.includes("onOpenContext")')
+        point_click(settings_trigger)
+        wait('!!document.querySelector("[data-app-settings-menu]")')
+        menu_bounds(settings_panel)
+        assert js('document.activeElement === document.querySelector("[data-app-settings-menu] select")')
+        key("Tab")
+        assert js('document.activeElement === document.querySelectorAll("[data-app-settings-menu] select")[1]')
+        key("Tab", shift=True)
+        key("Escape")
+        wait('!document.querySelector("[data-app-settings-menu]")')
+        assert js('document.activeElement.matches("[data-app-settings-trigger]")')
+
+        for locale in ["en", "zh", "ja"]:
+            js("groupWorkProbe.language(" + json.dumps(locale) + ")")
+            for dark in [False, True]:
+                js("groupWorkProbe.setDark(" + json.dumps(dark) + ")")
+                point_click(settings_trigger)
+                wait('!!document.querySelector("[data-app-settings-menu]")')
+                for scale in ["125", "70", "100"]:
+                    preference(1, scale)
+                    menu_bounds(settings_panel)
+                    assert js('document.querySelectorAll("[data-app-settings-menu] select")[1].value') == scale
+                shot("settings-" + locale + ("-dark" if dark else "-light"))
+                key("Escape")
+                wait('!document.querySelector("[data-app-settings-menu]")')
+        js('groupWorkProbe.language("en")')
+        js("groupWorkProbe.setDark(false)")
+        point_click(settings_trigger)
+        preference(0, "dark")
+        assert js('document.documentElement.classList.contains("dark")')
+        assert js('localStorage.getItem("cccc-theme")') == "dark"
+        preference(0, "light")
+        preference(2, "ja")
+        assert js('document.querySelectorAll("[data-app-settings-menu] select")[2].value') == "ja"
+        assert js('localStorage.getItem("cccc-language")') == "ja"
+        preference(2, "en")
+        # The full production SettingsModal must own focus after the popover closes.
+        point_click(settings_panel + " button:last-child")
+        wait('!!document.querySelector("[aria-modal=true]") && !document.querySelector("[data-app-settings-menu]")')
+        time.sleep(0.3)
+        assert js('document.activeElement.closest("[aria-modal=true]")!==null')
+        key("Escape")
+        wait('!document.querySelector("[aria-modal=true]")')
+        assert js('document.activeElement.matches("[data-app-settings-trigger]")')
+        point_click(settings_trigger)
+        point_click(settings_panel + " button:first-of-type")
+        wait('!!document.querySelector("[aria-modal=true]")')
+        assert js('groupWorkProbe.actions.includes("onOpenAccount")')
+        key("Escape")
+        wait('!document.querySelector("[aria-modal=true]")')
+        js("groupWorkProbe.setCanAccessAccount(false)")
+        point_click(settings_trigger)
+        assert js('document.querySelectorAll("[data-app-settings-menu] button").length') == 1
+        key("Escape")
+        js("groupWorkProbe.setCanAccessAccount(true)")
+        point_click(settings_trigger)
+        js('groupWorkProbe.chooseGroup("g2")')
+        wait('!document.querySelector("[data-app-settings-menu]")')
+        js('groupWorkProbe.chooseGroup("g1")')
+        point_click(settings_trigger)
+        dimensions(900)
+        wait('!document.querySelector("[data-app-settings-menu]")')
+        assert js('document.querySelector("[data-app-settings-trigger]").getClientRects().length') == 0
+        point_click('header [aria-label="Menu"]')
+        wait('!!document.querySelector(".mobile-menu-panel")')
+        for width, height in [(900, 700), (390, 844), (320, 568), (390, 360)]:
+            dimensions(width, height)
+            preference(1, "125", ".mobile-menu-panel")
+            menu_bounds(".mobile-menu-panel")
+            js('document.querySelector(".mobile-menu-content").scrollTop=9999')
+            time.sleep(0.1)
+            assert js('(() => {const e=document.querySelector(".mobile-menu-panel button:last-child");const r=e.getBoundingClientRect();return r.bottom<=innerHeight && r.top>=0;})()')
+            shot("settings-mobile-" + str(width) + "-" + str(height))
+            preference(1, "100", ".mobile-menu-panel")
+        key("Escape")
+        wait('!document.querySelector(".mobile-menu-panel")')
+        dimensions(1440)
+        print("PASS settings choices/locales/scale, account scope, keyboard focus, dialog handoff, responsive dismissal and mobile reachability", flush=True)
 
         composer_selector = "textarea:not(.xterm-helper-textarea)"
         composer = rect(composer_selector)
@@ -347,8 +447,8 @@ with tempfile.TemporaryDirectory(
         assert js('document.activeElement.getAttribute("aria-label")') == "Controls for Foreman"
         click('[data-runtime-actor-id=actor-1] [aria-label="Controls for Foreman"]')
         js('Array.from(document.querySelectorAll("[data-radix-popper-content-wrapper] button")).find(e=>e.textContent.includes("Terminal history")).click()')
-        wait('!!document.querySelector("[aria-modal=true]")')
-        assert js('document.activeElement.closest("[aria-modal=true]")!==null')
+        # The modal schedules initial focus on the next animation frame.
+        wait('document.activeElement.closest("[aria-modal=true]")!==null')
         key("Escape")
         wait('!document.querySelector("[aria-modal=true]")')
         assert js("groupWorkProbe.sockets.length") == opens
@@ -369,7 +469,7 @@ with tempfile.TemporaryDirectory(
         wait("groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4")
         click('[aria-label="Next page"]')
         wait(
-            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).join(",")==="actor-5,actor-6,actor-7,actor-8"'
+            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-5,actor-6,actor-7,actor-8"'
         )
         js('groupWorkProbe.chooseGroup("g2")')
         time.sleep(0.3)
@@ -382,17 +482,17 @@ with tempfile.TemporaryDirectory(
         )
         js('groupWorkProbe.chooseGroup("g1")')
         wait(
-            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).join(",")==="actor-5,actor-6,actor-7,actor-8"'
+            'groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-5,actor-6,actor-7,actor-8"'
         )
         js("window.groupWorkReloadPending=true")
         cdp("Page.reload")
         wait(
-            '!window.groupWorkReloadPending && !!window.groupWorkProbe && groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).join(",")==="actor-5,actor-6,actor-7,actor-8"'
+            '!window.groupWorkReloadPending && !!window.groupWorkProbe && groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-5,actor-6,actor-7,actor-8"'
         )
         # Width changes keep the focused Actor, then the visible page anchor.
         point_click('[data-runtime-actor-id="actor-7"] .xterm-screen')
         dimensions(700)
-        wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).join(",")==="actor-7"')
+        wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).map(s=>s.actor).sort().join(",")==="actor-7"')
         assert js('groupWorkProbe.ui.getState().chatSessions.g1.terminalPage') == 6
         dimensions(1440)
         wait('groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4')
@@ -472,6 +572,28 @@ with tempfile.TemporaryDirectory(
         assert js(
             'document.querySelector("[data-runtime-actor-id=actor-3]").innerText.includes("Waiting")'
         )
+        # Coarse pointers enlarge touch controls: notices must not displace actions.
+        js('groupWorkProbe.patchActor("actor-4",{effective_working_state:"stuck"})')
+        cdp("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        dimensions(320, 568)
+        for scale in [100, 125]:
+            js(f'groupWorkProbe.setTextScale({scale})')
+            for index, status in [(0, "Stopped"), (2, "Waiting"), (3, "Stuck")]:
+                js(f'groupWorkProbe.ui.getState().setGroupTerminalPage("g1",{index})')
+                time.sleep(0.3)
+                shot("touch-status-" + status.lower() + "-" + str(scale))
+                assert js(f'''(() => {{
+                    const name = document.querySelector('#runtime-inspector-actor-{index + 1}');
+                    const status = Array.from(name.parentElement.children).find(e => e.textContent === {json.dumps(status)});
+                    return name.getBoundingClientRect().width >= 60 && !!status && status.getBoundingClientRect().width >= 25;
+                }})()'''), status
+                assert js('''Array.from(document.querySelectorAll('[data-runtime-actor-id] button')).filter(e=>e.getClientRects().length).every(e=>{const r=e.getBoundingClientRect();return r.right<=innerWidth && r.left>=0;})'''), status
+        js('groupWorkProbe.setTextScale(100)')
+        cdp("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        dimensions(1440)
+        js('groupWorkProbe.patchActor("actor-4",{effective_working_state:"working"})')
+        js('groupWorkProbe.ui.getState().setGroupTerminalPage("g1",0)')
+        time.sleep(0.3)
         # No hidden messages may acquire Voice viewed observations.
         beforeViewed = js(
             'groupWorkProbe.requests.filter(r=>r.path.endsWith("/messages/viewed")).length'
@@ -545,7 +667,7 @@ with tempfile.TemporaryDirectory(
         )
         assert len(live()) == 1
         # The shared menu remains accessible when desktop header controls collapse.
-        dimensions(1024)
+        dimensions(900)
         time.sleep(0.3)
         click('header [aria-label="Menu"]')
         wait('!!document.querySelector(".mobile-menu-panel")')

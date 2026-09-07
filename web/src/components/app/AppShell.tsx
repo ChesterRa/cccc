@@ -268,7 +268,6 @@ export function AppShell({
       <main className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)]">
         <AppHeader
           workControlsRef={setWorkControlsHost}
-          isDark={isDark}
           theme={theme}
           textScale={textScale}
           onThemeChange={onThemeChange}

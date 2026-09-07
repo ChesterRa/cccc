@@ -1789,7 +1789,6 @@ export function AppModals({
     <>
       <MobileMenuSheet
         isOpen={modals.mobileMenu}
-        isDark={isDark}
         theme={theme}
         textScale={textScale}
         selectedGroupId={selectedGroupId}

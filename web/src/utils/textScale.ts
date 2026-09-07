@@ -21,13 +21,6 @@ export function getTextScaleLabel(scale: TextScale): string {
   return `${normalizeTextScale(scale)}%`;
 }
 
-export function getNextTextScale(scale: TextScale): TextScale {
-  const normalized = normalizeTextScale(scale);
-  const currentIndex = TEXT_SCALE_OPTIONS.indexOf(normalized);
-  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % TEXT_SCALE_OPTIONS.length : 0;
-  return TEXT_SCALE_OPTIONS[nextIndex];
-}
-
 export function applyTextScale(scale: TextScale): TextScale {
   const normalized = normalizeTextScale(scale);
   if (typeof document !== "undefined") {

@@ -8,26 +8,21 @@ import {
   resolveGroupControls,
 } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
-import { TextScaleSwitcher } from "../TextScaleSwitcher";
-import { ThemeToggleCompact } from "../ThemeToggle";
-import { LanguageSwitcher } from "../LanguageSwitcher";
 import {
   ClipboardIcon,
   SearchIcon,
   PlayIcon,
   PauseIcon,
   StopIcon,
-  SettingsIcon,
-  AccountIcon,
   EditIcon,
   MoreIcon,
   MenuIcon,
 } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { AppSettingsMenu } from "./AppSettingsMenu";
 
 export interface AppHeaderProps {
-  isDark: boolean;
   theme: Theme;
   textScale: TextScale;
   onThemeChange: (theme: Theme) => void;
@@ -55,7 +50,6 @@ export interface AppHeaderProps {
 }
 
 export function AppHeader({
-  isDark,
   theme,
   textScale,
   onThemeChange,
@@ -85,9 +79,6 @@ export function AppHeader({
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const headerRailClass = "flex items-center gap-1 p-[3px]";
-  const headerUtilityRailClass = "flex items-center gap-0.5 p-[3px]";
-  const headerUtilityButtonClass =
-    "flex items-center justify-center h-8 w-8 rounded-xl transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
@@ -310,65 +301,23 @@ export function AppHeader({
                 </IconButton>
               </div>
 
-              <div className={`${headerUtilityRailClass} hidden @min-[1050px]/group-header:flex`}>
-                <ThemeToggleCompact
-                  theme={theme}
-                  onThemeChange={onThemeChange}
-                  isDark={isDark}
-                  variant="rail"
-                  className={headerUtilityButtonClass}
-                />
-                <TextScaleSwitcher
-                  textScale={textScale}
-                  onTextScaleChange={onTextScaleChange}
-                  variant="rail"
-                  className={headerUtilityButtonClass}
-                />
-                <LanguageSwitcher
-                  isDark={isDark}
-                  variant="rail"
-                  className={classNames(
-                    headerUtilityButtonClass,
-                    "text-[10px] font-semibold tracking-[0.04em]",
-                  )}
-                />
-                <span
-                  className="mx-0.5 h-4 w-px bg-[var(--glass-border-subtle)]"
-                  aria-hidden="true"
-                />
-                {canAccessAccount ? (
-                  <IconButton
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={onOpenAccount}
-                    className={headerUtilityButtonClass}
-                    label={t("account")}
-                  >
-                    <AccountIcon size={17} />
-                  </IconButton>
-                ) : null}
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onOpenSettings}
-                  disabled={!selectedGroupId && !canAccessAccount}
-                  className={classNames(
-                    headerUtilityButtonClass,
-                    "disabled:opacity-45 disabled:text-[var(--color-text-tertiary)]",
-                  )}
-                  label={t("settings")}
-                >
-                  <SettingsIcon size={18} />
-                </IconButton>
-              </div>
+              <AppSettingsMenu
+                key={selectedGroupId}
+                theme={theme}
+                textScale={textScale}
+                onThemeChange={onThemeChange}
+                onTextScaleChange={onTextScaleChange}
+                canAccessAccount={canAccessAccount}
+                canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
+                onOpenAccount={onOpenAccount}
+                onOpenSettings={onOpenSettings}
+              />
             </div>
 
             <IconButton
               type="button"
               variant="secondary"
-              className="text-[var(--color-text-secondary)] @min-[1050px]/group-header:hidden"
+              className="text-[var(--color-text-secondary)] @min-[760px]/group-header:hidden"
               onClick={onOpenMobileMenu}
               label={t("menu")}
             >

@@ -652,48 +652,57 @@ export function AgentTab({
     : 0;
   const stateNext = String(agentState?.hot?.next_action || "").trim();
   const actorGroupRole = normalizeActorGroupRole(actor.role);
+  const compactStatusText = !isRunning
+    ? runtimeStatusText
+    : !isHeadless && connectionStatus !== "connected"
+      ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
+      : workingState === "waiting" || workingState === "stuck"
+        ? runtimeStatusText
+        : !isHeadless && terminalReady && !terminalWritable
+          ? t("readOnlyConnection")
+          : "";
 
   return (
     <div className="@container/actor-view flex min-h-0 min-w-0 flex-col h-full">
       {compact ? (
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--glass-border-subtle)] px-2 text-xs">
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${statusTone.dotClass}`}
-            role="img"
-            aria-label={runtimeStatusText}
-            title={runtimeStatusText}
-          />
-          <span
-            id={`runtime-inspector-${actor.id}`}
-            className="min-w-0 flex-1 truncate font-semibold"
-            title={actor.title || actor.id}
+        <div
+          className={classNames(
+            "flex min-h-9 shrink-0 items-center border-b border-[var(--glass-border-subtle)] px-2 text-xs [@media(pointer:coarse)]:min-h-11",
+            navigation
+              ? "flex-wrap @min-[480px]/actor-view:flex-nowrap @min-[480px]/actor-view:gap-2"
+              : "gap-2",
+          )}
+        >
+          <div
+            className={classNames(
+              "flex min-w-0 flex-1 items-center gap-2",
+              Boolean(navigation) && "basis-full min-h-8 @min-[480px]/actor-view:basis-auto",
+            )}
           >
-            {actor.title || actor.id}
-          </span>
-          <span
-            className={`${navigation ? "hidden @min-[480px]/actor-view:inline" : ""} shrink-0 text-[var(--color-text-tertiary)]`}
-            title={actor.effective_working_reason}
-          >
-            {runtimeStatusText}
-          </span>
-          {!isHeadless &&
-          isRunning &&
-          connectionStatus === "connected" &&
-          terminalReady &&
-          !terminalWritable ? (
-            <span className="hidden shrink-0 text-[10px] text-amber-700 dark:text-amber-300 @min-[480px]/actor-view:inline">
-              {t("readOnlyConnection")}
-            </span>
-          ) : null}
-          {!isHeadless && isRunning && connectionStatus !== "connected" ? (
             <span
-              className={`${navigation ? "hidden @min-[480px]/actor-view:inline" : ""} text-[var(--color-text-tertiary)]`}
+              className={`h-2 w-2 shrink-0 rounded-full ${statusTone.dotClass}`}
+              role="img"
+              aria-label={runtimeStatusText}
+              title={[runtimeStatusText, actor.effective_working_reason].filter(Boolean).join("\n")}
+            />
+            <span
+              id={`runtime-inspector-${actor.id}`}
+              className="min-w-0 flex-1 truncate font-semibold"
+              title={actor.title || actor.id}
             >
-              {t(
-                connectionStatus !== "disconnected" ? "chat:workView.connecting" : "connectionLost",
-              )}
+              {actor.title || actor.id}
             </span>
-          ) : null}
+            {compactStatusText ? (
+              <span
+                className="max-w-[40%] shrink-0 truncate text-[var(--color-text-secondary)]"
+                title={[compactStatusText, actor.effective_working_reason]
+                  .filter(Boolean)
+                  .join("\n")}
+              >
+                {compactStatusText}
+              </span>
+            ) : null}
+          </div>
           {navigation}
           <ActorQuickControls
             key={String(isVisible)}
