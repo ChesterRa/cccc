@@ -84,8 +84,10 @@ it("does not take over or resize a read-only attachment and limits explicit take
   const root = createRoot(host);
   try {
     await act(async () => root.render(<Probe />));
+    expect(controls!.canSendInput()).toBe(false);
     expect(new URL(sockets[0].url).searchParams.get("takeover")).toBeNull();
     await act(async () => sockets[0].attach(false));
+    expect(controls!.canSendInput()).toBe(false);
     resize({ cols: 90, rows: 30 });
     input("blocked");
     controls!.sendInterrupt();
@@ -93,12 +95,19 @@ it("does not take over or resize a read-only attachment and limits explicit take
     await act(async () => controls!.requestTakeover());
     expect(sockets[0].readyState).toBe(3);
     expect(new URL(sockets[1].url).searchParams.get("takeover")).toBe("true");
-    await act(async () => sockets[1].attach(true));
+    const canSendInput = controls!.canSendInput;
+    await act(async () => {
+      sockets[1].attach(true);
+      // The gesture callback must see the grant before React renders new state.
+      expect(canSendInput()).toBe(true);
+    });
+    expect(controls!.canSendInput()).toBe(true);
     expect(sockets[1].sent.some((frame) => frame[0] === 50)).toBe(true);
     input("allowed");
     expect(sockets[1].sent.some((frame) => frame[0] === 48)).toBe(true);
     await act(async () => {
       sockets[1].readyState = 3;
+      expect(controls!.canSendInput()).toBe(false);
       sockets[1].onclose?.({ code: 1006 });
     });
     await act(async () => vi.advanceTimersByTime(1000));

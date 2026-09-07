@@ -450,7 +450,6 @@ export function AgentTab({
     // Ensure focus works consistently across browsers (and prevents the inactive cursor style).
     const onMouseDown = () => term.focus();
     term.element?.addEventListener("mousedown", onMouseDown);
-    const detachTouchScroll = attachTerminalTouchScroll(term);
 
     const copySelection = async (): Promise<boolean> => {
       try {
@@ -541,7 +540,6 @@ export function AgentTab({
 
     return () => {
       if (fitFrame) cancelAnimationFrame(fitFrame);
-      detachTouchScroll();
       term.element?.removeEventListener("contextmenu", onContextMenu);
       term.element?.removeEventListener("mousedown", onMouseDown);
       term.dispose();
@@ -559,6 +557,7 @@ export function AgentTab({
     connectionFailed,
     terminalReady,
     terminalWritable,
+    canSendInput,
     requestReconnect,
     requestTakeover,
     sendInterrupt,
@@ -580,6 +579,13 @@ export function AgentTab({
     clearTerminalSignal,
     setReconnectTrigger,
   });
+
+  // Follow xterm's lifetime, while reading connection ownership live on each move.
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term) return;
+    return attachTerminalTouchScroll(term, canSendInput);
+  }, [actor.id, groupId, isHeadless, isRunning, activated, canSendInput]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {

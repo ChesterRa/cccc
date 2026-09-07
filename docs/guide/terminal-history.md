@@ -7,6 +7,10 @@ modes and alternate buffers receive one xterm wheel event per accumulated row
 of finger movement, so applications that keep their own history can scroll it. Dragging downward
 moves toward earlier output; tapping still focuses the terminal. CCCC does not
 override Claude's renderer settings or construct mouse escape sequences itself.
+Application scrolling requires a writable connection. Read-only normal buffers
+always scroll local history, including when another page owns terminal input.
+Writer handoffs take effect on the next touch move without recreating xterm.
+Read-only alternate buffers cannot send scrolling input and have no local history.
 
 Native PTY actors always keep terminal output in two bounded memory layers, with an optional durable third layer:
 

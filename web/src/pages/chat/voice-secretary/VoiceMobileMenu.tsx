@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Ellipsis, Maximize, Sparkles } from "lucide-react";
 import { Button } from "../../../components/ui/button";
@@ -29,16 +29,47 @@ type Props = {
 export function VoiceMobileMenu(props: Props) {
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const choosingAction = useRef(false);
+  useEffect(() => {
+    if (props.disabled) setOpen(false);
+  }, [props.disabled]);
+  useEffect(() => {
+    const trigger = triggerRef.current;
+    if (!open || !trigger) return;
+    const observer = new ResizeObserver(() => {
+      if (!trigger.getClientRects().length) setOpen(false);
+    });
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [open]);
   const label = t("voiceSecretaryMobileOptions", { defaultValue: "Voice options" });
   const choose = (action: () => void) => {
-    action();
+    if (props.disabled) return;
+    // Workspace and Document can open a modal. Give it a stable return target
+    // and let it own focus after this popover closes.
+    choosingAction.current = true;
+    triggerRef.current?.focus();
     setOpen(false);
+    action();
   };
   return (
     <div className="voice-mobile-only">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open && !props.disabled}
+        onOpenChange={(value) => {
+          choosingAction.current = false;
+          setOpen(value);
+        }}
+      >
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="iconTouch" disabled={props.disabled} aria-label={label}>
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            size="iconTouch"
+            disabled={props.disabled}
+            aria-label={label}
+          >
             <Ellipsis size={18} aria-hidden="true" />
           </Button>
         </PopoverTrigger>
@@ -48,9 +79,12 @@ export function VoiceMobileMenu(props: Props) {
           collisionPadding={12}
           className="voice-mobile-menu"
           aria-label={label}
+          onCloseAutoFocus={(event) => {
+            if (choosingAction.current) event.preventDefault();
+          }}
         >
           {props.assistantEnabled && props.onModeChange ? (
-            <fieldset disabled={props.settingsLocked} className="min-w-0">
+            <fieldset disabled={props.disabled || props.settingsLocked} className="min-w-0">
               <legend className="px-2 text-xs text-[var(--color-text-muted)]">
                 {t("voiceSecretaryModeSelector")}
               </legend>
@@ -69,7 +103,7 @@ export function VoiceMobileMenu(props: Props) {
             </fieldset>
           ) : null}
           {props.assistantEnabled ? (
-            <fieldset disabled={props.languageDisabled} className="min-w-0">
+            <fieldset disabled={props.disabled || props.languageDisabled} className="min-w-0">
               <legend className="px-2 text-xs text-[var(--color-text-muted)]">
                 {t("voiceSecretaryLanguage")}
               </legend>

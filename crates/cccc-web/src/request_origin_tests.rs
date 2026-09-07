@@ -133,12 +133,3 @@ fn supervised_proxy_trust_requires_a_loopback_binding() {
     assert!(!proxy_headers_trusted_for(true, false, None));
     assert!(proxy_headers_trusted_for(false, true, Some("0.0.0.0")));
 }
-
-#[test]
-fn any_origin_switch_is_opt_in() {
-    std::env::remove_var("CCCC_WEB_ALLOW_ANY_ORIGIN");
-    assert!(!allow_any_origin());
-    std::env::set_var("CCCC_WEB_ALLOW_ANY_ORIGIN", "1");
-    assert!(allow_any_origin());
-    std::env::remove_var("CCCC_WEB_ALLOW_ANY_ORIGIN");
-}

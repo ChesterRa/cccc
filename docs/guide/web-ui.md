@@ -589,6 +589,22 @@ Cookie-authenticated Rust Web writes require an exact allowed `Origin`, with a
 same-origin `Referer` accepted only as a fallback. This check is independent of
 CORS and blocks same-site sibling domains from submitting state-changing forms.
 
+Cross-origin browser clients can opt in through `CCCC_WEB_CORS_ORIGINS`, a
+comma-separated list of exact origins (scheme, host and port). Named origins
+support credentials and are also accepted by Cookie write and WebSocket origin
+checks. Include only trusted client sites.
+
+`CCCC_WEB_ALLOW_ANY_ORIGIN=1` instead enables wildcard HTTP CORS without
+credentials, for clients that explicitly supply an `Authorization: Bearer ...`
+access token and omit browser credentials. It does not bypass Cookie write or
+WebSocket origin checks, create an authenticated principal, or expose the local
+passwordless principal to other sites. Local passwordless reads with an Origin
+or Referer must identify the same loopback origin, just as writes do. Browser
+WebSocket clients still need a same-origin connection or a named trusted origin.
+If both settings are present, wildcard HTTP CORS takes precedence; use only
+`CCCC_WEB_CORS_ORIGINS` for cross-origin Cookie sessions. Both settings are off
+by default and require restarting the Web process to change CORS responses.
+
 #### Reverse proxy headers
 
 When a reverse proxy terminates HTTPS or exposes CCCC under another host, it

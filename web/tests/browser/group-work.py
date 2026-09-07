@@ -615,6 +615,30 @@ with tempfile.TemporaryDirectory(
         )
         tiled()
         time.sleep(0.3)
+        def readonly_touch_history(actor):
+            # Use xterm's public viewport state: rendered rows can be overscanned
+            # and the fixture keeps producing live output during the gesture.
+            pane = f'[data-runtime-actor-id={actor}]'
+            js(f'void(window.touchTerminal=groupWorkProbe.terminals.find(t=>t.element?.isConnected&&t.element.closest({json.dumps(pane)})))')
+            for mode in [1000, 1002, 1003]:
+                js(f'''(async()=>{{touchTerminal.reset();
+                    await new Promise(resolve=>touchTerminal.write(Array.from({{length:200}},(_,i)=>'audit-line '+i+'\\r\\n').join('')+'\\x1b[?1006h\\x1b[?'+{mode}+'h',resolve));
+                    touchTerminal.scrollToBottom();}})()''')
+                before = js('touchTerminal.buffer.active.viewportY')
+                screen = rect(pane + ' .xterm-screen')
+                cell_height = screen["height"] / js('touchTerminal.rows')
+                start = {"x": screen["x"] + screen["width"] / 2, "y": screen["y"] + screen["height"] / 3}
+                end = {"x": start["x"], "y": start["y"] + 3 * cell_height + 0.2}
+                sent = js(f'groupWorkProbe.sockets.filter(s=>s.actor==={json.dumps(actor)}).flatMap(s=>s.frames).filter(f=>f.type===48).length')
+                cdp("Emulation.setTouchEmulationEnabled", {"enabled": True})
+                cdp("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [start]})
+                cdp("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [end]})
+                cdp("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+                wait(f'touchTerminal.buffer.active.viewportY==={before-3}')
+                assert js(f'groupWorkProbe.sockets.filter(s=>s.actor==={json.dumps(actor)}).flatMap(s=>s.frames).filter(f=>f.type===48).length') == sent
+                cdp("Emulation.setTouchEmulationEnabled", {"enabled": False})
+            print("PASS Actor read-only touch", actor, flush=True)
+
         # Read-only mode still shows output but cannot send raw terminal input.
         js("groupWorkProbe.setReadOnly(true)")
         time.sleep(0.3)
@@ -623,6 +647,7 @@ with tempfile.TemporaryDirectory(
         assert not js(
             'groupWorkProbe.sockets.some(s=>s.frames.some(f=>f.type===48&&f.text.includes("must-not-send")))'
         )
+        readonly_touch_history("actor-3")
         js("groupWorkProbe.setReadOnly(false)")
         js("groupWorkProbe.setCount(8)")
         time.sleep(0.3)
@@ -635,6 +660,7 @@ with tempfile.TemporaryDirectory(
         point_click("[data-runtime-actor-id=actor-1] .xterm-screen")
         typing("read-only-attachment")
         assert not js('groupWorkProbe.sockets.filter(s=>s.readyState===1&&s.actor==="actor-1").some(s=>s.frames.some(f=>f.type===48||f.type===50))')
+        readonly_touch_history("actor-1")
         shot("writer-preserved")
         click('[data-runtime-actor-id=actor-1] [aria-label="Take control"]')
         wait('!groupWorkProbe.externalWriters.has("actor-1")')

@@ -56,7 +56,6 @@ export function VoiceAnalystTerminal({ analyst, isVisible, runtime }: Props) {
 
     const focus = () => terminal.focus();
     terminal.element?.addEventListener("mousedown", focus);
-    const detachTouchScroll = attachTerminalTouchScroll(terminal);
     const copySelection = async () => {
       const selection = terminal.getSelection?.() || "";
       return selection ? copyTextToClipboard(selection) : false;
@@ -92,7 +91,6 @@ export function VoiceAnalystTerminal({ analyst, isVisible, runtime }: Props) {
     const frame = requestAnimationFrame(fit);
     return () => {
       cancelAnimationFrame(frame);
-      detachTouchScroll();
       terminal.element?.removeEventListener("mousedown", focus);
       terminal.element?.removeEventListener("contextmenu", contextCopy);
       terminal.dispose();
@@ -128,6 +126,7 @@ export function VoiceAnalystTerminal({ analyst, isVisible, runtime }: Props) {
     connectionFailed,
     terminalReady,
     terminalWritable,
+    canSendInput,
     requestReconnect,
     sendInterrupt,
   } = useAgentTerminalConnection({
@@ -148,6 +147,12 @@ export function VoiceAnalystTerminal({ analyst, isVisible, runtime }: Props) {
     buildCustomWebSocketUrl,
     inspectActorTail: false,
   });
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    return attachTerminalTouchScroll(terminal, canSendInput);
+  }, [analyst.generation, fit, canSendInput]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-chat-bg)]">

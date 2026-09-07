@@ -32,7 +32,13 @@ fn allowed_with_proxy(request: &Request, trust_proxy: bool, peer_is_loopback: bo
         .get(header::UPGRADE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
-    if matches!(request.method(), &Method::GET | &Method::HEAD) && !websocket {
+    // CORS can make reads visible to other sites. A loopback network peer is
+    // not sufficient proof that the initiating browser page is local.
+    if matches!(request.method(), &Method::GET | &Method::HEAD)
+        && !websocket
+        && !headers.contains_key(header::ORIGIN)
+        && !headers.contains_key(header::REFERER)
+    {
         return true;
     }
     crate::request_origin::source_origin(headers).is_some_and(|source| {

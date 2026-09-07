@@ -14,7 +14,7 @@ function dispatchTouch(element: HTMLElement, type: string, clientY?: number): Ev
   return event;
 }
 
-function setupTerminal(mouseTrackingMode = "none", bufferType = "normal") {
+function setupTerminal(mouseTrackingMode = "none", bufferType = "normal", writable = true) {
   const element = document.createElement("div");
   const screen = document.createElement("div");
   screen.className = "xterm-screen";
@@ -41,14 +41,59 @@ function setupTerminal(mouseTrackingMode = "none", bufferType = "normal") {
     focus,
     modes: { mouseTrackingMode },
     buffer: { active: { type: bufferType } },
+    options: { disableStdin: false },
   } as unknown as Terminal;
   const wheels: WheelEvent[] = [];
   element.addEventListener("wheel", (event) => wheels.push(event));
-  const dispose = attachTerminalTouchScroll(term);
-  return { element, scrollLines, focus, dispose, wheels, term };
+  const dispose = attachTerminalTouchScroll(term, () => writable);
+  return {
+    element,
+    scrollLines,
+    focus,
+    dispose,
+    wheels,
+    term,
+    setWritable: (value: boolean) => {
+      writable = value;
+    },
+  };
 }
 
 describe("terminal touch scroll", () => {
+  it.each(["vt200", "drag", "any"])(
+    "keeps local history usable across writer handoffs in %s mode",
+    (mode) => {
+      const { element, scrollLines, wheels, setWritable, term } = setupTerminal(
+        mode,
+        "normal",
+        false,
+      );
+      dispatchTouch(element, "touchstart", 100);
+      dispatchTouch(element, "touchmove", 154);
+      expect(scrollLines.mock.calls).toEqual([[-3]]);
+      expect(wheels).toHaveLength(0);
+      setWritable(true);
+      dispatchTouch(element, "touchmove", 208);
+      expect(wheels).toHaveLength(3);
+      expect(scrollLines.mock.calls).toEqual([[-3]]);
+      setWritable(false);
+      dispatchTouch(element, "touchmove", 262);
+      expect(scrollLines.mock.calls).toEqual([[-3], [-3]]);
+      expect(wheels).toHaveLength(3);
+      setWritable(true);
+      term.options.disableStdin = true;
+      dispatchTouch(element, "touchmove", 316);
+      expect(scrollLines.mock.calls).toEqual([[-3], [-3], [-3]]);
+      expect(wheels).toHaveLength(3);
+    },
+  );
+
+  it("does not synthesize application input for a read-only alternate buffer", () => {
+    const { element, wheels } = setupTerminal("vt200", "alternate", false);
+    dispatchTouch(element, "touchstart", 100);
+    dispatchTouch(element, "touchmove", 154);
+    expect(wheels).toHaveLength(0);
+  });
   it.each(["none", "x10"])("scrolls local history in normal-buffer %s mode", (mode) => {
     const { element, scrollLines, focus, wheels } = setupTerminal(mode);
 

@@ -440,6 +440,8 @@ export function VoiceSecretaryComposerControl({
   const [open, setOpen] = useState(false);
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
+  const assistantModeTriggerRef = useRef<HTMLButtonElement>(null);
+  const assistantLanguageTriggerRef = useRef<HTMLButtonElement>(null);
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<VoiceSecretaryAction>("");
   const [recognitionLanguageSaving, setRecognitionLanguageSaving] = useState(false);
@@ -1526,6 +1528,8 @@ export function VoiceSecretaryComposerControl({
     setOpen(false);
     setLoading(false);
     setActionBusy("");
+    setShowAssistantModeMenu(false);
+    setShowAssistantLanguageMenu(false);
     setRecognitionLanguageSaving(false);
     setAssistant(null);
     setDocuments([]);
@@ -2520,6 +2524,35 @@ export function VoiceSecretaryComposerControl({
     setOpen(false);
   }, []);
   const { modalRef } = useModalA11y(open, closePanel);
+
+  useEffect(() => {
+    if (controlDisabled) {
+      setShowAssistantModeMenu(false);
+      setShowAssistantLanguageMenu(false);
+      return;
+    }
+    const triggers = [
+      {
+        element: assistantModeTriggerRef.current,
+        open: showAssistantModeMenu,
+        close: () => setShowAssistantModeMenu(false),
+      },
+      {
+        element: assistantLanguageTriggerRef.current,
+        open: showAssistantLanguageMenu,
+        close: () => setShowAssistantLanguageMenu(false),
+      },
+    ].filter((item) => item.open && item.element);
+    if (!triggers.length) return;
+    // Portals must close when responsive CSS hides their trigger.
+    const observer = new ResizeObserver(() => {
+      for (const item of triggers) {
+        if (!item.element?.getClientRects().length) item.close();
+      }
+    });
+    for (const item of triggers) observer.observe(item.element!);
+    return () => observer.disconnect();
+  }, [controlDisabled, showAssistantModeMenu, showAssistantLanguageMenu]);
 
   useEffect(() => {
     if (!showAssistantModeMenu) return undefined;
@@ -5885,6 +5918,7 @@ export function VoiceSecretaryComposerControl({
               )}
             </button>
             <VoiceMobileMenu
+              key={selectedGroupId}
               disabled={controlDisabled}
               settingsLocked={recording || recordingStarting}
               assistantEnabled={assistantEnabled}
@@ -5914,6 +5948,7 @@ export function VoiceSecretaryComposerControl({
                 <Popover open={showAssistantModeMenu} onOpenChange={setShowAssistantModeMenu}>
                   <PopoverTrigger asChild>
                     <button
+                      ref={assistantModeTriggerRef}
                       type="button"
                       className={classNames(
                         "inline-flex h-11 min-w-0 shrink items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:shrink-0",
@@ -6068,6 +6103,7 @@ export function VoiceSecretaryComposerControl({
                 >
                   <PopoverTrigger asChild>
                     <button
+                      ref={assistantLanguageTriggerRef}
                       type="button"
                       className={classNames(
                         "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",

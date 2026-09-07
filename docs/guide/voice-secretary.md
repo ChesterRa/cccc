@@ -14,14 +14,18 @@ language, prompt polishing, and the workspace entry in a scrollable panel with
 44 px touch targets. Recording locks still disable mode and language changes. Desktop and mobile
 language controls share the same disabled state, including pending saves;
 completion or failure re-enables language selection.
+Menus close when switching Groups, when their controls become unavailable, or
+when responsive layout hides their trigger. Opening the workspace transfers
+keyboard focus into it; closing it returns focus to the Voice options button.
 Transcription and prompt-processing status appear above the input instead of
 competing with action buttons. The wider-screen controls remain inline.
 
-For composer layout changes, run `bash web/tests/browser/voice-mobile-toolbar.sh`
-against the Vite dev UI (`CCCC_MOBILE_TEST_URL` overrides port 5190). It checks
-computed bounds at 390×844, 844×390, and 1280×900 in English and Chinese, plus
-a long prompt-processing status. The prompt submission is intercepted; this
-layout check does not validate backend processing or replace iPhone Safari QA.
+For an isolated browser regression, start a Vite dev server on port 15559 and run
+`python3 web/tests/browser/voice-mobile.py` (see the script for configuration).
+It checks production controls at 390×844, 844×390, and 1280×900 in English,
+Chinese and Japanese, menu lifecycle and focus, and real xterm touch protocols.
+It uses a temporary Chrome profile and synthetic HTTP, with no microphone,
+provider or daemon calls. These checks do not replace iPhone Safari QA.
 
 ## Local ASR
 
