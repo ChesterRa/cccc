@@ -136,6 +136,7 @@
   "builtInAssistantsTitle": "助手",
   "builtInAssistantsHint": "当前工作组的辅助能力。",
   "builtInAssistantOpenShort": "打开",
+  "voiceSecretaryMobileOptions": "语音选项",
   "voiceSecretaryTitle": "语音小秘书",
   "voiceSecretaryManualHint": "这个面板只负责开始/停止麦克风采集和维护语音小秘书工作文档；工作组级启用和配置在 设置 > Assistants 中管理。",
   "voiceSecretaryWorkspaceHint": "采集语音、维护工作文档，并请求小秘书整理或发送内容。",

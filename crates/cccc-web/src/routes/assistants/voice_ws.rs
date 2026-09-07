@@ -1,4 +1,4 @@
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use cccc_core::{GroupStore, voice_recording_lease};
 use serde_json::{Value, json};
 
@@ -140,6 +140,13 @@ pub(super) async fn serve(
                         json!({"type":"closed","ok":true,"seq":command["seq"]}),
                     )
                     .await;
+                    // The application-level closed event does not close the WebSocket.
+                    let _ = socket
+                        .send(Message::Close(Some(CloseFrame {
+                            code: close_code::NORMAL,
+                            reason: "".into(),
+                        })))
+                        .await;
                     stopped = true;
                     break;
                 }

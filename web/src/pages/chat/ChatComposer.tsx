@@ -231,6 +231,7 @@ export function ChatComposer({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashVisibleCount, setSlashVisibleCount] = useState(SLASH_COMMAND_PAGE_SIZE);
+  const [voiceStatusTarget, setVoiceStatusTarget] = useState<HTMLDivElement | null>(null);
   const [voiceCaptureMode, setVoiceCaptureMode] = useState<VoiceSecretaryCaptureMode>("prompt");
   const [mentionMenuLeft, setMentionMenuLeft] = useState(8);
   const [composerScrollTop, setComposerScrollTop] = useState(0);
@@ -1103,6 +1104,8 @@ export function ChatComposer({
             onClearRecipients={onClearRecipients}
           />
 
+          <div ref={setVoiceStatusTarget} data-voice-mobile-status-slot />
+
           {/* Row 2 — Textarea */}
           <div className="relative min-w-0 flex-1">
             {mentionOverlay ? (
@@ -1223,11 +1226,12 @@ export function ChatComposer({
           </div>
           {/* Row 3 — Action bar */}
           <div
+            data-composer-action-bar
             className={classNames(
               "grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem_2.75rem] items-center gap-2 px-2 pb-2 pt-1 sm:flex sm:justify-between",
             )}
           >
-            <div className="contents sm:flex sm:items-center sm:gap-1.5">
+            <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:items-center sm:gap-1.5">
               <button
                 className={classNames(
                   "glass-btn flex h-11 w-11 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 sm:h-9 sm:w-9",
@@ -1245,13 +1249,14 @@ export function ChatComposer({
                 <AttachmentIcon size={18} />
               </button>
 
-              <div className="min-w-0 sm:min-w-max">
+              <div className="min-w-0">
                 <LazyVoiceSecretaryComposerControl
                   isDark={isDark}
                   selectedGroupId={selectedGroupId}
                   busy={busy}
                   disabled={!selectedGroupId || busy === "send" || !composerGroupSettled}
                   variant="assistantRow"
+                  statusPortalTarget={voiceStatusTarget}
                   captureMode={voiceCaptureMode}
                   onCaptureModeChange={setVoiceCaptureMode}
                   composerText={composerText}

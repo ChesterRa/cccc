@@ -1,5 +1,13 @@
 # Terminal history
 
+Touch scrolling follows the active xterm mode. Ordinary buffers with mouse
+tracking disabled or X10 tracking scroll local history directly; X10 reports
+button presses only, not wheel input. VT200, drag and any-event mouse-tracking
+modes and alternate buffers receive one xterm wheel event per accumulated row
+of finger movement, so applications that keep their own history can scroll it. Dragging downward
+moves toward earlier output; tapping still focuses the terminal. CCCC does not
+override Claude's renderer settings or construct mouse escape sequences itself.
+
 Native PTY actors always keep terminal output in two bounded memory layers, with an optional durable third layer:
 
 - A configurable in-memory hot buffer serves live WebSocket output, cursor reconnects, history queries, and raw-replay fallback. It defaults to 10 MiB per actor.

@@ -8,6 +8,21 @@ Enabling it copies the foreman's runtime settings into the dedicated
 `voice-secretary` actor; disabling it removes only that actor and leaves
 documents, transcript sidecars, and model caches intact.
 
+On screens narrower than 640 px, the composer keeps the microphone and a
+**Voice options** button in the action bar. Voice options contains capture mode,
+language, prompt polishing, and the workspace entry in a scrollable panel with
+44 px touch targets. Recording locks still disable mode and language changes. Desktop and mobile
+language controls share the same disabled state, including pending saves;
+completion or failure re-enables language selection.
+Transcription and prompt-processing status appear above the input instead of
+competing with action buttons. The wider-screen controls remain inline.
+
+For composer layout changes, run `bash web/tests/browser/voice-mobile-toolbar.sh`
+against the Vite dev UI (`CCCC_MOBILE_TEST_URL` overrides port 5190). It checks
+computed bounds at 390×844, 844×390, and 1280×900 in English and Chinese, plus
+a long prompt-processing status. The prompt submission is intercepted; this
+layout check does not validate backend processing or replace iPhone Safari QA.
+
 ## Local ASR
 
 Open **Settings > Assistants**, enable Voice Secretary, select **Local ASR**, and
@@ -194,6 +209,13 @@ An active local-ASR audio stream renews its recording lease. The browser's
 HTTP heartbeat remains a cross-tab status signal, but transient heartbeat
 failures do not stop or orphan an otherwise healthy recording WebSocket. The
 explicit single-recorder lease remains authoritative.
+
+After a successful local-ASR stop, the server sends the final transcript events,
+the application `closed` event, and a WebSocket Close frame with code 1000.
+The browser processes transport errors after earlier transcript events so that
+expected shutdown cannot interrupt asynchronous transcript finalization or
+display a spurious connection-failed message. Unexpected connection failures
+still report an error.
 
 Documents use the active workspace under `docs/voice-secretary/`. Groups without
 an active workspace store the Markdown fallback under CCCC_HOME. Removing a

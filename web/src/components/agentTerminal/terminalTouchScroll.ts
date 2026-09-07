@@ -69,7 +69,31 @@ export function attachTerminalTouchScroll(term: Terminal): () => void {
     const accumulatedPx = remainderPx + deltaPx;
     const lines = Math.trunc(accumulatedPx / cellHeight);
     remainderPx = accumulatedPx - lines * cellHeight;
-    if (lines !== 0) term.scrollLines(lines);
+    if (lines === 0) return;
+    const mouseMode = term.modes.mouseTrackingMode;
+    const reportsWheel = mouseMode === "vt200" || mouseMode === "drag" || mouseMode === "any";
+    // X10 reports button presses only. Its normal buffer still needs local
+    // scrollback, since a wheel event on the root reaches neither reporting
+    // nor the child viewport's local scroll listener.
+    if (reportsWheel || term.buffer.active.type === "alternate") {
+      // xterm listens on element and owns mouse/alternate-buffer encoding.
+      // Line units avoid its small-pixel trackpad scaling; one event per line
+      // also supports TUIs that consume each wheel report as a single step.
+      for (let line = 0; line < Math.abs(lines); line += 1) {
+        element.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: Math.sign(lines),
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX: event.touches[0].clientX,
+            clientY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    } else {
+      term.scrollLines(lines);
+    }
   };
 
   const onTouchEnd = () => {

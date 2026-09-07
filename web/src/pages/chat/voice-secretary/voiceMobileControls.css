@@ -1,0 +1,57 @@
+.voice-mobile-only {
+  display: flex;
+}
+.voice-desktop-controls,
+.voice-desktop-status {
+  display: none;
+}
+.voice-mobile-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.voice-mobile-status:not(:empty) {
+  padding: 8px 12px 0;
+}
+.voice-mobile-status > * {
+  max-width: 100%;
+}
+.voice-mobile-status > button {
+  min-height: 44px;
+}
+.voice-mobile-status > * > span,
+.voice-mobile-status > * > div {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Specificity also wins over the unlayered glass-modal background. */
+.glass-modal.voice-mobile-menu {
+  width: min(20rem, calc(100vw - 24px));
+  max-height: min(65dvh, var(--radix-popover-content-available-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  background: var(--color-bg-primary);
+}
+.voice-mobile-menu .voice-mobile-choice {
+  width: 100%;
+  min-height: 44px;
+  justify-content: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+@media (min-width: 640px) {
+  .voice-mobile-only,
+  .voice-mobile-status {
+    display: none;
+  }
+  .voice-desktop-controls {
+    display: contents;
+  }
+  .voice-desktop-status {
+    display: contents;
+  }
+}

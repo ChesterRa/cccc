@@ -1,3 +1,6 @@
+import { VoiceMobileMenu } from "./voice-secretary/VoiceMobileMenu";
+import { VoiceComposerStatus } from "./voice-secretary/VoiceComposerStatus";
+import { queueVoiceSocketError } from "./voice-secretary/voiceSocketError";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -208,6 +211,7 @@ export type VoiceSecretaryComposerControlProps = {
   composerContext?: Record<string, unknown>;
   onPromptDraft?: (text: string, opts?: { mode?: "replace" | "append" }) => void;
   initiallyOpen?: boolean;
+  statusPortalTarget?: HTMLElement | null;
 };
 export type VoiceSecretaryCaptureMode = "document" | "instruction" | "prompt";
 type VoiceActivityFeedItem =
@@ -274,6 +278,7 @@ export function VoiceSecretaryComposerControl({
   buttonSizePx = 44,
   disabled,
   variant = "button",
+  statusPortalTarget,
   captureMode = "document",
   onCaptureModeChange,
   onQuoteDocument,
@@ -843,6 +848,12 @@ export function VoiceSecretaryComposerControl({
     [t],
   );
   const controlDisabled = disabled || !selectedGroupId || busy === "send";
+  const recognitionLanguageDisabled =
+    controlDisabled ||
+    !assistantEnabled ||
+    recording ||
+    recordingStarting ||
+    recognitionLanguageSaving;
   const isAssistantRow = variant === "assistantRow";
   const selectedAudioDeviceLabel = useMemo(() => {
     if (!selectedAudioDeviceId) return SERVICE_DEFAULT_MIC_LABEL;
@@ -3586,18 +3597,25 @@ export function VoiceSecretaryComposerControl({
           });
       };
       ws.onerror = () => {
-        if (!isActiveRecordingRun(runId)) return;
-        const message = t("voiceSecretaryLocalAsrConnectionFailed", {
-          defaultValue:
-            "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
-        });
-        if (isCurrentGroup(gid)) {
-          setSpeechError(message);
-          showError(message);
-        }
-        serviceMessageQueue = serviceMessageQueue.then(() => {
-          cleanupServiceAudio(runId, { code: "local_asr_ws_error", detail: message, groupId: gid });
-        });
+        serviceMessageQueue = queueVoiceSocketError(
+          serviceMessageQueue,
+          () => !isActiveRecordingRun(runId) || serviceAudioExpectedCloseRunIdRef.current === runId,
+          () => {
+            const message = t("voiceSecretaryLocalAsrConnectionFailed", {
+              defaultValue:
+                "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
+            });
+            if (isCurrentGroup(gid)) {
+              setSpeechError(message);
+              showError(message);
+            }
+            cleanupServiceAudio(runId, {
+              code: "local_asr_ws_error",
+              detail: message,
+              groupId: gid,
+            });
+          },
+        );
       };
       ws.onclose = (event) => {
         serviceMessageQueue = serviceMessageQueue.then(() => {
@@ -5866,357 +5884,388 @@ export function VoiceSecretaryComposerControl({
                 <MicrophoneIcon size={15} aria-hidden="true" />
               )}
             </button>
-            {assistantEnabled && onCaptureModeChange ? (
-              <Popover open={showAssistantModeMenu} onOpenChange={setShowAssistantModeMenu}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className={classNames(
-                      "inline-flex h-11 min-w-0 shrink items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:shrink-0",
-                      isDark
-                        ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                        : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
-                    )}
-                    disabled={controlDisabled || recording || recordingStarting}
-                    title={
-                      modeChangeDisabledReason ||
-                      `${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`
-                    }
-                    aria-label={t("voiceSecretaryModeSelector", {
-                      defaultValue: "Voice Secretary capture mode",
-                    })}
-                  >
-                    <span className="min-w-0 truncate">{assistantRowCurrentMode.label}</span>
-                    <ChevronDownIcon size={12} aria-hidden="true" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" sideOffset={6} className="w-56 rounded-2xl p-1.5">
-                  <div
-                    role="menu"
-                    aria-label={t("voiceSecretaryModeSelector", {
-                      defaultValue: "Voice Secretary capture mode",
-                    })}
-                  >
-                    {assistantRowModeOptions.map((option) => {
-                      const active = option.key === captureMode;
-                      return (
-                        <button
-                          key={option.key}
-                          type="button"
-                          className={classNames(
-                            "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
-                            active
-                              ? isDark
-                                ? "bg-white/10"
-                                : "bg-black/5"
-                              : isDark
-                                ? "hover:bg-white/5"
-                                : "hover:bg-black/5",
-                          )}
-                          role="menuitemradio"
-                          aria-checked={active}
-                          disabled={recording || recordingStarting}
-                          title={modeChangeDisabledReason || option.description}
-                          onPointerDown={(event) => {
-                            event.preventDefault();
-                            handleAssistantRowModeChange(option.key);
-                          }}
-                        >
-                          <span
+            <VoiceMobileMenu
+              disabled={controlDisabled}
+              settingsLocked={recording || recordingStarting}
+              assistantEnabled={assistantEnabled}
+              mode={captureMode}
+              modes={assistantRowModeOptions}
+              onModeChange={onCaptureModeChange ? handleAssistantRowModeChange : undefined}
+              language={configuredRecognitionLanguage}
+              languageDisabled={recognitionLanguageDisabled}
+              languages={voiceLanguageOptions.map((value) => ({
+                value,
+                label: voiceLanguageLabel(value),
+              }))}
+              onLanguageChange={(value) => {
+                void updateRecognitionLanguage(value);
+              }}
+              optimizeLabel={promptOptimizeTitle}
+              optimizeDisabled={controlDisabled || !!actionBusy || !canOptimizeComposerPrompt}
+              onOptimize={handlePromptOptimizeClick}
+              workspaceLabel={openButtonLabel}
+              onWorkspace={() => {
+                if (open) closePanel();
+                else setOpen(true);
+              }}
+            />
+            <div className="voice-desktop-controls">
+              {assistantEnabled && onCaptureModeChange ? (
+                <Popover open={showAssistantModeMenu} onOpenChange={setShowAssistantModeMenu}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={classNames(
+                        "inline-flex h-11 min-w-0 shrink items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:shrink-0",
+                        isDark
+                          ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                          : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                      )}
+                      disabled={controlDisabled || recording || recordingStarting}
+                      title={
+                        modeChangeDisabledReason ||
+                        `${t("voiceSecretaryModeSelector", { defaultValue: "Voice Secretary capture mode" })}: ${assistantRowCurrentMode.label}`
+                      }
+                      aria-label={t("voiceSecretaryModeSelector", {
+                        defaultValue: "Voice Secretary capture mode",
+                      })}
+                    >
+                      <span className="min-w-0 truncate">{assistantRowCurrentMode.label}</span>
+                      <ChevronDownIcon size={12} aria-hidden="true" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" sideOffset={6} className="w-56 rounded-2xl p-1.5">
+                    <div
+                      role="menu"
+                      aria-label={t("voiceSecretaryModeSelector", {
+                        defaultValue: "Voice Secretary capture mode",
+                      })}
+                    >
+                      {assistantRowModeOptions.map((option) => {
+                        const active = option.key === captureMode;
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
                             className={classNames(
-                              "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
-                              option.key === "document"
+                              "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                              active
                                 ? isDark
-                                  ? "bg-slate-700 text-slate-200"
-                                  : "bg-gray-100 text-gray-700"
-                                : option.key === "instruction"
-                                  ? isDark
-                                    ? "bg-emerald-500/20 text-emerald-100"
-                                    : "bg-emerald-50 text-emerald-700"
-                                  : isDark
-                                    ? "bg-indigo-500/25 text-indigo-200"
-                                    : "bg-indigo-100 text-indigo-700",
+                                  ? "bg-white/10"
+                                  : "bg-black/5"
+                                : isDark
+                                  ? "hover:bg-white/5"
+                                  : "hover:bg-black/5",
                             )}
+                            role="menuitemradio"
+                            aria-checked={active}
+                            disabled={recording || recordingStarting}
+                            title={modeChangeDisabledReason || option.description}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              handleAssistantRowModeChange(option.key);
+                            }}
                           >
-                            {option.key === "document" ? (
-                              <MicrophoneIcon size={13} />
-                            ) : option.key === "instruction" ? (
-                              <span className="text-[12px] font-black leading-none">?</span>
-                            ) : (
-                              <span className="text-[11px] font-black italic leading-none">P</span>
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1">
                             <span
                               className={classNames(
-                                "block text-sm font-semibold",
+                                "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
+                                option.key === "document"
+                                  ? isDark
+                                    ? "bg-slate-700 text-slate-200"
+                                    : "bg-gray-100 text-gray-700"
+                                  : option.key === "instruction"
+                                    ? isDark
+                                      ? "bg-emerald-500/20 text-emerald-100"
+                                      : "bg-emerald-50 text-emerald-700"
+                                    : isDark
+                                      ? "bg-indigo-500/25 text-indigo-200"
+                                      : "bg-indigo-100 text-indigo-700",
+                              )}
+                            >
+                              {option.key === "document" ? (
+                                <MicrophoneIcon size={13} />
+                              ) : option.key === "instruction" ? (
+                                <span className="text-[12px] font-black leading-none">?</span>
+                              ) : (
+                                <span className="text-[11px] font-black italic leading-none">
+                                  P
+                                </span>
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span
+                                className={classNames(
+                                  "block text-sm font-semibold",
+                                  isDark ? "text-slate-100" : "text-gray-900",
+                                )}
+                              >
+                                {option.label}
+                              </span>
+                              <span
+                                className={classNames(
+                                  "block text-[11px]",
+                                  isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500",
+                                )}
+                              >
+                                {option.description}
+                              </span>
+                            </span>
+                            {active ? (
+                              <span
+                                className={classNames(
+                                  "text-xs font-semibold",
+                                  isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
+                                )}
+                              >
+                                ✓
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              ) : !assistantEnabled ? (
+                <span className="inline-flex h-11 items-center px-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:h-8">
+                  {directDictationLabel}
+                </span>
+              ) : null}
+              {assistantEnabled && captureMode === "prompt" ? (
+                <button
+                  type="button"
+                  className={classNames(
+                    "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
+                    promptOptimizePending
+                      ? isDark
+                        ? "bg-amber-400/12 text-amber-100"
+                        : "bg-amber-50 text-amber-800"
+                      : isDark
+                        ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                    !controlDisabled &&
+                      !actionBusy &&
+                      canOptimizeComposerPrompt &&
+                      "active:scale-[0.96]",
+                  )}
+                  onClick={(event) => handlePromptOptimizeClick(event)}
+                  disabled={
+                    controlDisabled ||
+                    !!actionBusy ||
+                    !assistantEnabled ||
+                    !canOptimizeComposerPrompt
+                  }
+                  aria-label={promptOptimizeTitle}
+                  title={promptOptimizeTitle}
+                >
+                  <SparklesIcon size={15} aria-hidden="true" />
+                </button>
+              ) : null}
+              {assistantEnabled ? (
+                <Popover
+                  open={showAssistantLanguageMenu}
+                  onOpenChange={setShowAssistantLanguageMenu}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={classNames(
+                        "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
+                        isDark
+                          ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                          : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                      )}
+                      disabled={recognitionLanguageDisabled}
+                      title={
+                        recording
+                          ? recordingSettingsLockedTitle
+                          : `${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`
+                      }
+                      aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
+                    >
+                      {configuredRecognitionLanguageShortLabel}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
+                    <div
+                      role="menu"
+                      aria-label={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
+                    >
+                      {voiceLanguageOptions.map((optionValue) => {
+                        const active = optionValue === configuredRecognitionLanguage;
+                        return (
+                          <button
+                            key={optionValue}
+                            type="button"
+                            className={classNames(
+                              "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
+                              active
+                                ? isDark
+                                  ? "bg-white/10"
+                                  : "bg-black/5"
+                                : isDark
+                                  ? "hover:bg-white/5"
+                                  : "hover:bg-black/5",
+                            )}
+                            role="menuitemradio"
+                            aria-checked={active}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              setShowAssistantLanguageMenu(false);
+                              void updateRecognitionLanguage(optionValue);
+                            }}
+                          >
+                            <span
+                              className={classNames(
+                                "flex h-6 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tracking-[0.08em]",
+                                isDark ? "bg-white/10 text-slate-200" : "bg-gray-100 text-gray-700",
+                              )}
+                            >
+                              {voiceLanguageShortLabel(optionValue)}
+                            </span>
+                            <span
+                              className={classNames(
+                                "min-w-0 flex-1 truncate text-sm font-semibold",
                                 isDark ? "text-slate-100" : "text-gray-900",
                               )}
                             >
-                              {option.label}
+                              {voiceLanguageLabel(optionValue)}
                             </span>
-                            <span
-                              className={classNames(
-                                "block text-[11px]",
-                                isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500",
-                              )}
-                            >
-                              {option.description}
-                            </span>
-                          </span>
-                          {active ? (
-                            <span
-                              className={classNames(
-                                "text-xs font-semibold",
-                                isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
-                              )}
-                            >
-                              ✓
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            ) : !assistantEnabled ? (
-              <span className="inline-flex h-11 items-center px-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:h-8">
-                {directDictationLabel}
-              </span>
-            ) : null}
-            {assistantEnabled && captureMode === "prompt" ? (
+                            {active ? (
+                              <span
+                                className={classNames(
+                                  "text-xs font-semibold",
+                                  isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
+                                )}
+                              >
+                                ✓
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              ) : null}
               <button
                 type="button"
                 className={classNames(
                   "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
-                  promptOptimizePending
+                  open
                     ? isDark
-                      ? "bg-amber-400/12 text-amber-100"
-                      : "bg-amber-50 text-amber-800"
+                      ? "bg-white/10 text-[var(--color-text-primary)]"
+                      : "bg-black/5 text-gray-900"
                     : isDark
                       ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                       : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
-                  !controlDisabled &&
-                    !actionBusy &&
-                    canOptimizeComposerPrompt &&
-                    "active:scale-[0.96]",
+                  !controlDisabled && "active:scale-[0.96]",
                 )}
-                onClick={(event) => handlePromptOptimizeClick(event)}
-                disabled={
-                  controlDisabled || !!actionBusy || !assistantEnabled || !canOptimizeComposerPrompt
-                }
-                aria-label={promptOptimizeTitle}
-                title={promptOptimizeTitle}
+                onClick={() => {
+                  if (open) closePanel();
+                  else setOpen(true);
+                }}
+                disabled={controlDisabled}
+                aria-pressed={open}
+                aria-label={openButtonLabel}
+                title={openButtonLabel}
               >
-                <SparklesIcon size={15} aria-hidden="true" />
+                <MaximizeIcon size={15} />
+              </button>
+            </div>
+          </div>
+          <VoiceComposerStatus target={statusPortalTarget}>
+            {recordingGroupNoticeText ? (
+              <div
+                className={classNames(
+                  "inline-flex max-w-[min(22rem,calc(100vw-10rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
+                  isDark ? "bg-rose-400/12 text-rose-100" : "bg-rose-50 text-rose-800",
+                )}
+                title={recordingSettingsLockedTitle}
+                aria-live="polite"
+              >
+                <span className="min-w-0 truncate font-semibold leading-4">
+                  {recordingGroupNoticeText}
+                </span>
+              </div>
+            ) : null}
+            {!pendingPromptInOtherGroup && (pendingPromptDraft || promptDraftWaiting) ? (
+              <div
+                className={classNames(
+                  "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
+                  pendingPromptDraft
+                    ? isDark
+                      ? "bg-emerald-400/12 text-emerald-100"
+                      : "bg-emerald-50 text-emerald-900"
+                    : isDark
+                      ? "bg-amber-400/12 text-amber-100"
+                      : "bg-amber-50 text-amber-900",
+                )}
+              >
+                <div
+                  className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                  style={TWO_LINE_STATUS_STYLE}
+                >
+                  {promptDraftWaiting ? (
+                    <AnimatedShinyText
+                      className={classNames(
+                        isDark
+                          ? "bg-[linear-gradient(110deg,rgba(254,243,199,0.82)_18%,rgba(255,255,255,0.98)_48%,rgba(251,191,36,0.94)_68%,rgba(254,243,199,0.82)_84%)]"
+                          : "bg-[linear-gradient(110deg,rgb(120,53,15)_18%,rgb(217,119,6)_42%,rgb(255,255,255)_52%,rgb(146,64,14)_66%,rgb(120,53,15)_84%)]",
+                      )}
+                    >
+                      {promptDraftWaitingTitle}
+                    </AnimatedShinyText>
+                  ) : (
+                    promptDraftReadyTitle
+                  )}
+                </div>
+              </div>
+            ) : null}
+            {pendingAskFeedback && pendingAskFeedbackSummaryText ? (
+              <button
+                type="button"
+                className={classNames(
+                  "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px] transition-opacity",
+                  askFeedbackStatusClassName(pendingAskFeedbackStatus),
+                  pendingAskFeedbackHasFinalReply
+                    ? "cursor-pointer hover:opacity-85"
+                    : "cursor-default",
+                )}
+                aria-live="polite"
+                onClick={() => openVoiceReplyBubble(pendingAskFeedback)}
+                disabled={!pendingAskFeedbackHasFinalReply}
+                title={
+                  pendingAskFeedbackHasFinalReply
+                    ? t("voiceSecretaryOpenReply", { defaultValue: "Open Voice Secretary reply" })
+                    : undefined
+                }
+              >
+                <span
+                  className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                  style={TWO_LINE_STATUS_STYLE}
+                >
+                  {pendingAskFeedbackSummaryText}
+                </span>
               </button>
             ) : null}
-            {assistantEnabled ? (
-              <Popover open={showAssistantLanguageMenu} onOpenChange={setShowAssistantLanguageMenu}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className={classNames(
-                      "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
-                      isDark
-                        ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                        : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
-                    )}
-                    disabled={
-                      controlDisabled ||
-                      !assistantEnabled ||
-                      recording ||
-                      recordingStarting ||
-                      recognitionLanguageSaving
-                    }
-                    title={
-                      recording
-                        ? recordingSettingsLockedTitle
-                        : `${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`
-                    }
-                    aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
-                  >
-                    {configuredRecognitionLanguageShortLabel}
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
-                  <div
-                    role="menu"
-                    aria-label={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
-                  >
-                    {voiceLanguageOptions.map((optionValue) => {
-                      const active = optionValue === configuredRecognitionLanguage;
-                      return (
-                        <button
-                          key={optionValue}
-                          type="button"
-                          className={classNames(
-                            "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
-                            active
-                              ? isDark
-                                ? "bg-white/10"
-                                : "bg-black/5"
-                              : isDark
-                                ? "hover:bg-white/5"
-                                : "hover:bg-black/5",
-                          )}
-                          role="menuitemradio"
-                          aria-checked={active}
-                          onPointerDown={(event) => {
-                            event.preventDefault();
-                            setShowAssistantLanguageMenu(false);
-                            void updateRecognitionLanguage(optionValue);
-                          }}
-                        >
-                          <span
-                            className={classNames(
-                              "flex h-6 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tracking-[0.08em]",
-                              isDark ? "bg-white/10 text-slate-200" : "bg-gray-100 text-gray-700",
-                            )}
-                          >
-                            {voiceLanguageShortLabel(optionValue)}
-                          </span>
-                          <span
-                            className={classNames(
-                              "min-w-0 flex-1 truncate text-sm font-semibold",
-                              isDark ? "text-slate-100" : "text-gray-900",
-                            )}
-                          >
-                            {voiceLanguageLabel(optionValue)}
-                          </span>
-                          {active ? (
-                            <span
-                              className={classNames(
-                                "text-xs font-semibold",
-                                isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
-                              )}
-                            >
-                              ✓
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            ) : null}
-            <button
-              type="button"
-              className={classNames(
-                "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8",
-                open
-                  ? isDark
-                    ? "bg-white/10 text-[var(--color-text-primary)]"
-                    : "bg-black/5 text-gray-900"
-                  : isDark
-                    ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
-                !controlDisabled && "active:scale-[0.96]",
-              )}
-              onClick={() => {
-                if (open) closePanel();
-                else setOpen(true);
-              }}
-              disabled={controlDisabled}
-              aria-pressed={open}
-              aria-label={openButtonLabel}
-              title={openButtonLabel}
-            >
-              <MaximizeIcon size={15} />
-            </button>
-          </div>
-          {recordingGroupNoticeText ? (
-            <div
-              className={classNames(
-                "inline-flex max-w-[min(22rem,calc(100vw-10rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
-                isDark ? "bg-rose-400/12 text-rose-100" : "bg-rose-50 text-rose-800",
-              )}
-              title={recordingSettingsLockedTitle}
-              aria-live="polite"
-            >
-              <span className="min-w-0 truncate font-semibold leading-4">
-                {recordingGroupNoticeText}
-              </span>
-            </div>
-          ) : null}
-          {!pendingPromptInOtherGroup && (pendingPromptDraft || promptDraftWaiting) ? (
-            <div
-              className={classNames(
-                "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]",
-                pendingPromptDraft
-                  ? isDark
-                    ? "bg-emerald-400/12 text-emerald-100"
-                    : "bg-emerald-50 text-emerald-900"
-                  : isDark
-                    ? "bg-amber-400/12 text-amber-100"
-                    : "bg-amber-50 text-amber-900",
-              )}
-            >
+            {showLiveTranscriptSummary && currentLiveTranscript ? (
               <div
-                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
-                style={TWO_LINE_STATUS_STYLE}
-              >
-                {promptDraftWaiting ? (
-                  <AnimatedShinyText
-                    className={classNames(
-                      isDark
-                        ? "bg-[linear-gradient(110deg,rgba(254,243,199,0.82)_18%,rgba(255,255,255,0.98)_48%,rgba(251,191,36,0.94)_68%,rgba(254,243,199,0.82)_84%)]"
-                        : "bg-[linear-gradient(110deg,rgb(120,53,15)_18%,rgb(217,119,6)_42%,rgb(255,255,255)_52%,rgb(146,64,14)_66%,rgb(120,53,15)_84%)]",
-                    )}
-                  >
-                    {promptDraftWaitingTitle}
-                  </AnimatedShinyText>
-                ) : (
-                  promptDraftReadyTitle
+                className={classNames(
+                  "inline-flex max-w-[min(40rem,calc(100vw-10rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
+                  isDark ? "bg-cyan-400/12 text-cyan-100" : "bg-cyan-50 text-cyan-900",
                 )}
+                aria-live="polite"
+              >
+                <span
+                  className="min-w-0 whitespace-normal break-words font-semibold leading-4"
+                  style={TWO_LINE_STATUS_STYLE}
+                >
+                  {liveTranscriptSummaryText}
+                </span>
               </div>
-            </div>
-          ) : null}
-          {pendingAskFeedback && pendingAskFeedbackSummaryText ? (
-            <button
-              type="button"
-              className={classNames(
-                "inline-flex max-w-[min(34rem,calc(100vw-12rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px] transition-opacity",
-                askFeedbackStatusClassName(pendingAskFeedbackStatus),
-                pendingAskFeedbackHasFinalReply
-                  ? "cursor-pointer hover:opacity-85"
-                  : "cursor-default",
-              )}
-              aria-live="polite"
-              onClick={() => openVoiceReplyBubble(pendingAskFeedback)}
-              disabled={!pendingAskFeedbackHasFinalReply}
-              title={
-                pendingAskFeedbackHasFinalReply
-                  ? t("voiceSecretaryOpenReply", { defaultValue: "Open Voice Secretary reply" })
-                  : undefined
-              }
-            >
-              <span
-                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
-                style={TWO_LINE_STATUS_STYLE}
-              >
-                {pendingAskFeedbackSummaryText}
-              </span>
-            </button>
-          ) : null}
-          {showLiveTranscriptSummary && currentLiveTranscript ? (
-            <div
-              className={classNames(
-                "inline-flex max-w-[min(40rem,calc(100vw-10rem))] items-start rounded-full px-2.5 py-1 text-left text-[11px]",
-                isDark ? "bg-cyan-400/12 text-cyan-100" : "bg-cyan-50 text-cyan-900",
-              )}
-              aria-live="polite"
-            >
-              <span
-                className="min-w-0 whitespace-normal break-words font-semibold leading-4"
-                style={TWO_LINE_STATUS_STYLE}
-              >
-                {liveTranscriptSummaryText}
-              </span>
-            </div>
-          ) : null}
+            ) : null}
+          </VoiceComposerStatus>
         </div>
       ) : (
         <button

@@ -271,6 +271,15 @@ async fn record_once(
             break;
         }
     }
+    let close = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("normal WebSocket close timed out")
+        .expect("missing WebSocket Close frame")
+        .expect("recording must not reset the connection without a closing handshake");
+    assert!(
+        matches!(close, Message::Close(Some(ref frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal),
+        "expected normal Close frame after closed event, got {close:?}"
+    );
     frames
 }
 
