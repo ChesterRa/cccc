@@ -1,5 +1,6 @@
 mod cancellation;
 mod command;
+mod command_output;
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
@@ -10,6 +11,9 @@ mod manager_windows_tests;
 mod output;
 mod output_reader;
 mod process_tree;
+mod pty_input;
+#[cfg(target_os = "linux")]
+mod pty_io;
 mod registry;
 mod session;
 mod session_history;
@@ -43,6 +47,7 @@ pub use command::{
     is_canonical_deepseek_config, is_canonical_deepseek_profile_manifest,
     is_canonical_deepseek_runtime_manifest,
 };
+pub use command_output::{CapturedOutput, capture_command, capture_command_blocking};
 pub use executable::{prepare_pty_command, resolve_command_executable, resolve_executable_in_path};
 pub use history_access::{
     active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,

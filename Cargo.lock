@@ -618,6 +618,7 @@ version = "0.4.38"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-windows-process",
+ "filedescriptor",
  "nix 0.28.0",
  "portable-pty",
  "retach",

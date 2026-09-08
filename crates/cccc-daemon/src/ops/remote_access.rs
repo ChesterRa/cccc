@@ -1,3 +1,4 @@
+use super::operation::{Operation, Policy::GlobalWrite};
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{HomeLayout, settings};
@@ -8,12 +9,16 @@ use crate::dispatch::{OpError, OpResult, object, string_arg};
 
 const REMOTE_ACCESS_MODE: &str = "tailnet_only";
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "remote_access_state" => state(home),
-        "remote_access_configure" => configure(home, request),
-        "remote_access_start" => set_running(home, request, true),
-        "remote_access_stop" => set_running(home, request, false),
+        "remote_access_state" => Operation::new(GlobalWrite, |home, _request| state(home)),
+        "remote_access_configure" => Operation::new(GlobalWrite, configure),
+        "remote_access_start" => Operation::new(GlobalWrite, |home, request| {
+            set_running(home, request, true)
+        }),
+        "remote_access_stop" => Operation::new(GlobalWrite, |home, request| {
+            set_running(home, request, false)
+        }),
         _ => return None,
     })
 }
@@ -110,25 +115,11 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
     }
     if provider == "tailscale" {
         let command = if running { "up" } else { "down" };
-        let output = Command::new("tailscale")
-            .arg(command)
-            .output()
-            .map_err(|error| OpError::new("remote_access_not_installed", error.to_string()))?;
-        if !output.status.success() {
-            let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            return Err(OpError::new(
-                if running {
-                    "remote_access_start_failed"
-                } else {
-                    "remote_access_stop_failed"
-                },
-                if message.is_empty() {
-                    format!("tailscale {command} failed")
-                } else {
-                    message
-                },
-            ));
-        }
+        run_tailscale(
+            Command::new("tailscale").arg(command),
+            running,
+            std::time::Duration::from_secs(30),
+        )?;
     }
     let remote_access = settings::update(home, |latest| {
         normalize(&mut latest.remote_access)
@@ -143,6 +134,45 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
     })
     .map_err(OpError::io)?;
     object(payload(home, &remote_access))
+}
+
+fn run_tailscale(
+    command: &mut Command,
+    running: bool,
+    timeout: std::time::Duration,
+) -> Result<(), OpError> {
+    let failure_code = if running {
+        "remote_access_start_failed"
+    } else {
+        "remote_access_stop_failed"
+    };
+    let output = cccc_runtime::capture_command_blocking(command, None, timeout, 65_536)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                OpError::new("remote_access_not_installed", error.to_string())
+            } else if error.kind() == std::io::ErrorKind::TimedOut {
+                OpError::new(failure_code, format!(
+                    "{error}; Tailscale network state may already have changed; check Tailscale before retrying"
+                ))
+            } else {
+                OpError::new(failure_code, error.to_string())
+            }
+        })?;
+    if !output.status.success() {
+        let mut message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if output.stderr_truncated {
+            message.push_str(" [output truncated]");
+        }
+        return Err(OpError::new(
+            failure_code,
+            if message.is_empty() {
+                "tailscale command failed".to_owned()
+            } else {
+                message
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn apply_configure_patch(config: &mut Map<String, Value>, request: &DaemonRequest) {
@@ -424,4 +454,50 @@ fn command_exists(name: &str) -> bool {
             candidate.is_file() || cfg!(windows) && path.join(format!("{name}.exe")).is_file()
         })
     })
+}
+
+#[cfg(all(test, unix))]
+mod command_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn tailscale_command_reports_exit_failure_and_missing_executable() {
+        let mut failed = Command::new("/bin/sh");
+        failed.args(["-c", "printf 'fixture failure' >&2; exit 7"]);
+        let error =
+            run_tailscale(&mut failed, false, Duration::from_secs(1)).expect_err("exit failure");
+        assert_eq!(error.code, "remote_access_stop_failed");
+        assert_eq!(error.message, "fixture failure");
+        let temp = tempfile::tempdir().expect("fixture");
+        let error = run_tailscale(
+            &mut Command::new(temp.path().join("absent")),
+            true,
+            Duration::from_secs(1),
+        )
+        .expect_err("absent");
+        assert_eq!(error.code, "remote_access_not_installed");
+    }
+
+    #[test]
+    fn tailscale_timeout_releases_the_command_and_its_child() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let marker = temp.path().join("late-child");
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("(sleep 0.4; : > \"$1\") & wait")
+            .arg("fixture")
+            .arg(&marker);
+        let started = Instant::now();
+        let result = run_tailscale(&mut command, true, Duration::from_millis(60));
+        let error = result.expect_err("hung command must fail within the deadline");
+        assert_eq!(error.code, "remote_access_start_failed");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(450));
+        assert!(
+            !marker.exists(),
+            "timed out command must not leave its child running"
+        );
+    }
 }

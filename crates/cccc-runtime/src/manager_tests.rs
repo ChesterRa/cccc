@@ -10,6 +10,238 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[test]
+#[cfg(target_os = "linux")]
+fn stop_can_finish_while_terminal_input_is_backpressured() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_blocked_terminal_input";
+    let actor = "peer1";
+    start(spec(
+        &temp,
+        group,
+        actor,
+        "stty raw -echo; touch ready; i=0; while [ ! -f release ] && [ $i -lt 500 ]; do sleep 0.02; i=$((i + 1)); done; dd bs=65536 count=16 iflag=fullblock of=/dev/null 2>/dev/null",
+    ))
+    .expect("non-reading terminal");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !temp.path().join("ready").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let ready = temp.path().join("ready").exists();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        entered_tx.send(()).expect("entered");
+        write(group, actor, &vec![b'x'; 1024 * 1024])
+    });
+    entered_rx.recv().expect("writer started");
+    // Allow the PTY input queue to fill. The fixture never consumes those bytes.
+    std::thread::sleep(Duration::from_millis(100));
+    let backpressured = !writer.is_finished();
+    let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
+    let stopper = std::thread::spawn(move || {
+        let result = stop(group, actor);
+        stopped_tx.send(result).expect("stopped receiver");
+    });
+    let stopped_without_release = stopped_rx.recv_timeout(Duration::from_secs(1));
+    // Always release our fixture before assertions, including on the old code,
+    // so reproducing the bug does not leave a blocked worker or child behind.
+    std::fs::write(temp.path().join("release"), b"").expect("release fixture");
+    stopper.join().expect("stopper");
+    let _ = writer.join().expect("writer");
+    assert!(
+        ready && backpressured,
+        "fixture must reach blocked input before stop"
+    );
+    stopped_without_release
+        .expect("stop must not wait for the Actor to consume a blocked terminal write")
+        .expect("stop");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn cancellation_releases_backpressured_input_and_waiting_submission() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_cancel_blocked_input";
+    let actor = "peer1";
+    start(spec(
+        &temp, group, actor,
+        "stty raw -echo; touch ready; i=0; while [ ! -f release ] && [ $i -lt 500 ]; do sleep 0.02; i=$((i + 1)); done; dd bs=65536 count=16 iflag=fullblock of=/dev/null 2>/dev/null",
+    )).expect("non-reading terminal");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !temp.path().join("ready").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let ready = temp.path().join("ready").exists();
+    let blocked_cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::clone(&blocked_cancel);
+    let (blocked_tx, blocked_rx) = std::sync::mpsc::channel();
+    let blocked = std::thread::spawn(move || {
+        let result = submit_interruptible(
+            group,
+            actor,
+            &vec![b'x'; 1024 * 1024],
+            b"",
+            Duration::ZERO,
+            &cancel,
+        );
+        blocked_tx.send(result).expect("blocked receiver");
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    let backpressured = !blocked.is_finished();
+    let waiting_cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::clone(&waiting_cancel);
+    let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+    let waiting = std::thread::spawn(move || {
+        let result = submit_interruptible(
+            group,
+            actor,
+            b"must-not-be-written",
+            b"",
+            Duration::ZERO,
+            &cancel,
+        );
+        waiting_tx.send(result).expect("waiting receiver");
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    let gate_blocked = !waiting.is_finished();
+    waiting_cancel.store(true, Ordering::Release);
+    let waiting_result = waiting_rx.recv_timeout(Duration::from_secs(1));
+    let first_still_blocked = !blocked.is_finished();
+    blocked_cancel.store(true, Ordering::Release);
+    let blocked_result = blocked_rx.recv_timeout(Duration::from_secs(1));
+    // Release before asserting so the reproducer also cleans up on regression.
+    std::fs::write(temp.path().join("release"), b"").expect("release");
+    stop(group, actor).expect("cleanup");
+    blocked.join().expect("blocked submission");
+    waiting.join().expect("waiting submission");
+    assert!(ready && backpressured && gate_blocked && first_still_blocked);
+    assert!(
+        !waiting_result
+            .expect("gate wait must be cancellable")
+            .expect("waiting result")
+    );
+    assert!(
+        !blocked_result
+            .expect("blocked PTY write must be cancellable")
+            .expect("blocked result")
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn revoked_attachment_releases_backpressured_input() {
+    let _guard = test_guard();
+    for takeover in [false, true] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group = "g_revoked_blocked_input";
+        let actor = "peer1";
+        start(spec(
+            &temp,
+            group,
+            actor,
+            "stty raw -echo; touch ready; sleep 30",
+        ))
+        .expect("terminal");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !temp.path().join("ready").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let attachment = crate::attach(
+            group,
+            actor,
+            crate::TerminalAttachMode::Control,
+            false,
+            None,
+        )
+        .expect("attachment");
+        let input = attachment.input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            tx.send(input.write(&vec![b'x'; 1024 * 1024]))
+                .expect("receiver");
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let blocked = !writer.is_finished();
+        let replacement = if takeover {
+            Some(
+                crate::attach(group, actor, crate::TerminalAttachMode::Control, true, None)
+                    .expect("takeover"),
+            )
+        } else {
+            drop(attachment);
+            None
+        };
+        let result = rx.recv_timeout(Duration::from_secs(1));
+        stop(group, actor).expect("cleanup");
+        writer.join().expect("writer");
+        drop(replacement);
+        assert!(blocked, "fixture must block before revocation");
+        assert!(
+            !result
+                .expect("revocation must release blocked input")
+                .expect("write result")
+        );
+    }
+}
+
+#[test]
+fn submission_does_not_continue_in_a_replacement_session() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_submission_generation";
+    let actor = "peer1";
+    start(spec(
+        &temp,
+        group,
+        actor,
+        "stty raw -echo; touch ready; dd bs=1 count=1 of=received 2>/dev/null; sleep 10",
+    ))
+    .expect("first session");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !temp.path().join("ready").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let submitting = std::thread::spawn(move || {
+        submit_interruptible(
+            group,
+            actor,
+            b"x",
+            b"must-not-reach-replacement",
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+        )
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::fs::metadata(temp.path().join("received")).map_or(0, |m| m.len()) != 1
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    stop(group, actor).expect("stop first");
+    start(spec(
+        &temp,
+        group,
+        actor,
+        "stty raw -echo; cat > replacement-input",
+    ))
+    .expect("replacement");
+    let received = std::fs::read(temp.path().join("received")).expect("received first payload");
+    let result = submitting.join().expect("submission thread");
+    stop(group, actor).expect("cleanup replacement");
+    assert_eq!(received, b"x");
+    assert!(
+        result.is_err(),
+        "a stopped generation cannot accept the submit suffix"
+    );
+    assert!(
+        std::fs::read(temp.path().join("replacement-input"))
+            .unwrap_or_default()
+            .is_empty()
+    );
+}
+
+#[test]
 fn cold_terminal_readiness_preserves_large_input() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().expect("tempdir");

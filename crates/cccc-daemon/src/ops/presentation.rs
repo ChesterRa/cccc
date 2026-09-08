@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::presentation::{self, Publish};
@@ -6,11 +10,11 @@ use serde_json::json;
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, store, string_arg};
 use crate::ops::messaging;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "presentation_get" => get(home, request),
-        "presentation_publish" => publish(home, request),
-        "presentation_clear" => clear(home, request),
+        "presentation_get" => Operation::new(Read, get),
+        "presentation_publish" => Operation::new(Write, publish),
+        "presentation_clear" => Operation::new(Write, clear),
         _ => return None,
     })
 }

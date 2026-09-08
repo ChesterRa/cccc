@@ -84,29 +84,32 @@ pub fn latest_state(
     source_event_id: &str,
 ) -> Result<Option<(String, String)>, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let events = ledger::read_all(&store.ledger_path(group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?;
-    Ok(events.iter().rev().find_map(|event| {
-        (event.kind == "runtime.delivery"
-            && event.data.get("actor_id").and_then(Value::as_str) == Some(actor_id)
-            && event.data.get("source_event_id").and_then(Value::as_str) == Some(source_event_id))
-        .then(|| {
-            (
-                event
-                    .data
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                event
-                    .data
-                    .get("transport")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
+    let path = store.ledger_path(group_id).map_err(OpError::io)?;
+    ledger::inspect(&path, |events, _| {
+        events.iter().rev().find_map(|event| {
+            (event.kind == "runtime.delivery"
+                && event.data.get("actor_id").and_then(Value::as_str) == Some(actor_id)
+                && event.data.get("source_event_id").and_then(Value::as_str)
+                    == Some(source_event_id))
+            .then(|| {
+                (
+                    event
+                        .data
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    event
+                        .data
+                        .get("transport")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
         })
-    }))
+    })
+    .map_err(OpError::io)
 }
 
 pub fn claim(
@@ -140,35 +143,40 @@ pub fn claim_deliveries(
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     let lock_path = delivery_lock_path(&ledger_path);
     with_exclusive_lock(&lock_path, || {
-        let events = ledger::read_all(&ledger_path)?;
-        let mut states = HashMap::new();
-        for (actor, _transport) in deliveries {
-            let state = events
-                .iter()
-                .rev()
-                .find_map(|event| {
-                    (event.kind == "runtime.delivery"
-                        && event.data.get("actor_id").and_then(Value::as_str)
-                            == Some(actor.id.as_str())
-                        && event.data.get("source_event_id").and_then(Value::as_str)
-                            == Some(source_event_id))
-                    .then(|| {
-                        event
-                            .data
-                            .get("state")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned()
+        let (claimable, mut states) = ledger::inspect(&ledger_path, |events, _| {
+            let mut states = HashMap::new();
+            for (actor, _transport) in deliveries {
+                let state = events
+                    .iter()
+                    .rev()
+                    .find_map(|event| {
+                        (event.kind == "runtime.delivery"
+                            && event.data.get("actor_id").and_then(Value::as_str)
+                                == Some(actor.id.as_str())
+                            && event.data.get("source_event_id").and_then(Value::as_str)
+                                == Some(source_event_id))
+                        .then(|| {
+                            event
+                                .data
+                                .get("state")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned()
+                        })
                     })
-                })
-                .unwrap_or_default();
-            states.insert(actor.id.clone(), state.clone());
-            if state == "claimed" {
-                return Ok((false, states));
+                    .unwrap_or_default();
+                states.insert(actor.id.clone(), state.clone());
+                if state == "claimed" {
+                    return (false, states);
+                }
+                if state == "accepted" || (state == "ambiguous" && !force_ambiguous) {
+                    return (false, states);
+                }
             }
-            if state == "accepted" || (state == "ambiguous" && !force_ambiguous) {
-                return Ok((false, states));
-            }
+            (true, states)
+        })?;
+        if !claimable {
+            return Ok((false, states));
         }
         for (actor, transport) in deliveries {
             append_state(
@@ -192,56 +200,58 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
     with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
-        let events = ledger::read_all(&ledger_path)?;
-        let mut latest = HashMap::<(String, String), (String, String)>::new();
-        for event in events {
-            if event.kind == "actor.add" {
+        let latest = ledger::inspect(&ledger_path, |events, _| {
+            let mut latest = HashMap::<(String, String), (String, String)>::new();
+            for event in events {
+                if event.kind == "actor.add" {
+                    let actor_id = event
+                        .data
+                        .get("actor")
+                        .and_then(Value::as_object)
+                        .and_then(|actor| actor.get("id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if !actor_id.is_empty() {
+                        latest.retain(|(existing, _), _| existing != actor_id);
+                    }
+                    continue;
+                }
+                if event.kind != "runtime.delivery" {
+                    continue;
+                }
                 let actor_id = event
                     .data
-                    .get("actor")
-                    .and_then(Value::as_object)
-                    .and_then(|actor| actor.get("id"))
+                    .get("actor_id")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if !actor_id.is_empty() {
-                    latest.retain(|(existing, _), _| existing != actor_id);
+                let source_event_id = event
+                    .data
+                    .get("source_event_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if actor_id.is_empty() || source_event_id.is_empty() {
+                    continue;
                 }
-                continue;
+                latest.insert(
+                    (actor_id.into(), source_event_id.into()),
+                    (
+                        event
+                            .data
+                            .get("state")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        event
+                            .data
+                            .get("transport")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                    ),
+                );
             }
-            if event.kind != "runtime.delivery" {
-                continue;
-            }
-            let actor_id = event
-                .data
-                .get("actor_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let source_event_id = event
-                .data
-                .get("source_event_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if actor_id.is_empty() || source_event_id.is_empty() {
-                continue;
-            }
-            latest.insert(
-                (actor_id.into(), source_event_id.into()),
-                (
-                    event
-                        .data
-                        .get("state")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                    event
-                        .data
-                        .get("transport")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                ),
-            );
-        }
+            latest
+        })?;
         let mut settled = 0;
         for ((actor_id, source_event_id), (state, transport)) in latest {
             let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
@@ -283,83 +293,86 @@ pub fn pending_sources(
     limit: usize,
 ) -> Result<Vec<Event>, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let events = ledger::read_all(&store.ledger_path(&group.group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?;
-    let generation = events
-        .iter()
-        .rposition(|event| {
-            event.kind == "actor.add"
-                && event
-                    .data
-                    .get("actor")
-                    .and_then(Value::as_object)
-                    .and_then(|value| value.get("id"))
-                    .and_then(Value::as_str)
-                    == Some(actor.id.as_str())
-        })
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    let generation_events = &events[generation..];
-    let legacy_read_watermark = LegacyReadWatermark::from_events(generation_events, &actor.id);
-    let mut latest = Map::<String, Value>::new();
-    for event in generation_events {
-        if event.kind != "runtime.delivery"
-            || event.data.get("actor_id").and_then(Value::as_str) != Some(actor.id.as_str())
-        {
-            continue;
-        }
-        if let (Some(source), Some(state)) = (
-            event.data.get("source_event_id").and_then(Value::as_str),
-            event.data.get("state").and_then(Value::as_str),
-        ) {
-            latest.insert(source.to_owned(), Value::String(state.to_owned()));
-        }
-    }
-    let mut pending = Vec::new();
-    for event in generation_events {
-        if event.by == actor.id {
-            continue;
-        }
-        let state = latest
-            .get(&event.id)
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let addressed = if event.kind == "chat.message" {
-            let mode = event
-                .data
-                .get("message_mode")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            (matches!(mode, "send" | "request_reply") || (mode == "mail" && state == "claimed"))
-                && inbox::is_for_actor(group, event, &actor.id)
-        } else if event.kind == "system.notify" {
-            if legacy_read_watermark.covers_notification(event) {
+    let path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    ledger::inspect(&path, |events, _| {
+        let generation = events
+            .iter()
+            .rposition(|event| {
+                event.kind == "actor.add"
+                    && event
+                        .data
+                        .get("actor")
+                        .and_then(Value::as_object)
+                        .and_then(|value| value.get("id"))
+                        .and_then(Value::as_str)
+                        == Some(actor.id.as_str())
+            })
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let generation_events = &events[generation..];
+        let legacy_read_watermark = LegacyReadWatermark::from_events(generation_events, &actor.id);
+        let mut latest = Map::<String, Value>::new();
+        for event in generation_events {
+            if event.kind != "runtime.delivery"
+                || event.data.get("actor_id").and_then(Value::as_str) != Some(actor.id.as_str())
+            {
                 continue;
             }
-            let notice_kind = event
-                .data
-                .get("kind")
+            if let (Some(source), Some(state)) = (
+                event.data.get("source_event_id").and_then(Value::as_str),
+                event.data.get("state").and_then(Value::as_str),
+            ) {
+                latest.insert(source.to_owned(), Value::String(state.to_owned()));
+            }
+        }
+        let mut pending = Vec::new();
+        for event in generation_events {
+            if event.by == actor.id {
+                continue;
+            }
+            let state = latest
+                .get(&event.id)
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if matches!(notice_kind, "mail_notice" | "reply_notice") {
-                event.data.get("target_actor_id").and_then(Value::as_str) == Some(actor.id.as_str())
+            let addressed = if event.kind == "chat.message" {
+                let mode = event
+                    .data
+                    .get("message_mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                (matches!(mode, "send" | "request_reply") || (mode == "mail" && state == "claimed"))
+                    && inbox::is_for_actor(group, event, &actor.id)
+            } else if event.kind == "system.notify" {
+                if legacy_read_watermark.covers_notification(event) {
+                    continue;
+                }
+                let notice_kind = event
+                    .data
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if matches!(notice_kind, "mail_notice" | "reply_notice") {
+                    event.data.get("target_actor_id").and_then(Value::as_str)
+                        == Some(actor.id.as_str())
+                } else {
+                    inbox::is_for_actor(group, event, &actor.id)
+                }
             } else {
-                inbox::is_for_actor(group, event, &actor.id)
+                false
+            };
+            if !addressed {
+                continue;
             }
-        } else {
-            false
-        };
-        if !addressed {
-            continue;
-        }
-        if !matches!(state, "accepted" | "ambiguous") {
-            pending.push(event.clone());
-            if pending.len() >= limit.max(1) {
-                break;
+            if !matches!(state, "accepted" | "ambiguous") {
+                pending.push(event.clone());
+                if pending.len() >= limit.max(1) {
+                    break;
+                }
             }
         }
-    }
-    Ok(pending)
+        pending
+    })
+    .map_err(OpError::io)
 }
 
 #[cfg(test)]

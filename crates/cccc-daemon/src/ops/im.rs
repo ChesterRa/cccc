@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::im_state;
@@ -7,19 +11,21 @@ use std::io;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "im_status" => status(home, request),
-        "im_config" => config(home, request),
-        "im_set" => set(home, request),
-        "im_unset" => unset(home, request),
-        "im_start" => running(home, request, true),
-        "im_stop" => running(home, request, false),
-        "im_bind_chat" => bind(home, request),
-        "im_list_pending" => list(home, request, "pending"),
-        "im_list_authorized" => list(home, request, "authorized"),
-        "im_reject_pending" => reject(home, request),
-        "im_revoke_chat" => revoke(home, request),
+        "im_status" => Operation::new(Read, status),
+        "im_config" => Operation::new(Write, config),
+        "im_set" => Operation::new(Write, set),
+        "im_unset" => Operation::new(Write, unset),
+        "im_start" => Operation::new(Write, |home, request| running(home, request, true)),
+        "im_stop" => Operation::new(Write, |home, request| running(home, request, false)),
+        "im_bind_chat" => Operation::new(Write, bind),
+        "im_list_pending" => Operation::new(Read, |home, request| list(home, request, "pending")),
+        "im_list_authorized" => {
+            Operation::new(Read, |home, request| list(home, request, "authorized"))
+        }
+        "im_reject_pending" => Operation::new(Write, reject),
+        "im_revoke_chat" => Operation::new(Write, revoke),
         _ => return None,
     })
 }

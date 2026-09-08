@@ -10,7 +10,7 @@ const MAX_QUEUED_RESPONSES: usize = 64;
 const RESPONSE_RETRY_DELAY: Duration = Duration::from_millis(5);
 const RESPONSE_FINISH_TIMEOUT: Duration = Duration::from_millis(250);
 
-pub(crate) type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+use crate::pty_input::SharedPtyWriter;
 
 struct QueueState {
     responses: VecDeque<Vec<u8>>,
@@ -199,6 +199,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl crate::pty_input::PtyInput for RecordingWriter {}
 
     impl Write for RecordingWriter {
         fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {

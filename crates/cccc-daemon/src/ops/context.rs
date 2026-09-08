@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{ActorRole, DaemonRequest, Event};
 use cccc_core::context::{ContextDoc, ContextStore};
 use cccc_core::ledger;
@@ -6,11 +10,11 @@ use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, store, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "context_get" => get(home, request),
-        "context_sync" => sync(home, request),
-        "task_list" => super::task_list::run(home, request),
+        "context_get" => Operation::new(Read, get),
+        "context_sync" => Operation::new(Write, sync),
+        "task_list" => Operation::new(Read, super::task_list::run),
         _ => return None,
     })
 }
@@ -44,21 +48,40 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let operations = parse_operations(request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
-    let document = contexts.load(&group_id).map_err(OpError::io)?;
-    authorize(&group, &document, &operations, &by)?;
+    let role = if by.is_empty() || matches!(by.as_str(), "user" | "system") {
+        None
+    } else {
+        Some(actors::effective_role(&group, &by).ok_or_else(|| {
+            OpError::new(
+                "permission_denied",
+                format!("context changes require a known actor: {by}"),
+            )
+        })?)
+    };
+    let mut denied = None;
     let result = contexts
-        .sync(
+        .sync_checked(
             &group_id,
             &operations,
             string_arg(request, "if_version").as_deref(),
             &by,
             bool_arg(request, "dry_run", false),
+            |document, operation| {
+                authorize(role, document, operation, &by).map_err(|error| {
+                    denied = Some(error);
+                    std::io::Error::other("context authorization rejected")
+                })
+            },
         )
         .map_err(|error| {
-            if error.to_string() == "version_conflict" {
+            if let Some(error) = denied.take() {
+                error
+            } else if error.to_string() == "version_conflict" {
                 OpError::new("version_conflict", "context version conflict")
-            } else {
+            } else if error.kind() == std::io::ErrorKind::InvalidInput {
                 OpError::invalid(error)
+            } else {
+                OpError::io(error)
             }
         })?;
     if !result.dry_run && !result.changes.is_empty() {
@@ -105,93 +128,84 @@ fn parse_operations(request: &DaemonRequest) -> Result<Vec<Map<String, Value>>, 
 }
 
 fn authorize(
-    group: &GroupDoc,
+    role: Option<ActorRole>,
     document: &ContextDoc,
-    operations: &[Map<String, Value>],
+    operation: &Map<String, Value>,
     by: &str,
 ) -> Result<(), OpError> {
-    if by.is_empty() || matches!(by, "user" | "system") {
+    let Some(role) = role else {
         return Ok(());
-    }
-    let role = actors::effective_role(group, by).ok_or_else(|| {
-        OpError::new(
-            "permission_denied",
-            format!("context changes require a known actor: {by}"),
-        )
-    })?;
-    for operation in operations {
-        let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
-        match name {
-            "coordination.brief.update" | "meta.merge" if role != ActorRole::Foreman => {
+    };
+    let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
+    match name {
+        "coordination.brief.update" | "meta.merge" if role != ActorRole::Foreman => {
+            return Err(OpError::new(
+                "permission_denied",
+                format!("{name} requires foreman or user"),
+            ));
+        }
+        "agent_state.update" | "agent_state.clear" => {
+            if operation
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .is_some_and(|actor_id| actor_id != by)
+            {
                 return Err(OpError::new(
                     "permission_denied",
-                    format!("{name} requires foreman or user"),
+                    "actors may only update their own state",
                 ));
             }
-            "agent_state.update" | "agent_state.clear" => {
-                if operation
-                    .get("actor_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|actor_id| actor_id != by)
-                {
-                    return Err(OpError::new(
-                        "permission_denied",
-                        "actors may only update their own state",
-                    ));
-                }
+        }
+        "task.create" if role == ActorRole::Peer => {
+            if operation
+                .get("assignee")
+                .and_then(Value::as_str)
+                .is_some_and(|assignee| !assignee.trim().is_empty() && assignee != by)
+            {
+                return Err(OpError::new(
+                    "permission_denied",
+                    "peers may not create tasks assigned to another actor",
+                ));
             }
-            "task.create" if role == ActorRole::Peer => {
-                if operation
+        }
+        "task.update" | "task.move" | "task.restore" | "task.delete" if role == ActorRole::Peer => {
+            let Some(task_id) = operation
+                .get("task_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|task_id| !task_id.is_empty())
+            else {
+                return Ok(());
+            };
+            let Some(task) = document
+                .tasks
+                .iter()
+                .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
+            else {
+                return Ok(());
+            };
+            let owns_task = ["assignee", "handoff_to"]
+                .iter()
+                .any(|field| task.get(*field).and_then(Value::as_str) == Some(by));
+            if !owns_task {
+                return Err(OpError::new(
+                    "permission_denied",
+                    format!("{name} requires the assignee, handoff target, foreman, or user"),
+                ));
+            }
+            if name == "task.update"
+                && operation
                     .get("assignee")
                     .and_then(Value::as_str)
                     .is_some_and(|assignee| !assignee.trim().is_empty() && assignee != by)
-                {
-                    return Err(OpError::new(
-                        "permission_denied",
-                        "peers may not create tasks assigned to another actor",
-                    ));
-                }
-            }
-            "task.update" | "task.move" | "task.restore" | "task.delete"
-                if role == ActorRole::Peer =>
             {
-                let Some(task_id) = operation
-                    .get("task_id")
-                    .and_then(Value::as_str)
-                    .filter(|task_id| !task_id.trim().is_empty())
-                else {
-                    continue;
-                };
-                let Some(task) = document
-                    .tasks
-                    .iter()
-                    .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
-                else {
-                    continue;
-                };
-                let owns_task = ["assignee", "handoff_to"]
-                    .iter()
-                    .any(|field| task.get(*field).and_then(Value::as_str) == Some(by));
-                if !owns_task {
-                    return Err(OpError::new(
-                        "permission_denied",
-                        format!("{name} requires the assignee, handoff target, foreman, or user"),
-                    ));
-                }
-                if name == "task.update"
-                    && operation
-                        .get("assignee")
-                        .and_then(Value::as_str)
-                        .is_some_and(|assignee| !assignee.trim().is_empty() && assignee != by)
-                {
-                    return Err(OpError::new(
-                        "permission_denied",
-                        "peers may not reassign tasks to another actor",
-                    ));
-                }
+                return Err(OpError::new(
+                    "permission_denied",
+                    "peers may not reassign tasks to another actor",
+                ));
             }
-            _ => {}
         }
+        _ => {}
     }
     Ok(())
 }

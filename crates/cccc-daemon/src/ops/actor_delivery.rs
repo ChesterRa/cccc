@@ -730,6 +730,61 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn worker_shutdown_cancels_blocked_terminal_submission_before_runtime_stop() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group_id = format!("g_blocked_delivery_{}", std::process::id());
+        let mut actor = Actor::new("peer");
+        actor.runtime = ActorRuntime::Custom;
+        actor.submit = ActorSubmit::None;
+        cccc_runtime::start(cccc_runtime::LaunchSpec {
+            group_id: group_id.clone(),
+            actor_id: actor.id.clone(),
+            runner: cccc_contracts::RunnerKind::Pty,
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "stty raw -echo; touch ready; sleep 30".into(),
+            ],
+            cwd: temp.path().into(),
+            env: Default::default(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("terminal");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !temp.path().join("ready").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&cancelled);
+        let group = group_id.clone();
+        let (result_tx, result_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let result = submit_terminal_text(&group, &actor, &"x".repeat(1024 * 1024), &cancel);
+            result_tx.send(result).expect("result receiver");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let blocked = !thread.is_finished();
+        let worker = DeliveryWorker {
+            sender: None,
+            cancelled,
+            thread: Some(thread),
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            worker.shutdown();
+            done_tx.send(()).expect("shutdown receiver");
+        });
+        let stopped = done_rx.recv_timeout(std::time::Duration::from_secs(1));
+        cccc_runtime::stop(&group_id, "peer").expect("cleanup");
+        shutdown.join().expect("shutdown thread");
+        assert!(blocked, "fixture must block input before shutdown");
+        stopped.expect("delivery shutdown must finish before stopping the runtime");
+        assert!(!result_rx.recv().expect("cancelled submission"));
+    }
+
+    #[test]
     fn worker_shutdown_releases_claims_as_retryable_failures() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

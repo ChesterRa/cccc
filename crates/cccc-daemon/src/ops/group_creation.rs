@@ -1,3 +1,4 @@
+use super::operation::{Operation, Policy::GlobalWrite};
 use cccc_contracts::DaemonRequest;
 use cccc_core::path_input::{PreparedDirectory, ensure_exact_directory, remove_if_created_empty};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, Registry, Scope, active, group_scope, scope};
@@ -6,8 +7,8 @@ use std::io;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
-    (request.op == "group_create_with_scope").then(|| create(home, request))
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
+    (request.op == "group_create_with_scope").then_some(Operation::new(GlobalWrite, create))
 }
 
 fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

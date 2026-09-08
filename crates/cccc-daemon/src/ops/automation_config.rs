@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
 use cccc_core::automation::STANDUP_SNIPPET;
 use cccc_core::fs::read_json;
@@ -8,12 +12,12 @@ use serde_json::{Map, Value, json};
 use super::automation_rule_access::{expected_version, validate as validate_rule};
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "group_automation_update" => update(home, request),
-        "group_automation_state" => state(home, request),
-        "group_automation_manage" => manage(home, request),
-        "group_automation_reset_baseline" => reset(home, request),
+        "group_automation_update" => Operation::new(Write, update),
+        "group_automation_state" => Operation::new(Read, state),
+        "group_automation_manage" => Operation::new(Write, manage),
+        "group_automation_reset_baseline" => Operation::new(Write, reset),
         _ => return None,
     })
 }

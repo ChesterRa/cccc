@@ -130,13 +130,18 @@ fn deepseek_node_preflight(env: &BTreeMap<String, String>) -> Result<(), String>
             node_command.env(key, value);
         }
     }
-    let node = node_command
-        .arg("--version")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_default();
+    let output = crate::capture_command_blocking(
+        node_command.arg("--version"),
+        None,
+        std::time::Duration::from_secs(5),
+        32_768,
+    )
+    .map_err(|error| format!("could not determine Node version: {error}"))?;
+    let node = if output.status.success() && !output.stdout_truncated {
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    } else {
+        String::new()
+    };
     if !node_supported(&node) {
         return Err(format!(
             "DeepSeek Harness requires Node {DEEPSEEK_NODE_RANGE} (found {})",
@@ -459,6 +464,24 @@ mod tests {
     use super::{deepseek_home, default_command, detect_runtimes};
     use cccc_contracts::ActorRuntime;
     use std::collections::BTreeMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_node_preflight_does_not_wait_indefinitely_for_version_output() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("node");
+        std::fs::write(&path, "#!/bin/sh\n/bin/sleep 6\nprintf 'v24.0.0\\n'\n").expect("fixture");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("permissions");
+        let env = BTreeMap::from([("PATH".into(), temp.path().display().to_string())]);
+        let started = Instant::now();
+        let result = super::deepseek_node_preflight(&env);
+        assert!(result.is_err(), "a stalled version probe must fail");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     #[test]
     fn runtime_discovery_returns_frontend_contract() {

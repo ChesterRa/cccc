@@ -62,15 +62,14 @@ pub(super) fn dispatch_message(
     op: &str,
     args: Map<String, Value>,
 ) -> Result<Map<String, Value>, OpError> {
-    super::super::messaging::handle(
-        home,
-        &DaemonRequest {
-            v: 1,
-            op: op.into(),
-            args,
-        },
-    )
-    .ok_or_else(|| OpError::new("internal_error", "messaging operation unavailable"))?
+    let request = DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args,
+    };
+    super::super::messaging::resolve_operation(&request)
+        .ok_or_else(|| OpError::new("internal_error", "messaging operation unavailable"))?
+        .execute(home, &request)
 }
 
 pub(super) fn items<'a>(state: &'a Value, key: &str) -> &'a [Value] {

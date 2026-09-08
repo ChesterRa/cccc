@@ -1,3 +1,4 @@
+use super::operation::{Operation, Policy::Write};
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::active;
 use cccc_core::group_scope;
@@ -9,12 +10,12 @@ use std::collections::BTreeSet;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "attach" => attach(home, request),
-        "group_detach_scope" => detach(home, request),
-        "group_use" => use_group(home, request),
-        "registry_reconcile" => reconcile(home, request),
+        "attach" => Operation::new(Write, attach),
+        "group_detach_scope" => Operation::new(Write, detach),
+        "group_use" => Operation::new(Write, use_group),
+        "registry_reconcile" => Operation::new(Write, reconcile),
         _ => return None,
     })
 }

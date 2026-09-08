@@ -3,10 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
-mod operation_access;
-use operation_access::{
-    is_global_write, is_group_lock_independent_read, is_read_only, uses_runtime_lock_only,
-};
+use crate::ops::operation::Policy;
 
 #[derive(Clone, Default)]
 pub struct DispatchLocks {
@@ -15,6 +12,7 @@ pub struct DispatchLocks {
 }
 
 pub enum DispatchPermit {
+    ResourceOwned,
     GlobalRead {
         _guard: OwnedRwLockReadGuard<()>,
     },
@@ -34,6 +32,7 @@ pub enum DispatchPermit {
 impl DispatchLocks {
     pub async fn acquire(&self, request: &DaemonRequest) -> DispatchPermit {
         match access(request) {
+            Access::ResourceOwned => DispatchPermit::ResourceOwned,
             Access::GlobalRead => DispatchPermit::GlobalRead {
                 _guard: self.global.clone().read_owned().await,
             },
@@ -100,6 +99,7 @@ impl DispatchLocks {
 }
 
 enum Access {
+    ResourceOwned,
     GlobalRead,
     GlobalWrite,
     GroupRead(String),
@@ -107,17 +107,13 @@ enum Access {
 }
 
 fn access(request: &DaemonRequest) -> Access {
-    if uses_runtime_lock_only(&request.op) {
-        // These calls synchronize through session_runtime's own mutex. A group
-        // lock would deadlock a reply waiting for its matching poll/complete.
-        return Access::GlobalRead;
-    }
-    if is_group_lock_independent_read(request) {
-        // Managed runtimes enumerate their CCCC MCP tools while actor_start is
-        // still materializing the provider. capability_state reads atomic
-        // Group snapshots and synchronizes its own CapabilityStore mutations,
-        // so taking the outer Group lock here would deadlock that handshake.
-        return Access::GlobalRead;
+    let policy = crate::dispatch::resolve_operation(request)
+        .map_or(Policy::Write, |operation| operation.policy);
+    match policy {
+        Policy::ResourceOwned => return Access::ResourceOwned,
+        Policy::GlobalRead => return Access::GlobalRead,
+        Policy::GlobalWrite => return Access::GlobalWrite,
+        Policy::Read | Policy::Write => {}
     }
     let group_id = request
         .args
@@ -126,10 +122,10 @@ fn access(request: &DaemonRequest) -> Access {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    if is_global_write(request) {
+    if request.args.contains_key("dst_group_id") {
         return Access::GlobalWrite;
     }
-    match (group_id, is_read_only(&request.op)) {
+    match (group_id, matches!(policy, Policy::Read)) {
         (Some(group_id), true) => Access::GroupRead(group_id),
         (Some(group_id), false) => Access::GroupWrite(group_id),
         (None, true) => Access::GlobalRead,
@@ -182,14 +178,14 @@ mod tests {
                 "capability_state",
                 json!({"group_id":"g_one","actor_id":"peer1","view":"mcp_catalog"})
             )),
-            Access::GlobalRead
+            Access::ResourceOwned
         ));
         assert!(matches!(
             access(&request(
                 "term_attachment_status",
                 json!({"group_id":"g_one","actor_id":"peer1","attachment_id":1})
             )),
-            Access::GlobalRead
+            Access::ResourceOwned
         ));
         assert!(matches!(
             access(&request("send", json!({"group_id":"g_one"}))),
@@ -206,23 +202,27 @@ mod tests {
             )),
             Access::GlobalWrite
         ));
+        for op in ["group_bridge_session_open", "group_bridge_session_deliver"] {
+            assert!(matches!(
+                access(&request(op, json!({"group_id":"g_one"}))),
+                Access::GlobalRead
+            ));
+        }
         for op in [
-            "group_bridge_session_open",
             "group_bridge_session_poll",
             "group_bridge_session_complete",
             "group_bridge_session_close",
             "group_bridge_session_ready",
-            "group_bridge_session_deliver",
         ] {
             assert!(
                 matches!(
                     access(&request(op, json!({"group_id":"g_one"}))),
-                    Access::GlobalRead
+                    Access::ResourceOwned
                 ),
                 "{op} must use only the session runtime lock"
             );
         }
-        for op in ["capability_install", "capability_install_target"] {
+        for op in ["capability_enable", "capability_install_target"] {
             assert!(
                 matches!(
                     access(&request(op, json!({"group_id":"g_one"}))),
@@ -248,6 +248,23 @@ mod tests {
     }
 
     #[test]
+    fn profile_secret_key_aliases_share_the_read_policy() {
+        for op in [
+            "actor_profile_env_private_keys",
+            "actor_profile_secret_keys",
+        ] {
+            assert!(matches!(
+                access(&request(op, json!({}))),
+                Access::GlobalRead
+            ));
+            assert!(matches!(
+                access(&request(op, json!({"group_id":"g_one"}))),
+                Access::GroupRead(group_id) if group_id == "g_one"
+            ));
+        }
+    }
+
+    #[test]
     fn mutation_names_that_look_like_reads_still_take_write_locks() {
         for op in [
             "group_set_state",
@@ -270,11 +287,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn voice_polling_during_actor_start_does_not_block_nested_mcp_discovery() {
+    async fn status_polling_during_actor_start_does_not_block_nested_mcp_discovery() {
         use std::future::{Future, poll_fn};
         use std::task::Poll;
 
-        for op in ["voice_preferences_get", "voice_notifications_get"] {
+        for op in [
+            "voice_preferences_get",
+            "voice_notifications_get",
+            "runtime_hermes_status",
+            "group_space_provider_credential_status",
+        ] {
             let locks = DispatchLocks::default();
             let _startup = locks
                 .acquire(&request("actor_start", json!({"group_id":"g_one"})))
@@ -302,7 +324,7 @@ mod tests {
                 )),
             )
             .await
-            .expect("Voice polling must not create an actor-start/MCP lock cycle");
+            .expect("Status polling must not create an actor-start/MCP lock cycle");
             assert!(matches!(
                 poll_permit,
                 Some(DispatchPermit::GlobalRead { .. })
@@ -314,6 +336,56 @@ mod tests {
                 Access::GlobalWrite
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn startup_catalog_discovery_can_finish_with_a_global_writer_queued() {
+        use std::future::{Future, poll_fn};
+        use std::task::Poll;
+
+        let locks = DispatchLocks::default();
+        let startup = locks.group_write("g_one").await;
+        let update = request("settings_update", json!({}));
+        let writer = locks.acquire(&update);
+        tokio::pin!(writer);
+        poll_fn(|cx| {
+            assert!(writer.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+
+        for op in [
+            "capability_state",
+            "term_attachment_status",
+            "terminal_write",
+            "group_bridge_session_poll",
+            "group_bridge_session_complete",
+            "group_bridge_session_close",
+            "group_bridge_session_ready",
+        ] {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                locks.acquire(&request(
+                    op,
+                    json!({"group_id":"g_one","actor_id":"peer","view":"mcp_catalog"}),
+                )),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                panic!("{op} must not queue behind a writer waiting for its caller")
+            });
+        }
+        // Discovery is independent; the actual mutation still waits for the
+        // lifecycle operation to complete.
+        poll_fn(|cx| {
+            assert!(writer.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(startup);
+        tokio::time::timeout(std::time::Duration::from_millis(250), writer)
+            .await
+            .expect("global mutation proceeds after startup releases its permit");
     }
 
     #[tokio::test]

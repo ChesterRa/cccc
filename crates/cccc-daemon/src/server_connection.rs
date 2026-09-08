@@ -183,6 +183,102 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn raw_terminal_write_does_not_block_actor_stop_dispatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("backpressured input", "").expect("group");
+        store
+            .mutate(&group.group_id, |doc| {
+                let mut actor = cccc_contracts::Actor::new("peer");
+                actor.runtime = cccc_contracts::ActorRuntime::Custom;
+                actor.runner = cccc_contracts::RunnerKind::Pty;
+                cccc_core::actors::add(doc, actor)
+            })
+            .expect("actor");
+        cccc_runtime::start(cccc_runtime::LaunchSpec {
+            group_id: group.group_id.clone(), actor_id: "peer".into(),
+            runner: cccc_contracts::RunnerKind::Pty,
+            command: vec!["sh".into(), "-c".into(), "stty raw -echo; touch ready; while [ ! -f release ]; do sleep 0.02; done; dd bs=65536 count=16 iflag=fullblock of=/dev/null 2>/dev/null".into()],
+            cwd: temp.path().into(), env: Default::default(), cols: 80, rows: 24,
+        }).expect("runtime");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while !temp.path().join("ready").exists() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let locks = DispatchLocks::default();
+        let (shutdown, _) = watch::channel(false);
+        let input = serde_json::from_value(json!({"v":1,"op":"terminal_write","args":{
+            "group_id":group.group_id,"actor_id":"peer","data":"x".repeat(1024*1024)
+        }}))
+        .expect("input request");
+        let (input_home, input_shutdown, input_locks) =
+            (home.clone(), shutdown.clone(), locks.clone());
+        let writing = tokio::spawn(async move {
+            super::response(&input_home, input, &input_shutdown, &input_locks).await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let backpressured = !writing.is_finished();
+        let stop = serde_json::from_value(json!({"v":1,"op":"actor_stop","args":{
+            "group_id":group.group_id,"actor_id":"peer","by":"user"
+        }}))
+        .expect("stop request");
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(2),
+            super::response(&home, stop, &shutdown, &locks),
+        )
+        .await;
+        std::fs::write(temp.path().join("release"), b"").expect("release fixture");
+        let written = writing.await.expect("writer task");
+        let _ = cccc_runtime::stop(&group.group_id, "peer");
+        assert!(backpressured, "fixture must block a real input write");
+        assert!(
+            stopped
+                .expect("stop must remain dispatchable during raw input")
+                .ok
+        );
+        assert!(
+            !written.ok,
+            "interrupted input must not be reported fully written"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_dispatch_keeps_permissions_without_outer_lifecycle_locks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("catalog", "").expect("group");
+        let locks = DispatchLocks::default();
+        let mutation: cccc_contracts::DaemonRequest = serde_json::from_value(json!({
+            "v":1,"op":"settings_update","args":{}
+        }))
+        .expect("mutation");
+        let _global = locks.acquire(&mutation).await;
+        let (shutdown, _) = watch::channel(false);
+        for (by, ok) in [("peer", true), ("another_actor", false)] {
+            let request = serde_json::from_value(json!({
+                "v":1,"op":"capability_state",
+                "args":{"group_id":group.group_id,"actor_id":"peer","by":by,"view":"mcp_catalog"}
+            }))
+            .expect("request");
+            let response = tokio::time::timeout(
+                Duration::from_secs(2),
+                super::response(&home, request, &shutdown, &locks),
+            )
+            .await
+            .expect("catalog dispatch is independent of the outer lifecycle lock");
+            assert_eq!(response.ok, ok);
+            if ok {
+                assert!(response.result["visible_tools"].is_array());
+            } else {
+                assert_eq!(response.error.expect("error").code, "permission_denied");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn connection_upgrades_to_the_events_stream() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

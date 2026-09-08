@@ -8,10 +8,12 @@ pub fn apply_all(
     document: &mut ContextDoc,
     operations: &[Map<String, Value>],
     by: &str,
+    mut authorize: impl FnMut(&ContextDoc, &Map<String, Value>) -> io::Result<()>,
 ) -> io::Result<Vec<Value>> {
     let mut changes = Vec::with_capacity(operations.len());
     for (index, operation) in operations.iter().enumerate() {
         let name = operation.get("op").and_then(Value::as_str).unwrap_or("");
+        authorize(document, operation)?;
         apply_one(document, name, operation, by)?;
         changes.push(json!({"index": index, "op": name, "detail": "applied"}));
     }

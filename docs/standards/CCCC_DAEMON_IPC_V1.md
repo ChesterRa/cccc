@@ -145,6 +145,19 @@ The stream semantics are implementation-defined but, in CCCC today:
   window. A reconnecting client SHOULD resume from its last fully consumed byte
   cursor using `since`; the handshake clamps an expired cursor to retained history.
 
+Input is serialized per runtime session, without holding lifecycle synchronization
+across PTY I/O. An input transaction remains bound to that session: stopping and
+restarting an Actor MUST NOT route an old payload or submit-key suffix into its
+replacement. Writer ownership MUST be checked before starting an attachment input
+transaction. Partial or cancelled writes MUST NOT be reported as fully submitted.
+The Linux implementation uses nonblocking PTY readiness waits so backpressure
+remains responsive to cancellation, writer revocation and hangup; bytes already
+accepted by the PTY cannot be recalled. Other platforms retain their native PTY I/O.
+The reference daemon closes a terminal attachment if one input batch cannot be
+written within 30 seconds, releasing its writer ownership. This bounds a stalled
+input stream even when pending writes prevent observing client EOF. It does not
+limit idle viewing time or stop the Actor.
+
 Out-of-band control:
 - Control operations (e.g., `term_resize`) MUST be performed over a separate concurrent daemon connection.
 
@@ -828,10 +841,14 @@ Args:
 }
 ```
 
-The `mcp_catalog` view is read from the latest atomic Group snapshot without acquiring the
-outer Group lifecycle lock. Managed runtimes can initialize their actor-scoped CCCC MCP server
+The `mcp_catalog` view is read from one atomic Group snapshot without acquiring either
+outer lifecycle lock (Group or global). Managed runtimes can initialize their actor-scoped CCCC MCP server
 while `actor_start` is still materializing the provider, so serializing this internal catalog
-read behind that same lifecycle lock would deadlock provider startup. All other
+read behind that same lifecycle lock would deadlock provider startup. A queued global writer
+can also block a subsequent global read while waiting for startup to release its permit;
+therefore a global read permit is not a safe substitute. Catalog assembly reuses its captured
+Group snapshot for role and tool visibility decisions; authorization checks and capability-store
+synchronization still apply. All other
 `capability_state` reads retain normal Group read serialization; capability-store updates keep
 their own locking and are not relaxed by this view.
 
@@ -2198,8 +2215,10 @@ Result:
 #### `assistant_voice_session_update`
 
 Persist a Web-owned completion projection (currently speaker diarization) into
-the canonical session authority before publishing its completion
-event. This is an internal daemon boundary used by browser capture; callers do
+the canonical session authority. With `completion_event`, the daemon then appends
+the matching `assistant.voice.session` event under the same Group write permit.
+Web MUST NOT append the completion directly to the ledger. This is an internal
+daemon boundary used by browser capture; callers do
 not replace transcript segments through this operation.
 
 Voice-session mutation is limited to the user, the
@@ -2215,6 +2234,7 @@ Args:
   group_id: string
   session_id: string
   by?: "assistant:voice_secretary" | string
+  completion_event?: "diarization_ready" | "diarization_failed"
   patch: {
     status?: string
     document_path?: string
@@ -2231,8 +2251,19 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; session: Record<string, unknown> }
+{ group_id: string; session: Record<string, unknown>; completion_event_id?: string }
 ```
+
+When `completion_event` is supplied, `patch.status` MUST be `closed` and
+`patch.diarization_ready` MUST match the outcome. Invalid combinations MUST fail
+before state mutation. Omitting it preserves projection-only updates. An append
+failure MUST be reported even when session state was already saved; repeating the
+same completion is safe and emits at most one event per Group/session/outcome.
+A successful completion response MUST include its `completion_event_id`; a
+projection-only response from an older daemon is not completion confirmation.
+The Web completion caller retries transient I/O or unknown transport outcomes at
+most four times, then reports failure. This does not promise an atomic transaction
+across the state file and ledger, nor recovery after the Web host exits.
 
 #### `assistant_voice_session_transcript_clear`
 
@@ -3145,7 +3176,7 @@ Result:
 
 Notes:
 - CCCC does not create or select a separate Hermes profile.
-- `HERMES_HOME`, when supplied by the user, is treated as ordinary runtime environment.
+- `HERMES_HOME`, when supplied by the user, is treated as ordinary runtime environment. Explicit Actor/Profile environment takes precedence over the host default.
 - `mcp.env` must persist `${CCCC_HOME}`, `${CCCC_GROUP_ID}`, and `${CCCC_ACTOR_ID}` placeholders so each actor process resolves its own CCCC identity.
 
 #### `runtime_hermes_prepare`
@@ -3174,6 +3205,7 @@ Result:
 Notes:
 - Setup MAY invoke `hermes mcp add cccc ...` and answer Hermes' discovery prompt only when `auto_enable_tools`/`yes` is true.
 - Discovery uses concrete CCCC env values, then CCCC normalizes saved Hermes MCP env back to actor-time placeholders.
+- Hermes and other runtime MCP configuration/check helpers are finite commands: input, both output streams, and exit share a deadline. Their owned process group / Windows Job is released on completion or timeout. Captured output is bounded to 2,000,000 bytes per stream; oversized output is an explicit command error, never partial setup evidence.
 
 #### `runtime_hermes_mcp_test`
 
@@ -4040,7 +4072,7 @@ Notes:
 
 Args:
 ```ts
-{ group_id: string; by?: string; ops: Array<Record<string, unknown>>; dry_run?: boolean }
+{ group_id: string; by?: string; ops: Array<Record<string, unknown>>; dry_run?: boolean; if_version?: string }
 ```
 
 Operation item shape (normative minimum):
@@ -4050,7 +4082,9 @@ type ContextOpV1 = { op: string } & Record<string, unknown>
 
 Notes:
 - Unknown op names SHOULD be rejected.
-- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v2 operation list.
+- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v3 operation list and permission/storage failure semantics.
+- `if_version` is compared with the current locked snapshot; a mismatch returns `version_conflict`.
+- Invalid or unauthorized batches do not persist. Unreadable canonical state and persistence failures return `io_error`; after such a failure, reload before retrying because per-file atomic writes do not imply multi-file rollback.
 
 Result:
 ```ts
@@ -4774,6 +4808,16 @@ Result:
 { snapshot: Record<string, unknown> }
 ```
 
+Snapshot metadata counts and hashes the canonical Event array in ledger append
+order, including sealed plain or gzip segments. Snapshot and compaction MUST
+reject malformed JSON and records that cannot be decoded as Event objects before
+publishing snapshot metadata or rotating the active file. They MUST NOT silently
+omit unreadable records from a successful integrity report. Maintenance scans do
+not require a full-history query index. Stored records MUST contain their
+nonempty `id` and `ts`; maintenance MUST NOT invent those fields using construction
+defaults. Deterministic defaults for omitted optional fields and the snapshot hash
+format remain unchanged for canonical records.
+
 #### `ledger_compact`
 
 Args:
@@ -4984,6 +5028,7 @@ Streaming mode:
 - When `kinds` is provided, only matching event kinds SHOULD be emitted.
 - If `by` identifies an `actor_id`, a daemon MAY apply the same recipient-routing visibility rules used by messaging (e.g., only emit `chat.message`/`system.notify` addressed to that actor and exclude the actor’s own `chat.message` events). This stream filter is independent of the Mail-only Inbox projection.
 - Resume (`since_event_id` / `since_ts`) is best-effort in v1; clients MUST be able to reconcile using `inbox_peek`.
+- Ledger compaction preserves event IDs. An established follower MUST retain unseen events across rotation and refill, and MUST NOT advance its cursor when a busy writer defers polling. A missing previously observed cursor is an explicit recovery error, not permission to skip events.
 - The stream ends when the client closes the connection or the daemon exits.
 - To protect daemon responsiveness, a daemon MAY drop slow subscribers (clients SHOULD reconnect and reconcile).
 
@@ -5212,6 +5257,13 @@ A non-local Web binding or a configured public URL requires at least one adminis
 #### `remote_access_start`
 
 Start remote access according to configured provider/mode.
+
+Tailscale start/stop commands have a 30-second deadline and bounded captured
+output. Missing executables report `remote_access_not_installed`; command
+failure or timeout reports `remote_access_start_failed` / `remote_access_stop_failed`.
+An error does not mark the desired enabled state as successfully changed. A
+timeout does not roll back external network changes; inspect Tailscale before
+retrying. Other providers retain their own lifecycle semantics.
 
 Args:
 ```ts
@@ -5451,6 +5503,15 @@ legacy state after a canonical terminal decision.
 
 The Rust WebSocket owner and MCP bridge share live reverse-session state through
 these daemon-internal operations:
+
+Internal session completion, polling, close and readiness operations synchronize through the
+session runtime's mutex and generation checks, without acquiring outer Group or global lifecycle
+permits. A completion or poll must not wait behind a global mutation which is itself waiting for
+the delivery to finish. Session open and delivery retain their outer global read permits, so
+initiating work still participates in lifecycle draining. Terminal attachment ownership inspection
+likewise uses the terminal resource's own synchronization.
+This exception does not relax ordinary message, settings, capability mutation, or Group lifecycle
+serialization and does not grant terminal write permission.
 
 - `group_bridge_session_open`: register a live route identified by `group_id`,
   `remote_group_id`, and `remote_peer_id`; returns a new opaque `generation`.

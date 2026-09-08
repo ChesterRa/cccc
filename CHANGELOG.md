@@ -7,7 +7,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- **Concurrent ledger queries preserve exact committed history.** Cold rebuilds capture source versions and records together; delayed append callbacks cannot duplicate an old event or hide a later same-sized message.
+- **Auxiliary commands cannot wait forever.** DeepSeek's Node version probe and Tailscale start/stop use bounded output and deadlines, with owned child-process cleanup and explicit failure reporting.
+- **Context storage errors preserve the original state for recovery.** Malformed files fail explicitly instead of being treated as empty, and failed partial writes invalidate stale version tokens.
+- **Task permissions follow the actual batch state.** Padded task IDs and newly created or relinquished tasks cannot bypass ownership checks; rejected batches leave no partial changes.
+- **Live notifications survive ledger compaction and refill.** Daemon and Web followers recover unseen events by their ledger IDs when archive sources change, while ordinary appends retain incremental reads.
+- **Published MCP context and Space actions are callable.** Decision/handoff notes and Space sync now reach their existing handlers; context snapshots honor the archived-task option and tool descriptions match actual results.
+- **Short MCP commands stop when timed out or cancelled.** Shell/Git calls and runtime MCP setup helpers share bounded, concurrent input/output capture, so blocked pipes cannot outlive the command deadline. Shell results explicitly report truncated output; setup checks reject incomplete output.
+- **Hermes setup respects the Actor profile environment.** An explicit `HERMES_HOME` is no longer overwritten by the host default.
+- **Voice Secretary completion events now use the daemon's session update boundary.** The Web host no longer writes them directly to the ledger; transient failures and lost IPC replies can be retried without duplicate completion events.
+- **MCP host shutdown releases its local command sessions.** Cleanup is scoped to the owning Home and leaves other hosts and Actor/Analyst runtimes running. Observed command completion also releases its runtime resources.
+- **Stopping Voice during setup prevents late startup work and playback.** A call returned after cancellation is released by its exact generation, preserving newer calls and the retained Analyst session.
+- **Linux terminals remain stoppable when an Actor stops consuming input.** Pending message submission responds to cancellation, revoked terminal writers release the input lane, and an old submission cannot continue in a restarted Actor session.
+- **Actor startup and internal session callbacks remain available while global changes are queued.** MCP discovery and Bridge session coordination use their resource-owned synchronization, avoiding a lifecycle lock cycle. Catalog visibility uses one Group snapshot, and Hermes/Group Space status reads no longer take unnecessary write locks.
+- **Actor status notifications recover after temporary ledger write failures.** The next normal status tick retries the uncommitted transition without repeating successfully published state.
 - **Kilo snapshot progress no longer leaks into Actor and Voice Analyst answers.** The shared stream adapter excludes text explicitly marked as transient UI progress while preserving ordinary answer text, including synthetic content. Native snapshot behavior and strict runtime result checks remain unchanged.
+
+### Changed
+- **Evicting large history indexes no longer holds the global cache lock during deallocation.** Other Groups can continue querying while the removed index is freed.
+- **Ledger snapshots validate and hash history in one streaming pass.** Maintenance no longer builds a full-history query index, preserves canonical snapshot hashes, and rejects unreadable event objects before publishing metadata or rotating files.
+- **Delivery and reminder checks avoid copying the entire message history.** Runtime turn claims, recovery, completion checks, and queue counts borrow the existing index and retain only needed results. Reminder checks skip history when no Actor is eligible.
+- **Daemon operations declare their concurrency policy beside their handler.** This removes a separate operation whitelist and verifies documented operations through the executable resolver. Both Profile secret-key listing aliases now use read access.
+- **Terminal stream ingestion avoids re-serializing unrelated history.** Raw event replay checks compare identity before payload, preserving changed content and Group/Actor isolation.
+- **Architecture documentation describes actual process and state ownership.** It distinguishes the shared control plane from Web/MCP integration hosts and configuration, coordination, and event authorities.
 
 ## [0.4.38] — 2026-09-07
 

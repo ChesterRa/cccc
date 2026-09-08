@@ -8,48 +8,61 @@ use super::yaml_storage::ContextPaths;
 use crate::fs::{read_yaml, write_yaml};
 
 pub(super) fn load_tasks(tasks_dir: &Path) -> io::Result<Vec<Map<String, Value>>> {
-    if !tasks_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut paths = fs::read_dir(tasks_dir)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| is_task_path(path))
-        .collect::<Vec<_>>();
+    let entries = match fs::read_dir(tasks_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<io::Result<Vec<_>>>()?;
+    paths.retain(|path| is_task_path(path));
     paths.sort();
-    Ok(paths
+    paths
         .iter()
-        .filter_map(|path| {
-            read_yaml::<Value>(path)
-                .ok()
-                .and_then(|value| value.as_object().cloned())
-                .filter(|task| {
-                    task.get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| !id.is_empty())
-                })
-        })
-        .collect())
-}
-
-pub(super) fn load_agents(path: &Path) -> BTreeMap<String, Map<String, Value>> {
-    let source = read_yaml_map(path);
-    source
-        .get("agent_states")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            let mut state = value.as_object()?.clone();
-            let actor_id = state
-                .remove("actor_id")
-                .or_else(|| state.remove("id"))?
-                .as_str()?
-                .trim()
-                .to_owned();
-            (!actor_id.is_empty()).then_some((actor_id, state))
+        .map(|path| {
+            // An enumerated task must exist and remain readable. Treating it as
+            // empty could recycle its ID and overwrite the user's original file.
+            let task = required_yaml_map(path)?;
+            let id = task.get("id").and_then(Value::as_str);
+            if id != path.file_stem().and_then(|stem| stem.to_str()) {
+                return Err(invalid_data(path, "task id must match its filename"));
+            }
+            Ok(task)
         })
         .collect()
+}
+
+pub(super) fn load_agents(path: &Path) -> io::Result<BTreeMap<String, Map<String, Value>>> {
+    let source = read_yaml_map(path)?;
+    let Some(states) = source.get("agent_states") else {
+        return Ok(BTreeMap::new());
+    };
+    let states = states
+        .as_array()
+        .ok_or_else(|| invalid_data(path, "agent_states must be an array"))?;
+    let mut result = BTreeMap::new();
+    for value in states {
+        let mut state = value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| invalid_data(path, "agent state must be an object"))?;
+        let actor_id = state
+            .remove("actor_id")
+            .or_else(|| state.remove("id"))
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            })
+            .ok_or_else(|| invalid_data(path, "agent state requires an actor id"))?;
+        if result.insert(actor_id, state).is_some() {
+            return Err(invalid_data(path, "duplicate agent state id"));
+        }
+    }
+    Ok(result)
 }
 
 pub(super) fn write_agents(
@@ -91,12 +104,18 @@ pub(super) fn write_task_diff(
     Ok(())
 }
 
-pub(super) fn has_tasks(path: &Path) -> bool {
-    fs::read_dir(path).ok().is_some_and(|entries| {
-        entries
-            .filter_map(Result::ok)
-            .any(|entry| is_task_path(&entry.path()))
-    })
+pub(super) fn has_tasks(path: &Path) -> io::Result<bool> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        if is_task_path(&entry?.path()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn is_task_id(id: &str) -> bool {
@@ -105,11 +124,31 @@ pub(super) fn is_task_id(id: &str) -> bool {
     })
 }
 
-pub(super) fn read_yaml_map(path: &Path) -> Map<String, Value> {
-    read_yaml::<Value>(path)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default()
+pub(super) fn read_yaml_map(path: &Path) -> io::Result<Map<String, Value>> {
+    match required_yaml_map(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Map::new()),
+        result => result,
+    }
+}
+
+fn required_yaml_map(path: &Path) -> io::Result<Map<String, Value>> {
+    let value = read_yaml::<Value>(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("cannot read context file {}: {error}", path.display()),
+        )
+    })?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid_data(path, "expected an object"))
+}
+
+pub(super) fn invalid_data(path: &Path, detail: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("invalid context file {}: {detail}", path.display()),
+    )
 }
 
 fn write_task(paths: &ContextPaths, task: &Map<String, Value>) -> io::Result<()> {

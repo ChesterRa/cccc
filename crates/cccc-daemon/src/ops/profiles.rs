@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::profiles::ProfileStore;
@@ -6,25 +10,25 @@ use serde_json::{Map, Value, json};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 use crate::ops::actor_secrets;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "actor_profile_list" => list(home, request),
-        "actor_profile_get" => get(home, request),
-        "actor_profile_upsert" => upsert(home, request),
-        "actor_profile_delete" => delete(home, request),
+        "actor_profile_list" => Operation::new(Read, list),
+        "actor_profile_get" => Operation::new(Read, get),
+        "actor_profile_upsert" => Operation::new(Write, upsert),
+        "actor_profile_delete" => Operation::new(Write, delete),
         "actor_profile_env_private_keys" | "actor_profile_secret_keys" => {
-            secret_keys(home, request)
+            Operation::new(Read, secret_keys)
         }
         "actor_profile_env_private_update" | "actor_profile_secret_update" => {
-            secret_update(home, request)
+            Operation::new(Write, secret_update)
         }
         "actor_profile_copy_actor_secrets" | "actor_profile_secret_copy_from_actor" => {
-            copy_actor(home, request)
+            Operation::new(Write, copy_actor)
         }
         "actor_profile_copy_profile_secrets" | "actor_profile_secret_copy_from_profile" => {
-            copy_profile(home, request)
+            Operation::new(Write, copy_profile)
         }
-        "actor_profile_copy_voice_analyst_secrets" => copy_voice_analyst(home, request),
+        "actor_profile_copy_voice_analyst_secrets" => Operation::new(Write, copy_voice_analyst),
         _ => return None,
     })
 }
@@ -180,8 +184,9 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 op: "actor_update".into(),
                 args,
             };
-            super::actors::handle(home, &conversion)
-                .ok_or_else(|| OpError::new("unknown_op", "actor_update is unavailable"))??;
+            super::actors::resolve_operation(&conversion)
+                .ok_or_else(|| OpError::new("unknown_op", "actor_update is unavailable"))?
+                .execute(home, &conversion)?;
         }
     }
     let (deleted, _) = profiles

@@ -19,35 +19,46 @@ pub(crate) struct SourceRevision {
 pub struct LedgerFollower {
     initialized: bool,
     sources: BTreeMap<PathBuf, SourceRevision>,
+    last_event_id: Option<String>,
 }
 
 impl LedgerFollower {
     pub fn at_end(path: &Path) -> io::Result<(Self, Option<String>)> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(path)?;
-        FileExt::lock_shared(&file)?;
-        let result = (|| {
-            let sources = revisions(path)?
-                .into_iter()
-                .map(|revision| (revision.path.clone(), revision))
-                .collect();
-            let cursor = tail(path, 1)?.last().map(|event| event.id.clone());
-            Ok((
-                Self {
-                    initialized: true,
-                    sources,
-                },
-                cursor,
-            ))
-        })();
-        let unlock = FileExt::unlock(&file);
-        result.and_then(|value| unlock.map(|()| value))
+        // The active file is replaced during compaction. Lock the same stable
+        // boundary as append/compact so offsets and cursor describe one state.
+        let _lock = ledger_lock_file(path)?;
+        FileExt::lock_shared(&_lock)?;
+        let sources = revisions(path)?
+            .into_iter()
+            .map(|revision| (revision.path.clone(), revision))
+            .collect();
+        let cursor = tail(path, 1)?.last().map(|event| event.id.clone());
+        Ok((
+            Self {
+                initialized: true,
+                sources,
+                last_event_id: cursor.clone(),
+            },
+            cursor,
+        ))
     }
 
     pub fn poll(&mut self, path: &Path) -> io::Result<Vec<Event>> {
+        let _lock = ledger_lock_file(path)?;
+        if self.initialized {
+            match FileExt::try_lock_shared(&_lock) {
+                Ok(()) => {}
+                Err(error)
+                    if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+                {
+                    return Ok(Vec::new());
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            FileExt::lock_shared(&_lock)?;
+        }
+
         let group_id = ledger_group_id(path);
         let revisions = revisions(path)?;
         let mut next_sources: BTreeMap<_, _> = revisions
@@ -56,53 +67,52 @@ impl LedgerFollower {
             .map(|revision| (revision.path.clone(), revision))
             .collect();
         if !self.initialized {
+            let cursor = tail(path, 1)?.last().map(|event| event.id.clone());
             self.initialized = true;
             self.sources = next_sources;
+            self.last_event_id = cursor;
             return Ok(Vec::new());
         }
         if self.sources == next_sources {
             return Ok(Vec::new());
         }
 
-        let rotated_source = self.sources.get(path).and_then(|active| {
-            let active_was_replaced = next_sources
-                .get(path)
-                .is_none_or(|current| current.len < active.len);
-            active_was_replaced.then(|| {
-                revisions
-                    .iter()
-                    .rev()
-                    .find(|revision| {
-                        revision.path != path
-                            && !self.sources.contains_key(&revision.path)
-                            && revision.len >= active.len
-                    })
-                    .map(|revision| (revision.path.clone(), active.len))
-            })?
-        });
-        let mut appended = Vec::new();
-        for revision in &revisions {
-            let offset = match self.sources.get(&revision.path) {
-                Some(previous) if revision.len >= previous.len => previous.len,
-                Some(_) => 0,
-                None if rotated_source
-                    .as_ref()
-                    .is_some_and(|(source, _)| source == &revision.path) =>
-                {
-                    rotated_source
-                        .as_ref()
-                        .map_or(revision.len, |(_, offset)| *offset)
-                }
-                None if revision.path == path => 0,
-                None => revision.len,
-            };
-            if offset < revision.len {
-                let (events, consumed_end) = read_source_from(&revision.path, offset, &group_id)?;
-                appended.extend(events);
-                if let Some(source) = next_sources.get_mut(&revision.path) {
-                    source.len = consumed_end;
+        let source_set_changed = self.sources.keys().ne(next_sources.keys());
+        let appended = if source_set_changed {
+            // Byte offsets belong to files, not the reused active pathname.
+            // Search backward only as far as the last delivered ID; rotation
+            // must not build an index of the entire historical prefix.
+            read_after_cursor(path, self.last_event_id.as_deref(), &group_id)?
+        } else {
+            let mut appended = Vec::new();
+            for revision in &revisions {
+                let previous = self
+                    .sources
+                    .get(&revision.path)
+                    .expect("unchanged source set");
+                let offset = if revision.len >= previous.len {
+                    previous.len
+                } else {
+                    0
+                };
+                if offset < revision.len {
+                    let (events, consumed_end) =
+                        read_source_from(&revision.path, offset, &group_id)?;
+                    appended.extend(events);
+                    next_sources
+                        .get_mut(&revision.path)
+                        .expect("current source")
+                        .len = consumed_end;
                 }
             }
+            appended
+        };
+        if let Some(event) = appended.last() {
+            self.last_event_id = Some(event.id.clone());
+        } else if next_sources.get(path).is_none_or(|source| source.len == 0)
+            && next_sources.len() <= 1
+        {
+            self.last_event_id = None;
         }
         self.sources = next_sources;
         Ok(appended)
@@ -166,6 +176,18 @@ fn append_with(
 }
 
 pub(crate) fn acquire_writer_lock(path: &Path) -> io::Result<File> {
+    let lock = ledger_lock_file(path)?;
+    lock.lock_exclusive()?;
+    Ok(lock)
+}
+
+pub(crate) fn acquire_reader_lock(path: &Path) -> io::Result<File> {
+    let lock = ledger_lock_file(path)?;
+    FileExt::lock_shared(&lock)?;
+    Ok(lock)
+}
+
+fn ledger_lock_file(path: &Path) -> io::Result<File> {
     let lock_path = ledger_lock_path(path);
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -181,7 +203,6 @@ pub(crate) fn acquire_writer_lock(path: &Path) -> io::Result<File> {
         lock.flush()?;
     }
     lock.seek(SeekFrom::Start(0))?;
-    lock.lock_exclusive()?;
     Ok(lock)
 }
 
@@ -220,39 +241,67 @@ pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {
     Ok(events)
 }
 
-pub(crate) fn validate_jsonl(path: &Path) -> io::Result<()> {
+/// Visit canonical records for maintenance without retaining a query index.
+/// The caller holds the stable writer lock for the entire visit.
+pub(crate) fn visit_validated(
+    path: &Path,
+    mut visit: impl FnMut(Event) -> io::Result<()>,
+) -> io::Result<()> {
     for source in source_paths(path)? {
         if is_gzip(&source) {
-            validate_source_json(
+            visit_validated_source(
                 BufReader::new(GzDecoder::new(File::open(&source)?)),
                 &source,
+                &mut visit,
             )?;
         } else {
-            validate_source_json(BufReader::new(File::open(&source)?), &source)?;
+            visit_validated_source(BufReader::new(File::open(&source)?), &source, &mut visit)?;
         }
     }
     Ok(())
 }
 
-fn validate_source_json(mut reader: impl BufRead, source: &Path) -> io::Result<()> {
+fn visit_validated_source(
+    mut reader: impl BufRead,
+    source: &Path,
+    visit: &mut impl FnMut(Event) -> io::Result<()>,
+) -> io::Result<()> {
+    // Event's construction defaults generate an ID and timestamp. Those are
+    // useful for new events, but cannot certify missing fields in stored bytes.
+    #[derive(serde::Deserialize)]
+    struct StoredIdentity<'a> {
+        #[serde(borrow)]
+        id: std::borrow::Cow<'a, str>,
+        #[serde(borrow)]
+        ts: std::borrow::Cow<'a, str>,
+    }
     let mut line = Vec::new();
     let mut line_no = 0_usize;
     while reader.read_until(b'\n', &mut line)? != 0 {
         line_no += 1;
         let raw = trim_ascii(&line);
         if !raw.is_empty() {
-            let value: Value = serde_json::from_slice(raw).map_err(|error| {
-                io::Error::other(format!(
-                    "malformed ledger JSON at {}:{line_no}: {error}",
-                    source.display()
-                ))
-            })?;
-            if !value.is_object() {
+            if raw.first() != Some(&b'{') {
                 return Err(io::Error::other(format!(
                     "malformed ledger JSON at {}:{line_no}: event must be an object",
                     source.display()
                 )));
             }
+            let invalid = |error| {
+                io::Error::other(format!(
+                    "malformed ledger JSON at {}:{line_no}: {error}",
+                    source.display()
+                ))
+            };
+            let identity: StoredIdentity<'_> = serde_json::from_slice(raw).map_err(invalid)?;
+            if identity.id.is_empty() || identity.ts.is_empty() {
+                return Err(io::Error::other(format!(
+                    "malformed ledger JSON at {}:{line_no}: stored id and ts must be nonempty",
+                    source.display()
+                )));
+            }
+            let event: Event = serde_json::from_slice(raw).map_err(invalid)?;
+            visit(event)?;
         }
         line.clear();
     }
@@ -441,7 +490,9 @@ pub fn tail_filtered(
         if remaining == 0 {
             break;
         }
-        newest_first.extend(read_source_reverse(source, remaining, kind, &group_id)?);
+        newest_first.extend(read_source_reverse(
+            source, remaining, kind, &group_id, None,
+        )?);
     }
 
     let has_more = newest_first.len() > limit;
@@ -467,6 +518,9 @@ pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec
     })
 }
 
+/// Compute a projection without cloning the full history. The callback holds
+/// the index read lock: return owned results before appending or calling other
+/// ledger operations for the same path.
 pub fn inspect<T>(
     path: &Path,
     inspect: impl FnOnce(&[Event], &std::collections::HashMap<String, usize>) -> T,
@@ -502,17 +556,42 @@ pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event
     crate::ledger_index::find_relay(path, source_event_id)
 }
 
+fn read_after_cursor(path: &Path, cursor: Option<&str>, group_id: &str) -> io::Result<Vec<Event>> {
+    let mut newest_first = Vec::new();
+    for source in source_paths(path)?.iter().rev() {
+        let mut events = read_source_reverse(source, usize::MAX, None, group_id, cursor)?;
+        let found = cursor.is_some_and(|id| events.last().is_some_and(|event| event.id == id));
+        if found {
+            events.pop();
+        }
+        newest_first.extend(events);
+        if found {
+            newest_first.reverse();
+            return Ok(newest_first);
+        }
+    }
+    if cursor.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "cannot resume rotated ledger: previous event is missing",
+        ));
+    }
+    newest_first.reverse();
+    Ok(newest_first)
+}
+
 fn read_source_reverse(
     path: &Path,
     limit: usize,
     kind: Option<&str>,
     group_id: &str,
+    stop_at: Option<&str>,
 ) -> io::Result<Vec<Event>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
     if is_gzip(path) {
-        return read_gzip_tail(path, limit, kind, group_id);
+        return read_gzip_tail(path, limit, kind, group_id, stop_at);
     }
 
     const CHUNK_SIZE: u64 = 64 * 1024;
@@ -521,9 +600,12 @@ fn read_source_reverse(
     let result: io::Result<Vec<Event>> = (|| {
         let mut position = file.metadata()?.len();
         let mut pending = Vec::new();
-        let mut events = Vec::with_capacity(limit);
+        let mut events = Vec::with_capacity(limit.min(1024));
+        let reached_cursor = |events: &[Event]| {
+            stop_at.is_some_and(|id| events.last().is_some_and(|event| event.id == id))
+        };
 
-        while position > 0 && events.len() < limit {
+        while position > 0 && events.len() < limit && !reached_cursor(&events) {
             let start = position.saturating_sub(CHUNK_SIZE);
             let chunk_len = usize::try_from(position - start).map_err(io::Error::other)?;
             let mut buffer = vec![0; chunk_len];
@@ -532,7 +614,7 @@ fn read_source_reverse(
             buffer.extend_from_slice(&pending);
 
             let mut line_end = buffer.len();
-            while line_end > 0 && events.len() < limit {
+            while line_end > 0 && events.len() < limit && !reached_cursor(&events) {
                 let Some(newline) = buffer[..line_end].iter().rposition(|byte| *byte == b'\n')
                 else {
                     break;
@@ -550,7 +632,7 @@ fn read_source_reverse(
             position = start;
         }
 
-        if position == 0 && events.len() < limit {
+        if position == 0 && events.len() < limit && !reached_cursor(&events) {
             push_reverse_event(&pending, path, kind, group_id, &mut events);
         }
         Ok(events)
@@ -566,9 +648,11 @@ fn read_gzip_tail(
     limit: usize,
     kind: Option<&str>,
     group_id: &str,
+    stop_at: Option<&str>,
 ) -> io::Result<Vec<Event>> {
     let mut reader = BufReader::new(GzDecoder::new(File::open(path)?));
-    let mut retained = VecDeque::with_capacity(limit);
+    let mut retained = VecDeque::with_capacity(limit.min(1024));
+    let mut reached_cursor = stop_at.is_none();
     let mut line = Vec::new();
     let mut line_no = 0usize;
     while reader.read_until(b'\n', &mut line)? > 0 {
@@ -578,12 +662,25 @@ fn read_gzip_tail(
             && let Some(event) = decode_event_line(raw, path, line_no, group_id)
             && event_matches_kind(&event, kind)
         {
+            if stop_at == Some(event.id.as_str()) {
+                reached_cursor = true;
+                retained.clear();
+            }
+            if !reached_cursor {
+                line.clear();
+                continue;
+            }
             if retained.len() == limit {
                 retained.pop_front();
             }
             retained.push_back(event);
         }
         line.clear();
+    }
+    if !reached_cursor {
+        // This compressed segment is entirely after the cursor. Decode it once
+        // more for delivery; the first pass retained no historical prefix.
+        return read_gzip_tail(path, limit, kind, group_id, None);
     }
     Ok(retained.into_iter().rev().collect())
 }
@@ -855,6 +952,78 @@ mod tests {
         let events = read_all(&path).expect("read invalidated index");
         assert_eq!(events.len(), 2);
         assert_eq!(events[1], external);
+    }
+
+    #[test]
+    fn follower_snapshot_waits_for_the_actual_writer_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        append(&path, &Event::new("group.create", "g_test")).expect("initial");
+        let event = Event::new("chat.message", "g_test");
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let mut reader = None;
+        let mut early_result = None;
+        append_with(&path, &event, |file, encoded| {
+            file.write_all(&encoded[..encoded.len() / 2])?;
+            let path = path.clone();
+            reader = Some(std::thread::spawn(move || {
+                ready_tx.send(()).expect("reader ready");
+                result_tx
+                    .send(LedgerFollower::at_end(&path))
+                    .expect("snapshot result");
+            }));
+            ready_rx.recv().expect("reader started");
+            early_result = result_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .ok();
+            file.write_all(&encoded[encoded.len() / 2..])?;
+            file.sync_data()
+        })
+        .expect("finish append");
+        let was_early = early_result.is_some();
+        let (mut follower, cursor) = early_result
+            .unwrap_or_else(|| {
+                result_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("snapshot completed")
+            })
+            .expect("snapshot");
+        reader.expect("reader").join().expect("join");
+        assert!(!was_early, "snapshot observed an incomplete actual append");
+        assert_eq!(cursor, Some(event.id));
+        assert!(follower.poll(&path).expect("subsequent poll").is_empty());
+    }
+
+    #[test]
+    fn a_busy_group_does_not_block_established_follower_polling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        append(&path, &Event::new("group.create", "g_test")).expect("initial");
+        let (mut follower, _) = LedgerFollower::at_end(&path).expect("follower");
+        let lock = acquire_writer_lock(&path).expect("busy writer");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let next_path = path.clone();
+        let reader = std::thread::spawn(move || {
+            let result = follower.poll(&next_path);
+            sender.send((follower, result)).expect("poll result");
+        });
+        let early = receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .ok();
+        drop(lock);
+        let was_blocked = early.is_none();
+        let (mut follower, result) = early.unwrap_or_else(|| {
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("poll after release")
+        });
+        reader.join().expect("join");
+        assert!(!was_blocked, "busy group blocked polling");
+        assert!(result.expect("deferred poll").is_empty());
+        let event = Event::new("chat.message", "g_test");
+        append(&path, &event).expect("append after contention");
+        assert_eq!(follower.poll(&path).expect("retry"), vec![event]);
     }
 
     #[test]

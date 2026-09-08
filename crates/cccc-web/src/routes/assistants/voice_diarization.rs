@@ -1,7 +1,5 @@
-use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::{GroupStore, ledger};
+use cccc_contracts::DaemonRequest;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -72,24 +70,18 @@ pub(super) fn spawn(
             )
         })
         .await;
-        let (action, result, error_code, error_message) = match outcome {
-            Ok(Ok(Some(result))) => ("diarization_ready", Some(result), "", String::new()),
+        let (result, error_code, error_message) = match outcome {
+            Ok(Ok(Some(result))) => (Some(result), "", String::new()),
             Ok(Ok(None)) => (
-                "diarization_failed",
                 None,
                 "diarization_model_unavailable",
                 "speaker diarization model became unavailable".into(),
             ),
-            Ok(Err(error)) => ("diarization_failed", None, error.code, error.message),
-            Err(error) => (
-                "diarization_failed",
-                None,
-                "diarization_task_failed",
-                error.to_string(),
-            ),
+            Ok(Err(error)) => (None, error.code, error.message),
+            Err(error) => (None, "diarization_task_failed", error.to_string()),
         };
         if let Err(error) = persist_result(
-            &state,
+            &state.client,
             &group_id,
             &session_id,
             &document_path,
@@ -105,25 +97,6 @@ pub(super) fn spawn(
                 %session_id,
                 "failed to persist voice diarization completion"
             );
-            return;
-        }
-        if let Err(error) = emit_event_with_retry(
-            &state,
-            &group_id,
-            &session_id,
-            &document_path,
-            action,
-            error_code,
-            &error_message,
-        )
-        .await
-        {
-            tracing::error!(
-                %error,
-                %group_id,
-                %session_id,
-                "failed to emit voice diarization completion event"
-            );
         }
     });
     SpawnStatus::Started
@@ -136,7 +109,7 @@ fn reservation_semaphore() -> Arc<Semaphore> {
 }
 
 async fn persist_result(
-    state: &AppState,
+    client: &cccc_client::DaemonClient,
     group_id: &str,
     session_id: &str,
     document_path: &str,
@@ -144,28 +117,52 @@ async fn persist_result(
     error_code: &str,
     error_message: &str,
 ) -> std::io::Result<()> {
-    let response = state
-        .client
-        .call(&completion_request(
-            group_id,
-            session_id,
-            document_path,
-            result,
-            error_code,
-            error_message,
-        ))
-        .await
-        .map_err(std::io::Error::other)?;
-    if response.ok {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(
-            response
-                .error
-                .map(|error| format!("{}: {}", error.code, error.message))
-                .unwrap_or_else(|| "voice session update failed".into()),
-        ))
+    let request = completion_request(
+        group_id,
+        session_id,
+        document_path,
+        result,
+        error_code,
+        error_message,
+    );
+    for attempt in 0..4 {
+        // The daemon owns both the projection and its deterministic completion
+        // event. Retrying this one operation also covers an unknown IPC result.
+        let error = match client.call(&request).await {
+            Ok(response) if response.ok => {
+                if response
+                    .result
+                    .get("completion_event_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty())
+                {
+                    return Ok(());
+                }
+                return Err(std::io::Error::other(
+                    "daemon did not confirm the completion event; matching daemon and Web builds are required",
+                ));
+            }
+            Ok(response) => {
+                let error = response.error;
+                let retryable = error.as_ref().is_some_and(|error| error.code == "io_error");
+                let error = std::io::Error::other(
+                    error
+                        .map(|error| format!("{}: {}", error.code, error.message))
+                        .unwrap_or_else(|| "voice session update failed".into()),
+                );
+                if !retryable {
+                    return Err(error);
+                }
+                error
+            }
+            Err(error) => std::io::Error::other(error),
+        };
+        if attempt == 3 {
+            return Err(error);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
     }
+    unreachable!("bounded completion retry returns on its final attempt")
 }
 
 fn completion_request(
@@ -176,6 +173,11 @@ fn completion_request(
     error_code: &str,
     error_message: &str,
 ) -> DaemonRequest {
+    let completion_event = if result.is_some() {
+        "diarization_ready"
+    } else {
+        "diarization_failed"
+    };
     let patch = if let Some(result) = result {
         json!({
             "status":"closed",
@@ -200,54 +202,13 @@ fn completion_request(
             "group_id":group_id,
             "session_id":session_id,
             "by":"assistant:voice_secretary",
-            "patch":patch
+            "patch":patch,
+            "completion_event":completion_event
         })
         .as_object()
         .cloned()
         .expect("voice session update args"),
     }
-}
-
-async fn emit_event_with_retry(
-    state: &AppState,
-    group_id: &str,
-    session_id: &str,
-    document_path: &str,
-    action: &str,
-    error_code: &str,
-    error_message: &str,
-) -> std::io::Result<()> {
-    let store = GroupStore::new(state.home.clone())?;
-    let path = store.ledger_path(group_id)?;
-    let mut event = Event::new("assistant.voice.session", group_id);
-    event.id = format!(
-        "{:x}",
-        Sha256::digest(format!(
-            "voice-diarization:{group_id}:{session_id}:{action}"
-        ))
-    );
-    event.by = "system".into();
-    event.data = json!({
-        "action":action,"session_id":session_id,"document_path":document_path,
-        "error_code":error_code,"error_message":error_message
-    })
-    .as_object()
-    .cloned()
-    .unwrap_or_default();
-    let mut last_error = None;
-    for attempt in 0..4 {
-        if ledger::read_all(&path)
-            .is_ok_and(|events| events.iter().any(|existing| existing.id == event.id))
-        {
-            return Ok(());
-        }
-        match ledger::append(&path, &event) {
-            Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
-    }
-    Err(last_error.unwrap_or_else(|| std::io::Error::other("event append failed")))
 }
 
 #[cfg(test)]

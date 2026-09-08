@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::memory::MemoryStore;
@@ -8,21 +12,23 @@ use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_a
 
 mod reme;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "memory_search" => search(home, request),
-        "memory_reme_search" => reme::reme_search(home, request),
-        "memory_get" => get(home, request),
-        "memory_reme_get" => reme::reme_get(home, request),
-        "memory_write" => write(home, request),
-        "memory_reme_write" => reme::reme_write(home, request),
-        "memory_health" => health(home, request),
-        "memory_profile_get" => profile(home, request),
-        "memory_reme_layout_get" => layout(home, request),
-        "memory_reme_index_sync" => index(home, request),
-        "memory_reme_context_check" => reme::context_check(request),
-        "memory_reme_compact" => reme::compact(request),
-        "memory_reme_daily_flush" => reme::daily_flush(home, request),
+        "memory_search" => Operation::new(Read, search),
+        "memory_reme_search" => Operation::new(Read, reme::reme_search),
+        "memory_get" => Operation::new(Read, get),
+        "memory_reme_get" => Operation::new(Read, reme::reme_get),
+        "memory_write" => Operation::new(Write, write),
+        "memory_reme_write" => Operation::new(Write, reme::reme_write),
+        "memory_health" => Operation::new(Read, health),
+        "memory_profile_get" => Operation::new(Read, profile),
+        "memory_reme_layout_get" => Operation::new(Read, layout),
+        "memory_reme_index_sync" => Operation::new(Write, index),
+        "memory_reme_context_check" => {
+            Operation::new(Read, |_home, request| reme::context_check(request))
+        }
+        "memory_reme_compact" => Operation::new(Write, |_home, request| reme::compact(request)),
+        "memory_reme_daily_flush" => Operation::new(Write, reme::daily_flush),
         _ => return None,
     })
 }

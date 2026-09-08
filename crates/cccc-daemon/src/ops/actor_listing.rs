@@ -100,43 +100,41 @@ fn web_model_queue_fields(
 
     let pending = super::runtime_delivery::pending_sources(home, group, actor, 10_000)?;
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let events = ledger::read_all(&store.ledger_path(&group.group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?;
-    let Some(active_position) = events.iter().position(|event| event.id == active_event_id) else {
-        return Ok(fields);
-    };
-    let positions = events
-        .iter()
-        .enumerate()
-        .map(|(position, event)| (event.id.as_str(), position))
-        .collect::<BTreeMap<_, _>>();
-    let queued = pending
-        .iter()
-        .filter(|event| {
-            positions
-                .get(event.id.as_str())
-                .is_some_and(|position| *position > active_position)
-        })
-        .collect::<Vec<_>>();
-    fields.insert(
-        "web_model_queued_count".into(),
-        Value::from(u64::try_from(queued.len()).unwrap_or(u64::MAX)),
-    );
-    if let Some(latest) = queued.last() {
+    let path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    ledger::inspect(&path, |events, positions| {
+        let Some(active_position) = events.iter().position(|event| event.id == active_event_id)
+        else {
+            return fields;
+        };
+        let queued = pending
+            .iter()
+            .filter(|event| {
+                positions
+                    .get(event.id.as_str())
+                    .is_some_and(|position| *position > active_position)
+            })
+            .collect::<Vec<_>>();
         fields.insert(
-            "web_model_queued_after_event_id".into(),
-            Value::String(active_event_id.into()),
+            "web_model_queued_count".into(),
+            Value::from(u64::try_from(queued.len()).unwrap_or(u64::MAX)),
         );
-        fields.insert(
-            "web_model_queued_latest_event_id".into(),
-            Value::String(latest.id.clone()),
-        );
-        fields.insert(
-            "web_model_queued_latest_ts".into(),
-            Value::String(latest.ts.clone()),
-        );
-    }
-    Ok(fields)
+        if let Some(latest) = queued.last() {
+            fields.insert(
+                "web_model_queued_after_event_id".into(),
+                Value::String(active_event_id.into()),
+            );
+            fields.insert(
+                "web_model_queued_latest_event_id".into(),
+                Value::String(latest.id.clone()),
+            );
+            fields.insert(
+                "web_model_queued_latest_ts".into(),
+                Value::String(latest.ts.clone()),
+            );
+        }
+        fields
+    })
+    .map_err(OpError::io)
 }
 
 fn bool_arg(request: &DaemonRequest, name: &str) -> bool {

@@ -110,6 +110,7 @@ export class CodexVoiceBrowserSession {
         throw failure("webrtc_unsupported");
       }
       await applyOutputDevice(this.audio, this.preferences.outputDeviceId);
+      if (this.stopping) return;
       const stream = await captureMicrophone(this.preferences.inputDeviceId);
       if (this.stopping) {
         for (const track of stream.getTracks()) track.stop();
@@ -132,8 +133,11 @@ export class CodexVoiceBrowserSession {
       this.providerChannel.bind(dataChannel);
 
       const offer = await peer.createOffer();
+      if (this.stopping) return;
       await peer.setLocalDescription(offer);
+      if (this.stopping) return;
       await waitForIceGathering(peer);
+      if (this.stopping) return;
       const offerSdp = peer.localDescription?.sdp;
       if (!offerSdp?.trim()) throw failure("webrtc_offer_failed");
 
@@ -148,7 +152,13 @@ export class CodexVoiceBrowserSession {
       });
       this.requestAbort = null;
       if (!response.ok) throw failure(response.error.code);
-      if (this.stopping) return;
+      if (this.stopping) {
+        // Abort can lose to a completed HTTP response. Release only this
+        // generation; it must not occupy the lease or stop a newer call.
+        const stopped = await stopCodexVoiceCall(response.result.call.generation);
+        if (!stopped.ok) throw failure(stopped.error.code);
+        return;
+      }
       this.call = response.result.call;
       this.analyst = response.result.analyst;
       this.callbacks.onCall(this.call);
@@ -162,15 +172,18 @@ export class CodexVoiceBrowserSession {
       );
       this.eventSocket = eventSocket;
       await eventSocket.connect();
+      if (this.stopping) return;
       await peer.setRemoteDescription({ type: "answer", sdp: response.result.answer_sdp });
+      if (this.stopping) return;
       await waitForDataChannelOpen(peer, () => this.providerChannel.readyState());
       if (this.stopping) return;
       this.callbacks.onPhase("listening");
     } catch (error) {
-      if (!this.stopping) {
-        this.callbacks.onError(failureCode(error));
-        this.callbacks.onPhase("failed");
-      }
+      // A cancelled startup is finished. Rejecting it later would let its
+      // controller failure handler interfere with a newly started call.
+      if (this.stopping) return;
+      this.callbacks.onError(failureCode(error));
+      this.callbacks.onPhase("failed");
       await this.stop({ notifyPhase: false });
       throw error;
     }
@@ -188,12 +201,14 @@ export class CodexVoiceBrowserSession {
   }
 
   async resumeAudio(): Promise<boolean> {
+    if (this.stopping) return false;
     try {
       await this.audio.play();
+      if (this.stopping) return false;
       this.callbacks.onPlaybackBlocked(false);
       return true;
     } catch {
-      this.callbacks.onPlaybackBlocked(true);
+      if (!this.stopping) this.callbacks.onPlaybackBlocked(true);
       return false;
     }
   }

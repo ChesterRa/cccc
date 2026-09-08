@@ -2,6 +2,7 @@ use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::output_reader::OutputReader;
 use crate::process_tree::OwnedProcessTree;
+use crate::pty_input::SharedPtyWriter;
 use crate::session_history::SessionHistory;
 use crate::terminal_attach::{
     AttachmentRegistry, TerminalAttachMode, TerminalAttachOptions, TerminalAttachment,
@@ -11,7 +12,6 @@ use cccc_contracts::{RunnerKind, utc_now};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -40,10 +40,10 @@ pub struct SessionStatus {
 
 pub struct Session {
     status: SessionStatus,
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
     child: Box<dyn Child + Send + Sync>,
     process_tree: OwnedProcessTree,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: SharedPtyWriter,
     input_gate: Arc<Mutex<()>>,
     attachments: AttachmentRegistry,
     history: SessionHistory,
@@ -84,14 +84,26 @@ impl Session {
                 .map_err(|e| std::io::Error::other(e.to_string()))
         })?;
         let pid = child.process_id();
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        #[cfg(target_os = "linux")]
+        let (reader, writer) = {
+            let (reader, writer) = crate::pty_io::open(pair.master.as_ref())?;
+            (
+                Box::new(reader) as Box<dyn std::io::Read + Send>,
+                Box::new(writer) as Box<dyn crate::pty_input::PtyInput>,
+            )
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (reader, writer) = (
+            pair.master
+                .try_clone_reader()
+                .map_err(|error| std::io::Error::other(error.to_string()))?,
+            pair.master
+                .take_writer()
+                .map_err(|error| std::io::Error::other(error.to_string()))?,
+        );
+        #[cfg(not(target_os = "linux"))]
+        let writer =
+            Box::new(crate::pty_input::NativeInput(writer)) as Box<dyn crate::pty_input::PtyInput>;
         let writer = Arc::new(Mutex::new(writer));
         let input_gate = Arc::new(Mutex::new(()));
         let history = SessionHistory::new_at_with_size(
@@ -117,7 +129,7 @@ impl Session {
                 started_at: utc_now(),
                 exit_code: None,
             },
-            master: pair.master,
+            master: Some(pair.master),
             child,
             process_tree,
             writer,
@@ -156,15 +168,12 @@ impl Session {
         Ok(self.status.clone())
     }
 
-    pub fn write(&mut self, data: &[u8]) -> Result<(), RuntimeError> {
+    pub(crate) fn input_writer(&mut self) -> Result<SharedPtyWriter, RuntimeError> {
         let status = self.status();
         if !status.running {
             return Err(RuntimeError::NotFound(status.group_id, status.actor_id));
         }
-        let mut writer = self.writer.lock().map_err(|_| RuntimeError::Poisoned)?;
-        writer.write_all(data)?;
-        writer.flush()?;
-        Ok(())
+        Ok(Arc::clone(&self.writer))
     }
 
     pub(crate) fn input_gate(&self) -> Arc<Mutex<()>> {
@@ -205,17 +214,15 @@ impl Session {
         )
     }
 
-    pub(crate) fn write_from_attachment(
+    pub(crate) fn input_writer_from_attachment(
         &mut self,
         registry: &AttachmentRegistry,
         attachment_id: u64,
-        data: &[u8],
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<Option<SharedPtyWriter>, RuntimeError> {
         if !self.attachments.same_session(registry) || !registry.is_writer(attachment_id)? {
-            return Ok(false);
+            return Ok(None);
         }
-        self.write(data)?;
-        Ok(true)
+        self.input_writer().map(Some)
     }
 
     pub(crate) fn attachment_writable(&self, attachment_id: u64) -> Result<bool, RuntimeError> {
@@ -237,6 +244,13 @@ impl Session {
         let rows = rows.max(1);
         self.history.resize_terminal_with(cols, rows, || {
             self.master
+                .as_ref()
+                .ok_or_else(|| {
+                    RuntimeError::NotRunning(
+                        self.status.group_id.clone(),
+                        self.status.actor_id.clone(),
+                    )
+                })?
                 .resize(PtySize {
                     rows,
                     cols,
@@ -268,6 +282,11 @@ impl Session {
     }
 
     pub(crate) fn finish_output(&mut self) -> Result<(), RuntimeError> {
+        if !self.status.running {
+            // ConPTY owns its console through this handle. Release it even if
+            // an in-flight input operation still pins the stopped Session.
+            self.master.take();
+        }
         if let Some(reader) = self.reader.take() {
             if !reader.finish()? {
                 self.history.seal_output()?;
