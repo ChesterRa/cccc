@@ -136,9 +136,30 @@ fn supervised_proxy_trust_requires_a_loopback_binding() {
 
 #[test]
 fn any_origin_switch_is_opt_in() {
-    std::env::remove_var("CCCC_WEB_ALLOW_ANY_ORIGIN");
-    assert!(!allow_any_origin());
-    std::env::set_var("CCCC_WEB_ALLOW_ANY_ORIGIN", "1");
-    assert!(allow_any_origin());
-    std::env::remove_var("CCCC_WEB_ALLOW_ANY_ORIGIN");
+    if let Ok(expected) = std::env::var("CCCC_TEST_ANY_ORIGIN_CHILD") {
+        assert_eq!(allow_any_origin(), expected == "true");
+        return;
+    }
+    // 与现有 socket 测试一样，只为子进程设置环境，避免并行测试修改全局状态。
+    for (value, expected) in [(None, false), (Some("1"), true), (Some("0"), false)] {
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        child
+            .args([
+                "--exact",
+                "request_origin::tests::any_origin_switch_is_opt_in",
+                "--nocapture",
+            ])
+            .env("CCCC_TEST_ANY_ORIGIN_CHILD", expected.to_string())
+            .env_remove("CCCC_WEB_ALLOW_ANY_ORIGIN");
+        if let Some(value) = value {
+            child.env("CCCC_WEB_ALLOW_ANY_ORIGIN", value);
+        }
+        let output = child.output().expect("isolated test child");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
