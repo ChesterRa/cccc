@@ -7,6 +7,11 @@ import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
 import { ReachMembershipSection } from "./ReachMembershipSection";
 import { useMembershipController } from "./useMembershipController";
+import {
+  membershipOwnsReach,
+  membershipPanelKind,
+  membershipReachStatus,
+} from "./reachMembershipModel";
 import { useReachWebLogin } from "./useReachWebLogin";
 import { useWebAccessSessionSummaries } from "./useWebAccessSessionSummaries";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
@@ -115,6 +120,9 @@ export function WebAccessTab({
     membershipPollReady,
     reachBusy,
     reachAction,
+    reachChecking,
+    reachCheckExpired,
+    checkReach,
     refresh: refreshMembership,
     connect: connectMembership,
     poll: pollMembership,
@@ -341,7 +349,48 @@ export function WebAccessTab({
     remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "",
   );
 
+  const reachOwned = membership
+    ? membershipOwnsReach(membership)
+    : remoteState?.provider === "reach" && remoteState.enabled;
+
   const reachabilitySummary = useMemo(() => {
+    if (savedProvider === "reach" || membershipOwnsReach(membership)) {
+      if (!membership) {
+        return {
+          label: t(
+            membershipBusy ? "webAccess.reach.statusLoading" : "webAccess.reach.statusUnavailable",
+          ),
+          detail: t(membershipBusy ? "webAccess.reach.loading" : "webAccess.reach.loadFailed"),
+          tone: "neutral" as const,
+        };
+      }
+      const kind = membershipPanelKind(membership);
+      if (kind === "cut" || kind === "pending" || kind === "logged_out") {
+        return {
+          label: t(`account.status.${kind}`),
+          detail: t(`webAccess.reach.${kind === "logged_out" ? "loggedOut" : kind}`),
+          tone: "neutral" as const,
+        };
+      }
+      if (reachChecking) {
+        return {
+          label: t("webAccess.reach.checking"),
+          detail: t("webAccess.reach.checkingHelp"),
+          tone: "neutral" as const,
+        };
+      }
+      const state = membershipReachStatus(membership);
+      return {
+        label: t(`webAccess.reach.connectionStatus.${state}`),
+        detail: t(`webAccess.reach.connectionHelp.${state}`),
+        tone:
+          state === "online"
+            ? ("good" as const)
+            : state === "off"
+              ? ("neutral" as const)
+              : ("warn" as const),
+      };
+    }
     if (!remoteState || provider === "off" || statusReason === "local_only") {
       return {
         label: t("webAccess.summary.localOnly"),
@@ -390,12 +439,10 @@ export function WebAccessTab({
       return {
         label: t("webAccess.summary.remoteEnabled"),
         detail:
-          savedProvider === "reach"
-            ? membership?.hostname || t("webAccess.reach.online")
-            : remoteState.endpoint ||
-              t("webAccess.summary.remoteEnabledHint", {
-                provider: provider === "tailscale" ? "Tailscale" : t("webAccess.providers.manual"),
-              }),
+          remoteState.endpoint ||
+          t("webAccess.summary.remoteEnabledHint", {
+            provider: provider === "tailscale" ? "Tailscale" : t("webAccess.providers.manual"),
+          }),
         tone: "good" as const,
       };
     }
@@ -407,6 +454,8 @@ export function WebAccessTab({
   }, [
     applySupported,
     membership,
+    membershipBusy,
+    reachChecking,
     provider,
     remoteState,
     restartRequired,
@@ -1349,7 +1398,8 @@ export function WebAccessTab({
                     content={
                       <div className="space-y-2">
                         {loginActive ? <div>{t("webAccess.currentBrowserVerifyHint")}</div> : null}
-                        {session?.current_browser_signed_in ? (
+                        {session?.current_browser_signed_in &&
+                        session.principal_kind !== "local" ? (
                           <div>{t("webAccess.signOutHint")}</div>
                         ) : null}
                       </div>
@@ -1368,7 +1418,7 @@ export function WebAccessTab({
                     )}
                   </InfoPopover>
                 </div>
-                {session?.current_browser_signed_in ? (
+                {session?.current_browser_signed_in && session.principal_kind !== "local" ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -1634,6 +1684,9 @@ export function WebAccessTab({
             hasAdminToken={hasAdminToken}
             reachBusy={reachBusy}
             reachAction={reachAction}
+            reachChecking={reachChecking}
+            reachCheckExpired={reachCheckExpired}
+            onCheckReach={checkReach}
             onConnectAccount={() => void connectMembership()}
             onPollAccount={() => void pollMembership()}
             onOpenAccount={onOpenAccount}
@@ -1653,7 +1706,7 @@ export function WebAccessTab({
             onCopyFailed={() => setError(t("common:copyFailed"))}
           />
 
-          <div className={membership?.online ? "hidden" : settingsWorkspacePanelClass(isDark)}>
+          <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
               {t("webAccess.accessGoalTitle")}
             </div>
@@ -1694,7 +1747,7 @@ export function WebAccessTab({
             </div>
           </div>
 
-          <div className={membership?.online ? "hidden" : settingsWorkspacePanelClass(isDark)}>
+          <div className={reachOwned ? "hidden" : settingsWorkspacePanelClass(isDark)}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -1850,7 +1903,7 @@ export function WebAccessTab({
             ) : null}
           </div>
 
-          {!membership?.online ? (
+          {!reachOwned ? (
             <WebAccessReachabilityActions
               action={primaryReachabilityAction}
               actionHint={
@@ -1863,7 +1916,7 @@ export function WebAccessTab({
               hasAdminToken={hasAdminToken}
               saveBusy={saveBusy}
               applyBusy={applyBusy}
-              endpoint={membership?.online ? null : remoteState?.endpoint || null}
+              endpoint={reachOwned ? null : remoteState?.endpoint || null}
               onSave={() => void handleSaveReachability()}
               onApply={() => void handleApplyReachability()}
               onCopyEndpoint={async () => {
@@ -1873,7 +1926,7 @@ export function WebAccessTab({
             />
           ) : null}
 
-          <div ref={advancedDisclosureRef} className={membership?.online ? "hidden" : "mt-4"}>
+          <div ref={advancedDisclosureRef} className={reachOwned ? "hidden" : "mt-4"}>
             <button
               type="button"
               onClick={toggleAdvanced}
@@ -1896,7 +1949,7 @@ export function WebAccessTab({
             </button>
           </div>
 
-          {showAdvanced && !membership?.online ? (
+          {showAdvanced && !reachOwned ? (
             <div className={settingsWorkspacePanelClass(isDark)}>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">

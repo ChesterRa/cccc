@@ -5328,6 +5328,9 @@ Stable error classes:
     cut: boolean
     disabled: boolean
     in_reach: boolean
+    reach_enabled: boolean
+    reach_status: "off" | "connecting" | "online" | "offline" | "unknown"
+    checked_at?: string
     reach_supported: boolean
     account_reachable?: boolean | null
     account_origin?: string | null
@@ -5344,7 +5347,32 @@ Stable error classes:
 }
 ```
 
-`membership_status` is user-only because `web_url` contains a local bearer credential. Implementations MUST reject non-user callers before assembling it. The URL is assembled locally and MUST NOT be stored on the account plane. It is null while logged out. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+`membership_status` is user-only. Implementations MUST reject non-user callers before assembling it. `hostname` is the reserved, tokenless device origin; its presence does not prove that DNS or a tunnel has been provisioned. `web_url` is the tokenless Web sign-in address, assembled locally and null while logged out. It MUST NOT contain a bearer credential. The Web port can separately issue a short-lived, one-time Web login grant for the current authorized administrator. Website account sign-in does not authenticate a browser to the local CCCC Web. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+
+`reach_enabled` is the saved Reach intent; `in_reach` only identifies the selected
+provider. Neither proves connectivity. `reach_status` is an ephemeral projection:
+`off` when stopped or unlinked/cut, `connecting` immediately after an accepted
+start, `offline` when enabled but the helper is absent or the account reports a
+disconnected/unprovisioned tunnel, and `unknown` when the running helper has no
+current connection confirmation. `online=true` and `reach_status=online` require
+enabled Reach, a live tracked helper, and current account-side connection
+evidence. A successful process start or an unavailable status service MUST NOT
+produce `online=true`. Mutating operations do not claim unperformed connection
+checks. `checked_at` is the UTC time of a completed status refresh, including a
+failed account check; it is not a cached last-success timestamp.
+
+The account device API adds `connection: not_started | online | offline | unknown`
+alongside its existing fields. Native clients preserve `unknown`, including
+unrecognized future states; when the field is absent on an older issuer, they
+use the existing `online` boolean. This is an additive v1 change.
+
+Tunnel connection evidence is not proof of origin application availability or
+browser authorization. Clients label it accordingly and offer the Web sign-in
+flow for an actual access check. After an explicit start, clients MAY perform
+bounded status confirmation while the panel is visible; they MUST stop on a
+deadline and MUST NOT reissue Reach start or change configuration as a retry.
+Disconnected Reach still owns its provider/binding settings until explicitly
+stopped; configuration controls must not infer ownership from `online`.
 
 `account_reachable` is ephemeral evidence from the current status refresh; it is
 omitted when no linked-device probe applies, `true` after a valid account-plane
@@ -5399,9 +5427,9 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier and an owner-only proof key. Reach MUST send a fresh random challenge, and the loopback `/api/v1/ready` response MUST return the recorded identifier plus an HMAC-SHA256 proof bound to that challenge before Reach may start. The verifier MUST NOT send the expected identifier or proof key to the listener; a live PID, accepting TCP port, or reflected request value alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier and an owner-only proof key. Reach MUST send a fresh random challenge, and the loopback `/api/v1/ready` response MUST return the recorded identifier plus an HMAC-SHA256 proof bound to that challenge before Reach may start. The verifier MUST NOT send the expected identifier or proof key to the listener; a live PID, accepting TCP port, or reflected request value alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble public URLs and origin-bound Web login links. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
-The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires enabled Reach, a live tracked helper, and confirmation of a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
 
 Membership state lives in `CCCC_HOME/secrets/membership.json`. Every
 read-modify-write mutation MUST hold

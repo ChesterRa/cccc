@@ -1384,7 +1384,7 @@
       "open": "初期設定が必要",
       "openHint": "アクセストークンはまだありません。localhost はパスワードなしで利用できます。LAN または公開アクセスを有効にする前に、ローカル bootstrap コードで最初の管理者トークンを作成してください。",
       "protected": "ログイン有効",
-      "protectedHint": "{{count}} 個のアクセストークンが設定されています。localhost でも、トークンを持たないブラウザはサインインが必要です。"
+      "protectedHint": "リモートログイン用のアクセストークンを {{count}} 個設定済みです。localhost への直接アクセスは引き続きログイン不要です。"
     },
     "cards": { "reachability": "到達性", "accessControl": "Web ログイン" },
     "accessControlTitle": "アクセストークン",
@@ -1515,14 +1515,14 @@
       "loggedOut": "このパネルから管理された公開アクセスを設定できます。ローカル利用には影響しません。",
       "pending": "アカウントページでこのインストールを承認してください。CCCC が自動的に結果を確認します。",
       "pendingCode": "デバイスコード",
-      "loggedInOffline": "アカウントと Web の保護は準備済みです。このマシンを公開するときにリモートアクセスをオンにしてください。",
+      "loggedInOffline": "この端末は連携済みで、開始の準備ができています。リモートアクセスをオンにして予約済みアドレスを有効にしてください。",
       "online": "管理された公開アクセスが動作中です。Reach をオフにするまで詳細なバインド設定は非表示になります。",
       "cut": "このデバイスは切断済みで、自分では再公開できません。次のログインは新しいデバイスになります。",
       "setup": "リモートアクセスを設定",
       "relink": "インストールを再リンク",
       "openApproval": "インストールを承認",
       "manageAccount": "アカウント",
-      "adminTokenRequired": "Web を公開する前に Admin Access Token で保護してください。",
+      "adminTokenRequired": "この端末は連携済みです。リモート Web アクセスを保護する管理者アクセストークンを作成してから Reach を有効にしてください。",
       "createAdminToken": "Admin Token を作成",
       "publicAddressLabel": "公開アドレス",
       "publicAddressHelp": "共有しても安全です。訪問者には有効な Web アクセス資格情報が必要です。",
@@ -1536,7 +1536,7 @@
       "copy": "コピー",
       "copied": "コピーしました",
       "checkAgain": "再確認",
-      "start": "オン",
+      "start": "リモートアクセスをオン",
       "stop": "オフ",
       "startFailed": "リモートアクセスを開始できませんでした。",
       "stopFailed": "リモートアクセスを停止できませんでした。",
@@ -1552,7 +1552,27 @@
       "statusPending": "承認待ち",
       "statusOffline": "リンク済み、未公開",
       "statusOnline": "オンライン",
-      "statusCut": "切断済み"
+      "statusCut": "切断済み",
+      "connectionStatus": {
+        "off": "リモートアクセスはオフ",
+        "connecting": "トンネルに接続中",
+        "online": "トンネル接続済み",
+        "offline": "トンネル未接続",
+        "unknown": "接続を確認できません"
+      },
+      "connectionHelp": {
+        "off": "この端末は連携済みです。Web Access で Reach を有効にしてください。連携だけでは予約済みアドレスは有効になりません。",
+        "connecting": "Reach が起動しました。トンネルの接続を待っています。アドレスはまだ確認できていません。",
+        "online": "トンネルは接続済みです。Web を開いてリモートアクセスを確認してください。公開アドレスへの直接アクセスには CCCC へのログインが必要です。",
+        "offline": "Reach は有効ですが、トンネルは未接続です。この端末のネットワークと CCCC の起動状態を確認してから再確認してください。",
+        "unknown": "Reach は動作中ですが、接続サービスで状態を確認できません。しばらくして再確認してください。アカウント連携は維持されます。"
+      },
+      "checking": "接続を確認中…",
+      "checkingHelp": "最大 45 秒間、トンネル接続を確認します。Reach は再起動しません。待機中もリモートアクセスをオフにできます。",
+      "checkConnection": "接続を確認",
+      "retryStart": "Reach の起動を再試行",
+      "checkExpired": "トンネル接続を確認できなかったため、自動確認を終了しました。Reach の設定は変更していません。この端末のネットワークを確認し、「接続を確認」で再試行してください。",
+      "checkedAt": "最終確認：{{time}}"
     },
     "lastApplyErrorTitle": "直近の適用失敗",
     "reachabilityStatusTitle": "現在の到達状態",
@@ -1608,7 +1628,7 @@
     "unknownUser": "不明ユーザー",
     "currentBrowserChecking": "セッション確認中",
     "currentBrowserCheckingHint": "ログインは有効です。このページは現在のブラウザセッション状態を更新中です。",
-    "currentBrowserVerifyHint": "ログイン画面を確認したい場合は、シークレットウィンドウまたは別ブラウザを使ってください。",
+    "currentBrowserVerifyHint": "シークレットウィンドウでリモートアドレスを開くとログイン画面を確認できます。localhost への直接アクセスはログイン不要です。",
     "managementLockedTitle": "管理者ログインが必要です",
     "managementLockedHint": "このブラウザには現在管理者権限がありません。アクセストークンを含むグローバル設定は、管理者トークンでサインインするまでロックされます。",
     "signOut": "サインアウト",
@@ -1626,7 +1646,9 @@
     "restartDialogCommandMainLabel": "普段 `CCCC` を起動している場合",
     "restartDialogCommandStandaloneLabel": "普段 Web サーバーを個別に起動している場合",
     "restartDialogSupervisorHint": "Web が Docker、systemd、または他の supervisor 配下にある場合は、上のコマンドではなくそのサービス自体を再起動してください。",
-    "restartDialogDone": "了解"
+    "restartDialogDone": "了解",
+    "currentBrowserLocal": "ローカル管理者",
+    "currentBrowserLocalHint": "このブラウザは localhost から直接アクセスしています。リモートブラウザにはアクセストークンまたはワンタイムログインリンクが必要です。"
   },
   "group_bridge": {
     "overview": "概要",

@@ -34,6 +34,13 @@ export function useWebAccessSessionSummaries(
   }, [knownAccessTokenCount, t]);
 
   const currentBrowserSummary = useMemo<WebAccessSummary>(() => {
+    if (session?.principal_kind === "local" && session.current_browser_signed_in) {
+      return {
+        label: t("webAccess.currentBrowserLocal"),
+        detail: t("webAccess.currentBrowserLocalHint"),
+        tone: "good",
+      };
+    }
     if (!loginActive) {
       return {
         label: t("webAccess.currentBrowserOpen"),

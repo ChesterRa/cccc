@@ -6,6 +6,7 @@ import {
   membershipApprovalUrl,
   membershipManagementUrl,
   membershipPanelKind,
+  membershipOwnsReach,
   membershipPublicAddress,
   type MembershipState,
 } from "./reachMembershipModel";
@@ -67,6 +68,17 @@ describe("reach membership hostname safety", () => {
 });
 
 describe("reach membership panel kind", () => {
+  it("keeps active Reach configuration locked through an outage, but not after a confirmed stop", () => {
+    expect(membershipOwnsReach(membership({ reach_enabled: true, online: false }))).toBe(true);
+    expect(
+      membershipOwnsReach(membership({ reach_enabled: false, cloudflared: { running: true } })),
+    ).toBe(true);
+    expect(
+      membershipOwnsReach(
+        membership({ in_reach: true, reach_enabled: false, cloudflared: { running: false } }),
+      ),
+    ).toBe(false);
+  });
   it("splits logged out, pending, cut, offline, and online", () => {
     expect(membershipPanelKind(null)).toBe("logged_out");
     expect(

@@ -72,6 +72,8 @@ async fn configured_tokens_do_not_hide_the_local_admin_session_projection() {
     assert_eq!(projection["access_token_count"], 1);
     assert_eq!(projection["can_access_global_settings"], true);
     assert_eq!(projection["user_id"], "local");
+    assert_eq!(projection["is_admin"], true);
+    assert_eq!(projection["principal_kind"], "local");
 
     let ready = app
         .oneshot(local_get(

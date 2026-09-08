@@ -1379,7 +1379,7 @@
       "open": "需要初始化",
       "openHint": "当前还没有访问令牌。本机 localhost 仍可免登录使用；启用局域网或公网访问前，请用本机 bootstrap 验证码创建首个管理员令牌。",
       "protected": "登录已生效",
-      "protectedHint": "已配置 {{count}} 个访问令牌。没有令牌的浏览器即使在 localhost 上也必须先登录。"
+      "protectedHint": "已配置 {{count}} 个远程登录访问令牌；通过本机地址直接访问仍免登录。"
     },
     "cards": { "reachability": "可达性", "accessControl": "Web 登录" },
     "accessControlTitle": "访问令牌",
@@ -1510,14 +1510,14 @@
       "loggedOut": "无需离开当前面板即可设置托管公网访问；本地使用不受影响。",
       "pending": "请在账户页批准这套安装，CCCC 会自动检查授权结果。",
       "pendingCode": "设备代码",
-      "loggedInOffline": "账户和 Web 保护已就绪；需要让这台机器上线时再打开远程访问。",
+      "loggedInOffline": "本机已关联账户，已具备开启条件。点击“开启远程访问”以启用预留地址。",
       "online": "托管公网访问正在运行。关闭 Reach 后才会重新显示高级绑定设置。",
       "cut": "这台设备已被切断，不能再自己发布。下一次登录会是一台新设备。",
       "setup": "设置远程访问",
       "relink": "重新绑定这套安装",
       "openApproval": "批准这套安装",
       "manageAccount": "账户",
-      "adminTokenRequired": "公开 Web 前，请先用管理员 Access Token 保护它。",
+      "adminTokenRequired": "本机已关联账户。先创建管理员访问令牌以保护远程 Web 访问，然后开启 Reach。",
       "createAdminToken": "创建管理员令牌",
       "publicAddressLabel": "公网地址",
       "publicAddressHelp": "这个地址可以分享；访客仍需有效的 Web 访问凭据。",
@@ -1531,7 +1531,7 @@
       "copy": "复制",
       "copied": "已复制",
       "checkAgain": "再次检查",
-      "start": "打开",
+      "start": "开启远程访问",
       "stop": "关闭",
       "startFailed": "打开远程访问失败。",
       "stopFailed": "关闭远程访问失败。",
@@ -1547,7 +1547,27 @@
       "statusPending": "等待批准",
       "statusOffline": "已绑定，未发布",
       "statusOnline": "在线",
-      "statusCut": "已切断"
+      "statusCut": "已切断",
+      "connectionStatus": {
+        "off": "远程访问未开启",
+        "connecting": "隧道连接中",
+        "online": "隧道已连接",
+        "offline": "隧道未连接",
+        "unknown": "暂时无法确认连接"
+      },
+      "connectionHelp": {
+        "off": "本机已关联账户。前往 Web Access 开启 Reach；仅关联账户不会启用预留地址。",
+        "connecting": "Reach 已启动，正在等待隧道连接，地址尚未确认可用。",
+        "online": "隧道已连接。点击“打开 Web”检查远程访问；直接访问公开地址仍需登录 CCCC。",
+        "offline": "Reach 已开启，但隧道尚未连接。请检查本机网络及 CCCC 是否运行，再检查连接。",
+        "unknown": "Reach 正在运行，但连接服务暂时无法确认其状态。请稍后再检查，账户关联会保留。"
+      },
+      "checking": "正在检查连接…",
+      "checkingHelp": "正在确认隧道连接，最多检查 45 秒。此操作不会重启 Reach，等待时仍可关闭远程访问。",
+      "checkConnection": "检查连接",
+      "retryStart": "重试启动 Reach",
+      "checkExpired": "尚未确认隧道连接，自动检查已结束，未自动更改 Reach 设置。请检查本机网络，再点击“检查连接”重试。",
+      "checkedAt": "最近检查：{{time}}"
     },
     "lastApplyErrorTitle": "最近一次应用失败",
     "reachabilityStatusTitle": "当前可达状态",
@@ -1603,7 +1623,7 @@
     "unknownUser": "未知用户",
     "currentBrowserChecking": "正在检查会话",
     "currentBrowserCheckingHint": "当前已经启用登录，这个页面正在刷新当前浏览器的会话状态。",
-    "currentBrowserVerifyHint": "如果你想验证登录门面，请用无痕窗口或另一个浏览器打开。",
+    "currentBrowserVerifyHint": "请在无痕窗口中使用远程地址检查登录页面；通过本机地址直接访问仍免登录。",
     "managementLockedTitle": "需要管理员登录",
     "managementLockedHint": "当前浏览器没有管理员权限。包括访问令牌在内的全局设置都会被锁定，直到你使用管理员令牌登录。",
     "signOut": "退出登录",
@@ -1621,7 +1641,9 @@
     "restartDialogCommandMainLabel": "如果你平时直接启动 CCCC",
     "restartDialogCommandStandaloneLabel": "如果你平时单独启动 Web 服务",
     "restartDialogSupervisorHint": "如果 Web 是由 Docker、systemd 或其它 supervisor 托管的，请重启对应服务，而不是直接使用上面的命令。",
-    "restartDialogDone": "知道了"
+    "restartDialogDone": "知道了",
+    "currentBrowserLocal": "本机管理员",
+    "currentBrowserLocalHint": "当前浏览器通过本机地址访问。远程浏览器仍需使用访问令牌或一次性登录链接进行认证。"
   },
   "group_bridge": {
     "overview": "概览",

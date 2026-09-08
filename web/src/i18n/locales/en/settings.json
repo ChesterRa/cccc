@@ -1384,7 +1384,7 @@
       "open": "Setup required",
       "openHint": "No Access Tokens exist yet. Localhost stays passwordless; create the first administrator token with the local bootstrap code before enabling LAN or public access.",
       "protected": "Login active",
-      "protectedHint": "{{count}} Access Token configured. Browsers without a token must sign in, even on localhost."
+      "protectedHint": "{{count}} Access Token configured for remote sign-in. Direct localhost access remains passwordless."
     },
     "cards": { "reachability": "Reachability", "accessControl": "Web Login" },
     "accessControlTitle": "Access Tokens",
@@ -1515,14 +1515,14 @@
       "loggedOut": "Set up managed public access without leaving this panel. Local use is unchanged.",
       "pending": "Approve this installation in the account page. CCCC checks the result automatically.",
       "pendingCode": "Device code",
-      "loggedInOffline": "Account and Web protection are ready. Turn on remote access when you want this machine online.",
+      "loggedInOffline": "This installation is linked and ready to enable Reach. Turn on remote access to activate its reserved address.",
       "online": "Managed public access is running. Advanced binding controls stay out of the way until Reach is turned off.",
       "cut": "This device was cut. It cannot publish itself again. The next login is a new device.",
       "setup": "Set up remote access",
       "relink": "Relink installation",
       "openApproval": "Approve installation",
       "manageAccount": "Account",
-      "adminTokenRequired": "Protect Web with an Admin Access Token before publishing it.",
+      "adminTokenRequired": "This installation is linked. Create an administrator access token to protect remote Web access, then enable Reach.",
       "createAdminToken": "Create Admin Token",
       "publicAddressLabel": "Public address",
       "publicAddressHelp": "Safe to share. Visitors still need valid Web access credentials.",
@@ -1536,7 +1536,7 @@
       "copy": "Copy",
       "copied": "Copied",
       "checkAgain": "Check again",
-      "start": "Turn on",
+      "start": "Turn on remote access",
       "stop": "Turn off",
       "startFailed": "Failed to start remote access.",
       "stopFailed": "Failed to stop remote access.",
@@ -1552,7 +1552,27 @@
       "statusPending": "Waiting for approval",
       "statusOffline": "Linked, not published",
       "statusOnline": "Online",
-      "statusCut": "Cut"
+      "statusCut": "Cut",
+      "connectionStatus": {
+        "off": "Remote access is off",
+        "connecting": "Connecting tunnel",
+        "online": "Tunnel connected",
+        "offline": "Tunnel disconnected",
+        "unknown": "Connection not confirmed"
+      },
+      "connectionHelp": {
+        "off": "This installation is linked. Continue in Web Access to enable Reach; linking alone does not make its reserved address accessible.",
+        "connecting": "Reach has started. Waiting for the tunnel to connect; the address is not confirmed yet.",
+        "online": "The tunnel is connected. Open Web to check remote access. The public address still requires CCCC sign-in.",
+        "offline": "Reach is enabled, but its tunnel is not connected. Check this computer’s network and whether CCCC is running, then check again.",
+        "unknown": "Reach is running, but the connection service could not confirm its status. Check again shortly; your account remains linked."
+      },
+      "checking": "Checking connection…",
+      "checkingHelp": "Checking the tunnel for up to 45 seconds. This does not restart Reach. You can turn it off while waiting.",
+      "checkConnection": "Check connection",
+      "retryStart": "Retry starting Reach",
+      "checkExpired": "The tunnel connection could not be confirmed. Automatic checking has stopped without changing Reach settings. Check this computer’s network, then use Check connection to try again.",
+      "checkedAt": "Last checked: {{time}}"
     },
     "lastApplyErrorTitle": "Last apply failure",
     "reachabilityStatusTitle": "Current reachability state",
@@ -1608,7 +1628,7 @@
     "unknownUser": "unknown user",
     "currentBrowserChecking": "Checking session",
     "currentBrowserCheckingHint": "Login is active. This page is still refreshing the current browser session state.",
-    "currentBrowserVerifyHint": "Use an incognito window or another browser if you want to verify the login screen.",
+    "currentBrowserVerifyHint": "Use the remote address in an incognito window to check its sign-in page. Direct localhost access remains passwordless.",
     "managementLockedTitle": "Admin sign-in required",
     "managementLockedHint": "This browser does not currently have admin access. Global settings, including Access Tokens, are locked until you sign in with an admin token.",
     "signOut": "Sign out",
@@ -1626,7 +1646,9 @@
     "restartDialogCommandMainLabel": "If you normally start CCCC",
     "restartDialogCommandStandaloneLabel": "If you normally run the Web server separately",
     "restartDialogSupervisorHint": "If Web is managed by Docker, systemd, or another supervisor, restart that service instead of using the commands above.",
-    "restartDialogDone": "Understood"
+    "restartDialogDone": "Understood",
+    "currentBrowserLocal": "Local administrator",
+    "currentBrowserLocalHint": "This browser has direct localhost access. Remote browsers must sign in with an Access Token or a one-time login link."
   },
   "group_bridge": {
     "overview": "Overview",

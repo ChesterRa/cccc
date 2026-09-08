@@ -122,10 +122,19 @@ fn print_membership_copy(response: &DaemonResponse) {
     {
         let state = if body.get("cut").and_then(Value::as_bool).unwrap_or(false) {
             "cut"
-        } else if body.get("online").and_then(Value::as_bool).unwrap_or(false) {
-            "online"
         } else {
-            "linked, not published"
+            match body.get("reach_status").and_then(Value::as_str) {
+                Some("connecting") => "starting; run `cccc reach status` to confirm the connection",
+                Some("online") => "tunnel connected",
+                Some("offline") => {
+                    "enabled, tunnel disconnected; check this machine's network and CCCC"
+                }
+                Some("unknown") => "connection unconfirmed; run `cccc reach status` to check again",
+                _ if body.get("online").and_then(Value::as_bool).unwrap_or(false) => {
+                    "tunnel connected"
+                }
+                _ => "off; enable it in Settings > Web Access or run `cccc reach on`",
+            }
         };
         let origin = text(body, "account_origin");
         if origin.is_empty() {
@@ -133,6 +142,9 @@ fn print_membership_copy(response: &DaemonResponse) {
         } else {
             eprintln!("Remote access: {state}  account: {origin}");
         }
+    }
+    if !body.get("online").and_then(Value::as_bool).unwrap_or(false) {
+        return;
     }
     let hostname = text(body, "hostname");
     let web = text(body, "web_url");
@@ -143,11 +155,10 @@ fn print_membership_copy(response: &DaemonResponse) {
         "Hostname (people / account page): {}",
         display_or_none(&hostname)
     );
+    eprintln!("Web (CCCC sign-in required): {}", display_or_none(&web));
     eprintln!(
-        "Web (this machine, includes admin token): {}",
-        display_or_none(&web)
+        "Website sign-in does not sign you into this device. Local Web Access can create a temporary sign-in link."
     );
-    eprintln!("The Web URL is a bearer credential; keep it private.");
     eprintln!("Web Model connectors are managed per actor in CCCC settings.");
 }
 

@@ -579,11 +579,35 @@ a tab. The temporary header token is removed from browser session storage after
 the cookie is established. Access tokens are not accepted in ordinary API, SSE,
 or WebSocket query strings and should never be placed in shared URLs.
 
-Reach follows the same rule. Its status payload exposes only a tokenless public
+For managed remote access, open **Settings → Web Access** and link this installation
+to your CCCC account in the Reach section. Approve the request on the website,
+then return to the same local panel. If an administrator Access Token already
+exists, reuse it; otherwise complete the displayed token prerequisite. Choose
+**Turn on remote access** explicitly. Account registration only reserves the
+device address; enabling Reach creates its DNS record and tunnel.
+
+The panel confirms the connection with at most six status checks over 45 seconds.
+It pauses checks while hidden and never restarts or provisions a tunnel as a
+retry. If confirmation ends without a connection, check this computer's network
+and CCCC process, then use **Check connection**. A stopped helper offers an
+explicit startup retry. **Turn off** remains available, and other provider/binding
+settings remain locked while Reach is enabled even if the tunnel disconnects.
+
+**Tunnel connected** means the account service observed a connected tunnel. Open
+Web from another network to confirm application access; website account login
+does not sign the browser into this device. The displayed check time is the last
+status observation, not a continuous availability guarantee.
+
+Reach follows the same credential rule. Its status payload exposes only a tokenless public
 address. Clicking **Open Web** or **Copy Admin Link** asks the local authenticated
 Rust Web session for a 120-second, one-time exchange code bound to that Reach
 origin. The public endpoint consumes the code once, establishes the HttpOnly
 cookie, and redirects to a clean `/ui/` URL.
+
+A passwordless localhost administrator reuses an existing administrator Access
+Token for this exchange; no new long-lived token is created. A remotely signed-in
+administrator remains bound to their own active token. Revoking that token also
+invalidates outstanding links backed by it.
 
 Cookie-authenticated Rust Web writes require an exact allowed `Origin`, with a
 same-origin `Referer` accepted only as a fallback. This check is independent of

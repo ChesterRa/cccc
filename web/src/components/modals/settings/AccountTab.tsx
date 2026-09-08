@@ -6,6 +6,7 @@ import {
   membershipApprovalUrl,
   membershipManagementUrl,
   membershipPanelKind,
+  membershipReachStatus,
 } from "./reachMembershipModel";
 import {
   dangerButtonClass,
@@ -67,8 +68,7 @@ export function AccountTab({
   const approvalUrl = membershipApprovalUrl(membership, language);
   const managementUrl = membershipManagementUrl(membership, language);
   const accountOrigin = String(membership?.account_origin || "").trim();
-  const reachLinked = Boolean(membership?.in_reach);
-  const reachOnline = Boolean(membership?.online);
+  const reachStatus = membershipReachStatus(membership);
   const reachSupported = membership?.reach_supported !== false;
   const statusLabel = t(`account.status.${kind}`);
 
@@ -258,15 +258,21 @@ export function AccountTab({
                       ? t("account.servicesUnavailable")
                       : !reachSupported
                         ? t("account.reachUnsupported")
-                        : reachOnline
-                          ? t("account.reachOnline")
-                          : reachLinked
-                            ? t("account.reachOff")
-                            : t("account.reachAvailable")}
+                        : t(`webAccess.reach.connectionHelp.${reachStatus}`)}
               </p>
             </div>
-            <button type="button" onClick={onOpenWebAccess} className={secondaryButtonClass()}>
-              {returnToWebAccess ? t("account.continueWebAccess") : t("account.openWebAccess")}
+            <button
+              type="button"
+              onClick={onOpenWebAccess}
+              className={
+                kind === "offline" && reachSupported && reachStatus === "off"
+                  ? primaryButtonClass(false)
+                  : secondaryButtonClass()
+              }
+            >
+              {returnToWebAccess || (kind === "offline" && reachSupported && reachStatus === "off")
+                ? t("account.continueWebAccess")
+                : t("account.openWebAccess")}
             </button>
           </div>
         </div>

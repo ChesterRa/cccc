@@ -80,7 +80,16 @@ pub(super) struct DeviceStatus {
     pub device_id: Option<String>,
     pub hostname: Option<String>,
     pub disabled: bool,
-    pub online: Option<bool>,
+    pub connection: Option<DeviceConnection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DeviceConnection {
+    NotStarted,
+    Online,
+    Offline,
+    Unknown,
 }
 
 pub(super) struct AccountClient {
@@ -321,7 +330,20 @@ impl AccountClient {
                 .get("disabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-            online: data.get("online").and_then(Value::as_bool),
+            // The additive field distinguishes an unavailable tunnel-status API
+            // from a disconnected tunnel. Older issuers only return `online`.
+            connection: match data.get("connection") {
+                Some(value) => {
+                    Some(serde_json::from_value(value.clone()).unwrap_or(DeviceConnection::Unknown))
+                }
+                None => data.get("online").and_then(Value::as_bool).map(|online| {
+                    if online {
+                        DeviceConnection::Online
+                    } else {
+                        DeviceConnection::Offline
+                    }
+                }),
+            },
         })
     }
 
@@ -629,6 +651,29 @@ mod tests {
         let device = client.fetch_device("token").expect("device");
         assert_eq!(device.device_id.as_deref(), Some("d-1"));
         assert!(!device.disabled);
+        assert_eq!(device.connection, Some(DeviceConnection::Online));
+    }
+
+    #[test]
+    fn device_connection_preserves_unknown_and_not_started() {
+        let origin = server(vec![
+            (200, r#"{"online":false,"connection":"not_started"}"#),
+            (200, r#"{"online":false,"connection":"unknown"}"#),
+            (200, r#"{"online":true,"connection":"future_state"}"#),
+            (200, r#"{"online":false}"#),
+        ]);
+        let client = AccountClient::new(&origin).expect("client");
+        for expected in [
+            DeviceConnection::NotStarted,
+            DeviceConnection::Unknown,
+            DeviceConnection::Unknown,
+            DeviceConnection::Offline,
+        ] {
+            assert_eq!(
+                client.fetch_device("token").expect("device").connection,
+                Some(expected)
+            );
+        }
     }
 
     #[test]
