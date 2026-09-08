@@ -173,6 +173,7 @@ export function SettingsModal({
   const [imPlatform, setImPlatform] = useState<IMPlatform>("telegram");
   const [imBotTokenEnv, setImBotTokenEnv] = useState("");
   const [imAppTokenEnv, setImAppTokenEnv] = useState("");
+  const [imMattermostUrl, setImMattermostUrl] = useState("");
   // Feishu fields
   const [imFeishuDomain, setImFeishuDomain] = useState("https://open.feishu.cn");
   const [imFeishuAppId, setImFeishuAppId] = useState("");
@@ -291,6 +292,7 @@ export function SettingsModal({
     setImPlatform("telegram");
     setImBotTokenEnv("");
     setImAppTokenEnv("");
+    setImMattermostUrl("");
     setImFeishuDomain("https://open.feishu.cn");
     setImFeishuAppId("");
     setImFeishuAppSecret("");
@@ -324,6 +326,7 @@ export function SettingsModal({
           if (im.platform) setImPlatform(im.platform);
           setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
           setImAppTokenEnv(im.app_token_env || im.app_token || "");
+          setImMattermostUrl(im.mattermost_url || "");
           {
             const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
             const canon = raw
@@ -650,6 +653,7 @@ export function SettingsModal({
   const getCurrentIMConfigDraft = (): IMConfigDraft => ({
     botTokenEnv: imBotTokenEnv,
     appTokenEnv: imAppTokenEnv,
+    mattermostUrl: imMattermostUrl,
     feishuDomain: imFeishuDomain,
     feishuAppId: imFeishuAppId,
     feishuAppSecret: imFeishuAppSecret,
@@ -665,6 +669,7 @@ export function SettingsModal({
   const applyIMConfigDraft = (draft: IMConfigDraft) => {
     setImBotTokenEnv(draft.botTokenEnv);
     setImAppTokenEnv(draft.appTokenEnv);
+    setImMattermostUrl(draft.mattermostUrl);
     setImFeishuDomain(draft.feishuDomain);
     setImFeishuAppId(draft.feishuAppId);
     setImFeishuAppSecret(draft.feishuAppSecret);
@@ -697,6 +702,7 @@ export function SettingsModal({
       // Reset to empty if no cached draft (new platform)
       setImBotTokenEnv("");
       setImAppTokenEnv("");
+      setImMattermostUrl("");
       setImFeishuDomain("https://open.feishu.cn");
       setImFeishuAppId("");
       setImFeishuAppSecret("");
@@ -733,6 +739,7 @@ export function SettingsModal({
       if (resp.ok) {
         setImBotTokenEnv("");
         setImAppTokenEnv("");
+        setImMattermostUrl("");
         setImFeishuDomain("https://open.feishu.cn");
         setImFeishuAppId("");
         setImFeishuAppSecret("");
@@ -1309,6 +1316,8 @@ export function SettingsModal({
                     setImBotTokenEnv={setImBotTokenEnv}
                     imAppTokenEnv={imAppTokenEnv}
                     setImAppTokenEnv={setImAppTokenEnv}
+                    imMattermostUrl={imMattermostUrl}
+                    setImMattermostUrl={setImMattermostUrl}
                     imFeishuAppId={imFeishuAppId}
                     setImFeishuAppId={setImFeishuAppId}
                     imFeishuAppSecret={imFeishuAppSecret}

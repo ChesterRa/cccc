@@ -847,7 +847,7 @@
   },
   "imBridge": {
     "title": "IM Bridge",
-    "description": "Connect this group to Telegram, Slack, Discord, Feishu/Lark, DingTalk, or WeCom.",
+    "description": "Connect this group to Telegram, Slack, Discord, Mattermost, Feishu/Lark, DingTalk, or WeCom.",
     "running": "Running",
     "stopped": "Stopped",
     "platform": "Platform",
@@ -855,6 +855,9 @@
     "botTokenTelegram": "Bot Token (token or env var)",
     "botTokenSlack": "Bot Token (xoxb- or env var)",
     "botTokenDiscord": "Bot Token (token or env var)",
+    "mattermostUrl": "Mattermost site URL",
+    "mattermostUrlHint": "Enter the site root, including any installation subpath, without /api/v4, query parameters, or credentials. HTTPS is recommended; HTTP does not encrypt tokens or messages.",
+    "mattermostUsageHint": "Add the bot to a channel and send @Bot /subscribe. Use the same command prefix in DMs to avoid Mattermost slash-command interception. After approval, use @Bot /send @actor message; DMs also accept plain text. All chats bound to this group share context and subscribed output; they are not private, isolated conversations.",
     "botToken": "Bot Token",
     "botTokenHintSlack": "Paste xoxb-… token or an env var name; required for outbound messages.",
     "botTokenHint": "Paste the bot token or an env var name; required for bot authentication.",

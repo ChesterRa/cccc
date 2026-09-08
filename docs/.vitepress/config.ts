@@ -147,6 +147,7 @@ export default defineConfig({
             { text: 'Telegram', link: '/guide/im-bridge/telegram' },
             { text: 'Slack', link: '/guide/im-bridge/slack' },
             { text: 'Discord', link: '/guide/im-bridge/discord' },
+            { text: 'Mattermost', link: '/guide/im-bridge/mattermost' },
             { text: 'Feishu', link: '/guide/im-bridge/feishu' },
             { text: 'DingTalk', link: '/guide/im-bridge/dingtalk' },
             { text: 'WeCom', link: '/guide/im-bridge/wecom' }

@@ -5,6 +5,7 @@ import * as api from "../../../services/api";
 export type IMConfigDraft = {
   botTokenEnv: string;
   appTokenEnv: string;
+  mattermostUrl: string;
   feishuDomain: string;
   feishuAppId: string;
   feishuAppSecret: string;
@@ -24,6 +25,7 @@ export function canStartIMBridge(platform: IMPlatform, weixinLoggedIn: boolean):
 
 function toIMConfigExtra(config: IMConfigDraft) {
   return {
+    mattermost_url: config.mattermostUrl,
     feishu_domain: config.feishuDomain,
     feishu_app_id: config.feishuAppId,
     feishu_app_secret: config.feishuAppSecret,

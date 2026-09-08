@@ -24,6 +24,9 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod mattermost;
+mod mattermost_inbound;
+mod mattermost_outbound;
 mod outbound_attachment;
 mod outbound_chunks;
 mod outbound_message;
@@ -250,6 +253,14 @@ impl ImWorkerRegistry {
         if platform == "slack" {
             let tasks =
                 slack::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
+        }
+        if platform == "mattermost" {
+            let tasks =
+                mattermost::start(home, client, group_id, config, self.ledger_events.clone())
+                    .await?;
             return self
                 .install(group_id, generation, worker(tasks, no_op_stopper()))
                 .await;

@@ -842,7 +842,7 @@
   },
   "imBridge": {
     "title": "IM 桥接",
-    "description": "将此工作组连接到 Telegram、Slack、Discord、飞书/Lark、钉钉或企业微信。",
+    "description": "将此工作组连接到 Telegram、Slack、Discord、Mattermost、飞书/Lark、钉钉或企业微信。",
     "running": "运行中",
     "stopped": "已停止",
     "platform": "平台",
@@ -850,6 +850,9 @@
     "botTokenTelegram": "Bot Token（令牌或环境变量）",
     "botTokenSlack": "Bot Token（xoxb- 或环境变量）",
     "botTokenDiscord": "Bot Token（令牌或环境变量）",
+    "mattermostUrl": "Mattermost 站点地址",
+    "mattermostUrlHint": "填写站点根地址，可包含安装子路径，不要附加 /api/v4、查询参数或凭据。建议使用 HTTPS；HTTP 不加密令牌和消息。",
+    "mattermostUsageHint": "把 Bot 加入频道后发送 @Bot /subscribe；私聊也用此前缀执行命令，避免 Mattermost 拦截斜杠命令。经批准后使用 @Bot /send @actor 消息，私聊可直接发送普通正文。所有绑定到本工作组的聊天共享上下文和订阅输出，不构成私密隔离。",
     "botToken": "Bot 令牌",
     "botTokenHintSlack": "粘贴 xoxb-… 令牌或环境变量名；发送消息时必需。",
     "botTokenHint": "粘贴 bot 令牌或环境变量名；用于 bot 认证。",

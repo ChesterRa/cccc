@@ -33,6 +33,8 @@ interface IMBridgeTabProps {
   setImBotTokenEnv: (v: string) => void;
   imAppTokenEnv: string;
   setImAppTokenEnv: (v: string) => void;
+  imMattermostUrl: string;
+  setImMattermostUrl: (v: string) => void;
   // Feishu fields
   imFeishuDomain: string;
   setImFeishuDomain: (v: string) => void;
@@ -141,6 +143,8 @@ export function IMBridgeTab({
   setImBotTokenEnv,
   imAppTokenEnv,
   setImAppTokenEnv,
+  imMattermostUrl,
+  setImMattermostUrl,
   imFeishuDomain,
   setImFeishuDomain,
   imFeishuAppId,
@@ -206,6 +210,8 @@ export function IMBridgeTab({
         return "SLACK_BOT_TOKEN (or xoxb-...)";
       case "discord":
         return "DISCORD_BOT_TOKEN (or <token>)";
+      case "mattermost":
+        return "MATTERMOST_BOT_TOKEN (or <token>)";
       default:
         return "";
     }
@@ -225,12 +231,16 @@ export function IMBridgeTab({
       return true;
     }
     if (!imBotTokenEnv) return false;
+    if (imPlatform === "mattermost" && !imMattermostUrl.trim()) return false;
     if (imPlatform === "slack" && !imAppTokenEnv) return false;
     return true;
   };
 
   const needsBotToken =
-    imPlatform === "telegram" || imPlatform === "slack" || imPlatform === "discord";
+    imPlatform === "telegram" ||
+    imPlatform === "slack" ||
+    imPlatform === "discord" ||
+    imPlatform === "mattermost";
 
   // Authorized chats state
   const [authChats, setAuthChats] = useState<api.IMAuthorizedChat[]>([]);
@@ -522,6 +532,7 @@ export function IMBridgeTab({
                     { value: "telegram", label: "Telegram" },
                     { value: "slack", label: "Slack" },
                     { value: "discord", label: "Discord" },
+                    { value: "mattermost", label: "Mattermost" },
                     { value: "feishu", label: "Feishu/Lark" },
                     { value: "dingtalk", label: "DingTalk" },
                     { value: "wecom", label: t("imBridge.wecom") },
@@ -534,7 +545,33 @@ export function IMBridgeTab({
                 />
               </div>
 
-              {/* Bot Token (Telegram/Slack/Discord) */}
+              {imPlatform === "mattermost" && (
+                <div>
+                  <label htmlFor="im-mattermost-url" className={labelClass()}>
+                    {t("imBridge.mattermostUrl")}
+                  </label>
+                  <input
+                    id="im-mattermost-url"
+                    type="url"
+                    value={imMattermostUrl}
+                    onChange={(e) => setImMattermostUrl(e.target.value)}
+                    placeholder="https://mattermost.example.com"
+                    aria-describedby="im-mattermost-url-hint"
+                    className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
+                  />
+                  <p
+                    id="im-mattermost-url-hint"
+                    className="text-xs mt-1 text-[var(--color-text-muted)]"
+                  >
+                    {t("imBridge.mattermostUrlHint")}
+                  </p>
+                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
+                    {t("imBridge.mattermostUsageHint")}
+                  </p>
+                </div>
+              )}
+
+              {/* Bot Token (Telegram/Slack/Discord/Mattermost) */}
               {needsBotToken && (
                 <div>
                   <label className={labelClass()}>{getBotTokenLabel()}</label>

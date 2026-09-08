@@ -13,7 +13,14 @@ use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
 
 const PLATFORMS: &[&str] = &[
-    "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin",
+    "telegram",
+    "slack",
+    "discord",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "weixin",
+    "mattermost",
 ];
 
 #[derive(Debug, Deserialize)]

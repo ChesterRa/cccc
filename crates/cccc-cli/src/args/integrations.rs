@@ -96,6 +96,8 @@ pub struct ImSetArgs {
     #[arg(long)]
     pub domain: Option<String>,
     #[arg(long)]
+    pub mattermost_url: Option<String>,
+    #[arg(long)]
     pub robot_code_env: Option<String>,
     #[arg(long)]
     pub robot_code: Option<String>,

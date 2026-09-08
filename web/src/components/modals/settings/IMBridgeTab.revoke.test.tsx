@@ -117,6 +117,31 @@ describe("IMBridgeTab revoke loading identity", () => {
     expect(container.textContent).not.toContain("Revoke");
   });
 
+  it("requires a Mattermost site and token using the existing configuration controls", async () => {
+    const mattermostProps = props();
+    mattermostProps.imPlatform = "mattermost";
+    mattermostProps.imBotTokenEnv = "MATTERMOST_BOT_TOKEN";
+    mattermostProps.onSaveConfig = vi.fn();
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    const saveButton = () =>
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "imBridge.saveConfig",
+      )!;
+    expect(saveButton().disabled).toBe(true);
+    expect(container.querySelector('input[type="url"]')?.id).toBe("im-mattermost-url");
+    expect(container.textContent).toContain("imBridge.mattermostUsageHint");
+
+    mattermostProps.imMattermostUrl = "https://mm.example.test/chat";
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    expect(saveButton().disabled).toBe(false);
+    await act(async () => saveButton().click());
+    expect(mattermostProps.onSaveConfig).toHaveBeenCalledOnce();
+
+    mattermostProps.imBotTokenEnv = "";
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    expect(saveButton().disabled).toBe(true);
+  });
+
   function revokeButtons(): HTMLButtonElement[] {
     return [...container.querySelectorAll("button")].filter(
       (button) => button.textContent === "Revoke" || button.textContent === "...",
@@ -143,6 +168,8 @@ function props(): ComponentProps<typeof IMBridgeTab> {
     setImBotTokenEnv: noop,
     imAppTokenEnv: "",
     setImAppTokenEnv: noop,
+    imMattermostUrl: "",
+    setImMattermostUrl: noop,
     imFeishuDomain: "",
     setImFeishuDomain: noop,
     imFeishuAppId: "",

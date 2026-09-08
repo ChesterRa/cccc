@@ -35,6 +35,7 @@ export async function setIMConfig(
   botTokenEnv: string,
   appTokenEnv?: string,
   extra?: {
+    mattermost_url?: string;
     feishu_domain?: string;
     feishu_app_id?: string;
     feishu_app_secret?: string;
@@ -48,11 +49,20 @@ export async function setIMConfig(
 ) {
   const body: Record<string, unknown> = { group_id: groupId, platform };
 
-  if (platform === "telegram" || platform === "slack" || platform === "discord") {
+  if (
+    platform === "telegram" ||
+    platform === "slack" ||
+    platform === "discord" ||
+    platform === "mattermost"
+  ) {
     body.bot_token_env = botTokenEnv;
     if (platform === "slack" && appTokenEnv) {
       body.app_token_env = appTokenEnv;
     }
+  }
+
+  if (platform === "mattermost" && extra) {
+    body.mattermost_url = extra.mattermost_url;
   }
 
   if (platform === "feishu" && extra) {
