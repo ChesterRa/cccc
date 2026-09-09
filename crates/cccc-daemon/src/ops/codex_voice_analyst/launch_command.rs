@@ -23,7 +23,12 @@ pub(super) fn prepare(
     let executable = resolve_runtime_executable(&configured[0], environment)?;
     let (arguments, has_web_search) = codex_global_arguments(&configured[1..])?;
     let model = model_from_arguments(&arguments);
-    let mut remote_tui_prefix = vec![executable.to_string_lossy().into_owned()];
+    // 更新由操作者管理，避免启动菜单把投递的消息当作升级选择；显式参数仍可覆盖默认值。
+    let mut remote_tui_prefix = vec![
+        executable.to_string_lossy().into_owned(),
+        "-c".into(),
+        "check_for_update_on_startup=false".into(),
+    ];
     remote_tui_prefix.extend(arguments);
     if !has_web_search {
         remote_tui_prefix.extend(["-c".into(), "web_search=\"live\"".into()]);

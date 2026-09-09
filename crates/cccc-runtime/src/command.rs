@@ -295,7 +295,7 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
         ActorRuntime::Claude => "claude --dangerously-skip-permissions",
         ActorRuntime::Cline => "cline --tui --auto-approve true",
         ActorRuntime::Codex => {
-            "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search"
+            "codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search"
         }
         ActorRuntime::Deepseek => "dsh-acp-demo",
         ActorRuntime::Copilot => "copilot --allow-all",
@@ -464,6 +464,15 @@ mod tests {
     use super::{deepseek_home, default_command, detect_runtimes};
     use cccc_contracts::ActorRuntime;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn codex_default_disables_startup_update_checks() {
+        assert!(
+            default_command(ActorRuntime::Codex)
+                .windows(2)
+                .any(|pair| pair == ["-c", "check_for_update_on_startup=false"])
+        );
+    }
 
     #[cfg(unix)]
     #[test]

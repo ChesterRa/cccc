@@ -35,6 +35,31 @@ fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
             .windows(2)
             .any(|pair| pair == ["-c", "web_search=\"live\""])
     );
+    assert_eq!(
+        &prepared.remote_tui_prefix[1..3],
+        ["-c", "check_for_update_on_startup=false"]
+    );
+}
+
+#[test]
+fn startup_update_default_preserves_explicit_overrides() {
+    let executable = std::env::current_exe().expect("test executable");
+    for value in ["true", "false"] {
+        let config = format!("check_for_update_on_startup={value}");
+        for flags in [
+            vec!["-c".to_owned(), config.clone()],
+            vec!["--config".to_owned(), config.clone()],
+            vec![format!("--config={config}")],
+        ] {
+            let mut configured = vec![executable.to_string_lossy().into_owned()];
+            configured.extend(flags.clone());
+            let prepared = launch_command::prepare(&configured, &BTreeMap::new()).expect("command");
+            for command in [&prepared.remote_tui_prefix, &prepared.app_server] {
+                assert_eq!(&command[1..3], ["-c", "check_for_update_on_startup=false"]);
+                assert_eq!(&command[3..3 + flags.len()], flags.as_slice());
+            }
+        }
+    }
 }
 
 #[test]
@@ -56,6 +81,8 @@ fn app_server_launch_matches_the_codex_actor_yolo_policy() {
         prepared.remote_tui_prefix,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--search",
             "--profile",
             "voice",
@@ -74,6 +101,8 @@ fn app_server_launch_matches_the_codex_actor_yolo_policy() {
         prepared.app_server,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--search",
             "--profile",
             "voice",
@@ -149,6 +178,8 @@ fn app_server_replaces_actor_host_policy_but_preserves_user_model_options() {
         prepared.remote_tui_prefix,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--model",
             "gpt-test",
             "-c",

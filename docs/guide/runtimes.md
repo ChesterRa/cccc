@@ -37,7 +37,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 |------------|-----------------|--------------------------------|
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
 | `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
-| `codex` | `codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
+| `codex` | `codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
 | `deepseek` | CCCC-managed `dsh-acp-demo --config …/cordis.yml` | Official ACP app composition; provider permission requests are rejected rather than implicitly approved. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
@@ -54,6 +54,8 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
+
+CCCC 启动的 Codex 默认关闭启动更新检查，避免交互式升级菜单阻塞会话或消费待投递的消息。托管 app-server 与原生终端使用同一默认值，包括自定义可执行路径。CLI 升级仍由操作者通过原安装渠道管理；不修改全局 `config.toml`。需要恢复检查时，可在 Actor 或 Runtime Profile 的命令中显式添加 `-c check_for_update_on_startup=true`。这不解决不兼容版本或失效登录。
 
 ## Setup Commands
 
