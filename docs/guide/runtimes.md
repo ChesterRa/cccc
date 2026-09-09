@@ -55,7 +55,13 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
 
-CCCC 启动的 Codex 默认关闭启动更新检查，避免交互式升级菜单阻塞会话或消费待投递的消息。托管 app-server 与原生终端使用同一默认值，包括自定义可执行路径。CLI 升级仍由操作者通过原安装渠道管理；不修改全局 `config.toml`。需要恢复检查时，可在 Actor 或 Runtime Profile 的命令中显式添加 `-c check_for_update_on_startup=true`。这不解决不兼容版本或失效登录。
+CCCC disables Codex startup update checks by default so an interactive upgrade
+menu cannot block a session or consume messages intended for it. The managed
+app-server and native terminal share this default, including when using a custom
+executable path. Operators manage CLI upgrades through the original installation
+channel; CCCC does not modify the global `config.toml`. To restore update checks,
+explicitly add `-c check_for_update_on_startup=true` to the Actor or Runtime Profile
+command. This setting does not resolve incompatible versions or expired sign-ins.
 
 ## Setup Commands
 

@@ -94,6 +94,7 @@ async fn serve_tcp(
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut automation = AutomationScheduler::new();
+    let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -117,6 +118,7 @@ async fn serve_tcp(
         }
     }
     begin_runtime_shutdown(&paths.home);
+    drop(reach_restore);
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -161,6 +163,7 @@ async fn serve_platform_default(
     let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut automation = AutomationScheduler::new();
+    let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -184,6 +187,7 @@ async fn serve_platform_default(
         }
     }
     begin_runtime_shutdown(&paths.home);
+    drop(reach_restore);
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -299,6 +303,64 @@ mod tests {
     use super::*;
     use cccc_contracts::Actor;
     use cccc_core::{GroupStore, ledger};
+
+    #[tokio::test]
+    async fn startup_reconciles_saved_reach_without_a_status_poll() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        cccc_core::settings::update(&home, |global| {
+            global
+                .remote_access
+                .insert("provider".into(), "reach".into());
+            global.remote_access.insert("enabled".into(), true.into());
+            Ok(())
+        })
+        .expect("enable Reach");
+        cccc_core::membership::save(
+            &home,
+            &cccc_core::membership::MembershipState {
+                logged_in: true,
+                account_origin: Some("http://127.0.0.1:1".into()),
+                device_token: Some("isolated-device-fixture".into()),
+                ..Default::default()
+            },
+        )
+        .expect("membership");
+        let (shutdown, receiver) = watch::channel(false);
+        let worker_home = home.clone();
+        let worker_shutdown = shutdown.clone();
+        let worker = tokio::spawn(async move {
+            let paths = DaemonPaths::new(worker_home);
+            serve_tcp(
+                &paths,
+                worker_shutdown,
+                receiver,
+                DispatchLocks::default(),
+                |_, _| {},
+            )
+            .await
+        });
+        let observed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if cccc_core::membership::load(&home)
+                    .expect("state")
+                    .last_error
+                    .is_some_and(|error| error.contains("administrator access token"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        shutdown.send(true).expect("shutdown fixture");
+        worker.await.expect("server task").expect("server");
+        assert!(
+            observed.is_ok(),
+            "daemon startup must reconcile saved Reach intent even without polling settings"
+        );
+    }
 
     fn assert_address_is_published(home: HomeLayout, _locks: DispatchLocks) {
         let paths = DaemonPaths::new(home);

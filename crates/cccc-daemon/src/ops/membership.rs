@@ -14,6 +14,9 @@ use crate::dispatch::{OpError, OpResult, bool_arg, object, string_arg};
 #[path = "membership/web_runtime.rs"]
 mod web_runtime;
 pub(crate) use web_runtime::validated_live_web_binding;
+#[path = "membership/restore.rs"]
+mod restore;
+pub(crate) use restore::ReachRestore;
 
 struct PublicUrls {
     hostname: Option<String>,
@@ -177,6 +180,11 @@ fn logout(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             !remote_url.is_empty()
                 && hostname.trim_end_matches('/') == remote_url.trim_end_matches('/')
         });
+    // A failed remote retirement keeps its credentials for retry, but must not
+    // let background recovery undo the local stop the user just requested.
+    if retires_reach && boolean(&remote, "enabled", false) {
+        save_reach_disabled(home)?;
+    }
     if let (Some(origin), Some(token)) = (
         bound_account_origin(&state).ok(),
         state
@@ -241,19 +249,8 @@ fn reach_on_with(
     start_helper: impl FnOnce(&HomeLayout, &str) -> Result<(), RuntimeError>,
 ) -> OpResult {
     require_user(request)?;
-    if environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED") {
-        return fail(
-            home,
-            "membership_gate",
-            "CCCC_WEB_ALLOW_UNAUTHENTICATED is incompatible with reach",
-        );
-    }
-    if admin_token_count(home) == 0 {
-        return fail(
-            home,
-            "membership_gate",
-            "an administrator access token is required before reach can start",
-        );
+    if let Err(error) = validate_reach_access(home) {
+        return fail(home, &error.code, &error.message);
     }
     let remote = settings::load(home).map_err(OpError::io)?.remote_access;
     let provider = text(&remote, "provider", "off");
@@ -311,6 +308,35 @@ fn reach_on_with(
         }
         Err(error) => return Err(account_fail(home, error)),
     };
+    commit_reach_start(home, &credentials, start_helper)?;
+    let mut payload = status_payload(home)?;
+    // Process creation is acceptance of the start request, not evidence that
+    // Cloudflare has connected. Clients confirm via bounded status checks.
+    payload["membership"]["reach_status"] = json!("connecting");
+    object(payload)
+}
+
+fn validate_reach_access(home: &HomeLayout) -> Result<(), OpError> {
+    if environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED") {
+        return Err(OpError::new(
+            "membership_gate",
+            "CCCC_WEB_ALLOW_UNAUTHENTICATED is incompatible with reach",
+        ));
+    }
+    if admin_token_count(home) == 0 {
+        return Err(OpError::new(
+            "membership_gate",
+            "an administrator access token is required before reach can start",
+        ));
+    }
+    Ok(())
+}
+
+fn commit_reach_start(
+    home: &HomeLayout,
+    credentials: &super::membership_account::ReachCredentials,
+    start_helper: impl FnOnce(&HomeLayout, &str) -> Result<(), RuntimeError>,
+) -> Result<(), OpError> {
     membership::update(home, |state| {
         state.hostname = Some(credentials.hostname.clone());
         state.tunnel_token = Some(credentials.tunnel_token.clone());
@@ -352,11 +378,7 @@ fn reach_on_with(
         }
         return Err(OpError::io(error));
     }
-    let mut payload = status_payload(home)?;
-    // Process creation is acceptance of the start request, not evidence that
-    // Cloudflare has connected. Clients confirm via bounded status checks.
-    payload["membership"]["reach_status"] = json!("connecting");
-    object(payload)
+    Ok(())
 }
 
 pub(super) fn reach_off(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -370,19 +392,23 @@ pub(super) fn reach_off(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
     }
     membership_cloudflared::stop(home).map_err(runtime_error)?;
     if boolean(&remote, "enabled", false) {
-        settings::update(home, |global| {
-            global
-                .remote_access
-                .insert("enabled".into(), Value::Bool(false));
-            global.remote_access.insert(
-                "updated_at".into(),
-                Value::String(cccc_contracts::utc_now()),
-            );
-            Ok(())
-        })
-        .map_err(OpError::io)?;
+        save_reach_disabled(home)?;
     }
     object(status_payload(home)?)
+}
+
+fn save_reach_disabled(home: &HomeLayout) -> Result<(), OpError> {
+    settings::update(home, |global| {
+        global
+            .remote_access
+            .insert("enabled".into(), Value::Bool(false));
+        global.remote_access.insert(
+            "updated_at".into(),
+            Value::String(cccc_contracts::utc_now()),
+        );
+        Ok(())
+    })
+    .map_err(OpError::io)
 }
 
 fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {

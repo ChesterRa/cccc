@@ -586,11 +586,23 @@ exists, reuse it; otherwise complete the displayed token prerequisite. Choose
 **Turn on remote access** explicitly. Account registration only reserves the
 device address; enabling Reach creates its DNS record and tunnel.
 
+Once enabled, Reach restores automatically when CCCC restarts and its Web
+listener is ready. Keep CCCC running on this computer; opening the settings
+panel is not required. Temporary network/account failures retry in the
+background, with a delay of up to one minute between failed attempts. An
+already-running tunnel helper handles its own network reconnection.
+Turning Reach off, unlinking the account, or cutting the device prevents
+automatic restoration. If unlinking cannot complete because the account service
+is unavailable, Reach stays off and the device credential is retained so you can
+retry unlinking. If the installed helper is missing or no longer matches
+this CCCC version, install it explicitly with `cccc reach install`; automatic
+restoration does not download or upgrade executables.
+
 The panel confirms the connection with at most six status checks over 45 seconds.
 It pauses checks while hidden and never restarts or provisions a tunnel as a
 retry. If confirmation ends without a connection, check this computer's network
 and CCCC process, then use **Check connection**. A stopped helper offers an
-explicit startup retry. **Turn off** remains available, and other provider/binding
+explicit startup retry in addition to daemon recovery. **Turn off** remains available, and other provider/binding
 settings remain locked while Reach is enabled even if the tunnel disconnects.
 
 **Tunnel connected** means the account service observed a connected tunnel. Open

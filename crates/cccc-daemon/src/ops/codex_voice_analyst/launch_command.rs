@@ -23,7 +23,8 @@ pub(super) fn prepare(
     let executable = resolve_runtime_executable(&configured[0], environment)?;
     let (arguments, has_web_search) = codex_global_arguments(&configured[1..])?;
     let model = model_from_arguments(&arguments);
-    // 更新由操作者管理，避免启动菜单把投递的消息当作升级选择；显式参数仍可覆盖默认值。
+    // Operators manage updates. Keep the startup menu from consuming delivered
+    // messages as upgrade choices; explicit arguments can override this default.
     let mut remote_tui_prefix = vec![
         executable.to_string_lossy().into_owned(),
         "-c".into(),

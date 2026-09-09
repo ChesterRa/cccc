@@ -315,14 +315,7 @@ pub(super) fn start(home: &HomeLayout, tunnel_token: &str) -> Result<Status, Run
         return Err(RuntimeError::process("missing tunnel token"));
     }
     stop(home)?;
-    let installed =
-        cloudflared::inspect(home).map_err(|error| RuntimeError::process(error.to_string()))?;
-    if !installed.matches_pin {
-        return Err(RuntimeError::process("pinned cloudflared is not installed"));
-    }
-    let binary = installed
-        .path
-        .ok_or_else(|| RuntimeError::process("pinned cloudflared is not installed"))?;
+    let binary = installed_binary(home)?;
     let token_file = write_token(home, token)?;
     start_command(
         home,
@@ -335,6 +328,19 @@ pub(super) fn start(home: &HomeLayout, tunnel_token: &str) -> Result<Status, Run
             token_file.to_string_lossy().into_owned(),
         ],
     )
+}
+
+pub(super) fn installed_binary(home: &HomeLayout) -> Result<PathBuf, RuntimeError> {
+    let installed =
+        cloudflared::inspect(home).map_err(|error| RuntimeError::process(error.to_string()))?;
+    if !installed.matches_pin {
+        return Err(RuntimeError::process(
+            "pinned cloudflared is not installed; run `cccc reach install`",
+        ));
+    }
+    installed.path.ok_or_else(|| {
+        RuntimeError::process("pinned cloudflared is not installed; run `cccc reach install`")
+    })
 }
 
 fn start_command(home: &HomeLayout, argv: &[String]) -> Result<Status, RuntimeError> {
@@ -418,6 +424,11 @@ fn start_command(home: &HomeLayout, argv: &[String]) -> Result<Status, RuntimeEr
         }
     });
     Ok(Status { running: true })
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn start_restore_fixture(home: &HomeLayout) -> Result<(), RuntimeError> {
+    start_command(home, &["/bin/sleep".into(), "60".into()]).map(|_| ())
 }
 
 #[cfg(unix)]

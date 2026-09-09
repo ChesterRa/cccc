@@ -64,6 +64,16 @@ impl DispatchLocks {
         }
     }
 
+    // Background reconciliation must not queue a writer behind Actor startup:
+    // startup can need another read permit for its own MCP discovery.
+    pub(crate) fn try_global_write(&self) -> Option<DispatchPermit> {
+        self.global
+            .clone()
+            .try_write_owned()
+            .ok()
+            .map(|guard| DispatchPermit::GlobalWrite { _guard: guard })
+    }
+
     pub async fn group_write(&self, group_id: &str) -> DispatchPermit {
         let global = self.global.clone().read_owned().await;
         let group = self.group(group_id).write_owned().await;

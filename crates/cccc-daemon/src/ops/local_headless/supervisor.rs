@@ -1,5 +1,5 @@
 use super::super::codex_voice_analyst::lifecycle_timing;
-use super::{HeadlessStatus, Session, managed_reader, managed_runtime, poisoned, provider_cli};
+use super::{HeadlessStatus, Session, managed_reader, poisoned, provider_cli, run_managed_launch};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::Map;
@@ -78,18 +78,20 @@ fn start_managed_agent(
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
     super::super::codex_mcp::configure_actor_cli(&mut env);
-    let app = managed_runtime().block_on(
-        super::super::codex_voice_analyst::AnalystSession::launch_actor(
-            home,
-            super::super::codex_voice_analyst::ActorLaunchConfig {
-                workdir: cwd.clone(),
-                group_id: group.group_id.clone(),
-                actor_id: actor.id.clone(),
-                runtime: actor.runtime,
-                command: provider_cli::base_command(actor),
-                environment: env,
-            },
-        )
+    let config = super::super::codex_voice_analyst::ActorLaunchConfig {
+        workdir: cwd.clone(),
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        runtime: actor.runtime,
+        command: provider_cli::base_command(actor),
+        environment: env,
+    };
+    let launch_home = home.clone();
+    let app = run_managed_launch(
+        async move {
+            super::super::codex_voice_analyst::AnalystSession::launch_actor(&launch_home, config)
+                .await
+        }
         .instrument(tracing::info_span!(
             "actor_runtime_start", group_id = %group.group_id, actor_id = %actor.id
         )),

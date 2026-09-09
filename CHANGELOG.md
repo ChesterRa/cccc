@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- **Grok Actors stay running after CCCC restarts.** Automatic restoration no longer shuts them down when startup finishes. Manual startup also keeps the restored session connected after its request worker exits.
+- **Enabled Reach restores after CCCC restarts.** The daemon waits for the live Web listener and restores a stopped tunnel helper with bounded account requests and retry backoff. Late responses cannot override turning Reach off, unlinking, relinking, or shutdown; running helpers are left in place.
 - **Concurrent ledger queries preserve exact committed history.** Cold rebuilds capture source versions and records together; delayed append callbacks cannot duplicate an old event or hide a later same-sized message.
 - **Auxiliary commands cannot wait forever.** DeepSeek's Node version probe and Tailscale start/stop use bounded output and deadlines, with owned child-process cleanup and explicit failure reporting.
 - **Context storage errors preserve the original state for recovery.** Malformed files fail explicitly instead of being treated as empty, and failed partial writes invalidate stale version tokens.
