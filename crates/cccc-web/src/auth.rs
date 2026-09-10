@@ -61,23 +61,9 @@ pub async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !websocket_origin_allowed(&state, &request) {
-        tracing::warn!(
-            origin = request
-                .headers()
-                .get(header::ORIGIN)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default(),
-            served_origin = ?crate::request_origin::served_origin(&state, request.headers()),
-            path = request.uri().path(),
-            "rejected WebSocket origin"
-        );
-        return failure_text(
-            StatusCode::FORBIDDEN,
-            "origin_not_allowed",
-            "WebSocket origin is not allowed",
-        );
-    }
+    // WebSocket Origin is intentionally not used as an authorization gate.
+    // TAE/reverse proxies may rewrite the externally visible host and scheme;
+    // authentication and group/actor capability checks below remain mandatory.
     let store = match AccessTokenStore::new(state.home.clone()) {
         Ok(store) => store,
         Err(error) => return auth_store_failure(error),
@@ -182,34 +168,6 @@ pub async fn authorize(
     }
     request.extensions_mut().insert(principal);
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
-}
-
-fn websocket_origin_allowed(state: &AppState, request: &Request) -> bool {
-    websocket_origin_allowed_with_proxy(
-        request,
-        crate::request_origin::proxy_headers_trusted(state),
-    )
-}
-
-fn websocket_origin_allowed_with_proxy(request: &Request, trust_proxy: bool) -> bool {
-    let websocket = request
-        .headers()
-        .get(header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
-    if !websocket {
-        return true;
-    }
-    let Some(origin) = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return true;
-    };
-    crate::request_origin::origin_allowed_with_proxy(request.headers(), origin, trust_proxy)
 }
 
 fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {
