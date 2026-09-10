@@ -29,6 +29,25 @@ pub fn ensure(
     env: &mut BTreeMap<String, String>,
     cccc_executable: &Path,
 ) -> Result<DeepSeekSetupOutcome, String> {
+    if let Some(executable) = cccc_core::cli_management::apply_environment(home, "deepseek", env)
+        .map_err(|error| error.to_string())?
+    {
+        env.insert(
+            "CCCC_HOME".into(),
+            home.root().to_string_lossy().into_owned(),
+        );
+        env.entry(NODE_USE_ENV_PROXY.into())
+            .or_insert_with(|| "1".into());
+        let dsh_home = cccc_runtime::deepseek_home(env).ok_or("DeepSeek 安装目录不可用")?;
+        // 受管版本只能由安装操作修改，Actor 启动时不原地修补其包或配置。
+        cccc_runtime::deepseek_preflight(&[executable.to_string_lossy().into_owned()], env)?;
+        return Ok(DeepSeekSetupOutcome {
+            profile: dsh_home.join("profiles/cccc-acp"),
+            dsh_home,
+            packages_installed: false,
+            profile_created: false,
+        });
+    }
     ensure_with(
         home,
         env,
@@ -52,6 +71,58 @@ fn ensure_with(
         .join("runtimes")
         .join("deepseek")
         .join(DEEPSEEK_RELEASE_VERSION);
+    ensure_at_with(
+        home,
+        dsh_home,
+        env,
+        cccc_executable,
+        installer,
+        external_preflight,
+        ready_preflight,
+    )
+}
+
+/// CLI 管理在新的隔离目录复用原生组件、配置与就绪检查。
+pub(crate) fn prepare_isolated(
+    home: &HomeLayout,
+    dsh_home: PathBuf,
+    env: &mut BTreeMap<String, String>,
+    cccc_executable: &Path,
+    installer: impl Fn(&Path, &BTreeMap<String, String>) -> Result<(), String>,
+) -> Result<DeepSeekSetupOutcome, String> {
+    let managed = home
+        .root()
+        .join("cli-management/versions")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !dsh_home
+        .canonicalize()
+        .map_err(|error| error.to_string())?
+        .starts_with(managed)
+    {
+        return Err("DeepSeek 隔离目录不在本实例 CLI 管理目录中".into());
+    }
+    ensure_at_with(
+        home,
+        dsh_home,
+        env,
+        cccc_executable,
+        installer,
+        cccc_runtime::deepseek_external_preflight,
+        cccc_runtime::deepseek_preflight,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_at_with(
+    home: &HomeLayout,
+    dsh_home: PathBuf,
+    env: &mut BTreeMap<String, String>,
+    cccc_executable: &Path,
+    installer: impl Fn(&Path, &BTreeMap<String, String>) -> Result<(), String>,
+    external_preflight: impl Fn(&[String], &BTreeMap<String, String>) -> Result<(), String>,
+    ready_preflight: impl Fn(&[String], &BTreeMap<String, String>) -> Result<(), String>,
+) -> Result<DeepSeekSetupOutcome, String> {
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
@@ -168,15 +239,7 @@ fn install_packages(dsh_home: &Path, env: &BTreeMap<String, String>) -> Result<(
     let mut command = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" });
     configure_process_group(&mut command);
     command
-        .args([
-            "install",
-            "--save-exact",
-            "--no-audit",
-            "--no-fund",
-            "--before",
-            DEEPSEEK_NPM_BEFORE,
-        ])
-        .args(required_packages().map(|(package, version)| format!("{package}@{version}")))
+        .args(install_args())
         .current_dir(dsh_home)
         .envs(env)
         .stdin(Stdio::null())
@@ -205,6 +268,21 @@ fn install_packages(dsh_home: &Path, env: &BTreeMap<String, String>) -> Result<(
             }
         }
     }
+}
+
+pub(crate) fn install_args() -> Vec<String> {
+    [
+        "install",
+        "--save-exact",
+        "--no-audit",
+        "--no-fund",
+        "--before",
+        DEEPSEEK_NPM_BEFORE,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain(required_packages().map(|(package, version)| format!("{package}@{version}")))
+    .collect()
 }
 
 fn ensure_profile(dsh_home: &Path, executable: &Path) -> std::io::Result<(PathBuf, bool)> {

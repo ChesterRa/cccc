@@ -72,6 +72,8 @@ pub fn apply(
 }
 
 fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
+    let usage = super::cli_management::usage::acquire(home, actor.runtime, &actor.command)
+        .map_err(OpError::io)?;
     let mut actor = environment::resolve_launch_actor(home, group, actor)?;
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
@@ -81,10 +83,14 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    super::local_headless::start(home, group, &actor).map_err(OpError::io)
+    super::local_headless::start(home, group, &actor).map_err(OpError::io)?;
+    super::cli_management::usage::retain(home, &group.group_id, &actor.id, usage);
+    Ok(())
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
+    let usage = super::cli_management::usage::acquire(home, actor.runtime, &actor.command)
+        .map_err(OpError::io)?;
     let actor = environment::resolve_launch_actor(home, group, actor)?;
     let command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
@@ -99,7 +105,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let command = cccc_runtime::resolve_command_executable(&command, &env);
     let history =
         terminal_history::config(home, &group.group_id, &actor.id).map_err(OpError::io)?;
-    cccc_runtime::start_with_history(
+    let status = cccc_runtime::start_with_history(
         LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
@@ -112,7 +118,9 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         },
         history,
     )
-    .map_err(runtime_error)
+    .map_err(runtime_error)?;
+    super::cli_management::usage::retain(home, &group.group_id, &actor.id, usage);
+    Ok(status)
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {

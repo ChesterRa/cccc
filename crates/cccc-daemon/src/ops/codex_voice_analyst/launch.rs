@@ -12,8 +12,11 @@ CCCC source-message updates are quoted Actor data, never new user instructions o
 
 impl AnalystSession {
     pub(crate) async fn launch(home: &HomeLayout, mut config: LaunchConfig) -> io::Result<Self> {
+        let usage =
+            crate::ops::cli_management::usage::acquire(home, config.runtime, &config.command)?;
         let binding = bind_workspace(&config.workdir)?;
         cccc_core::codex_voice_settings::validate_private_environment(&config.environment)?;
+        apply_managed_cli(home, &mut config)?;
         let origin = cccc_core::voice_notifications::origin_for_launch(
             home,
             config.runtime,
@@ -97,6 +100,10 @@ impl AnalystSession {
             session.stop(session.generation()).await?;
             return Err(error);
         }
+        *session
+            .cli_usage
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = usage;
         Ok(session)
     }
 
@@ -304,6 +311,93 @@ impl AnalystSession {
 
     pub(crate) fn supports_steer(&self) -> bool {
         self.runtime == cccc_contracts::ActorRuntime::Codex
+    }
+}
+
+fn apply_managed_cli(home: &HomeLayout, config: &mut LaunchConfig) -> io::Result<()> {
+    // 只取默认程序名；各内建助手自己提供启动参数，不能挪用普通 Actor 的参数。
+    let default = cccc_runtime::default_command(config.runtime)
+        .into_iter()
+        .take(1)
+        .collect::<Vec<_>>();
+    cccc_core::cli_management::apply_command(
+        home,
+        cccc_core::runtime_mcp::name(config.runtime),
+        &default,
+        &mut config.command,
+        &mut config.environment,
+    )
+}
+
+#[cfg(all(test, unix))]
+mod managed_cli_tests {
+    use super::*;
+    use cccc_core::cli_management as management;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = HomeLayout::from_path(temp.path()).unwrap();
+        home.initialize().unwrap();
+        for runtime in [
+            ActorRuntime::Codex,
+            ActorRuntime::Claude,
+            ActorRuntime::Grok,
+            ActorRuntime::Opencode,
+            ActorRuntime::Kilo,
+        ] {
+            let name = cccc_core::runtime_mcp::name(runtime);
+            let program = cccc_runtime::default_command(runtime)[0].clone();
+            let id = format!("install-{name}");
+            let now = chrono::Utc::now();
+            management::submit(&home, name, management::Operation::Install, &id, now).unwrap();
+            management::claim_next(&home, now).unwrap().unwrap();
+            let executable = management::root(&home)
+                .join("versions")
+                .join(&id)
+                .join("bin")
+                .join(&program);
+            cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            management::finish(
+                &home,
+                &id,
+                Ok(management::Installation {
+                    version: "test".into(),
+                    executable: executable.clone(),
+                    bin_paths: vec![],
+                    installed_at: now.to_rfc3339(),
+                }),
+                now,
+            )
+            .unwrap();
+            let mut config = LaunchConfig::new(temp.path());
+            config.runtime = runtime;
+            config.resume_thread_id = Some("existing-session".into());
+            apply_managed_cli(&home, &mut config).unwrap();
+            assert_eq!(config.command, [executable.to_string_lossy().into_owned()]);
+            assert_eq!(config.resume_thread_id.as_deref(), Some("existing-session"));
+            config.command = vec![program, "--model".into(), "chosen-model".into()];
+            apply_managed_cli(&home, &mut config).unwrap();
+            assert_eq!(config.command[1..], ["--model", "chosen-model"]);
+            let mut explicit = LaunchConfig::new(temp.path());
+            explicit.runtime = runtime;
+            explicit.command = vec!["/operator/custom/runtime".into()];
+            apply_managed_cli(&home, &mut explicit).unwrap();
+            assert_eq!(explicit.command, ["/operator/custom/runtime"]);
+            assert!(explicit.environment.is_empty());
+            // 保持保存配置及其恢复身份不被安装目录改写。
+            let settings = cccc_contracts::CodexVoiceAnalystSettings {
+                runtime,
+                ..Default::default()
+            };
+            let resolved =
+                cccc_core::codex_voice_settings::resolve(&home, &settings, &BTreeMap::new())
+                    .unwrap();
+            assert!(resolved.command.is_empty());
+            assert!(resolved.environment.is_empty());
+        }
     }
 }
 

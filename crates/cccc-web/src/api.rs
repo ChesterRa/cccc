@@ -142,7 +142,9 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         },
         |error| (error.code, error.message, error.details),
     );
-    let status = if matches!(error.0.as_str(), "foreman_not_found" | "foreman_not_unique") {
+    let status = if error.0 == "cli_worker_unavailable" {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else if matches!(error.0.as_str(), "foreman_not_found" | "foreman_not_unique") {
         StatusCode::BAD_REQUEST
     } else if error.0.contains("not_found") {
         StatusCode::NOT_FOUND

@@ -14,6 +14,15 @@ pub(super) fn resolve_launch_actor(
     let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
     actor.env.extend(profile_secrets);
     actor.env.extend(actor_secret_values);
+    let default = cccc_runtime::default_command(actor.runtime);
+    cccc_core::cli_management::apply_command(
+        home,
+        cccc_core::runtime_mcp::name(actor.runtime),
+        &default,
+        &mut actor.command,
+        &mut actor.env,
+    )
+    .map_err(OpError::io)?;
     Ok(actor)
 }
 
@@ -31,3 +40,7 @@ pub(super) fn launch_env(
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
     env
 }
+
+#[cfg(all(test, unix))]
+#[path = "environment_tests.rs"]
+mod tests;

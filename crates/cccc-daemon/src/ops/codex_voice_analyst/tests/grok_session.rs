@@ -578,6 +578,7 @@ fn fake_analyst_session(
     root: &Path,
 ) -> AnalystSession {
     AnalystSession {
+        cli_usage: Default::default(),
         binding: WorkspaceBinding {
             root: root.canonicalize().expect("fake Analyst root"),
         },
@@ -603,6 +604,7 @@ fn analyst_from_grok(
     generation: &str,
 ) -> AnalystSession {
     AnalystSession {
+        cli_usage: Default::default(),
         binding: WorkspaceBinding {
             root: workspace.canonicalize().expect("workspace root"),
         },

@@ -136,6 +136,10 @@ impl AnalystSession {
                 Err(error) => return Err(error),
             }
         }
+        self.cli_usage
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
         Ok(())
     }
 

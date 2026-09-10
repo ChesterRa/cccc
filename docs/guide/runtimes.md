@@ -65,6 +65,8 @@ command. This setting does not resolve incompatible versions or expired sign-ins
 
 ## Setup Commands
 
+Related software lifecycle guide: [CLI Management (中文)](cli-management.md).
+
 Most CLI runtimes can be prepared with `cccc setup --runtime <id>`:
 
 ```bash

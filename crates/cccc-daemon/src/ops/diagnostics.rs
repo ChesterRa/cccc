@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-mod tail;
+pub(super) mod tail;
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {

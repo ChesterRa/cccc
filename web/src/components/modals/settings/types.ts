@@ -16,6 +16,7 @@ export type GlobalTabId =
   | "account"
   | "capabilities"
   | "actorProfiles"
+  | "cliManagement"
   | "myProfiles"
   | "branding"
   | "webAccess"

@@ -97,6 +97,17 @@ pub fn deepseek_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
                 .filter(|value| !value.trim().is_empty())
                 .map(|home| PathBuf::from(home).join(".cccc"))
         })?;
+    // CLI 管理使用版本独立目录；只接受本 CCCC Home 下的受管目录。
+    // 外部 DSH_HOME 仍不接管 CCCC 的固定依赖与会话合同。
+    if let Some(selected) = env.get("DSH_HOME").map(PathBuf::from)
+        && let (Ok(selected_root), Ok(managed_root)) = (
+            selected.canonicalize(),
+            root.join("cli-management/versions").canonicalize(),
+        )
+        && selected_root.starts_with(managed_root)
+    {
+        return Some(selected);
+    }
     Some(
         root.join("runtimes")
             .join("deepseek")
@@ -533,6 +544,30 @@ mod tests {
             Some(std::path::PathBuf::from(
                 "/custom/cccc/runtimes/deepseek/0.1.0-rc.6"
             ))
+        );
+    }
+
+    #[test]
+    fn deepseek_selected_home_must_remain_inside_managed_versions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("cccc");
+        let selected = root.join("cli-management/versions/job/deepseek");
+        std::fs::create_dir_all(&selected).unwrap();
+        let mut env = BTreeMap::from([
+            ("CCCC_HOME".into(), root.to_string_lossy().into_owned()),
+            ("DSH_HOME".into(), selected.to_string_lossy().into_owned()),
+        ]);
+        assert_eq!(deepseek_home(&env), Some(selected));
+        env.insert(
+            "DSH_HOME".into(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        assert_eq!(
+            deepseek_home(&env),
+            Some(
+                root.join("runtimes/deepseek")
+                    .join(super::DEEPSEEK_RELEASE_VERSION)
+            )
         );
     }
 

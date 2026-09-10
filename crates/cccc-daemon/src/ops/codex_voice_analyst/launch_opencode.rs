@@ -77,6 +77,7 @@ impl AnalystSession {
             tracing::warn!(%error, %group_id, %actor_id, ?runtime, "failed to persist managed ACP session");
         }
         Ok(Self {
+            cli_usage: Default::default(),
             #[cfg(test)]
             binding,
             generation,

@@ -6,6 +6,7 @@ mod actors;
 mod assistants;
 mod blob_download;
 mod capabilities;
+mod cli_management;
 mod codex_voice;
 mod context;
 mod diagnostics;
@@ -118,6 +119,7 @@ pub fn router() -> Router<AppState> {
         .merge(remote_access::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
+        .merge(cli_management::routes())
         .merge(streams::routes())
         .merge(terminal::routes())
 }

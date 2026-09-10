@@ -20,6 +20,7 @@ mod automation_manage;
 mod automation_rule_access;
 pub(crate) mod automation_runtime;
 mod capabilities;
+pub(crate) mod cli_management;
 mod codex_mcp;
 pub(crate) mod codex_voice_analyst;
 pub(crate) mod codex_voice_controller;
@@ -86,6 +87,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         group_creation::resolve_operation,
         groups::resolve_operation,
         hermes_runtime::resolve_operation,
+        cli_management::resolve_operation,
         group_copy::resolve_operation,
         group_bridge::resolve_operation,
         group_scopes::resolve_operation,

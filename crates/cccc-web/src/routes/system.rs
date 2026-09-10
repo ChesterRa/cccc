@@ -87,14 +87,60 @@ async fn ready(
         None => json!({"web":"ready"}),
     })
 }
-async fn runtimes() -> Json<Value> {
-    let runtimes = cccc_runtime::detect_runtimes();
+async fn runtimes(State(state): State<AppState>) -> ApiResult {
+    let selected = cccc_core::cli_management::load(&state.home);
+    if let Err(error) = &selected {
+        tracing::warn!(%error, "CLI management state unavailable during runtime discovery");
+    }
+    let mut runtimes = cccc_runtime::detect_runtimes();
+    for runtime in &mut runtimes {
+        let selected = match &selected {
+            Ok(selected) => selected,
+            Err(_) => {
+                // 只读目录保留原生探测；管理故障另报，实际启动仍严格检查受管状态。
+                continue;
+            }
+        };
+        if let Some(installation) = selected.installations.get(&runtime.name) {
+            runtime.path = Some(installation.executable.clone());
+            let mut env = std::env::vars().collect();
+            runtime.available =
+                cccc_core::cli_management::apply_environment(&state.home, &runtime.name, &mut env)
+                    .is_ok_and(|executable| executable.is_some());
+            if runtime.available && runtime.name == "deepseek" {
+                env.insert(
+                    "CCCC_HOME".into(),
+                    state.home.root().to_string_lossy().into_owned(),
+                );
+                runtime.available = cccc_runtime::deepseek_preflight(
+                    &[installation.executable.to_string_lossy().into_owned()],
+                    &env,
+                )
+                .is_ok();
+            }
+        }
+    }
     let available = runtimes
         .iter()
         .filter(|runtime| runtime.available)
         .map(|runtime| runtime.name.clone())
         .collect::<Vec<_>>();
-    success(json!({"available":available,"runtimes":runtimes}))
+    let error = selected.err().map(|_| "cli_management_state_error");
+    let runtimes = runtimes
+        .into_iter()
+        .map(|runtime| {
+            let affected =
+                error.is_some() && !matches!(runtime.name.as_str(), "web_model" | "custom");
+            let mut value = json!(runtime);
+            if affected {
+                value["managed_error"] = json!(error);
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    Ok(success(
+        json!({"available":available,"runtimes":runtimes,"cli_management_error":error}),
+    ))
 }
 async fn observability_get(State(state): State<AppState>) -> ApiResult {
     call(&state, "observability_get", Default::default()).await

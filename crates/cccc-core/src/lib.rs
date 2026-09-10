@@ -15,6 +15,7 @@ mod capability_builtin;
 pub mod capability_legacy;
 #[cfg(test)]
 mod capability_legacy_tests;
+pub mod cli_management;
 pub mod cloudflared;
 pub mod codex_voice_settings;
 pub mod context;

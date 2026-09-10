@@ -24,6 +24,8 @@ pub fn apply(
 }
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
+    let usage = crate::ops::cli_management::usage::acquire(home, actor.runtime, &actor.command)
+        .map_err(OpError::io)?;
     let mut actor = resolve_launch_actor(home, group, actor)?;
     actor.normalize_runtime_constraints();
     if actor.command.is_empty() {
@@ -40,7 +42,9 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
     let cwd = actor_runtime::working_directory(group, &actor)?;
-    start(home, group, &actor, &cwd).map_err(OpError::io)
+    start(home, group, &actor, &cwd).map_err(OpError::io)?;
+    crate::ops::cli_management::usage::retain(home, &group.group_id, &actor.id, usage);
+    Ok(())
 }
 
 fn resolve_launch_actor(

@@ -165,6 +165,7 @@ impl AnalystSession {
             }
         }
         Ok(Self {
+            cli_usage: Default::default(),
             #[cfg(test)]
             binding,
             generation,
