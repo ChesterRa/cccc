@@ -3,6 +3,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { documentFinalAsrDisposition } from "./voiceFinalAsrPolicy";
 
 describe("documentFinalAsrDisposition", () => {
+  it.each([true, false])("retries unconfirmed checkpoints even when partial=%s", (partial) => {
+    expect(
+      documentFinalAsrDisposition({
+        partial,
+        transcript_persistence: "failed",
+        transcript_persisted: false,
+        transcript_pending_segments: [{ segment_id: "external-v-600", text: "second" }],
+      }),
+    ).toBe("retry_persistence");
+  });
+
   it("keeps complete live text when segmented final ASR is partial", () => {
     expect(
       documentFinalAsrDisposition({

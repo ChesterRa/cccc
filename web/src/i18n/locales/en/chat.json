@@ -286,6 +286,7 @@
   "voiceSecretaryTranscript": "Transcript",
   "voiceSecretaryTranscriptPlaceholder": "Stable transcript from dictation appears here; Voice Secretary updates the working document automatically.",
   "voiceSecretaryTranscriptAppendFailed": "Failed to save Voice Secretary transcript segment.",
+  "voiceSecretaryCheckpointRecoveryFilled": "Unconfirmed transcript text was returned to the original Group's composer. Review it before sending.",
   "voiceSecretaryPrivacyHint": "Raw transcript stays in assistant sidecar storage; the working markdown document is the user-facing artifact.",
   "voiceSecretaryWorkingDocument": "Working document",
   "voiceSecretaryWorkdocTitle": "Voice Secretary workdoc",

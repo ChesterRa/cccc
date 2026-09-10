@@ -59,9 +59,10 @@ test "$(find "$TMP_ROOT/installed" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2
 grep -Fxq 'standalone-v1' "$TMP_ROOT/installed/.cccc-standalone"
 cmp "$package_dir/cccc" "$installed"
 test "$("$installed" --version)" = "cccc $VERSION"
-update_check=$("$installed" update --check)
+update_check=$("$installed" update --check --offline)
 printf '%s\n' "$update_check" | grep -Fx "Current version: $VERSION"
 printf '%s\n' "$update_check" | grep -Fx "Install directory: $TMP_ROOT/installed"
+printf '%s\n' "$update_check" | grep -Fx "Latest version: not checked (offline)"
 
 export CCCC_HOME="$TMP_ROOT/home"
 "$installed" --port 0 >"$TMP_ROOT/cccc-web.log" 2>&1 &

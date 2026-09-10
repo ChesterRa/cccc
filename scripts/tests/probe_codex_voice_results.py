@@ -342,7 +342,7 @@ def main():
                 "chatgpt-account-id": auth["account_id"],
                 "originator": "cccc",
                 "x-session-id": str(uuid.uuid4()),
-                "user-agent": "cccc/0.4.38",
+                "user-agent": "cccc/0.4.39",
                 "openai-alpha": "quicksilver=v2",
             },
             json={

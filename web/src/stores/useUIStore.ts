@@ -82,7 +82,7 @@ interface UIState {
   sidebarWidth: number;
   isSmallScreen: boolean;
   presentationSplitWidth: number;
-  composerHeight: number;
+  composerHeight: number | null;
   chatSessions: Record<string, ChatSessionState>;
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
@@ -107,7 +107,7 @@ interface UIState {
   incrementChatUnread: (groupId: string) => void;
   setSmallScreen: (v: boolean) => void;
   setPresentationSplitWidth: (v: number) => void;
-  setComposerHeight: (v: number) => void;
+  setComposerHeight: (v: number | null) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setGroupWorkView: (groupId: string, view: GroupWorkView) => void;
@@ -402,7 +402,7 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setSmallScreen: (v) => set({ isSmallScreen: v }),
   setComposerHeight: (v) => {
-    const next = clampComposerHeight(v);
+    const next = v === null ? null : clampComposerHeight(v);
     saveComposerHeight(next);
     set({ composerHeight: next });
   },

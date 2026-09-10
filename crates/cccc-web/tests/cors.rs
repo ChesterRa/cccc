@@ -32,8 +32,13 @@ fn wildcard_cors_supports_explicit_bearer_requests() {
 }
 
 #[test]
-fn cookie_writes_keep_origin_checks_when_websocket_headers_do_not() {
+fn wildcard_cors_does_not_authorize_cookie_writes_or_websockets() {
     isolated("cookie", true, "");
+}
+
+#[test]
+fn websocket_origins_follow_the_authentication_source() {
+    isolated("websocket", false, "https://client.example");
 }
 
 #[test]
@@ -65,6 +70,43 @@ async fn configured_origin_worker() {
         .expect("token");
     let app = cccc_web::app(home);
     let origin = "https://client.example";
+    if case == "websocket" {
+        for bearer in [false, true] {
+            for source in [
+                None,
+                Some("null"),
+                Some("https://evil.example"),
+                Some(origin),
+            ] {
+                let mut request = Request::get("/api/v1/access-tokens")
+                    .header(header::HOST, "internal-proxy:8848")
+                    .header(header::UPGRADE, "WebSocket");
+                if let Some(source) = source {
+                    request = request.header(header::ORIGIN, source);
+                }
+                request = if bearer {
+                    request.header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                } else {
+                    request.header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                };
+                let response = app
+                    .clone()
+                    .oneshot(request.body(Body::empty()).expect("request"))
+                    .await
+                    .expect("websocket authorization");
+                assert_eq!(
+                    response.status(),
+                    if bearer || source == Some(origin) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    },
+                    "bearer={bearer}, origin={source:?}"
+                );
+            }
+        }
+        return;
+    }
     if matches!(case.as_str(), "bearer" | "exact" | "default") {
         let response = app
             .clone()
@@ -146,7 +188,7 @@ async fn configured_origin_worker() {
                 .expect("cookie request");
             assert_eq!(
                 response.status(),
-                if case == "exact" || websocket {
+                if case == "exact" {
                     StatusCode::OK
                 } else {
                     StatusCode::FORBIDDEN

@@ -172,7 +172,7 @@ pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionSta
     Ok(statuses)
 }
 
-fn actor_is_running(group: &GroupDoc, actor: &Actor) -> bool {
+pub(super) fn actor_is_running(group: &GroupDoc, actor: &Actor) -> bool {
     if super::local_headless::supports(actor) {
         super::local_headless::running(&group.group_id, &actor.id)
     } else {

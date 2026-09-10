@@ -91,8 +91,10 @@ cccc update
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Web サイトインストーラーによる導入では、`cccc update --check` で更新元を確認
-できます。pip 管理下のコマンドは standalone 自己更新を明示的に拒否し、代わりに
+`cccc update --check` はチャネルの最新バージョン、インストールの所有者、ネイティブ
+プラットフォームの要件を確認します。pip 管理下でも利用でき、インストールや稼働中の
+サービスを変更しません。`--offline` を追加すると通信せずローカル情報のみ表示します。
+pip 管理下のコマンドは standalone 自己更新を引き続き拒否し、代わりに
 パッケージマネージャーのコマンドを表示します。どちらも同じネイティブ製品を
 導入しますが、ファイルは作成元のインストーラーが管理し続けます。pip で更新する
 前に `cccc daemon stop` を実行し、foreground の CCCC process も終了してください。
@@ -100,6 +102,12 @@ Web サイトインストーラーによる導入では、`cccc update --check` 
 から Web サイトインストーラーへ切り替える場合は、先に
 `python -m pip uninstall cccc-pair` を実行してください。
 `CCCC_ALLOW_REPLACE_EXISTING=1` を設定しても、pip 管理下のファイルは上書きしません。
+
+旧版の `cccc update` が `0.4.35` のままなら、そのインストールを所有する Python 環境で
+上記の最低バージョンを指定した pip コマンドを実行してください。`0.4.35` は汎用 Python
+パッケージを提供する最終版です。非対応環境では、バージョン指定のない pip 更新が再び
+この版を選ぶことがあります。最低バージョンの指定により不一致を明示的なエラーにできます。
+詳しくは [更新 FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35) を参照してください。
 
 ### 起動
 

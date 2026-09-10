@@ -1,5 +1,5 @@
 {
-  "resizeComposer": "调整输入框高度上限（双击恢复默认）",
+  "resizeComposer": "调整输入区高度（双击或按回车恢复自动高度）",
   "openSidebar": "打开侧边栏",
   "closeSidebar": "关闭侧边栏",
   "collapseSidebar": "收起侧边栏",

@@ -8,7 +8,7 @@ import {
 } from "./groups";
 import {
   fetchVoiceAssistantDocumentContent,
-  retryVoiceAssistantFinalRevision,
+  retryVoiceAssistantTranscriptPersistence,
 } from "./voiceSecretary";
 
 describe("assistant API helpers", () => {
@@ -140,7 +140,7 @@ describe("assistant API helpers", () => {
         );
 
       const modelId = backend ? "bailian:fun-asr-realtime" : "sense-voice";
-      await retryVoiceAssistantFinalRevision("g1", {
+      await retryVoiceAssistantTranscriptPersistence("g1", {
         sessionId: "session-1",
         documentPath: "docs/voice-secretary/meeting.md",
         text: "最终文本。",

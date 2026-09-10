@@ -9,6 +9,9 @@ use anyhow::{Context, Result, bail};
 
 use crate::args::{ReleaseChannelArg, UpdateArgs};
 
+#[path = "update_check.rs"]
+mod check;
+
 const RELEASE_INDEX_URL: &str = "https://chesterra.github.io/cccc/releases.json";
 const RELEASE_INDEX_MAX_BYTES: usize = 16 * 1024;
 
@@ -33,17 +36,20 @@ const WINDOWS_INSTALL_COMMAND: &str = concat!(
 
 pub async fn run(args: UpdateArgs) -> Result<()> {
     let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
-    let install_dir = standalone_install_dir(&executable)?;
     let channel = effective_channel(args.channel);
 
     if args.check {
-        println!("Current version: {}", crate::PRODUCT_VERSION);
-        println!("Install directory: {}", install_dir.display());
-        println!("Release channel: {}", channel_name(channel));
-        println!("Installer: {}", installer_url());
-        return Ok(());
+        return check::report(
+            &mut std::io::stdout(),
+            &executable,
+            crate::PRODUCT_VERSION,
+            &args,
+            latest_channel_version(channel),
+        )
+        .await;
     }
 
+    let install_dir = standalone_install_dir(&executable)?;
     let version = latest_channel_version(channel).await?;
     if !should_install(crate::PRODUCT_VERSION, &version, args.channel)? {
         println!(
@@ -213,25 +219,47 @@ fn should_install(
     }
 }
 
-fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstallationOwner {
+    Standalone,
+    Pip,
+    Unmanaged,
+    Unrecognized,
+}
+
+fn installation_owner(executable: &Path) -> Result<InstallationOwner> {
     let install_dir = executable
         .parent()
         .context("CCCC executable has no parent directory")?;
     let marker = install_dir.join(INSTALL_MARKER);
     match std::fs::read_to_string(&marker) {
-        Ok(value) if value.trim() == INSTALL_MARKER_VERSION => {}
-        Ok(value) if value.trim() == PIP_INSTALL_MARKER_VERSION => bail!(
+        Ok(value) if value.trim() == INSTALL_MARKER_VERSION => Ok(InstallationOwner::Standalone),
+        Ok(value) if value.trim() == PIP_INSTALL_MARKER_VERSION => Ok(InstallationOwner::Pip),
+        Ok(_) => Ok(InstallationOwner::Unrecognized),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(InstallationOwner::Unmanaged)
+        }
+        Err(error) => Err(error).context(format!("could not read {}", marker.display())),
+    }
+}
+
+fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
+    match installation_owner(executable)? {
+        InstallationOwner::Standalone => {}
+        InstallationOwner::Pip => bail!(
             "this CCCC executable is managed by pip; update it with python -m pip install --upgrade \"cccc-pair>=0.4.36\""
         ),
-        Ok(_) => bail!(
+        InstallationOwner::Unrecognized => bail!(
             "this Rust executable is managed by another installation or has an unrecognized owner; update it through that installer"
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+        InstallationOwner::Unmanaged => bail!(
             "this CCCC executable is not an owned standalone installation; update it through its package manager (for pip: python -m pip install --upgrade \"cccc-pair>=0.4.36\")"
         ),
-        Err(error) => return Err(error).context(format!("could not read {}", marker.display())),
     }
-    Ok(install_dir.to_path_buf())
+    Ok(executable
+        .parent()
+        .context("CCCC executable has no parent directory")?
+        .to_path_buf())
 }
 
 #[cfg(not(windows))]

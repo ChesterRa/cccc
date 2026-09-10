@@ -286,6 +286,7 @@
   "voiceSecretaryTranscript": "转写文本",
   "voiceSecretaryTranscriptPlaceholder": "稳定转写会显示在这里；语音小秘书会自动更新工作文档。",
   "voiceSecretaryTranscriptAppendFailed": "保存语音小秘书转写片段失败。",
+  "voiceSecretaryCheckpointRecoveryFilled": "未确认保存的转写已放回原工作组输入框，请核对后再发送。",
   "voiceSecretaryPrivacyHint": "原始转写保存在小秘书 sidecar 中；面向用户的正式产物是 markdown 工作文档。",
   "voiceSecretaryWorkingDocument": "工作文档",
   "voiceSecretaryWorkdocTitle": "语音小秘书工作稿",

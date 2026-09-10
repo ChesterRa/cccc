@@ -62,6 +62,7 @@ For a website-installer distribution, inspect or apply updates with:
 ```bash
 cccc update
 cccc update --check
+cccc update --check --offline
 ```
 
 Website-script installations update through the GitHub Pages installer and
@@ -77,8 +78,15 @@ nor an authority for runtime startup in 0.4.36. `cccc status` reports the one
 installed product, daemon state, groups, and detected agent runtimes without
 implementation availability rows.
 
-Inside a pip installation, `cccc update` refuses replacement and prints the pip
-command. This keeps Windows and virtual-environment files under their package
+Online `cccc update --check` reports the latest published channel version,
+installation owner, and native platform requirements for standalone, pip-owned,
+and unmanaged executables. Failed discovery is reported as unknown with a
+nonzero exit code, while local details remain visible. `--check --offline` skips
+discovery and explicitly marks the latest version as not checked. Both checks
+leave the installation and running services alone.
+
+Inside a pip installation, `cccc update` without `--check` refuses replacement
+and prints the pip command. This keeps Windows and virtual-environment files under their package
 manager instead of attempting to infer an interpreter or overwrite a running
 executable. Standalone ownership is proven only by the complete marker beside
 that exact executable.

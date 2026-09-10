@@ -6,10 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.39] — 2026-09-10
+
+### Added
+- **Voice Secretary supports Bailian and Volcengine realtime ASR.** Administrator-managed server-side credentials, Group-specific provider selection, live/final transcription, and existing recording leases and durable document revisions share the established voice workflow. Cloud capture does not require local ASR models.
+
 ### Fixed
+- **Voice Secretary starts correctly with managed runtimes.** Startup and health checks use the runtime owner's live state, avoiding false failures that immediately stop a successfully launched secretary. Explicit re-enabling also restores the Actor's enabled state; settings autosave still leaves stopped Actors stopped.
+- **Cookie-authenticated WebSockets retain source protection.** Browser connections require an allowed origin; explicitly authenticated Bearer clients can connect through host-rewriting proxies without an unrelated origin rejection.
 - **Recording history preserves separate sessions.** Final ASR rows use session-scoped identities, so a later recording no longer replaces an earlier one in Transcript.
 - **Group import keeps the latest directory selection.** Late directory responses cannot overwrite a newer choice or revive a closed picker.
-- **External ASR preserves final text after checkpoint failures and honors document-update settings.** Completed provider packets still enter recovery with idempotent segment IDs and a retryable final-text response. Cloud document checkpoints now respect the configured interval or stop-only mode while subtitles remain live.
+- **External ASR preserves input after checkpoint failures and honors document-update settings.** Unconfirmed segments retain their original IDs for recovery before a final revision can supersede them, including incomplete recordings. A failed browser retry returns the remaining text to the originating composer for review. Cloud document checkpoints respect the configured interval or stop-only mode while subtitles remain live.
+- **Update checks report the latest release and the correct installation channel.** Standalone, pip-owned, and unmanaged commands can inspect updates without changing files or running services. Failed discovery is explicitly unknown, offline checks are available, and migration guidance explains older Python installs stuck on 0.4.35.
+- **Reach setup distinguishes account linking, tunnel connection, and device sign-in.** Web Access offers explicit enablement, bounded connection checks with fresh timestamps, and consistent recovery after manual refresh. The CLI only presents the remote address once the tunnel is confirmed connected.
+- **Remote sign-in links work from passwordless localhost administration.** One-time links reuse an existing administrator Access Token without creating another long-lived credential; revoked tokens invalidate their outstanding links.
+- **Managed Codex sessions skip startup update prompts by default.** Actors and Voice Analyst honor an explicit `check_for_update_on_startup` override without changing the user's global Codex configuration.
+- **Codex terminal attachment keeps permissions on the managed server.** Actor and Voice Analyst remote TUIs no longer receive approval or sandbox overrides that can prevent session resume; the app-server retains the existing execution policy.
 - **Grok Actors stay running after CCCC restarts.** Automatic restoration no longer shuts them down when startup finishes. Manual startup also keeps the restored session connected after its request worker exits.
 - **Enabled Reach restores after CCCC restarts.** The daemon waits for the live Web listener and restores a stopped tunnel helper with bounded account requests and retry backoff. Late responses cannot override turning Reach off, unlinking, relinking, or shutdown; running helpers are left in place.
 - **Claude Actors survive worktree transcript moves.** Running observers follow a unique same-session transcript after verifying the consumed history, preserving unread records and partial lines. Missing or incomplete destinations receive a bounded grace period; corrupt or ambiguous history still fails closed.
@@ -27,9 +39,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Linux terminals remain stoppable when an Actor stops consuming input.** Pending message submission responds to cancellation, revoked terminal writers release the input lane, and an old submission cannot continue in a restarted Actor session.
 - **Actor startup and internal session callbacks remain available while global changes are queued.** MCP discovery and Bridge session coordination use their resource-owned synchronization, avoiding a lifecycle lock cycle. Catalog visibility uses one Group snapshot, and Hermes/Group Space status reads no longer take unnecessary write locks.
 - **Actor status notifications recover after temporary ledger write failures.** The next normal status tick retries the uncommitted transition without repeating successfully published state.
-- **Kilo snapshot progress no longer leaks into Actor and Voice Analyst answers.** The shared stream adapter excludes text explicitly marked as transient UI progress while preserving ordinary answer text, including synthetic content. Native snapshot behavior and strict runtime result checks remain unchanged.
 
 ### Changed
+- **Recognition settings save without restarting the Voice Secretary.** Backend and document-update selections save automatically; enabling the secretary remains a separate action, and provider credentials retain explicit Save and Clear controls.
+- **Desktop composer height and mobile Voice Secretary controls are easier to adjust.** Dragging changes the input's actual height even for an empty draft; double-click or Enter restores compact automatic sizing. Keyboard control and saved manual sizing remain available. Phone layouts retain accessible recording controls and independent content scrolling. Appearance choices stay inside the existing settings menu.
+- **Manual LAN access accepts authenticated HTTP connections.** An Admin Access Token is still required; public access should use HTTPS through a tunnel or reverse proxy.
 - **Evicting large history indexes no longer holds the global cache lock during deallocation.** Other Groups can continue querying while the removed index is freed.
 - **Ledger snapshots validate and hash history in one streaming pass.** Maintenance no longer builds a full-history query index, preserves canonical snapshot hashes, and rejects unreadable event objects before publishing metadata or rotating files.
 - **Delivery and reminder checks avoid copying the entire message history.** Runtime turn claims, recovery, completion checks, and queue counts borrow the existing index and retain only needed results. Reminder checks skip history when no Actor is eligible.
@@ -40,8 +54,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.4.38] — 2026-09-07
 
 ### Added
-- **Voice Secretary supports Bailian and Volcengine realtime ASR.** Administrator-managed server-side credentials, Group-specific provider selection, live/final transcription, and existing recording leases and durable document revisions share the established voice workflow. Cloud capture does not require local ASR models.
-
 - **Interactive tiled terminals show up to four Actors per page.** Each Group remembers its view and page; its header, composer, and Presentation controls remain available. Each tile supports direct input and expansion with independent focus and write ownership.
 - **Codex Voice can receive cross-Group Actor notifications.** Optional per-Group subscriptions, exact reply tracking, viewed-message suppression, and visible source/delivery states connect Actor results to the global voice conversation. Group and sender attribution accompanies each notification.
 - **Codex, Claude Code, Grok Build, OpenCode, and Kilo share managed session adapters across Actors and Voice Analyst.** Native writable TUIs and structured observation follow the same provider conversation within each role. Runtime Profiles support provider/model configuration and private environment settings.
@@ -55,6 +67,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Voice Secretary preserves final transcript revisions without duplicate document input.** Complete final SenseVoice results supersede live Paraformer text while retaining revision history; mobile recording options and status are easier to reach.
 
 ### Fixed
+- **Kilo snapshot progress no longer leaks into Actor and Voice Analyst answers.** The shared stream adapter excludes text explicitly marked as transient UI progress while preserving ordinary answer text, including synthetic content. Native snapshot behavior and strict runtime result checks remain unchanged.
 - **Voice submission no longer waits indefinitely on stalled speech.** Context updates fit provider limits, queues and waits are bounded, and known-unsent results survive teardown, including overflow. Voice polling avoids an Actor-startup dispatcher lock cycle, and recipient aliases are resolved for tracked replies. Submission still does not guarantee complete spoken narration.
 - **Global Voice transcripts combine fragments from the same provider turn.** Opening words no longer appear as separate repeated or truncated entries in the affected event sequences.
 - **Voice Secretary completes final transcript processing before normal WebSocket closure.** Browser speech recovery is bounded and releases capture when retries are exhausted.

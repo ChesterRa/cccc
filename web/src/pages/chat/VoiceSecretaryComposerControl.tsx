@@ -39,7 +39,7 @@ import {
   fetchVoiceAssistantDocumentContent,
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
-  retryVoiceAssistantFinalRevision,
+  retryVoiceAssistantTranscriptPersistence,
   saveVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
   updateVoiceAssistantRecordingLease,
@@ -3454,15 +3454,38 @@ export function VoiceSecretaryComposerControl({
                         serviceFinalTranscriptRef.current,
                         finalText,
                       );
-                      const retry = await retryVoiceAssistantFinalRevision(gid, {
+                      const retry = await retryVoiceAssistantTranscriptPersistence(gid, {
                         sessionId: voiceRecordingSessionIdRef.current,
                         documentPath: effectiveCaptureTargetDocumentPath,
                         text: finalText,
                         language: effectiveRecognitionLanguage,
                         modelId: String(payload.model_id || "").trim(),
                         recognitionBackend: String(payload.backend || ""),
+                        partial: payload.partial === true,
+                        pendingSegments: payload.transcript_pending_segments,
                       });
                       if (!retry.ok) {
+                        const pending = recordFromUnknown(
+                          retry.error.details,
+                        ).transcript_pending_segments;
+                        const recovered = Array.isArray(pending)
+                          ? pending
+                              .map((segment) =>
+                                String(recordFromUnknown(segment).text || "").trim(),
+                              )
+                              .filter(Boolean)
+                              .join("\n")
+                          : "";
+                        if (recovered) {
+                          // Recovery remains scoped to the recording's Group even
+                          // if the user navigated or started another recording.
+                          routeVoiceTextToComposerGroup({
+                            groupId: gid,
+                            text: recovered,
+                            mode: "append",
+                          });
+                          showNotice({ message: t("voiceSecretaryCheckpointRecoveryFilled") });
+                        }
                         if (isCurrentGroup(gid)) {
                           showError(
                             retry.error.message ||
@@ -3473,7 +3496,18 @@ export function VoiceSecretaryComposerControl({
                         }
                         return;
                       }
+                      if (!isActiveRecordingRun(runId)) return;
                       if (isCurrentGroup(gid)) applyTranscriptAppendResult(retry.result);
+                    }
+                    if (payload.partial === true) {
+                      finalizeLiveTranscriptPreview();
+                      if (isCurrentGroup(gid)) {
+                        await restoreLatestVoiceMeetingSession({
+                          replaceSession: true,
+                          sessionId: voiceRecordingSessionIdRef.current,
+                        });
+                      }
+                      return;
                     }
                     serviceFinalAsrTextRef.current = finalText;
                     serviceCommittedTranscriptRef.current = finalText;

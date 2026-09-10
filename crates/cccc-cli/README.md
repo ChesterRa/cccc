@@ -28,8 +28,10 @@ website-installer distribution with:
 cccc update
 ```
 
-Use `cccc update --check` to inspect the standalone installation and update
-source. Pip-owned installations remain owned by pip and must be upgraded with
+Use `cccc update --check` to query the latest channel release and display the
+installation owner and platform requirements. It also works for pip-owned or
+unmanaged executables without allowing self-update. Add `--offline` to inspect
+local details without a network request. Pip-owned installations must be upgraded with
 `python -m pip install --upgrade "cccc-pair>=0.4.36"`; `cccc update` refuses to
 replace them through the standalone installer. The installer refuses to
 overwrite an existing public `cccc` command without its standalone ownership

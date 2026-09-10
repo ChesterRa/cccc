@@ -65,9 +65,10 @@ try {
   if ($LASTEXITCODE -ne 0 -or $reportedVersion -ne "cccc $version") {
     throw "installed version mismatch: $reportedVersion"
   }
-  $updateCheck = (& $installed update --check | Out-String)
+  $updateCheck = (& $installed update --check --offline | Out-String)
   if ($LASTEXITCODE -ne 0 -or -not $updateCheck.Contains("Current version: $version") -or
-      -not $updateCheck.Contains("Install directory: " + (Split-Path $installed))) {
+      -not $updateCheck.Contains("Install directory: " + (Split-Path $installed)) -or
+      -not $updateCheck.Contains("Latest version: not checked (offline)")) {
     throw "standalone update ownership check failed: $updateCheck"
   }
 

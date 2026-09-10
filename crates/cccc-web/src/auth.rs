@@ -61,9 +61,8 @@ pub async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    // WebSocket Origin is intentionally not used as an authorization gate.
-    // TAE/reverse proxies may rewrite the externally visible host and scheme;
-    // authentication and group/actor capability checks below remain mandatory.
+    // Explicit bearer clients may connect through host-rewriting proxies.
+    // Browser cookies still require source validation, including WebSocket GETs.
     let store = match AccessTokenStore::new(state.home.clone()) {
         Ok(store) => store,
         Err(error) => return auth_store_failure(error),
@@ -108,13 +107,13 @@ pub async fn authorize(
     if principal.is_some()
         && !is_public(request.method(), request.uri().path())
         && matches!(token_source, TokenSource::Cookie | TokenSource::Local)
-        && is_unsafe_method(request.method())
+        && (is_unsafe_method(request.method()) || is_websocket_upgrade(&request))
         && !crate::request_origin::cookie_csrf_allowed(&state, request.headers())
     {
         return failure_text(
             StatusCode::FORBIDDEN,
             "csrf_origin_invalid",
-            "Cookie-authenticated write requests require an allowed Origin or Referer",
+            "Cookie-authenticated writes and WebSockets require an allowed Origin or Referer",
         );
     }
     let bootstrap_cookie = principal.as_ref().and_then(|principal| {
@@ -168,6 +167,14 @@ pub async fn authorize(
     }
     request.extensions_mut().insert(principal);
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
+}
+
+fn is_websocket_upgrade(request: &Request) -> bool {
+    request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }
 
 fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {

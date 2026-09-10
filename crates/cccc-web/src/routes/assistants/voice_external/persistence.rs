@@ -65,6 +65,8 @@ pub(super) async fn recover(
     group: &str,
     active: &mut Active,
 ) -> serde_json::Value {
+    // final_event reports any still-unacknowledged segments, rather than letting
+    // a successful final revision hide this recovery attempt's failure.
     let _ = checkpoints(state, group, active, true).await;
     final_event(state, group, active).await
 }
@@ -79,6 +81,35 @@ pub(super) async fn final_event(
             .transcript
             .final_event(&active.model, active.completed, active.stop_seq.clone());
     if active.persist {
+        // A final revision is raw-only once this session has semantic input.
+        // Do not supersede live segments until every checkpoint is confirmed:
+        // otherwise neither the final revision nor a late checkpoint can deliver
+        // the missing input. A lost reply also needs the original idempotency key.
+        let mut pending: Vec<_> = active
+            .transcript
+            .segments()
+            .filter(|segment| {
+                !active.persisted.contains(&segment.id) && !segment.text.trim().is_empty()
+            })
+            .collect();
+        pending.sort_by_key(|segment| (segment.start_ms, segment.end_ms));
+        if !pending.is_empty() {
+            event["transcript_persistence"] = json!("failed");
+            event["transcript_persisted"] = json!(false);
+            let error = persistence_error();
+            event["transcript_persistence_error"] =
+                json!({"code":error.code,"message":error.message});
+            event["transcript_pending_segments"] = json!(
+                pending
+                    .iter()
+                    .map(|segment| {
+                        json!({"segment_id":format!("external-{}",segment.id.replace(':',"-")),
+                    "text":segment.text,"start_ms":segment.start_ms,"end_ms":segment.end_ms})
+                    })
+                    .collect::<Vec<_>>()
+            );
+            return event;
+        }
         let _ = voice_ws_revision::persist_final_revision(
             state,
             FinalRevision {

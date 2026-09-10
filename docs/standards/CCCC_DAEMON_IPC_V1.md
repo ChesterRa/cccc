@@ -1784,9 +1784,15 @@ peer. Its startup runtime config (Runtime-derived execution surface, `command`,
 env/secrets, scope, submit behavior) is copied from the current stable foreman actor so the user
 does not configure a second runtime profile. The foreman's enabled/running state
 does not affect assistant config inheritance. If no foreman actor exists,
-enabling Voice Secretary fails. If the group is already running, the daemon
-starts or restarts this assistant actor as needed; disabling Voice Secretary
-stops/removes the actor and its private env.
+enabling Voice Secretary fails. An explicit `enabled=true` request also enables
+the internal actor and, if the group is already running, starts it as needed.
+Saving configuration alone MUST NOT start a stopped actor. Startup confirmation
+and `health.actor.running` MUST use the runtime owner's live state; a managed
+session does not return a traditional PTY launch status, and a retained error
+record does not prove it is running. Structured external runtimes retain their
+enabled/Group-running semantics. A failed start rolls back assistant settings,
+actor configuration, and private env. Disabling Voice Secretary stops/removes
+the actor and its private env.
 
 Args:
 ```ts
@@ -2959,7 +2965,7 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
-- A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
+- A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. For both Actors and Voice Analyst, execution-policy overrides MUST be applied to the app-server; the remote TUI MUST attach without approval, sandbox, or shell-environment policy overrides. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
 - A daemon-launched `claude` actor MUST use one CCCC-owned Claude Agent View background session and MUST start `claude attach` against that exact session. The resolved executable and each observed live worker MUST independently report Claude Code 2.1.259 or newer; their versions need not match. Agent View can retain older workers after upgrading the supervisor and migrate an idle session to a newer worker, so a supported version change alone MUST NOT invalidate the same managed session. CCCC MUST continue validating exact session identity, the protocol-v1 control response shape, and the credential-file boundary; unsupported or unverifiable versions, invalid protocol responses, and credential-boundary violations MUST fail closed. CCCC observes turn ownership and terminal settlement from the append-only provider transcript. A single retryable control-query failure MUST NOT invalidate a still-live session; sustained inability to verify liveness or confirmed job absence MUST disconnect it. CCCC owns background/session/attach, name, MCP identity, autonomy, and resume arguments. Runtime Profile environment values MUST be merged into one stable, owner-scoped, CCCC-protected settings file because Agent View deliberately strips arbitrary process environment from persisted jobs and stores that file path in its durable respawn metadata; raw values MUST NOT appear in the job record, terminal command, receipt, or logs. An ordinary process stop MUST retain this file while the durable session receipt remains resumable. The copy MUST be atomically replaced when that owner's effective settings change and removed when the managed session identity, Actor, or Group is retired. Stop MUST report success only after the Agent View job is confirmed absent. Start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, and the complete effective Claude launch identity, including content of file-backed settings and prompt inputs, still match. A live idle matching session MAY be re-adopted; an active, ambiguous, copied, or identity-mismatched session MUST fail or start fresh according to the existing receipt boundary and MUST NOT be guessed. Legacy Claude Hook and print-mode receipts MUST NOT be resumed.
 - A daemon-launched `grok` actor MUST use one CCCC-owned managed session. CCCC starts a dedicated private Grok leader, connects its ACP observer, and attaches the native writable Grok TUI to the same provider session. It injects the actor-scoped CCCC MCP server at session creation and treats structured lifecycle events as working/completion authority. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-terminal Grok receipts MUST NOT be resumed.
 - The Grok ACP observer MUST associate live `_meta.promptId` activity with its local turn and consume matching durable `turn_completed` updates, including `_x.ai/session/update`, for both controlled and native turns. A `send_now` cancellation MUST settle the old turn before the next native input is associated; a delayed prompt RPC response or duplicate terminal MUST NOT settle the new turn or consume its sources. A turn ending before prompt-bearing activity MAY use the persisted session-scoped event sequence following its user record as its completion boundary, never wall-clock timing. Replay records MUST NOT admit controlled or native input. Uncorrelated `prompt_complete` notifications remain non-authoritative. OpenCode and Kilo use their ordered backend event stream as described below.
@@ -6770,3 +6776,23 @@ checkpoint failed. These checkpoints have
 once that session has a final cloud revision. Provider errors are sanitized;
 `recovered_text` on an error contains only recognized non-document speech for
 recovery into the originating composer, not an automatic Agent request.
+
+A complete final revision MUST NOT be submitted while any nonempty cloud
+checkpoint lacks acknowledgement. Final revision persistence is not proof of
+checkpoint or semantic-input delivery. In this case `final_asr_text` MUST report
+`transcript_persistence=failed`, `transcript_persisted=false`, and
+`transcript_pending_segments`, in audio-time order. Each pending record contains
+the original daemon `segment_id`, `text`, `start_ms`, and `end_ms`; an uncertain
+write acknowledgement MUST retain its original idempotency key too.
+
+The browser retries these records sequentially through the existing transcript
+append operation using the recording's Group, session, document, language, and
+model. Each retry is stable live input (`is_final=true`, `flush=true`,
+`transcript_stage=live`, backend `external_provider_asr_streaming`). Only after
+all acknowledgements may a complete final result be retried as `final-asr`.
+Pending checkpoints take precedence over `partial=true`: partial results MUST
+also recover their pending records, but MUST NOT submit a superseding final
+revision. A failed browser checkpoint retry stops the sequence and retains the
+remaining IDs and text in its error details. The Web UI reports failure and
+returns this unconfirmed text to the original Group's composer for user recovery;
+it MUST NOT dispatch it automatically, mark it committed, or retry indefinitely.

@@ -262,11 +262,10 @@ export function ChatComposer({
     scale: rootFontScale,
   });
   const baseComposerHeight = (isSmallScreen ? 44 : 48) * rootFontScale;
-  const desktopComposerHeight = composerResize.minimum;
   const minComposerHeight = isSmallScreen
     ? Math.max(baseComposerHeight + 6, 52)
-    : desktopComposerHeight;
-  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : composerResize.height;
+    : composerResize.minHeight;
+  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : composerResize.maxHeight;
   const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
 
@@ -1126,7 +1125,9 @@ export function ChatComposer({
               <div
                 className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-none px-4 py-3 text-transparent"
                 style={{
-                  minHeight: `${minComposerHeight}px`,
+                  minHeight: isSmallScreen
+                    ? `${minComposerHeight}px`
+                    : `var(--composer-min-height, ${minComposerHeight}px)`,
                   maxHeight: isSmallScreen
                     ? `${maxComposerHeight}px`
                     : `var(--composer-max-height, ${maxComposerHeight}px)`,
@@ -1149,7 +1150,9 @@ export function ChatComposer({
                 showSuggestedUserMessage ? "pl-11 pr-4" : "px-4",
               )}
               style={{
-                minHeight: `${minComposerHeight}px`,
+                minHeight: isSmallScreen
+                  ? `${minComposerHeight}px`
+                  : `var(--composer-min-height, ${minComposerHeight}px)`,
                 maxHeight: isSmallScreen
                   ? `${maxComposerHeight}px`
                   : `var(--composer-max-height, ${maxComposerHeight}px)`,

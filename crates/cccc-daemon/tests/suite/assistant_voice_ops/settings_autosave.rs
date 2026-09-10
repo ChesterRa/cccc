@@ -48,3 +48,43 @@ fn recognition_settings_save_without_starting_an_enabled_but_stopped_actor() {
         1
     );
 }
+
+#[test]
+fn external_voice_secretary_tracks_group_enablement_without_a_local_process() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("voice", "").expect("group");
+    store
+        .mutate(&group.group_id, |doc| {
+            let mut foreman = Actor::new("foreman");
+            foreman.runtime = ActorRuntime::WebModel;
+            doc.actors.push(foreman);
+            Ok(())
+        })
+        .expect("external foreman");
+    for running in [false, true, false] {
+        store
+            .mutate(&group.group_id, |doc| {
+                doc.running = running;
+                Ok(())
+            })
+            .expect("group state");
+        let enabled = ok(
+            &home,
+            "assistant_settings_update",
+            json!({"group_id":group.group_id,"patch":{"enabled":true}}),
+        );
+        assert_eq!(enabled.result["actor_started"], running);
+        assert_eq!(
+            enabled.result["assistant"]["health"]["actor"]["running"],
+            running
+        );
+        assert_eq!(
+            enabled.result["assistant"]["health"]["actor"]["pid"],
+            Value::Null
+        );
+        assert!(cccc_runtime::status(&group.group_id, "voice-secretary").is_err());
+    }
+}

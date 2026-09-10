@@ -93,8 +93,10 @@ cccc update
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Use `cccc update --check` to inspect a website-installer deployment before
-updating it. A pip-owned command deliberately refuses standalone self-update
+Use `cccc update --check` to query the latest channel release and inspect the
+installation owner and native platform requirements without changing the installation
+or running services. It also works for pip-owned commands. Add `--offline` for
+local details without a network request. A pip-owned command refuses standalone self-update
 and prints the package-manager command instead. Both channels install the same
 native product, but each remains owned by the installer that created it. Before
 a pip upgrade, run `cccc daemon stop` and close any foreground CCCC process so
@@ -103,6 +105,12 @@ switch from pip to the website installer in the same command directory, first
 run `python -m pip uninstall cccc-pair`; the standalone installer deliberately
 refuses to overwrite pip-owned files, even with
 `CCCC_ALLOW_REPLACE_EXISTING=1`.
+
+If an older `cccc update` stays on `0.4.35`, use the version-constrained pip
+command above in the Python environment that owns that installation.
+`0.4.35` was the last portable Python release; an unsupported platform can
+silently select it with an unconstrained pip upgrade. The minimum version makes
+that mismatch an explicit error. See the [upgrade FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35).
 
 ### Launch
 
