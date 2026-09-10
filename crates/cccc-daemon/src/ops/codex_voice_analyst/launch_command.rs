@@ -34,7 +34,8 @@ pub(super) fn prepare(
     if !has_web_search {
         remote_tui_prefix.extend(["-c".into(), "web_search=\"live\"".into()]);
     }
-    remote_tui_prefix.extend([
+    // Remote resume clients cannot override permissions owned by app-server.
+    let permission_overrides = [
         "--dangerously-bypass-approvals-and-sandbox".into(),
         "-c".into(),
         "shell_environment_policy.inherit=all".into(),
@@ -42,8 +43,9 @@ pub(super) fn prepare(
         "approval_policy=\"never\"".into(),
         "-c".into(),
         "sandbox_mode=\"danger-full-access\"".into(),
-    ]);
+    ];
     let mut app_server = remote_tui_prefix.clone();
+    app_server.extend(permission_overrides);
     app_server.extend([
         "app-server".into(),
         "--listen".into(),

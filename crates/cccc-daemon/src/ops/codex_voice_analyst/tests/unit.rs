@@ -13,7 +13,7 @@ fn workspace_binding_requires_an_existing_directory() {
 }
 
 #[test]
-fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
+fn default_launch_keeps_permission_overrides_on_app_server_only() {
     let executable = std::env::current_exe().expect("test executable");
     let prepared = launch_command::prepare(
         &[executable.to_string_lossy().into_owned()],
@@ -27,7 +27,18 @@ fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
     );
     assert_eq!(
         &prepared.app_server[prepared.remote_tui_prefix.len()..],
-        ["app-server", "--listen", "ws://127.0.0.1:0"]
+        [
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            "shell_environment_policy.inherit=all",
+            "-c",
+            "approval_policy=\"never\"",
+            "-c",
+            "sandbox_mode=\"danger-full-access\"",
+            "app-server",
+            "--listen",
+            "ws://127.0.0.1:0"
+        ]
     );
     assert!(
         prepared
@@ -88,13 +99,6 @@ fn app_server_launch_matches_the_codex_actor_yolo_policy() {
             "voice",
             "-c",
             "model=\"gpt-5.6-sol\"",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-c",
-            "shell_environment_policy.inherit=all",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "sandbox_mode=\"danger-full-access\"",
         ]
     );
     assert_eq!(
@@ -184,13 +188,6 @@ fn app_server_replaces_actor_host_policy_but_preserves_user_model_options() {
             "gpt-test",
             "-c",
             "web_search=\"live\"",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-c",
-            "shell_environment_policy.inherit=all",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "sandbox_mode=\"danger-full-access\"",
         ]
     );
 }
