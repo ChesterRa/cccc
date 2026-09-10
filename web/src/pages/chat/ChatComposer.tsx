@@ -1,3 +1,6 @@
+import { ComposerResizeHandle } from "./ComposerResizeHandle";
+import { useComposerHeightResize } from "./useComposerHeightResize";
+
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -251,12 +254,19 @@ export function ChatComposer({
   };
 
   const [rootFontScale, setRootFontScale] = useState(readRootFontScale);
+  const footerRef = useRef<HTMLElement>(null);
+  const composerResize = useComposerHeightResize({
+    footerRef,
+    composerRef,
+    enabled: !isSmallScreen,
+    scale: rootFontScale,
+  });
   const baseComposerHeight = (isSmallScreen ? 44 : 48) * rootFontScale;
-  const desktopComposerHeight = 64 * rootFontScale;
+  const desktopComposerHeight = composerResize.minimum;
   const minComposerHeight = isSmallScreen
     ? Math.max(baseComposerHeight + 6, 52)
     : desktopComposerHeight;
-  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : desktopComposerHeight;
+  const maxComposerHeight = isSmallScreen ? 128 * rootFontScale : composerResize.height;
   const composerFontSize = (isSmallScreen ? 15 : 14) * rootFontScale;
   const composerLineHeight = (isSmallScreen ? 24 : 20) * rootFontScale;
 
@@ -933,6 +943,7 @@ export function ChatComposer({
 
   return (
     <footer
+      ref={footerRef}
       className={classNames(
         "relative z-40 flex-shrink-0 border-t px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom,0px)*0.6)] transition-colors sm:px-2.5 sm:pt-2 sm:pb-[calc(0.5rem+env(safe-area-inset-bottom,0px)*0.6)]",
         // The panel background is 90%+ opaque: a backdrop blur under it is
@@ -940,6 +951,9 @@ export function ChatComposer({
         "border-[var(--glass-border)] bg-[var(--glass-panel-bg)]",
       )}
     >
+      {!isSmallScreen ? (
+        <ComposerResizeHandle {...composerResize} label={t("layout:resizeComposer")} />
+      ) : null}
       {/* Reply indicator */}
       {replyTarget && (
         <div
@@ -1113,7 +1127,9 @@ export function ChatComposer({
                 className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-none px-4 py-3 text-transparent"
                 style={{
                   minHeight: `${minComposerHeight}px`,
-                  maxHeight: `${maxComposerHeight}px`,
+                  maxHeight: isSmallScreen
+                    ? `${maxComposerHeight}px`
+                    : `var(--composer-max-height, ${maxComposerHeight}px)`,
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
                   border: "none",
@@ -1134,7 +1150,9 @@ export function ChatComposer({
               )}
               style={{
                 minHeight: `${minComposerHeight}px`,
-                maxHeight: `${maxComposerHeight}px`,
+                maxHeight: isSmallScreen
+                  ? `${maxComposerHeight}px`
+                  : `var(--composer-max-height, ${maxComposerHeight}px)`,
                 fontSize: `${composerFontSize}px`,
                 lineHeight: `${composerLineHeight}px`,
                 border: "none",
@@ -1176,7 +1194,9 @@ export function ChatComposer({
                   isDark ? "text-white/22" : "text-gray-400/80",
                 )}
                 style={{
-                  maxHeight: `${maxComposerHeight}px`,
+                  maxHeight: isSmallScreen
+                    ? `${maxComposerHeight}px`
+                    : `var(--composer-max-height, ${maxComposerHeight}px)`,
                   fontSize: `${composerFontSize}px`,
                   lineHeight: `${composerLineHeight}px`,
                 }}

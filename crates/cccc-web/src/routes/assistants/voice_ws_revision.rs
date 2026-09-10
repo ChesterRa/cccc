@@ -55,7 +55,7 @@ pub(super) async fn persist_final_revision(
             PersistenceStatus::Persisted
         }
         Ok(response) => {
-            tracing::warn!(?response.error, "final SenseVoice revision was rejected");
+            tracing::warn!(?response.error, "final ASR revision was rejected");
             let error = response.error.map_or_else(
                 || json!({"code":"daemon_rejected","message":"daemon rejected final transcript"}),
                 |error| json!({"code":error.code,"message":error.message}),
@@ -64,7 +64,7 @@ pub(super) async fn persist_final_revision(
             PersistenceStatus::Failed
         }
         Err(error) => {
-            tracing::warn!(%error, "final SenseVoice revision could not be persisted");
+            tracing::warn!(%error, "final ASR revision could not be persisted");
             annotate(
                 final_asr,
                 "failed",
@@ -130,7 +130,7 @@ fn final_revision_args(
         "trigger":{
             "trigger_kind":trigger_kind,
             "capture_mode":"service",
-            "recognition_backend":"assistant_service_local_asr_final",
+            "recognition_backend":if final_asr["backend"] == "external_provider_asr_final" { "external_provider_asr_final" } else { "assistant_service_local_asr_final" },
             "final_model_id":model_id,
         }
     })
@@ -141,6 +141,19 @@ fn final_revision_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_final_revision_preserves_provider_model_and_stage() {
+        let args = final_revision_args("g_test","session-1","docs/voice-secretary/meeting.md","zh-CN","bailian:fun-asr-realtime","external_asr_stop",
+            &json!({"ok":true,"text":"云端终稿","backend":"external_provider_asr_final","model_id":"bailian:fun-asr-realtime"})).expect("args");
+        assert_eq!(
+            args["trigger"]["recognition_backend"],
+            "external_provider_asr_final"
+        );
+        assert_eq!(args["source_model_id"], "bailian:fun-asr-realtime");
+        assert_eq!(args["transcript_stage"], "final");
+        assert_eq!(args["supersede_stage"], "live");
+    }
 
     #[test]
     fn final_revision_is_revision_only_and_supersedes_live_segments() {

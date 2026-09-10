@@ -584,5 +584,7 @@
     "empty": "此 Group 暂无 Actor。",
     "connecting": "连接中…",
     "switchTo": "切换到{{view}}"
-  }
+  },
+  "voiceSecretaryExternalAsrNotReady": "请先在设置 > 助手中配置百炼或火山的凭证。",
+  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR 连接失败，请检查服务端网络和供应商配置。"
 }

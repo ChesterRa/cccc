@@ -401,12 +401,16 @@ export function voiceTranscriptItemsFromMeetingSession(
       const updatedAt =
         assistantVoiceTimestampMs(String(record.updated_at || record.created_at || "")) ||
         Date.now() - index;
+      // A document transcript contains multiple recording sessions, each of
+      // which may use the same provider segment ID (for example final-asr).
+      const segmentSessionId = String(record.session_id || sessionId).trim();
+      const segmentId = String(record.segment_id || "").trim() || `segment-${index}`;
       const item = createVoiceTranscriptItem({
-        id: String(record.segment_id || "").trim() || `${session.session_id}-segment-${index}`,
+        id: JSON.stringify([segmentSessionId, segmentId]),
         cleanText: text,
         metadata: {
           mode: "document",
-          sessionId: String(session.session_id || "").trim(),
+          sessionId: segmentSessionId,
           documentPath,
           language: String(record.language || session.language || "").trim(),
           source,

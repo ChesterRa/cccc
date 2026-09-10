@@ -32,7 +32,7 @@ fn wildcard_cors_supports_explicit_bearer_requests() {
 }
 
 #[test]
-fn wildcard_cors_does_not_authorize_cookie_writes_or_websockets() {
+fn cookie_writes_keep_origin_checks_when_websocket_headers_do_not() {
     isolated("cookie", true, "");
 }
 
@@ -146,7 +146,7 @@ async fn configured_origin_worker() {
                 .expect("cookie request");
             assert_eq!(
                 response.status(),
-                if case == "exact" {
+                if case == "exact" || websocket {
                     StatusCode::OK
                 } else {
                     StatusCode::FORBIDDEN
@@ -154,6 +154,22 @@ async fn configured_origin_worker() {
                 "websocket={websocket}"
             );
         }
+    }
+    if case == "cookie" {
+        // Removing the Origin gate must not grant an unauthenticated request access.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/access-tokens")
+                    .header(header::HOST, "cccc.example")
+                    .header(header::ORIGIN, origin)
+                    .header(header::UPGRADE, "websocket")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("unauthenticated request");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
     if case == "local" {
         for source in [

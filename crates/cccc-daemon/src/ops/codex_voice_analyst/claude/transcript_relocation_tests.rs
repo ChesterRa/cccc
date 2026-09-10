@@ -103,7 +103,7 @@ async fn stale_main_project_pointer_recovers_worktree_history_and_fences_old_mes
 }
 
 #[tokio::test]
-async fn refuses_to_follow_a_second_move_after_initialization() {
+async fn missing_active_history_waits_then_fails_without_switching_session() {
     let fixture = Fixture::new();
     let mut follower = fixture.follower();
     follower
@@ -119,6 +119,8 @@ async fn refuses_to_follow_a_second_move_after_initialization() {
             .join("moved.jsonl"),
     )
     .expect("complete rename in fixture");
+    assert!(follower.poll().await.expect("migration grace").is_empty());
+    tokio::time::sleep(super::super::transcript_continuity::RELOCATION_TIMEOUT).await;
     assert_eq!(
         follower
             .poll()
@@ -127,6 +129,104 @@ async fn refuses_to_follow_a_second_move_after_initialization() {
             .kind(),
         io::ErrorKind::NotFound
     );
+}
+
+#[tokio::test]
+async fn active_worktree_round_trips_preserve_unread_and_partial_records() {
+    for copy_move in [false, true] {
+        let fixture = Fixture::new();
+        let mut follower = fixture.follower();
+        follower.initialize().await.expect("resume history");
+        for (source, target) in [
+            (&fixture.actual, &fixture.old),
+            (&fixture.old, &fixture.actual),
+            (&fixture.actual, &fixture.old),
+        ] {
+            // Consume half a record before relocation; the remainder is unread.
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(source)
+                .expect("transcript relocation fixture operation");
+            file.write_all(b"{\"type\":\"user\",")
+                .expect("transcript relocation fixture operation");
+            assert!(follower.poll().await.expect("partial input").is_empty());
+            file.write_all(b"\"message\":{\"content\":\"new work\"}}\n")
+                .expect("transcript relocation fixture operation");
+            drop(file);
+            if copy_move {
+                std::fs::copy(source, target).expect("transcript relocation fixture operation");
+                std::fs::remove_file(source).expect("transcript relocation fixture operation");
+            } else {
+                std::fs::rename(source, target).expect("transcript relocation fixture operation");
+            }
+            // Job metadata still points at the previous directory.
+            let expected = json!({"type":"user","message":{"content":"new work"}});
+            assert_eq!(
+                follower.poll().await.expect("relocate without replay"),
+                [expected]
+            );
+            assert!(follower.poll().await.expect("stale pointer").is_empty());
+            std::fs::write(&fixture.state, json!({"linkScanPath":target}).to_string())
+                .expect("transcript relocation fixture operation");
+            assert!(follower.poll().await.expect("updated pointer").is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn active_relocation_waits_for_missing_or_incomplete_copy() {
+    let fixture = Fixture::new();
+    let mut follower = fixture.follower();
+    follower.initialize().await.expect("initialize follower");
+    let bytes = std::fs::read(&fixture.actual).expect("transcript relocation fixture operation");
+    std::fs::remove_file(&fixture.actual).expect("transcript relocation fixture operation");
+    assert!(
+        follower
+            .poll()
+            .await
+            .expect("missing during move")
+            .is_empty()
+    );
+    std::fs::write(&fixture.old, &bytes[..2]).expect("transcript relocation fixture operation");
+    assert!(follower.poll().await.expect("copy in progress").is_empty());
+    let mut complete = bytes;
+    complete.extend_from_slice(b"{\"type\":\"user\",\"message\":{\"content\":\"next\"}}\n");
+    std::fs::write(&fixture.old, complete).expect("transcript relocation fixture operation");
+    assert_eq!(
+        follower.poll().await.expect("completed copy"),
+        [json!({"type":"user","message":{"content":"next"}})]
+    );
+    assert!(follower.poll().await.expect("poll transcript").is_empty());
+}
+
+#[tokio::test]
+async fn active_relocation_rejects_changed_consumed_prefix_and_ambiguous_candidates() {
+    for ambiguous in [false, true] {
+        let fixture = Fixture::new();
+        let mut follower = fixture.follower();
+        follower.initialize().await.expect("initialize follower");
+        std::fs::rename(&fixture.actual, &fixture.old)
+            .expect("transcript relocation fixture operation");
+        if ambiguous {
+            let other = fixture.config.join("projects/other");
+            std::fs::create_dir_all(&other).expect("transcript relocation fixture operation");
+            std::fs::copy(&fixture.old, other.join(format!("{ID}.jsonl")))
+                .expect("transcript relocation fixture operation");
+        } else {
+            let content = std::fs::read_to_string(&fixture.old)
+                .expect("transcript relocation fixture operation")
+                .replace("old work", "bad work");
+            std::fs::write(&fixture.old, content).expect("transcript relocation fixture operation");
+        }
+        assert_eq!(
+            follower
+                .poll()
+                .await
+                .expect_err("unverifiable history")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 }
 
 #[tokio::test]

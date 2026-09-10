@@ -1,6 +1,11 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
 import {
+  clampComposerHeight,
+  loadComposerHeight,
+  saveComposerHeight,
+} from "../utils/composerHeight";
+import {
   clampPresentationSplitWidth,
   PRESENTATION_SPLIT_DEFAULT_WIDTH,
 } from "../utils/presentationSplitLayout";
@@ -77,6 +82,7 @@ interface UIState {
   sidebarWidth: number;
   isSmallScreen: boolean;
   presentationSplitWidth: number;
+  composerHeight: number;
   chatSessions: Record<string, ChatSessionState>;
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
@@ -101,6 +107,7 @@ interface UIState {
   incrementChatUnread: (groupId: string) => void;
   setSmallScreen: (v: boolean) => void;
   setPresentationSplitWidth: (v: number) => void;
+  setComposerHeight: (v: number) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setGroupWorkView: (groupId: string, view: GroupWorkView) => void;
@@ -302,6 +309,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarWidth: loadSidebarWidth(),
   isSmallScreen: false,
   presentationSplitWidth: loadPresentationSplitWidth(),
+  composerHeight: loadComposerHeight(),
   chatSessions: loadChatSessions(),
   webReadOnly: false,
   sseStatus: "disconnected" as const,
@@ -393,6 +401,11 @@ export const useUIStore = create<UIState>((set) => ({
       };
     }),
   setSmallScreen: (v) => set({ isSmallScreen: v }),
+  setComposerHeight: (v) => {
+    const next = clampComposerHeight(v);
+    saveComposerHeight(next);
+    set({ composerHeight: next });
+  },
   setPresentationSplitWidth: (v) => {
     const next = clampPresentationSplitWidth(v);
     savePresentationSplitWidth(next);

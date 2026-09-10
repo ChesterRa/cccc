@@ -232,16 +232,6 @@ fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {
             "remote Web exposure requires an access token",
         ));
     }
-    if provider == "manual"
-        && public_url.is_empty()
-        && !is_loopback_host(&host)
-        && !environment_flag("CCCC_REMOTE_ALLOW_INSECURE")
-    {
-        return Err(OpError::new(
-            "remote_access_invalid_config",
-            "plain HTTP LAN exposure requires CCCC_REMOTE_ALLOW_INSECURE=1; prefer an HTTPS reverse proxy or encrypted overlay",
-        ));
-    }
     config.insert("provider".into(), Value::String(provider));
     config.insert("mode".into(), Value::String(mode));
     config.insert("web_port".into(), Value::Number(port.into()));

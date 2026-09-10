@@ -1,0 +1,280 @@
+/* This new disclosure is absent from every pre-existing sm+ layout. */
+.voice-mobile-prompt-toggle {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  [data-voice-mobile-sheet].glass-modal {
+    padding: 12px 8px max(8px, env(safe-area-inset-bottom, 0px));
+  }
+  [data-voice-sheet-close] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    top: 4px;
+    right: 4px;
+  }
+  .voice-workspace-device-options [cmdk-item] {
+    min-height: 44px;
+  }
+  [data-voice-sheet-header] {
+    padding: 4px 4px 8px;
+  }
+  [data-voice-header-grid] {
+    gap: 8px;
+    padding-right: 0;
+  }
+  [data-voice-mode-hint] {
+    display: none;
+  }
+  [data-voice-state-bar] {
+    margin-top: 4px;
+    gap: 4px;
+    min-height: 44px;
+    border: 1px solid var(--glass-border-subtle);
+    border-radius: 12px;
+    padding: 0 4px;
+  }
+  [data-voice-state-bar] > [role="switch"] {
+    min-height: 44px;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+  }
+  [data-voice-state-bar] > span {
+    min-height: 0;
+    padding: 4px;
+    white-space: normal;
+    background: transparent;
+  }
+  [data-voice-mode-tabs] > button {
+    min-height: 44px;
+    padding-inline: 8px;
+  }
+  [data-voice-device-row] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) 44px;
+    gap: 6px;
+  }
+  [data-voice-device-row][data-voice-has-refresh="false"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  }
+  [data-voice-setting] {
+    display: block;
+    min-width: 0;
+  }
+  [data-voice-setting] > span {
+    display: none;
+  }
+  [data-voice-setting] > button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 8px;
+    border-radius: 12px;
+  }
+  [data-voice-setting="browser-microphone"] > span:last-child {
+    display: flex;
+    height: 44px;
+    padding: 0 8px;
+    border-radius: 12px;
+  }
+  [data-voice-refresh] {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border-radius: 12px;
+  }
+  [data-voice-record] {
+    grid-column: 1 / -1;
+    min-height: 44px;
+    justify-content: center;
+  }
+  [data-voice-workspace-body][data-voice-body-mode="prompt"],
+  [data-voice-workspace-body][data-voice-body-mode="instruction"] {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 8px 0 0;
+    gap: 8px;
+  }
+  [data-voice-request-panel] {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 8px;
+    gap: 8px;
+  }
+  [data-voice-request-card="prompt"] {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  [data-voice-request-card="prompt"] [data-voice-request-title] {
+    display: none;
+  }
+  .voice-mobile-prompt-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 44px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    color: var(--color-text-primary);
+    font-size: 0.75rem;
+    text-align: left;
+  }
+  .voice-mobile-prompt-toggle:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+  }
+  [data-voice-prompt-open="false"] [data-voice-prompt-description] {
+    display: none;
+  }
+  [data-voice-prompt-description] {
+    margin-top: 4px;
+    padding: 6px 8px;
+    border: 0;
+    background: transparent;
+  }
+  [data-voice-activity] {
+    flex: 1;
+    min-height: 0;
+    padding: 8px;
+  }
+  [data-voice-activity] > div:first-child {
+    flex-shrink: 0;
+    min-height: 44px;
+  }
+  [data-voice-activity] button,
+  [data-voice-activity] a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  [data-voice-activity-scroll] {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overscroll-behavior-y: contain;
+    padding-bottom: 8px;
+    scroll-padding-block: 8px;
+  }
+  /* Keep typed instructions usable without consuming the activity viewport. */
+  [data-voice-request-card="instruction"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  [data-voice-request-card="instruction"] [data-voice-request-title] {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+  }
+  [data-voice-instruction-input] {
+    display: block;
+    margin-top: 0;
+    min-height: 44px;
+    height: 2.75rem;
+    max-height: 4.5rem;
+    resize: none;
+    padding: 6px 8px;
+  }
+  [data-voice-instruction-send] {
+    margin-top: 0;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+  [data-voice-workspace-body][data-voice-body-mode="document"] {
+    display: flex;
+    overflow: hidden;
+    padding: 8px 0 0;
+  }
+  [data-voice-document-panel] {
+    flex: 1;
+    min-width: 0;
+    padding: 8px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  [data-voice-document-header] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 0 0 8px;
+  }
+  [data-voice-document-heading] {
+    flex: none;
+    width: 100%;
+  }
+  [data-voice-document-title] {
+    font-size: 1rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  [data-voice-document-meta] {
+    margin-top: 4px;
+    gap: 4px 6px;
+  }
+  [data-voice-document-views] {
+    flex-basis: 100%;
+  }
+  [data-voice-document-views] > button {
+    flex: 1;
+  }
+  [data-voice-document-panel] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  [data-voice-document-location] {
+    flex-basis: 100%;
+    border-radius: 8px;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+  }
+  [data-voice-document-path] {
+    flex: 1 1 12rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  [data-voice-document-actions] {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+  [data-voice-document-panel] > div:last-child {
+    flex: 1 0 min(8rem, 24dvh);
+    min-height: 0;
+    margin-top: 8px;
+    padding: 12px;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 12px;
+  }
+  [data-voice-document-panel] > div:last-child:has(> textarea) {
+    padding: 0;
+  }
+  [data-voice-document-panel] textarea {
+    min-height: 0;
+    resize: none;
+    padding: 12px;
+  }
+  [data-voice-document-panel] .markdown-body {
+    font-size: 0.8125rem;
+    line-height: 1.65;
+  }
+  [data-voice-document-panel] .markdown-body h1 {
+    font-size: 1.25rem;
+    line-height: 1.4;
+  }
+  [data-voice-document-panel] .markdown-body h2 {
+    font-size: 1.0625rem;
+    line-height: 1.4;
+  }
+  [data-voice-document-panel] .markdown-body h3 {
+    font-size: 1rem;
+  }
+}

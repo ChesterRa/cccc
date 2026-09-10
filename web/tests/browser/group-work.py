@@ -252,19 +252,26 @@ with tempfile.TemporaryDirectory(
         settings_panel = "[data-app-settings-menu]"
 
         def preference(index, value, container=settings_panel):
-            js(f'''(() => {{
-              const select = document.querySelector({json.dumps(container)}).querySelectorAll('select')[{index}];
-              select.value = {json.dumps(value)};
-              select.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            }})()''')
-            time.sleep(0.2)
+            name = ("theme", "textScale", "language")[index]
+            trigger = container + f' [data-appearance-select="{name}"]'
+            menu = f'[data-appearance-menu="{name}"][data-state="open"]'
+            js(f"document.querySelector({json.dumps(trigger)}).scrollIntoView({{block: 'nearest'}})")
+            point_click(trigger)
+            wait(f"(() => {{ const e = document.querySelector({json.dumps(menu)}); return !!e && getComputedStyle(e).opacity === '1'; }})()")
+            option = menu + f' [role="menuitemradio"][data-value="{value}"]'
+            js(f"document.querySelector({json.dumps(option)}).scrollIntoView({{block: 'nearest'}})")
+            point_click(option)
+            wait(f"document.querySelector({json.dumps(trigger)}).dataset.value === {json.dumps(value)}")
+            wait(f"!document.querySelector({json.dumps(menu)}) && document.activeElement === document.querySelector({json.dumps(trigger)})")
+            assert js(f"!!document.querySelector({json.dumps(container)})")
+            assert js(f"document.activeElement === document.querySelector({json.dumps(trigger)})")
 
         def menu_bounds(selector):
             bounds = rect(selector)
             assert bounds["x"] >= 0 and bounds["y"] >= 0, bounds
             assert bounds["right"] <= js("innerWidth") + 1, bounds
             assert bounds["bottom"] <= js("innerHeight") + 1, bounds
-            assert js(f'''Array.from(document.querySelector({json.dumps(selector)}).querySelectorAll('select')).every(e => e.scrollWidth <= e.clientWidth + 1)''')
+            assert js(f'''Array.from(document.querySelector({json.dumps(selector)}).querySelectorAll('[data-appearance-select]')).every(e => e.scrollWidth <= e.clientWidth + 1)''')
 
         point_click('header [aria-label="Edit group"]')
         point_click('header [aria-label="Context Panel"]')
@@ -272,9 +279,9 @@ with tempfile.TemporaryDirectory(
         point_click(settings_trigger)
         wait('!!document.querySelector("[data-app-settings-menu]")')
         menu_bounds(settings_panel)
-        assert js('document.activeElement === document.querySelector("[data-app-settings-menu] select")')
+        assert js('document.activeElement === document.querySelector("[data-app-settings-menu] [data-appearance-select=theme]")')
         key("Tab")
-        assert js('document.activeElement === document.querySelectorAll("[data-app-settings-menu] select")[1]')
+        assert js('document.activeElement === document.querySelector("[data-app-settings-menu] [data-appearance-select=textScale]")')
         key("Tab", shift=True)
         key("Escape")
         wait('!document.querySelector("[data-app-settings-menu]")')
@@ -289,7 +296,7 @@ with tempfile.TemporaryDirectory(
                 for scale in ["125", "70", "100"]:
                     preference(1, scale)
                     menu_bounds(settings_panel)
-                    assert js('document.querySelectorAll("[data-app-settings-menu] select")[1].value') == scale
+                    assert js('document.querySelector("[data-app-settings-menu] [data-appearance-select=textScale]").dataset.value') == scale
                 shot("settings-" + locale + ("-dark" if dark else "-light"))
                 key("Escape")
                 wait('!document.querySelector("[data-app-settings-menu]")')
@@ -301,11 +308,11 @@ with tempfile.TemporaryDirectory(
         assert js('localStorage.getItem("cccc-theme")') == "dark"
         preference(0, "light")
         preference(2, "ja")
-        assert js('document.querySelectorAll("[data-app-settings-menu] select")[2].value') == "ja"
+        assert js('document.querySelector("[data-app-settings-menu] [data-appearance-select=language]").dataset.value') == "ja"
         assert js('localStorage.getItem("cccc-language")') == "ja"
         preference(2, "en")
         # The full production SettingsModal must own focus after the popover closes.
-        point_click(settings_panel + " button:last-child")
+        point_click(settings_panel + " > button:last-child")
         wait('!!document.querySelector("[aria-modal=true]") && !document.querySelector("[data-app-settings-menu]")')
         time.sleep(0.3)
         assert js('document.activeElement.closest("[aria-modal=true]")!==null')
@@ -313,14 +320,14 @@ with tempfile.TemporaryDirectory(
         wait('!document.querySelector("[aria-modal=true]")')
         assert js('document.activeElement.matches("[data-app-settings-trigger]")')
         point_click(settings_trigger)
-        point_click(settings_panel + " button:first-of-type")
+        point_click(settings_panel + " > button:first-of-type")
         wait('!!document.querySelector("[aria-modal=true]")')
         assert js('groupWorkProbe.actions.includes("onOpenAccount")')
         key("Escape")
         wait('!document.querySelector("[aria-modal=true]")')
         js("groupWorkProbe.setCanAccessAccount(false)")
         point_click(settings_trigger)
-        assert js('document.querySelectorAll("[data-app-settings-menu] button").length') == 1
+        assert js('document.querySelectorAll("[data-app-settings-menu] > button").length') == 1
         key("Escape")
         js("groupWorkProbe.setCanAccessAccount(true)")
         point_click(settings_trigger)

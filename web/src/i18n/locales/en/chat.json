@@ -584,5 +584,7 @@
     "empty": "No Actors in this Group yet.",
     "connecting": "Connecting…",
     "switchTo": "Switch to {{view}}"
-  }
+  },
+  "voiceSecretaryExternalAsrNotReady": "Configure Bailian or Volcengine credentials in Settings > Assistants first.",
+  "voiceSecretaryExternalAsrConnectionFailed": "External ASR connection failed. Check the server network and provider configuration."
 }

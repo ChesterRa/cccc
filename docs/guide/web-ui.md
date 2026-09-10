@@ -27,8 +27,10 @@ The Web UI has these main areas:
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Settings and more** collects theme, text size, language, account and the full settings entry.
-Appearance choices show their current values and can be selected directly. Narrow headers use
-the existing overflow menu, with the same appearance choices and access rules.
+Appearance choices use application menus for theme, text size and language. Selecting an
+option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
+options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
+sheet with the same choices and access rules; choice panels are portalled above its scroll area.
 **Pause Delivery** pauses message delivery; **Stop All Agents** stops the Actors themselves.
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
@@ -394,6 +396,43 @@ Click on an agent's tab to see its terminal output.
 1. Type in the message input at the bottom
 2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
+On desktop, drag the separator above the composer upward to increase its height
+limit. The input still grows with its contents and shrinks when cleared; dragging
+does not reserve an empty block. Double-click resets the limit, and a focused
+separator accepts Up/Down (16 base pixels), Home (minimum), and End (maximum).
+The preference is stored locally in base-font pixels and scales with text size.
+The effective limit is recalculated as the panel shrinks, capped at 60% of the
+panel while reserving message space and accounting for the other composer rows.
+The separator is absent below 768 px; mobile message scrolling and the existing
+input expansion control remain unchanged. The isolated regression is
+`bash web/tests/browser/composer-resize.sh` against a Vite server on port 5190
+(`CCCC_COMPOSER_RESIZE_URL` overrides the fixture URL).
+
+On phones narrower than 640 px, the Voice Secretary sheet keeps language,
+microphone and device refresh on one row. Prompt-mode help starts collapsed;
+the Activity area uses the remaining height and scrolls independently, so the
+last reply can be read without scrolling the control header. Instruction mode
+places the compact text input and Send button side by side. Document mode stacks
+the heading, view switch, metadata and actions at full width; paths wrap, markdown
+headings use smaller phone sizes, and document content scrolls within the available
+space. Wider layouts use
+the existing workspace arrangement. The isolated UI regression is
+`bash web/tests/browser/voice-workspace-mobile.sh`; its synthetic device and ASR
+transport boundaries validate controls and layout, not recognition accuracy.
+`bash web/tests/browser/voice-workspace-modes.sh before` captures a baseline before
+a layout change; `bash web/tests/browser/voice-workspace-modes.sh after` checks all
+three modes at 390×844, both themes, and 100%/125% font sizes. It also captures
+640/1024/1440 px desktop baselines for each mode and theme. This matrix uses the
+Vite fixture on port 5555 and writes PNGs and measured bounds under
+`/tmp/cccc-voice-workspace-modes/`. Follow with
+`bash web/tests/browser/voice-workspace-modes-controls.sh` for long-copy, touch
+scrolling, and repeated edit/preview/transcript transitions.
+`uv run --no-project --with pillow python web/tests/browser/voice-workspace-modes-compare.py`
+checks recorded layout improvements and desktop pixels. The paired desktop CSS
+captures isolate compositor edge noise; original before/after PNGs and geometry
+are retained too. The paired CSS comparison measures stylesheet effects on the current markup;
+use the separate control tests to validate changes to component behavior.
+
 Recipient chips are one-shot: a successful send clears the selection, and switching Groups does not
 restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
 drafts.
@@ -567,7 +606,7 @@ CCCC keeps the token policy simple:
 - localhost-only: direct loopback browser requests are passwordless and use a non-persistent local administrator principal
 - LAN/private network and public URL/tunnel/reverse proxy: an Admin Access Token is mandatory before exposure
 
-`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure also requires `CCCC_REMOTE_ALLOW_INSECURE=1`; prefer an HTTPS reverse proxy, tunnel, or encrypted overlay. Neither override is offered as a Web UI toggle.
+`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure is allowed by default for private-network use, but still requires an Admin Access Token before remote APIs can be used. Prefer an HTTPS reverse proxy, tunnel, or encrypted overlay for untrusted networks.
 
 CCCC adds `frame-ancestors 'self'`, `SAMEORIGIN`, `nosniff`, `no-referrer`, a restrictive permissions policy, and HSTS on HTTPS responses. Supervised CCCC Web processes trust reverse-proxy forwarding headers automatically only while the effective listener is loopback. A supervised LAN/wildcard listener or externally managed reverse proxy must explicitly set `CCCC_WEB_TRUST_PROXY_HEADERS=1` and must overwrite—not append—client-supplied `Forwarded` and `X-Forwarded-*` headers. Direct public listeners should leave this flag unset.
 
@@ -668,3 +707,7 @@ A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message
 content. Full event content remains on the per-Group stream and is subject to
 the same scope check. Administrative capability changes require an Admin token.
+
+WebSocket upgrades do not use Origin as an authorization gate. Login and
+group/actor capability checks remain mandatory; HTTP cookie CSRF retains its
+origin checks.

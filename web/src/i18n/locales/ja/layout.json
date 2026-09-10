@@ -1,4 +1,5 @@
 {
+  "resizeComposer": "入力欄の高さ上限を調整（ダブルクリックでリセット）",
   "openSidebar": "サイドバーを開く",
   "closeSidebar": "サイドバーを閉じる",
   "collapseSidebar": "サイドバーを折りたたむ",

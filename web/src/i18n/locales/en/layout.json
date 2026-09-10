@@ -1,4 +1,5 @@
 {
+  "resizeComposer": "Resize input height limit (double-click to reset)",
   "openSidebar": "Open sidebar",
   "closeSidebar": "Close sidebar",
   "collapseSidebar": "Collapse sidebar",

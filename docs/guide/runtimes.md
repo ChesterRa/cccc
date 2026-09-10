@@ -275,9 +275,14 @@ to troubleshoot a managed-session startup failure.
 
 If a saved transcript path no longer exists after a worktree move, initial
 recovery searches the configured Claude project store for the same session ID.
-Only a unique, validated regular file is accepted. The recovered file is pinned
-for the running session; later relocation, replacement, or ambiguous candidates
-fail explicitly rather than replaying or switching history.
+Only a unique, validated regular file is accepted. Running sessions also follow
+worktree transcript moves when the old path disappears and a unique file for
+the same session preserves the complete consumed byte prefix (SHA-256 checked).
+The reader retains its offset and any partial record, so history is not replayed.
+A missing or incomplete destination has a 10-second grace period; ambiguity,
+changed consumed history, same-path replacement, and paths outside the configured
+Claude store still fail explicitly. This preserves the existing provider session
+and terminal attachment without restarting the Actor.
 
 Direct Grok Actors use the same managed-session contract through Grok's native
 topology: CCCC owns one private leader, connects an ACP observer, and attaches

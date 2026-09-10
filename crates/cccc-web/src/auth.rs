@@ -253,7 +253,8 @@ fn accepts_local_principal(method: &Method, path: &str) -> bool {
 }
 
 fn requires_admin(method: &Method, path: &str) -> bool {
-    path.starts_with("/api/v1/access-tokens")
+    path.starts_with("/api/v1/voice/asr/providers")
+        || path.starts_with("/api/v1/access-tokens")
         || path.starts_with("/api/v1/actor_profiles")
         || path.starts_with("/api/v1/nomcp/")
         || path.starts_with("/api/v1/web-model/")

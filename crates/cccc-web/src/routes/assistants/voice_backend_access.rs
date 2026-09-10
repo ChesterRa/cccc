@@ -16,6 +16,13 @@ pub(super) fn require_local_asr(assistant: &Value) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub(super) fn require_service_asr(assistant: &Value) -> Result<(), ApiError> {
+    if assistant["config"]["recognition_backend"] == "external_provider_asr" {
+        return Ok(());
+    }
+    require_local_asr(assistant)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

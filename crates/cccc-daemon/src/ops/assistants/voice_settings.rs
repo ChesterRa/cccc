@@ -202,7 +202,9 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             }
         }
     }
-    let actor_started = if enabled && after.running {
+    // Configuration updates must not restart a stopped or failed actor.
+    // Only an explicit enable request owns runtime startup.
+    let actor_started = if enabled && after.running && patch.get("enabled") == Some(&json!(true)) {
         match actor_runtime::apply(home, &after, ACTOR_ID, "actor.start") {
             Ok(Some(status)) if status.running => true,
             Ok(None)

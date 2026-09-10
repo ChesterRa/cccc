@@ -27,6 +27,77 @@ Chinese and Japanese, menu lifecycle and focus, and real xterm touch protocols.
 It uses a temporary Chrome profile and synthetic HTTP, with no microphone,
 provider or daemon calls. These checks do not replace iPhone Safari QA.
 
+## External realtime ASR: Bailian and Volcengine
+
+Select **Settings > Assistants > Recognition location > External provider ASR**.
+Choose a provider, configure its credentials, save the provider configuration,
+and then save the Group settings. Provider selection is Group-specific;
+credentials/model settings are shared by this CCCC service instance and can only
+be managed by administrators. Existing recordings retain the provider/model
+selected at start; changes apply to subsequent recordings.
+
+- **Alibaba Cloud Bailian**: API Key, Beijing or Singapore region, optional
+  Workspace ID, and either `fun-asr-realtime` (default) or
+  `paraformer-realtime-v2`. A Workspace ID selects the region's dedicated
+  `maas.aliyuncs.com` endpoint; leaving it empty uses the supported DashScope
+  endpoint for that region. API keys must match the selected region/workspace.
+- **Volcengine Doubao**: the optimized bidirectional `bigmodel_async` endpoint.
+  New-console accounts use **API Key**; legacy accounts use **App ID + Access
+  Token**. Select the purchased 1.0/2.0 duration/concurrent Resource ID; the
+  default is `volc.seedasr.sauc.duration`. Streaming language detection is owned
+  by the Volcengine model; the local language selection is not sent as an
+  unsupported forced-language parameter.
+
+**Test connection** checks the saved credentials/connection (and Bailian task
+admission) without sending microphone audio. It is not a recognition-accuracy
+or available-quota guarantee. Real recognition requires an enabled, funded
+provider account and network access from the CCCC server to the provider WSS
+endpoint. Audio leaves the CCCC server for the chosen provider and may incur
+provider charges.
+
+Credentials are stored separately from Group/assistant configuration, in
+`CCCC_HOME/config/voice-asr-providers.json`, using atomic owner-only writes on
+Unix. Read APIs return presence/configured flags rather than credentials.
+Blank credential inputs preserve the stored values; **Clear provider
+credentials** explicitly removes them. Browser code never receives stored keys,
+and vendor response bodies/credential headers are not relayed in errors.
+
+External recording reuses the browser's 16 kHz mono PCM16 WebSocket transport,
+recording lease and bounded segmented storage. Audio is packaged in 200 ms
+chunks. Volcengine uses incremental (`single`) utterance results, which are
+accumulated by timestamp instead of retransmitting the complete meeting on
+every update. Bailian waits for `task-started` before audio; Volcengine's optimized
+stream starts sending audio without waiting for a nonexistent task-started event.
+Stopping flushes the remaining PCM, requests the provider's final result, and
+waits for explicit completion before emitting the existing `final_asr_text` and
+`closed` events. Empty captures close without submitting an empty recognition.
+
+For document capture, the server buffers stable provider sentences and appends
+them with idempotent IDs at the configured document-update interval. Disabling
+automatic updates (`auto_document_max_window_seconds: null`) defers submission
+until recording ends; live subtitles still arrive immediately. Stop and recovery
+flush pending text regardless of the interval. The browser does not append
+duplicate cloud checkpoints. Complete final results supersede live revisions
+through the existing transcript API. Provider completion is separate from saving:
+a failed last checkpoint is retried with its original segment ID, and the final
+text is still returned with persistence status so the browser can retry saving.
+Connection failures retain known document segments and recover available text to
+the composer for non-document capture. A disconnected document recording gets a
+bounded attempt to finalize its provider stream. Lease release is fenced to its
+owner and also runs when the handler is cancelled.
+
+This initial external integration is realtime WebSocket ASR. The existing HTTP
+file-transcription endpoint remains local-ASR-only. Cloud capture does not invoke
+local SenseVoice final ASR or local speaker separation. Provider session/quota
+limits can be stricter than local recording limits; failures stop capture
+explicitly rather than silently reconnecting/replaying billable audio.
+
+Protocol references:
+- [Bailian realtime WebSocket](https://help.aliyun.com/zh/model-studio/fun-asr-realtime-websocket-api)
+- [Bailian client events](https://help.aliyun.com/zh/model-studio/fun-asr-client-events)
+- [Bailian server events](https://help.aliyun.com/zh/model-studio/fun-asr-server-events)
+- [Volcengine streaming ASR](https://www.volcengine.com/docs/6561/1354869)
+
 ## Local ASR
 
 Open **Settings > Assistants**, enable Voice Secretary, select **Local ASR**, and
@@ -242,3 +313,21 @@ Native model installation is a Web-owned boundary: the Web UI manages the
 bundled sherpa-onnx model cache, while the daemon reports
 `assistant_voice_model_install=false` in daemon capabilities. Callers must
 inspect that capability instead of assuming a daemon operation is available.
+
+### Recognition settings save automatically
+
+Recognition backend, external provider, and document update switches save when changed.
+The document interval saves when the input loses focus or Enter is pressed. Failed
+saves show an error and restore the previous settings. These group configuration
+updates do not start the Voice Secretary actor; only an explicit enable request
+starts it. Provider credentials still use their separate save action. Changes to
+recognition settings apply to the next recording.
+
+New Volcengine configurations default to API Key authentication and ASR 2.0 hourly.
+Existing credentials, authentication modes, and resource versions are preserved.
+Choose credentials by their field names in the speech console, not by the age of
+an account: API Key and App ID + Access Token are separate authentication methods.
+Secret Key is not used by this streaming API. The selected model version and
+billing plan must be enabled for that account. Connection tests distinguish a
+known resource-not-granted rejection from authentication failure, unspecified
+access denial, and quota limits without exposing upstream response bodies.

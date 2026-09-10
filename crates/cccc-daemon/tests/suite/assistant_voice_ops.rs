@@ -7,6 +7,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+#[path = "assistant_voice_ops/settings_autosave.rs"]
+mod settings_autosave;
+
 #[path = "assistant_voice_ops/voice_session_update.rs"]
 mod voice_session_update;
 

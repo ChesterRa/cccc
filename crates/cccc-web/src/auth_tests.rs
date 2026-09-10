@@ -1,5 +1,4 @@
 use super::*;
-use axum::body::Body;
 
 #[test]
 fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {

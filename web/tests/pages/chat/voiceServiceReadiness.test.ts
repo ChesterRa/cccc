@@ -88,3 +88,24 @@ describe("voiceServiceReadiness", () => {
     ).toBe("sherpa_onnx_streaming");
   });
 });
+
+it.each([true, false])(
+  "routes external ASR through service capture with configured=%s",
+  (configured) => {
+    const readiness = resolveVoiceServiceReadiness({
+      assistant: {
+        assistant_id: "voice_secretary",
+        kind: "voice_secretary",
+        enabled: false,
+        lifecycle: "idle",
+        health: { service: { ready: configured, provider: "bailian" } },
+        config: { recognition_backend: "external_provider_asr" },
+      },
+    });
+    expect(readiness).toMatchObject({
+      serviceAsrReady: true,
+      serviceAsrConfigured: configured,
+      assistantEnabled: false,
+    });
+  },
+);

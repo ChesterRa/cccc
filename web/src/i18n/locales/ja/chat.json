@@ -584,5 +584,7 @@
     "empty": "この Group にはまだ Actor がいません。",
     "connecting": "接続中…",
     "switchTo": "{{view}}に切り替え"
-  }
+  },
+  "voiceSecretaryExternalAsrNotReady": "設定 > アシスタントで Bailian または Volcengine の認証情報を設定してください。",
+  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR に接続できません。サーバーのネットワークとプロバイダー設定を確認してください。"
 }

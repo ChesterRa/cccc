@@ -72,6 +72,7 @@ export function retryVoiceAssistantFinalRevision(
     text: string;
     language: string;
     modelId?: string;
+    recognitionBackend?: string;
   },
 ): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
   const modelId = String(payload.modelId || "").trim();
@@ -92,7 +93,10 @@ export function retryVoiceAssistantFinalRevision(
     trigger: {
       trigger_kind: "browser_persistence_retry",
       capture_mode: "service",
-      recognition_backend: "assistant_service_local_asr_final",
+      recognition_backend:
+        payload.recognitionBackend === "external_provider_asr_final"
+          ? "external_provider_asr_final"
+          : "assistant_service_local_asr_final",
       final_model_id: modelId,
     },
     by: "user",

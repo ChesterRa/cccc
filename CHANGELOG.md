@@ -7,8 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- **Recording history preserves separate sessions.** Final ASR rows use session-scoped identities, so a later recording no longer replaces an earlier one in Transcript.
+- **Group import keeps the latest directory selection.** Late directory responses cannot overwrite a newer choice or revive a closed picker.
+- **External ASR preserves final text after checkpoint failures and honors document-update settings.** Completed provider packets still enter recovery with idempotent segment IDs and a retryable final-text response. Cloud document checkpoints now respect the configured interval or stop-only mode while subtitles remain live.
 - **Grok Actors stay running after CCCC restarts.** Automatic restoration no longer shuts them down when startup finishes. Manual startup also keeps the restored session connected after its request worker exits.
 - **Enabled Reach restores after CCCC restarts.** The daemon waits for the live Web listener and restores a stopped tunnel helper with bounded account requests and retry backoff. Late responses cannot override turning Reach off, unlinking, relinking, or shutdown; running helpers are left in place.
+- **Claude Actors survive worktree transcript moves.** Running observers follow a unique same-session transcript after verifying the consumed history, preserving unread records and partial lines. Missing or incomplete destinations receive a bounded grace period; corrupt or ambiguous history still fails closed.
 - **Concurrent ledger queries preserve exact committed history.** Cold rebuilds capture source versions and records together; delayed append callbacks cannot duplicate an old event or hide a later same-sized message.
 - **Auxiliary commands cannot wait forever.** DeepSeek's Node version probe and Tailscale start/stop use bounded output and deadlines, with owned child-process cleanup and explicit failure reporting.
 - **Context storage errors preserve the original state for recovery.** Malformed files fail explicitly instead of being treated as empty, and failed partial writes invalidate stale version tokens.
@@ -36,6 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.4.38] — 2026-09-07
 
 ### Added
+- **Voice Secretary supports Bailian and Volcengine realtime ASR.** Administrator-managed server-side credentials, Group-specific provider selection, live/final transcription, and existing recording leases and durable document revisions share the established voice workflow. Cloud capture does not require local ASR models.
+
 - **Interactive tiled terminals show up to four Actors per page.** Each Group remembers its view and page; its header, composer, and Presentation controls remain available. Each tile supports direct input and expansion with independent focus and write ownership.
 - **Codex Voice can receive cross-Group Actor notifications.** Optional per-Group subscriptions, exact reply tracking, viewed-message suppression, and visible source/delivery states connect Actor results to the global voice conversation. Group and sender attribution accompanies each notification.
 - **Codex, Claude Code, Grok Build, OpenCode, and Kilo share managed session adapters across Actors and Voice Analyst.** Native writable TUIs and structured observation follow the same provider conversation within each role. Runtime Profiles support provider/model configuration and private environment settings.
