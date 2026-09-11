@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -59,6 +60,12 @@ for key in list(env):
         env.pop(key)
 env.update({"CCCC_HOME": str(root / "home"), "HOME": str(root / "user"),
             "USERPROFILE": str(root / "user"), "PATH": str(root / "bin") + os.pathsep + env.get("PATH", "")})
+if os.name == "nt":
+    # Known Folders 默认验证目录存在；隔离 Profile 也须有两种 AppData 目录。
+    for key, name in (("APPDATA", "Roaming"), ("LOCALAPPDATA", "Local")):
+        path = root / "user/AppData" / name
+        path.mkdir(parents=True)
+        env[key] = str(path)
 (root / "environment.json").write_text(json.dumps({key: env[key] for key in ("CCCC_HOME", "HOME", "USERPROFILE", "PATH")}), encoding="utf-8")
 if args.prepare_only:
     print(root)
@@ -67,10 +74,19 @@ if args.prepare_only:
 base = "http://127.0.0.1:8863/"
 session = "cli-management-" + root.name
 evidence = root / "evidence"
+browser_started = False
 
 def browser(*arguments):
-    result = subprocess.run([args.browser, "--session", session, *arguments],
-                            capture_output=True, text=True, encoding="utf-8", timeout=40)
+    global browser_started
+    browser_started = True
+    # 与原生子进程日志一致：直接写文件，避免后代持有管道导致 communicate 等不到 EOF。
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
+        result = subprocess.run([args.browser, "--session", session, *arguments],
+                                stdout=stdout, stderr=stderr, timeout=40)
+        stdout.seek(0)
+        stderr.seek(0)
+        result.stdout = stdout.read()
+        result.stderr = stderr.read()
     with (evidence / "browser.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps({"args": arguments, "code": result.returncode,
                               "out": result.stdout, "err": result.stderr}, ensure_ascii=False) + "\n")
@@ -606,8 +622,9 @@ try:
     print("通过：真实页面平台清单、安装/更新/修复/卸载、Actor 来源与外部文件保护、后台串行计划、记录/日志/归档、故障恢复、重启中断、三语主题与受限身份。真实供应商链路另行验收。")
 finally:
     try:
-        browser("snapshot", "-i")
-        browser("close")
+        if browser_started:
+            browser("snapshot", "-i")
+            browser("close")
     finally:
         subprocess.run([str(binary), "daemon", "stop"], env=env, capture_output=True, timeout=20, check=False)
         try:

@@ -17,16 +17,17 @@ fn write_cli(path: &Path, version: &str) {
 
 fn select_version(home: &HomeLayout, version: &str, operation: management::Operation) {
     let now = chrono::Utc::now();
-    management::submit(home, "grok", operation, version, now).expect("submit");
+    let id = version.replace('.', "-");
+    management::submit(home, "grok", operation, &id, now).expect("submit");
     management::claim_next(home, now).expect("claim");
     let executable = management::root(home)
         .join("versions")
-        .join(version)
+        .join(&id)
         .join("bin/grok.cmd");
     write_cli(&executable, version);
     management::finish(
         home,
-        version,
+        &id,
         Ok(management::Installation {
             version: version.into(),
             bin_paths: vec![executable.parent().expect("bin").into()],
