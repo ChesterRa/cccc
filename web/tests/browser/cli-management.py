@@ -22,6 +22,8 @@ binary = args.binary.resolve(strict=True)
 root.mkdir(parents=True, exist_ok=False)
 for name in ("bin", "releases", "user", "home", "workspace", "evidence"):
     (root / name).mkdir()
+# 原生 attach 以 Git 根目录确定 Scope，不能让夹具向上归并到源码仓库。
+subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "--quiet", str(root / "workspace")], check=True)
 (root / "fixture-marker").write_text("controlled-cli-only", encoding="utf-8")
 (root / "target-version").write_text("1.0.0", encoding="utf-8")
 fixture = Path(__file__).with_name("cli-management-fixture.py").resolve()
