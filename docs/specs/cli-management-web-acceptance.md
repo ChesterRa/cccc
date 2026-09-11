@@ -2,7 +2,7 @@
 
 ## 当前最终验收入口
 
-2026-09-11 已确认增加按服务端平台筛选 CLI、Windows 原生测试及 Windows GUI 测试。统一验收入口为 [最终检查与跨平台验收](cli-management-final-checks.md)，其中 WGUI-01～WGUI-10 是新增必测用例，目前均待实现测试入口并执行。
+2026-09-11 已确认增加按服务端平台筛选 CLI、Windows 原生测试及 Windows GUI 测试。统一验收入口为 [最终检查与跨平台验收](cli-management-final-checks.md)。跨平台真实浏览器入口已实现，Linux 正在完成全流程复测；WGUI-01～WGUI-10 的 Windows 运行仍待执行，不能把 Linux 结果当作 Windows 验收。
 
 本文其余章节保存各轮历史结果。特别是下方 W01～W17 的“通过”仅适用于对应历史 Linux 环境；“17 项”是当时 Linux 清单，不是 Windows 固定数量。第二轮 PR 复审的 2015 项及隔离组件浏览器验证在本机 WSL 执行，不符合随后确认的测试机执行规则，不是当前最终验收或 Windows 验收通过证明。
 

@@ -572,9 +572,12 @@ try:
     access_file = root / "home/access_tokens.yaml"
     access_saved = access_file.read_bytes() if access_file.exists() else None
     restricted = "local-gui-restricted-fixture"
-    access_file.write_text(json.dumps({"tokens": {restricted: {
-        "user_id": "gui-fixture", "allowed_groups": [group_id], "is_admin": False,
-        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}}}), encoding="utf-8")
+    # 原生实现无管理员时处于 bootstrap；模拟已配置实例须同时有管理员记录。
+    access_file.write_text(json.dumps({"tokens": {
+        restricted: {"user_id": "gui-fixture", "allowed_groups": [group_id], "is_admin": False,
+                     "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+        "local-gui-admin-fixture": {"user_id": "gui-admin-fixture", "allowed_groups": [], "is_admin": True,
+                                    "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}}}), encoding="utf-8")
     try:
         request = urllib.request.Request(base + "api/v1/cli-management", headers={"Authorization": "Bearer " + restricted})
         try:
@@ -587,8 +590,10 @@ try:
         browser("wait", "[data-app-settings-trigger]")
         browser("click", "[data-app-settings-trigger]")
         click("设置")
+        browser("wait", "--text", "全局范围")
         browser("find", "role", "button", "click", "--name", "全局 全局范围", "--exact")
-        browser("wait", "--text", "管理员")
+        browser("wait", "--text", "我的配置")
+        browser("wait", "--fn", "![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='CLI 管理')")
         browser("screenshot", str(evidence / "restricted.png"))
     finally:
         browser("set", "headers", "{}")
