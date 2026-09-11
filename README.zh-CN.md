@@ -90,13 +90,20 @@ cccc update
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-官网安装脚本部署可先运行 `cccc update --check` 查看升级来源。由 pip 管理的命令会
+运行 `cccc update --check` 可查询渠道最新版本，查看安装所有者及原生平台要求，
+不会更改安装或运行中的服务；pip 安装也可以检查。加上 `--offline` 只查看本机信息，
+不发出网络请求。由 pip 管理的命令仍会
 明确拒绝 standalone 自更新并提示包管理器命令。两条渠道安装的是同一个原生产品，
 但文件始终由最初创建它们的安装器管理。使用 pip 升级前请运行
 `cccc daemon stop` 并关闭前台 CCCC 进程，确保包管理器可以替换可执行文件，
 Windows 尤其如此。如果要在同一命令目录从 pip 切换到官网安装脚本，请先运行
 `python -m pip uninstall cccc-pair`；即使设置了
 `CCCC_ALLOW_REPLACE_EXISTING=1`，官网安装器也不会覆盖 pip 管理的文件。
+
+若旧版 `cccc update` 始终停在 `0.4.35`，请在安装它的 Python 环境中执行上面带最低
+版本约束的 pip 命令。`0.4.35` 是最后提供通用 Python 包的版本；不受支持的平台执行
+无版本约束的 pip 升级时，可能仍然选中它。最低版本约束会让不匹配明确报错，详见
+[升级 FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35)。
 
 ### 启动
 

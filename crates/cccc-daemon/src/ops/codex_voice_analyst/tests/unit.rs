@@ -193,6 +193,35 @@ fn app_server_replaces_actor_host_policy_but_preserves_user_model_options() {
 }
 
 #[test]
+fn configured_permission_flags_never_reach_the_remote_tui() {
+    let executable = std::env::current_exe().expect("test executable");
+    let configured = vec![executable.to_string_lossy().into_owned()];
+    let expected = launch_command::prepare(&configured, &BTreeMap::new()).expect("default command");
+    for flags in [
+        vec!["--yolo"],
+        vec!["--dangerously-bypass-approvals-and-sandbox"],
+        vec!["-a", "on-request"],
+        vec!["--ask-for-approval", "on-request"],
+        vec!["--ask-for-approval=on-request"],
+        vec!["-s", "read-only"],
+        vec!["--sandbox", "read-only"],
+        vec!["--sandbox=read-only"],
+        vec!["-c", "approval_policy=\"on-request\""],
+        vec!["--config", "sandbox_mode=\"read-only\""],
+        vec!["--config=approval_policy=\"on-request\""],
+        vec!["--config=sandbox_mode=\"read-only\""],
+        vec!["-c", "shell_environment_policy.inherit=none"],
+        vec!["--config", "shell_environment_policy={inherit=\"none\"}"],
+        vec!["--config=shell_environment_policy.inherit=none"],
+    ] {
+        let mut command = configured.clone();
+        command.extend(flags.iter().map(|flag| (*flag).to_owned()));
+        let prepared = launch_command::prepare(&command, &BTreeMap::new()).expect("command");
+        assert_eq!(prepared, expected, "configured flags: {flags:?}");
+    }
+}
+
+#[test]
 fn app_server_and_remote_tui_preserve_custom_codex_provider_configuration() {
     let executable = std::env::current_exe().expect("test executable");
     let configured = vec![

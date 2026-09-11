@@ -103,6 +103,7 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .get("enabled")
         .and_then(Value::as_bool)
         .unwrap_or(was_enabled);
+    let explicit_enable = patch.get("enabled") == Some(&json!(true));
     if enabled
         && !was_enabled
         && !before.actors.iter().any(|actor| actor.id == ACTOR_ID)
@@ -145,6 +146,10 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             actor.created_at = utc_now();
             actor.updated_at = utc_now();
             group.actors.push(actor);
+        } else if explicit_enable {
+            if let Some(actor) = group.actors.iter_mut().find(|actor| actor.id == ACTOR_ID) {
+                actor.enabled = true;
+            }
         } else if !enabled {
             group.actors.retain(|actor| actor.id != ACTOR_ID);
         }
@@ -204,15 +209,14 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     // Configuration updates must not restart a stopped or failed actor.
     // Only an explicit enable request owns runtime startup.
-    let actor_started = if enabled && after.running && patch.get("enabled") == Some(&json!(true)) {
+    let actor_started = if enabled && after.running && explicit_enable {
         match actor_runtime::apply(home, &after, ACTOR_ID, "actor.start") {
-            Ok(Some(status)) if status.running => true,
-            Ok(None)
+            Ok(_)
                 if after
                     .actors
                     .iter()
                     .find(|actor| actor.id == ACTOR_ID)
-                    .is_some_and(actor_runtime::is_structured) =>
+                    .is_some_and(|actor| actor_running(&after, actor)) =>
             {
                 true
             }
@@ -361,6 +365,16 @@ pub fn default_assistant() -> Value {
     json!({"assistant_id":ASSISTANT_ID,"kind":ASSISTANT_ID,"enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{},"policy":{"action_allowlist":["voice_secretary.request"],"requires_user_confirmation":[]},"config":{"capture_mode":"browser","recognition_backend":"browser_asr","recognition_language":"auto","retention_ttl_seconds":900,"auto_document_enabled":true,"document_default_dir":"docs/voice-secretary","auto_document_quiet_ms":5000,"auto_document_min_chars":700,"auto_document_max_window_seconds":300,"service_model_id":"","service_diarization_model_id":"","tts_enabled":false},"ui":{"surface":"composer_quick_strip","composer_control":"voice_secretary_workspace","title":"Voice Secretary"}})
 }
 
+fn actor_running(group: &cccc_core::GroupDoc, actor: &cccc_contracts::Actor) -> bool {
+    if actor_runtime::is_structured(actor) {
+        actor.enabled && group.running
+    } else {
+        // Managed providers own their liveness separately from the PTY. An
+        // absent PTY return value or a retained error record is not a verdict.
+        actor_runtime::actor_is_running(group, actor)
+    }
+}
+
 fn project_actor_runtime(group: &cccc_core::GroupDoc, mut assistant: Value) -> Value {
     let actor = group.actors.iter().find(|actor| actor.id == ACTOR_ID);
     let status = actor_runtime::status(&group.group_id, ACTOR_ID);
@@ -368,15 +382,7 @@ fn project_actor_runtime(group: &cccc_core::GroupDoc, mut assistant: Value) -> V
     let headless_status = local_headless
         .then(|| super::super::local_headless::status(&group.group_id, ACTOR_ID))
         .flatten();
-    let running = actor.is_some_and(|actor| {
-        if local_headless {
-            headless_status.is_some()
-        } else if actor_runtime::is_structured(actor) {
-            actor.enabled && group.running
-        } else {
-            status.as_ref().is_some_and(|status| status.running)
-        }
-    });
+    let running = actor.is_some_and(|actor| actor_running(group, actor));
     let enabled = assistant["enabled"].as_bool().unwrap_or(false);
     let lifecycle = assistant["lifecycle"].as_str().unwrap_or("idle").to_owned();
     assistant["health"]["actor"] = json!({

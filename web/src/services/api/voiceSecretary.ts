@@ -64,7 +64,7 @@ export async function fetchVoiceAssistantDocumentContent(
   };
 }
 
-export function retryVoiceAssistantFinalRevision(
+export async function retryVoiceAssistantTranscriptPersistence(
   groupId: string,
   payload: {
     sessionId: string;
@@ -73,9 +73,89 @@ export function retryVoiceAssistantFinalRevision(
     language: string;
     modelId?: string;
     recognitionBackend?: string;
+    partial?: boolean;
+    pendingSegments?: unknown;
   },
 ): Promise<ApiResponse<AssistantVoiceTranscriptSegmentResult>> {
   const modelId = String(payload.modelId || "").trim();
+  const pending = payload.pendingSegments ?? [];
+  if (
+    !Array.isArray(pending) ||
+    pending.some((value) => {
+      const segment = asRecord(value);
+      return (
+        !segment ||
+        typeof segment.segment_id !== "string" ||
+        !segment.segment_id.trim() ||
+        typeof segment.text !== "string" ||
+        !segment.text.trim() ||
+        typeof segment.start_ms !== "number" ||
+        !Number.isFinite(segment.start_ms) ||
+        segment.start_ms < 0 ||
+        typeof segment.end_ms !== "number" ||
+        !Number.isFinite(segment.end_ms) ||
+        segment.end_ms < segment.start_ms
+      );
+    })
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_checkpoint_recovery",
+        message: "Invalid transcript checkpoint recovery data",
+      },
+    };
+  }
+  let checkpoint: ApiResponse<AssistantVoiceTranscriptSegmentResult> = {
+    ok: true,
+    result: { group_id: groupId, session_id: payload.sessionId },
+  };
+  for (const [index, segment] of pending.entries()) {
+    try {
+      checkpoint = await appendVoiceAssistantTranscriptSegment(groupId, {
+        sessionId: payload.sessionId,
+        segmentId: segment.segment_id,
+        documentPath: payload.documentPath,
+        text: segment.text,
+        language: payload.language,
+        isFinal: true,
+        flush: true,
+        startMs: segment.start_ms,
+        endMs: segment.end_ms,
+        revision: { stage: "live", sourceModelId: modelId },
+        trigger: {
+          trigger_kind: "browser_checkpoint_retry",
+          capture_mode: "service",
+          recognition_backend: "external_provider_asr_streaming",
+        },
+        by: "user",
+      });
+    } catch (error) {
+      // A response body can fail after fetch has resolved. Preserve the same
+      // unconfirmed segment even when the transport helper cannot return JSON.
+      checkpoint = {
+        ok: false,
+        error: {
+          code: "checkpoint_retry_failed",
+          message: error instanceof Error ? error.message : "Transcript checkpoint retry failed",
+        },
+      };
+    }
+    if (!checkpoint.ok) {
+      return {
+        ...checkpoint,
+        error: {
+          ...checkpoint.error,
+          details: {
+            ...asRecord(checkpoint.error.details),
+            transcript_pending_segments: pending.slice(index),
+          },
+        },
+      };
+    }
+  }
+  // Partial provider output is recoverable live input, never a superseding final.
+  if (payload.partial) return checkpoint;
   return appendVoiceAssistantTranscriptSegment(groupId, {
     sessionId: payload.sessionId,
     segmentId: "final-asr",

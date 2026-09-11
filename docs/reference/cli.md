@@ -370,13 +370,22 @@ Upgrade a website-installer-owned CCCC executable.
 
 ```bash
 cccc update                        # Upgrade from stable GitHub Releases
-cccc update --check                # Show the standalone install and channel
+cccc update --check                # Query latest release, ownership, and platform requirements
+cccc update --check --offline      # Inspect local details without a network request
 cccc update --channel stable       # Force the stable GitHub Release channel
 cccc update --channel rc           # Force the prerelease GitHub Release channel
 ```
 
 Notes:
 - A stable build defaults to `stable`; a prerelease build defaults to `rc`.
+- `--check` is read-only for standalone, pip-owned, and unmanaged installations.
+  It reports the exact executable, ownership, build platform requirements,
+  current version, latest channel version, and the appropriate next step. It
+  does not replace files, run pip, stop services, or grant standalone ownership.
+- A failed online check returns a nonzero exit code and retains local details
+  with an explicit unknown update status. `--offline` requires `--check`, makes
+  no network request, and labels the latest version as not checked. It does not
+  imply that the installed version is current.
 - Website-installer installations reuse the GitHub Pages installer and preserve
   their current install directory.
 - Update discovery reads `https://chesterra.github.io/cccc/releases.json`, a small
@@ -404,7 +413,7 @@ Notes:
   release is published, rerun the original installation command to upgrade an
   installation whose old `cccc update` is blocked by API rate limits.
 - Pip-owned, source-tree, and other markerless executables are not updated by
-  this command. Pip users run
+  this command; they can still use `--check`. Pip users run
   `python -m pip install -U "cccc-pair>=0.4.36"`; the wheel contains the same
   native executable and no Python runtime or fallback. Run `cccc daemon stop`
   and close foreground CCCC processes before asking pip to replace it.

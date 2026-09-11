@@ -56,6 +56,42 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 Both installation channels provide the same Rust executable. The pip wheel has
 no importable CCCC Python package or fallback implementation.
 
+### Why does an older `cccc update` stay on 0.4.35?
+
+CCCC 0.4.35 was the last release with a portable Python wheel and source
+distribution. Starting with 0.4.36, pip distributes only native platform wheels.
+An older Python updater runs an unconstrained `pip install -U cccc-pair`; pip
+can successfully select 0.4.35 again when newer wheels do not match the current
+platform. A successful pip exit alone does not mean the latest CCCC was installed.
+
+Current native packages support Linux x86-64 with glibc 2.28+, Apple Silicon
+macOS 11+, and Windows x86-64. Intel Mac support ended with 0.4.37. Linux ARM64,
+Alpine/musl, older glibc systems, and native Windows ARM64 Python environments
+do not match the current wheels. Updating pip cannot add a missing CCCC platform
+package.
+
+For a pip-owned installation, stop CCCC and use the **same Python environment
+that owns its command**:
+
+```bash
+python -m pip install -U "cccc-pair>=0.4.36"
+```
+
+The lower bound requires a native release and makes unsupported environments
+fail explicitly. To require a particular newer release, use that version as the
+lower bound or an exact pin. The native updater's online `--check` prints an
+exact pip target when a newer release is available. It does not run pip itself.
+
+If the platform is supported but the version still does not advance, check the
+pip index or mirror and its available versions, then verify which `cccc` command
+your shell runs. A different Python environment or an earlier PATH entry can
+leave the old command active. Do not share pip configuration containing private
+index credentials. See the installation diagnostics below.
+
+Newer `cccc update --check` queries the release index and reports current and
+latest versions. Older clients only display local installation information;
+upgrading server-side metadata cannot change that already installed code.
+
 ### Why does `cccc` still start an older installation after an upgrade?
 
 CCCC does not delete commands owned by another Python environment or installer.

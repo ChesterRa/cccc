@@ -30,7 +30,29 @@ describe("composer height limits", () => {
         throw Error("blocked");
       },
     });
-    expect(loadComposerHeight()).toBe(64);
+    expect(loadComposerHeight()).toBeNull();
     expect(() => saveComposerHeight(300)).not.toThrow();
+    expect(() => saveComposerHeight(null)).not.toThrow();
+  });
+  it("distinguishes automatic height from a saved manual minimum and restores defaults without a new setting", () => {
+    let stored: string | null = null;
+    vi.stubGlobal("localStorage", {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => {
+        stored = value;
+      },
+      removeItem: () => {
+        stored = null;
+      },
+    });
+    expect(loadComposerHeight()).toBeNull();
+    saveComposerHeight(64);
+    expect(loadComposerHeight()).toBe(64);
+    saveComposerHeight(264);
+    expect(loadComposerHeight()).toBe(264);
+    saveComposerHeight(null);
+    expect(loadComposerHeight()).toBeNull();
+    stored = "invalid";
+    expect(loadComposerHeight()).toBeNull();
   });
 });

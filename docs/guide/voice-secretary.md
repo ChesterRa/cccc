@@ -81,6 +81,12 @@ duplicate cloud checkpoints. Complete final results supersede live revisions
 through the existing transcript API. Provider completion is separate from saving:
 a failed last checkpoint is retried with its original segment ID, and the final
 text is still returned with persistence status so the browser can retry saving.
+If several segments remain unconfirmed, the browser retries those segments with
+their original IDs before saving the final revision. This also recovers available
+segments from an incomplete recording without treating them as a complete final
+transcript. If a browser retry still fails, recording stops with an error and
+the remaining unconfirmed text returns to the original Group's composer for
+review; it is not automatically sent to an Actor.
 Connection failures retain known document segments and recover available text to
 the composer for non-document capture. A disconnected document recording gets a
 bounded attempt to finalize its provider stream. Lease release is fenced to its

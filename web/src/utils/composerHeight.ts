@@ -1,5 +1,6 @@
 // Preferences use pixels at 100% text scale; the view converts to rendered pixels.
 export const COMPOSER_DEFAULT_HEIGHT = 64;
+export const COMPOSER_AUTO_MAX_HEIGHT = 128;
 export const COMPOSER_HEIGHT_KEY = "cccc-composer-height";
 
 export function clampComposerHeight(value: number, maximum = Number.MAX_SAFE_INTEGER): number {
@@ -24,17 +25,20 @@ export function composerHeightLimit(
   );
 }
 
-export function loadComposerHeight(): number {
+export function loadComposerHeight(): number | null {
   try {
-    return clampComposerHeight(Number(localStorage.getItem(COMPOSER_HEIGHT_KEY)));
+    const stored = localStorage.getItem(COMPOSER_HEIGHT_KEY);
+    if (!stored?.trim() || !Number.isFinite(Number(stored))) return null;
+    return clampComposerHeight(Number(stored));
   } catch {
-    return COMPOSER_DEFAULT_HEIGHT;
+    return null;
   }
 }
 
-export function saveComposerHeight(height: number): void {
+export function saveComposerHeight(height: number | null): void {
   try {
-    localStorage.setItem(COMPOSER_HEIGHT_KEY, String(clampComposerHeight(height)));
+    if (height === null) localStorage.removeItem(COMPOSER_HEIGHT_KEY);
+    else localStorage.setItem(COMPOSER_HEIGHT_KEY, String(clampComposerHeight(height)));
   } catch {
     // Storage can be unavailable; the in-memory preference remains usable.
   }

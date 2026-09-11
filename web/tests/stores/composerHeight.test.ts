@@ -7,6 +7,9 @@ const storage = {
   setItem: vi.fn((key: string, value: string) => {
     data.set(key, value);
   }),
+  removeItem: vi.fn((key: string) => {
+    data.delete(key);
+  }),
 };
 beforeEach(() => {
   vi.resetModules();
@@ -27,6 +30,11 @@ describe("composer height preference store", () => {
     expect(reloaded.useUIStore.getState().composerHeight).toBe(324);
     reloaded.useUIStore.getState().setComposerHeight(-1);
     expect(reloaded.useUIStore.getState().composerHeight).toBe(64);
+    reloaded.useUIStore.getState().setComposerHeight(null);
+    expect(storage.removeItem).toHaveBeenCalledWith(COMPOSER_HEIGHT_KEY);
+    vi.resetModules();
+    const automatic = await import("../../src/stores/useUIStore");
+    expect(automatic.useUIStore.getState().composerHeight).toBeNull();
   });
   it("keeps the in-memory preference usable when storage writes fail", async () => {
     const { useUIStore } = await import("../../src/stores/useUIStore");
@@ -36,13 +44,13 @@ describe("composer height preference store", () => {
     expect(() => useUIStore.getState().setComposerHeight(240)).not.toThrow();
     expect(useUIStore.getState().composerHeight).toBe(240);
   });
-  it("uses the default when reading this preference fails", async () => {
+  it("uses automatic height when reading this preference fails", async () => {
     storage.getItem.mockImplementation((key) => {
       if (key === COMPOSER_HEIGHT_KEY) throw Error("blocked");
       return null;
     });
     const { useUIStore } = await import("../../src/stores/useUIStore");
-    expect(useUIStore.getState().composerHeight).toBe(64);
+    expect(useUIStore.getState().composerHeight).toBeNull();
     storage.getItem.mockImplementation((key) => data.get(key) ?? null);
   });
 });

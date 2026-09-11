@@ -23,19 +23,22 @@ function Probe({
   useComposerTextareaAutoResize({
     composerRef,
     value,
-    minHeight: 64 * scale,
-    maxHeight: resize.height,
+    minHeight: enabled ? resize.minHeight : 52,
+    maxHeight: enabled ? resize.maxHeight : 128,
   });
   return (
     <section data-panel>
       <main />
       <footer ref={footerRef}>
-        {enabled ? <ComposerResizeHandle {...resize} label="Input height limit" /> : null}
+        {enabled ? <ComposerResizeHandle {...resize} label="Input height" /> : null}
         <textarea
           ref={composerRef}
           value={value}
           readOnly
-          style={{ maxHeight: "var(--composer-max-height)" }}
+          style={{
+            minHeight: "var(--composer-min-height)",
+            maxHeight: "var(--composer-max-height)",
+          }}
         />
       </footer>
     </section>
@@ -111,7 +114,7 @@ describe("composer height interaction", () => {
       ),
     );
   }
-  it("previews content growth without store writes, commits once, and shrinks empty drafts", async () => {
+  it("previews actual height without store writes and retains manual size as content changes", async () => {
     await render();
     const storage = vi.spyOn(Storage.prototype, "setItem");
     const handle = host.querySelector('[role="separator"]')!;
@@ -129,9 +132,14 @@ describe("composer height interaction", () => {
     expect(document.body.style.cursor).toBe("");
     expect(document.body.style.userSelect).toBe("");
     await render({ value: "" });
-    expect(host.querySelector("textarea")!.style.height).toBe("64px");
+    expect(host.querySelector("textarea")!.style.height).toBe("264px");
     await render({ value: "a\nb\nc\nd\ne" });
+    expect(host.querySelector("textarea")!.style.height).toBe("264px");
+    await act(async () => handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(useUIStore.getState().composerHeight).toBeNull();
     expect(host.querySelector("textarea")!.style.height).toBe("124px");
+    await render({ value: "" });
+    expect(host.querySelector("textarea")!.style.height).toBe("64px");
   });
   it("supports keyboard bounds, resize clamping, font scale, and double-click reset", async () => {
     await render({ scale: 1.25 });
@@ -156,7 +164,8 @@ describe("composer height interaction", () => {
     expect(useUIStore.getState().composerHeight).toBe(64);
     await key("End");
     await act(async () => handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    expect(useUIStore.getState().composerHeight).toBe(64);
+    expect(useUIStore.getState().composerHeight).toBeNull();
+    expect(host.querySelector("textarea")!.style.height).toBe("150px");
   });
   it("cancels a drag without persisting and restores existing body styles", async () => {
     await render();
@@ -179,5 +188,62 @@ describe("composer height interaction", () => {
     await pointer("pointerup", 400);
     expect(updates).not.toHaveBeenCalled();
     expect(document.body.style.cursor).toBe("");
+  });
+
+  it("visibly expands an empty draft and starts dragging from the displayed automatic height", async () => {
+    useUIStore.setState({ composerHeight: null });
+    await render({ value: "" });
+    const handle = host.querySelector('[role="separator"]')!;
+    await pointer("pointerdown", 600, handle);
+    await pointer("pointermove", 400);
+    expect(host.querySelector("textarea")!.style.height).toBe("264px");
+    await pointer("pointerup", 400);
+    expect(useUIStore.getState().composerHeight).toBe(264);
+    await act(async () =>
+      handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(useUIStore.getState().composerHeight).toBeNull();
+    await render({ value: longText });
+    expect(host.querySelector("textarea")!.style.height).toBe("128px");
+    await pointer("pointerdown", 600, handle);
+    await pointer("pointermove", 500);
+    expect(host.querySelector("textarea")!.style.height).toBe("228px");
+    await pointer("pointerup", 500);
+    expect(useUIStore.getState().composerHeight).toBe(228);
+  });
+
+  it("keeps automatic height after a click or a cancelled drag", async () => {
+    useUIStore.setState({ composerHeight: null });
+    await render({ value: "" });
+    updates.mockClear();
+    const handle = host.querySelector('[role="separator"]')!;
+    await pointer("pointerdown", 600, handle);
+    await pointer("pointerup", 600);
+    expect(updates).not.toHaveBeenCalled();
+    expect(useUIStore.getState().composerHeight).toBeNull();
+    await pointer("pointerdown", 600, handle);
+    await pointer("pointermove", 400);
+    await pointer("pointercancel", 400);
+    expect(host.querySelector("textarea")!.style.height).toBe("64px");
+    expect(updates).not.toHaveBeenCalled();
+    await render({ value: longText });
+    expect(host.querySelector("textarea")!.style.height).toBe("128px");
+  });
+
+  it("preserves the desktop preference across mobile layout and reclaims drag resources on unmount", async () => {
+    useUIStore.setState({ composerHeight: 300 });
+    await render({ value: "" });
+    expect(host.querySelector("textarea")!.style.height).toBe("300px");
+    await render({ value: "", enabled: false });
+    expect(host.querySelector("textarea")!.style.height).toBe("52px");
+    expect(host.querySelector("footer")!.style.getPropertyValue("--composer-min-height")).toBe("");
+    await render({ value: "" });
+    expect(host.querySelector("textarea")!.style.height).toBe("300px");
+    await pointer("pointerdown", 600, host.querySelector('[role="separator"]')!);
+    await pointer("pointermove", 500);
+    await act(async () => root.render(null));
+    expect(document.body.style.cursor).toBe("");
+    expect(document.body.style.userSelect).toBe("");
+    expect(useUIStore.getState().composerHeight).toBe(300);
   });
 });

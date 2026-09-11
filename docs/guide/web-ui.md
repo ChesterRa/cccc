@@ -396,17 +396,16 @@ Click on an agent's tab to see its terminal output.
 1. Type in the message input at the bottom
 2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
-On desktop, drag the separator above the composer upward to increase its height
-limit. The input still grows with its contents and shrinks when cleared; dragging
-does not reserve an empty block. Double-click resets the limit, and a focused
-separator accepts Up/Down (16 base pixels), Home (minimum), and End (maximum).
-The preference is stored locally in base-font pixels and scales with text size.
-The effective limit is recalculated as the panel shrinks, capped at 60% of the
-panel while reserving message space and accounting for the other composer rows.
+On desktop, the input grows with its contents up to a compact height by default.
+Drag the separator above the composer to set its actual height, including for an
+empty draft. That manual height stays in place while typing or clearing the input.
+Double-click or press Enter on the focused separator to restore automatic sizing.
+Up/Down adjust by 16 base pixels; Home selects the minimum and End the maximum.
+The manual preference is stored locally in base-font pixels and scales with text
+size. Its effective height is recalculated as the panel shrinks, capped at 60% of
+the panel while reserving message space and accounting for other composer rows.
 The separator is absent below 768 px; mobile message scrolling and the existing
-input expansion control remain unchanged. The isolated regression is
-`bash web/tests/browser/composer-resize.sh` against a Vite server on port 5190
-(`CCCC_COMPOSER_RESIZE_URL` overrides the fixture URL).
+input expansion control remain unchanged.
 
 On phones narrower than 640 px, the Voice Secretary sheet keeps language,
 microphone and device refresh on one row. Prompt-mode help starts collapsed;
@@ -416,22 +415,7 @@ places the compact text input and Send button side by side. Document mode stacks
 the heading, view switch, metadata and actions at full width; paths wrap, markdown
 headings use smaller phone sizes, and document content scrolls within the available
 space. Wider layouts use
-the existing workspace arrangement. The isolated UI regression is
-`bash web/tests/browser/voice-workspace-mobile.sh`; its synthetic device and ASR
-transport boundaries validate controls and layout, not recognition accuracy.
-`bash web/tests/browser/voice-workspace-modes.sh before` captures a baseline before
-a layout change; `bash web/tests/browser/voice-workspace-modes.sh after` checks all
-three modes at 390×844, both themes, and 100%/125% font sizes. It also captures
-640/1024/1440 px desktop baselines for each mode and theme. This matrix uses the
-Vite fixture on port 5555 and writes PNGs and measured bounds under
-`/tmp/cccc-voice-workspace-modes/`. Follow with
-`bash web/tests/browser/voice-workspace-modes-controls.sh` for long-copy, touch
-scrolling, and repeated edit/preview/transcript transitions.
-`uv run --no-project --with pillow python web/tests/browser/voice-workspace-modes-compare.py`
-checks recorded layout improvements and desktop pixels. The paired desktop CSS
-captures isolate compositor edge noise; original before/after PNGs and geometry
-are retained too. The paired CSS comparison measures stylesheet effects on the current markup;
-use the separate control tests to validate changes to component behavior.
+the existing workspace arrangement.
 
 Recipient chips are one-shot: a successful send clears the selection, and switching Groups does not
 restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
@@ -664,22 +648,24 @@ Token for this exchange; no new long-lived token is created. A remotely signed-i
 administrator remains bound to their own active token. Revoking that token also
 invalidates outstanding links backed by it.
 
-Cookie-authenticated Rust Web writes require an exact allowed `Origin`, with a
+Cookie-authenticated Rust Web writes and WebSocket connections require an exact allowed `Origin`, with a
 same-origin `Referer` accepted only as a fallback. This check is independent of
 CORS and blocks same-site sibling domains from submitting state-changing forms.
 
 Cross-origin browser clients can opt in through `CCCC_WEB_CORS_ORIGINS`, a
 comma-separated list of exact origins (scheme, host and port). Named origins
-support credentials and are also accepted by Cookie write and WebSocket origin
-checks. Include only trusted client sites.
+support credentials and are also accepted by Cookie write and Cookie-authenticated
+WebSocket origin checks. Include only trusted client sites.
 
 `CCCC_WEB_ALLOW_ANY_ORIGIN=1` instead enables wildcard HTTP CORS without
 credentials, for clients that explicitly supply an `Authorization: Bearer ...`
 access token and omit browser credentials. It does not bypass Cookie write or
-WebSocket origin checks, create an authenticated principal, or expose the local
+Cookie-authenticated WebSocket origin checks, create an authenticated principal, or expose the local
 passwordless principal to other sites. Local passwordless reads with an Origin
 or Referer must identify the same loopback origin, just as writes do. Browser
-WebSocket clients still need a same-origin connection or a named trusted origin.
+WebSocket clients using cookies still need a same-origin connection or a named
+trusted origin. Explicit Bearer-authenticated WebSocket clients do not require an
+Origin match; token and Group permissions still apply.
 If both settings are present, wildcard HTTP CORS takes precedence; use only
 `CCCC_WEB_CORS_ORIGINS` for cross-origin Cookie sessions. Both settings are off
 by default and require restarting the Web process to change CORS responses.
@@ -704,14 +690,11 @@ Do not pass through client-supplied `X-Forwarded-*` values. The trusted proxy
 must overwrite them. CCCC also accepts RFC 7239 `Forwarded` with `host` and
 `proto`, and handles comma-separated multi-proxy `X-Forwarded-*` chains by
 using the first browser-facing value. A mismatch is rejected with
-`origin_not_allowed` for WebSockets or `csrf_origin_invalid` for Cookie writes;
-the server log records both the received and reconstructed origins.
+`csrf_origin_invalid` for Cookie-authenticated writes and WebSockets. If a proxy
+cannot preserve the public host, configure its exact browser origin in
+`CCCC_WEB_CORS_ORIGINS` instead of disabling source protection.
 
 A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message
 content. Full event content remains on the per-Group stream and is subject to
 the same scope check. Administrative capability changes require an Admin token.
-
-WebSocket upgrades do not use Origin as an authorization gate. Login and
-group/actor capability checks remain mandatory; HTTP cookie CSRF retains its
-origin checks.
