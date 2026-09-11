@@ -16,6 +16,16 @@ impl DeepSeekSupervisor {
         cwd: &Path,
         env: &[(String, String)],
     ) -> Result<u64, SupervisorError> {
+        self.start_with_resources(command, cwd, env, Vec::new())
+    }
+
+    pub fn start_with_resources(
+        &mut self,
+        command: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        retained_files: Vec<std::fs::File>,
+    ) -> Result<u64, SupervisorError> {
         if command.is_empty() {
             return Err(SupervisorError::EmptyCommand);
         }
@@ -31,6 +41,7 @@ impl DeepSeekSupervisor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let (child, tree) = crate::OwnedProcessTree::spawn(&mut process)?;
+        tree.retain_files(retained_files);
         self.child = Some(child);
         self.process_tree = Some(tree);
         let stdout = self

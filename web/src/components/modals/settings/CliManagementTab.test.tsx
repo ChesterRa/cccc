@@ -511,6 +511,51 @@ describe("CLI 管理原生设置", () => {
     expect(api.submitCliJob).not.toHaveBeenCalled();
   });
 
+  it("90 秒间隔可通过原生表单校验并保存，查看全部会请求归档", async () => {
+    const onSave = vi.fn(async () => undefined);
+    await act(async () =>
+      root.render(
+        <CliScheduleEditor
+          initial={{
+            id: "seconds",
+            enabled: true,
+            trigger: { kind: "interval", every_seconds: 90 },
+          }}
+          busy={false}
+          onSave={onSave}
+          onCancel={() => undefined}
+        />,
+      ),
+    );
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!;
+    expect(input.value).toBe("1.5");
+    expect(input.checkValidity()).toBe(true);
+    await act(async () => container.querySelector("form")!.requestSubmit());
+    expect(onSave).toHaveBeenCalledWith({
+      id: "seconds",
+      enabled: true,
+      trigger: { kind: "interval", every_seconds: 90 },
+    });
+    for (let index = 0; index < 21; index++) {
+      const id = `history-${index}`;
+      data.state.jobs[id] = {
+        id,
+        runtime: "codex",
+        operation: "install",
+        status: "failed",
+        created_at: "2026-09-10T00:00:00Z",
+        started_at: null,
+        finished_at: null,
+        source_rule: null,
+        error: "fixture",
+      };
+    }
+    await mount();
+    expect(api.fetchCliManagement).toHaveBeenLastCalledWith(false);
+    await act(async () => button("cliManagement.allJobs").click());
+    expect(api.fetchCliManagement).toHaveBeenLastCalledWith(true);
+  });
+
   it("操作记录的状态、来源、时间与日志编号逐项对应，切换记录不串日志", async () => {
     const statuses: api.CliJob["status"][] = [
       "queued",

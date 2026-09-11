@@ -55,6 +55,7 @@ impl Session {
         spec: LaunchSpec,
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
+        retained_files: Vec<std::fs::File>,
     ) -> Result<Self, RuntimeError> {
         let prepared_command = crate::prepare_pty_command(&spec.command, &spec.env);
         let (program, args) = prepared_command
@@ -83,6 +84,7 @@ impl Session {
                 .spawn_command(command)
                 .map_err(|e| std::io::Error::other(e.to_string()))
         })?;
+        process_tree.retain_files(retained_files);
         let pid = child.process_id();
         #[cfg(target_os = "linux")]
         let (reader, writer) = {
@@ -163,6 +165,7 @@ impl Session {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.process_tree.release_files_after_exit();
         }
         self.finish_output()?;
         Ok(self.status.clone())
@@ -301,7 +304,9 @@ impl Drop for Session {
         let _ = self.process_tree.terminate();
         if self.status.running {
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            if self.child.wait().is_ok() {
+                self.process_tree.release_files_after_exit();
+            }
             self.status.running = false;
         }
         let _ = self.finish_output();

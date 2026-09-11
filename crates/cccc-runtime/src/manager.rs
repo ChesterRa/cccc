@@ -14,19 +14,28 @@ use std::time::Duration;
 type ReapCandidate = (Key, Arc<Mutex<Session>>, SessionHistory, SessionStatus);
 
 pub fn start(spec: LaunchSpec) -> Result<SessionStatus, RuntimeError> {
-    start_inner(spec, None)
+    start_inner(spec, None, Vec::new())
 }
 
 pub fn start_with_history(
     spec: LaunchSpec,
     history: HistoryConfig,
 ) -> Result<SessionStatus, RuntimeError> {
-    start_inner(spec, Some(history))
+    start_inner(spec, Some(history), Vec::new())
+}
+
+pub fn start_with_history_and_resources(
+    spec: LaunchSpec,
+    history: HistoryConfig,
+    retained_files: Vec<std::fs::File>,
+) -> Result<SessionStatus, RuntimeError> {
+    start_inner(spec, Some(history), retained_files)
 }
 
 fn start_inner(
     spec: LaunchSpec,
     history: Option<HistoryConfig>,
+    retained_files: Vec<std::fs::File>,
 ) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
@@ -34,7 +43,8 @@ fn start_inner(
         Some(history) => history.end_cursor()?,
         None => 0,
     };
-    let mut session = Session::start_with_history(spec, history, history_cursor_floor)?;
+    let mut session =
+        Session::start_with_history(spec, history, history_cursor_floor, retained_files)?;
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {

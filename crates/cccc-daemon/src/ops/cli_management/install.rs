@@ -67,200 +67,263 @@ fn install_mise(
     stop: &AtomicBool,
 ) -> io::Result<management::Installation> {
     // 每次操作独立安装目录；即使同版本重装失败，也不覆盖被旧 Actor 使用的文件。
+    management::validate_id(&job.id)?;
     let directory = management::root(home).join("versions").join(&job.id);
-    std::fs::create_dir_all(&directory)?;
+    std::fs::create_dir_all(
+        directory
+            .parent()
+            .ok_or_else(|| io::Error::other("安装目录无父目录"))?,
+    )?;
+    // 不接管先前留下或其他进程创建的目录，清理只针对本次独占创建的暂存目录。
+    std::fs::create_dir(&directory)?;
     let directory = directory.canonicalize()?;
-    for (key, relative) in [
-        ("MISE_DATA_DIR", "data"),
-        ("MISE_CACHE_DIR", "cache"),
-        ("MISE_CONFIG_DIR", "config"),
-        ("MISE_STATE_DIR", "state"),
-        ("MISE_SYSTEM_CONFIG_DIR", "system"),
-        ("MISE_GLOBAL_CONFIG_FILE", "config/config.toml"),
-        ("npm_config_cache", "npm-cache"),
-    ] {
-        env.insert(
-            key.into(),
-            directory.join(relative).to_string_lossy().into_owned(),
-        );
-    }
-    env.insert(
-        "MISE_CEILING_PATHS".into(),
-        directory.to_string_lossy().into_owned(),
-    );
-    env.insert("MISE_YES".into(), "1".into());
-    env.insert("MISE_COLOR".into(), "0".into());
-    env.insert("MISE_JOBS".into(), "1".into());
-    env.insert("MISE_HTTP_TIMEOUT".into(), "60s".into());
-    env.insert("MISE_FETCH_REMOTE_VERSIONS_CACHE".into(), "0s".into());
-    env.insert("CI".into(), "1".into());
-    env.insert(
-        "CCCC_HOME".into(),
-        home.root().to_string_lossy().into_owned(),
-    );
-    let release = if tool.starts_with("http:") {
-        let release = super::distribution::resolve(runtime, log, stop)?;
-        std::fs::create_dir_all(directory.join("config"))?;
-        std::fs::write(directory.join("config/config.toml"), release.config(tool)?)?;
-        Some(release)
-    } else {
-        None
-    };
-    let execute = |args: Vec<String>, env: &BTreeMap<String, String>, capture| {
-        process::run(
-            &mut process::command(mise, &args, &directory, env),
-            log,
-            stop,
-            Duration::from_secs(900),
-            capture,
-        )
-    };
-    let deepseek = runtime == ActorRuntime::Deepseek;
-    let hermes = runtime == ActorRuntime::Hermes;
-    let version = if deepseek {
-        cccc_contracts::DEEPSEEK_RELEASE_VERSION.to_owned()
-    } else if let Some(release) = &release {
-        release.version.clone()
-    } else {
-        let mut version_env = env.clone();
-        if runtime == ActorRuntime::Amp {
-            // Amp 正常发行包含时间戳与 Git 后缀，被 mise 当作 SemVer 预发布过滤。
-            // 只调整 Amp 的版本查询；其他 CLI 和依赖仍只解析稳定版本。
-            version_env.insert("MISE_PRERELEASES".into(), "1".into());
+    let result = (|| {
+        for (key, relative) in [
+            ("MISE_DATA_DIR", "data"),
+            ("MISE_CACHE_DIR", "cache"),
+            ("MISE_CONFIG_DIR", "config"),
+            ("MISE_STATE_DIR", "state"),
+            ("MISE_SYSTEM_CONFIG_DIR", "system"),
+            ("MISE_GLOBAL_CONFIG_FILE", "config/config.toml"),
+            ("npm_config_cache", "npm-cache"),
+        ] {
+            env.insert(
+                key.into(),
+                directory.join(relative).to_string_lossy().into_owned(),
+            );
         }
-        concrete_version(&execute(
-            vec!["latest".into(), tool.into()],
-            &version_env,
-            true,
-        )?)?
-    };
-    let selected = management::load(home)?
-        .installations
-        .get(&job.runtime)
-        .cloned();
-    if let Some(selected) = selected.filter(|selected| selected.version == version) {
-        log.write("stage", "已是目标版本，验证现有选中版本")?;
-        let mut verify_env = env.clone();
-        let checked =
-            management::apply_environment(home, &job.runtime, &mut verify_env).and_then(|_| {
-                verify(
-                    runtime,
-                    &selected.executable,
-                    &version,
-                    &directory,
-                    &verify_env,
-                    log,
-                    stop,
-                )
-            });
-        match checked {
-            Ok(()) => return Ok(selected),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
-            Err(error) => {
-                log.write(
-                    "stage",
-                    &format!("现有安装验证失败：{error}；在新目录重新安装，不覆盖原文件"),
-                )?;
+        env.insert(
+            "MISE_CEILING_PATHS".into(),
+            directory.to_string_lossy().into_owned(),
+        );
+        env.insert("MISE_YES".into(), "1".into());
+        env.insert("MISE_COLOR".into(), "0".into());
+        env.insert("MISE_JOBS".into(), "1".into());
+        env.insert("MISE_HTTP_TIMEOUT".into(), "60s".into());
+        env.insert("MISE_FETCH_REMOTE_VERSIONS_CACHE".into(), "0s".into());
+        env.insert("CI".into(), "1".into());
+        env.insert(
+            "CCCC_HOME".into(),
+            home.root().to_string_lossy().into_owned(),
+        );
+        let release = if tool.starts_with("http:") {
+            let release = super::distribution::resolve(runtime, log, stop)?;
+            std::fs::create_dir_all(directory.join("config"))?;
+            std::fs::write(directory.join("config/config.toml"), release.config(tool)?)?;
+            Some(release)
+        } else {
+            None
+        };
+        let execute = |args: Vec<String>, env: &BTreeMap<String, String>, capture| {
+            process::run(
+                &mut process::command(mise, &args, &directory, env),
+                log,
+                stop,
+                Duration::from_secs(900),
+                capture,
+            )
+        };
+        let deepseek = runtime == ActorRuntime::Deepseek;
+        let hermes = runtime == ActorRuntime::Hermes;
+        let version = if deepseek {
+            cccc_contracts::DEEPSEEK_RELEASE_VERSION.to_owned()
+        } else if let Some(release) = &release {
+            release.version.clone()
+        } else {
+            let mut version_env = env.clone();
+            if runtime == ActorRuntime::Amp {
+                // Amp 正常发行包含时间戳与 Git 后缀，被 mise 当作 SemVer 预发布过滤。
+                // 只调整 Amp 的版本查询；其他 CLI 和依赖仍只解析稳定版本。
+                version_env.insert("MISE_PRERELEASES".into(), "1".into());
+            }
+            concrete_version(&execute(
+                vec!["latest".into(), tool.into()],
+                &version_env,
+                true,
+            )?)?
+        };
+        let selected = management::load(home)?
+            .installations
+            .get(&job.runtime)
+            .cloned();
+        if let Some(selected) = selected.filter(|selected| selected.version == version) {
+            log.write("stage", "已是目标版本，验证现有选中版本")?;
+            let mut verify_env = env.clone();
+            let checked = management::apply_environment(home, &job.runtime, &mut verify_env)
+                .and_then(|_| {
+                    verify(
+                        runtime,
+                        &selected.executable,
+                        &version,
+                        &directory,
+                        &verify_env,
+                        log,
+                        stop,
+                    )
+                });
+            match checked {
+                Ok(()) => return Ok(selected),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
+                Err(error) => {
+                    log.write(
+                        "stage",
+                        &format!("现有安装验证失败：{error}；在新目录重新安装，不覆盖原文件"),
+                    )?;
+                }
             }
         }
-    }
-    let mut tools = if deepseek || hermes {
-        Vec::new()
-    } else {
-        vec![format!("{tool}@{version}")]
-    };
-    let mut dependencies = if node { vec!["node@22"] } else { Vec::new() };
-    if hermes {
-        dependencies.extend(["python@3.11", "uv", "ripgrep", "ffmpeg"]);
-    }
-    for dependency in dependencies {
-        let dependency_version = concrete_version(&execute(
-            vec!["latest".into(), dependency.into()],
-            &env,
-            true,
-        )?)?;
-        let dependency_tool = format!(
-            "{}@{dependency_version}",
-            dependency.split('@').next().unwrap_or(dependency)
-        );
-        execute(vec!["install".into(), dependency_tool.clone()], &env, false)?;
-        let dependency_env = execute(
-            vec!["env".into(), "--json".into(), dependency_tool.clone()],
-            &env,
-            true,
-        )?;
-        let bins = managed_paths(&dependency_env, &directory)?;
-        prepend_paths(&mut env, &bins)?;
-        tools.push(dependency_tool);
-    }
-    let bin_paths = if deepseek {
-        let dsh_home = directory.join("deepseek");
-        std::fs::create_dir(&dsh_home)?;
-        let cccc_executable = crate::ops::codex_mcp::resolve_cccc_executable()
-            .ok_or_else(|| io::Error::other("找不到用于 DeepSeek 配置的 CCCC 可执行文件"))?;
-        crate::deepseek_setup::prepare_isolated(
-            home,
-            dsh_home,
-            &mut env,
-            &cccc_executable,
-            |root, env| {
-                cccc_core::fs::write_json(
-                    &root.join("package.json"),
-                    &cccc_runtime::canonical_deepseek_runtime_manifest(),
-                )
-                .map_err(|error| error.to_string())?;
-                let npm = runtime_mcp::find_program(
-                    if cfg!(windows) { "npm.cmd" } else { "npm" },
-                    env.get("PATH").map(std::ffi::OsStr::new),
-                )
-                .ok_or("DeepSeek 安装需要 npm")?;
-                process::run(
-                    &mut process::command(&npm, &crate::deepseek_setup::install_args(), root, env),
-                    log,
-                    stop,
-                    Duration::from_secs(900),
-                    false,
-                )
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-            },
-        )
-        .map_err(io::Error::other)?;
-        managed_paths(&serde_json::to_string(&env)?, &directory)?
-    } else if hermes {
-        let bin = super::hermes::install(&directory, &version, &env, log, stop)?;
-        prepend_paths(&mut env, &[bin])?;
-        managed_paths(&serde_json::to_string(&env)?, &directory)?
-    } else {
-        let mut args = vec!["install".into()];
-        if release.is_none() {
-            args.extend(tools.iter().cloned());
+        let mut tools = if deepseek || hermes {
+            Vec::new()
+        } else {
+            vec![format!("{tool}@{version}")]
+        };
+        let mut dependencies = if node { vec!["node@22"] } else { Vec::new() };
+        if hermes {
+            dependencies.extend(["python@3.11", "uv", "ripgrep", "ffmpeg"]);
         }
-        execute(args, &env, false)?;
-        let mut args = vec!["env".into(), "--json".into()];
-        if release.is_none() {
-            args.extend(tools);
+        for dependency in dependencies {
+            let dependency_version = concrete_version(&execute(
+                vec!["latest".into(), dependency.into()],
+                &env,
+                true,
+            )?)?;
+            let dependency_tool = format!(
+                "{}@{dependency_version}",
+                dependency.split('@').next().unwrap_or(dependency)
+            );
+            execute(vec!["install".into(), dependency_tool.clone()], &env, false)?;
+            let dependency_env = execute(
+                vec!["env".into(), "--json".into(), dependency_tool.clone()],
+                &env,
+                true,
+            )?;
+            let bins = managed_paths(&dependency_env, &directory)?;
+            prepend_paths(&mut env, &bins)?;
+            tools.push(dependency_tool);
         }
-        managed_paths(&execute(args, &env, true)?, &directory)?
-    };
-    let path = std::env::join_paths(&bin_paths).map_err(io::Error::other)?;
-    let name = cccc_runtime::default_command(runtime)
-        .into_iter()
-        .next()
-        .ok_or_else(|| io::Error::other("Runtime 没有 CLI 命令"))?;
-    let executable = runtime_mcp::find_program_in(&name, Some(&path), &directory)
-        .ok_or_else(|| io::Error::other(format!("安装完成但找不到可执行文件 {name}")))?;
-    if !executable.canonicalize()?.starts_with(&directory) {
-        return Err(io::Error::other("CLI 可执行文件不在本次隔离安装目录中"));
+        let bin_paths = if deepseek {
+            let dsh_home = directory.join("deepseek");
+            std::fs::create_dir(&dsh_home)?;
+            let cccc_executable = crate::ops::codex_mcp::resolve_cccc_executable()
+                .ok_or_else(|| io::Error::other("找不到用于 DeepSeek 配置的 CCCC 可执行文件"))?;
+            crate::deepseek_setup::prepare_isolated(
+                home,
+                dsh_home,
+                &mut env,
+                &cccc_executable,
+                |root, env| {
+                    cccc_core::fs::write_json(
+                        &root.join("package.json"),
+                        &cccc_runtime::canonical_deepseek_runtime_manifest(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let npm = runtime_mcp::find_program(
+                        if cfg!(windows) { "npm.cmd" } else { "npm" },
+                        env.get("PATH").map(std::ffi::OsStr::new),
+                    )
+                    .ok_or("DeepSeek 安装需要 npm")?;
+                    process::run(
+                        &mut process::command(
+                            &npm,
+                            &crate::deepseek_setup::install_args(),
+                            root,
+                            env,
+                        ),
+                        log,
+                        stop,
+                        Duration::from_secs(900),
+                        false,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                },
+            )
+            .map_err(|error| {
+                io::Error::new(
+                    if stop.load(std::sync::atomic::Ordering::Acquire) {
+                        io::ErrorKind::Interrupted
+                    } else {
+                        io::ErrorKind::Other
+                    },
+                    error,
+                )
+            })?;
+            managed_paths(&serde_json::to_string(&env)?, &directory)?
+        } else if hermes {
+            let bin = super::hermes::install(&directory, &version, &env, log, stop)?;
+            prepend_paths(&mut env, &[bin])?;
+            managed_paths(&serde_json::to_string(&env)?, &directory)?
+        } else {
+            let mut args = vec!["install".into()];
+            if release.is_none() {
+                args.extend(tools.iter().cloned());
+            }
+            execute(args, &env, false)?;
+            let mut args = vec!["env".into(), "--json".into()];
+            if release.is_none() {
+                args.extend(tools);
+            }
+            managed_paths(&execute(args, &env, true)?, &directory)?
+        };
+        let path = std::env::join_paths(&bin_paths).map_err(io::Error::other)?;
+        let name = cccc_runtime::default_command(runtime)
+            .into_iter()
+            .next()
+            .ok_or_else(|| io::Error::other("Runtime 没有 CLI 命令"))?;
+        let executable = runtime_mcp::find_program_in(&name, Some(&path), &directory)
+            .ok_or_else(|| io::Error::other(format!("安装完成但找不到可执行文件 {name}")))?;
+        if !executable.canonicalize()?.starts_with(&directory) {
+            return Err(io::Error::other("CLI 可执行文件不在本次隔离安装目录中"));
+        }
+        prepend_paths(&mut env, &bin_paths)?;
+        verify(runtime, &executable, &version, &directory, &env, log, stop)?;
+        Ok(management::Installation {
+            version,
+            executable,
+            bin_paths,
+            installed_at: chrono::Utc::now().to_rfc3339(),
+        })
+    })();
+    // 无法确认下载/安装进程退出时，不能删除它仍可能写入的目录。
+    if log
+        .cleanup_pending
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return match result {
+            Err(error) => Err(error),
+            Ok(_) => Err(io::Error::other(
+                "CLI 进程收尾未完成，保留暂存目录，不提交安装",
+            )),
+        };
     }
-    prepend_paths(&mut env, &bin_paths)?;
-    verify(runtime, &executable, &version, &directory, &env, log, stop)?;
-    Ok(management::Installation {
-        version,
-        executable,
-        bin_paths,
-        installed_at: chrono::Utc::now().to_rfc3339(),
-    })
+    cleanup_staging(&directory, result)
+}
+
+fn cleanup_staging(
+    directory: &Path,
+    result: io::Result<management::Installation>,
+) -> io::Result<management::Installation> {
+    if result
+        .as_ref()
+        .is_ok_and(|installation| installation.executable.starts_with(directory))
+    {
+        return result;
+    }
+    let cleanup = (|| {
+        let meta = directory.symlink_metadata()?;
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return Err(io::Error::other("暂存目录归属发生变化，拒绝清理"));
+        }
+        std::fs::remove_dir_all(directory)
+    })();
+    match (result, cleanup) {
+        (result, Ok(())) => result,
+        (Err(primary), Err(cleanup)) => Err(io::Error::new(
+            primary.kind(),
+            format!("{primary}; 暂存目录清理失败：{cleanup}"),
+        )),
+        (Ok(_), Err(cleanup)) => Err(io::Error::other(format!("暂存目录清理失败：{cleanup}"))),
+    }
 }
 
 fn managed_paths(output: &str, directory: &Path) -> io::Result<Vec<PathBuf>> {
@@ -446,6 +509,56 @@ mod tests {
         assert!(managed_paths(r#"{"PATH":"/usr/bin"}"#, temp.path()).is_err());
     }
 
+    #[test]
+    fn uncertain_process_cleanup_preserves_staging_and_blocks_more_commands() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let job = management::submit(
+            &home,
+            "codex",
+            management::Operation::Install,
+            "pending-cleanup",
+            chrono::Utc::now(),
+        )
+        .expect("submit");
+        let log = Log::open(&home, &job.id).expect("log");
+        log.cleanup_pending
+            .store(true, std::sync::atomic::Ordering::Release);
+        let result = install_mise(
+            &home,
+            &job,
+            ActorRuntime::Codex,
+            "codex",
+            false,
+            Path::new("must-not-launch"),
+            Default::default(),
+            &log,
+            &AtomicBool::new(false),
+        );
+        assert!(
+            result
+                .expect_err("refused")
+                .to_string()
+                .contains("不启动后续安装命令")
+        );
+        assert!(
+            management::root(&home)
+                .join("versions/pending-cleanup")
+                .is_dir()
+        );
+        assert!(
+            management::root(&home)
+                .join("logs/pending-cleanup.jsonl")
+                .is_file()
+        );
+        assert!(
+            management::load(&home)
+                .expect("state")
+                .installations
+                .is_empty()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn isolated_install_and_failed_update_keep_the_previous_executable() {
@@ -483,6 +596,47 @@ esac
         );
         env.insert("CLI_TEST_VERSION".into(), "1.2.3".into());
         let now = chrono::Utc::now();
+        let failed = management::submit(
+            &home,
+            "codex",
+            management::Operation::Install,
+            "failed-first",
+            now,
+        )
+        .expect("submit failed fixture");
+        management::claim_next(&home, now).expect("claim failed fixture");
+        let mut failed_env = env.clone();
+        failed_env.insert("CLI_TEST_FAIL".into(), "1".into());
+        let failure = install_mise(
+            &home,
+            &failed,
+            ActorRuntime::Codex,
+            "codex",
+            false,
+            &mise,
+            failed_env,
+            &Log::open(&home, &failed.id).expect("failed log"),
+            &AtomicBool::new(false),
+        )
+        .expect_err("failed verification");
+        management::finish(&home, &failed.id, Err(failure.to_string()), now)
+            .expect("record failure");
+        assert!(
+            management::load(&home)
+                .expect("state")
+                .installations
+                .is_empty()
+        );
+        assert!(
+            !management::root(&home)
+                .join("versions/failed-first")
+                .exists()
+        );
+        assert!(
+            management::root(&home)
+                .join("logs/failed-first.jsonl")
+                .exists()
+        );
         let job = management::submit(&home, "codex", management::Operation::Install, "first", now)
             .expect("isolated install and");
         management::claim_next(&home, now).expect("isolated install and");
@@ -526,6 +680,9 @@ esac
             &AtomicBool::new(false),
         )
         .expect_err("isolated install and");
+        assert!(!management::root(&home).join("versions/second").exists());
+        assert!(management::root(&home).join("logs/second.jsonl").exists());
+        assert!(binary.exists(), "外部文件不能随失败暂存目录一起清理");
         management::finish(&home, &job.id, Err(error.to_string()), now)
             .expect("isolated install and");
         assert_eq!(
@@ -637,12 +794,11 @@ esac
                     previous
                 );
             }
-            if matches!(scenario, "healthy" | "stopped") {
+            if matches!(scenario, "healthy" | "failed-repair" | "stopped") {
                 assert!(
                     !management::root(&home)
                         .join("versions")
                         .join(scenario)
-                        .join("data")
                         .exists()
                 );
             }

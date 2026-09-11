@@ -9,7 +9,8 @@ pub(super) fn resolve_launch_actor(
     group: &GroupDoc,
     actor: &Actor,
 ) -> Result<Actor, OpError> {
-    let mut actor = actor_profile_runtime::resolve(home, actor)?;
+    // apply 已按本次启动解析运行配置；不能在加锁/启动过程中再次切换快照。
+    let mut actor = actor.clone();
     let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
     let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
     actor.env.extend(profile_secrets);

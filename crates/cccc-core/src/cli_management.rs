@@ -9,6 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::PathBuf;
 
+mod history;
+pub use history::{find_job, load_with_history};
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
@@ -86,7 +89,7 @@ pub fn root(home: &HomeLayout) -> PathBuf {
 pub fn read_log(home: &HomeLayout, id: &str, offset: u64) -> io::Result<Value> {
     use std::io::{BufRead, Read, Seek, SeekFrom};
     validate_id(id)?;
-    if !load(home)?.jobs.contains_key(id) {
+    if find_job(home, id)?.is_none() {
         return Err(io::Error::new(io::ErrorKind::NotFound, "cli_job_not_found"));
     }
     let file = match std::fs::File::open(root(home).join("logs").join(format!("{id}.jsonl"))) {
@@ -227,6 +230,7 @@ fn update<T>(home: &HomeLayout, change: impl FnOnce(&mut State) -> io::Result<T>
         let mut state = load(home)?;
         let previous = state.clone();
         let result = change(&mut state)?;
+        history::compact(home, &previous, &mut state)?;
         if state != previous {
             fs::write_json_committed(&root(home).join("state.json"), &state)?;
         }
@@ -403,6 +407,7 @@ pub fn save_rules(
 }
 
 fn enqueue(
+    home: &HomeLayout,
     state: &mut State,
     runtime: &str,
     operation: Operation,
@@ -412,9 +417,13 @@ fn enqueue(
 ) -> io::Result<Job> {
     validate_id(runtime)?;
     validate_id(id)?;
-    if let Some(existing) = state.jobs.get(id) {
+    let existing = match state.jobs.get(id) {
+        Some(job) => Some(job.clone()),
+        None => history::archived_job(home, id)?,
+    };
+    if let Some(existing) = existing {
         if existing.runtime == runtime && existing.operation == operation {
-            return Ok(existing.clone());
+            return Ok(existing);
         }
         return Err(invalid("cli_request_id_conflict"));
     }
@@ -430,9 +439,6 @@ fn enqueue(
     }
     if operation != Operation::Install && !state.installations.contains_key(runtime) {
         return Err(invalid("cli_not_managed"));
-    }
-    if state.jobs.len() >= 10_000 {
-        return Err(invalid("cli_job_history_full"));
     }
     let job = Job {
         id: id.to_owned(),
@@ -457,7 +463,7 @@ pub fn submit(
     now: DateTime<Utc>,
 ) -> io::Result<Job> {
     update(home, |state| {
-        enqueue(state, runtime, operation, request_id, None, now)
+        enqueue(home, state, runtime, operation, request_id, None, now)
     })
 }
 
@@ -483,6 +489,7 @@ pub fn enqueue_due(home: &HomeLayout, now: DateTime<Utc>) -> io::Result<Vec<Job>
             for runtime in &runtimes {
                 let id = uuid::Uuid::new_v4().to_string();
                 match enqueue(
+                    home,
                     state,
                     runtime,
                     Operation::Update,
@@ -544,6 +551,27 @@ pub fn finish_uninstall(
     now: DateTime<Utc>,
 ) -> io::Result<Job> {
     finish_result(home, id, result.map(|()| None), now)
+}
+
+pub fn interrupt(
+    home: &HomeLayout,
+    id: &str,
+    error: String,
+    now: DateTime<Utc>,
+) -> io::Result<Job> {
+    update(home, |state| {
+        let job = state
+            .jobs
+            .get_mut(id)
+            .ok_or_else(|| invalid("cli_job_not_found"))?;
+        if job.status != JobStatus::Running {
+            return Err(invalid("cli_job_not_running"));
+        }
+        job.status = JobStatus::Interrupted;
+        job.error = Some(error);
+        job.finished_at = Some(now.to_rfc3339());
+        Ok(job.clone())
+    })
 }
 
 fn finish_result(

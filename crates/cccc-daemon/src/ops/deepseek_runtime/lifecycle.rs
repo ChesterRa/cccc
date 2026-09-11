@@ -1,4 +1,4 @@
-use super::{running, start, stop};
+use super::{running, start_with_resources, stop};
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_runtime, actor_secrets};
 use cccc_contracts::{Actor, ActorRuntime};
@@ -24,9 +24,9 @@ pub fn apply(
 }
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
+    let mut actor = resolve_launch_actor(home, group, actor)?;
     let usage = crate::ops::cli_management::usage::acquire(home, actor.runtime, &actor.command)
         .map_err(OpError::io)?;
-    let mut actor = resolve_launch_actor(home, group, actor)?;
     actor.normalize_runtime_constraints();
     if actor.command.is_empty() {
         actor.command = cccc_runtime::default_command(actor.runtime);
@@ -42,8 +42,7 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
     let cwd = actor_runtime::working_directory(group, &actor)?;
-    start(home, group, &actor, &cwd).map_err(OpError::io)?;
-    crate::ops::cli_management::usage::retain(home, &group.group_id, &actor.id, usage);
+    start_with_resources(home, group, &actor, &cwd, usage).map_err(OpError::io)?;
     Ok(())
 }
 
@@ -52,7 +51,7 @@ fn resolve_launch_actor(
     group: &GroupDoc,
     actor: &Actor,
 ) -> Result<Actor, OpError> {
-    let mut actor = actor_profile_runtime::resolve(home, actor)?;
+    let mut actor = actor.clone();
     let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
     let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
     actor.env.extend(profile_secrets);

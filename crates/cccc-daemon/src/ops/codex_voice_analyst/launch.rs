@@ -111,6 +111,17 @@ impl AnalystSession {
         home: &HomeLayout,
         config: ActorLaunchConfig,
     ) -> io::Result<Self> {
+        let usage =
+            crate::ops::cli_management::usage::acquire(home, config.runtime, &config.command)?;
+        let session = Self::launch_actor_inner(home, config).await?;
+        *session
+            .cli_usage
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = usage;
+        Ok(session)
+    }
+
+    async fn launch_actor_inner(home: &HomeLayout, config: ActorLaunchConfig) -> io::Result<Self> {
         let binding = bind_workspace(&config.workdir)?;
         if config.runtime == cccc_contracts::ActorRuntime::Claude {
             return Self::launch_claude(

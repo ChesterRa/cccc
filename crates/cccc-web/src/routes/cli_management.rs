@@ -38,8 +38,19 @@ async fn read_log(
     .await
 }
 
-async fn status(State(state): State<AppState>) -> ApiResult {
-    call(&state, "cli_management_get", object(json!({"by":"user"}))).await
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatusQuery {
+    #[serde(default)]
+    history: bool,
+}
+
+async fn status(State(state): State<AppState>, Query(query): Query<StatusQuery>) -> ApiResult {
+    let mut args = object(json!({"by":"user"}));
+    if query.history {
+        args.insert("history".into(), json!(true));
+    }
+    call(&state, "cli_management_get", args).await
 }
 
 async fn submit(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {

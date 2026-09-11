@@ -146,7 +146,11 @@ fn execute_job(
             let message = log.redact(&error.to_string());
             log.write("error", &message)?;
             log.sync()?;
-            management::finish_uninstall(home, &job.id, Err(message), Utc::now())?;
+            if error.kind() == io::ErrorKind::Interrupted {
+                management::interrupt(home, &job.id, message, Utc::now())?;
+            } else {
+                management::finish_uninstall(home, &job.id, Err(message), Utc::now())?;
+            }
         }
         return Ok(());
     }
@@ -174,12 +178,19 @@ fn execute_job(
             }
         }
     })();
-    management::finish(
-        home,
-        &job.id,
-        result.map_err(|error| error.to_string()),
-        Utc::now(),
-    )?;
+    match result {
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+            management::interrupt(home, &job.id, error.to_string(), Utc::now())?;
+        }
+        result => {
+            management::finish(
+                home,
+                &job.id,
+                result.map_err(|error| error.to_string()),
+                Utc::now(),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -312,21 +323,31 @@ fn read_log(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    fields(request, &[])?;
+    fields(request, &["history"])?;
+    let history = match request.args.get("history") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(OpError::new("invalid_args", "history 必须是布尔值")),
+    };
     if worker_failures().contains(home.root()) {
         return Err(OpError::new(
             "cli_worker_unavailable",
             "CLI 管理后台发生错误；请检查 CCCC 守护进程日志和存储状态，恢复后刷新重试",
         ));
     }
-    let state = management::load(home).map_err(state_error)?;
+    let state = if history {
+        management::load_with_history(home)
+    } else {
+        management::load(home)
+    }
+    .map_err(state_error)?;
     let runtimes = cccc_runtime::detect_runtimes()
         .into_iter()
         .map(|probe| {
             let runtime: ActorRuntime =
                 serde_json::from_value(json!(probe.name)).map_err(OpError::invalid)?;
             let managed_error = if state.installations.contains_key(&probe.name) {
-                management::apply_environment(home, &probe.name, &mut Default::default())
+                managed_readiness(home, &probe.name)
                     .err().map(|error| error.to_string())
             } else { None };
             Ok(json!({
@@ -340,6 +361,21 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .collect::<Result<Vec<_>, OpError>>()?;
     object(json!({"runtimes":runtimes,"state":state}))
+}
+
+fn managed_readiness(home: &HomeLayout, runtime: &str) -> io::Result<()> {
+    let mut env = std::env::vars().collect();
+    if let Some(executable) = management::apply_environment(home, runtime, &mut env)? {
+        if runtime == "deepseek" {
+            env.insert(
+                "CCCC_HOME".into(),
+                home.root().to_string_lossy().into_owned(),
+            );
+            cccc_runtime::deepseek_preflight(&[executable.to_string_lossy().into_owned()], &env)
+                .map_err(io::Error::other)?;
+        }
+    }
+    Ok(())
 }
 
 fn submit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -388,6 +424,49 @@ mod tests {
             op: op.into(),
             args: args.as_object().expect("request").clone(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_deepseek_status_rejects_missing_dependencies_without_mutation() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let executable =
+            management::root(&home).join("versions/deepseek/node_modules/.bin/dsh-acp-demo");
+        cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").expect("fixture");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("mode");
+        let now = Utc::now();
+        management::submit(
+            &home,
+            "deepseek",
+            management::Operation::Install,
+            "deepseek",
+            now,
+        )
+        .expect("submit");
+        management::claim_next(&home, now).expect("claim");
+        management::finish(
+            &home,
+            "deepseek",
+            Ok(management::Installation {
+                version: "fixture".into(),
+                executable: executable.clone(),
+                bin_paths: vec![executable.parent().expect("parent").into()],
+                installed_at: now.to_rfc3339(),
+            }),
+            now,
+        )
+        .expect("finish");
+        assert!(management::apply_environment(&home, "deepseek", &mut Default::default()).is_ok());
+        let before = management::load(&home).expect("state");
+        assert!(managed_readiness(&home, "deepseek").is_err());
+        assert_eq!(management::load(&home).expect("unchanged"), before);
+        assert_eq!(
+            std::fs::read(&executable).expect("unchanged executable"),
+            b"#!/bin/sh\nexit 0\n"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

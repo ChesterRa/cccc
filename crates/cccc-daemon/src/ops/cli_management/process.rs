@@ -16,6 +16,7 @@ pub(super) struct Log {
     file: Arc<Mutex<File>>,
     secrets: Arc<Vec<String>>,
     directory: PathBuf,
+    pub(super) cleanup_pending: Arc<AtomicBool>,
 }
 
 impl Log {
@@ -36,6 +37,7 @@ impl Log {
             )),
             secrets: Arc::new(Self::environment_secrets()),
             directory: directory.join(job_id),
+            cleanup_pending: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -187,6 +189,11 @@ pub(super) fn run(
     timeout: Duration,
     capture: bool,
 ) -> io::Result<String> {
+    if log.cleanup_pending.load(Ordering::Acquire) {
+        return Err(io::Error::other(
+            "此前 CLI 进程收尾未完成，不启动后续安装命令",
+        ));
+    }
     if stop.load(Ordering::Acquire) {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "CLI 后台已停止"));
     }
@@ -249,6 +256,7 @@ pub(super) fn run(
         },
     );
     if let Err(error) = cleanup {
+        log.cleanup_pending.store(true, Ordering::Release);
         let message = format!("CLI 进程树收尾失败，未确认进程已停止：{error}");
         let _ = log.write("error", &message);
         let _ = log.sync();

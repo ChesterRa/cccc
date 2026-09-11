@@ -2,19 +2,8 @@
 use cccc_contracts::ActorRuntime;
 use cccc_core::{HomeLayout, cli_management as management};
 use fs2::FileExt;
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-
-type Key = (PathBuf, String, String);
-type Uses = HashMap<Key, Vec<File>>;
-
-fn actors() -> &'static Mutex<Uses> {
-    static ACTORS: OnceLock<Mutex<Uses>> = OnceLock::new();
-    ACTORS.get_or_init(Default::default)
-}
 
 fn lock_file(home: &HomeLayout, runtime: &str) -> io::Result<File> {
     management::validate_id(runtime)?;
@@ -37,21 +26,24 @@ pub(crate) fn acquire(
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    let state = management::load(home)?;
+    management::load(home)?;
     let mut names = vec![name];
     // 显式引用另一 Runtime 的受管目录，也必须保护实际使用的安装。
-    for job in state
-        .jobs
-        .values()
-        .filter(|job| job.operation != management::Operation::Uninstall)
-    {
-        management::validate_id(&job.id)?;
-        let directory = management::root(home).join("versions").join(&job.id);
-        if command
-            .iter()
-            .any(|part| std::path::Path::new(part).starts_with(&directory))
+    for part in command {
+        if let Ok(relative) =
+            std::path::Path::new(part).strip_prefix(management::root(home).join("versions"))
         {
-            names.push(job.runtime.clone());
+            if let Some(id) = relative
+                .components()
+                .next()
+                .and_then(|part| part.as_os_str().to_str())
+            {
+                if let Some(job) = management::find_job(home, id)? {
+                    if job.operation != management::Operation::Uninstall {
+                        names.push(job.runtime);
+                    }
+                }
+            }
         }
     }
     names.sort();
@@ -72,35 +64,8 @@ pub(crate) fn acquire(
         .collect()
 }
 
-pub(crate) fn retain(home: &HomeLayout, group: &str, actor: &str, files: Vec<File>) {
-    // 启动已取得共享文件锁，即使登记锁中毒也必须保留这些句柄，不能放开使用保护。
-    actors()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(
-            (home.root().to_path_buf(), group.into(), actor.into()),
-            files,
-        );
-}
-
 pub(super) fn exclusive(home: &HomeLayout, runtime: &str) -> io::Result<File> {
-    // 卸载是破坏性操作；登记锁中毒时无法确信归属完整，保守拒绝，不清除中毒状态。
-    // 使用启动时留下的归属，不依赖可能已被修改的 Actor 配置。
-    actors()
-        .lock()
-        .map_err(|_| io::Error::other("CLI usage registry poisoned"))?
-        .retain(|(root, group, actor), _| {
-            if root != home.root() {
-                return true;
-            }
-            let pty = match cccc_runtime::status(group, actor) {
-                Ok(status) => status.running,
-                Err(cccc_runtime::RuntimeError::NotFound(_, _)) => false,
-                Err(_) => true,
-            };
-            pty || crate::ops::local_headless::running(group, actor)
-                || crate::ops::deepseek_runtime::running(group, actor)
-        });
+    // 锁由本次进程/会话持有，不通过 Actor ID 推断旧进程是否已退出。
     let file = lock_file(home, runtime)?;
     FileExt::try_lock_exclusive(&file).map_err(|error| {
         if error.kind() == io::ErrorKind::WouldBlock {

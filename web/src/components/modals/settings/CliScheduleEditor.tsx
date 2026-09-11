@@ -151,13 +151,17 @@ export function CliScheduleEditor({
             <input
               required
               type="number"
+              step="any"
               min={1}
               max={525600}
               value={trigger.every_seconds / 60}
               onChange={(e) =>
                 setDraft({
                   ...draft,
-                  trigger: { kind: "interval", every_seconds: Number(e.target.value) * 60 },
+                  trigger: {
+                    kind: "interval",
+                    every_seconds: Math.round(Number(e.target.value) * 60),
+                  },
                 })
               }
               className={inputClass()}

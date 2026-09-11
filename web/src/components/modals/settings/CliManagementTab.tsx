@@ -31,6 +31,7 @@ export function CliManagementTab({ isDark }: { isDark: boolean }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showAllJobs, setShowAllJobs] = useState(false);
   const [logJobId, setLogJobId] = useState<string | null>(null);
   const [editing, setEditing] = useState<{
     initial: CliSchedule;
@@ -49,7 +50,7 @@ export function CliManagementTab({ isDark }: { isDark: boolean }) {
     const generation = readGeneration.current;
     reloadPending.current = true;
     try {
-      const response = await api.fetchCliManagement();
+      const response = await api.fetchCliManagement(showAllJobs);
       if (!mounted.current || generation !== readGeneration.current) return;
       if (!response.ok) {
         setError(errorMessage(response.error, t("cliManagement.loadFailed")));
@@ -64,7 +65,7 @@ export function CliManagementTab({ isDark }: { isDark: boolean }) {
       reloadPending.current = false;
       if (mounted.current) setLoading(false);
     }
-  }, [t]);
+  }, [t, showAllJobs]);
 
   useEffect(() => {
     mounted.current = true;
@@ -151,7 +152,6 @@ export function CliManagementTab({ isDark }: { isDark: boolean }) {
   const jobs = Object.values(data?.state.jobs || {}).sort((a, b) =>
     b.created_at.localeCompare(a.created_at),
   );
-  const [showAllJobs, setShowAllJobs] = useState(false);
   const logJob = jobs.find((job) => job.id === logJobId);
 
   return (

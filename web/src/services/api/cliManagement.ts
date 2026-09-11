@@ -51,8 +51,8 @@ export type CliLogPage = {
   has_more: boolean;
 };
 
-export function fetchCliManagement() {
-  return apiJson<CliManagementStatus>("/api/v1/cli-management");
+export function fetchCliManagement(history = false) {
+  return apiJson<CliManagementStatus>(`/api/v1/cli-management${history ? "?history=true" : ""}`);
 }
 
 export function submitCliJob(runtime: string, operation: CliOperation, requestId: string) {

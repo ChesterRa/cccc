@@ -362,3 +362,36 @@ fn managed_cli_is_used_for_default_launch_but_explicit_program_is_preserved() {
     assert_eq!(resolved.command, actor.command);
     assert_eq!(resolved.env, actor.env);
 }
+
+#[test]
+fn managed_cli_launch_keeps_resolved_profile_snapshot() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("snapshot", "")
+        .expect("group");
+    let profiles = cccc_core::profiles::ProfileStore::new(home.clone()).expect("profiles");
+    let profile = |runtime, command| {
+        serde_json::json!({"id":"ap_snapshot", "name":"snapshot", "runtime":runtime, "command":[command]}).as_object().expect("object").clone()
+    };
+    profiles
+        .upsert(profile("cursor", "/old/cursor-agent"), None)
+        .expect("original");
+    let actor =
+        crate::ops::actor_profile_runtime::link(&home, &Actor::new("snapshot"), "ap_snapshot")
+            .expect("link");
+    let snapshot = crate::ops::actor_profile_runtime::resolve(&home, &actor).expect("resolve once");
+    profiles
+        .upsert(profile("codex", "/new/codex"), None)
+        .expect("changed during launch");
+    let launch = resolve_launch_actor(&home, &group, &snapshot).expect("prepare resolved launch");
+    assert_eq!(launch.runtime, snapshot.runtime);
+    assert_eq!(launch.command, snapshot.command);
+    assert_ne!(
+        launch.command,
+        crate::ops::actor_profile_runtime::resolve(&home, &actor)
+            .expect("new profile")
+            .command
+    );
+}

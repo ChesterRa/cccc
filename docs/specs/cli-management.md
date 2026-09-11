@@ -46,9 +46,12 @@
 ## 默认启动与持久化
 
 - `CCCC_HOME/cli-management/state.json` 保存 `revision`、`rules`、`installations`、`jobs`；持有 `state.lock` 完成读改写并原子保存。不保存供应商凭据。
+- 常用状态保留最近 10,000 条终态操作和全部活动操作。超出部分在下次写事务中移入 `cli-management/history/`，不删除操作记录或日志；刚形成的终态先提交状态，最迟后续写事务再归档。只归档此前已提交且未改变的终态：先原子写归档，再提交缩减后的状态，崩溃后的相同副本可重试，内容冲突则明确报错。归档文件名编码操作 ID，避免大小写不敏感文件系统上的冲突。
+- 默认轮询不展开归档；“查看全部”显式请求完整操作历史。旧请求幂等检查和日志查询按 ID 查找归档，卸载归属检查包括归档中的安装记录，不因近期记录上限阻止新操作。
 - 默认启动使用有效受管记录；无记录才沿用原生探测。Actor 显式命令不覆盖，环境和命令选择只发生在启动边界，不改保存的 Actor、原生会话或已运行进程。
 - 受管文件/依赖损坏、管理状态读取失败均明确拒绝受影响的默认启动，不静默回落外部版本。普通 Actor、DeepSeek 及内建 Voice Analyst 接入同一选择规则。
 - 安装/更新先解析具体版本，在每个操作独立目录安装并验证，成功才写入选择。健康的同版本可复用；损坏则隔离修复，失败保留旧选择。
+- 正常返回失败、中断或复用旧版本时，删除本次独占创建且未选中的暂存目录；日志在独立目录保留。拒绝接管已存在的同名目录，清理失败合并到原错误并保留中断类型。安装子进程收尾失败、无法确认已退出时保留暂存目录和错误，不删除仍可能被写入的文件。突然终止进程或磁盘错误可能留下目录，不承诺崩溃后的自动清理，也不删除旧版本或外部安装。
 - `Operation::Update`、HTTP 新请求与响应统一为 `update`。旧 `upgrade` 只作 Serde 读取别名；旧记录重试保留原编号，不重复入队。新格式回退到旧程序不是双向兼容，不能盲目降级。
 - `/api/v1/runtimes` 读取管理状态失败仍返回 HTTP 200，完整保留原生探测的目录字段、可用性、路径和 `available` 列表；另以 `cli_management_error="cli_management_state_error"` 和 CLI 项的同名 `managed_error` 错误码报告管理状态故障。该目录不是启动授权，不得把读取失败扩散为既有 CLI 不可用。状态健康时顶层错误为 null；不会重置坏状态。
 - 单项受管依赖损坏只使该项不可用，其余照常返回。目录展示降级不改变启动时的严格检查。
@@ -67,9 +70,11 @@
 - 卸载两个 HTTP 入口进入同一实现，不是占位。仅删除可由该 Runtime 安装操作记录证明归属的 `versions/<操作编号>` 目录，包括旧版本；拒绝越界、目录链接、归属不明及被其他 Runtime 引用的目录。
 - 外部软件、供应商登录、原生会话、Group、Actor、计划和日志全部保留。全部删除成功后才原子移除受管记录；后续默认启动恢复原生探测，自动计划跳过该 CLI。显式旧路径不自动修正。
 - 使用原生 fs2 文件锁：CCCC 启动者持共享锁，卸载尝试独占锁；活动 Actor/内建助手须先停止，不自动杀掉它们。配置改变不解除已启动进程的归属。其他终端直接运行的程序不在这一使用保护范围。
-- 使用登记锁中毒时，启动保留已取得的共享句柄；破坏性卸载保守拒绝，不清空登记或中毒标志。
+- Actor Profile 只在原生外层入口解析一次，实际启动和使用锁使用同一份 Runtime/command 快照，不因启动途中 Profile 修改保护错误的软件。显式引用另一 Runtime 的受管目录也保护其安装，包含已归档的安装记录。
+- PTY/DeepSeek 使用锁通过原生 OwnedProcessTree 的可选资源接入绑定每次进程的唯一身份，不由相同 Actor ID 覆盖；只发停止信号或停止/回收失败均不提前释放。原生 wait/try_wait 确认退出后释放，正常停止不等待卸载才清理。内建助手与 local-headless 复用 AnalystSession 的资源清理边界。无法确认退出且失去后续回收机会的异常路径保守保留到 CCCC 进程退出；不改变原生停止成功/失败合同。原生无附加资源入口传空集合，已有调用行为不变。
 - 卸载失败/中断可能已删除部分文件，保留受管记录并报错，不承诺文件级回滚；可重试卸载或更新修复，不允许静默回落。安装/更新失败不切换旧选择。
 - 重启恢复把未完成的 Running 标记 Interrupted，不自动重放；存储故障恢复后重新核对，不永久卡住旧 Running。
+- 执行器收到 `io::ErrorKind::Interrupted` 时，同样保存 Interrupted、错误和结束时间，不转写为 Failed；安装/更新的旧选择保持，卸载保留记录供重试。
 - Worker 按原生后台服务组织为异步循环、逐次 `spawn_blocking` 和异步等待。关闭先发 stop，最多等待 6 秒，超时中止异步调度任务并记录明确警告，不再无上限 await。
 - 执行中的安装命令每 25ms 检查 stop，并通过 OwnedProcessTree 终止所属进程树；退出回收最多等待 5 秒。已开始的阻塞调用无法被 Tokio abort 强制停止；6 秒仅是 Worker.finish 等待上限，不是磁盘/内核卡死时整个进程退出保证。警告不表示阻塞收尾已完成，不能据此立即复用同一 Home 启动第二个 Worker。
 - 不提供手动版本回切、定期旧版本清理或任意命令安装接口，不修改原有 CLI 的登录与计费方式。
@@ -78,6 +83,7 @@
 
 - 规则属于实例，仅为已安装的受管 CLI 创建 Update；未安装和外部软件不自动接管。多条规则，初始关闭，周期默认 03:00。
 - 复用 `interval`（至少 60 秒）、`cron`（五段）和 `at` 合同。界面每天/每周单日/每月，多个星期使用多条规则；复杂表达式保留原值，不能无声变成每天。
+- 间隔输入允许小数分钟，提交时换算为整数秒；例如已有 90 秒计划显示 1.5 分钟，可不改变间隔直接保存。
 - 保存固定时区，下次时间按浏览器本地时间显示；月末不存在的日期不执行，一次性不重复。计划版本冲突拒绝覆盖并保留草稿。
 - 星期转换仅在 CLI 管理私有入口复制 trigger 后进行：Web 0/7 周日、1 周一转换为 cron 库编号并补秒。保存校验、首次计算和到期续排程均走此入口；API/持久化表达式不变。
 - 公共 `automation_schedule.rs` 与上游基线完全相同，工作组自动化仍保持旧解释；不在本功能修复原有 Web/工作组后端星期差异，不新增公共开关。
@@ -89,7 +95,7 @@
 
 | HTTP 入口 | Daemon 操作 | 输入与结果 |
 |---|---|---|
-| GET /api/v1/cli-management | cli_management_get | 返回 `{runtimes,state}` |
+| GET /api/v1/cli-management | cli_management_get | 可选布尔查询 `history`，默认 false；true 合并全部归档操作。Daemon 使用同名布尔参数，返回 `{runtimes,state}` |
 | POST /api/v1/cli-management/jobs | cli_management_submit | `runtime,operation,request_id`；返回 `{job}`，三种操作全部支持 |
 | POST /api/v1/cli-management/uninstall | cli_management_uninstall | `runtime,request_id`；等价于通用入口的 `operation=uninstall`，返回 `{job}` |
 | PUT /api/v1/cli-management/schedules | cli_management_schedules_update | `revision,rules`；返回 `{state}` |
@@ -103,7 +109,7 @@
 | external_available / external_path | boolean / string 或 null；原生外部探测结果，不代表默认来源 |
 | source | 已知安装来源：`{kind:mise,tool,node}`、`{kind:official,distribution}`、`{kind:deepseek}` 或 `{kind:not_applicable,reason}`；不是默认使用来源配置 |
 | installation | 受管安装对象或 null |
-| managed_error | string 或 null；受管文件与依赖验证错误 |
+| managed_error | string 或 null；受管文件与依赖验证错误。DeepSeek 复用原生 `deepseek_preflight` 检查组件和配置，不能仅凭可执行文件存在判断就绪 |
 | uninstall_available / uninstall_reason | 有受管记录时 true/null，否则 false/`cli_not_managed`；true 不绕过运行中和目录归属检查 |
 
 `state` 合同：
@@ -135,6 +141,7 @@
 | 启动与卸载 | 受管优先、无记录回落、损坏拒绝；实际删除仅限受管目录，外部软件及登录/会话不变；活动使用拒绝 |
 | 调度 | 全星期/复杂表达式/日/月末/时区、保存重载、续排程、重复领取；工作组旧行为不变 |
 | Worker | 正常关闭、活动进程树回收、独立进程不受影响、6 秒超时分支、存储故障恢复 |
+| 记录归档 | 超过 10,000 条仍可提交；旧请求幂等、旧日志、旧安装归属和显式命令使用保护；归档失败不丢记录 |
 | HTTP | 权限、幂等、冲突、两个卸载入口、日志、坏状态下目录降级及修复后恢复 |
 | Web | 原生风格与三语，17 项清单、中文术语、操作记录、日志、计划交互及故障恢复 |
 | 发布 | 文档治理与 CLI 功能分支分开；仅获准的开发实例部署，标准版不动；推送需独立授权和完整历史秘密扫描 |

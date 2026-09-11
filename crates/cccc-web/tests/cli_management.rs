@@ -50,6 +50,7 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
 
     for (method, suffix) in [
         ("GET", ""),
+        ("GET", "?history=true"),
         ("GET", "/jobs/unknown/log"),
         ("POST", "/jobs"),
         ("PUT", "/schedules"),
@@ -96,6 +97,18 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         .expect("cli management is");
     assert_eq!(response.status(), StatusCode::OK);
     let catalog = payload(response).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/cli-management?history=true")
+                .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
+                .body(Body::empty())
+                .expect("history request"),
+        )
+        .await
+        .expect("history response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(payload(response).await, catalog);
     assert_eq!(
         catalog["result"]["runtimes"]
             .as_array()

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 只从安装任务记录推导删除目标，不接受接口传入的路径或跟随目录链接。
 fn directories(home: &HomeLayout, job: &management::Job) -> io::Result<Vec<PathBuf>> {
-    let state = management::load(home)?;
+    let state = management::load_with_history(home)?;
     let installation = state
         .installations
         .get(&job.runtime)
@@ -151,6 +151,74 @@ mod tests {
             .expect("remove");
         super::super::execute_job(home, &job, &AtomicBool::new(false)).expect("remove");
         management::load(home).expect("remove").jobs[id].clone()
+    }
+
+    #[test]
+    fn archived_installation_keeps_usage_protection_and_interrupted_uninstall_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let executable = installed(&home, "archived-install");
+        let mut state = management::load(&home).expect("state");
+        let original = state.jobs["archived-install"].clone();
+        for index in 0..10_000 {
+            let mut job = original.clone();
+            job.id = format!("recent-{index}");
+            job.runtime = "claude".into();
+            job.created_at = "2099-01-01T00:00:00Z".into();
+            state.jobs.insert(job.id.clone(), job);
+        }
+        cccc_core::fs::write_json(&management::root(&home).join("state.json"), &state)
+            .expect("legacy state");
+        let now = Utc::now();
+        management::submit(
+            &home,
+            "codex",
+            management::Operation::Uninstall,
+            "interrupted",
+            now,
+        )
+        .expect("submit");
+        assert!(
+            !management::load(&home)
+                .expect("recent")
+                .jobs
+                .contains_key("archived-install")
+        );
+        assert_eq!(
+            management::find_job(&home, "archived-install").expect("archive"),
+            Some(original)
+        );
+        let lease = usage::acquire(
+            &home,
+            ActorRuntime::Cursor,
+            &[executable.to_string_lossy().into_owned()],
+        )
+        .expect("cross-runtime archived command");
+        assert!(usage::exclusive(&home, "codex").is_err());
+        drop(lease);
+        let job = management::claim_next(&home, now)
+            .expect("claim")
+            .expect("job");
+        super::super::execute_job(&home, &job, &AtomicBool::new(true))
+            .expect("interruption persisted");
+        let state = management::load(&home).expect("state");
+        assert_eq!(
+            state.jobs["interrupted"].status,
+            management::JobStatus::Interrupted
+        );
+        assert!(state.jobs["interrupted"].finished_at.is_some());
+        assert_eq!(state.installations["codex"].executable, executable);
+        assert!(executable.exists());
+        assert_eq!(
+            remove(&home, "retry-archive").status,
+            management::JobStatus::Succeeded
+        );
+        assert!(!executable.exists());
+        assert!(
+            management::root(&home)
+                .join("logs/interrupted.jsonl")
+                .is_file()
+        );
     }
 
     #[test]
