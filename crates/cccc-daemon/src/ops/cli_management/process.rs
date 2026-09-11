@@ -91,7 +91,7 @@ impl Log {
         // 先还原终端显示文本，再匹配凭据；颜色码不能把敏感字段拆开绕过脱敏。
         static ANSI: OnceLock<Regex> = OnceLock::new();
         let mut text = ANSI
-            .get_or_init(|| Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").unwrap())
+            .get_or_init(|| Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").expect("valid ANSI pattern"))
             .replace_all(text, "")
             .into_owned();
         // 环境变量遍历顺序不稳定，先处理长值，避免短前缀替换后暴露长凭据尾部。
@@ -102,9 +102,9 @@ impl Log {
         }
         static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
         for (pattern, replacement) in PATTERNS.get_or_init(|| vec![
-            (Regex::new(r"(?i)(https?://)[^\s/@]+:[^\s/@]+@").unwrap(), "$1[REDACTED]@"),
-            (Regex::new(r#"(?i)((?:api[_-]?key|access[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^\s"'&,;]+"#).unwrap(), "$1[REDACTED]"),
-            (Regex::new(r"(?i)(bearer\s+)[a-z0-9._~+/=-]+").unwrap(), "$1[REDACTED]"),
+            (Regex::new(r"(?i)(https?://)[^\s/@]+:[^\s/@]+@").expect("valid URL credential pattern"), "$1[REDACTED]@"),
+            (Regex::new(r#"(?i)((?:api[_-]?key|access[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^\s"'&,;]+"#).expect("valid secret field pattern"), "$1[REDACTED]"),
+            (Regex::new(r"(?i)(bearer\s+)[a-z0-9._~+/=-]+").expect("valid bearer pattern"), "$1[REDACTED]"),
         ]) {
             text = pattern.replace_all(&text, *replacement).into_owned();
         }
@@ -313,7 +313,10 @@ pub(super) fn read_log(home: &HomeLayout, id: &str, offset: u64) -> io::Result<s
             "原始输出的脱敏尾部视图（最多 200 行 / 8 MiB，不代表完整文件）：\n{}",
             Log::redact_text(&lines.join("\n"), &Log::environment_secrets()),
         ));
-        entry.as_object_mut().unwrap().remove("output_file");
+        entry
+            .as_object_mut()
+            .expect("output log entry is an object")
+            .remove("output_file");
     }
     Ok(page)
 }
@@ -335,9 +338,9 @@ mod tests {
 
     #[test]
     fn terminal_formatting_and_overlapping_credentials_cannot_bypass_redaction() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        let mut log = Log::open(&home, "formatted-secrets").unwrap();
+        let temp = tempfile::tempdir().expect("terminal formatting and");
+        let home = HomeLayout::from_path(temp.path()).expect("terminal formatting and");
+        let mut log = Log::open(&home, "formatted-secrets").expect("terminal formatting and");
         // 不修改进程环境，也不使用任何真实凭据。
         log.secrets = Arc::new(vec!["sample-secret".into(), "sample-secret-longer".into()]);
         let cases = [
@@ -352,13 +355,13 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(log.redact(input), expected, "{input:?}");
-            log.write("stderr", input).unwrap();
+            log.write("stderr", input).expect("terminal formatting and");
         }
-        log.sync().unwrap();
+        log.sync().expect("terminal formatting and");
         let stored = std::fs::read_to_string(
             cli_management::root(&home).join("logs/formatted-secrets.jsonl"),
         )
-        .unwrap();
+        .expect("terminal formatting and");
         assert!(!stored.contains("private-value"));
         assert!(!stored.contains("longer"));
         assert!(!stored.contains("sample-"));
@@ -368,8 +371,8 @@ mod tests {
     fn process_output_uses_private_files_without_waiting_for_newlines() {
         use std::io::{Seek, SeekFrom};
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("process output uses");
+        let home = HomeLayout::from_path(temp.path()).expect("process output uses");
         cli_management::submit(
             &home,
             "codex",
@@ -377,8 +380,8 @@ mod tests {
             "raw-output",
             chrono::Utc::now(),
         )
-        .unwrap();
-        let log = Log::open(&home, "raw-output").unwrap();
+        .expect("process output uses");
+        let log = Log::open(&home, "raw-output").expect("process output uses");
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "head -c 10485760 /dev/zero | tr '\\000' x; printf '\\nlast-out\\n'; printf 'token=private-value\\n' >&2"]);
         run(
@@ -388,50 +391,57 @@ mod tests {
             Duration::from_secs(10),
             false,
         )
-        .unwrap();
+        .expect("process output uses");
         assert_eq!(
             std::fs::metadata(&log.directory)
-                .unwrap()
+                .expect("process output uses")
                 .permissions()
                 .mode()
                 & 0o777,
             0o700
         );
         let raw = std::fs::read_dir(&log.directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
+            .expect("process output uses")
+            .map(|entry| entry.expect("process output uses").path())
             .collect::<Vec<_>>();
         assert_eq!(raw.len(), 2);
         for path in &raw {
             assert_eq!(
-                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                std::fs::metadata(path)
+                    .expect("process output uses")
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o600
             );
         }
         let out = raw
             .iter()
             .find(|path| path.to_string_lossy().ends_with(".stdout.log"))
-            .unwrap();
-        assert_eq!(std::fs::metadata(out).unwrap().len(), 10_485_760 + 10);
-        let mut file = File::open(out).unwrap();
-        file.seek(SeekFrom::End(-10)).unwrap();
+            .expect("process output uses");
+        assert_eq!(
+            std::fs::metadata(out).expect("process output uses").len(),
+            10_485_760 + 10
+        );
+        let mut file = File::open(out).expect("process output uses");
+        file.seek(SeekFrom::End(-10)).expect("process output uses");
         let mut tail = String::new();
-        file.read_to_string(&mut tail).unwrap();
+        file.read_to_string(&mut tail).expect("process output uses");
         assert_eq!(tail, "\nlast-out\n");
         let mut offset = 0;
         let mut texts = String::new();
         loop {
-            let page = read_log(&home, "raw-output", offset).unwrap();
+            let page = read_log(&home, "raw-output", offset).expect("process output uses");
             assert!(
                 page["entries"]
                     .as_array()
-                    .unwrap()
+                    .expect("process output uses")
                     .iter()
                     .all(|entry| entry.get("output_file").is_none())
             );
             texts.push_str(&page.to_string());
-            offset = page["next_offset"].as_u64().unwrap();
-            if !page["has_more"].as_bool().unwrap() {
+            offset = page["next_offset"].as_u64().expect("process output uses");
+            if !page["has_more"].as_bool().expect("process output uses") {
                 break;
             }
         }
@@ -442,9 +452,9 @@ mod tests {
 
     #[test]
     fn query_capture_is_separate_from_unlimited_process_logs() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        let log = Log::open(&home, "query").unwrap();
+        let temp = tempfile::tempdir().expect("query capture is");
+        let home = HomeLayout::from_path(temp.path()).expect("query capture is");
+        let log = Log::open(&home, "query").expect("query capture is");
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "printf '1.2.3'; printf 'diagnostic' >&2"]);
         assert_eq!(
@@ -455,7 +465,7 @@ mod tests {
                 Duration::from_secs(2),
                 true
             )
-            .unwrap(),
+            .expect("query capture is"),
             "1.2.3"
         );
         let mut oversized = Command::new("/bin/sh");
@@ -467,15 +477,17 @@ mod tests {
             Duration::from_secs(2),
             true,
         )
-        .unwrap_err();
+        .expect_err("query capture is");
         assert!(error.to_string().contains("结构化输出超过"));
         assert!(
-            std::fs::read_dir(&log.directory).unwrap().any(|entry| entry
-                .unwrap()
-                .metadata()
-                .unwrap()
-                .len()
-                == 1_048_577)
+            std::fs::read_dir(&log.directory)
+                .expect("query capture is")
+                .any(|entry| entry
+                    .expect("query capture is")
+                    .metadata()
+                    .expect("query capture is")
+                    .len()
+                    == 1_048_577)
         );
         let mut parent = Command::new("/bin/sh");
         parent.args(["-c", "sleep 30 & printf 'no-newline'"]);
@@ -488,7 +500,7 @@ mod tests {
                 Duration::from_secs(2),
                 true
             )
-            .unwrap(),
+            .expect("query capture is"),
             "no-newline"
         );
         assert!(started.elapsed() < Duration::from_secs(2));
@@ -496,8 +508,8 @@ mod tests {
 
     #[test]
     fn long_unicode_and_escaped_logs_remain_readable_and_redacted_across_pages() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("long unicode and");
+        let home = HomeLayout::from_path(temp.path()).expect("long unicode and");
         cli_management::submit(
             &home,
             "codex",
@@ -505,29 +517,30 @@ mod tests {
             "long-log",
             chrono::Utc::now(),
         )
-        .unwrap();
-        let log = Log::open(&home, "long-log").unwrap();
+        .expect("long unicode and");
+        let log = Log::open(&home, "long-log").expect("long unicode and");
         let content = format!(
             "{}token=must-not-leak {}",
             "中".repeat(21_843),
             "\0\\\"多行\n".repeat(150_000)
         );
-        log.write("stdout", &content).unwrap();
-        log.sync().unwrap();
+        log.write("stdout", &content).expect("long unicode and");
+        log.sync().expect("long unicode and");
         let expected = log.redact(&content);
         let mut result = String::new();
         let mut offset = 0;
         let mut pages = 0;
         loop {
-            let page = cli_management::read_log(&home, "long-log", offset).unwrap();
-            for entry in page["entries"].as_array().unwrap() {
-                result.push_str(entry["text"].as_str().unwrap());
+            let page =
+                cli_management::read_log(&home, "long-log", offset).expect("long unicode and");
+            for entry in page["entries"].as_array().expect("long unicode and") {
+                result.push_str(entry["text"].as_str().expect("long unicode and"));
             }
             pages += 1;
-            let next = page["next_offset"].as_u64().unwrap();
+            let next = page["next_offset"].as_u64().expect("long unicode and");
             assert!(next > offset);
             offset = next;
-            if !page["has_more"].as_bool().unwrap() {
+            if !page["has_more"].as_bool().expect("long unicode and") {
                 break;
             }
         }
@@ -539,9 +552,9 @@ mod tests {
 
     #[test]
     fn logs_both_streams_redacts_credentials_and_preserves_failure() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        let log = Log::open(&home, "test").unwrap();
+        let temp = tempfile::tempdir().expect("logs both streams");
+        let home = HomeLayout::from_path(temp.path()).expect("logs both streams");
+        let log = Log::open(&home, "test").expect("logs both streams");
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "printf 'token=example-value\\n'; printf 'https://account:example-password@proxy.invalid/\\n' >&2; exit 7"]);
         assert!(
@@ -554,8 +567,8 @@ mod tests {
             )
             .is_err()
         );
-        let contents =
-            std::fs::read_to_string(cli_management::root(&home).join("logs/test.jsonl")).unwrap();
+        let contents = std::fs::read_to_string(cli_management::root(&home).join("logs/test.jsonl"))
+            .expect("logs both streams");
         assert!(
             contents.contains("stdout")
                 && contents.contains("stderr")
@@ -567,10 +580,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn log_storage_failure_prevents_starting_the_command() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        let log = Log::open(&home, "storage-failure").unwrap();
-        *log.file.lock().unwrap() = OpenOptions::new().write(true).open("/dev/full").unwrap();
+        let temp = tempfile::tempdir().expect("log storage failure");
+        let home = HomeLayout::from_path(temp.path()).expect("log storage failure");
+        let log = Log::open(&home, "storage-failure").expect("log storage failure");
+        *log.file.lock().expect("log storage failure") = OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("log storage failure");
         let marker = temp.path().join("not-started");
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "touch \"$CLI_TEST_MARKER\""])
@@ -582,18 +598,21 @@ mod tests {
             Duration::from_secs(2),
             false,
         )
-        .unwrap_err();
+        .expect_err("log storage failure");
         assert_eq!(error.raw_os_error(), Some(28));
         assert!(!marker.exists());
     }
 
     #[test]
     fn timeout_stops_descendants_without_harming_other_processes() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        let log = Log::open(&home, "timeout").unwrap();
+        let temp = tempfile::tempdir().expect("timeout stops descendants");
+        let home = HomeLayout::from_path(temp.path()).expect("timeout stops descendants");
+        let log = Log::open(&home, "timeout").expect("timeout stops descendants");
         let marker = temp.path().join("should-not-exist");
-        let mut unrelated = Command::new("sleep").arg("5").spawn().unwrap();
+        let mut unrelated = Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .expect("timeout stops descendants");
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", "(sleep 1; touch \"$CLI_TEST_MARKER\") & wait"])
             .env("CLI_TEST_MARKER", &marker);
@@ -604,10 +623,18 @@ mod tests {
             Duration::from_millis(80),
             false,
         );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
-        assert!(unrelated.try_wait().unwrap().is_none());
-        unrelated.kill().unwrap();
-        unrelated.wait().unwrap();
+        assert_eq!(
+            result.expect_err("timeout stops descendants").kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(
+            unrelated
+                .try_wait()
+                .expect("timeout stops descendants")
+                .is_none()
+        );
+        unrelated.kill().expect("timeout stops descendants");
+        unrelated.wait().expect("timeout stops descendants");
         std::thread::sleep(Duration::from_millis(1100));
         assert!(!marker.exists());
     }

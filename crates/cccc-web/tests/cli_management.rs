@@ -10,14 +10,16 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
-    let temp = tempfile::tempdir().unwrap();
-    let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-    home.initialize().unwrap();
-    let tokens = AccessTokenStore::new(home.clone()).unwrap();
-    let admin = tokens.create("admin", vec![], true, None).unwrap();
+    let temp = tempfile::tempdir().expect("cli management is");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("cli management is");
+    home.initialize().expect("cli management is");
+    let tokens = AccessTokenStore::new(home.clone()).expect("cli management is");
+    let admin = tokens
+        .create("admin", vec![], true, None)
+        .expect("cli management is");
     let member = tokens
         .create("member", vec!["g_test".into()], false, None)
-        .unwrap();
+        .expect("cli management is");
     let daemon_home = home.clone();
     let mut daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     let client = cccc_client::DaemonClient::new(home.clone());
@@ -43,7 +45,7 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         }
     })
     .await
-    .unwrap();
+    .expect("cli management is");
     let app = cccc_web::app(home.clone());
 
     for (method, suffix) in [
@@ -69,10 +71,10 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                     request
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from("{}"))
-                        .unwrap(),
+                        .expect("cli management is"),
                 )
                 .await
-                .unwrap();
+                .expect("cli management is");
             assert_eq!(response.status(), status, "{method} {suffix}");
         }
     }
@@ -80,25 +82,32 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
 
     // 旧通知配置即使损坏也不再读取，不应阻塞 CLI 管理。
     let retired_config = cli_management::root(&home).join("notification.secret.json");
-    cccc_core::fs::atomic_write(&retired_config, b"invalid legacy notification config").unwrap();
+    cccc_core::fs::atomic_write(&retired_config, b"invalid legacy notification config")
+        .expect("cli management is");
     let response = app
         .clone()
         .oneshot(
             Request::get("/api/v1/cli-management")
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("cli management is"),
         )
         .await
-        .unwrap();
+        .expect("cli management is");
     assert_eq!(response.status(), StatusCode::OK);
     let catalog = payload(response).await;
-    assert_eq!(catalog["result"]["runtimes"].as_array().unwrap().len(), 19);
+    assert_eq!(
+        catalog["result"]["runtimes"]
+            .as_array()
+            .expect("cli management is")
+            .len(),
+        19
+    );
     assert!(catalog["result"].get("notification").is_none());
     assert!(
         catalog["result"]["runtimes"]
             .as_array()
-            .unwrap()
+            .expect("cli management is")
             .iter()
             .all(|runtime| runtime["uninstall_available"] == false)
     );
@@ -117,15 +126,20 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                     .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(body.to_string()))
-                    .unwrap(),
+                    .expect("cli management is"),
             )
             .await
-            .unwrap();
+            .expect("cli management is");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let error = payload(response).await;
         assert_eq!(error["error"]["code"], "invalid_args");
     }
-    assert!(cli_management::load(&home).unwrap().jobs.is_empty());
+    assert!(
+        cli_management::load(&home)
+            .expect("cli management is")
+            .jobs
+            .is_empty()
+    );
 
     let rules = json!({"revision":0,"rules":[{"id":"monday","enabled":true,"trigger":{"kind":"cron","cron":"0 3 * * 1","timezone":"Asia/Shanghai"}}]});
     for expected in [StatusCode::OK, StatusCode::CONFLICT] {
@@ -136,13 +150,19 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                     .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(rules.to_string()))
-                    .unwrap(),
+                    .expect("cli management is"),
             )
             .await
-            .unwrap();
+            .expect("cli management is");
         assert_eq!(response.status(), expected);
     }
-    assert_eq!(cli_management::load(&home).unwrap().rules.len(), 1);
+    assert_eq!(
+        cli_management::load(&home)
+            .expect("cli management is")
+            .rules
+            .len(),
+        1
+    );
     let retired = app
         .clone()
         .oneshot(
@@ -150,21 +170,21 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
-                .unwrap(),
+                .expect("cli management is"),
         )
         .await
-        .unwrap();
+        .expect("cli management is");
     // 未注册地址沿用原生 SPA 兜底；HTML 不是成功的配置 API 响应。
     assert_eq!(retired.status(), StatusCode::OK);
     assert!(
         retired.headers()[header::CONTENT_TYPE]
             .to_str()
-            .unwrap()
+            .expect("cli management is")
             .starts_with("text/html")
     );
     assert!(
         std::fs::read_to_string(&retired_config)
-            .unwrap()
+            .expect("cli management is")
             .contains("invalid legacy")
     );
     // 模拟旧版本留下的未知 Runtime 队列项：后台必须失败并留日志，不能执行任意软件。
@@ -175,10 +195,10 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         "invalid-queued",
         chrono::Utc::now(),
     )
-    .unwrap();
+    .expect("cli management is");
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
-            if cli_management::load(&home).unwrap().jobs["invalid-queued"].status
+            if cli_management::load(&home).expect("cli management is").jobs["invalid-queued"].status
                 == cli_management::JobStatus::Failed
             {
                 break;
@@ -187,30 +207,30 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         }
     })
     .await
-    .unwrap();
+    .expect("cli management is");
     let response = app
         .clone()
         .oneshot(
             Request::get("/api/v1/cli-management/jobs/invalid-queued/log")
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("cli management is"),
         )
         .await
-        .unwrap();
+        .expect("cli management is");
     assert_eq!(response.status(), StatusCode::OK);
     let logs = payload(response).await;
     assert!(
         logs["result"]["entries"]
             .as_array()
-            .unwrap()
+            .expect("cli management is")
             .iter()
             .any(|entry| entry["stream"] == "error")
     );
     assert!(
         !logs["result"]["entries"]
             .as_array()
-            .unwrap()
+            .expect("cli management is")
             .iter()
             .any(|entry| entry["stream"] == "notification")
     );
@@ -218,24 +238,24 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
     {
         use std::io::Write;
         let directory = cli_management::root(&home).join("logs/invalid-queued");
-        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&directory).expect("cli management is");
         let filename = "00000000-0000-4000-8000-000000000001.stdout.log";
         cccc_core::fs::atomic_write(
             &directory.join(filename),
             b"ordinary output\ntoken=private-output-value\n",
         )
-        .unwrap();
+        .expect("cli management is");
         let mut index = std::fs::OpenOptions::new()
             .append(true)
             .open(cli_management::root(&home).join("logs/invalid-queued.jsonl"))
-            .unwrap();
-        let offset = index.metadata().unwrap().len();
+            .expect("cli management is");
+        let offset = index.metadata().expect("cli management is").len();
         writeln!(
             index,
             "{}",
             json!({"stream":"stdout", "output_file":filename, "text":""})
         )
-        .unwrap();
+        .expect("cli management is");
         let response = app
             .clone()
             .oneshot(
@@ -244,10 +264,10 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                 ))
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("cli management is"),
             )
             .await
-            .unwrap();
+            .expect("cli management is");
         assert_eq!(response.status(), StatusCode::OK);
         let view = payload(response).await;
         assert!(view.to_string().contains("ordinary output"));
@@ -258,16 +278,16 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
     }
     assert!(
         cli_management::load(&home)
-            .unwrap()
+            .expect("cli management is")
             .installations
             .is_empty()
     );
     // 模拟状态可读但写锁路径不可用；HTTP 必须明确报后台故障而非返回旧快照。
     let lock = cli_management::root(&home).join("state.lock");
     let preserved = lock.with_extension("preserved");
-    std::fs::rename(&lock, &preserved).unwrap();
-    std::fs::create_dir(&lock).unwrap();
-    let mut interrupted = cli_management::load(&home).unwrap();
+    std::fs::rename(&lock, &preserved).expect("cli management is");
+    std::fs::create_dir(&lock).expect("cli management is");
+    let mut interrupted = cli_management::load(&home).expect("cli management is");
     let mut queued = interrupted.jobs["invalid-queued"].clone();
     queued.id = "storage-recovery".into();
     queued.status = cli_management::JobStatus::Queued;
@@ -279,7 +299,7 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         &cli_management::root(&home).join("state.json"),
         &interrupted,
     )
-    .unwrap();
+    .expect("cli management is");
     let fault = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let response = app
@@ -288,10 +308,10 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                     Request::get("/api/v1/cli-management")
                         .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                         .body(Body::empty())
-                        .unwrap(),
+                        .expect("cli management is"),
                 )
                 .await
-                .unwrap();
+                .expect("cli management is");
             if response.status() == StatusCode::SERVICE_UNAVAILABLE {
                 break payload(response).await;
             }
@@ -299,8 +319,8 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
         }
     })
     .await;
-    std::fs::remove_dir(&lock).unwrap();
-    std::fs::rename(&preserved, &lock).unwrap();
+    std::fs::remove_dir(&lock).expect("cli management is");
+    std::fs::rename(&preserved, &lock).expect("cli management is");
     let restored = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let response = app
@@ -309,10 +329,10 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
                     Request::get("/api/v1/cli-management")
                         .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                         .body(Body::empty())
-                        .unwrap(),
+                        .expect("cli management is"),
                 )
                 .await
-                .unwrap();
+                .expect("cli management is");
             if response.status() == StatusCode::OK {
                 let body = payload(response).await;
                 if body["result"]["state"]["jobs"]["storage-recovery"]["status"] == "failed" {
@@ -330,25 +350,32 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
             args: Default::default(),
         })
         .await
-        .unwrap();
+        .expect("cli management is");
     tokio::time::timeout(std::time::Duration::from_secs(10), daemon)
         .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+        .expect("cli management is")
+        .expect("cli management is")
+        .expect("cli management is");
     assert_eq!(
-        cli_management::load(&home).unwrap().rules[0].rule.id,
+        cli_management::load(&home)
+            .expect("cli management is")
+            .rules[0]
+            .rule
+            .id,
         "monday"
     );
-    assert_eq!(fault.unwrap()["error"]["code"], "cli_worker_unavailable");
+    assert_eq!(
+        fault.expect("cli management is")["error"]["code"],
+        "cli_worker_unavailable"
+    );
     assert!(restored.is_ok());
 }
 
 #[tokio::test]
 async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
-    let temp = tempfile::tempdir().unwrap();
-    let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-    home.initialize().unwrap();
+    let temp = tempfile::tempdir().expect("managed uninstall http");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("managed uninstall http");
+    home.initialize().expect("managed uninstall http");
     let now = chrono::Utc::now();
     cli_management::submit(
         &home,
@@ -357,28 +384,30 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
         "fixture",
         now,
     )
-    .unwrap();
-    cli_management::claim_next(&home, now).unwrap();
+    .expect("managed uninstall http");
+    cli_management::claim_next(&home, now).expect("managed uninstall http");
     let executable = cli_management::root(&home).join("versions/fixture/bin/codex");
-    cccc_core::fs::atomic_write(&executable, b"controlled test fixture").unwrap();
+    cccc_core::fs::atomic_write(&executable, b"controlled test fixture")
+        .expect("managed uninstall http");
     cli_management::finish(
         &home,
         "fixture",
         Ok(cli_management::Installation {
             version: "1.0.0".into(),
             executable: executable.clone(),
-            bin_paths: vec![executable.parent().unwrap().into()],
+            bin_paths: vec![executable.parent().expect("managed uninstall http").into()],
             installed_at: now.to_rfc3339(),
         }),
         now,
     )
-    .unwrap();
+    .expect("managed uninstall http");
     let external = temp.path().join("external-codex");
-    cccc_core::fs::atomic_write(&external, b"preserve external installation").unwrap();
+    cccc_core::fs::atomic_write(&external, b"preserve external installation")
+        .expect("managed uninstall http");
     let admin = AccessTokenStore::new(home.clone())
-        .unwrap()
+        .expect("managed uninstall http")
         .create("admin", vec![], true, None)
-        .unwrap();
+        .expect("managed uninstall http");
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     let client = cccc_client::DaemonClient::new(home.clone());
@@ -397,7 +426,7 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
         }
     })
     .await
-    .unwrap();
+    .expect("managed uninstall http");
     let app = cccc_web::app(home.clone());
     // 专用入口提交，通用入口重试相同编号；完成后重试也不能产生第二次删除。
     for path in ["/uninstall", "/jobs"] {
@@ -412,14 +441,14 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
                     .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(body.to_string()))
-                    .unwrap(),
+                    .expect("managed uninstall http"),
             )
             .await
-            .unwrap();
+            .expect("managed uninstall http");
         assert_eq!(response.status(), StatusCode::OK);
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
-                let state = cli_management::load(&home).unwrap();
+                let state = cli_management::load(&home).expect("managed uninstall http");
                 let job = &state.jobs["remove-fixture"];
                 if job.status == cli_management::JobStatus::Succeeded {
                     break;
@@ -435,9 +464,9 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
             }
         })
         .await
-        .unwrap();
+        .expect("managed uninstall http");
     }
-    let state = cli_management::load(&home).unwrap();
+    let state = cli_management::load(&home).expect("managed uninstall http");
     assert!(state.installations.is_empty());
     assert_eq!(state.jobs.len(), 2);
     assert!(!executable.exists());
@@ -447,10 +476,10 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
             Request::get("/api/v1/cli-management/jobs/remove-fixture/log")
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("managed uninstall http"),
         )
         .await
-        .unwrap();
+        .expect("managed uninstall http");
     assert_eq!(response.status(), StatusCode::OK);
     assert!(
         payload(response)
@@ -465,14 +494,22 @@ async fn managed_uninstall_http_uses_worker_and_retries_are_idempotent() {
             args: Default::default(),
         })
         .await
-        .unwrap();
+        .expect("managed uninstall http");
     tokio::time::timeout(std::time::Duration::from_secs(10), daemon)
         .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+        .expect("managed uninstall http")
+        .expect("managed uninstall http")
+        .expect("managed uninstall http");
 }
 
 async fn payload(response: axum::response::Response) -> Value {
-    serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+    serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("payload")
+            .to_bytes(),
+    )
+    .expect("payload")
 }

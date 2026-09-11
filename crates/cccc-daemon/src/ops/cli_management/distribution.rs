@@ -207,11 +207,11 @@ mod tests {
         let mut manifest = json!({"version":"1.2.3","platforms":{"x86_64-unknown-linux":{
             "url":"https://static.devin.ai/cli/1.2.3/devin-1.2.3-x86_64-unknown-linux.tar.gz", "sha256":checksum
         }}});
-        let release = devin(&manifest, "linux", "x86_64").unwrap();
+        let release = devin(&manifest, "linux", "x86_64").expect("manifests pin version");
         assert!(
             release
                 .config("http:cccc-devin")
-                .unwrap()
+                .expect("manifests pin version")
                 .contains("bin_path = \"bin\"")
         );
         manifest["platforms"]["x86_64-unknown-linux"]["url"] =
@@ -223,7 +223,7 @@ mod tests {
         ]});
         assert!(
             kiro(&manifest, "linux", "aarch64", true)
-                .unwrap()
+                .expect("manifests pin version")
                 .url
                 .ends_with("-musl.tar.gz")
         );
@@ -234,7 +234,7 @@ mod tests {
             "x86_64",
             false,
         )
-        .unwrap();
+        .expect("manifests pin version");
         assert_eq!(version, "1.2.3");
         assert!(url.contains("/x64-baseline/"));
         let config = Release {
@@ -245,7 +245,7 @@ mod tests {
             binary: Some("droid"),
         }
         .config("http:cccc-droid")
-        .unwrap();
+        .expect("manifests pin version");
         assert!(!config.contains("bin_path"));
         assert!(config.contains("bin = \"droid\""));
         assert!(droid("VER=\"1.0\"\nVER=\"2.0\"", "linux", "x86_64", true).is_err());

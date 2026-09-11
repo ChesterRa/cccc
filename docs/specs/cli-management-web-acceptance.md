@@ -1,5 +1,29 @@
 # CLI 管理 Web 验收
 
+## PR 验证（2026-09-11）
+
+- 保留已公开的独立功能提交 `aead235b`，通过 `48bf13db` 合并上游 `22733e9a`（v0.4.39），不强推、不夹带其他功能。合并完成时，相对新上游的 53 个功能文件与原补丁的增删行逐文件相同；新上游 WebSocket 来源保护保留，公共 cron、CI workflow 和许可证没有功能差异。
+- 对齐上游 CI 时发现本功能的一处非最简布尔表达式及新增测试/固定不变量中的 `unwrap/unwrap_err` 未通过 Clippy。使用等价布尔表达式和有说明的 `expect/expect_err` 修正，再按原生 rustfmt 排版；没有 lint 豁免、测试跳过或业务断言变更。规范化格式和断言说明后逐文件比较，未发现其他 Rust 逻辑变化。
+- 已通过：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings`；前端 `npm run check`、全套 292 个文件的 1514 项测试及生产构建；`python3 -m ruff check scripts tests` 和 `python3 -m pytest -q` 的 111 项测试。构建中的原有体积提示不是测试失败。
+- 最终 Rust 结果：核心 214、Runtime 11、DeepSeek 10、CLI 管理 25、Actor 3、Claude 语音启动 52、原生锁策略 8、HTTP/Runtime/CORS 12、认证 10，共 **345 项通过、0 项失败、1 项真实供应商安装测试按原规则忽略**。加上前端及 Python，本轮合计 **1970 项通过**；子进程、重复复测及已包含在 Python 套件中的三语检查不重复计数。
+- 最终 Rust 复测按下列命令串行执行。首次本地验证包装脚本在检查完成后因运行中修改日志路径导致语法错误，已固定脚本、检查语法并重新执行；不以异常退出的包装脚本作为最终通过证据。
+- 本轮不重新运行真实浏览器、供应商下载/更新、登录、模型会话或部署；下方 2026-09-10 浏览器矩阵及更早 Linux x86_64 供应商验证仅属有日期的历史证据。不是全仓 Rust 测试或跨平台验收，不能推导 Windows/macOS 已通过。
+- 术语及边界复核：受管安装、CLI 更新、CLI 自动更新计划和 CLI 操作记录保持一致；Actor、Runtime、模型与软件安装不混用。指南、规格及验收链接不依赖未合入的治理分支。
+
+本轮 Rust 入口（均使用 `--locked`）：
+
+```sh
+cargo test -p cccc-pair-core --lib --locked
+cargo test -p cccc-pair-runtime --lib --locked command::tests
+cargo test -p cccc-pair-daemon --lib --locked deepseek_setup
+cargo test -p cccc-pair-daemon --lib --locked cli_management
+cargo test -p cccc-pair-daemon --lib --locked managed_cli
+cargo test -p cccc-pair-daemon --lib --locked codex_voice_analyst::claude::
+cargo test -p cccc-pair-daemon --lib --locked dispatch_concurrency
+cargo test -p cccc-pair-web --locked --test cli_management --test runtimes --test cors
+cargo test -p cccc-pair-web --lib --locked auth::tests
+```
+
 ## 独立 CLI 补丁发布验证（2026-09-10）
 
 - 基线为上游 `0c1d10a1`，在独立 `feat/cli-management-upstream` 分支整理。功能不依赖 Mattermost 连接器或治理文档合入；公共 `automation_schedule.rs` 无差异，原生语音、权限及三语设置的上游改动保留。

@@ -386,7 +386,7 @@ mod tests {
         DaemonRequest {
             v: 1,
             op: op.into(),
-            args: args.as_object().unwrap().clone(),
+            args: args.as_object().expect("request").clone(),
         }
     }
 
@@ -401,7 +401,7 @@ mod tests {
         };
         tokio::time::timeout(std::time::Duration::from_secs(7), worker.finish())
             .await
-            .unwrap();
+            .expect("shutdown bounds a");
         assert!(stop.load(std::sync::atomic::Ordering::Acquire));
         assert!(observer.is_finished());
     }
@@ -414,8 +414,8 @@ mod tests {
             atomic::{AtomicBool, Ordering},
         };
         use std::time::Duration;
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
+        let temp = tempfile::tempdir().expect("shutdown waits for");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("shutdown waits for");
         let marker = temp.path().join("started");
         let late = temp.path().join("late");
         let stop = Arc::new(AtomicBool::new(false));
@@ -427,10 +427,10 @@ mod tests {
         let mut other = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
-            .unwrap();
+            .expect("shutdown waits for");
         let task = tokio::spawn(async move {
             tokio::task::spawn_blocking(move || {
-                let log = process::Log::open(&home, "shutdown").unwrap();
+                let log = process::Log::open(&home, "shutdown").expect("shutdown waits for");
                 let mut command = std::process::Command::new("/bin/sh");
                 command
                     .args([
@@ -446,11 +446,14 @@ mod tests {
                     Duration::from_secs(30),
                     false,
                 );
-                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+                assert_eq!(
+                    result.expect_err("shutdown waits for").kind(),
+                    io::ErrorKind::Interrupted
+                );
                 worker_cleaned.store(true, Ordering::Release);
             })
             .await
-            .unwrap();
+            .expect("shutdown waits for");
         });
         let worker = Worker { stop, task };
         let started = tokio::time::timeout(Duration::from_secs(3), async {
@@ -460,10 +463,10 @@ mod tests {
         })
         .await;
         worker.finish().await;
-        let other_running = other.try_wait().unwrap().is_none();
-        other.kill().unwrap();
-        other.wait().unwrap();
-        started.unwrap();
+        let other_running = other.try_wait().expect("shutdown waits for").is_none();
+        other.kill().expect("shutdown waits for");
+        other.wait().expect("shutdown waits for");
+        started.expect("shutdown waits for");
         assert!(cleaned.load(Ordering::Acquire));
         assert!(other_running);
         tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -472,9 +475,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn storage_fault_is_visible_and_recovery_does_not_replay_running_jobs() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("faulted")).unwrap();
-        let other = HomeLayout::from_path(temp.path().join("unaffected")).unwrap();
+        let temp = tempfile::tempdir().expect("storage fault is");
+        let home = HomeLayout::from_path(temp.path().join("faulted")).expect("storage fault is");
+        let other =
+            HomeLayout::from_path(temp.path().join("unaffected")).expect("storage fault is");
         let now = Utc::now();
         management::submit(
             &home,
@@ -483,8 +487,8 @@ mod tests {
             "running",
             now,
         )
-        .unwrap();
-        management::claim_next(&home, now).unwrap();
+        .expect("storage fault is");
+        management::claim_next(&home, now).expect("storage fault is");
         management::submit(
             &home,
             "old-runtime-two",
@@ -492,12 +496,12 @@ mod tests {
             "queued",
             now,
         )
-        .unwrap();
+        .expect("storage fault is");
         let lock = management::root(&home).join("state.lock");
         let preserved = lock.with_extension("preserved");
-        std::fs::rename(&lock, &preserved).unwrap();
+        std::fs::rename(&lock, &preserved).expect("storage fault is");
         // 仅阻止当前临时实例的状态写入，已有状态仍可读，不改宿主文件系统权限。
-        std::fs::create_dir(&lock).unwrap();
+        std::fs::create_dir(&lock).expect("storage fault is");
         let worker = Worker::start(home.clone());
         let fault_observed = tokio::time::timeout(std::time::Duration::from_secs(3), async {
             while !worker_failures().contains(home.root()) {
@@ -509,12 +513,12 @@ mod tests {
         let get = request("cli_management_get", json!({"by":"user"}));
         let fault = dispatch(&home, &get);
         let unaffected = dispatch(&other, &get);
-        let before = management::load(&home).unwrap();
-        std::fs::remove_dir(&lock).unwrap();
-        std::fs::rename(&preserved, &lock).unwrap();
+        let before = management::load(&home).expect("storage fault is");
+        std::fs::remove_dir(&lock).expect("storage fault is");
+        std::fs::rename(&preserved, &lock).expect("storage fault is");
         let recovered = tokio::time::timeout(std::time::Duration::from_secs(4), async {
             loop {
-                let state = management::load(&home).unwrap();
+                let state = management::load(&home).expect("storage fault is");
                 if !worker_failures().contains(home.root())
                     && state.jobs["queued"].status == management::JobStatus::Failed
                 {
@@ -526,14 +530,17 @@ mod tests {
         .await;
         worker.finish().await;
         assert!(fault_observed);
-        assert_eq!(fault.error.unwrap().code, "cli_worker_unavailable");
+        assert_eq!(
+            fault.error.expect("storage fault is").code,
+            "cli_worker_unavailable"
+        );
         assert!(unaffected.ok);
         assert_eq!(
             before.jobs["running"].status,
             management::JobStatus::Running
         );
         assert_eq!(before.jobs["queued"].status, management::JobStatus::Queued);
-        let recovered = recovered.unwrap();
+        let recovered = recovered.expect("storage fault is");
         assert_eq!(
             recovered.jobs["running"].status,
             management::JobStatus::Interrupted
@@ -550,7 +557,8 @@ mod tests {
         let not_applicable = runtimes
             .iter()
             .filter(|probe| {
-                let runtime = serde_json::from_value(json!(probe.name)).unwrap();
+                let runtime =
+                    serde_json::from_value(json!(probe.name)).expect("all catalog runtimes");
                 matches!(source(runtime), Source::NotApplicable { .. })
             })
             .map(|probe| probe.name.as_str())
@@ -560,8 +568,8 @@ mod tests {
 
     #[test]
     fn retired_notification_operation_is_not_handled() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("retired notification operation");
+        let home = HomeLayout::from_path(temp.path()).expect("retired notification operation");
         assert!(
             resolve_operation(&request(
                 "cli_management_notification_update",
@@ -575,7 +583,8 @@ mod tests {
     #[test]
     fn cli_operation_policies_use_native_registry_without_resolving_io() {
         for op in ["cli_management_get", "cli_management_log"] {
-            let operation = crate::dispatch::resolve_operation(&request(op, json!({}))).unwrap();
+            let operation = crate::dispatch::resolve_operation(&request(op, json!({})))
+                .expect("cli operation policies");
             assert!(matches!(operation.policy, Policy::Read));
         }
         for op in [
@@ -583,7 +592,8 @@ mod tests {
             "cli_management_schedules_update",
             "cli_management_uninstall",
         ] {
-            let operation = crate::dispatch::resolve_operation(&request(op, json!({}))).unwrap();
+            let operation = crate::dispatch::resolve_operation(&request(op, json!({})))
+                .expect("cli operation policies");
             assert!(matches!(operation.policy, Policy::GlobalWrite));
         }
         assert!(
@@ -594,8 +604,8 @@ mod tests {
 
     #[test]
     fn unmanaged_uninstall_and_actor_requests_do_not_create_jobs() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("unmanaged uninstall and");
+        let home = HomeLayout::from_path(temp.path()).expect("unmanaged uninstall and");
         for op in [
             "cli_management_get",
             "cli_management_submit",
@@ -603,7 +613,10 @@ mod tests {
             "cli_management_uninstall",
         ] {
             let response = dispatch(&home, &request(op, json!({"by":"codex"})));
-            assert_eq!(response.error.unwrap().code, "permission_denied");
+            assert_eq!(
+                response.error.expect("unmanaged uninstall and").code,
+                "permission_denied"
+            );
         }
         for (op, args) in [
             ("cli_management_uninstall", json!({"by":"user"})),
@@ -613,15 +626,23 @@ mod tests {
             ),
         ] {
             let response = dispatch(&home, &request(op, args));
-            assert_eq!(response.error.unwrap().code, "invalid_args");
+            assert_eq!(
+                response.error.expect("unmanaged uninstall and").code,
+                "invalid_args"
+            );
         }
-        assert!(management::load(&home).unwrap().jobs.is_empty());
+        assert!(
+            management::load(&home)
+                .expect("unmanaged uninstall and")
+                .jobs
+                .is_empty()
+        );
     }
 
     #[test]
     fn rejects_arbitrary_commands_and_persists_idempotent_requests() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("rejects arbitrary commands");
+        let home = HomeLayout::from_path(temp.path()).expect("rejects arbitrary commands");
         for runtime in ["custom", "web_model", "npm:untrusted", "../codex"] {
             assert!(!dispatch(&home, &request("cli_management_submit", json!({"by":"user","runtime":runtime,"operation":"install","request_id":"test"}))).ok);
         }
@@ -635,14 +656,25 @@ mod tests {
             first.result,
             dispatch(&home, &request("cli_management_submit", args)).result
         );
-        assert_eq!(management::load(&home).unwrap().jobs.len(), 1);
-        assert!(management::load(&home).unwrap().installations.is_empty());
+        assert_eq!(
+            management::load(&home)
+                .expect("rejects arbitrary commands")
+                .jobs
+                .len(),
+            1
+        );
+        assert!(
+            management::load(&home)
+                .expect("rejects arbitrary commands")
+                .installations
+                .is_empty()
+        );
     }
 
     #[test]
     fn schedule_edits_require_a_current_revision() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
+        let temp = tempfile::tempdir().expect("schedule edits require");
+        let home = HomeLayout::from_path(temp.path()).expect("schedule edits require");
         let args = json!({"by":"user","revision":0,"rules":[{"id":"daily","enabled":true,"trigger":{"kind":"cron","cron":"0 3 * * *","timezone":"UTC"}}]});
         assert!(
             dispatch(
@@ -654,7 +686,7 @@ mod tests {
         assert_eq!(
             dispatch(&home, &request("cli_management_schedules_update", args))
                 .error
-                .unwrap()
+                .expect("schedule edits require")
                 .code,
             "cli_schedule_revision_conflict"
         );

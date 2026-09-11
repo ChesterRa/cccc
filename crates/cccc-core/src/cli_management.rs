@@ -467,7 +467,7 @@ pub fn enqueue_due(home: &HomeLayout, now: DateTime<Utc>) -> io::Result<Vec<Job>
         let runtimes = state.installations.keys().cloned().collect::<Vec<_>>();
         let mut due = Vec::new();
         for entry in &mut state.rules {
-            if !entry.rule.enabled || !entry.next_run_at.is_some_and(|at| at <= now) {
+            if !entry.rule.enabled || entry.next_run_at.is_none_or(|at| at > now) {
                 continue;
             }
             due.push(entry.rule.id.clone());
@@ -633,40 +633,52 @@ mod tests {
                     "kind":"cron", "cron":format!("0 3 * * {day}"), "timezone":"Asia/Shanghai"
                 }),
             );
-            let expected: DateTime<Utc> = expected.parse().unwrap();
-            save_rules(&home, 0, vec![rule.clone()], now).unwrap();
-            let stored = load(&home).unwrap();
+            let expected: DateTime<Utc> = expected.parse().expect("cli cron conversion");
+            save_rules(&home, 0, vec![rule.clone()], now).expect("cli cron conversion");
+            let stored = load(&home).expect("cli cron conversion");
             assert_eq!(stored.rules[0].rule, rule);
             assert_eq!(stored.rules[0].next_run_at, Some(expected), "{day}");
             assert!(
                 enqueue_due(&home, expected - TimeDelta::seconds(1))
-                    .unwrap()
+                    .expect(
+                        "cli_cron_conversion_preserves_saved_rules_and_reschedules_after_reload"
+                    )
                     .is_empty()
             );
-            let jobs = enqueue_due(&home, expected).unwrap();
+            let jobs = enqueue_due(&home, expected).expect("cli cron conversion");
             assert_eq!(jobs.len(), 1, "{day}");
             assert_eq!(jobs[0].operation, Operation::Update);
             assert_eq!(jobs[0].source_rule.as_deref(), Some("weekly"));
-            let reloaded = load(&home).unwrap();
+            let reloaded = load(&home).expect("cli cron conversion");
             assert_eq!(reloaded.rules[0].rule, rule);
             assert_eq!(
                 reloaded.rules[0].next_run_at,
                 next_run_at(&rule.trigger, Some(expected.timestamp()), expected)
             );
-            assert!(reloaded.rules[0].next_run_at.unwrap() > expected);
+            assert!(
+                reloaded.rules[0].next_run_at.expect(
+                    "cli_cron_conversion_preserves_saved_rules_and_reschedules_after_reload"
+                ) > expected
+            );
             if day == "1" {
                 assert_eq!(
                     reloaded.rules[0].next_run_at,
                     Some(expected + TimeDelta::days(7))
                 );
             }
-            assert!(enqueue_due(&home, expected).unwrap().is_empty());
+            assert!(
+                enqueue_due(&home, expected)
+                    .expect(
+                        "cli_cron_conversion_preserves_saved_rules_and_reschedules_after_reload"
+                    )
+                    .is_empty()
+            );
         }
     }
 
     #[test]
     fn cli_cron_keeps_calendar_and_validation_boundaries() {
-        let now = "2026-04-30T04:00:00Z".parse().unwrap();
+        let now = "2026-04-30T04:00:00Z".parse().expect("cli cron keeps");
         for (expression, expected) in [
             ("0 3 31 * *", "2026-05-31T03:00:00Z"),
             ("0 3 * * *", "2026-05-01T03:00:00Z"),
@@ -675,10 +687,10 @@ mod tests {
                 "calendar",
                 json!({"kind":"cron","cron":expression,"timezone":"UTC"}),
             );
-            validate_rule(&rule, now).unwrap();
+            validate_rule(&rule, now).expect("cli cron keeps");
             assert_eq!(
                 next_run_at(&rule.trigger, None, now),
-                Some(expected.parse().unwrap())
+                Some(expected.parse().expect("cli cron keeps"))
             );
         }
         for expression in ["0 3 * * 8", "0 3 * * */0", "0 3 * * 5-1", "0 0 3 * * 1"] {
@@ -692,11 +704,11 @@ mod tests {
 
     #[test]
     fn cli_conversion_does_not_change_group_automation_weekdays() {
-        let now = "2026-09-07T00:00:00Z".parse().unwrap();
+        let now = "2026-09-07T00:00:00Z".parse().expect("cli conversion does");
         let trigger = json!({"kind":"cron","cron":"0 3 * * 1","timezone":"UTC"});
-        let trigger = trigger.as_object().unwrap();
-        let sunday: DateTime<Utc> = "2026-09-13T03:00:00Z".parse().unwrap();
-        let monday: DateTime<Utc> = "2026-09-07T03:00:00Z".parse().unwrap();
+        let trigger = trigger.as_object().expect("cli conversion does");
+        let sunday: DateTime<Utc> = "2026-09-13T03:00:00Z".parse().expect("cli conversion does");
+        let monday: DateTime<Utc> = "2026-09-07T03:00:00Z".parse().expect("cli conversion does");
         assert_eq!(
             automation::next_rule_fire_at(Some(trigger), None, now),
             Some(sunday)
@@ -730,9 +742,13 @@ mod tests {
     #[test]
     fn update_accepts_legacy_operation_and_serializes_canonically() {
         for input in ["update", "upgrade"] {
-            let operation: Operation = serde_json::from_value(json!(input)).unwrap();
+            let operation: Operation =
+                serde_json::from_value(json!(input)).expect("update accepts legacy");
             assert_eq!(operation, Operation::Update);
-            assert_eq!(serde_json::to_value(operation).unwrap(), json!("update"));
+            assert_eq!(
+                serde_json::to_value(operation).expect("update accepts legacy"),
+                json!("update")
+            );
         }
     }
 
@@ -740,42 +756,55 @@ mod tests {
     fn legacy_update_record_keeps_identity_and_deduplicates_after_reload() {
         let (_temp, home, now) = fixture();
         installed(&home, now);
-        let job = submit(&home, "codex", Operation::Update, "legacy-request", now).unwrap();
-        let mut stored = serde_json::to_value(load(&home).unwrap()).unwrap();
+        let job = submit(&home, "codex", Operation::Update, "legacy-request", now)
+            .expect("legacy update record");
+        let mut stored = serde_json::to_value(load(&home).expect("legacy update record"))
+            .expect("legacy update record");
         stored["jobs"]["legacy-request"]["operation"] = json!("upgrade");
-        fs::write_json_committed(&root(&home).join("state.json"), &stored).unwrap();
-        assert_eq!(load(&home).unwrap().jobs["legacy-request"], job);
+        fs::write_json_committed(&root(&home).join("state.json"), &stored)
+            .expect("legacy update record");
         assert_eq!(
-            submit(&home, "codex", Operation::Update, "legacy-request", now).unwrap(),
+            load(&home).expect("legacy update record").jobs["legacy-request"],
             job
         );
-        assert_eq!(load(&home).unwrap().jobs.len(), 2);
         assert_eq!(
-            claim_next(&home, now).unwrap().unwrap().operation,
+            submit(&home, "codex", Operation::Update, "legacy-request", now)
+                .expect("legacy update record"),
+            job
+        );
+        assert_eq!(load(&home).expect("legacy update record").jobs.len(), 2);
+        assert_eq!(
+            claim_next(&home, now)
+                .expect("legacy update record")
+                .expect("legacy update record")
+                .operation,
             Operation::Update
         );
-        let stored: Value = fs::read_json(&root(&home).join("state.json")).unwrap();
+        let stored: Value =
+            fs::read_json(&root(&home).join("state.json")).expect("legacy update record");
         assert_eq!(stored["jobs"]["legacy-request"]["operation"], "update");
     }
 
     fn fixture() -> (tempfile::TempDir, HomeLayout, DateTime<Utc>) {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-        home.initialize().unwrap();
-        (temp, home, "2026-09-07T00:00:00Z".parse().unwrap())
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("fixture");
+        home.initialize().expect("fixture");
+        (temp, home, "2026-09-07T00:00:00Z".parse().expect("fixture"))
     }
 
     fn rule(id: &str, trigger: Value) -> Rule {
         Rule {
             id: id.into(),
             enabled: true,
-            trigger: trigger.as_object().unwrap().clone(),
+            trigger: trigger.as_object().expect("rule").clone(),
         }
     }
 
     fn installed(home: &HomeLayout, now: DateTime<Utc>) {
-        submit(home, "codex", Operation::Install, "install-1", now).unwrap();
-        claim_next(home, now).unwrap().unwrap();
+        submit(home, "codex", Operation::Install, "install-1", now).expect("installed");
+        claim_next(home, now)
+            .expect("installed")
+            .expect("installed");
         finish(
             home,
             "install-1",
@@ -787,7 +816,7 @@ mod tests {
             }),
             now,
         )
-        .unwrap();
+        .expect("installed");
     }
 
     #[test]
@@ -797,38 +826,51 @@ mod tests {
         installed(&home, now);
         save_rules(
             &home,
-            load(&home).unwrap().revision,
+            load(&home).expect("uninstall clears only").revision,
             vec![rule(
                 "daily",
                 json!({"kind":"cron","cron":"0 3 * * *","timezone":"UTC"}),
             )],
             now,
         )
-        .unwrap();
-        let job = submit(&home, "codex", Operation::Uninstall, "remove", now).unwrap();
+        .expect("uninstall clears only");
+        let job = submit(&home, "codex", Operation::Uninstall, "remove", now)
+            .expect("uninstall clears only");
         assert_eq!(
-            submit(&home, "codex", Operation::Uninstall, "remove", now).unwrap(),
+            submit(&home, "codex", Operation::Uninstall, "remove", now)
+                .expect("uninstall clears only"),
             job
         );
         assert!(submit(&home, "codex", Operation::Update, "update", now).is_err());
-        claim_next(&home, now).unwrap();
-        finish_uninstall(&home, "remove", Err("in use".into()), now).unwrap();
-        assert!(load(&home).unwrap().installations.contains_key("codex"));
-        submit(&home, "codex", Operation::Uninstall, "retry", now).unwrap();
-        claim_next(&home, now).unwrap();
-        finish_uninstall(&home, "retry", Ok(()), now).unwrap();
-        assert!(load(&home).unwrap().installations.is_empty());
+        claim_next(&home, now).expect("uninstall clears only");
+        finish_uninstall(&home, "remove", Err("in use".into()), now)
+            .expect("uninstall clears only");
+        assert!(
+            load(&home)
+                .expect("uninstall clears only")
+                .installations
+                .contains_key("codex")
+        );
+        submit(&home, "codex", Operation::Uninstall, "retry", now).expect("uninstall clears only");
+        claim_next(&home, now).expect("uninstall clears only");
+        finish_uninstall(&home, "retry", Ok(()), now).expect("uninstall clears only");
+        assert!(
+            load(&home)
+                .expect("uninstall clears only")
+                .installations
+                .is_empty()
+        );
         assert_eq!(
             submit(&home, "codex", Operation::Uninstall, "retry", now)
-                .unwrap()
+                .expect("uninstall clears only")
                 .status,
             JobStatus::Succeeded
         );
-        assert_eq!(load(&home).unwrap().jobs.len(), 3);
-        assert_eq!(load(&home).unwrap().rules.len(), 1);
+        assert_eq!(load(&home).expect("uninstall clears only").jobs.len(), 3);
+        assert_eq!(load(&home).expect("uninstall clears only").rules.len(), 1);
         assert!(
             enqueue_due(&home, now + TimeDelta::days(1))
-                .unwrap()
+                .expect("uninstall clears only")
                 .is_empty()
         );
     }
@@ -840,9 +882,13 @@ mod tests {
             "weekly",
             json!({"kind":"cron","cron":"0 3 * * 1","timezone":"Asia/Shanghai"}),
         );
-        let saved = save_rules(&home, 0, vec![weekly.clone()], now).unwrap();
+        let saved =
+            save_rules(&home, 0, vec![weekly.clone()], now).expect("rejects invalid schedules");
         assert_eq!(
-            saved.rules[0].next_run_at.unwrap().to_rfc3339(),
+            saved.rules[0]
+                .next_run_at
+                .expect("rejects invalid schedules")
+                .to_rfc3339(),
             "2026-09-13T19:00:00+00:00"
         );
         assert!(save_rules(&home, 0, vec![], now).is_err());
@@ -852,23 +898,35 @@ mod tests {
         );
         assert!(save_rules(&home, 1, vec![bad], now).is_err());
         assert!(save_rules(&home, 1, vec![weekly.clone(), weekly], now).is_err());
-        assert_eq!(load(&home).unwrap(), saved);
+        assert_eq!(load(&home).expect("rejects invalid schedules"), saved);
     }
 
     #[test]
     fn failure_preserves_selected_version_and_retry_is_idempotent() {
         let (_temp, home, now) = fixture();
         installed(&home, now);
-        let previous = load(&home).unwrap().installations;
-        let job = submit(&home, "codex", Operation::Update, "update-1", now).unwrap();
+        let previous = load(&home)
+            .expect("failure preserves selected")
+            .installations;
+        let job = submit(&home, "codex", Operation::Update, "update-1", now)
+            .expect("failure preserves selected");
         assert_eq!(
-            submit(&home, "codex", Operation::Update, "update-1", now).unwrap(),
+            submit(&home, "codex", Operation::Update, "update-1", now)
+                .expect("failure preserves selected"),
             job
         );
         assert!(submit(&home, "codex", Operation::Update, "update-2", now).is_err());
-        claim_next(&home, now).unwrap().unwrap();
-        finish(&home, "update-1", Err("verification failed".into()), now).unwrap();
-        assert_eq!(load(&home).unwrap().installations, previous);
+        claim_next(&home, now)
+            .expect("failure preserves selected")
+            .expect("failure preserves selected");
+        finish(&home, "update-1", Err("verification failed".into()), now)
+            .expect("failure preserves selected");
+        assert_eq!(
+            load(&home)
+                .expect("failure preserves selected")
+                .installations,
+            previous
+        );
         assert!(submit(&home, "codex", Operation::Install, "update-1", now).is_err());
     }
 
@@ -885,19 +943,22 @@ mod tests {
             )],
             now,
         )
-        .unwrap();
-        assert!(enqueue_due(&home, now).unwrap().is_empty());
+        .expect("due rules are");
+        assert!(enqueue_due(&home, now).expect("due rules are").is_empty());
         let due = now + TimeDelta::seconds(61);
-        let jobs = enqueue_due(&home, due).unwrap();
+        let jobs = enqueue_due(&home, due).expect("due rules are");
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].runtime, "codex");
         assert_eq!(jobs[0].operation, Operation::Update);
-        assert!(enqueue_due(&home, due).unwrap().is_empty());
-        claim_next(&home, due).unwrap();
-        assert_eq!(recover_interrupted(&home, due).unwrap(), 1);
-        assert_eq!(recover_interrupted(&home, due).unwrap(), 0);
-        assert!(claim_next(&home, due).unwrap().is_none());
-        assert_eq!(load(&home).unwrap().installations["codex"].version, "1.0");
+        assert!(enqueue_due(&home, due).expect("due rules are").is_empty());
+        claim_next(&home, due).expect("due rules are");
+        assert_eq!(recover_interrupted(&home, due).expect("due rules are"), 1);
+        assert_eq!(recover_interrupted(&home, due).expect("due rules are"), 0);
+        assert!(claim_next(&home, due).expect("due rules are").is_none());
+        assert_eq!(
+            load(&home).expect("due rules are").installations["codex"].version,
+            "1.0"
+        );
     }
 
     #[test]
@@ -915,18 +976,28 @@ mod tests {
             "friday",
             json!({"kind":"cron","cron":"0 3 * * 5","timezone":"UTC"}),
         );
-        let state = save_rules(&home, 0, vec![once, disabled, monday, friday], now).unwrap();
+        let state = save_rules(&home, 0, vec![once, disabled, monday, friday], now)
+            .expect("one time disabled");
         assert!(state.rules[1].next_run_at.is_none());
         assert_ne!(state.rules[2].next_run_at, state.rules[3].next_run_at);
-        assert_eq!(enqueue_due(&home, now).unwrap().len(), 1);
-        assert!(enqueue_due(&home, now).unwrap().is_empty());
-        assert!(load(&home).unwrap().rules[0].next_run_at.is_none());
+        assert_eq!(enqueue_due(&home, now).expect("one time disabled").len(), 1);
+        assert!(
+            enqueue_due(&home, now)
+                .expect("one time disabled")
+                .is_empty()
+        );
+        assert!(
+            load(&home).expect("one time disabled").rules[0]
+                .next_run_at
+                .is_none()
+        );
     }
 
     #[test]
     fn rejects_corrupt_state_instead_of_resetting_user_data() {
         let (_temp, home, _now) = fixture();
-        fs::atomic_write(&root(&home).join("state.json"), b"broken").unwrap();
+        fs::atomic_write(&root(&home).join("state.json"), b"broken")
+            .expect("rejects corrupt state");
         assert!(load(&home).is_err());
     }
 
@@ -936,33 +1007,41 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (_temp, home, now) = fixture();
         installed(&home, now);
-        let executable = load(&home).unwrap().installations["codex"]
+        let executable = load(&home).expect("selected cli environment").installations["codex"]
             .executable
             .clone();
-        fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").expect("selected cli environment");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("selected cli environment");
         let global = std::env::var_os("PATH");
         let mut env = BTreeMap::from([
             ("PATH".into(), "/usr/bin".into()),
             ("ACTOR_SETTING".into(), "retained".into()),
         ]);
         assert_eq!(
-            apply_environment(&home, "codex", &mut env).unwrap(),
+            apply_environment(&home, "codex", &mut env).expect(
+                "selected_cli_environment_does_not_change_global_path_or_silently_fallback"
+            ),
             Some(executable.clone())
         );
         assert_eq!(
-            std::env::split_paths(&env["PATH"]).next().unwrap(),
-            executable.parent().unwrap()
+            std::env::split_paths(&env["PATH"]).next().expect(
+                "selected_cli_environment_does_not_change_global_path_or_silently_fallback"
+            ),
+            executable.parent().expect(
+                "selected_cli_environment_does_not_change_global_path_or_silently_fallback"
+            )
         );
         assert_eq!(env["ACTOR_SETTING"], "retained");
         assert_eq!(std::env::var_os("PATH"), global);
-        std::fs::rename(&executable, executable.with_extension("missing")).unwrap();
+        std::fs::rename(&executable, executable.with_extension("missing"))
+            .expect("selected cli environment");
         let before = env.clone();
         assert!(apply_environment(&home, "codex", &mut env).is_err());
         assert_eq!(env, before);
         assert!(
             apply_environment(&home, "custom", &mut env)
-                .unwrap()
+                .expect("selected cli environment")
                 .is_none()
         );
     }
@@ -970,29 +1049,46 @@ mod tests {
     #[test]
     fn log_cursor_paginates_and_retries_partial_records_without_losing_text() {
         let (_temp, home, now) = fixture();
-        submit(&home, "codex", Operation::Install, "log-test", now).unwrap();
+        submit(&home, "codex", Operation::Install, "log-test", now).expect("log cursor paginates");
         let path = root(&home).join("logs/log-test.jsonl");
         let mut contents = (0..205)
             .map(|index| format!("{{\"text\":\"第{index}行\"}}\n"))
             .collect::<String>();
         let complete_length = contents.len() as u64;
         contents.push_str("{\"text\":\"尚未完成");
-        fs::atomic_write(&path, contents.as_bytes()).unwrap();
-        let first = read_log(&home, "log-test", 0).unwrap();
-        assert_eq!(first["entries"].as_array().unwrap().len(), 200);
-        let second = read_log(&home, "log-test", first["next_offset"].as_u64().unwrap()).unwrap();
-        assert_eq!(second["entries"].as_array().unwrap().len(), 5);
-        assert_eq!(second["next_offset"], complete_length);
-        assert!(second["has_more"].as_bool().unwrap());
-        assert!(
-            read_log(&home, "log-test", complete_length).unwrap()["entries"]
+        fs::atomic_write(&path, contents.as_bytes()).expect("log cursor paginates");
+        let first = read_log(&home, "log-test", 0).expect("log cursor paginates");
+        assert_eq!(
+            first["entries"]
                 .as_array()
-                .unwrap()
+                .expect("log cursor paginates")
+                .len(),
+            200
+        );
+        let second = read_log(
+            &home,
+            "log-test",
+            first["next_offset"].as_u64().expect("log cursor paginates"),
+        )
+        .expect("log cursor paginates");
+        assert_eq!(
+            second["entries"]
+                .as_array()
+                .expect("log cursor paginates")
+                .len(),
+            5
+        );
+        assert_eq!(second["next_offset"], complete_length);
+        assert!(second["has_more"].as_bool().expect("log cursor paginates"));
+        assert!(
+            read_log(&home, "log-test", complete_length).expect("log cursor paginates")["entries"]
+                .as_array()
+                .expect("log cursor paginates")
                 .is_empty()
         );
         contents.push_str("\"}\n");
-        fs::atomic_write(&path, contents.as_bytes()).unwrap();
-        let last = read_log(&home, "log-test", complete_length).unwrap();
+        fs::atomic_write(&path, contents.as_bytes()).expect("log cursor paginates");
+        let last = read_log(&home, "log-test", complete_length).expect("log cursor paginates");
         assert_eq!(last["entries"][0]["text"], "尚未完成");
         assert_eq!(last["has_more"], false);
         assert!(read_log(&home, "../log-test", 0).is_err());

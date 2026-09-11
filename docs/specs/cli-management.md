@@ -4,7 +4,7 @@
 
 ## 范围、术语与原生边界
 
-- 本功能分支基于上游 `0c1d10a1`（2026-09-10 拉取）；后台入口沿用原生 `resolve_operation/Operation/Policy`，只注册本功能的读取和全局写入操作，不恢复已被上游删除的 `dispatch_concurrency/operation_access.rs`。其余调度与锁策略保持上游行为。当前基线验证与先前 `dd556f1b` 及已部署实例的历史证据分别记录在 Web 验收文档，不互相替代。
+- 本功能最初基于上游 `0c1d10a1`，2026-09-11 为 PR 同步至 `22733e9a`（v0.4.39）；保留已公开功能提交，通过合并上游更新，不改写其历史。后台入口沿用原生 `resolve_operation/Operation/Policy`，只注册本功能的读取和全局写入操作，不恢复已被上游删除的 `dispatch_concurrency/operation_access.rs`。其余调度与锁策略保持上游行为，包括新上游的 WebSocket 来源检查。各基线验证与已部署实例的历史证据分别记录在 Web 验收文档，不互相替代。
 - 全局设置提供 Agent CLI 安装、更新、受管卸载、CLI 自动更新计划和 CLI 操作记录。Runtime、Actor、模型、供应商登录与软件安装不是同一概念。
 - 受管安装是 CCCC 负责生命周期的软件副本；外部安装仅通过原生探测使用，不更新、卸载或接管。统一用“受管”，不把它作为第二套来源选择配置。
 - 原生 Runtime 清单为 19 项；CLI 管理页显示 17 个有已知安装来源的 CLI，排除 `web_model` 与 `custom`，不从通用目录或 Actor 配置删除它们。

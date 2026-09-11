@@ -337,9 +337,9 @@ mod managed_cli_tests {
 
     #[test]
     fn analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path()).unwrap();
-        home.initialize().unwrap();
+        let temp = tempfile::tempdir().expect("analyst defaults select");
+        let home = HomeLayout::from_path(temp.path()).expect("analyst defaults select");
+        home.initialize().expect("analyst defaults select");
         for runtime in [
             ActorRuntime::Codex,
             ActorRuntime::Claude,
@@ -351,15 +351,27 @@ mod managed_cli_tests {
             let program = cccc_runtime::default_command(runtime)[0].clone();
             let id = format!("install-{name}");
             let now = chrono::Utc::now();
-            management::submit(&home, name, management::Operation::Install, &id, now).unwrap();
-            management::claim_next(&home, now).unwrap().unwrap();
+            management::submit(&home, name, management::Operation::Install, &id, now).expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
+            management::claim_next(&home, now)
+                .expect(
+                    "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+                )
+                .expect(
+                    "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+                );
             let executable = management::root(&home)
                 .join("versions")
                 .join(&id)
                 .join("bin")
                 .join(&program);
-            cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexit 0\n").expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
             management::finish(
                 &home,
                 &id,
@@ -371,20 +383,26 @@ mod managed_cli_tests {
                 }),
                 now,
             )
-            .unwrap();
+            .expect("analyst defaults select");
             let mut config = LaunchConfig::new(temp.path());
             config.runtime = runtime;
             config.resume_thread_id = Some("existing-session".into());
-            apply_managed_cli(&home, &mut config).unwrap();
+            apply_managed_cli(&home, &mut config).expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
             assert_eq!(config.command, [executable.to_string_lossy().into_owned()]);
             assert_eq!(config.resume_thread_id.as_deref(), Some("existing-session"));
             config.command = vec![program, "--model".into(), "chosen-model".into()];
-            apply_managed_cli(&home, &mut config).unwrap();
+            apply_managed_cli(&home, &mut config).expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
             assert_eq!(config.command[1..], ["--model", "chosen-model"]);
             let mut explicit = LaunchConfig::new(temp.path());
             explicit.runtime = runtime;
             explicit.command = vec!["/operator/custom/runtime".into()];
-            apply_managed_cli(&home, &mut explicit).unwrap();
+            apply_managed_cli(&home, &mut explicit).expect(
+                "analyst_defaults_select_managed_cli_without_actor_flags_or_identity_changes",
+            );
             assert_eq!(explicit.command, ["/operator/custom/runtime"]);
             assert!(explicit.environment.is_empty());
             // 保持保存配置及其恢复身份不被安装目录改写。
@@ -394,7 +412,7 @@ mod managed_cli_tests {
             };
             let resolved =
                 cccc_core::codex_voice_settings::resolve(&home, &settings, &BTreeMap::new())
-                    .unwrap();
+                    .expect("analyst defaults select");
             assert!(resolved.command.is_empty());
             assert!(resolved.environment.is_empty());
         }

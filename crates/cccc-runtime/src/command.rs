@@ -549,10 +549,10 @@ mod tests {
 
     #[test]
     fn deepseek_selected_home_must_remain_inside_managed_versions() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().expect("deepseek selected home");
         let root = temp.path().join("cccc");
         let selected = root.join("cli-management/versions/job/deepseek");
-        std::fs::create_dir_all(&selected).unwrap();
+        std::fs::create_dir_all(&selected).expect("deepseek selected home");
         let mut env = BTreeMap::from([
             ("CCCC_HOME".into(), root.to_string_lossy().into_owned()),
             ("DSH_HOME".into(), selected.to_string_lossy().into_owned()),

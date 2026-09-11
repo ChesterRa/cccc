@@ -282,7 +282,7 @@ fn failed_install_leaves_profile_absent_and_retryable() {
 fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
     use cccc_core::cli_management as management;
     use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().expect("no managed record");
     let home = test_home(temp.path());
     let executable = cccc_executable(temp.path());
     let initial = test_env(temp.path());
@@ -294,15 +294,16 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
         |_, _| Ok(()),
         fixture_ready,
     )
-    .unwrap();
+    .expect("no managed record");
     let bin = legacy.dsh_home.join("node_modules/.bin");
-    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&bin).expect("no managed record");
     for (name, body) in [
         ("dsh-acp-demo", "#!/bin/sh\nexit 0\n"),
         ("node", "#!/bin/sh\nprintf 'v22.19.0\\n'\n"),
     ] {
-        fs::write(bin.join(name), body).unwrap();
-        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(bin.join(name), body).expect("no managed record");
+        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700))
+            .expect("no managed record");
     }
     let files = [
         legacy.dsh_home.join("package.json"),
@@ -310,7 +311,9 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
         legacy.profile.join("package.json"),
         legacy.profile.join("cordis.yml"),
     ];
-    let before = files.each_ref().map(|path| fs::read(path).unwrap());
+    let before = files
+        .each_ref()
+        .map(|path| fs::read(path).expect("no managed record"));
     // 缺少管理状态和合法但没有受管记录的状态，都不接管原生路径。
     for existing_empty_state in [false, true] {
         if existing_empty_state {
@@ -318,7 +321,7 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
                 &management::root(&home).join("state.json"),
                 &management::State::default(),
             )
-            .unwrap();
+            .expect("no managed record");
         }
         let state_before = fs::read(management::root(&home).join("state.json")).ok();
         for proxy in [None, Some("0")] {
@@ -339,15 +342,20 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
                 cccc_runtime::deepseek_external_preflight,
                 cccc_runtime::deepseek_preflight,
             )
-            .unwrap();
-            let actual = ensure(&home, &mut actual_env, &executable).unwrap();
+            .expect("no managed record");
+            let actual = ensure(&home, &mut actual_env, &executable).expect("no managed record");
             assert_eq!(actual, expected);
             assert!(!actual.packages_installed && !actual.profile_created);
             assert_eq!(actual_env, expected_env);
-            assert_eq!(files.each_ref().map(|path| fs::read(path).unwrap()), before);
+            assert_eq!(
+                files.each_ref().map(|path| fs::read(path).expect(
+                    "no_managed_record_preserves_legacy_entry_outcome_environment_and_errors"
+                )),
+                before
+            );
         }
         // 原生 Node 校验失败仍返回同一错误及环境，不触发安装或修复。
-        fs::write(bin.join("node"), "#!/bin/sh\nprintf 'v18.0.0\\n'\n").unwrap();
+        fs::write(bin.join("node"), "#!/bin/sh\nprintf 'v18.0.0\\n'\n").expect("no managed record");
         let mut expected_env = initial.clone();
         let mut actual_env = initial.clone();
         let expected = ensure_with(
@@ -358,18 +366,24 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
             cccc_runtime::deepseek_external_preflight,
             cccc_runtime::deepseek_preflight,
         )
-        .unwrap_err();
+        .expect_err("no managed record");
         assert_eq!(
-            ensure(&home, &mut actual_env, &executable).unwrap_err(),
+            ensure(&home, &mut actual_env, &executable).expect_err("no managed record"),
             expected
         );
         assert_eq!(actual_env, expected_env);
-        assert_eq!(files.each_ref().map(|path| fs::read(path).unwrap()), before);
+        assert_eq!(
+            files
+                .each_ref()
+                .map(|path| fs::read(path).expect("no managed record")),
+            before
+        );
         assert_eq!(
             fs::read(management::root(&home).join("state.json")).ok(),
             state_before
         );
-        fs::write(bin.join("node"), "#!/bin/sh\nprintf 'v22.19.0\\n'\n").unwrap();
+        fs::write(bin.join("node"), "#!/bin/sh\nprintf 'v22.19.0\\n'\n")
+            .expect("no managed record");
     }
 }
 
@@ -378,7 +392,7 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
 fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
     use cccc_core::cli_management as management;
     use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().expect("selected install is");
     let home = test_home(temp.path());
     let executable = cccc_executable(temp.path());
     let mut env = test_env(temp.path());
@@ -390,10 +404,10 @@ fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
         |_, _| Ok(()),
         fixture_ready,
     )
-    .unwrap();
-    let legacy_config = fs::read(legacy.profile.join("cordis.yml")).unwrap();
+    .expect("selected install is");
+    let legacy_config = fs::read(legacy.profile.join("cordis.yml")).expect("selected install is");
     let isolated = management::root(&home).join("versions/test/deepseek");
-    fs::create_dir_all(&isolated).unwrap();
+    fs::create_dir_all(&isolated).expect("selected install is");
     ensure_at_with(
         &home,
         isolated.clone(),
@@ -403,15 +417,16 @@ fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
         |_, _| Ok(()),
         fixture_ready,
     )
-    .unwrap();
+    .expect("selected install is");
     let bin = isolated.join("node_modules/.bin");
-    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&bin).expect("selected install is");
     for (name, body) in [
         ("dsh-acp-demo", "#!/bin/sh\nexit 0\n"),
         ("node", "#!/bin/sh\nprintf 'v22.19.0\\n'\n"),
     ] {
-        fs::write(bin.join(name), body).unwrap();
-        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(bin.join(name), body).expect("selected install is");
+        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o700))
+            .expect("selected install is");
     }
     let now = chrono::Utc::now();
     management::submit(
@@ -421,8 +436,8 @@ fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
         "test",
         now,
     )
-    .unwrap();
-    management::claim_next(&home, now).unwrap();
+    .expect("selected install is");
+    management::claim_next(&home, now).expect("selected install is");
     management::finish(
         &home,
         "test",
@@ -434,17 +449,17 @@ fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
         }),
         now,
     )
-    .unwrap();
+    .expect("selected install is");
     env.insert(
         "CCCC_DEEPSEEK_SESSION_ROOT".into(),
         "/unchanged/sessions".into(),
     );
-    let selected = ensure(&home, &mut env, &executable).unwrap();
+    let selected = ensure(&home, &mut env, &executable).expect("selected install is");
     assert_eq!(selected.dsh_home, isolated);
     assert!(!selected.packages_installed && !selected.profile_created);
     assert_eq!(env["CCCC_DEEPSEEK_SESSION_ROOT"], "/unchanged/sessions");
     assert_eq!(
-        fs::read(legacy.profile.join("cordis.yml")).unwrap(),
+        fs::read(legacy.profile.join("cordis.yml")).expect("selected install is"),
         legacy_config
     );
     let manifest = selected
@@ -452,10 +467,10 @@ fn selected_install_is_read_only_and_preserves_legacy_home_and_session_root() {
         .join("node_modules")
         .join(DEEPSEEK_LLM_ADAPTER_PACKAGE)
         .join("package.json");
-    fs::write(&manifest, r#"{"version":"incompatible"}"#).unwrap();
+    fs::write(&manifest, r#"{"version":"incompatible"}"#).expect("selected install is");
     assert!(ensure(&home, &mut env, &executable).is_err());
     assert_eq!(
-        fs::read_to_string(manifest).unwrap(),
+        fs::read_to_string(manifest).expect("selected install is"),
         r#"{"version":"incompatible"}"#
     );
 }

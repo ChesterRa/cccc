@@ -106,19 +106,21 @@ mod tests {
     use chrono::Utc;
 
     fn installed(home: &HomeLayout, id: &str) -> PathBuf {
-        home.initialize().unwrap();
+        home.initialize().expect("installed");
         let now = Utc::now();
-        management::submit(home, "codex", management::Operation::Install, id, now).unwrap();
-        management::claim_next(home, now).unwrap();
+        management::submit(home, "codex", management::Operation::Install, id, now)
+            .expect("installed");
+        management::claim_next(home, now).expect("installed");
         let executable = management::root(home)
             .join("versions")
             .join(id)
             .join("bin/codex");
-        cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexec sleep 60\n").unwrap();
+        cccc_core::fs::atomic_write(&executable, b"#!/bin/sh\nexec sleep 60\n").expect("installed");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+                .expect("installed");
         }
         management::finish(
             home,
@@ -126,12 +128,12 @@ mod tests {
             Ok(management::Installation {
                 version: "1.0.0".into(),
                 executable: executable.clone(),
-                bin_paths: vec![executable.parent().unwrap().to_path_buf()],
+                bin_paths: vec![executable.parent().expect("installed").to_path_buf()],
                 installed_at: now.to_rfc3339(),
             }),
             now,
         )
-        .unwrap();
+        .expect("installed");
         executable
     }
 
@@ -143,41 +145,55 @@ mod tests {
             id,
             Utc::now(),
         )
-        .unwrap();
-        let job = management::claim_next(home, Utc::now()).unwrap().unwrap();
-        super::super::execute_job(home, &job, &AtomicBool::new(false)).unwrap();
-        management::load(home).unwrap().jobs[id].clone()
+        .expect("remove");
+        let job = management::claim_next(home, Utc::now())
+            .expect("remove")
+            .expect("remove");
+        super::super::execute_job(home, &job, &AtomicBool::new(false)).expect("remove");
+        management::load(home).expect("remove").jobs[id].clone()
     }
 
     #[test]
     fn removes_all_owned_versions_preserves_external_data_and_rejects_active_use() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
+        let temp = tempfile::tempdir().expect("removes all owned");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("removes all owned");
         let old = installed(&home, "old");
         let selected = installed(&home, "new");
         let external = temp.path().join("external/codex");
         let login = home.root().join("login-fixture.json");
         let session = home.root().join("groups/fixture/session.txt");
         for path in [&external, &login, &session] {
-            cccc_core::fs::atomic_write(path, b"preserve").unwrap();
+            cccc_core::fs::atomic_write(path, b"preserve").expect(
+                "removes_all_owned_versions_preserves_external_data_and_rejects_active_use",
+            );
         }
-        let in_use = usage::acquire(&home, ActorRuntime::Codex, &[]).unwrap();
+        let in_use = usage::acquire(&home, ActorRuntime::Codex, &[]).expect("removes all owned");
         let failure = remove(&home, "busy");
         assert_eq!(failure.status, management::JobStatus::Failed);
-        assert!(failure.error.unwrap().contains("使用"));
+        assert!(failure.error.expect("removes all owned").contains("使用"));
         assert!(old.exists() && selected.exists());
         drop(in_use);
         let result = remove(&home, "retry");
         assert_eq!(result.status, management::JobStatus::Succeeded);
         assert!(!old.exists() && !selected.exists());
-        assert!(management::load(&home).unwrap().installations.is_empty());
+        assert!(
+            management::load(&home)
+                .expect("removes all owned")
+                .installations
+                .is_empty()
+        );
         assert!(
             management::apply_environment(&home, "codex", &mut Default::default())
-                .unwrap()
+                .expect("removes all owned")
                 .is_none()
         );
         for path in [&external, &login, &session] {
-            assert_eq!(std::fs::read(path).unwrap(), b"preserve");
+            assert_eq!(
+                std::fs::read(path).expect(
+                    "removes_all_owned_versions_preserves_external_data_and_rejects_active_use"
+                ),
+                b"preserve"
+            );
         }
         assert!(management::root(&home).join("logs/retry.jsonl").is_file());
         assert_eq!(
@@ -188,7 +204,7 @@ mod tests {
                 "retry",
                 Utc::now()
             )
-            .unwrap(),
+            .expect("removes all owned"),
             result
         );
     }
@@ -196,11 +212,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn real_pty_actor_blocks_removal_even_when_its_configuration_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
+        let temp = tempfile::tempdir().expect("real pty actor");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("real pty actor");
         let executable = installed(&home, "pty-install");
-        let store = GroupStore::new(home.clone()).unwrap();
-        let mut group = store.create("受控卸载测试", "").unwrap();
+        let store = GroupStore::new(home.clone()).expect("real pty actor");
+        let mut group = store.create("受控卸载测试", "").expect("real pty actor");
         group.scopes.push(Scope {
             scope_key: "test".into(),
             url: temp.path().to_string_lossy().into_owned(),
@@ -213,15 +229,17 @@ mod tests {
         actor.runner = RunnerKind::Pty;
         actor.command = vec![executable.to_string_lossy().into_owned()];
         group.actors.push(actor);
-        crate::ops::actor_runtime::apply(&home, &group, "fixture", "actor.start").unwrap();
+        crate::ops::actor_runtime::apply(&home, &group, "fixture", "actor.start")
+            .expect("real pty actor");
         let pid = cccc_runtime::status(&group.group_id, "fixture")
-            .unwrap()
+            .expect("real pty actor")
             .pid;
         group.actors[0].command = vec!["sh".into()];
         let failed = remove(&home, "in-use");
         // 无论断言结果如何，先结束本测试拥有的子进程。
-        let still_running = cccc_runtime::status(&group.group_id, "fixture").unwrap();
-        cccc_runtime::stop(&group.group_id, "fixture").unwrap();
+        let still_running =
+            cccc_runtime::status(&group.group_id, "fixture").expect("real pty actor");
+        cccc_runtime::stop(&group.group_id, "fixture").expect("real pty actor");
         assert_eq!(failed.status, management::JobStatus::Failed);
         assert!(still_running.running);
         assert_eq!(still_running.pid, pid);
@@ -235,19 +253,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_symlinked_job_directories_and_allows_retry_after_missing_files() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
+        let temp = tempfile::tempdir().expect("refuses symlinked job");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("refuses symlinked job");
         installed(&home, "owned");
         let path = management::root(&home).join("versions/owned");
         let moved = temp.path().join("external");
-        std::fs::rename(&path, &moved).unwrap();
-        std::os::unix::fs::symlink(&moved, &path).unwrap();
+        std::fs::rename(&path, &moved).expect("refuses symlinked job");
+        std::os::unix::fs::symlink(&moved, &path).expect("refuses symlinked job");
         assert_eq!(
             remove(&home, "symlink").status,
             management::JobStatus::Failed
         );
         assert!(moved.join("bin/codex").exists());
-        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&path).expect("refuses symlinked job");
         assert_eq!(
             remove(&home, "missing").status,
             management::JobStatus::Succeeded
@@ -257,10 +275,10 @@ mod tests {
 
     #[test]
     fn uninstall_lock_rejects_new_starts_and_releases_after_failure() {
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
+        let temp = tempfile::tempdir().expect("uninstall lock rejects");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("uninstall lock rejects");
         installed(&home, "guarded");
-        let guard = usage::exclusive(&home, "codex").unwrap();
+        let guard = usage::exclusive(&home, "codex").expect("uninstall lock rejects");
         assert!(usage::acquire(&home, ActorRuntime::Codex, &[]).is_err());
         assert!(usage::acquire(&home, ActorRuntime::Claude, &[]).is_ok());
         drop(guard);

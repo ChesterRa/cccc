@@ -171,8 +171,14 @@ mod tests {
     use super::*;
     #[test]
     fn hermes_release_uses_explicit_official_tag_not_an_option_or_branch() {
-        assert_eq!(release_tag("v2026.9.7").unwrap(), "v2026.9.7");
-        assert_eq!(release_tag("2026.9.7").unwrap(), "v2026.9.7");
+        assert_eq!(
+            release_tag("v2026.9.7").expect("hermes release uses"),
+            "v2026.9.7"
+        );
+        assert_eq!(
+            release_tag("2026.9.7").expect("hermes release uses"),
+            "v2026.9.7"
+        );
         for invalid in ["main", "latest", "--branch", "2026.9.7\n", "1.2.3/../../"] {
             assert!(release_tag(invalid).is_err());
         }

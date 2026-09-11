@@ -366,9 +366,12 @@ mod tests {
                 "GitHub Copilot CLI 1.0.83.\nRun 'copilot update'.",
                 "1.0.83"
             )
-            .unwrap()
+            .expect("version probe accepts")
         );
-        assert!(matches_version("Hermes Agent v0.21.1 (2026.9.7)", "v2026.9.7").unwrap());
+        assert!(
+            matches_version("Hermes Agent v0.21.1 (2026.9.7)", "v2026.9.7")
+                .expect("version probe accepts")
+        );
         for wrong in [
             "11.0.83",
             "1.0.830",
@@ -376,7 +379,7 @@ mod tests {
             "1.0.83-beta",
             "1.0.83+build",
         ] {
-            assert!(!matches_version(wrong, "1.0.83").unwrap());
+            assert!(!matches_version(wrong, "1.0.83").expect("version probe accepts"));
         }
     }
 
@@ -388,16 +391,17 @@ mod tests {
         assert!(!Path::new(&root).exists(), "拒绝使用已有数据目录");
         let runtime = std::env::var("CLI_MANAGEMENT_TEST_RUNTIME").expect("必须指定已知 Runtime");
         assert!(runtime_mcp::from_name(&runtime).is_some());
-        let home = HomeLayout::from_path(&root).unwrap();
-        home.initialize().unwrap();
+        let home = HomeLayout::from_path(&root).expect("real install and");
+        home.initialize().expect("real install and");
         for (id, operation) in [
             ("install", management::Operation::Install),
             ("update", management::Operation::Update),
         ] {
             let now = chrono::Utc::now();
-            let job = management::submit(&home, &runtime, operation, id, now).unwrap();
-            management::claim_next(&home, now).unwrap();
-            let log = Log::open(&home, id).unwrap();
+            let job =
+                management::submit(&home, &runtime, operation, id, now).expect("real install and");
+            management::claim_next(&home, now).expect("real install and");
+            let log = Log::open(&home, id).expect("real install and");
             let result = install(&home, &job, &log, &AtomicBool::new(false));
             let summary = match &result {
                 Ok(selected) => format!(
@@ -409,8 +413,8 @@ mod tests {
                 ),
                 Err(error) => log.redact(&error.to_string()),
             };
-            log.write("验收", &summary).unwrap();
-            log.sync().unwrap();
+            log.write("验收", &summary).expect("real install and");
+            log.sync().expect("real install and");
             let success = result.is_ok();
             management::finish(
                 &home,
@@ -418,7 +422,7 @@ mod tests {
                 result.map_err(|error| log.redact(&error.to_string())),
                 chrono::Utc::now(),
             )
-            .unwrap();
+            .expect("real install and");
             assert!(
                 success,
                 "{summary}；完整日志：{root}/cli-management/logs/{id}.jsonl"
@@ -432,8 +436,13 @@ mod tests {
         for value in ["", "latest", "../1", "--force", "1\n2", "1;command"] {
             assert!(concrete_version(value).is_err(), "{value}");
         }
-        assert_eq!(concrete_version("0.153.2\n").unwrap(), "0.153.2");
-        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            concrete_version("0.153.2\n").expect(
+                "version_and_path_results_cannot_inject_options_or_select_external_binaries"
+            ),
+            "0.153.2"
+        );
+        let temp = tempfile::tempdir().expect("version and path");
         assert!(managed_paths(r#"{"PATH":"/usr/bin"}"#, temp.path()).is_err());
     }
 
@@ -441,13 +450,14 @@ mod tests {
     #[test]
     fn isolated_install_and_failed_update_keep_the_previous_executable() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
-        let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-        home.initialize().unwrap();
+        let temp = tempfile::tempdir().expect("isolated install and");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated install and");
+        home.initialize().expect("isolated install and");
         let mise = temp.path().join("mise");
         let binary = temp.path().join("fake-codex");
-        std::fs::write(&binary, "#!/bin/sh\nprintf 'codex-cli %s\\n' \"$CLI_TEST_VERSION\"\n[ \"$CLI_TEST_FAIL\" != 1 ]\n").unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(&binary, "#!/bin/sh\nprintf 'codex-cli %s\\n' \"$CLI_TEST_VERSION\"\n[ \"$CLI_TEST_FAIL\" != 1 ]\n").expect("isolated install and");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+            .expect("isolated install and");
         std::fs::write(
             &mise,
             r#"#!/bin/sh
@@ -463,8 +473,9 @@ case "$1" in
 esac
 "#,
         )
-        .unwrap();
-        std::fs::set_permissions(&mise, std::fs::Permissions::from_mode(0o700)).unwrap();
+        .expect("isolated install and");
+        std::fs::set_permissions(&mise, std::fs::Permissions::from_mode(0o700))
+            .expect("isolated install and");
         let mut env = process::install_environment();
         env.insert(
             "CLI_TEST_BINARY".into(),
@@ -473,9 +484,9 @@ esac
         env.insert("CLI_TEST_VERSION".into(), "1.2.3".into());
         let now = chrono::Utc::now();
         let job = management::submit(&home, "codex", management::Operation::Install, "first", now)
-            .unwrap();
-        management::claim_next(&home, now).unwrap();
-        let log = Log::open(&home, &job.id).unwrap();
+            .expect("isolated install and");
+        management::claim_next(&home, now).expect("isolated install and");
+        let log = Log::open(&home, &job.id).expect("isolated install and");
         let mut result = install_mise(
             &home,
             &job,
@@ -487,22 +498,22 @@ esac
             &log,
             &AtomicBool::new(false),
         )
-        .unwrap();
+        .expect("isolated install and");
         assert!(
             result
                 .executable
                 .starts_with(management::root(&home).join("versions/first"))
         );
         let dependency = management::root(&home).join("versions/first/dependency");
-        std::fs::create_dir(&dependency).unwrap();
+        std::fs::create_dir(&dependency).expect("isolated install and");
         result.bin_paths.push(dependency.clone());
-        management::finish(&home, &job.id, Ok(result.clone()), now).unwrap();
-        let previous_bytes = std::fs::read(&result.executable).unwrap();
+        management::finish(&home, &job.id, Ok(result.clone()), now).expect("isolated install and");
+        let previous_bytes = std::fs::read(&result.executable).expect("isolated install and");
         env.insert("CLI_TEST_VERSION".into(), "2.0.0".into());
         env.insert("CLI_TEST_FAIL".into(), "1".into());
         let job = management::submit(&home, "codex", management::Operation::Update, "second", now)
-            .unwrap();
-        management::claim_next(&home, now).unwrap();
+            .expect("isolated install and");
+        management::claim_next(&home, now).expect("isolated install and");
         let error = install_mise(
             &home,
             &job,
@@ -511,16 +522,22 @@ esac
             false,
             &mise,
             env.clone(),
-            &Log::open(&home, &job.id).unwrap(),
+            &Log::open(&home, &job.id).expect("isolated install and"),
             &AtomicBool::new(false),
         )
-        .unwrap_err();
-        management::finish(&home, &job.id, Err(error.to_string()), now).unwrap();
+        .expect_err("isolated install and");
+        management::finish(&home, &job.id, Err(error.to_string()), now)
+            .expect("isolated install and");
         assert_eq!(
-            management::load(&home).unwrap().installations["codex"],
+            management::load(&home)
+                .expect("isolated install and")
+                .installations["codex"],
             result
         );
-        assert_eq!(std::fs::read(&result.executable).unwrap(), previous_bytes);
+        assert_eq!(
+            std::fs::read(&result.executable).expect("isolated install and"),
+            previous_bytes
+        );
 
         env.insert("CLI_TEST_VERSION".into(), "1.2.3".into());
         env.remove("CLI_TEST_FAIL");
@@ -532,28 +549,33 @@ esac
             "failed-repair",
             "stopped",
         ] {
-            let previous = management::load(&home).unwrap().installations["codex"].clone();
+            let previous = management::load(&home)
+                .expect("isolated install and")
+                .installations["codex"]
+                .clone();
             let preserved = if scenario == "missing-executable" {
                 let moved = previous.executable.with_extension("preserved");
-                std::fs::rename(&previous.executable, &moved).unwrap();
+                std::fs::rename(&previous.executable, &moved).expect("isolated install and");
                 moved
             } else {
                 previous.executable.clone()
             };
             if scenario == "missing-dependency" {
-                std::fs::rename(&dependency, dependency.with_extension("preserved")).unwrap();
+                std::fs::rename(&dependency, dependency.with_extension("preserved"))
+                    .expect("isolated install and");
             }
             if matches!(scenario, "failed-probe" | "failed-repair") {
-                std::fs::write(&preserved, "#!/bin/sh\nprintf 'wrong version\\n'\n").unwrap();
+                std::fs::write(&preserved, "#!/bin/sh\nprintf 'wrong version\\n'\n")
+                    .expect("isolated install and");
             }
             if scenario == "failed-repair" {
                 env.insert("CLI_TEST_FAIL".into(), "1".into());
             }
-            let preserved_bytes = std::fs::read(&preserved).unwrap();
+            let preserved_bytes = std::fs::read(&preserved).expect("isolated install and");
             let job =
                 management::submit(&home, "codex", management::Operation::Update, scenario, now)
-                    .unwrap();
-            management::claim_next(&home, now).unwrap();
+                    .expect("isolated install and");
+            management::claim_next(&home, now).expect("isolated install and");
             let outcome = install_mise(
                 &home,
                 &job,
@@ -562,18 +584,18 @@ esac
                 false,
                 &mise,
                 env.clone(),
-                &Log::open(&home, &job.id).unwrap(),
+                &Log::open(&home, &job.id).expect("isolated install and"),
                 &AtomicBool::new(scenario == "stopped"),
             );
             match scenario {
-                "healthy" => assert_eq!(outcome.as_ref().unwrap(), &previous),
+                "healthy" => assert_eq!(outcome.as_ref().expect("isolated install and"), &previous),
                 "failed-repair" => assert!(outcome.is_err()),
                 "stopped" => assert_eq!(
-                    outcome.as_ref().unwrap_err().kind(),
+                    outcome.as_ref().expect_err("isolated install and").kind(),
                     io::ErrorKind::Interrupted
                 ),
                 _ => {
-                    let installed = outcome.as_ref().unwrap();
+                    let installed = outcome.as_ref().expect("isolated install and");
                     assert_eq!(installed.version, previous.version);
                     assert_ne!(installed.executable, previous.executable);
                     assert!(
@@ -582,27 +604,36 @@ esac
                             .starts_with(management::root(&home).join("versions").join(scenario))
                     );
                     assert_eq!(
-                        std::fs::read(&installed.executable).unwrap(),
+                        std::fs::read(&installed.executable).expect(
+                            "isolated_install_and_failed_update_keep_the_previous_executable"
+                        ),
                         previous_bytes
                     );
                 }
             }
             // 安装返回时仍未改变选中版本，旧文件也不被原地修复或移除。
             assert_eq!(
-                management::load(&home).unwrap().installations["codex"],
+                management::load(&home)
+                    .expect("isolated install and")
+                    .installations["codex"],
                 previous
             );
-            assert_eq!(std::fs::read(&preserved).unwrap(), preserved_bytes);
+            assert_eq!(
+                std::fs::read(&preserved).expect("isolated install and"),
+                preserved_bytes
+            );
             management::finish(
                 &home,
                 &job.id,
                 outcome.map_err(|error| error.to_string()),
                 now,
             )
-            .unwrap();
+            .expect("isolated install and");
             if matches!(scenario, "failed-repair" | "stopped") {
                 assert_eq!(
-                    management::load(&home).unwrap().installations["codex"],
+                    management::load(&home)
+                        .expect("isolated install and")
+                        .installations["codex"],
                     previous
                 );
             }

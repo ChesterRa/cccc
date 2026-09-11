@@ -47,24 +47,29 @@ async fn corrupt_management_state_preserves_native_catalog_and_start_fail_closed
     // 在子进程中提供确定可用的外部 CLI，不修改并行测试的全局 PATH。
     const CHILD: &str = "CCCC_RUNTIME_DISCOVERY_TEST_CHILD";
     if std::env::var_os(CHILD).is_none() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = tempfile::tempdir().expect("corrupt management state");
         let binary = fixture.path().join("codex");
-        std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").expect("corrupt management state");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+            .expect("corrupt management state");
         let mut paths = vec![fixture.path().to_path_buf()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "corrupt_management_state_preserves_native_catalog_and_start_fail_closed",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .env("PATH", std::env::join_paths(paths).unwrap())
-            .output()
-            .unwrap();
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("corrupt management state"))
+                .args([
+                    "--exact",
+                    "corrupt_management_state_preserves_native_catalog_and_start_fail_closed",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(
+                    "PATH",
+                    std::env::join_paths(paths).expect("corrupt management state"),
+                )
+                .output()
+                .expect("corrupt management state");
         assert!(
             output.status.success(),
             "{}\n{}",
@@ -84,27 +89,36 @@ async fn corrupt_management_state_preserves_native_catalog_and_start_fail_closed
         .filter(|runtime| runtime.available)
         .map(|runtime| &runtime.name)
         .collect();
-    let temp = tempfile::tempdir().unwrap();
-    let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-    home.initialize().unwrap();
+    let temp = tempfile::tempdir().expect("corrupt management state");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("corrupt management state");
+    home.initialize().expect("corrupt management state");
     let path = cccc_core::cli_management::root(&home).join("state.json");
-    cccc_core::fs::atomic_write(&path, b"broken").unwrap();
+    cccc_core::fs::atomic_write(&path, b"broken").expect("corrupt management state");
     let response = auth_support::authenticated_app(home.clone())
         .oneshot(
             Request::get("/api/v1/runtimes")
                 .body(Body::empty())
-                .unwrap(),
+                .expect("corrupt management state"),
         )
         .await
-        .unwrap();
+        .expect("corrupt management state");
     assert_eq!(response.status(), StatusCode::OK);
-    let payload: Value =
-        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let payload: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("corrupt management state")
+            .to_bytes(),
+    )
+    .expect("corrupt management state");
     assert_eq!(
         payload["result"]["cli_management_error"],
         "cli_management_state_error"
     );
-    let runtimes = payload["result"]["runtimes"].as_array().unwrap();
+    let runtimes = payload["result"]["runtimes"]
+        .as_array()
+        .expect("corrupt management state");
     assert_eq!(
         payload["result"]["available"],
         serde_json::json!(expected_available)
@@ -114,9 +128,12 @@ async fn corrupt_management_state_preserves_native_catalog_and_start_fail_closed
         let mut original_fields = runtime.clone();
         original_fields
             .as_object_mut()
-            .unwrap()
+            .expect("corrupt management state")
             .remove("managed_error");
-        assert_eq!(original_fields, serde_json::to_value(expected).unwrap());
+        assert_eq!(
+            original_fields,
+            serde_json::to_value(expected).expect("corrupt management state")
+        );
         if runtime["name"] != "custom" && runtime["name"] != "web_model" {
             assert_eq!(runtime["managed_error"], "cli_management_state_error");
         }
@@ -125,23 +142,33 @@ async fn corrupt_management_state_preserves_native_catalog_and_start_fail_closed
         cccc_core::cli_management::apply_environment(&home, "codex", &mut Default::default())
             .is_err()
     );
-    assert_eq!(std::fs::read(&path).unwrap(), b"broken");
-    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        std::fs::read(&path).expect("corrupt management state"),
+        b"broken"
+    );
+    std::fs::remove_file(path).expect("corrupt management state");
     let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::get("/api/v1/runtimes")
                 .body(Body::empty())
-                .unwrap(),
+                .expect("corrupt management state"),
         )
         .await
-        .unwrap();
+        .expect("corrupt management state");
     assert_eq!(response.status(), StatusCode::OK);
-    let payload: Value =
-        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let payload: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("corrupt management state")
+            .to_bytes(),
+    )
+    .expect("corrupt management state");
     assert!(payload["result"]["cli_management_error"].is_null());
     assert_eq!(
         payload["result"]["runtimes"],
-        serde_json::to_value(&native).unwrap()
+        serde_json::to_value(&native).expect("corrupt management state")
     );
     assert_eq!(
         payload["result"]["available"],
@@ -154,21 +181,23 @@ async fn corrupt_management_state_preserves_native_catalog_and_start_fail_closed
 async fn managed_runtime_with_missing_dependencies_is_not_advertised_as_available() {
     use cccc_core::cli_management as management;
     use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
-    let home = HomeLayout::from_path(temp.path().join("home")).unwrap();
-    home.initialize().unwrap();
+    let temp = tempfile::tempdir().expect("managed runtime with");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("managed runtime with");
+    home.initialize().expect("managed runtime with");
     let now = chrono::Utc::now();
     for runtime in ["deepseek", "codex"] {
-        management::submit(&home, runtime, management::Operation::Install, runtime, now).unwrap();
-        management::claim_next(&home, now).unwrap();
+        management::submit(&home, runtime, management::Operation::Install, runtime, now)
+            .expect("managed runtime with");
+        management::claim_next(&home, now).expect("managed runtime with");
         let root = management::root(&home).join("versions").join(runtime);
         let binary = if runtime == "deepseek" {
             root.join("deepseek/node_modules/.bin/dsh-acp-demo")
         } else {
             root.join("bin/codex")
         };
-        cccc_core::fs::atomic_write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        cccc_core::fs::atomic_write(&binary, b"#!/bin/sh\nexit 0\n").expect("managed runtime with");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+            .expect("managed runtime with");
         management::finish(
             &home,
             runtime,
@@ -184,26 +213,33 @@ async fn managed_runtime_with_missing_dependencies_is_not_advertised_as_availabl
             }),
             now,
         )
-        .unwrap();
+        .expect("managed runtime with");
     }
     let response = auth_support::authenticated_app(home)
         .oneshot(
             Request::get("/api/v1/runtimes")
                 .body(Body::empty())
-                .unwrap(),
+                .expect("managed runtime with"),
         )
         .await
-        .unwrap();
+        .expect("managed runtime with");
     assert_eq!(response.status(), StatusCode::OK);
-    let payload: Value =
-        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let payload: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("managed runtime with")
+            .to_bytes(),
+    )
+    .expect("managed runtime with");
     for name in ["codex", "deepseek"] {
         let runtime = payload["result"]["runtimes"]
             .as_array()
-            .unwrap()
+            .expect("managed runtime with")
             .iter()
             .find(|runtime| runtime["name"] == name)
-            .unwrap();
+            .expect("managed runtime with");
         assert_eq!(runtime["available"], false, "{name}");
     }
 }
