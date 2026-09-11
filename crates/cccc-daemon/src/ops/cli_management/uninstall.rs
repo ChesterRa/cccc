@@ -23,6 +23,7 @@ fn directories(home: &HomeLayout, job: &management::Job) -> io::Result<Vec<PathB
             Err(error) => return Err(error),
         }
     }
+    let canonical_root = root.canonicalize()?;
     let mut directories = Vec::new();
     for installed_job in state.jobs.values().filter(|entry| {
         entry.runtime == job.runtime && entry.operation != management::Operation::Uninstall
@@ -43,9 +44,12 @@ fn directories(home: &HomeLayout, job: &management::Job) -> io::Result<Vec<PathB
         !path
             .components()
             .any(|part| matches!(part, Component::ParentDir))
-            && directories
-                .iter()
-                .any(|directory| path.starts_with(directory))
+            && directories.iter().any(|directory| {
+                path.starts_with(directory)
+                    || directory
+                        .strip_prefix(&root)
+                        .is_ok_and(|relative| path.starts_with(canonical_root.join(relative)))
+            })
     };
     if !owned(&installation.executable) || installation.bin_paths.iter().any(|path| !owned(path)) {
         return Err(io::Error::other("无法从安装任务确认受管目录归属，拒绝卸载"));
@@ -222,6 +226,31 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_accepts_canonical_installation_paths_after_partial_removal() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let executable = installed(&home, "canonical");
+        let mut state = management::load(&home).expect("state");
+        let installation = state.installations.get_mut("codex").expect("installation");
+        installation.executable = executable.canonicalize().expect("canonical executable");
+        installation.bin_paths = vec![
+            executable
+                .parent()
+                .expect("bin")
+                .canonicalize()
+                .expect("canonical bin"),
+        ];
+        cccc_core::fs::write_json(&management::root(&home).join("state.json"), &state)
+            .expect("state");
+        std::fs::remove_file(&executable).expect("partial removal");
+        assert_eq!(
+            remove(&home, "remove-canonical").status,
+            management::JobStatus::Succeeded
+        );
+        assert!(!executable.parent().expect("bin").exists());
+    }
+
+    #[test]
     fn removes_all_owned_versions_preserves_external_data_and_rejects_active_use() {
         let temp = tempfile::tempdir().expect("removes all owned");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("removes all owned");
@@ -374,6 +403,9 @@ mod tests {
         .expect("fixture");
         management::claim_next(&home, Utc::now()).expect("fixture");
         let guard = usage::exclusive(&home, "codex").expect("fixture");
+        let blocked = usage::acquire(&home, ActorRuntime::Codex, &[]).expect_err("busy");
+        assert_eq!(blocked.kind(), io::ErrorKind::WouldBlock);
+        assert!(blocked.to_string().contains("正在卸载"));
         assert!(
             usage::acquire_in(
                 &home,
@@ -402,7 +434,9 @@ mod tests {
                 &[path.to_string_lossy().into_owned()],
             )
             .expect("fixture");
-            assert!(usage::exclusive(&home, "codex").is_err());
+            let blocked = usage::exclusive(&home, "codex").expect_err("busy");
+            assert_eq!(blocked.kind(), io::ErrorKind::WouldBlock);
+            assert!(blocked.to_string().contains("使用"));
             drop(lease);
             assert!(usage::exclusive(&home, "codex").is_ok());
         }

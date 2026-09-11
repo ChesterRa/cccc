@@ -72,8 +72,11 @@ pub(crate) fn acquire_in(
         .map(|name| {
             let file = lock_file(home, &name)?;
             FileExt::try_lock_shared(&file).map_err(|error| {
-                if error.kind() == io::ErrorKind::WouldBlock {
-                    io::Error::new(error.kind(), "CLI 正在卸载，请等待任务完成后再启动")
+                if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+                    io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "CLI 正在卸载，请等待任务完成后再启动",
+                    )
                 } else {
                     error
                 }
@@ -87,9 +90,9 @@ pub(super) fn exclusive(home: &HomeLayout, runtime: &str) -> io::Result<File> {
     // 锁由本次进程/会话持有，不通过 Actor ID 推断旧进程是否已退出。
     let file = lock_file(home, runtime)?;
     FileExt::try_lock_exclusive(&file).map_err(|error| {
-        if error.kind() == io::ErrorKind::WouldBlock {
+        if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
             io::Error::new(
-                error.kind(),
+                io::ErrorKind::WouldBlock,
                 "CLI 仍被 Actor 或内建助手使用；请先停止相关使用者，再重新卸载",
             )
         } else {
