@@ -157,6 +157,9 @@ pub(super) fn install_environment() -> BTreeMap<String, String> {
         "HOME",
         "USER",
         "USERPROFILE",
+        // 与原生 Claude launcher 相同，保留 Windows 工具所需的系统目录。
+        "APPDATA",
+        "LOCALAPPDATA",
         "SystemRoot",
         "SYSTEMROOT",
         "TEMP",
@@ -338,6 +341,21 @@ pub(super) fn command(
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).env_clear().envs(env);
     command
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn installation_preserves_windows_appdata_without_inheriting_credentials() {
+        let environment = install_environment();
+        for key in ["APPDATA", "LOCALAPPDATA"] {
+            assert_eq!(environment.get(key), std::env::var(key).ok().as_ref());
+        }
+        assert!(!environment.contains_key("GITHUB_TOKEN"));
+        assert!(!environment.contains_key("OPENAI_API_KEY"));
+    }
 }
 
 #[cfg(all(test, unix))]

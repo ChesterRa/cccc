@@ -30,7 +30,7 @@ subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "--quiet", str(r
 (root / "target-version").write_text("1.0.0", encoding="utf-8")
 fixture = Path(__file__).with_name("cli-management-fixture.py").resolve()
 if os.name == "nt":
-    wrapper = f'@echo off\r\n"{sys.executable}" "{fixture}" "{root}" %*\r\n'
+    wrapper = f'@echo off\r\n"{sys.executable}" -X utf8 "{fixture}" "{root}" %*\r\n'
 else:
     import shlex
     wrapper = f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(fixture))} {shlex.quote(str(root))} "$@"\n'

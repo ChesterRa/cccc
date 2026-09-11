@@ -2,7 +2,9 @@
 
 状态：2026-09-11 已补平台筛选、Windows 路径与 Actor 回归，以及跨平台真实 Web 验收入口，正在验证；尚未全部通过，不能放行。功能合同见 [CLI 管理规格](cli-management.md)，有日期的既有证据见 [Web 验收记录](cli-management-web-acceptance.md)。本页是放行清单，不是测试通过报告。
 
-本轮阶段结果：指定 Linux 测试机上 quality 111 项、Web 1518 项、Web 检查/构建、打包检查、Clippy 和安装/发布脚本通过。磁盘已获授权扩容，继续磁盘构建，不再使用 `noexec` 内存目录。容器须使用标准 init 回收孤儿进程；首次无 init 的进程回收失败及重跑证据分别保留。真实 Web 已覆盖依赖缺失、同版本修复、默认/显式 Actor、更新不强停旧 Actor、卸载后外部回落、关闭页面后的后台一次性计划及双 CLI 串行、最近 20/全部记录和状态损坏恢复。Windows、真实供应商安装链路及其余 GUI 场景仍在验证；最终候选还须复跑。没有推送候选分支或更新上游 PR。
+本轮阶段结果：指定 Linux 测试机的完整原生 CI 与真实 Web 验收已通过，供应商链路正在绑定修正后二进制复测。个人 Fork Windows 验证已通过前端、原生七组、CLI 管理核心/Daemon 与 Actor 来源切换回归；真实供应商 12 项通过，DeepSeek、Hermes 和 GUI 安装夹具仍有待修正项，尚未放行。中间候选仅推送个人 Fork 独立验证分支，没有更新上游 PR 或日常部署。
+
+Windows 实测修正范围：锁竞争判定沿用原生 `fs2::lock_contended_error`；卸载兼容规范化路径但保留归属校验。安装环境参照原生 Claude launcher 保留 `APPDATA`、`LOCALAPPDATA`，不继承模型凭据；Hermes 的 Git 克隆目标使用固定工作目录下的相对名称，避免把 Windows 扩展路径作为 Git 参数。GUI Python 替身显式以 UTF-8 运行。这些修正仍须分别通过原生回归、真实安装及网页复测；不能以原因已定位代替通过。
 
 真实 Web 自动化入口：[cli-management.py](../../web/tests/browser/cli-management.py) 与同目录的受控安装替身。必须在指定测试环境、全新目录运行；它不访问模型，也不能替代真实供应商安装验收。Windows Actor 回归入口为 `windows_managed_actor_update_uninstall_and_external_fallback`。
 

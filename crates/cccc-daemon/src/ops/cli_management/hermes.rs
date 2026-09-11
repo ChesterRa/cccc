@@ -49,7 +49,8 @@ pub(super) fn install(
     ]
     .into_iter()
     .map(str::to_owned)
-    .chain([source.to_string_lossy().into_owned()])
+    // cwd 已固定为本次安装目录；Git for Windows 不接受 \\?\ 前缀的目标参数。
+    .chain(["hermes-agent".into()])
     .collect::<Vec<_>>();
     process::run(
         &mut process::command(&git, &args, directory, &env),
