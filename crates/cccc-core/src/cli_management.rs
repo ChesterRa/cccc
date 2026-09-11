@@ -469,8 +469,22 @@ pub fn submit(
 
 /// 到期标记与更新任务同时持久化；重启不重新领取同一次计划。
 pub fn enqueue_due(home: &HomeLayout, now: DateTime<Utc>) -> io::Result<Vec<Job>> {
+    enqueue_due_for(home, now, |_| true)
+}
+
+/// 在同一次状态提交内过滤当前平台不支持的受管安装，不改动其历史及安装记录。
+pub fn enqueue_due_for(
+    home: &HomeLayout,
+    now: DateTime<Utc>,
+    supported: impl Fn(&str) -> bool,
+) -> io::Result<Vec<Job>> {
     update(home, |state| {
-        let runtimes = state.installations.keys().cloned().collect::<Vec<_>>();
+        let runtimes = state
+            .installations
+            .keys()
+            .filter(|name| supported(name))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut due = Vec::new();
         for entry in &mut state.rules {
             if !entry.rule.enabled || entry.next_run_at.is_none_or(|at| at > now) {
@@ -956,6 +970,41 @@ mod tests {
             previous
         );
         assert!(submit(&home, "codex", Operation::Install, "update-1", now).is_err());
+    }
+
+    #[test]
+    fn due_rules_skip_unsupported_platform_without_removing_installations() {
+        let (_temp, home, now) = fixture();
+        installed(&home, now);
+        let before = load(&home).expect("state").installations;
+        save_rules(
+            &home,
+            0,
+            vec![rule(
+                "interval",
+                json!({"kind":"interval","every_seconds":60}),
+            )],
+            now,
+        )
+        .expect("rules");
+        let due = now + TimeDelta::seconds(61);
+        assert!(
+            enqueue_due_for(&home, due, |_| false)
+                .expect("filter")
+                .is_empty()
+        );
+        assert_eq!(load(&home).expect("state").installations, before);
+        assert!(
+            enqueue_due(&home, due)
+                .expect("no duplicate tick")
+                .is_empty()
+        );
+        assert_eq!(
+            enqueue_due(&home, due + TimeDelta::seconds(61))
+                .expect("next tick")
+                .len(),
+            1
+        );
     }
 
     #[test]

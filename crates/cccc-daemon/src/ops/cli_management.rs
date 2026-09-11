@@ -66,7 +66,11 @@ impl Worker {
                         if state.rules.iter().any(|rule| {
                             rule.rule.enabled && rule.next_run_at.is_some_and(|at| at <= Utc::now())
                         }) {
-                            management::enqueue_due(&home, Utc::now())?;
+                            management::enqueue_due_for(&home, Utc::now(), |name| {
+                                cccc_core::runtime_mcp::from_name(name).is_some_and(|runtime| {
+                                    !matches!(source(runtime), Source::NotApplicable { .. })
+                                })
+                            })?;
                         }
                         if !worker_stop.load(Ordering::Acquire)
                             && management::load(&home)?
@@ -205,6 +209,20 @@ pub(super) enum Source {
 
 // 穷尽 Runtime 枚举；上游增加 Runtime 时必须重新核对安装来源，不能悄悄漏项。
 pub(super) fn source(runtime: ActorRuntime) -> Source {
+    source_for_platform(runtime, std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn source_for_platform(runtime: ActorRuntime, os: &str, arch: &str) -> Source {
+    if !matches!(runtime, ActorRuntime::WebModel | ActorRuntime::Custom)
+        && (!matches!(os, "linux" | "macos" | "windows")
+            || !matches!(arch, "x86_64" | "aarch64")
+            || (os == "windows" && matches!(runtime, ActorRuntime::Cursor | ActorRuntime::Droid))
+            || (os != "linux" && runtime == ActorRuntime::Kiro))
+    {
+        return Source::NotApplicable {
+            reason: "managed_install_platform_unsupported",
+        };
+    }
     let (tool, node) = match runtime {
         ActorRuntime::Amp => ("amp", true),
         ActorRuntime::Antigravity => ("antigravity-cli", false),
@@ -638,11 +656,42 @@ mod tests {
             .filter(|probe| {
                 let runtime =
                     serde_json::from_value(json!(probe.name)).expect("all catalog runtimes");
-                matches!(source(runtime), Source::NotApplicable { .. })
+                matches!(
+                    source_for_platform(runtime, "linux", "x86_64"),
+                    Source::NotApplicable { .. }
+                )
             })
             .map(|probe| probe.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(not_applicable, ["web_model", "custom"]);
+    }
+
+    #[test]
+    fn platform_filter_only_changes_managed_installation_choices() {
+        for probe in cccc_runtime::detect_runtimes() {
+            let runtime = cccc_core::runtime_mcp::from_name(&probe.name).expect("catalog runtime");
+            let unsupported = matches!(
+                runtime,
+                ActorRuntime::Cursor
+                    | ActorRuntime::Droid
+                    | ActorRuntime::Kiro
+                    | ActorRuntime::WebModel
+                    | ActorRuntime::Custom
+            );
+            assert_eq!(
+                matches!(
+                    source_for_platform(runtime, "windows", "x86_64"),
+                    Source::NotApplicable { .. }
+                ),
+                unsupported,
+                "{}",
+                probe.name
+            );
+            assert!(matches!(
+                source_for_platform(runtime, "linux", "riscv64"),
+                Source::NotApplicable { .. }
+            ));
+        }
     }
 
     #[test]

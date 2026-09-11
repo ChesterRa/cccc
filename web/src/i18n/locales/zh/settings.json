@@ -23,6 +23,7 @@
     "managedVersion": "CCCC 默认使用：受管版本 {{version}}",
     "externalInstallation": "CCCC 默认使用：外部安装（自动检测）。仅使用，不更新或卸载；安装受管版本不会覆盖它。",
     "notInstalled": "尚未安装",
+    "noSupportedCli": "当前服务器平台没有支持受管安装的 CLI；原生 Runtime 和外部安装的使用方式不变。",
     "notCli": "此 Runtime 不使用本地 CLI。",
     "customUnsupported": "自定义 Runtime 无确定安装来源，请沿用原有管理方式。",
     "loadFailed": "无法读取 CLI 管理状态，请刷新重试。",

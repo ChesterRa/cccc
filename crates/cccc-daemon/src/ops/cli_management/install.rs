@@ -327,6 +327,7 @@ fn cleanup_staging(
 }
 
 fn managed_paths(output: &str, directory: &Path) -> io::Result<Vec<PathBuf>> {
+    let directory = directory.canonicalize()?;
     let values: serde_json::Value = serde_json::from_str(output)?;
     let path = values
         .get("PATH")
@@ -334,11 +335,12 @@ fn managed_paths(output: &str, directory: &Path) -> io::Result<Vec<PathBuf>> {
         .ok_or_else(|| io::Error::other("mise 环境结果缺少 PATH"))?;
     let mut paths = Vec::new();
     for path in std::env::split_paths(path) {
-        if path.starts_with(directory)
-            && path.is_dir()
-            && path.canonicalize()?.starts_with(directory)
-            && !paths.contains(&path)
-        {
+        if !path.is_dir() {
+            continue;
+        }
+        // Windows 的普通路径与 canonicalize 返回的扩展长度路径须按同一形式比较。
+        let path = path.canonicalize()?;
+        if path.starts_with(&directory) && !paths.contains(&path) {
             paths.push(path);
         }
     }
@@ -423,6 +425,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn managed_paths_accept_native_and_canonical_paths_but_exclude_external_paths() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let directory = temp.path().join("managed space");
+        let bin = directory.join("bin");
+        let external = temp.path().join("external");
+        std::fs::create_dir_all(&bin).expect("fixture");
+        std::fs::create_dir_all(&external).expect("fixture");
+        let joined = std::env::join_paths([&bin, &external, &bin]).expect("path");
+        let output = serde_json::json!({"PATH": joined.to_string_lossy()}).to_string();
+        assert_eq!(
+            managed_paths(&output, &directory.canonicalize().expect("fixture"))
+                .expect("managed paths"),
+            vec![bin.canonicalize().expect("fixture")]
+        );
+    }
+
+    #[test]
     fn version_probe_accepts_sentence_punctuation_not_different_versions() {
         assert!(
             matches_version(
@@ -446,7 +465,7 @@ mod tests {
         }
     }
 
-    /// 仅在显式指定的无凭据测试机环境运行，保留安装和日志供检查。
+    /// 仅在显式指定的无凭据测试环境运行；卸载后保留操作记录和日志供检查。
     #[test]
     #[ignore = "需要测试机、真实 mise 与官方下载网络；不在本地或普通 CI 安装 CLI"]
     fn real_install_and_update_in_explicit_lab() {
@@ -459,7 +478,14 @@ mod tests {
         for (id, operation) in [
             ("install", management::Operation::Install),
             ("update", management::Operation::Update),
+            ("repair", management::Operation::Update),
         ] {
+            if id == "repair" {
+                let selected =
+                    management::load(&home).expect("state").installations[&runtime].clone();
+                std::fs::write(&selected.executable, b"broken-test-installation")
+                    .expect("corrupt owned test binary");
+            }
             let now = chrono::Utc::now();
             let job =
                 management::submit(&home, &runtime, operation, id, now).expect("real install and");
@@ -492,6 +518,32 @@ mod tests {
             );
             println!("{summary}");
         }
+        let selected = management::load(&home).expect("state").installations[&runtime].clone();
+        let now = chrono::Utc::now();
+        management::submit(
+            &home,
+            &runtime,
+            management::Operation::Uninstall,
+            "uninstall",
+            now,
+        )
+        .expect("uninstall submit");
+        let job = management::claim_next(&home, now)
+            .expect("uninstall claim")
+            .expect("uninstall job");
+        super::super::execute_job(&home, &job, &AtomicBool::new(false))
+            .expect("uninstall execution");
+        let state = management::load(&home).expect("state");
+        assert_eq!(
+            state.jobs["uninstall"].status,
+            management::JobStatus::Succeeded,
+            "{:?}",
+            state.jobs["uninstall"].error
+        );
+        assert!(!state.installations.contains_key(&runtime));
+        assert!(!selected.executable.exists());
+        assert!(management::root(&home).join("logs/install.jsonl").is_file());
+        println!("{runtime} 卸载通过；操作记录和日志保留");
     }
 
     #[test]

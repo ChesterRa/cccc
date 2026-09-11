@@ -23,6 +23,7 @@
     "managedVersion": "CCCC default: managed version {{version}}",
     "externalInstallation": "CCCC default: external installation (auto-detected). Used but never updated or removed. Installing a managed version does not overwrite it.",
     "notInstalled": "Not installed",
+    "noSupportedCli": "No managed CLI installation is supported on this server platform. Native Runtimes and external installations are unchanged.",
     "notCli": "This Runtime does not use a local CLI.",
     "customUnsupported": "A custom Runtime has no known installation source. Keep its existing management method.",
     "loadFailed": "Unable to load CLI management status. Refresh to retry.",

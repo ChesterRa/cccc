@@ -45,3 +45,7 @@ pub(super) fn launch_env(
 #[cfg(all(test, unix))]
 #[path = "environment_tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "environment_windows_tests.rs"]
+mod windows_tests;

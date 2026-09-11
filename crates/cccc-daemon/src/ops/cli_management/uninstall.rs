@@ -355,8 +355,15 @@ mod tests {
             .expect("fixture");
         std::fs::create_dir_all(versions.join("other-install")).expect("fixture");
         let indirect = versions.join("other-install/../codex-install/bin/codex");
-        let alias = temp.path().join("external-alias");
-        std::os::unix::fs::symlink(&executable, &alias).expect("fixture");
+        let paths = vec![executable.clone(), indirect];
+        #[cfg(unix)]
+        let paths = {
+            let alias = temp.path().join("external-alias");
+            std::os::unix::fs::symlink(&executable, &alias).expect("fixture");
+            let mut paths = paths;
+            paths.push(alias);
+            paths
+        };
         management::submit(
             &home,
             "codex",
@@ -376,7 +383,7 @@ mod tests {
             )
             .is_err()
         );
-        for path in [&executable, &indirect, &alias] {
+        for path in &paths {
             assert!(
                 usage::acquire(
                     &home,
@@ -388,7 +395,7 @@ mod tests {
             );
         }
         drop(guard);
-        for path in [&executable, &indirect, &alias] {
+        for path in &paths {
             let lease = usage::acquire(
                 &home,
                 ActorRuntime::Custom,

@@ -23,6 +23,7 @@
     "managedVersion": "CCCC の既定：管理バージョン {{version}}",
     "externalInstallation": "CCCC の既定：外部インストール（自動検出）。使用のみで更新・削除しません。管理バージョンの導入で上書きされません。",
     "notInstalled": "未インストール",
+    "noSupportedCli": "このサーバープラットフォームで管理インストールをサポートする CLI はありません。既存の Runtime と外部インストールの利用方法は変わりません。",
     "notCli": "この Runtime はローカル CLI を使用しません。",
     "customUnsupported": "カスタム Runtime のインストール元は不明です。既存の管理方法を使用してください。",
     "loadFailed": "CLI 管理状態を取得できません。再読み込みしてください。",

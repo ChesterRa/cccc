@@ -199,6 +199,11 @@ export function CliManagementTab({ isDark }: { isDark: boolean }) {
           )}
           {data && (
             <div className="divide-y divide-[var(--glass-border-subtle)]">
+              {data.runtimes.every((runtime) => runtime.source.kind === "not_applicable") && (
+                <p role="status" className="text-sm text-[var(--color-text-secondary)]">
+                  {t("cliManagement.noSupportedCli")}
+                </p>
+              )}
               {data.runtimes.map((runtime) => {
                 if (runtime.source.kind === "not_applicable") return null;
                 const job = jobs.find(

@@ -142,6 +142,18 @@ describe("CLI 管理原生设置", () => {
     expect(api.saveCliSchedules).not.toHaveBeenCalled();
   });
 
+  it("无受管安装支持的平台显示空态但保留操作记录入口", async () => {
+    data.runtimes[0].source = {
+      kind: "not_applicable",
+      reason: "managed_install_platform_unsupported",
+    };
+    await mount();
+    expect(container.textContent).toContain("cliManagement.noSupportedCli");
+    expect(container.textContent).not.toContain("Codex CLI");
+    expect(api.submitCliJob).not.toHaveBeenCalled();
+    expect(data.runtimes).toHaveLength(1);
+  });
+
   it("只展示可管理 CLI，不展示 Web Model 和 Custom，也不修改原始运行时清单", async () => {
     for (const [name, display_name] of [
       ["web_model", "Web Model"],

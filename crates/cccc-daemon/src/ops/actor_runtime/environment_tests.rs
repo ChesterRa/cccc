@@ -95,6 +95,7 @@ esac
     command
         .args(["--exact", &test_name, "--nocapture"])
         .env_clear()
+        .env("HOME", root)
         .env("PATH", path)
         .env(CHILD_ROOT, root);
     let (mut child, owner) =
