@@ -41,7 +41,7 @@
     "scheduleConflict": "Schedules changed elsewhere. Your draft was not saved. Cancel editing, refresh, and edit again.",
     "scheduleSaved": "Update schedules saved.",
     "duplicateSchedule": "A schedule with this name already exists.",
-    "invalidScheduleName": "Use up to 64 ASCII letters, digits, underscores, or hyphens, starting with a letter or digit.",
+    "invalidScheduleName": "Use 1–64 ASCII letters, digits, underscores, or hyphens.",
     "futureTimeRequired": "Choose a future execution time.",
     "timezone": "Schedule timezone",
     "scheduleTimeHint": "Fixed times use this timezone. Dates absent from a month are skipped.",

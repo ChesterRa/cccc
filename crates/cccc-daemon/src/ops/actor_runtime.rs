@@ -87,14 +87,14 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
     let actor = environment::resolve_launch_actor(home, group, actor)?;
-    let usage = super::cli_management::usage::acquire(home, actor.runtime, &actor.command)
-        .map_err(OpError::io)?;
     let command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
     };
     let cwd = working_directory(group, &actor)?;
+    let usage = super::cli_management::usage::acquire_in(home, actor.runtime, &actor.command, &cwd)
+        .map_err(OpError::io)?;
     let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     let _start_permit = crate::runtime_start_gate::permit(home)

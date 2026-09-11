@@ -342,6 +342,83 @@ mod tests {
     }
 
     #[test]
+    fn explicit_paths_lock_the_resolved_installation_during_uninstall() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let executable = installed(&home, "codex-install");
+        let versions = executable
+            .parent()
+            .expect("fixture")
+            .parent()
+            .expect("fixture")
+            .parent()
+            .expect("fixture");
+        std::fs::create_dir_all(versions.join("other-install")).expect("fixture");
+        let indirect = versions.join("other-install/../codex-install/bin/codex");
+        let alias = temp.path().join("external-alias");
+        std::os::unix::fs::symlink(&executable, &alias).expect("fixture");
+        management::submit(
+            &home,
+            "codex",
+            management::Operation::Uninstall,
+            "remove",
+            Utc::now(),
+        )
+        .expect("fixture");
+        management::claim_next(&home, Utc::now()).expect("fixture");
+        let guard = usage::exclusive(&home, "codex").expect("fixture");
+        assert!(
+            usage::acquire_in(
+                &home,
+                ActorRuntime::Custom,
+                &["other-install/../codex-install/bin/codex".into()],
+                versions
+            )
+            .is_err()
+        );
+        for path in [&executable, &indirect, &alias] {
+            assert!(
+                usage::acquire(
+                    &home,
+                    ActorRuntime::Custom,
+                    &[path.to_string_lossy().into_owned()]
+                )
+                .is_err(),
+                "{path:?}"
+            );
+        }
+        drop(guard);
+        for path in [&executable, &indirect, &alias] {
+            let lease = usage::acquire(
+                &home,
+                ActorRuntime::Custom,
+                &[path.to_string_lossy().into_owned()],
+            )
+            .expect("fixture");
+            assert!(usage::exclusive(&home, "codex").is_err());
+            drop(lease);
+            assert!(usage::exclusive(&home, "codex").is_ok());
+        }
+    }
+
+    #[test]
+    fn external_command_does_not_require_management_state() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("fixture");
+        let executable = installed(&home, "owned");
+        std::fs::write(management::root(&home).join("state.json"), "broken").expect("fixture");
+        assert!(usage::acquire(&home, ActorRuntime::Custom, &["/bin/sh".into()]).is_ok());
+        assert!(
+            usage::acquire(
+                &home,
+                ActorRuntime::Custom,
+                &[executable.to_string_lossy().into_owned()]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn uninstall_lock_rejects_new_starts_and_releases_after_failure() {
         let temp = tempfile::tempdir().expect("uninstall lock rejects");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("uninstall lock rejects");

@@ -1029,6 +1029,32 @@ mod tests {
         assert!(load(&home).is_err());
     }
 
+    #[test]
+    fn existing_schedule_ids_round_trip_without_narrowing_the_contract() {
+        let (_temp, home, now) = fixture();
+        let rules = ["normal", "_legacy", "-legacy"]
+            .into_iter()
+            .map(|id| rule(id, json!({"kind":"interval","every_seconds":90})))
+            .collect();
+        let saved = save_rules(&home, 0, rules, now).expect("save");
+        let loaded = load(&home).expect("reload");
+        assert_eq!(saved.rules, loaded.rules);
+        let edited = save_rules(
+            &home,
+            loaded.revision,
+            loaded.rules.into_iter().map(|state| state.rule).collect(),
+            now,
+        )
+        .expect("edit");
+        assert_eq!(saved.rules, edited.rules);
+        assert!(
+            save_rules(&home, edited.revision, vec![], now)
+                .expect("remove")
+                .rules
+                .is_empty()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn selected_cli_environment_does_not_change_global_path_or_silently_fallback() {

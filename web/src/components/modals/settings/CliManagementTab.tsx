@@ -582,9 +582,9 @@ function CliJobLog({ jobId, job, onClose }: { jobId: string; job?: CliJob; onClo
         <button
           type="button"
           className={secondaryButtonClass("sm")}
-          disabled={!page?.has_more}
+          disabled={!page?.has_more || page.next_offset <= offset}
           onClick={() => {
-            if (page) {
+            if (page && page.next_offset > offset) {
               setHistory([...history, offset]);
               setOffset(page.next_offset);
             }

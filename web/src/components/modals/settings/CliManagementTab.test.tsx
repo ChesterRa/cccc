@@ -283,6 +283,15 @@ describe("CLI 管理原生设置", () => {
       expect(api.fetchCliJobLog).toHaveBeenLastCalledWith("log-test", 100);
       expect(container.querySelector("pre")?.textContent).toContain("token=[REDACTED]");
       expect(button("cliManagement.nextPage").disabled).toBe(true);
+      vi.mocked(api.fetchCliJobLog).mockResolvedValueOnce({
+        ok: true,
+        result: { entries: [], next_offset: 100, has_more: true },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(button("cliManagement.nextPage").disabled).toBe(true);
+      expect(api.fetchCliJobLog).toHaveBeenLastCalledWith("log-test", 100);
       vi.mocked(api.fetchCliJobLog).mockRejectedValueOnce(new Error("network"));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3000);
@@ -511,50 +520,49 @@ describe("CLI 管理原生设置", () => {
     expect(api.submitCliJob).not.toHaveBeenCalled();
   });
 
-  it("90 秒间隔可通过原生表单校验并保存，查看全部会请求归档", async () => {
-    const onSave = vi.fn(async () => undefined);
-    await act(async () =>
-      root.render(
-        <CliScheduleEditor
-          initial={{
-            id: "seconds",
-            enabled: true,
-            trigger: { kind: "interval", every_seconds: 90 },
-          }}
-          busy={false}
-          onSave={onSave}
-          onCancel={() => undefined}
-        />,
-      ),
-    );
-    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!;
-    expect(input.value).toBe("1.5");
-    expect(input.checkValidity()).toBe(true);
-    await act(async () => container.querySelector("form")!.requestSubmit());
-    expect(onSave).toHaveBeenCalledWith({
-      id: "seconds",
-      enabled: true,
-      trigger: { kind: "interval", every_seconds: 90 },
-    });
-    for (let index = 0; index < 21; index++) {
-      const id = `history-${index}`;
-      data.state.jobs[id] = {
+  it.each(["seconds", "_seconds", "-seconds"])(
+    "计划 %s 的 90 秒间隔可保存，查看全部会请求归档",
+    async (id) => {
+      const onSave = vi.fn(async () => undefined);
+      await act(async () =>
+        root.render(
+          <CliScheduleEditor
+            initial={{ id, enabled: true, trigger: { kind: "interval", every_seconds: 90 } }}
+            busy={false}
+            onSave={onSave}
+            onCancel={() => undefined}
+          />,
+        ),
+      );
+      const input = container.querySelector<HTMLInputElement>('input[type="number"]')!;
+      expect(input.value).toBe("1.5");
+      expect(input.checkValidity()).toBe(true);
+      await act(async () => container.querySelector("form")!.requestSubmit());
+      expect(onSave).toHaveBeenCalledWith({
         id,
-        runtime: "codex",
-        operation: "install",
-        status: "failed",
-        created_at: "2026-09-10T00:00:00Z",
-        started_at: null,
-        finished_at: null,
-        source_rule: null,
-        error: "fixture",
-      };
-    }
-    await mount();
-    expect(api.fetchCliManagement).toHaveBeenLastCalledWith(false);
-    await act(async () => button("cliManagement.allJobs").click());
-    expect(api.fetchCliManagement).toHaveBeenLastCalledWith(true);
-  });
+        enabled: true,
+        trigger: { kind: "interval", every_seconds: 90 },
+      });
+      for (let index = 0; index < 21; index++) {
+        const id = `history-${index}`;
+        data.state.jobs[id] = {
+          id,
+          runtime: "codex",
+          operation: "install",
+          status: "failed",
+          created_at: "2026-09-10T00:00:00Z",
+          started_at: null,
+          finished_at: null,
+          source_rule: null,
+          error: "fixture",
+        };
+      }
+      await mount();
+      expect(api.fetchCliManagement).toHaveBeenLastCalledWith(false);
+      await act(async () => button("cliManagement.allJobs").click());
+      expect(api.fetchCliManagement).toHaveBeenLastCalledWith(true);
+    },
+  );
 
   it("操作记录的状态、来源、时间与日志编号逐项对应，切换记录不串日志", async () => {
     const statuses: api.CliJob["status"][] = [

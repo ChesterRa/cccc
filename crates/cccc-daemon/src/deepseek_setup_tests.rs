@@ -385,6 +385,30 @@ fn no_managed_record_preserves_legacy_entry_outcome_environment_and_errors() {
         fs::write(bin.join("node"), "#!/bin/sh\nprintf 'v22.19.0\\n'\n")
             .expect("no managed record");
     }
+    // CLI 管理状态损坏不影响显式外部命令的原生 setup 路径。
+    fs::write(management::root(&home).join("state.json"), "broken").expect("bad state");
+    for program in [
+        "/external/dsh",
+        "/external/dsh-acp-demo",
+        "/external/adapter",
+    ] {
+        let mut actual_env = initial.clone();
+        let mut expected_env = initial.clone();
+        let expected = ensure_with(
+            &home,
+            &mut expected_env,
+            &executable,
+            |_, _| panic!("不得重装原生副本"),
+            cccc_runtime::deepseek_external_preflight,
+            cccc_runtime::deepseek_preflight,
+        )
+        .expect("native ready");
+        let actual = ensure_for_command(&home, &[program.into()], &mut actual_env, &executable)
+            .expect("explicit ready");
+        assert_eq!(actual, expected);
+        assert_eq!(actual_env, expected_env);
+    }
+    assert!(ensure(&home, &mut initial.clone(), &executable).is_err());
 }
 
 #[cfg(unix)]

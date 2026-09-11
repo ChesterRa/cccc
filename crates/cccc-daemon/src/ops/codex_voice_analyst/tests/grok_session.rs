@@ -19,6 +19,49 @@ use std::time::Duration;
 const FAKE_SESSION_ID: &str = "01a0623c-19b3-7ec3-b777-95e24279ec67";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirmed_process_exit_releases_cli_usage_without_stopping_session() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let executable = fake_acp_without_user_echo(temp.path(), true);
+    let (protocol, process) =
+        launch_fake_acp(temp.path(), &executable, PromptCompletion::Response).await;
+    let mut session = fake_analyst_session(protocol, process, temp.path());
+    let auxiliary = process::spawn_background(
+        &["sh".into(), "-c".into(), "sleep 60".into()],
+        temp.path(),
+        &BTreeMap::new(),
+        "usage-test",
+    )
+    .expect("auxiliary");
+    session.auxiliary_processes.push(Arc::new(auxiliary));
+    let path = temp.path().join("usage.lock");
+    let file = std::fs::File::create(&path).expect("usage");
+    fs2::FileExt::lock_shared(&file).expect("shared");
+    session.cli_usage.lock().expect("usage").push(file);
+    let contender = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("contender");
+    assert!(fs2::FileExt::try_lock_exclusive(&contender).is_err());
+    session.protocol.close().await.expect("close stdin");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !session.process.as_ref().expect("process").confirmed_exit() {
+        assert!(tokio::time::Instant::now() < deadline, "provider must exit");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!session.process_running());
+    assert!(
+        fs2::FileExt::try_lock_exclusive(&contender).is_err(),
+        "辅助进程仍运行，不能释放"
+    );
+    session.auxiliary_processes[0]
+        .stop()
+        .expect("stop auxiliary");
+    assert!(!session.process_running());
+    fs2::FileExt::try_lock_exclusive(&contender).expect("all children exited");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grok_adapter_keeps_one_session_across_acp_tui_and_resume() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");

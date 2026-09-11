@@ -41,7 +41,7 @@
     "scheduleConflict": "计划已被其他操作修改，草稿未保存。请取消编辑，刷新后重新修改。",
     "scheduleSaved": "自动更新计划已保存。",
     "duplicateSchedule": "已存在同名计划，请修改名称。",
-    "invalidScheduleName": "名称须以英文字母或数字开头，只能含英文字母、数字、下划线和连字符，最多 64 个字符。",
+    "invalidScheduleName": "名称只能含英文字母、数字、下划线和连字符，长度为 1–64 个字符。",
     "futureTimeRequired": "请选择将来的执行时间。",
     "timezone": "计划时区",
     "scheduleTimeHint": "固定时刻按此时区执行；月末不存在的日期不执行。",

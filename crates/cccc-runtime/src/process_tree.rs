@@ -48,6 +48,10 @@ impl OwnedProcessTree {
         registry().retained_files.remove(&self.id);
     }
 
+    pub(crate) fn has_retained_files(&self) -> bool {
+        registry().retained_files.contains_key(&self.id)
+    }
+
     pub fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
         Self::spawn_registered(command, 0)
     }

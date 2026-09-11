@@ -7,7 +7,6 @@ import {
   formatTimeInput,
   getWeekdayOptions,
   isoToLocalDatetimeInput,
-  isValidId,
   localDatetimeInputToIso,
   localTimeZone,
   parseCronToPreset,
@@ -81,7 +80,8 @@ export function CliScheduleEditor({
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        if (!isValidId(draft.id)) {
+        // 与 CLI 管理已有持久化合同一致，不收紧原生自动化的共享校验器。
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(draft.id)) {
           setError(t("cliManagement.invalidScheduleName"));
           return;
         }

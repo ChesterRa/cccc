@@ -57,6 +57,17 @@ impl ChildOwner {
             .is_some_and(|status| status.ok().flatten().is_none())
     }
 
+    /// 与 running 的错误降级不同，释放使用资源必须有实际退出证据。
+    pub(in crate::ops::codex_voice_analyst) fn confirmed_exit(&self) -> bool {
+        self.child.lock().is_ok_and(|mut guard| {
+            guard.as_mut().is_none_or(|child| {
+                self.process_tree
+                    .try_wait(|| child.try_wait())
+                    .is_ok_and(|exit| exit.is_some())
+            })
+        })
+    }
+
     pub(in crate::ops::codex_voice_analyst) fn id(&self) -> Option<u32> {
         self.child
             .lock()

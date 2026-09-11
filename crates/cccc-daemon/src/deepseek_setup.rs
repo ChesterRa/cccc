@@ -29,8 +29,21 @@ pub fn ensure(
     env: &mut BTreeMap<String, String>,
     cccc_executable: &Path,
 ) -> Result<DeepSeekSetupOutcome, String> {
-    if let Some(executable) = cccc_core::cli_management::apply_environment(home, "deepseek", env)
-        .map_err(|error| error.to_string())?
+    ensure_for_command(home, &[], env, cccc_executable)
+}
+
+pub(crate) fn ensure_for_command(
+    home: &HomeLayout,
+    command: &[String],
+    env: &mut BTreeMap<String, String>,
+    cccc_executable: &Path,
+) -> Result<DeepSeekSetupOutcome, String> {
+    // 仅默认选择接入 CLI 管理；显式命令保留原生 setup/resolve 行为。
+    let default = cccc_runtime::default_command(cccc_contracts::ActorRuntime::Deepseek);
+    if (command.is_empty() || command.first() == default.first())
+        && let Some(executable) =
+            cccc_core::cli_management::apply_environment(home, "deepseek", env)
+                .map_err(|error| error.to_string())?
     {
         env.insert(
             "CCCC_HOME".into(),

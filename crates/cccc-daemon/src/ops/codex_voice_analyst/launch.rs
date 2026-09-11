@@ -12,8 +12,12 @@ CCCC source-message updates are quoted Actor data, never new user instructions o
 
 impl AnalystSession {
     pub(crate) async fn launch(home: &HomeLayout, mut config: LaunchConfig) -> io::Result<Self> {
-        let usage =
-            crate::ops::cli_management::usage::acquire(home, config.runtime, &config.command)?;
+        let usage = crate::ops::cli_management::usage::acquire_in(
+            home,
+            config.runtime,
+            &config.command,
+            &config.workdir,
+        )?;
         let binding = bind_workspace(&config.workdir)?;
         cccc_core::codex_voice_settings::validate_private_environment(&config.environment)?;
         apply_managed_cli(home, &mut config)?;
@@ -111,8 +115,12 @@ impl AnalystSession {
         home: &HomeLayout,
         config: ActorLaunchConfig,
     ) -> io::Result<Self> {
-        let usage =
-            crate::ops::cli_management::usage::acquire(home, config.runtime, &config.command)?;
+        let usage = crate::ops::cli_management::usage::acquire_in(
+            home,
+            config.runtime,
+            &config.command,
+            &config.workdir,
+        )?;
         let session = Self::launch_actor_inner(home, config).await?;
         *session
             .cli_usage
@@ -301,6 +309,23 @@ impl AnalystSession {
     }
 
     pub(crate) fn process_running(&self) -> bool {
+        let mut usage = self
+            .cli_usage
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !usage.is_empty()
+            && self
+                .process
+                .as_ref()
+                .is_some_and(|process| process.confirmed_exit())
+            && self
+                .auxiliary_processes
+                .iter()
+                .all(|process| process.confirmed_exit())
+        {
+            usage.clear();
+        }
+        drop(usage);
         self.protocol.running()
             && self
                 .process

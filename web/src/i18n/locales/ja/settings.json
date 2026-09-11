@@ -41,7 +41,7 @@
     "scheduleConflict": "別の操作でスケジュールが変更されました。下書きは未保存です。編集をキャンセルし、再読み込み後に編集してください。",
     "scheduleSaved": "自動更新スケジュールを保存しました。",
     "duplicateSchedule": "同名のスケジュールが存在します。",
-    "invalidScheduleName": "ASCII 英数字で始まる 64 文字以内の英数字、アンダースコア、ハイフンを使用してください。",
+    "invalidScheduleName": "1〜64 文字の ASCII 英数字、アンダースコア、ハイフンを使用してください。",
     "futureTimeRequired": "将来の実行時刻を指定してください。",
     "timezone": "スケジュールのタイムゾーン",
     "scheduleTimeHint": "指定時刻はこのタイムゾーンを使用します。その月に存在しない日付はスキップされます。",

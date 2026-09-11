@@ -17,21 +17,38 @@ fn lock_file(home: &HomeLayout, runtime: &str) -> io::Result<File> {
         .open(directory.join(format!("{runtime}.lock")))
 }
 
+#[cfg(test)]
 pub(crate) fn acquire(
     home: &HomeLayout,
     runtime: ActorRuntime,
     command: &[String],
 ) -> io::Result<Vec<File>> {
+    acquire_in(home, runtime, command, home.root())
+}
+
+pub(crate) fn acquire_in(
+    home: &HomeLayout,
+    runtime: ActorRuntime,
+    command: &[String],
+    cwd: &std::path::Path,
+) -> io::Result<Vec<File>> {
     let name = serde_json::to_value(runtime)?
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    management::load(home)?;
     let mut names = vec![name];
+    let versions = management::root(home).join("versions");
+    let canonical_versions = versions.canonicalize().ok();
     // 显式引用另一 Runtime 的受管目录，也必须保护实际使用的安装。
     for part in command {
+        let path = cwd.join(part);
+        let resolved = match path.canonicalize() {
+            Ok(path) => path,
+            Err(error) if path.starts_with(&versions) => return Err(error),
+            Err(_) => continue,
+        };
         if let Ok(relative) =
-            std::path::Path::new(part).strip_prefix(management::root(home).join("versions"))
+            resolved.strip_prefix(canonical_versions.as_deref().unwrap_or(&versions))
         {
             if let Some(id) = relative
                 .components()
@@ -42,6 +59,8 @@ pub(crate) fn acquire(
                     if job.operation != management::Operation::Uninstall {
                         names.push(job.runtime);
                     }
+                } else {
+                    return Err(io::Error::other("无法确认受管命令的安装归属"));
                 }
             }
         }

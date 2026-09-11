@@ -25,8 +25,15 @@ pub fn apply(
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
     let mut actor = resolve_launch_actor(home, group, actor)?;
-    let usage = crate::ops::cli_management::usage::acquire(home, actor.runtime, &actor.command)
-        .map_err(OpError::io)?;
+    // 仅为使用保护预解析目录；原生目录错误仍在 setup/preflight 后返回。
+    let cwd = actor_runtime::working_directory(group, &actor);
+    let usage = crate::ops::cli_management::usage::acquire_in(
+        home,
+        actor.runtime,
+        &actor.command,
+        cwd.as_deref().unwrap_or(home.root()),
+    )
+    .map_err(OpError::io)?;
     actor.normalize_runtime_constraints();
     if actor.command.is_empty() {
         actor.command = cccc_runtime::default_command(actor.runtime);
@@ -34,14 +41,15 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     actor.env = launch_env(home, group, &actor);
     let executable = crate::ops::codex_mcp::resolve_cccc_executable()
         .ok_or_else(|| setup_required("CCCC executable is not available for DeepSeek setup"))?;
-    crate::deepseek_setup::ensure(home, &mut actor.env, &executable).map_err(setup_required)?;
+    crate::deepseek_setup::ensure_for_command(home, &actor.command, &mut actor.env, &executable)
+        .map_err(setup_required)?;
     let session_root = actor
         .env
         .get("CCCC_DEEPSEEK_SESSION_ROOT")
         .ok_or_else(|| setup_required("DeepSeek session root is not configured"))?;
     std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
-    let cwd = actor_runtime::working_directory(group, &actor)?;
+    let cwd = cwd?;
     start_with_resources(home, group, &actor, &cwd, usage).map_err(OpError::io)?;
     Ok(())
 }

@@ -41,68 +41,73 @@ impl DeepSeekSupervisor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let (child, tree) = crate::OwnedProcessTree::spawn(&mut process)?;
+        let has_resources = !retained_files.is_empty();
         tree.retain_files(retained_files);
         self.child = Some(child);
         self.process_tree = Some(tree);
-        let stdout = self
-            .child
-            .as_mut()
-            .and_then(|child| child.stdout.take())
-            .ok_or_else(|| io::Error::other("deepseek stdout pipe unavailable"))?;
-        let stderr = self
-            .child
-            .as_mut()
-            .and_then(|child| child.stderr.take())
-            .ok_or_else(|| io::Error::other("deepseek stderr pipe unavailable"))?;
-        let (sender, receiver) = mpsc::sync_channel(STDOUT_FRAME_CAPACITY);
-        let thread = std::thread::Builder::new()
-            .name("cccc-deepseek-acp-stdout".into())
-            .spawn(move || {
-                let mut reader = BufReader::new(stdout);
-                loop {
-                    match read_bounded_frame(&mut reader) {
-                        Ok(Some(line)) => {
-                            if sender.send(Some(line)).is_err() {
+        let initialized = (|| -> Result<(), SupervisorError> {
+            let stdout = self
+                .child
+                .as_mut()
+                .and_then(|child| child.stdout.take())
+                .ok_or_else(|| io::Error::other("deepseek stdout pipe unavailable"))?;
+            let stderr = self
+                .child
+                .as_mut()
+                .and_then(|child| child.stderr.take())
+                .ok_or_else(|| io::Error::other("deepseek stderr pipe unavailable"))?;
+            let (sender, receiver) = mpsc::sync_channel(STDOUT_FRAME_CAPACITY);
+            let thread = std::thread::Builder::new()
+                .name("cccc-deepseek-acp-stdout".into())
+                .spawn(move || {
+                    let mut reader = BufReader::new(stdout);
+                    loop {
+                        match read_bounded_frame(&mut reader) {
+                            Ok(Some(line)) => {
+                                if sender.send(Some(line)).is_err() {
+                                    break;
+                                }
+                            }
+                            Ok(None) => {
+                                let _ = sender.send(None);
+                                break;
+                            }
+                            Err(_) => {
+                                let _ = sender.send(None);
                                 break;
                             }
                         }
-                        Ok(None) => {
-                            let _ = sender.send(None);
-                            break;
-                        }
-                        Err(_) => {
-                            let _ = sender.send(None);
-                            break;
-                        }
                     }
-                }
-            })?;
-        self.stdout_rx = Some(receiver);
-        self.stdout_thread = Some(thread);
-        let stderr_tail = Arc::clone(&self.stderr_tail);
-        self.stderr_thread = Some(
-            std::thread::Builder::new()
-                .name("cccc-deepseek-acp-stderr".into())
-                .spawn(move || {
-                    let mut reader = BufReader::new(stderr);
-                    let mut chunk = [0_u8; 4096];
-                    loop {
-                        match std::io::Read::read(&mut reader, &mut chunk) {
-                            Ok(0) => break,
-                            Ok(size) => {
-                                if let Ok(mut tail) = stderr_tail.lock() {
-                                    tail.extend_from_slice(&chunk[..size]);
-                                    if tail.len() > STDERR_TAIL_BYTES {
-                                        let start = tail.len() - STDERR_TAIL_BYTES;
-                                        tail.drain(..start);
+                })?;
+            self.stdout_rx = Some(receiver);
+            self.stdout_thread = Some(thread);
+            let stderr_tail = Arc::clone(&self.stderr_tail);
+            self.stderr_thread = Some(
+                std::thread::Builder::new()
+                    .name("cccc-deepseek-acp-stderr".into())
+                    .spawn(move || {
+                        let mut reader = BufReader::new(stderr);
+                        let mut chunk = [0_u8; 4096];
+                        loop {
+                            match std::io::Read::read(&mut reader, &mut chunk) {
+                                Ok(0) => break,
+                                Ok(size) => {
+                                    if let Ok(mut tail) = stderr_tail.lock() {
+                                        tail.extend_from_slice(&chunk[..size]);
+                                        if tail.len() > STDERR_TAIL_BYTES {
+                                            let start = tail.len() - STDERR_TAIL_BYTES;
+                                            tail.drain(..start);
+                                        }
                                     }
                                 }
+                                Err(_) => break,
                             }
-                            Err(_) => break,
                         }
-                    }
-                })?,
-        );
+                    })?,
+            );
+            Ok(())
+        })();
+        self.finish_reader_setup(initialized, has_resources)?;
         self.generation = self.generation.wrapping_add(1).max(1);
         self.next_request_id = 1;
         self.queue.clear();
@@ -114,6 +119,20 @@ impl DeepSeekSupervisor {
         self.active_request_id = None;
         self.pending_permissions.clear();
         Ok(self.generation)
+    }
+
+    fn finish_reader_setup(
+        &mut self,
+        initialized: Result<(), SupervisorError>,
+        has_resources: bool,
+    ) -> Result<(), SupervisorError> {
+        if let Err(error) = initialized {
+            if has_resources {
+                let _ = self.stop();
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Complete the ACP initialize/session-new handshake for this generation.
@@ -255,6 +274,36 @@ mod tests {
     use super::read_bounded_frame;
     use crate::deepseek_acp;
     use std::io::{BufReader, Cursor};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reader_setup_failure_releases_resources_after_confirmed_exit() {
+        use std::os::fd::AsRawFd;
+        let temp = tempfile::tempdir().expect("fixture");
+        let path = temp.path().join("usage");
+        let file = std::fs::File::create(&path).expect("resource");
+        let fd = format!("/proc/self/fd/{}", file.as_raw_fd());
+        let mut supervisor = crate::deepseek_supervisor::DeepSeekSupervisor::default();
+        supervisor
+            .start_with_resources(
+                &["sh".into(), "-c".into(), "sleep 60".into()],
+                temp.path(),
+                &[],
+                vec![file],
+            )
+            .expect("start");
+        assert_eq!(std::fs::read_link(&fd).expect("retained"), path);
+        assert!(
+            supervisor
+                .finish_reader_setup(
+                    Err(std::io::Error::other("injected reader setup failure").into()),
+                    true
+                )
+                .is_err()
+        );
+        assert!(supervisor.child.is_none());
+        assert_ne!(std::fs::read_link(&fd).ok().as_ref(), Some(&path));
+    }
 
     #[test]
     fn oversized_frame_is_discarded_as_one_physical_record() {
