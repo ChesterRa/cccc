@@ -15,6 +15,7 @@ import urllib.error
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", required=True, type=Path)
 parser.add_argument("--root", required=True, type=Path)
+parser.add_argument("--browser", default="agent-browser")
 parser.add_argument("--prepare-only", action="store_true")
 args = parser.parse_args()
 root = args.root.resolve()
@@ -68,7 +69,7 @@ session = "cli-management-" + root.name
 evidence = root / "evidence"
 
 def browser(*arguments):
-    result = subprocess.run(["agent-browser", "--session", session, *arguments],
+    result = subprocess.run([args.browser, "--session", session, *arguments],
                             capture_output=True, text=True, encoding="utf-8", timeout=40)
     with (evidence / "browser.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps({"args": arguments, "code": result.returncode,
