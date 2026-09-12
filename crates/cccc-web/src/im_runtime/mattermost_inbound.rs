@@ -169,7 +169,9 @@ impl MattermostInbound {
                             );
                         }
                     }
-                    dispatch_inbound_with(
+                    // daemon 可能先发布回答再返回提交结果，完成反应必须等待 ID 绑定。
+                    let _binding = self.reactions.binding.lock().await;
+                    let event_id = dispatch_inbound_with(
                         &self.daemon,
                         &self.group_id,
                         PLATFORM,
@@ -182,11 +184,13 @@ impl MattermostInbound {
                             attachments,
                         },
                     )
-                    .await
+                    .await?;
+                    self.reactions.bind(&key, post_id, event_id);
+                    Ok(())
                 }
                 .await;
                 match result {
-                    Ok(event_id) => self.reactions.bind(&key, post_id, event_id),
+                    Ok(()) => {}
                     Err(error) => {
                         self.reactions.fail_post(&key, post_id).await;
                         // 不回显 daemon/远端响应中的私人信息，完整错误仅进入本机错误日志。

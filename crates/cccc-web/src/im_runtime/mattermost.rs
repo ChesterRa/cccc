@@ -11,7 +11,9 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value, json};
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{
     WebSocketStream,
@@ -266,7 +268,7 @@ pub(super) async fn start(
         log_error(&home, group_id, "identity", error, &token);
     })?;
     let reactions = MattermostReactions::new(home.clone(), group_id, api.clone());
-    let inbound = MattermostInbound::new(
+    let mut inbound = MattermostInbound::new(
         home.clone(),
         group_id,
         daemon,
@@ -274,12 +276,26 @@ pub(super) async fn start(
         reactions.clone(),
         config,
     );
+    // 沿用 WeCom 的有界队列与独立入站任务，附件 REST 不占用心跳循环。
+    let (inbound_tx, mut inbound_rx) = mpsc::channel(128);
+    let inbound_home = home.clone();
+    let inbound_group = group_id.to_owned();
+    let inbound_api = api.clone();
+    let inbound = tokio::spawn(async move {
+        while let Some(event) = inbound_rx.recv().await {
+            if let Err(error) = inbound.handle(&event).await {
+                inbound_api.log_error(&inbound_home, &inbound_group, "inbound", &error);
+                persist_error(&inbound_home, &inbound_group, Some(&error));
+            }
+        }
+    });
     let connection = tokio::spawn(socket_loop(
         home.clone(),
         group_id.to_owned(),
         api.clone(),
         socket,
-        inbound,
+        inbound_tx,
+        Duration::from_secs(30),
     ));
     let cleanup = reactions.cleanup_task();
     let outbound = spawn_outbound_matching(
@@ -309,7 +325,7 @@ pub(super) async fn start(
             }
         },
     );
-    Ok(vec![connection, outbound, cleanup])
+    Ok(vec![connection, inbound, outbound, cleanup])
 }
 
 fn verify_identity(
@@ -414,21 +430,28 @@ async fn socket_loop(
     group_id: String,
     api: MattermostApi,
     mut socket: Socket,
-    mut inbound: MattermostInbound,
+    inbound: mpsc::Sender<Value>,
+    heartbeat_interval: Duration,
 ) {
     loop {
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+        let mut heartbeat = tokio::time::interval(heartbeat_interval);
         let mut last_received = tokio::time::Instant::now();
+        let mut permit = None;
         let error = loop {
             tokio::select! {
-                message = socket.next() => {
+                capacity = inbound.reserve(), if permit.is_none() => {
+                    let Ok(capacity) = capacity else { return; };
+                    permit = Some(capacity);
+                    // 本地背压不是远端失活；恢复读取后才重新计算接收超时。
+                    last_received = tokio::time::Instant::now();
+                }
+                message = socket.next(), if permit.is_some() => {
                     last_received = tokio::time::Instant::now();
                     match message {
                         Some(Ok(Message::Text(text))) => {
                             match serde_json::from_str::<Value>(&text) {
-                                Ok(event) => if let Err(error) = inbound.handle(&event).await {
-                                    log_error(&home, &group_id, "inbound", &error, &api.token);
-                                    persist_error(&home, &group_id, Some(&error));
+                                Ok(event) => if field(&event, "event") == "posted" {
+                                    if let Some(capacity) = permit.take() { capacity.send(event); }
                                 },
                                 Err(_) => log_error(&home, &group_id, "decode", "invalid Mattermost event JSON", &api.token),
                             }
@@ -440,7 +463,7 @@ async fn socket_loop(
                     }
                 }
                 _ = heartbeat.tick() => {
-                    if last_received.elapsed() > Duration::from_secs(90) { break "Mattermost WebSocket heartbeat timed out"; }
+                    if permit.is_some() && last_received.elapsed() > heartbeat_interval * 3 { break "Mattermost WebSocket heartbeat timed out"; }
                     if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break "Mattermost WebSocket ping failed"; }
                 }
             }
@@ -470,6 +493,7 @@ pub(super) struct MattermostReactions {
     group_id: String,
     api: MattermostApi,
     active: Active<MattermostReaction>,
+    pub(super) binding: Arc<Mutex<()>>,
 }
 #[derive(Clone)]
 struct MattermostReaction {
@@ -484,6 +508,7 @@ impl MattermostReactions {
             group_id: group_id.to_owned(),
             api,
             active: Active::default(),
+            binding: Arc::default(),
         }
     }
 
@@ -514,11 +539,13 @@ impl MattermostReactions {
             .await;
     }
     async fn complete(&self, key: &str, reply_to: Option<&str>, success: bool) {
+        let binding = self.binding.lock().await;
         let reaction = match reply_to {
             Some(id) => self.active.take_where(key, |r| r.event_id == id),
             None if self.active.len(key) == 1 => self.active.take_next(key),
             None => None,
         };
+        drop(binding);
         self.finish(reaction, success).await;
     }
     async fn emoji(&self, post_id: &str, emoji: &str) -> Result<(), String> {
@@ -603,6 +630,11 @@ mod tests {
         fail_create: AtomicBool,
         ws_mode: AtomicUsize,
         ws_connections: AtomicUsize,
+        ws_events: Mutex<Vec<Value>>,
+        ws_pings: AtomicUsize,
+        ws_pongs: AtomicUsize,
+        blocked_download: AtomicBool,
+        release_download: tokio::sync::Notify,
         uploads: Mutex<Vec<Vec<u8>>>,
         downloads: Mutex<usize>,
         rate_requests: Mutex<usize>,
@@ -660,9 +692,25 @@ mod tests {
                     let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                     return;
                 }
-                while let Some(Ok(message)) = socket.next().await {
-                    if let axum::extract::ws::Message::Ping(data) = message {
-                        let _ = socket.send(axum::extract::ws::Message::Pong(data)).await;
+                let events = state.ws_events.lock().expect("events").clone();
+                for event in events {
+                    socket.send(axum::extract::ws::Message::Text(event.to_string().into())).await.expect("event");
+                }
+                let mut heartbeat = tokio::time::interval(Duration::from_millis(30));
+                loop {
+                    tokio::select! {
+                        message = socket.next() => match message {
+                            Some(Ok(axum::extract::ws::Message::Ping(data))) => {
+                                state.ws_pings.fetch_add(1, Ordering::SeqCst);
+                                if socket.send(axum::extract::ws::Message::Pong(data)).await.is_err() { break; }
+                            }
+                            Some(Ok(axum::extract::ws::Message::Pong(_))) => { state.ws_pongs.fetch_add(1, Ordering::SeqCst); }
+                            None | Some(Err(_)) | Some(Ok(axum::extract::ws::Message::Close(_))) => break,
+                            _ => {}
+                        },
+                        _ = heartbeat.tick(), if mode == 5 => {
+                            if socket.send(axum::extract::ws::Message::Ping(vec![1].into())).await.is_err() { break; }
+                        }
                     }
                 }
             })
@@ -703,6 +751,9 @@ mod tests {
             }
             if path.starts_with("/sub/api/v4/files/") && method == Method::GET {
                 *state.downloads.lock().expect("downloads") += 1;
+                if state.blocked_download.load(Ordering::SeqCst) {
+                    state.release_download.notified().await;
+                }
                 return StatusCode::NOT_FOUND.into_response();
             }
             let raw = axum::body::to_bytes(request.into_body(), 20 * 1024 * 1024)
@@ -1402,20 +1453,14 @@ mod tests {
         let (_temp, home, group) = scope();
         let store = GroupStore::new(home.clone()).expect("store");
         let socket = fixture.api.socket().await.expect("首次连接");
-        let inbound = MattermostInbound::new(
-            home.clone(),
-            &group,
-            DaemonClient::new(home.clone()),
-            fixture.api.clone(),
-            MattermostReactions::new(home.clone(), &group, fixture.api.clone()),
-            &Map::new(),
-        );
+        let (inbound, _receiver) = mpsc::channel(128);
         let task = tokio::spawn(socket_loop(
             home,
             group.clone(),
             fixture.api.clone(),
             socket,
             inbound,
+            Duration::from_secs(30),
         ));
         let checked = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -1796,6 +1841,143 @@ mod tests {
         );
         assert_eq!(calls[3].2["post_id"], second);
         assert_eq!(calls[3].2["emoji_name"], "white_check_mark");
+    }
+
+    #[tokio::test]
+    async fn completion_waits_for_dispatch_binding_and_is_applied_only_once() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let reactions = MattermostReactions::new(home, &group, fixture.api.clone());
+        let key = target(true).key();
+        for success in [true, false] {
+            let post = if success { "p" } else { "q" }.repeat(26);
+            reactions.start(&key, &post).await;
+            let binding = reactions.binding.lock().await;
+            let completion = reactions.complete(&key, Some("early-event"), success);
+            tokio::pin!(completion);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut completion)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(reactions.active.len(&key), 1);
+            reactions.bind(&key, &post, "early-event".into());
+            drop(binding);
+            completion.await;
+            reactions.complete(&key, Some("early-event"), success).await;
+            assert_eq!(reactions.active.len(&key), 0);
+            let calls = fixture.state.reactions.lock().expect("calls");
+            assert_eq!(
+                calls.last().expect("completion").2["emoji_name"],
+                if success { "white_check_mark" } else { "x" }
+            );
+        }
+        assert_eq!(fixture.state.reactions.lock().expect("calls").len(), 6);
+        // 提交失败/取消释放锁后，无关完成也不得清除失败请求以外的反应。
+        let post = "r".repeat(26);
+        reactions.start(&key, &post).await;
+        let binding = reactions.binding.lock().await;
+        drop(binding);
+        reactions.complete(&key, Some("unrelated"), true).await;
+        assert_eq!(reactions.active.len(&key), 1);
+        reactions.fail_post(&key, &post).await;
+        assert_eq!(reactions.active.len(&key), 0);
+    }
+
+    #[tokio::test]
+    async fn socket_backpressure_keeps_sending_heartbeats_and_preserves_order() {
+        let fixture = fixture().await;
+        fixture.state.ws_mode.store(5, Ordering::SeqCst);
+        *fixture.state.ws_events.lock().expect("events") =
+            (0..3).map(|id| json!({"event":"posted","id":id})).collect();
+        let (_temp, home, group) = scope();
+        let socket = fixture.api.socket().await.expect("socket");
+        let (sender, mut receiver) = mpsc::channel(1);
+        let task = tokio::spawn(socket_loop(
+            home,
+            group,
+            fixture.api.clone(),
+            socket,
+            sender,
+            Duration::from_millis(20),
+        ));
+        // 超过三次心跳周期且队列无人消费：不得因本地背压误报远端超时。
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(receiver.len(), 1);
+        assert!(fixture.state.ws_pings.load(Ordering::SeqCst) >= 3);
+        assert_eq!(fixture.state.ws_connections.load(Ordering::SeqCst), 1);
+        for id in 0..3 {
+            let event = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .expect("event timeout")
+                .expect("event");
+            assert_eq!(event["id"], id);
+        }
+        drop(receiver);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("worker shutdown")
+            .expect("socket task");
+    }
+
+    #[tokio::test]
+    async fn slow_attachment_does_not_block_socket_pongs_or_reorder_inbound() {
+        let fixture = fixture().await;
+        fixture.state.ws_mode.store(5, Ordering::SeqCst);
+        fixture.state.blocked_download.store(true, Ordering::SeqCst);
+        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot 看附件","type":"","file_ids":["f".repeat(26)]});
+        let mut help = post.clone();
+        help["id"] = json!("q".repeat(26));
+        help["message"] = json!("@cccc_bot /help");
+        help["file_ids"] = json!([]);
+        *fixture.state.ws_events.lock().expect("events") = [post, help].into_iter()
+            .map(|post| json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}})).collect();
+        let (_temp, home, group) = scope();
+        let store = GroupStore::new(home.clone()).expect("store");
+        let config = json!({"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"});
+        let config = config.as_object().expect("config");
+        cccc_core::im_state::update(&store, &group, |state| {
+            state["config"] = json!(config);
+            Ok(())
+        })
+        .expect("config");
+        verify_identity(&home, &group, &fixture.api, config).expect("identity");
+        cccc_core::im_state::update(&store, &group, |state| {
+            state["authorized"] = json!([{"platform":"mattermost","chat_id":"c".repeat(26),"thread_id":0,"authorized_at":1}]);
+            Ok(())
+        }).expect("authorize");
+        let tasks = start(
+            home.clone(),
+            DaemonClient::new(home.clone()),
+            &group,
+            config,
+            crate::ledger_event_hub::LedgerEventHub::new(home),
+        )
+        .await
+        .expect("start");
+        assert_eq!(tasks.len(), 4);
+        let checked = tokio::time::timeout(Duration::from_secs(5), async {
+            while *fixture.state.downloads.lock().expect("downloads") == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            while fixture.state.ws_pongs.load(Ordering::SeqCst) < 3 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(fixture.state.posts.lock().expect("posts").is_empty());
+            fixture.state.release_download.notify_one();
+            while fixture.state.posts.lock().expect("posts").len() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let posts = fixture.state.posts.lock().expect("posts");
+            assert!(field(&posts[0], "message").contains("未能交给 CCCC"));
+            assert!(field(&posts[1], "message").contains("/help"));
+        })
+        .await;
+        for task in tasks {
+            task.abort();
+            let _ = task.await;
+        }
+        checked.expect("slow attachment and following help");
     }
 
     #[tokio::test]

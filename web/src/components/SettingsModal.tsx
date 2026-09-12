@@ -200,6 +200,7 @@ export function SettingsModal({
   const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>(
     {},
   );
+  const imMattermostDraftGroup = useRef<string | undefined>(undefined);
 
   // Global observability (developer mode)
   const [developerMode, setDeveloperMode] = useState(false);
@@ -697,10 +698,14 @@ export function SettingsModal({
     setImConfigError(null);
 
     // 1. Save current platform config to drafts
+    if (imPlatform === "mattermost") imMattermostDraftGroup.current = groupId;
     setImConfigDrafts((prev) => ({ ...prev, [imPlatform]: getCurrentIMConfigDraft() }));
 
     // 2. Load new platform's cached draft (if exists)
-    const cachedDraft = imConfigDrafts[newPlatform];
+    const cachedDraft =
+      newPlatform !== "mattermost" || imMattermostDraftGroup.current === groupId
+        ? imConfigDrafts[newPlatform]
+        : undefined;
     if (cachedDraft) {
       applyIMConfigDraft(cachedDraft);
     } else {

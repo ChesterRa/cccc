@@ -1,6 +1,29 @@
 # CCCC Mattermost 连接器验收
 
-日期：2026-09-07，提交前回归更新于 2026-09-12。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## PR #103 第二轮审核修订复验（2026-09-13）
+
+本次基于 `90fb70017525615fbde37d28066ffb341638d747` 修复第二轮审核的四项意见，仍只更新原 Mattermost PR，不涉及 CLI 管理、公共调度或其他连接器行为。
+
+| 修订 | 具体证据 |
+|---|---|
+| 附件处理移出 WebSocket 循环 | `slow_attachment_does_not_block_socket_pongs_or_reorder_inbound` 实际启动四个 worker，阻塞文件下载期间仍回应服务端 Ping，之后的 `/help` 不越过附件请求 |
+| 有界处理及顺序 | `socket_backpressure_keeps_sending_heartbeats_and_preserves_order` 把队列缩为 1，超过三次心跳周期仍发送 Ping，不因本地背压误重连，恢复后事件按序到达；接收端关闭后 socket 任务退出。满队列暂停读取的限制见指南，不承诺无限负载下不断线 |
+| 完成反应早于 ID 绑定 | `completion_waits_for_dispatch_binding_and_is_applied_only_once` 验证成功/失败完成均等绑定，重复完成不重复反应，无关完成不清除当前请求；保留既有失败及清理路径 |
+| Mattermost 草稿不跨组恢复 | 新 `SettingsModal.mattermost.test.tsx` 保持同一组件挂载，仅改变 Group；同组恢复，跨组 URL/Token 清空，保存只提交新组内容。测试机临时撤去草稿补丁时，此测试确实因恢复旧组 URL 而失败；恢复补丁后通过 |
+| 既有类型夹具补齐 | 补 `mattermostUrl` 及既有 `weixinAccountId` 必填项，不放宽类型；另以项目 TypeScript 配置显式纳入 `web/tests/` 的该夹具检查，通过 `FIXTURE_STRICT_TYPES_PASS` |
+
+Linux 定向协议测试 28 项通过、2 项凭据依赖 live 用例按默认规则忽略；前端定向测试 27 项通过。Windows 核心 IM 8 项、完整 IM runtime 191 项及七组 11 项 smoke 通过，原生编译通过。新异步用例包含在两平台测试中，不把零项筛选算通过。
+
+完整复验结果：
+
+- Linux：Ruff、111 项 Python；Web format/lint/typecheck、293 个文件的 1,523 项单测及生产构建；25 项打包测试、wheel/Twine 与产物形状；完整 Rust fmt/Clippy、安装器/发布资产、非 daemon workspace、daemon 串行、三项自启动及按 CI 条件启用的 Codex/Claude/Kilo 原生会话检查通过。首次 workspace 的未修改 `verified_live_owner_is_recovered_after_hostname_changes` 报 `Text file busy`；准确筛选到该项复跑通过，随后完整 Rust 流水线重跑至 `ALL_RUST_CHECKS_PASS`，未修改或跳过此测试。不能把首次完整命令记为成功。
+- Windows Server 2025：上述原生回归及构建最终 `ALL_WINDOWS_CHECKS_PASS`；保留既有编译警告，不为本补丁屏蔽或修改无关模块。
+- 两平台真实 Web：原有配置、无效 URL、保存/启动失败与重试、持久化、三语、窄屏及清除配置流程全部重跑；新增原生 Group 删除事件驱动的换组，验证同一个设置窗保持挂载，另一组 URL/Token 不恢复，新组草稿切换和保存回读正确。只删除独立 Home 内本次创建的合成组，无现用资料；浏览器和隔离服务已关闭。人工检查 Linux 浅色、Windows 深色的跨组截图。
+- 新单测首轮发现夹具字段缺失并补齐后全量通过；浏览器脚本早期失败来自 DOM 返回值、隐藏 dialog 选择器和 Windows 命令参数解析，修正脚本后完整重跑，无产品代码为这些定位问题改变。失败批次保留，不混入通过记录。
+
+全部执行于指定测试机，本机未运行测试、构建或扫描。模拟 HTTP/WS、合成 Group 和浏览器错误响应不等于重新进行真实 Mattermost 收发验收；两项默认忽略的 live 用例未在本轮重跑。最终提交仍须通过全历史和增量 Gitleaks、两平台源码一致性及文档链接门禁后才能推送；日常实例没有部署变更。
 
 ## PR #103 审核修订复验（2026-09-12）
 
