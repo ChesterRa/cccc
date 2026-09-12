@@ -300,7 +300,12 @@ async fn cli_management_is_admin_only_and_unmanaged_uninstall_is_rejected() {
     let preserved = lock.with_extension("preserved");
     std::fs::rename(&lock, &preserved).expect("cli management is");
     std::fs::create_dir(&lock).expect("cli management is");
-    let mut interrupted = cli_management::load(&home).expect("cli management is");
+    // 锁路径已故意损坏；直接读取此前已提交状态以准备恢复夹具，不能绕过
+    // 产品读取 API 把该存储故障误判为正常。
+    let mut interrupted: cli_management::State = cccc_core::fs::read_json(
+        &cli_management::root(&home).join("state.json"),
+    )
+    .expect("cli management is");
     let mut queued = interrupted.jobs["invalid-queued"].clone();
     queued.id = "storage-recovery".into();
     queued.status = cli_management::JobStatus::Queued;
