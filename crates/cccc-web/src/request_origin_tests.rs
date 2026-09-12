@@ -133,3 +133,64 @@ fn supervised_proxy_trust_requires_a_loopback_binding() {
     assert!(!proxy_headers_trusted_for(true, false, None));
     assert!(proxy_headers_trusted_for(false, true, Some("0.0.0.0")));
 }
+
+#[test]
+fn tls_terminating_proxies_keep_same_host_browser_requests_authorized() {
+    // Chrome sends no Sec-Fetch-* header on a WebSocket handshake, and an
+    // untrusted proxy hides the browser-facing scheme, so the served origin
+    // reads back as http:// for an https:// page.
+    let mut request =
+        HeaderMap::from_iter([(header::HOST, HeaderValue::from_static("cccc.tae.example"))]);
+    request.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://cccc.tae.example"),
+    );
+    assert_eq!(
+        served_origin_with_proxy(&request, false).as_deref(),
+        Some("http://cccc.tae.example")
+    );
+    assert!(cookie_csrf_allowed_with_proxy(&request, false));
+}
+
+#[test]
+fn scheme_agnostic_matching_still_rejects_other_hosts_and_ports() {
+    let mut sibling =
+        HeaderMap::from_iter([(header::HOST, HeaderValue::from_static("cccc.tae.example"))]);
+    sibling.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://evil.example"),
+    );
+    assert!(!cookie_csrf_allowed_with_proxy(&sibling, false));
+
+    let mut other_port = HeaderMap::from_iter([(
+        header::HOST,
+        HeaderValue::from_static("cccc.tae.example:8848"),
+    )]);
+    other_port.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://cccc.tae.example:9999"),
+    );
+    assert!(!cookie_csrf_allowed_with_proxy(&other_port, false));
+
+    // A subdomain is a different host, not a same-site relaxation.
+    let mut subdomain =
+        HeaderMap::from_iter([(header::HOST, HeaderValue::from_static("cccc.tae.example"))]);
+    subdomain.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://evil.cccc.tae.example"),
+    );
+    assert!(!cookie_csrf_allowed_with_proxy(&subdomain, false));
+}
+
+#[test]
+fn default_ports_normalize_across_schemes() {
+    let mut request = HeaderMap::from_iter([(
+        header::HOST,
+        HeaderValue::from_static("cccc.tae.example:443"),
+    )]);
+    request.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://cccc.tae.example"),
+    );
+    assert!(cookie_csrf_allowed_with_proxy(&request, false));
+}

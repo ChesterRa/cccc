@@ -27,6 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Connect names identify instances and message senders clearly.** New bindings initialize names from the host, the sidebar distinguishes instances from Groups, and remote Actors without custom titles display their actual IDs.
 - **Shared build caches respect the invoking checkout.** The Web build script resolves Cargo's package directory at runtime so generated assets stay in the source tree being built.
 - **Antigravity uses automatic native-terminal delivery.** Bootstrap context accompanies the first task in one submission, without footer-text matching or per-process Web confirmation. Antigravity configures and verifies MCP with its native CLI before launch. First-payload pacing addresses its observed initialization race; later deliveries retain a conditional bootstrap reminder. Packaged Actor launches supply the owning CLI on PATH and inherit instance and Actor context. Native first-use setup must still be completed before sending tasks.
+- **Same-origin browser writes work behind host-rewriting proxies.** Cookie CSRF validation accepts browser-generated `Sec-Fetch-Site: same-origin` without requiring an external-origin allowlist, while other requests retain Origin/Referer checks.
+- **Terminal and stream WebSockets connect through HTTPS reverse proxies again.** Browsers send no Fetch Metadata on a WebSocket handshake, and a TLS-terminating proxy makes the origin server read an `https://` page back as `http://`, so cookie-authenticated sockets were rejected with `csrf_origin_invalid`. Same-origin matching now compares host and port and ignores the scheme; different hosts, ports, and subdomains stay rejected.
 
 ## [0.4.39] — 2026-09-10
 

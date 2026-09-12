@@ -96,18 +96,20 @@ pub fn served_origin(state: &AppState, headers: &HeaderMap) -> Option<String> {
     served_origin_with_proxy(headers, proxy_headers_trusted(state))
 }
 
+fn served_host(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    forwarded_host(headers, trust_proxy)
+        .or_else(|| {
+            headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .map(str::to_owned)
+        })
+        .filter(|host| !host.is_empty())
+}
+
 pub(crate) fn served_origin_with_proxy(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
-    let host = forwarded_host(headers, trust_proxy).or_else(|| {
-        headers
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    })?;
-    if host.is_empty() {
-        return None;
-    }
+    let host = served_host(headers, trust_proxy)?;
     let scheme = forwarded_scheme(headers, trust_proxy).unwrap_or_else(|| "http".into());
     cccc_core::web_login_grants::normalize_origin(&format!("{scheme}://{host}"))
 }
@@ -145,7 +147,43 @@ pub(crate) fn origin_allowed_with_proxy(
     if served_origin_with_proxy(headers, trust_proxy).as_deref() == Some(origin.as_str()) {
         return true;
     }
+    if origin_authority_matches_served_host(headers, &origin, trust_proxy) {
+        return true;
+    }
     configured_origins().any(|allowed| allowed == origin)
+}
+
+/// TLS terminates at the reverse proxy, so the origin server sees `http` even
+/// for an `https://` page, and WebSocket handshakes carry no Fetch Metadata to
+/// recover the scheme from. Host and port must still match exactly: a
+/// cross-site attacker cannot serve a page from this host under either scheme,
+/// so the scheme alone contributes nothing to CSRF protection.
+fn origin_authority_matches_served_host(
+    headers: &HeaderMap,
+    origin: &str,
+    trust_proxy: bool,
+) -> bool {
+    let Some(origin) = origin_authority(origin) else {
+        return false;
+    };
+    served_host(headers, trust_proxy)
+        .and_then(|host| host_authority(&host))
+        .is_some_and(|served| served == origin)
+}
+
+fn origin_authority(origin: &str) -> Option<(String, Option<u16>)> {
+    authority_parts(&url::Url::parse(origin).ok()?)
+}
+
+fn host_authority(host: &str) -> Option<(String, Option<u16>)> {
+    authority_parts(&url::Url::parse(&format!("http://{host}")).ok()?)
+}
+
+/// Ports the two schemes imply by default normalize away, so `https://host`
+/// and a proxied `host:443` describe the same authority.
+fn authority_parts(url: &url::Url) -> Option<(String, Option<u16>)> {
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some((host, url.port().filter(|port| !matches!(port, 80 | 443))))
 }
 
 pub fn cookie_csrf_allowed(state: &AppState, headers: &HeaderMap) -> bool {
@@ -153,6 +191,15 @@ pub fn cookie_csrf_allowed(state: &AppState, headers: &HeaderMap) -> bool {
 }
 
 pub(crate) fn cookie_csrf_allowed_with_proxy(headers: &HeaderMap, trust_proxy: bool) -> bool {
+    // Browsers own Sec-Fetch-* headers: page JavaScript cannot forge them.
+    // This survives TLS termination and Host rewriting without trusting proxy
+    // headers globally. Only same-origin is sufficient, not same-site or none.
+    if headers
+        .get("sec-fetch-site")
+        .is_some_and(|site| site == "same-origin")
+    {
+        return true;
+    }
     source_origin(headers)
         .is_some_and(|origin| origin_allowed_with_proxy(headers, &origin, trust_proxy))
 }

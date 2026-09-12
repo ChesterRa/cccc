@@ -701,3 +701,22 @@ A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message
 content. Full event content remains on the per-Group stream and is subject to
 the same scope check. Administrative capability changes require an Admin token.
+
+Same-origin browser requests carrying `Sec-Fetch-Site: same-origin` satisfy the
+Cookie CSRF check even when a reverse proxy rewrites Host or terminates HTTPS.
+This does not require `CCCC_WEB_CORS_ORIGINS` or global proxy-header trust.
+Proxies should preserve this browser-generated header, never manufacture it for
+cross-origin requests. `same-site`, `cross-site`, `none`, and missing metadata
+continue through the existing Origin/Referer and configured-origin checks.
+Authentication and group permissions remain required. See the
+[Fetch Metadata specification](https://www.w3.org/TR/fetch-metadata/).
+
+Browsers send no Fetch Metadata on a WebSocket handshake, so Terminal and
+stream sockets fall back to comparing the request `Origin` against the served
+host. That comparison ignores the scheme, because TLS terminating at a reverse
+proxy makes the origin server read every `https://` page back as `http://`.
+Host and port must still match exactly — a different host, port, or subdomain
+is rejected — and the scheme alone adds nothing, since an attacker able to
+serve a page from this host would already control the site. Proxies that
+rewrite `Host` still need `CCCC_WEB_TRUST_PROXY_HEADERS=1` or an explicit
+`CCCC_WEB_CORS_ORIGINS` entry.
