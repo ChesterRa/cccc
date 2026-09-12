@@ -610,7 +610,11 @@ mod tests {
         let get = request("cli_management_get", json!({"by":"user"}));
         let fault = dispatch(&home, &get);
         let unaffected = dispatch(&other, &get);
-        let before = management::load(&home).expect("storage fault is");
+        // 管理状态读取也遵循同一把锁；故障期间只能直接检查此前已提交的文件，
+        // 不能绕过产品 API 将故障误判为可用。
+        let before: management::State =
+            cccc_core::fs::read_json(&management::root(&home).join("state.json"))
+                .expect("storage fault is");
         std::fs::remove_dir(&lock).expect("storage fault is");
         std::fs::rename(&preserved, &lock).expect("storage fault is");
         let recovered = tokio::time::timeout(std::time::Duration::from_secs(4), async {

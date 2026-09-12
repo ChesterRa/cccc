@@ -483,8 +483,19 @@ mod tests {
             if id == "repair" {
                 let selected =
                     management::load(&home).expect("state").installations[&runtime].clone();
-                std::fs::write(&selected.executable, b"broken-test-installation")
-                    .expect("corrupt owned test binary");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                loop {
+                    match std::fs::write(&selected.executable, b"broken-test-installation") {
+                        Ok(()) => break,
+                        // 部分 Windows CLI 在 `--version` 返回后短暂保留自身进程；
+                        // 真实更新会安装到新目录，测试只需等待其退出后损坏测试文件。
+                        Err(error) if cfg!(windows) && std::time::Instant::now() < deadline => {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            let _ = error;
+                        }
+                        Err(error) => panic!("corrupt owned test binary: {error}"),
+                    }
+                }
             }
             let now = chrono::Utc::now();
             let job =

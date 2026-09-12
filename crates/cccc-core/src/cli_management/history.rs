@@ -1,5 +1,5 @@
 //! 沿用原生文件锁和已提交 JSON 写入；归档不删除历史或日志。
-use super::{Job, State, invalid, load, root, validate_id};
+use super::{Job, State, invalid, load, load_unlocked, root, validate_id};
 use crate::{HomeLayout, fs};
 use std::io;
 use std::path::PathBuf;
@@ -34,7 +34,7 @@ pub fn find_job(home: &HomeLayout, id: &str) -> io::Result<Option<Job>> {
 /// 显式查看全部或查询安装归属时读取；日常启动、排程和轮询不展开归档。
 pub fn load_with_history(home: &HomeLayout) -> io::Result<State> {
     fs::with_exclusive_lock(&root(home).join("state.lock"), || {
-        let mut state = load(home)?;
+        let mut state = load_unlocked(home)?;
         let entries = match std::fs::read_dir(root(home).join("history")) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(state),

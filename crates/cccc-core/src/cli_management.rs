@@ -7,7 +7,7 @@ use serde_json::Map;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod history;
 pub use history::{find_job, load_with_history};
@@ -131,6 +131,10 @@ pub fn read_log(home: &HomeLayout, id: &str, offset: u64) -> io::Result<Value> {
 }
 
 pub fn load(home: &HomeLayout) -> io::Result<State> {
+    fs::with_exclusive_lock(&root(home).join("state.lock"), || load_unlocked(home))
+}
+
+fn load_unlocked(home: &HomeLayout) -> io::Result<State> {
     let path = root(home).join("state.json");
     match fs::read_json(&path) {
         Ok(state) => Ok(state),
@@ -169,14 +173,16 @@ pub fn apply_environment(
         return Ok(None);
     };
     let managed_root = root(home).canonicalize()?;
-    let executable = installation.executable.clone();
-    if !executable.canonicalize()?.starts_with(&managed_root)
-        || crate::runtime_mcp::find_program(&executable.to_string_lossy(), None).is_none()
+    let selected_executable = installation.executable.clone();
+    if !selected_executable
+        .canonicalize()?
+        .starts_with(&managed_root)
+        || crate::runtime_mcp::find_program(&selected_executable.to_string_lossy(), None).is_none()
     {
         return Err(invalid("cli_selected_executable_unavailable"));
     }
     let mut paths = vec![
-        executable
+        selected_executable
             .parent()
             .ok_or_else(|| invalid("cli_selected_path_invalid"))?
             .to_path_buf(),
@@ -200,6 +206,11 @@ pub fn apply_environment(
             }
         }
     }
+    let paths = paths
+        .into_iter()
+        .map(|path| launch_path(&path))
+        .collect::<Vec<_>>();
+    let executable = launch_path(&selected_executable);
     let path = std::env::join_paths(paths).map_err(io::Error::other)?;
     if runtime == "deepseek" {
         let bin = executable
@@ -225,9 +236,25 @@ pub fn apply_environment(
     Ok(Some(executable))
 }
 
+// `canonicalize` 在 Windows 返回 `\\?\\` 扩展路径；它适合边界校验，却不能直接
+// 作为 `.cmd`/`.bat` 的启动命令。仅在构造子进程命令和 PATH 时恢复常规路径。
+fn launch_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let value = path.to_string_lossy();
+        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(value) = value.strip_prefix(r"\\?\") {
+            return PathBuf::from(value);
+        }
+    }
+    path.to_path_buf()
+}
+
 fn update<T>(home: &HomeLayout, change: impl FnOnce(&mut State) -> io::Result<T>) -> io::Result<T> {
     fs::with_exclusive_lock(&root(home).join("state.lock"), || {
-        let mut state = load(home)?;
+        let mut state = load_unlocked(home)?;
         let previous = state.clone();
         let result = change(&mut state)?;
         history::compact(home, &previous, &mut state)?;
@@ -647,6 +674,19 @@ mod tests {
     use super::*;
     use chrono::TimeDelta;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_launch_path_strips_verbatim_prefix_for_command_execution() {
+        assert_eq!(
+            launch_path(Path::new(r"\\?\C:\cli\grok.cmd")),
+            PathBuf::from(r"C:\cli\grok.cmd")
+        );
+        assert_eq!(
+            launch_path(Path::new(r"\\?\UNC\server\share\cli.cmd")),
+            PathBuf::from(r"\\server\share\cli.cmd")
+        );
+    }
 
     #[test]
     fn cli_cron_conversion_preserves_saved_rules_and_reschedules_after_reload() {

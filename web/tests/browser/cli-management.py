@@ -40,7 +40,7 @@ mise.chmod(0o700)
 for version in ("0.9.0", "1.0.0", "2.0.0", "3.0.0"):
     exit_code = 7 if version == "3.0.0" else 0
     if os.name == "nt":
-        code = f'@echo off\r\nif "%~1"=="--version" (\r\n echo fixture {version}\r\n exit /b {exit_code}\r\n)\r\necho {version}>"%CCCC_HOME%\\%CCCC_ACTOR_ID%.marker"\r\ncmd.exe /Q\r\n'
+        code = f'@echo off\r\nif "%~1"=="--version" (\r\n echo fixture {version}\r\n exit /b {exit_code}\r\n)\r\necho {version}>"%CCCC_HOME%\\%CCCC_ACTOR_ID%.marker"\r\ncmd.exe /Q /K\r\n'
     else:
         code = f'#!/bin/sh\nif [ "${{1:-}}" = --version ]; then echo "fixture {version}"; exit {exit_code}; fi\nprintf "{version}\\n" > "$CCCC_HOME/$CCCC_ACTOR_ID.marker"\nwhile IFS= read -r line; do :; done\n'
     release = root / "releases" / version
@@ -76,13 +76,16 @@ session = "cli-management-" + root.name
 evidence = root / "evidence"
 browser_started = False
 
-def browser(*arguments):
+def browser(*arguments, stdin=None):
     global browser_started
     browser_started = True
     # 与原生子进程日志一致：直接写文件，避免后代持有管道导致 communicate 等不到 EOF。
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
-        result = subprocess.run([args.browser, "--session", session, *arguments],
-                                stdout=stdout, stderr=stderr, timeout=40)
+        command = [args.browser, "--session", session, *arguments]
+        kwargs = {"stdout": stdout, "stderr": stderr, "timeout": 40}
+        if stdin is not None:
+            kwargs.update({"input": stdin, "text": True})
+        result = subprocess.run(command, **kwargs)
         stdout.seek(0)
         stderr.seek(0)
         result.stdout = stdout.read()
@@ -102,7 +105,7 @@ def api(path):
     return data["result"]
 
 def click(name):
-    browser("wait", "--fn", "[...document.querySelectorAll('button')].some(e=>e.getClientRects().length && (e.getAttribute('aria-label')===" + json.dumps(name) + " || e.textContent.trim()===" + json.dumps(name) + "))")
+    browser("wait", "--fn", "[...document.querySelectorAll('button')].some(e=>e.getClientRects().length && !e.disabled && (e.getAttribute('aria-label')===" + json.dumps(name) + " || e.textContent.trim()===" + json.dumps(name) + "))")
     browser("find", "role", "button", "click", "--name", name, "--exact")
 
 def idle(expected):
@@ -113,11 +116,16 @@ def idle(expected):
             click("刷新")
             return state
         time.sleep(0.2)
-    raise AssertionError("操作未结束或数量不符")
+    raise AssertionError(f"操作未结束或数量不符，预期 {expected} 条：{state['jobs']}")
 
 def evaluate(expression):
-    value = json.loads(browser("eval", "JSON.stringify(" + expression + ")"))
+    # 复杂 JavaScript 含逗号时，Windows 命令行参数解析会改变表达式；走 stdin。
+    value = json.loads(browser("eval", "--stdin", stdin="JSON.stringify(" + expression + ")"))
     return json.loads(value) if isinstance(value, str) else value
+
+def filesystem_path(value):
+    # Windows canonicalize 会给绝对路径加 \\?\ 前缀；这是可执行路径，不应使边界断言误报。
+    return Path(str(value).removeprefix("\\\\?\\")).resolve()
 
 def choose(label, name):
     selector = '[role="combobox"][aria-label=' + json.dumps(label, ensure_ascii=False) + ']'
@@ -238,7 +246,7 @@ try:
     status = api("cli-management")
     for runtime in status["runtimes"]:
         if runtime["source"]["kind"] == "not_applicable":
-            browser("wait", "--fn", "![...document.querySelectorAll('h4')].some(e=>e.textContent===" + json.dumps(runtime["display_name"]) + ")")
+            browser("wait", "--fn", "![...document.querySelectorAll('h4')].some(e=>e.getClientRects().length && e.textContent===" + json.dumps(runtime["display_name"]) + ")")
     browser("screenshot", str(evidence / "platform.png"))
     click("安装受管版本 Grok")
     installed = idle(1)
@@ -309,7 +317,7 @@ try:
     click("安装受管版本 Grok")
     healthy = idle(6)
     selected = Path(healthy["installations"]["grok"]["executable"])
-    assert selected.resolve().is_relative_to(root / "home/cli-management/versions")
+    assert filesystem_path(selected).is_relative_to(root / "home/cli-management/versions")
     damaged = selected.with_name(selected.name + ".damaged")
     selected.rename(damaged)
     click("刷新")
@@ -448,7 +456,7 @@ try:
     browser("wait", "--fn", "!document.querySelector('[aria-label=\"移除计划 edit-check\"]')")
     # 注入仅属于本次测试的旧复杂计划，验证页面不把它重写成默认周期。
     state_file = root / "home/cli-management/state.json"
-    preserved = json.loads(state_file.read_text())
+    preserved = json.loads(state_file.read_text(encoding="utf-8"))
     preserved["rules"] = [{"id": "complex-check", "enabled": False,
                            "trigger": {"kind": "cron", "cron": "7 4 * * 1,3,5", "timezone": "UTC"},
                            "next_run_at": None}]
@@ -461,7 +469,7 @@ try:
     browser("wait", "--fn", "!document.querySelector('form input[maxlength=\"64\"]')")
     assert api("cli-management")["state"]["rules"][0]["trigger"]["cron"] == "7 4 * * 1,3,5"
     click("编辑")
-    changed = json.loads(state_file.read_text())
+    changed = json.loads(state_file.read_text(encoding="utf-8"))
     changed["revision"] += 1
     state_file.write_text(json.dumps(changed), encoding="utf-8")
     click("保存")
@@ -475,7 +483,7 @@ try:
     choose("调度类型", "一次性调度")
     choose("一次性模式", "精确时间")
     # datetime-local 是浏览器分段控件，普通文本 fill 会清空而非提交年份。
-    browser("find", "role", "spinbutton", "click", "--name", "Year Year", "--exact")
+    browser("find", "role", "spinbutton", "click", "--name", "年")
     browser("press", "ArrowDown")
     browser("press", "Tab")
     assert evaluate("Date.parse(document.querySelector('input[type=datetime-local]').value) < Date.now()")
@@ -556,7 +564,7 @@ try:
     click("更新 Grok")
     idle(24)
     # 按原生归档格式准备既有历史；自动归档阈值另由核心测试覆盖。
-    archived_state = json.loads(state_file.read_text())
+    archived_state = json.loads(state_file.read_text(encoding="utf-8"))
     oldest = min(archived_state["jobs"].values(), key=lambda job: job["created_at"])
     archive = root / "home/cli-management/history"
     archive.mkdir(exist_ok=True)
@@ -623,7 +631,7 @@ try:
 finally:
     try:
         if browser_started:
-            browser("snapshot", "-i")
+            browser("snapshot")
             browser("close")
     finally:
         subprocess.run([str(binary), "daemon", "stop"], env=env, capture_output=True, timeout=20, check=False)
