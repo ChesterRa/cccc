@@ -17,6 +17,7 @@ mod voice_asr;
 mod voice_audio_upload;
 mod voice_backend_access;
 mod voice_diarization;
+mod voice_external;
 mod voice_final_asr;
 mod voice_inference;
 mod voice_pcm_recording;
@@ -53,6 +54,7 @@ struct TranscriptionQuery {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(voice_external::routes())
         .route("/api/v1/groups/{group_id}/assistants", get(list))
         .route(
             "/api/v1/groups/{group_id}/assistants/{assistant_id}",
@@ -471,6 +473,9 @@ fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
         "model":selected_model,
         "runtime":runtime
     });
+    if assistant["config"]["recognition_backend"] == "external_provider_asr" {
+        assistant["health"]["service"] = voice_external::health(&state.home, &assistant);
+    }
     json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["new_input_available"].as_bool().unwrap_or_else(||value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0)),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
 }
 

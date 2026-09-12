@@ -1,19 +1,27 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use crate::dispatch::{OpError, OpResult, object};
 use cccc_contracts::DaemonRequest;
 use cccc_contracts::voice_notifications::{VoiceMessageRef, VoicePreferences};
 use cccc_core::{HomeLayout, voice_notifications as voice};
 use serde_json::json;
 
-pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "voice_preferences_get" => voice::preferences(home)
-            .map_err(OpError::io)
-            .and_then(|preferences| object(json!({"preferences":preferences}))),
-        "voice_preferences_set" => save(home, request),
-        "voice_messages_viewed" => viewed(home, request),
-        "voice_notifications_get" => voice::public_snapshot(home)
-            .map_err(OpError::io)
-            .and_then(object),
+        "voice_preferences_get" => Operation::new(Read, |home, _request| {
+            voice::preferences(home)
+                .map_err(OpError::io)
+                .and_then(|preferences| object(json!({"preferences":preferences})))
+        }),
+        "voice_preferences_set" => Operation::new(Write, save),
+        "voice_messages_viewed" => Operation::new(Write, viewed),
+        "voice_notifications_get" => Operation::new(Read, |home, _request| {
+            voice::public_snapshot(home)
+                .map_err(OpError::io)
+                .and_then(object)
+        }),
         _ => return None,
     })
 }

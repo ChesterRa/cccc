@@ -97,6 +97,9 @@ fn issue_reach_web_login(
     membership: &serde_json::Value,
     principal: &Principal,
 ) -> Result<serde_json::Value, ApiError> {
+    if !principal.is_admin {
+        return Err(ApiError::forbidden("administrator access is required"));
+    }
     if membership
         .get("online")
         .and_then(serde_json::Value::as_bool)
@@ -111,10 +114,29 @@ fn issue_reach_web_login(
         .get("hostname")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    let store = cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    let token = if principal.raw_token.is_empty() && principal.user_id == "local" {
+        // A direct localhost administrator has no bearer to exchange. Reuse an
+        // existing administrator credential; never mint a new long-lived token.
+        store
+            .list()
+            .map_err(|error| ApiError::bad(error.to_string()))?
+            .into_iter()
+            .find(|token| token.is_admin)
+    } else {
+        // A remote administrator remains bound to their own credential, even if
+        // it was revoked while checking the tunnel. Do not fall back to another.
+        store
+            .lookup(&principal.raw_token)
+            .map_err(|error| ApiError::bad(error.to_string()))?
+            .filter(|token| token.is_admin)
+    }
+    .ok_or_else(|| ApiError::forbidden("an active administrator access token is required"))?;
     let grant = cccc_core::web_login_grants::issue(
         home,
         origin,
-        &cccc_core::access_tokens::token_id(&principal.raw_token),
+        &token.token_id(),
         cccc_core::web_login_grants::DEFAULT_TTL_SECONDS,
     )
     .map_err(|error| ApiError::bad(error.to_string()))?;
@@ -132,10 +154,78 @@ fn issue_reach_web_login(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn reach_login_from_local_admin_resolves_an_existing_admin_credential() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        let store = cccc_core::access_tokens::AccessTokenStore::new(home.clone()).expect("store");
+        let token = store
+            .create("owner", Vec::new(), true, None)
+            .expect("admin token");
+        let principal = Principal {
+            user_id: "local".into(),
+            allowed_groups: Vec::new(),
+            is_admin: true,
+            raw_token: String::new(),
+        };
+        let result = issue_reach_web_login(
+            &home,
+            &json!({"online":true,"hostname":"https://reach.example"}),
+            &principal,
+        )
+        .expect("login link");
+        let url = url::Url::parse(result["web_url"].as_str().expect("URL")).expect("URL");
+        let code = url
+            .query_pairs()
+            .find(|(key, _)| key == "code")
+            .expect("code")
+            .1;
+        let token_id = cccc_core::web_login_grants::consume(&home, &code, "https://reach.example")
+            .expect("consume")
+            .expect("grant");
+        assert_eq!(token_id, token.token_id());
+        assert_eq!(store.list().expect("tokens").len(), 1);
+
+        // Exercise the remote browser exchange as well as the stored mapping.
+        use tower::ServiceExt;
+        let result = issue_reach_web_login(
+            &home,
+            &json!({"online":true,"hostname":"http://reach.example"}),
+            &principal,
+        )
+        .expect("second link");
+        let url = url::Url::parse(result["web_url"].as_str().expect("URL")).expect("URL");
+        let response = crate::app(home)
+            .oneshot(
+                axum::http::Request::get(format!(
+                    "{}?{}",
+                    url.path(),
+                    url.query().expect("exchange code")
+                ))
+                .header(axum::http::header::HOST, "reach.example")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+            )
+            .await
+            .expect("exchange response");
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[axum::http::header::LOCATION], "/ui/");
+        assert!(
+            response.headers()[axum::http::header::SET_COOKIE]
+                .to_str()
+                .expect("cookie")
+                .contains(&token.token)
+        );
+    }
+
     #[test]
     fn reach_login_link_contains_only_a_short_lived_exchange_code() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+            .expect("store")
+            .create("admin", Vec::new(), true, Some("acc_admin_secret"))
+            .expect("admin");
         let principal = Principal {
             user_id: "admin".into(),
             allowed_groups: Vec::new(),
@@ -162,5 +252,28 @@ mod tests {
                 .expect("consume"),
             Some(cccc_core::access_tokens::token_id(&principal.raw_token))
         );
+    }
+
+    #[test]
+    fn reach_login_never_substitutes_another_token_for_a_revoked_remote_admin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+            .expect("store")
+            .create("other-admin", Vec::new(), true, None)
+            .expect("other admin");
+        let principal = Principal {
+            user_id: "revoked-admin".into(),
+            allowed_groups: Vec::new(),
+            is_admin: true,
+            raw_token: "acc_revoked".into(),
+        };
+        let result = issue_reach_web_login(
+            &home,
+            &json!({"online":true,"hostname":"https://reach.example"}),
+            &principal,
+        );
+        assert!(result.is_err());
+        assert!(!home.root().join("web_login_grants.json").exists());
     }
 }

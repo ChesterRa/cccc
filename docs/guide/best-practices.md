@@ -241,7 +241,7 @@ If an agent keeps repeating:
 ### Remote Access
 
 - Create the first **Admin Access Token** with the one-time host-local code in `~/.cccc/web_bootstrap_token`; protected APIs remain locked while no administrator exists
-- Keep public Web access behind HTTPS; plain HTTP manual LAN exposure requires the explicit `CCCC_REMOTE_ALLOW_INSECURE=1` override
+- Keep public Web access behind HTTPS; plain HTTP is intended for trusted LAN use and still requires an Admin Access Token
 - Prefer Cloudflare Access or Tailscale over raw exposure
 - Don't expose port 8848 directly to the internet
 

@@ -187,9 +187,22 @@ fn context_action(
     if action_name == "get" || action_name == "list" {
         return Ok(("context_get".into(), args));
     }
+    if namespace == "coordination" {
+        match action_name.as_str() {
+            "add_decision" => {
+                args.insert("kind".into(), Value::String("decision".into()));
+            }
+            "add_handoff" => {
+                args.insert("kind".into(), Value::String("handoff".into()));
+            }
+            _ => {}
+        }
+    }
     let op_name = match (namespace, action_name.as_str()) {
         ("coordination", "update_brief" | "brief") => "coordination.brief.update",
-        ("coordination", "add_note" | "note") => "coordination.note.add",
+        ("coordination", "add_decision" | "add_handoff" | "add_note" | "note") => {
+            "coordination.note.add"
+        }
         ("agent_state", "update" | "clear") => {
             if action_name == "update" {
                 "agent_state.update"
@@ -339,6 +352,32 @@ mod tests {
     use super::daemon_call;
     use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
+
+    #[test]
+    fn advertised_daemon_tool_actions_have_executable_mappings() {
+        let mut failures = Vec::new();
+        for tool in crate::tools::catalog() {
+            let Some(name) = tool["name"].as_str() else {
+                continue;
+            };
+            let Some(actions) = tool["inputSchema"]["properties"]["action"]["enum"].as_array()
+            else {
+                continue;
+            };
+            for action in actions {
+                let args = json!({"action":action,"group_id":"g_fixture","by":"lead","task_id":"T001", "title":"fixture", "summary":"fixture"}).as_object().cloned().expect("args");
+                if let Err(error) = daemon_call(name, args) {
+                    if !error.starts_with("tool is not a daemon operation:") {
+                        failures.push(format!("{name} {action}: {error}"));
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "unmapped advertised actions: {failures:#?}"
+        );
+    }
 
     #[test]
     fn terminal_resize_maps_to_standard_daemon_operation() {

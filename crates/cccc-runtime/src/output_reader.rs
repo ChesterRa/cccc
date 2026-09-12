@@ -1,8 +1,7 @@
 use crate::RuntimeError;
+use crate::pty_input::SharedPtyWriter;
 use crate::session_history::SessionHistory;
-use crate::terminal_response_writer::{
-    SharedPtyWriter, TerminalResponseSender, TerminalResponseWriter,
-};
+use crate::terminal_response_writer::{TerminalResponseSender, TerminalResponseWriter};
 use std::io::Read;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -168,7 +167,9 @@ mod tests {
         }
     }
 
-    fn shared_writer(bytes: &Arc<Mutex<Vec<u8>>>, fail: bool) -> Arc<Mutex<Box<dyn Write + Send>>> {
+    impl crate::pty_input::PtyInput for RecordingWriter {}
+
+    fn shared_writer(bytes: &Arc<Mutex<Vec<u8>>>, fail: bool) -> crate::pty_input::SharedPtyWriter {
         Arc::new(Mutex::new(Box::new(RecordingWriter {
             bytes: Arc::clone(bytes),
             fail,

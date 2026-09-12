@@ -1,6 +1,6 @@
 # CCCC Context Ops Contract v3
 
-Status: Active (for CCCC v0.5.x ecosystem)
+Status: Active (Context v3 in the native CCCC workspace)
 
 This document defines the operation list and payload shapes for daemon IPC:
 - `context_sync` (see `docs/standards/CCCC_DAEMON_IPC_V1.md`)
@@ -21,7 +21,23 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 Read-only projections such as `board` and `attention` are daemon-computed and are not directly writable via context ops.
 
-All operations are applied in order. If any op is invalid, the daemon rejects the entire batch.
+All operations are applied in order. Each operation is authorized against the
+in-memory result of the preceding operations under the Context storage lock.
+If any operation is invalid or unauthorized, the daemon rejects the entire
+batch before writing payload files. Task IDs used for authorization MUST match
+the IDs used by the corresponding operation, including accepted whitespace.
+
+Canonical Context files that are unreadable, malformed, or contain inconsistent
+identity metadata MUST cause an explicit error; they MUST NOT be interpreted as
+empty state and overwritten by a later update. Missing files still support new
+Groups and the documented legacy migration path.
+
+Context uses atomic replacement of individual files, not a multi-file database
+transaction. A storage failure can leave part of a validated batch written. The
+revision is reserved before payload writes so such a failure invalidates prior
+`if_version` tokens. After an I/O error, callers MUST reload the current state
+before deciding what to retry; a newer revision alone is not a success receipt.
+Dry runs and rejected batches do not reserve a revision.
 
 `context_sync` only mutates the Context v3 stores named by its operations. It
 MUST NOT implicitly write the separate durable memory store. Callers that want

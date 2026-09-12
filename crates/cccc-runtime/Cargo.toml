@@ -9,13 +9,16 @@ description = "Process and terminal runtime management for CCCC"
 publish = false
 
 [dependencies]
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.37", path = "../cccc-contracts" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.39", path = "../cccc-contracts" }
 portable-pty.workspace = true
 retach.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+filedescriptor = "=0.8.3"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["process"] }

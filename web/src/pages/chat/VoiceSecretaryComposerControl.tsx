@@ -1,3 +1,4 @@
+import "./voice-secretary/voiceWorkspaceMobile.css";
 import { VoiceMobileMenu } from "./voice-secretary/VoiceMobileMenu";
 import { VoiceComposerStatus } from "./voice-secretary/VoiceComposerStatus";
 import { queueVoiceSocketError } from "./voice-secretary/voiceSocketError";
@@ -38,7 +39,7 @@ import {
   fetchVoiceAssistantDocumentContent,
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
-  retryVoiceAssistantFinalRevision,
+  retryVoiceAssistantTranscriptPersistence,
   saveVoiceAssistantDocument,
   sendVoiceAssistantDocumentInstruction,
   updateVoiceAssistantRecordingLease,
@@ -291,6 +292,7 @@ export function VoiceSecretaryComposerControl({
   const showError = useUIStore((state) => state.showError);
   const showNotice = useUIStore((state) => state.showNotice);
   const isSmallScreen = useUIStore((state) => state.isSmallScreen);
+  const [mobilePromptDetailsOpen, setMobilePromptDetailsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const refreshSeq = useRef(0);
@@ -312,6 +314,7 @@ export function VoiceSecretaryComposerControl({
   const serviceLatestPartialTranscriptRef = useRef("");
   const serviceCommittedTranscriptRef = useRef("");
   const serviceDocumentCommittedTranscriptRef = useRef("");
+  const serviceAsrBackendRef = useRef("assistant_service_local_asr");
   const serviceFinalAsrTextRef = useRef("");
   const serviceAudioDurationMsRef = useRef(0);
   const serviceCommittedEndMsRef = useRef(0);
@@ -440,6 +443,8 @@ export function VoiceSecretaryComposerControl({
   const [open, setOpen] = useState(false);
   const [showAssistantModeMenu, setShowAssistantModeMenu] = useState(false);
   const [showAssistantLanguageMenu, setShowAssistantLanguageMenu] = useState(false);
+  const assistantModeTriggerRef = useRef<HTMLButtonElement>(null);
+  const assistantLanguageTriggerRef = useRef<HTMLButtonElement>(null);
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<VoiceSecretaryAction>("");
   const [recognitionLanguageSaving, setRecognitionLanguageSaving] = useState(false);
@@ -1526,6 +1531,8 @@ export function VoiceSecretaryComposerControl({
     setOpen(false);
     setLoading(false);
     setActionBusy("");
+    setShowAssistantModeMenu(false);
+    setShowAssistantLanguageMenu(false);
     setRecognitionLanguageSaving(false);
     setAssistant(null);
     setDocuments([]);
@@ -1865,6 +1872,7 @@ export function VoiceSecretaryComposerControl({
   const flushServiceDocumentCheckpoint = useCallback(
     async (triggerKind = "max_window"): Promise<boolean> => {
       clearServiceDocumentCheckpointTimer();
+      if (serviceAsrBackendRef.current === "external_provider_asr") return true;
       if (
         voiceRecordingCaptureMode(voiceRecordingSessionScopeRef.current, captureMode) !== "document"
       )
@@ -1918,6 +1926,7 @@ export function VoiceSecretaryComposerControl({
   );
 
   const scheduleServiceDocumentCheckpoint = useCallback(() => {
+    if (serviceAsrBackendRef.current === "external_provider_asr") return;
     if (
       voiceRecordingCaptureMode(voiceRecordingSessionScopeRef.current, captureMode) !== "document"
     )
@@ -2520,6 +2529,35 @@ export function VoiceSecretaryComposerControl({
     setOpen(false);
   }, []);
   const { modalRef } = useModalA11y(open, closePanel);
+
+  useEffect(() => {
+    if (controlDisabled) {
+      setShowAssistantModeMenu(false);
+      setShowAssistantLanguageMenu(false);
+      return;
+    }
+    const triggers = [
+      {
+        element: assistantModeTriggerRef.current,
+        open: showAssistantModeMenu,
+        close: () => setShowAssistantModeMenu(false),
+      },
+      {
+        element: assistantLanguageTriggerRef.current,
+        open: showAssistantLanguageMenu,
+        close: () => setShowAssistantLanguageMenu(false),
+      },
+    ].filter((item) => item.open && item.element);
+    if (!triggers.length) return;
+    // Portals must close when responsive CSS hides their trigger.
+    const observer = new ResizeObserver(() => {
+      for (const item of triggers) {
+        if (!item.element?.getClientRects().length) item.close();
+      }
+    });
+    for (const item of triggers) observer.observe(item.element!);
+    return () => observer.disconnect();
+  }, [controlDisabled, showAssistantModeMenu, showAssistantLanguageMenu]);
 
   useEffect(() => {
     if (!showAssistantModeMenu) return undefined;
@@ -3139,10 +3177,15 @@ export function VoiceSecretaryComposerControl({
     if (!latestReadiness.serviceAsrConfigured) {
       failStart();
       showError(
-        t("voiceSecretaryLocalAsrModelsNotReady", {
-          defaultValue:
-            "The local ASR models are not ready. Install or repair Local ASR in Settings > Assistants, or switch to Browser ASR.",
-        }),
+        t(
+          latestReadiness.recognitionBackend === "external_provider_asr"
+            ? "voiceSecretaryExternalAsrNotReady"
+            : "voiceSecretaryLocalAsrModelsNotReady",
+          {
+            defaultValue:
+              "The local ASR models are not ready. Install or repair Local ASR in Settings > Assistants, or switch to Browser ASR.",
+          },
+        ),
       );
       return;
     }
@@ -3171,7 +3214,7 @@ export function VoiceSecretaryComposerControl({
     try {
       const activeLease = await acquireDaemonVoiceRecordingLease(gid, {
         captureMode: captureTransportMode,
-        recognitionBackend: "assistant_service_local_asr",
+        recognitionBackend: latestReadiness.recognitionBackend,
         dispatchTarget: captureDispatchTarget,
       });
       if (!isActiveRecordingRun(runId)) return;
@@ -3199,6 +3242,7 @@ export function VoiceSecretaryComposerControl({
       );
       return;
     }
+    serviceAsrBackendRef.current = latestReadiness.recognitionBackend;
     let pendingStream: MediaStream | null = null;
     try {
       const audioConstraints: MediaTrackConstraints = {
@@ -3346,6 +3390,10 @@ export function VoiceSecretaryComposerControl({
             const payload = JSON.parse(String(event.data || "{}")) as Record<string, unknown>;
             const type = String(payload.type || "").trim();
             if (type === "ready") {
+              serviceAsrBackendRef.current =
+                payload.backend === "external_provider_asr"
+                  ? "external_provider_asr"
+                  : latestReadiness.recognitionBackend;
               if (isCurrentGroup(gid)) setSpeechError("");
               return;
             }
@@ -3406,14 +3454,38 @@ export function VoiceSecretaryComposerControl({
                         serviceFinalTranscriptRef.current,
                         finalText,
                       );
-                      const retry = await retryVoiceAssistantFinalRevision(gid, {
+                      const retry = await retryVoiceAssistantTranscriptPersistence(gid, {
                         sessionId: voiceRecordingSessionIdRef.current,
                         documentPath: effectiveCaptureTargetDocumentPath,
                         text: finalText,
                         language: effectiveRecognitionLanguage,
                         modelId: String(payload.model_id || "").trim(),
+                        recognitionBackend: String(payload.backend || ""),
+                        partial: payload.partial === true,
+                        pendingSegments: payload.transcript_pending_segments,
                       });
                       if (!retry.ok) {
+                        const pending = recordFromUnknown(
+                          retry.error.details,
+                        ).transcript_pending_segments;
+                        const recovered = Array.isArray(pending)
+                          ? pending
+                              .map((segment) =>
+                                String(recordFromUnknown(segment).text || "").trim(),
+                              )
+                              .filter(Boolean)
+                              .join("\n")
+                          : "";
+                        if (recovered) {
+                          // Recovery remains scoped to the recording's Group even
+                          // if the user navigated or started another recording.
+                          routeVoiceTextToComposerGroup({
+                            groupId: gid,
+                            text: recovered,
+                            mode: "append",
+                          });
+                          showNotice({ message: t("voiceSecretaryCheckpointRecoveryFilled") });
+                        }
                         if (isCurrentGroup(gid)) {
                           showError(
                             retry.error.message ||
@@ -3424,7 +3496,18 @@ export function VoiceSecretaryComposerControl({
                         }
                         return;
                       }
+                      if (!isActiveRecordingRun(runId)) return;
                       if (isCurrentGroup(gid)) applyTranscriptAppendResult(retry.result);
+                    }
+                    if (payload.partial === true) {
+                      finalizeLiveTranscriptPreview();
+                      if (isCurrentGroup(gid)) {
+                        await restoreLatestVoiceMeetingSession({
+                          replaceSession: true,
+                          sessionId: voiceRecordingSessionIdRef.current,
+                        });
+                      }
+                      return;
                     }
                     serviceFinalAsrTextRef.current = finalText;
                     serviceCommittedTranscriptRef.current = finalText;
@@ -3563,6 +3646,9 @@ export function VoiceSecretaryComposerControl({
               return;
             }
             if (type === "error" || payload.ok === false) {
+              const recovered = String(payload.recovered_text || "").trim();
+              if (recovered && captureDispatchTarget !== "document")
+                appendDirectDictationToComposer(recovered);
               const error = recordFromUnknown(payload.error);
               const message =
                 String(error.message || "") ||
@@ -3601,10 +3687,15 @@ export function VoiceSecretaryComposerControl({
           serviceMessageQueue,
           () => !isActiveRecordingRun(runId) || serviceAudioExpectedCloseRunIdRef.current === runId,
           () => {
-            const message = t("voiceSecretaryLocalAsrConnectionFailed", {
-              defaultValue:
-                "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
-            });
+            const message = t(
+              serviceAsrBackendRef.current === "external_provider_asr"
+                ? "voiceSecretaryExternalAsrConnectionFailed"
+                : "voiceSecretaryLocalAsrConnectionFailed",
+              {
+                defaultValue:
+                  "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
+              },
+            );
             if (isCurrentGroup(gid)) {
               setSpeechError(message);
               showError(message);
@@ -4838,6 +4929,8 @@ export function VoiceSecretaryComposerControl({
               />
               <section
                 ref={modalRef}
+                data-voice-mobile-sheet
+                data-voice-sheet-mode={captureMode}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="voice-secretary-sheet-title"
@@ -4858,12 +4951,16 @@ export function VoiceSecretaryComposerControl({
                   })}
                 </div>
                 <div
+                  data-voice-sheet-header
                   className={classNames(
                     "relative shrink-0 border-b px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3",
                     isDark ? "border-white/10" : "border-black/10",
                   )}
                 >
-                  <div className="grid gap-3 pr-8 lg:grid-cols-[minmax(16rem,1fr)_auto_auto] lg:items-end">
+                  <div
+                    data-voice-header-grid
+                    className="grid gap-3 pr-8 lg:grid-cols-[minmax(16rem,1fr)_auto_auto] lg:items-end"
+                  >
                     <div className="min-w-0">
                       <div
                         className={classNames(
@@ -4874,6 +4971,7 @@ export function VoiceSecretaryComposerControl({
                         {t("voiceSecretaryTitle", { defaultValue: "Voice Secretary" })}
                       </div>
                       <div
+                        data-voice-mode-hint
                         className={classNames(
                           "mt-1 text-xs leading-5",
                           isDark ? "text-slate-400" : "text-gray-500",
@@ -4881,7 +4979,7 @@ export function VoiceSecretaryComposerControl({
                       >
                         {workspaceModeHint}
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <div data-voice-state-bar className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           role="switch"
@@ -4967,6 +5065,7 @@ export function VoiceSecretaryComposerControl({
                     </div>
                     {onCaptureModeChange ? (
                       <div
+                        data-voice-mode-tabs
                         className={classNames(
                           "inline-flex min-h-[38px] w-full items-center rounded-full border p-0.5 sm:w-auto lg:justify-self-center",
                           isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
@@ -5003,10 +5102,17 @@ export function VoiceSecretaryComposerControl({
                         })}
                       </div>
                     ) : null}
-                    <div className="grid min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-start lg:justify-end">
+                    <div
+                      data-voice-device-row
+                      data-voice-has-refresh={serviceAsrReady}
+                      className="grid min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-start lg:justify-end"
+                    >
                       {assistantEnabled ? (
                         <>
-                          <label className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex">
+                          <label
+                            data-voice-setting="language"
+                            className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex"
+                          >
                             <span>{t("voiceSecretaryLanguage", { defaultValue: "Language" })}</span>
                             <GroupCombobox
                               items={voiceLanguageOptions.map((optionValue) => ({
@@ -5031,7 +5137,7 @@ export function VoiceSecretaryComposerControl({
                                   ? "border-white/10 bg-white/[0.06] text-slate-100 focus:border-white/30"
                                   : "border-black/10 bg-white text-gray-800 focus:border-black/25",
                               )}
-                              contentClassName="p-0"
+                              contentClassName="p-0 voice-workspace-device-options"
                               disabled={recording || recordingStarting || recognitionLanguageSaving}
                               searchable={false}
                               matchTriggerWidth
@@ -5039,6 +5145,7 @@ export function VoiceSecretaryComposerControl({
                           </label>
                           {browserSpeechReady ? (
                             <label
+                              data-voice-setting="browser-microphone"
                               className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]"
                               title={t("voiceSecretaryMicDefaultHint", {
                                 defaultValue:
@@ -5071,7 +5178,10 @@ export function VoiceSecretaryComposerControl({
                           ) : null}
                           {serviceAsrReady ? (
                             <>
-                              <label className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex">
+                              <label
+                                data-voice-setting="microphone"
+                                className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[var(--color-text-secondary)] sm:inline-flex"
+                              >
                                 <span className="hidden xl:inline">
                                   {t("voiceSecretaryMicDevice", { defaultValue: "Microphone" })}
                                 </span>
@@ -5111,11 +5221,13 @@ export function VoiceSecretaryComposerControl({
                                   ariaLabel={t("voiceSecretaryMicDevice", {
                                     defaultValue: "Microphone",
                                   })}
+                                  contentClassName="voice-workspace-device-options"
                                   placeholder={selectedAudioDeviceLabel}
                                   searchable
                                 />
                               </label>
                               <button
+                                data-voice-refresh
                                 type="button"
                                 className={classNames(
                                   "inline-flex h-[38px] w-[38px] items-center justify-center rounded-full border text-[var(--color-text-secondary)] transition-colors disabled:opacity-60",
@@ -5137,6 +5249,7 @@ export function VoiceSecretaryComposerControl({
                             </>
                           ) : null}
                           <button
+                            data-voice-record
                             type="button"
                             className={classNames(
                               "inline-flex min-h-[38px] items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-60",
@@ -5248,6 +5361,8 @@ export function VoiceSecretaryComposerControl({
                 <div
                   key={`${captureMode}-${isSmallScreen ? "mobile" : "desktop"}`}
                   ref={workspaceScrollRef}
+                  data-voice-workspace-body
+                  data-voice-body-mode={captureMode}
                   className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden scrollbar-hide px-4 py-4 [overflow-anchor:none] sm:px-5 sm:py-5 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] lg:overflow-hidden"
                 >
                   {workspaceVisibility.showDocumentList ? (
@@ -5322,6 +5437,7 @@ export function VoiceSecretaryComposerControl({
 
                   {workspaceVisibility.showRequestPanel ? (
                     <aside
+                      data-voice-request-panel
                       className={classNames(
                         "flex min-h-0 flex-col gap-4 rounded-[26px] border p-3.5",
                         isDark
@@ -5331,12 +5447,15 @@ export function VoiceSecretaryComposerControl({
                     >
                       {workspaceVisibility.showRequestCard ? (
                         <div
+                          data-voice-request-card={captureMode}
+                          data-voice-prompt-open={mobilePromptDetailsOpen}
                           className={classNames(
                             "shrink-0 rounded-2xl border p-3",
                             isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
                           )}
                         >
                           <div
+                            data-voice-request-title
                             className={classNames(
                               "text-sm font-semibold",
                               isDark ? "text-slate-100" : "text-gray-900",
@@ -5345,7 +5464,21 @@ export function VoiceSecretaryComposerControl({
                             {panelRequestTitle}
                           </div>
                           {captureMode === "prompt" ? (
+                            <button
+                              type="button"
+                              className="voice-mobile-prompt-toggle"
+                              aria-expanded={mobilePromptDetailsOpen}
+                              aria-controls={`voice-prompt-help-${voiceCaptureOwnerIdRef.current}`}
+                              onClick={() => setMobilePromptDetailsOpen((value) => !value)}
+                            >
+                              <span>{panelRequestTitle}</span>
+                              <ChevronDownIcon size={14} aria-hidden="true" />
+                            </button>
+                          ) : null}
+                          {captureMode === "prompt" ? (
                             <div
+                              data-voice-prompt-description
+                              id={`voice-prompt-help-${voiceCaptureOwnerIdRef.current}`}
                               className={classNames(
                                 "mt-3 rounded-2xl border px-3 py-2 text-xs leading-5",
                                 isDark
@@ -5357,6 +5490,7 @@ export function VoiceSecretaryComposerControl({
                             </div>
                           ) : (
                             <textarea
+                              data-voice-instruction-input
                               value={documentInstruction}
                               onChange={(event) => setDocumentInstruction(event.target.value)}
                               placeholder={panelRequestPlaceholder}
@@ -5370,6 +5504,7 @@ export function VoiceSecretaryComposerControl({
                           )}
                           {captureMode !== "prompt" ? (
                             <button
+                              data-voice-instruction-send
                               type="button"
                               className={classNames(
                                 "mt-3 w-full rounded-2xl border px-3 py-2.5 text-xs font-semibold transition-colors disabled:opacity-60",
@@ -5388,6 +5523,7 @@ export function VoiceSecretaryComposerControl({
 
                       {workspaceVisibility.showActivityFeed ? (
                         <div
+                          data-voice-activity
                           className={classNames(
                             "flex min-h-0 flex-col overflow-hidden rounded-2xl border p-3 lg:flex-1",
                             isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
@@ -5438,7 +5574,10 @@ export function VoiceSecretaryComposerControl({
                               ) : null}
                             </div>
                           </div>
-                          <div className="mt-2 min-h-0 max-h-[42dvh] space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable] lg:max-h-none lg:flex-1">
+                          <div
+                            data-voice-activity-scroll
+                            className="mt-2 min-h-0 max-h-[42dvh] space-y-2 overflow-y-auto scrollbar-subtle pr-1 [scrollbar-gutter:stable] lg:max-h-none lg:flex-1"
+                          >
                             {liveActivityStreamItem ? (
                               <VoiceActivityStreamCard
                                 item={liveActivityStreamItem}
@@ -5458,6 +5597,7 @@ export function VoiceSecretaryComposerControl({
                                 return (
                                   <div
                                     key={feedItem.id}
+                                    data-voice-activity-item={feedItem.id}
                                     className={classNames(
                                       "rounded-2xl border px-2.5 py-2",
                                       isDark
@@ -5555,6 +5695,7 @@ export function VoiceSecretaryComposerControl({
                               return (
                                 <div
                                   key={item.request_id}
+                                  data-voice-activity-item={item.request_id}
                                   className={classNames(
                                     "rounded-2xl border px-2.5 py-2",
                                     isDark
@@ -5733,6 +5874,7 @@ export function VoiceSecretaryComposerControl({
                   ) : null}
                 </div>
                 <button
+                  data-voice-sheet-close
                   type="button"
                   onClick={closePanel}
                   className="absolute right-3 top-3 rounded-md p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 sm:right-4 sm:top-4"
@@ -5885,6 +6027,7 @@ export function VoiceSecretaryComposerControl({
               )}
             </button>
             <VoiceMobileMenu
+              key={selectedGroupId}
               disabled={controlDisabled}
               settingsLocked={recording || recordingStarting}
               assistantEnabled={assistantEnabled}
@@ -5914,6 +6057,7 @@ export function VoiceSecretaryComposerControl({
                 <Popover open={showAssistantModeMenu} onOpenChange={setShowAssistantModeMenu}>
                   <PopoverTrigger asChild>
                     <button
+                      ref={assistantModeTriggerRef}
                       type="button"
                       className={classNames(
                         "inline-flex h-11 min-w-0 shrink items-center justify-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:shrink-0",
@@ -6068,6 +6212,7 @@ export function VoiceSecretaryComposerControl({
                 >
                   <PopoverTrigger asChild>
                     <button
+                      ref={assistantLanguageTriggerRef}
                       type="button"
                       className={classNames(
                         "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",

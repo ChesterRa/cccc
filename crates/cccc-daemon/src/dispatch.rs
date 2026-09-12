@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 use std::io;
 
 use crate::ops;
+use crate::ops::operation::{Operation, Policy};
 
 pub type OpResult = Result<Map<String, Value>, OpError>;
 
@@ -22,44 +23,51 @@ pub fn dispatch(home: &HomeLayout, request: &DaemonRequest) -> DaemonResponse {
 }
 
 fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let core = match request.op.as_str() {
-        "ping" => Some(object(json!({
-            "pid": std::process::id(),
-            "version": env!("CARGO_PKG_VERSION"),
-            "ts": cccc_contracts::utc_now(),
-            "ipc_v": 1,
-            "capabilities": {
-                "events_stream": true,
-                "remote_access": true,
-                "presentation_browser_attach": false,
-                "presentation_browser_vnc_attach": false,
-                "space_provider_auth_browser_attach": false,
-                "space_provider_auth_browser_vnc_attach": false,
-                "web_model_browser_attach": false,
-                "web_model_browser_vnc_attach": false,
-                "term_attachment_status": true,
-                "term_attach_snapshot_v1": true,
-                "assistant_state": true,
-                "assistant_voice_recording_lease": true,
-                "assistant_voice_model_install": false,
-            },
-            "implementation": "rust",
-            "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
-        }))),
-        "version" => Some(object(
-            json!({"version": env!("CARGO_PKG_VERSION"), "implementation": "rust", "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY}),
-        )),
-        "home_get" => Some(object(
-            json!({"home": home.root(), "environment": "CCCC_HOME"}),
-        )),
-        "shutdown" => Some(shutdown(request)),
-        _ => None,
-    };
-    if let Some(result) = core {
-        return result;
-    }
-    ops::handle(home, request)?
+    resolve_operation(request)
         .ok_or_else(|| OpError::new("unknown_op", format!("unknown operation: {}", request.op)))?
+        .execute(home, request)
+}
+
+pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
+    Some(match request.op.as_str() {
+        "ping" => Operation::new(Policy::Read, ping),
+        "version" => Operation::new(Policy::Read, |_home, _request| {
+            object(
+                json!({"version": env!("CARGO_PKG_VERSION"), "implementation": "rust", "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY}),
+            )
+        }),
+        "home_get" => Operation::new(Policy::Read, |home, _request| {
+            object(json!({"home": home.root(), "environment": "CCCC_HOME"}))
+        }),
+        "shutdown" => Operation::new(Policy::GlobalWrite, |_home, request| shutdown(request)),
+        _ => return ops::resolve_operation(request),
+    })
+}
+
+fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
+    object(json!({
+        "pid": std::process::id(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "ts": cccc_contracts::utc_now(),
+        "ipc_v": 1,
+        "capabilities": {
+            "events_stream": true,
+            "remote_access": true,
+            "presentation_browser_attach": false,
+            "presentation_browser_vnc_attach": false,
+            "space_provider_auth_browser_attach": false,
+            "space_provider_auth_browser_vnc_attach": false,
+            "web_model_browser_attach": false,
+            "web_model_browser_vnc_attach": false,
+            "term_attachment_status": true,
+            "term_attach_snapshot_v1": true,
+            "assistant_state": true,
+            "assistant_voice_recording_lease": true,
+            "assistant_voice_model_install": false,
+        },
+        "implementation": "rust",
+        "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
+    }))
 }
 
 fn shutdown(request: &DaemonRequest) -> OpResult {
@@ -157,6 +165,54 @@ mod tests {
     use cccc_contracts::DaemonRequest;
     use cccc_core::HomeLayout;
     use serde_json::json;
+
+    #[test]
+    fn documented_operations_resolve_or_explicitly_advertise_unavailability() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let request = DaemonRequest {
+            v: 1,
+            op: "ping".into(),
+            args: Default::default(),
+        };
+        let ping = dispatch(&home, &request);
+        let spec = include_str!("../../../docs/standards/CCCC_DAEMON_IPC_V1.md");
+        for line in spec.lines().filter(|line| line.starts_with("#### ")) {
+            for op in line.split('`').skip(1).step_by(2).filter(|op| {
+                !op.is_empty()
+                    && op
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            }) {
+                // These change the connection protocol and are handled before
+                // ordinary dispatch in server_connection (with stream regressions).
+                if matches!(op, "term_attach" | "events_stream") {
+                    continue;
+                }
+                let request = DaemonRequest {
+                    v: 1,
+                    op: op.into(),
+                    args: Default::default(),
+                };
+                let available = super::resolve_operation(&request).is_some();
+                if ping.result["capabilities"]
+                    .get(op)
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(false)
+                {
+                    assert!(
+                        !available,
+                        "{op} has a handler but advertises unavailability"
+                    );
+                } else {
+                    assert!(
+                        available,
+                        "documented operation {op} has no executable route"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn string_aliases_skip_empty_primary_values() {

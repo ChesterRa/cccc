@@ -1,7 +1,7 @@
 use cccc_contracts::{Event, GroupState};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 
 use crate::actors;
@@ -169,14 +169,7 @@ fn tick_group_inner(
     let previous = state.clone();
     tick_rules(&store, &group, &mut state, &mut result)?;
     if include_unread && matches!(group.state, GroupState::Active | GroupState::Idle) {
-        tick_unread(
-            home,
-            &store,
-            &group,
-            delivery_actor_ids,
-            &mut state,
-            &mut result,
-        )?;
+        tick_unread(home, &store, &group, delivery_actor_ids, &mut result)?;
     }
     if state != previous {
         state::save(&store, group_id, &state)?;
@@ -315,7 +308,6 @@ fn tick_unread(
     store: &GroupStore,
     group: &GroupDoc,
     delivery_actor_ids: Option<&HashSet<String>>,
-    _state: &mut RuntimeState,
     result: &mut TickResult,
 ) -> io::Result<()> {
     let mail_after = delivery_timing_value(group, "mail_notice_after_seconds", 1_800);
@@ -323,15 +315,47 @@ fn tick_unread(
     if mail_after <= 0 && reply_after <= 0 {
         return Ok(());
     }
+    let eligible = actors::visible(group)
+        .filter(|actor| {
+            actor.enabled && delivery_actor_ids.is_none_or(|ids| ids.contains(&actor.id))
+        })
+        .collect::<Vec<_>>();
+    if eligible.is_empty() {
+        return Ok(());
+    }
     let ledger_path = store.ledger_path(&group.group_id)?;
-    let events = ledger::read_all(&ledger_path)?;
-    let positions = events
-        .iter()
-        .enumerate()
-        .map(|(index, event)| (event.id.clone(), index))
-        .collect::<HashMap<_, _>>();
-    let generations = inbox::actor_generation_positions(&events);
     let cursors = inbox::cursors(home, &group.group_id)?;
+    // Project only the notices while borrowing history. Release the index read
+    // lock before appending, since append also updates that same index.
+    let notices = ledger::inspect(&ledger_path, |events, positions| {
+        unread_notices(
+            group,
+            &eligible,
+            events,
+            positions,
+            &cursors,
+            mail_after,
+            reply_after,
+        )
+    })?;
+    for event in notices {
+        ledger::append(&ledger_path, &event)?;
+        result.notifications.push(event);
+    }
+    Ok(())
+}
+
+fn unread_notices(
+    group: &GroupDoc,
+    eligible: &[&cccc_contracts::Actor],
+    events: &[Event],
+    positions: &HashMap<String, usize>,
+    cursors: &BTreeMap<String, String>,
+    mail_after: i64,
+    reply_after: i64,
+) -> Vec<Event> {
+    let mut notices = Vec::new();
+    let generations = inbox::actor_generation_positions(events);
     let now = Utc::now().timestamp();
     let resume_at = events.iter().rev().find_map(|event| {
         let resumed = event.kind == "group.start"
@@ -458,9 +482,7 @@ fn tick_unread(
             .min()
     };
 
-    for actor in actors::visible(group).filter(|actor| {
-        actor.enabled && delivery_actor_ids.is_none_or(|actor_ids| actor_ids.contains(&actor.id))
-    }) {
+    for actor in eligible {
         let generation = generations.get(&actor.id).copied().unwrap_or(0);
         let cursor_position = cursors
             .get(&actor.id)
@@ -579,8 +601,7 @@ fn tick_unread(
                     ),
                     mail_pending.iter().map(|event| event.id.clone()).collect(),
                 );
-                ledger::append(&ledger_path, &event)?;
-                result.notifications.push(event);
+                notices.push(event);
             }
         }
         if !reply_due.is_empty() {
@@ -595,11 +616,10 @@ fn tick_unread(
                 ),
                 reply_due.iter().map(|event| event.id.clone()).collect(),
             );
-            ledger::append(&ledger_path, &event)?;
-            result.notifications.push(event);
+            notices.push(event);
         }
     }
-    Ok(())
+    notices
 }
 
 fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {
@@ -648,4 +668,37 @@ fn notice_event(
     .cloned()
     .expect("reminder data");
     event
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unread_tick_without_eligible_recipients_does_not_load_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("idle cost", "").expect("group");
+        group.state = GroupState::Active;
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&path, &Event::new("chat.message", &group.group_id)).expect("append");
+        for mode in ["no actors", "disabled", "not running"] {
+            if mode != "no actors" {
+                let mut actor = cccc_contracts::Actor::new("peer");
+                actor.enabled = mode != "disabled";
+                group.actors = vec![actor];
+            }
+            store.save(&group).expect("save");
+            crate::ledger_index::invalidate_path(&path);
+            let result = if mode == "not running" {
+                tick_group_for_delivery_actors(&home, &group.group_id, true, &HashSet::new())
+            } else {
+                tick_group(&home, &group.group_id, true)
+            }
+            .expect("tick");
+            assert!(result.notifications.is_empty());
+            assert!(!crate::ledger_index::is_cached(&path), "{mode}");
+        }
+    }
 }

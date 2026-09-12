@@ -1,3 +1,4 @@
+use super::operation::{Operation, Policy::Write};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::ledger_archive;
@@ -5,10 +6,10 @@ use serde_json::json;
 
 use crate::dispatch::{OpResult, object, required_arg, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "ledger_snapshot" => snapshot(home, request),
-        "ledger_compact" => compact(home, request),
+        "ledger_snapshot" => Operation::new(Write, snapshot),
+        "ledger_compact" => Operation::new(Write, compact),
         _ => return None,
     })
 }

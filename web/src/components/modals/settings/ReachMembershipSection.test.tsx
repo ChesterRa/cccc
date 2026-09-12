@@ -26,6 +26,9 @@ function render(
       hasAdminToken={options.hasAdminToken ?? false}
       reachBusy={false}
       reachAction={null}
+      reachChecking={false}
+      reachCheckExpired={false}
+      onCheckReach={noop}
       onConnectAccount={noop}
       onPollAccount={noop}
       onOpenAccount={noop}
@@ -105,6 +108,39 @@ describe("ReachMembershipSection", () => {
 
     expect(stopButton).toBeTruthy();
     expect(stopButton).not.toContain(' disabled=""');
+  });
+
+  it("checks a disconnected running tunnel without offering to provision it again", () => {
+    const html = render(
+      {
+        logged_in: true,
+        reach_enabled: true,
+        reach_status: "offline",
+        cloudflared: { running: true },
+        online: false,
+      },
+      { hasAdminToken: true },
+    );
+    expect(html).toContain("webAccess.reach.connectionStatus.offline");
+    expect(html).toContain("webAccess.reach.checkConnection");
+    expect(html).toContain("webAccess.reach.stop");
+    expect(html).not.toContain(">webAccess.reach.start</button>");
+    expect(html).not.toContain("webAccess.reach.openWeb");
+  });
+
+  it("offers an explicit startup retry when the tracked helper has stopped", () => {
+    const html = render(
+      {
+        logged_in: true,
+        reach_enabled: true,
+        reach_status: "offline",
+        cloudflared: { running: false },
+        online: false,
+      },
+      { hasAdminToken: true },
+    );
+    expect(html).toContain("webAccess.reach.retryStart");
+    expect(html).toContain("webAccess.reach.stop");
   });
 
   it("exposes connection failures as an inline alert", () => {

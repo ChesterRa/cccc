@@ -1,3 +1,5 @@
+import { ExternalAsrSettings } from "./ExternalAsrSettings";
+import type { VoiceAsrProvider } from "../../../services/api/voiceAsrProviders";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -32,7 +34,7 @@ interface AssistantsTabProps {
 }
 
 const VOICE_BACKENDS = ["browser_asr", "assistant_service_local_asr", "external_provider_asr"];
-const VOICE_AVAILABLE_BACKENDS = new Set(["browser_asr", "assistant_service_local_asr"]);
+const VOICE_AVAILABLE_BACKENDS = new Set(VOICE_BACKENDS);
 
 const VOICE_RECOMMENDED_MAX_WINDOW_SECONDS = 300;
 const VOICE_MIN_MAX_WINDOW_SECONDS = 10;
@@ -447,6 +449,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
 
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [recognitionBackend, setRecognitionBackend] = useState("browser_asr");
+  const [externalProvider, setExternalProvider] = useState<VoiceAsrProvider>("bailian");
   const [voiceDocumentAutoUpdateEnabled, setVoiceDocumentAutoUpdateEnabled] = useState(true);
   const [voiceMaxWindowSeconds, setVoiceMaxWindowSeconds] = useState(
     VOICE_RECOMMENDED_MAX_WINDOW_SECONDS,
@@ -479,6 +482,11 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     setVoiceEnabled(Boolean(voice?.enabled));
     if (!voiceBackendDraftDirtyRef.current) {
       setRecognitionBackend(backend || "browser_asr");
+      setExternalProvider(
+        readStringConfig(voice, "external_asr_provider", "bailian") === "volcengine"
+          ? "volcengine"
+          : "bailian",
+      );
     }
     const rawMaxWindow = voice?.config?.auto_document_max_window_seconds;
     const documentAutoUpdateEnabled = rawMaxWindow !== null;
@@ -606,6 +614,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
   const saveVoiceSettings = async (overrides?: {
     enabled?: boolean;
     backend?: string;
+    provider?: VoiceAsrProvider;
     documentAutoUpdateEnabled?: boolean;
     maxWindowSeconds?: number;
   }) => {
@@ -633,10 +642,11 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
         VOICE_MAX_MAX_WINDOW_SECONDS,
       );
       const resp = await api.updateAssistantSettings(gid, "voice_secretary", {
-        enabled: nextEnabled,
+        ...(typeof overrides?.enabled === "boolean" ? { enabled: nextEnabled } : {}),
         config: {
-          capture_mode: nextBackend === "assistant_service_local_asr" ? "service" : "browser",
+          capture_mode: nextBackend === "browser_asr" ? "browser" : "service",
           recognition_backend: nextBackend,
+          external_asr_provider: overrides?.provider ?? externalProvider,
           recognition_language: nextRecognitionLanguage,
           auto_document_enabled: true,
           auto_document_max_window_seconds: nextDocumentAutoUpdateEnabled
@@ -650,12 +660,15 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
       });
       if (!isCurrentGroup(gid)) return false;
       if (!resp.ok) {
+        voiceBackendDraftDirtyRef.current = false;
+        syncVoiceDraft(assistantState);
         setError(resp.error?.message || t("assistants.saveFailed"));
         return false;
       }
       setVoiceEnabled(nextEnabled);
       voiceBackendDraftDirtyRef.current = false;
       setRecognitionBackend(nextBackend);
+      setExternalProvider(overrides?.provider ?? externalProvider);
       setVoiceDocumentAutoUpdateEnabled(nextDocumentAutoUpdateEnabled);
       setVoiceMaxWindowSeconds(maxWindowSeconds);
       setNotice(t("assistants.voiceSaved"));
@@ -663,6 +676,8 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
       return true;
     } catch {
       if (!isCurrentGroup(gid)) return false;
+      voiceBackendDraftDirtyRef.current = false;
+      syncVoiceDraft(assistantState);
       setError(t("assistants.saveFailed"));
       return false;
     } finally {
@@ -1216,8 +1231,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     activeAssistantHelpPrompt !== null,
     resolveVoiceSecretaryGuidanceDraft(""),
   );
-  const showDocumentUpdateControls =
-    recognitionBackend === "browser_asr" || recognitionBackend === "assistant_service_local_asr";
+  const showDocumentUpdateControls = VOICE_AVAILABLE_BACKENDS.has(recognitionBackend);
 
   const renderVoiceGuidanceEditor = (expanded = false) => (
     <AssistantPromptEditor
@@ -1318,10 +1332,12 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                       </label>
                       <GroupCombobox
                         items={backendComboboxItems}
+                        disabled={busy || loadBusy || voiceSaveBusy}
                         value={recognitionBackend}
                         onChange={(value) => {
                           voiceBackendDraftDirtyRef.current = true;
                           setRecognitionBackend(value);
+                          void saveVoiceSettings({ backend: value });
                         }}
                         placeholder={t("assistants.recognitionBackend")}
                         searchPlaceholder={t("assistants.recognitionBackend")}
@@ -1342,6 +1358,21 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                       </p>
                     </div>
                   </div>
+
+                  {recognitionBackend === "external_provider_asr" ? (
+                    <ExternalAsrSettings
+                      provider={externalProvider}
+                      disabled={busy || voiceSaveBusy}
+                      onProviderChange={(provider) => {
+                        voiceBackendDraftDirtyRef.current = true;
+                        setExternalProvider(provider);
+                        void saveVoiceSettings({ provider });
+                      }}
+                      onConfigured={() => {
+                        void loadAssistants({ quiet: true });
+                      }}
+                    />
+                  ) : null}
 
                   {showServiceModelControls ? (
                     <div className={`mt-4 space-y-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
@@ -1782,7 +1813,10 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                             checked={voiceDocumentAutoUpdateEnabled}
                             disabled={busy || voiceSaveBusy}
                             label={t("assistants.documentAutoUpdateSwitch")}
-                            onChange={(checked) => setVoiceDocumentAutoUpdateEnabled(checked)}
+                            onChange={(checked) => {
+                              setVoiceDocumentAutoUpdateEnabled(checked);
+                              void saveVoiceSettings({ documentAutoUpdateEnabled: checked });
+                            }}
                           />
                           <button
                             type="button"
@@ -1806,7 +1840,13 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                               max={VOICE_MAX_MAX_WINDOW_SECONDS}
                               step={1}
                               value={voiceMaxWindowSeconds}
-                              disabled={!voiceDocumentAutoUpdateEnabled}
+                              disabled={busy || voiceSaveBusy || !voiceDocumentAutoUpdateEnabled}
+                              onBlur={() =>
+                                void saveVoiceSettings({ maxWindowSeconds: voiceMaxWindowSeconds })
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") event.currentTarget.blur();
+                              }}
                               onChange={(event) => {
                                 const value = Number(event.target.value);
                                 if (Number.isFinite(value)) setVoiceMaxWindowSeconds(value);
@@ -1856,17 +1896,6 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                       ) : null}
                     </div>
                   ) : null}
-
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => void saveVoiceSettings()}
-                      disabled={busy || voiceSaveBusy}
-                      className={primaryButtonClass(voiceSaveBusy)}
-                    >
-                      {voiceSaveBusy ? t("common:saving") : t("assistants.saveVoiceRecognition")}
-                    </button>
-                  </div>
                 </SettingsBlock>
 
                 {renderVoiceGuidanceEditor()}

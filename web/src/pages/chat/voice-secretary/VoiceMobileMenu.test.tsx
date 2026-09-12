@@ -24,11 +24,16 @@ describe("mobile voice options", () => {
     await act(async () => root.unmount());
     host.remove();
   });
-  async function open(settingsLocked = false, assistantEnabled = true, languageSaving = false) {
+  async function open(
+    settingsLocked = false,
+    assistantEnabled = true,
+    languageSaving = false,
+    disabled = false,
+  ) {
     await act(async () => {
       root.render(
         <VoiceMobileMenu
-          disabled={false}
+          disabled={disabled}
           settingsLocked={settingsLocked}
           assistantEnabled={assistantEnabled}
           mode="prompt"
@@ -96,5 +101,14 @@ describe("mobile voice options", () => {
     expect(option("Optimize")).toBeUndefined();
     await act(async () => option("Workspace").click());
     expect(onWorkspace).toHaveBeenCalledOnce();
+  });
+  it("closes an open menu when its control becomes unavailable", async () => {
+    await open();
+    expect(option("Workspace")).toBeDefined();
+    await open(false, true, false, true);
+    expect(option("Workspace")).toBeUndefined();
+    expect(host.querySelector("button")!.disabled).toBe(true);
+    expect(onWorkspace).not.toHaveBeenCalled();
+    expect(onModeChange).not.toHaveBeenCalled();
   });
 });

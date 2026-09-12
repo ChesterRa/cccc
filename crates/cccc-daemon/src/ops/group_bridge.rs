@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{GlobalRead, GlobalWrite, ResourceOwned, Write},
+};
 use cccc_contracts::{DaemonRequest, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION, utc_now};
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
@@ -116,18 +120,22 @@ pub(super) fn preflight_upload(home: &HomeLayout, request: &DaemonRequest) -> Op
     object(json!({"ready":true}))
 }
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "remote_send" => remote_send(home, request),
-        "remote_delivery_status" => delivery_status(home, request),
-        "group_bridge_receive_remote_send" => receive(home, request),
-        "group_bridge_receive_reply_request_cancel" => cancellation::receive(home, request),
-        "group_bridge_session_open" => session_runtime::open(home, request),
-        "group_bridge_session_close" => session_runtime::close(home, request),
-        "group_bridge_session_poll" => session_runtime::poll(home, request),
-        "group_bridge_session_complete" => session_runtime::complete(home, request),
-        "group_bridge_session_ready" => session_runtime::ready(home, request),
-        "group_bridge_session_deliver" => session_runtime::deliver(home, request),
+        "remote_send" => Operation::new(Write, remote_send),
+        "remote_delivery_status" => Operation::new(Write, delivery_status),
+        "group_bridge_receive_remote_send" => Operation::new(GlobalWrite, receive),
+        "group_bridge_receive_reply_request_cancel" => {
+            Operation::new(GlobalWrite, cancellation::receive)
+        }
+        // New work participates in lifecycle draining; completion and polling
+        // use the session owner so existing work can finish behind a queued writer.
+        "group_bridge_session_open" => Operation::new(GlobalRead, session_runtime::open),
+        "group_bridge_session_close" => Operation::new(ResourceOwned, session_runtime::close),
+        "group_bridge_session_poll" => Operation::new(ResourceOwned, session_runtime::poll),
+        "group_bridge_session_complete" => Operation::new(ResourceOwned, session_runtime::complete),
+        "group_bridge_session_ready" => Operation::new(ResourceOwned, session_runtime::ready),
+        "group_bridge_session_deliver" => Operation::new(GlobalRead, session_runtime::deliver),
         _ => return None,
     })
 }

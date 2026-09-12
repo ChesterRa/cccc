@@ -55,6 +55,11 @@ async function openMenu() {
   );
   return document.querySelector<HTMLElement>("[data-app-settings-menu]")!;
 }
+function buttonByText(panel: Element, text: string): HTMLButtonElement {
+  return Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+    (button) => button.textContent?.trim() === text,
+  )!;
+}
 afterEach(async () => {
   await act(async () => root?.unmount());
   host?.remove();
@@ -75,7 +80,7 @@ describe("header settings menu", () => {
     expect(onOpenGroupEdit).toHaveBeenCalledOnce();
     expect(host.querySelector('[aria-label="account"]')).toBeNull();
     const panel = await openMenu();
-    await act(async () => panel.querySelector<HTMLButtonElement>("button")!.click());
+    await act(async () => buttonByText(panel, "account").click());
     expect(onOpenAccount).toHaveBeenCalledOnce();
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
   });
@@ -83,13 +88,15 @@ describe("header settings menu", () => {
   it("keeps browser preferences usable without granting settings or account access", async () => {
     await mount({ canAccessAccount: false, selectedGroupId: "" });
     const panel = await openMenu();
-    expect(panel.querySelectorAll("select")).toHaveLength(3);
-    expect(panel.querySelectorAll("button")).toHaveLength(1);
-    expect(panel.querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
+    expect(
+      panel.querySelectorAll('[data-appearance-preferences] button[aria-haspopup="menu"]'),
+    ).toHaveLength(3);
+    expect(buttonByText(panel, "account")).toBeUndefined();
+    expect(buttonByText(panel, "settingsButton").disabled).toBe(true);
     await act(async () => root.render(<AppHeader {...props} canAccessAccount={false} />));
     const scoped = await openMenu();
-    expect(scoped.querySelectorAll("button")).toHaveLength(1);
-    expect(scoped.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
+    expect(buttonByText(scoped, "account")).toBeUndefined();
+    expect(buttonByText(scoped, "settingsButton").disabled).toBe(false);
     await act(async () => root.render(<AppHeader {...props} webReadOnly />));
     expect(host.querySelector("[data-app-settings-trigger]")).toBeNull();
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
@@ -112,21 +119,58 @@ describe("header settings menu", () => {
     }
     await act(async () => root.render(<Fixture />));
     const panel = await openMenu();
-    const [theme, scale, language] = panel.querySelectorAll("select");
-    for (const [select, value] of [
-      [theme, "dark"],
-      [scale, "125"],
-      [language, "ja"],
-    ] as const) {
-      await act(async () => {
-        select.value = value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+    for (const [label, text] of [
+      ["themeLabel", "themeDark"],
+      ["textSizeLabel", "125%"],
+      ["common:language", "日本語"],
+    ]) {
+      const trigger = panel.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+      expect(document.querySelector("[data-appearance-menu]")).toBeNull();
+      await act(async () => trigger.click());
+      const menu = await vi.waitFor(() => {
+        const element = document.getElementById(trigger.getAttribute("aria-controls")!);
+        expect(element?.getAttribute("data-state")).toBe("open");
+        return element!;
+      });
+      await act(async () => buttonByText(menu, text).click());
+      await vi.waitFor(() => {
+        expect(document.getElementById(menu.id)).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+        expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
       });
     }
-    expect(theme.value).toBe("dark");
-    expect(scale.value).toBe("125");
+    expect(panel.querySelector('button[aria-label="themeLabel"]')!.textContent).toContain(
+      "themeDark",
+    );
+    expect(panel.querySelector('button[aria-label="textSizeLabel"]')!.textContent).toContain(
+      "125%",
+    );
     expect(changeLanguage).toHaveBeenCalledWith("ja");
     expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
+  });
+
+  it("does not let a closing choice steal focus from a newly opened choice", async () => {
+    await mount();
+    const panel = await openMenu();
+    vi.useFakeTimers();
+    try {
+      const theme = panel.querySelector<HTMLButtonElement>('[data-appearance-select="theme"]')!;
+      await act(async () => theme.click());
+      const themeMenu = document.getElementById(theme.getAttribute("aria-controls")!)!;
+      await act(async () => buttonByText(themeMenu, "themeDark").click());
+      const scale = panel.querySelector<HTMLButtonElement>('[data-appearance-select="textScale"]')!;
+      await act(async () => scale.click());
+      const scaleMenu = document.getElementById(scale.getAttribute("aria-controls")!)!;
+      expect(scaleMenu).not.toBeNull();
+      await act(async () => {
+        vi.runOnlyPendingTimers();
+      });
+      expect(scale.getAttribute("aria-expanded")).toBe("true");
+      expect(scaleMenu.contains(document.activeElement)).toBe(true);
+      expect(document.querySelector("[data-app-settings-menu]")).toBe(panel);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("hands focus to the settings dialog and returns to the stable header trigger", async () => {
@@ -147,7 +191,7 @@ describe("header settings menu", () => {
     }
     await act(async () => root.render(<Fixture />));
     const panel = await openMenu();
-    await act(async () => panel.querySelector<HTMLButtonElement>("button:last-child")!.click());
+    await act(async () => buttonByText(panel, "settingsButton").click());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });

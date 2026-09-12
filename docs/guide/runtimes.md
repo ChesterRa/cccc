@@ -37,7 +37,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 |------------|-----------------|--------------------------------|
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
 | `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
-| `codex` | `codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
+| `codex` | `codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
 | `deepseek` | CCCC-managed `dsh-acp-demo --config …/cordis.yml` | Official ACP app composition; provider permission requests are rejected rather than implicitly approved. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
@@ -54,6 +54,14 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | `kilo` | `kilo` | Same request-scoped ACP approval policy as OpenCode; no persistent provider approval is written. |
 | `web_model` | N/A | Browser-delivered runtime; local CLI launch flags do not apply. |
 | `custom` | User command | CCCC preserves the user-provided command exactly. |
+
+CCCC disables Codex startup update checks by default so an interactive upgrade
+menu cannot block a session or consume messages intended for it. The managed
+app-server and native terminal share this default, including when using a custom
+executable path. Operators manage CLI upgrades through the original installation
+channel; CCCC does not modify the global `config.toml`. To restore update checks,
+explicitly add `-c check_for_update_on_startup=true` to the Actor or Runtime Profile
+command. This setting does not resolve incompatible versions or expired sign-ins.
 
 ## Setup Commands
 
@@ -109,6 +117,12 @@ and a busy-state follow-up exceeding 16,000 characters. A second probe checks
 that a submitted native model/variant selection reaches ACP. These probes do not
 use real provider credentials or paid inference. They do not establish native
 Windows or macOS behavior; those remain platform validation boundaries.
+
+Kilo can publish temporary snapshot-initialization progress as text parts marked
+`metadata["kilocode.lifecycle"]="transient"`. CCCC leaves that progress in the
+native TUI and excludes it from Actor/Analyst answer text, including later
+streaming updates to the same part. Ordinary answer text is preserved even
+when synthetic or containing the same words as a progress label.
 
 Windows npm installs (`npm install -g @kilocode/cli`, or a project-local install)
 expose `kilo.cmd`. CCCC resolves that official entrypoint to Node plus the
@@ -261,9 +275,14 @@ to troubleshoot a managed-session startup failure.
 
 If a saved transcript path no longer exists after a worktree move, initial
 recovery searches the configured Claude project store for the same session ID.
-Only a unique, validated regular file is accepted. The recovered file is pinned
-for the running session; later relocation, replacement, or ambiguous candidates
-fail explicitly rather than replaying or switching history.
+Only a unique, validated regular file is accepted. Running sessions also follow
+worktree transcript moves when the old path disappears and a unique file for
+the same session preserves the complete consumed byte prefix (SHA-256 checked).
+The reader retains its offset and any partial record, so history is not replayed.
+A missing or incomplete destination has a 10-second grace period; ambiguity,
+changed consumed history, same-path replacement, and paths outside the configured
+Claude store still fail explicitly. This preserves the existing provider session
+and terminal attachment without restarting the Actor.
 
 Direct Grok Actors use the same managed-session contract through Grok's native
 topology: CCCC owns one private leader, connects an ACP observer, and attaches

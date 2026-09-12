@@ -16,7 +16,7 @@ function terminalCellHeight(term: Terminal): number {
   return height > 0 ? Math.max(1, height / rows) : FALLBACK_CELL_HEIGHT_PX;
 }
 
-export function attachTerminalTouchScroll(term: Terminal): () => void {
+export function attachTerminalTouchScroll(term: Terminal, canSendInput: () => boolean): () => void {
   const element = term.element;
   if (!element) return () => undefined;
 
@@ -75,7 +75,13 @@ export function attachTerminalTouchScroll(term: Terminal): () => void {
     // X10 reports button presses only. Its normal buffer still needs local
     // scrollback, since a wheel event on the root reaches neither reporting
     // nor the child viewport's local scroll listener.
-    if (reportsWheel || term.buffer.active.type === "alternate") {
+    // Mouse tracking is an application request, not proof of writer ownership.
+    // Read current permission on every move, including handoffs during a gesture.
+    if (
+      !term.options.disableStdin &&
+      canSendInput() &&
+      (reportsWheel || term.buffer.active.type === "alternate")
+    ) {
       // xterm listens on element and owns mouse/alternate-buffer encoding.
       // Line units avoid its small-pixel trackpad scaling; one event per line
       // also supports TUIs that consume each wheel report as a single step.
@@ -91,7 +97,7 @@ export function attachTerminalTouchScroll(term: Terminal): () => void {
           }),
         );
       }
-    } else {
+    } else if (term.buffer.active.type === "normal") {
       term.scrollLines(lines);
     }
   };

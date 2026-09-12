@@ -17,7 +17,9 @@ export function resolveVoiceServiceReadiness(input: VoiceServiceReadinessInput) 
   return {
     assistantEnabled: Boolean(assistant?.enabled),
     recognitionBackend,
-    serviceAsrReady: recognitionBackend === "assistant_service_local_asr",
+    serviceAsrReady:
+      recognitionBackend === "assistant_service_local_asr" ||
+      recognitionBackend === "external_provider_asr",
     serviceAsrConfigured,
   };
 }

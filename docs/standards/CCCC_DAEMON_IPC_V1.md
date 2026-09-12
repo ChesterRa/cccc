@@ -145,6 +145,19 @@ The stream semantics are implementation-defined but, in CCCC today:
   window. A reconnecting client SHOULD resume from its last fully consumed byte
   cursor using `since`; the handshake clamps an expired cursor to retained history.
 
+Input is serialized per runtime session, without holding lifecycle synchronization
+across PTY I/O. An input transaction remains bound to that session: stopping and
+restarting an Actor MUST NOT route an old payload or submit-key suffix into its
+replacement. Writer ownership MUST be checked before starting an attachment input
+transaction. Partial or cancelled writes MUST NOT be reported as fully submitted.
+The Linux implementation uses nonblocking PTY readiness waits so backpressure
+remains responsive to cancellation, writer revocation and hangup; bytes already
+accepted by the PTY cannot be recalled. Other platforms retain their native PTY I/O.
+The reference daemon closes a terminal attachment if one input batch cannot be
+written within 30 seconds, releasing its writer ownership. This bounds a stalled
+input stream even when pending writes prevent observing client EOF. It does not
+limit idle viewing time or stop the Actor.
+
 Out-of-band control:
 - Control operations (e.g., `term_resize`) MUST be performed over a separate concurrent daemon connection.
 
@@ -828,10 +841,14 @@ Args:
 }
 ```
 
-The `mcp_catalog` view is read from the latest atomic Group snapshot without acquiring the
-outer Group lifecycle lock. Managed runtimes can initialize their actor-scoped CCCC MCP server
+The `mcp_catalog` view is read from one atomic Group snapshot without acquiring either
+outer lifecycle lock (Group or global). Managed runtimes can initialize their actor-scoped CCCC MCP server
 while `actor_start` is still materializing the provider, so serializing this internal catalog
-read behind that same lifecycle lock would deadlock provider startup. All other
+read behind that same lifecycle lock would deadlock provider startup. A queued global writer
+can also block a subsequent global read while waiting for startup to release its permit;
+therefore a global read permit is not a safe substitute. Catalog assembly reuses its captured
+Group snapshot for role and tool visibility decisions; authorization checks and capability-store
+synchronization still apply. All other
 `capability_state` reads retain normal Group read serialization; capability-store updates keep
 their own locking and are not relaxed by this view.
 
@@ -1767,9 +1784,15 @@ peer. Its startup runtime config (Runtime-derived execution surface, `command`,
 env/secrets, scope, submit behavior) is copied from the current stable foreman actor so the user
 does not configure a second runtime profile. The foreman's enabled/running state
 does not affect assistant config inheritance. If no foreman actor exists,
-enabling Voice Secretary fails. If the group is already running, the daemon
-starts or restarts this assistant actor as needed; disabling Voice Secretary
-stops/removes the actor and its private env.
+enabling Voice Secretary fails. An explicit `enabled=true` request also enables
+the internal actor and, if the group is already running, starts it as needed.
+Saving configuration alone MUST NOT start a stopped actor. Startup confirmation
+and `health.actor.running` MUST use the runtime owner's live state; a managed
+session does not return a traditional PTY launch status, and a retained error
+record does not prove it is running. Structured external runtimes retain their
+enabled/Group-running semantics. A failed start rolls back assistant settings,
+actor configuration, and private env. Disabling Voice Secretary stops/removes
+the actor and its private env.
 
 Args:
 ```ts
@@ -2198,8 +2221,10 @@ Result:
 #### `assistant_voice_session_update`
 
 Persist a Web-owned completion projection (currently speaker diarization) into
-the canonical session authority before publishing its completion
-event. This is an internal daemon boundary used by browser capture; callers do
+the canonical session authority. With `completion_event`, the daemon then appends
+the matching `assistant.voice.session` event under the same Group write permit.
+Web MUST NOT append the completion directly to the ledger. This is an internal
+daemon boundary used by browser capture; callers do
 not replace transcript segments through this operation.
 
 Voice-session mutation is limited to the user, the
@@ -2215,6 +2240,7 @@ Args:
   group_id: string
   session_id: string
   by?: "assistant:voice_secretary" | string
+  completion_event?: "diarization_ready" | "diarization_failed"
   patch: {
     status?: string
     document_path?: string
@@ -2231,8 +2257,19 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; session: Record<string, unknown> }
+{ group_id: string; session: Record<string, unknown>; completion_event_id?: string }
 ```
+
+When `completion_event` is supplied, `patch.status` MUST be `closed` and
+`patch.diarization_ready` MUST match the outcome. Invalid combinations MUST fail
+before state mutation. Omitting it preserves projection-only updates. An append
+failure MUST be reported even when session state was already saved; repeating the
+same completion is safe and emits at most one event per Group/session/outcome.
+A successful completion response MUST include its `completion_event_id`; a
+projection-only response from an older daemon is not completion confirmation.
+The Web completion caller retries transient I/O or unknown transport outcomes at
+most four times, then reports failure. This does not promise an atomic transaction
+across the state file and ledger, nor recovery after the Web host exits.
 
 #### `assistant_voice_session_transcript_clear`
 
@@ -2928,16 +2965,17 @@ Result:
 
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
-- A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
+- A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. For both Actors and Voice Analyst, execution-policy overrides MUST be applied to the app-server; the remote TUI MUST attach without approval, sandbox, or shell-environment policy overrides. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
 - A daemon-launched `claude` actor MUST use one CCCC-owned Claude Agent View background session and MUST start `claude attach` against that exact session. The resolved executable and each observed live worker MUST independently report Claude Code 2.1.259 or newer; their versions need not match. Agent View can retain older workers after upgrading the supervisor and migrate an idle session to a newer worker, so a supported version change alone MUST NOT invalidate the same managed session. CCCC MUST continue validating exact session identity, the protocol-v1 control response shape, and the credential-file boundary; unsupported or unverifiable versions, invalid protocol responses, and credential-boundary violations MUST fail closed. CCCC observes turn ownership and terminal settlement from the append-only provider transcript. A single retryable control-query failure MUST NOT invalidate a still-live session; sustained inability to verify liveness or confirmed job absence MUST disconnect it. CCCC owns background/session/attach, name, MCP identity, autonomy, and resume arguments. Runtime Profile environment values MUST be merged into one stable, owner-scoped, CCCC-protected settings file because Agent View deliberately strips arbitrary process environment from persisted jobs and stores that file path in its durable respawn metadata; raw values MUST NOT appear in the job record, terminal command, receipt, or logs. An ordinary process stop MUST retain this file while the durable session receipt remains resumable. The copy MUST be atomically replaced when that owner's effective settings change and removed when the managed session identity, Actor, or Group is retired. Stop MUST report success only after the Agent View job is confirmed absent. Start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, and the complete effective Claude launch identity, including content of file-backed settings and prompt inputs, still match. A live idle matching session MAY be re-adopted; an active, ambiguous, copied, or identity-mismatched session MUST fail or start fresh according to the existing receipt boundary and MUST NOT be guessed. Legacy Claude Hook and print-mode receipts MUST NOT be resumed.
 - A daemon-launched `grok` actor MUST use one CCCC-owned managed session. CCCC starts a dedicated private Grok leader, connects its ACP observer, and attaches the native writable Grok TUI to the same provider session. It injects the actor-scoped CCCC MCP server at session creation and treats structured lifecycle events as working/completion authority. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective provider-home identity still match. Legacy raw-terminal Grok receipts MUST NOT be resumed.
 - The Grok ACP observer MUST associate live `_meta.promptId` activity with its local turn and consume matching durable `turn_completed` updates, including `_x.ai/session/update`, for both controlled and native turns. A `send_now` cancellation MUST settle the old turn before the next native input is associated; a delayed prompt RPC response or duplicate terminal MUST NOT settle the new turn or consume its sources. A turn ending before prompt-bearing activity MAY use the persisted session-scoped event sequence following its user record as its completion boundary, never wall-clock timing. Replay records MUST NOT admit controlled or native input. Uncorrelated `prompt_complete` notifications remain non-authoritative. OpenCode and Kilo use their ordered backend event stream as described below.
-- A daemon-launched `opencode` actor MUST use one CCCC-owned managed session. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, observes the ACP session over stdio, attaches `opencode attach` to that exact session, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer. ACP remains the control and permission port. The observer MUST use the authenticated workdir-scoped `/event` endpoint, whose listener is registered before the HTTP response; the lazily subscribed `/global/event` endpoint cannot guarantee delivery of the first input. This backend event stream MUST order user admission, assistant output, and terminal session status for both controlled and native turns; a prompt RPC response or a duplicate ACP output update MUST NOT finish or contribute text to another turn. Persisted native input is not evidence that the current turn consumed it: correlation MUST follow the assistant message's parent user identity, retaining queued inputs across the preceding turn's idle status. A lost or malformed non-replayable stream invalidates the session. A model selection made in the native TUI becomes authoritative for later CCCC-managed prompts when the user submits the next TUI message; CCCC MUST mirror that message's exact provider/model and variant into the same ACP session. An explicit runtime-command `--model` remains the launch-time override. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-terminal OpenCode state MUST NOT be resumed.
+- A daemon-launched `opencode` actor MUST use one CCCC-owned managed session. CCCC starts `opencode acp` with a generation-scoped authenticated loopback backend, observes the ACP session over stdio, attaches `opencode attach` to that exact session, and injects the actor-scoped CCCC MCP server at session creation. The resolved executable MUST report OpenCode 1.18.14 or newer. ACP remains the control and permission port. The observer MUST use the authenticated workdir-scoped `/event` endpoint, whose listener is registered before the HTTP response; the lazily subscribed `/global/event` endpoint cannot guarantee delivery of the first input. Text parts marked `metadata["kilocode.lifecycle"]="transient"` are temporary Kilo UI progress and MUST NOT contribute to streamed or completed Actor/Analyst answer text; later deltas for these parts MUST also be excluded. The `synthetic` flag alone MUST NOT exclude ordinary answer text. This backend event stream MUST order user admission, assistant output, and terminal session status for both controlled and native turns; a prompt RPC response or a duplicate ACP output update MUST NOT finish or contribute text to another turn. Persisted native input is not evidence that the current turn consumed it: correlation MUST follow the assistant message's parent user identity, retaining queued inputs across the preceding turn's idle status. A lost or malformed non-replayable stream invalidates the session. A model selection made in the native TUI becomes authoritative for later CCCC-managed prompts when the user submits the next TUI message; CCCC MUST mirror that message's exact provider/model and variant into the same ACP session. An explicit runtime-command `--model` remains the launch-time override. Stop/start MUST validate and load the same version-2 managed receipt when its Runtime, workspace, command, model, and effective OpenCode storage identity still match. Legacy raw-terminal OpenCode state MUST NOT be resumed.
+- Completion of a temporary Actor restore worker or retirement of an IPC request worker MUST NOT terminate an otherwise healthy managed provider session. Providers that bind their lifetime to the spawning OS thread MUST be launched by daemon-lifetime workers. Explicit stop, failed-start rollback, and daemon shutdown retain ownership of process cleanup.
 - Managed runtime startup MAY synchronously enumerate the injected actor-scoped CCCC MCP tools before its provider session becomes ready. That catalog discovery MUST use `capability_state` with `view="mcp_catalog"` so it cannot wait on the same Group lifecycle lock held by `actor_start`; ordinary capability reads remain serialized normally.
 - For Codex, Claude, Grok, OpenCode, and Kilo Actors, CCCC MUST hand an incoming Actor delivery to the writable native TUI as soon as that terminal is ready. CCCC MUST NOT inspect provider busy state to choose `steer` versus `queue`, and MUST NOT hold the delivery until the current turn settles. The receiving Runtime owns that policy according to its own configuration. `runtime.delivery=accepted` means the canonical input and submit sequence were written successfully to the Runtime terminal; it does not claim that the provider completed or semantically accepted the work. Structured protocols remain authoritative for session identity, lifecycle, progress, completion, cancellation, and Voice Analyst delegation.
 - Realtime Voice owns the intent decision to create a Voice Analyst delegation; it does not own provider scheduling. Once `delegation.created` exists, CCCC MUST immediately hand the exact correlated input to the managed Runtime and MUST NOT hide it in a server-side wait-for-idle queue. An active Runtime with a verified exact-turn steer operation MAY receive the input through that operation; otherwise CCCC MUST write the exact payload and submit sequence to the same verified native terminal session, after which the Runtime owns the steer-versus-queue decision. CCCC MUST register correlation before the write, project whichever authoritative turn consumes it, and report success only after the Runtime control operation or complete terminal submit sequence was accepted. A missing, closed, or rejecting Runtime input path MUST return an explicit delivery error; busy state alone MUST NOT drop, delay, merge, or reject the delegation.
 - Voice Analyst Runtime settings MUST NOT change while a Realtime Voice call is active. After the call stops, active or queued Analyst work MUST block an ordinary settings update rather than being discarded implicitly. An interactive administrator MAY explicitly confirm discarding that work as part of the same settings transaction; CCCC MUST then stop the old managed session before applying the replacement and MUST report whether unfinished work was discarded. Candidate-launch failure MUST restore the prior settings and Runtime, but MUST NOT claim that explicitly discarded work was recovered.
-- Claude transcript entries MUST use the provider `promptId` as the durable provider-turn identity and MUST NOT infer identity from the Agent View summary headline. A human prompt observed before control acceptance is an external turn. Because the authenticated `reply` response does not expose that `promptId`, CCCC MAY return a stable local turn receipt as soon as the control request is accepted, but Voice ownership, progress, and results become authoritative only when the next transcript user record exactly matches the one pending controlled prompt and supplies its provider identifier. A competing prompt plus successful control acceptance is ambiguous and MUST invalidate the managed session rather than replaying the delivery. A controlled request that never starts, or settles without exposing the matching transcript, MUST fail within bounded post-acceptance or post-settlement intervals; active provider work MUST NOT expire solely because its turn is long. `turn_duration`, the provider interruption marker, and an explicit failure record are terminal authority. The state file and selected transcript file identity MUST be revalidated while following the session. Losing, truncating, rotating, replacing, or malformedly extending the non-replayable transcript tail, including an incomplete record that does not settle within a bounded interval, MUST invalidate the session.
+- Claude transcript entries MUST use the provider `promptId` as the durable provider-turn identity and MUST NOT infer identity from the Agent View summary headline. A human prompt observed before control acceptance is an external turn. Because the authenticated `reply` response does not expose that `promptId`, CCCC MAY return a stable local turn receipt as soon as the control request is accepted, but Voice ownership, progress, and results become authoritative only when the next transcript user record exactly matches the one pending controlled prompt and supplies its provider identifier. A competing prompt plus successful control acceptance is ambiguous and MUST invalidate the managed session rather than replaying the delivery. A controlled request that never starts, or settles without exposing the matching transcript, MUST fail within bounded post-acceptance or post-settlement intervals; active provider work MUST NOT expire solely because its turn is long. `turn_duration`, the provider interruption marker, and an explicit failure record are terminal authority. The state file and selected transcript file identity MUST be revalidated while following the session. An active transcript MAY relocate inside the configured Claude project store only after the old path disappears, a unique same-session file is found, and its entire consumed byte prefix matches the observer’s retained SHA-256 digest. The reader MUST preserve its byte offset and partial record without replaying history. A missing or incomplete relocation destination MUST settle within a bounded 10-second grace period; sustained loss, consumed-history mismatch, ambiguous candidates, same-path replacement, truncation of the active file, or malformed tail records MUST invalidate the session. Relocation alone MUST NOT stop or recreate the provider session.
 - A native-terminal delivery MUST wait for the TUI's advertised input mode before writing any payload; a PTY handle alone does not prove input readiness. Readiness waiting MUST be bounded and cancellable and MUST NOT inject a probe prompt, fall through on timeout, or wait for provider work to finish. Actor deliveries remain unaccepted on readiness failure; Voice native-input deliveries report an explicit error without writing the payload.
 - A Claude receipt MAY name an empty session that has never created a transcript. Before respawning it, CCCC MUST inspect the existing durable job metadata: only positive empty-input evidence with no transcript path, consumed transcript bytes, output, or token usage permits transcript-free recovery. An absent/null or numeric zero output-token counter does not indicate usage; nonzero or malformed counters MUST retain strict transcript validation. Unknown or materialized history MUST retain strict transcript validation, including a transcript written before Agent View publishes its path. This exception MUST preserve the exact provider session ID and MUST NOT replay old input or create a replacement conversation silently.
 - Observer failure MUST NOT be treated as proof of provider process exit. Actor and Analyst teardown MUST use confirmed provider stop, and a failed stop MUST retain retryable ownership rather than mark the job stopped. Normal managed-client shutdown MUST explicitly terminate event readers even when the session still retains the event sender; observers MUST distinguish expected closure from a failure and MUST NOT emit duplicate stop events.
@@ -3145,7 +3183,7 @@ Result:
 
 Notes:
 - CCCC does not create or select a separate Hermes profile.
-- `HERMES_HOME`, when supplied by the user, is treated as ordinary runtime environment.
+- `HERMES_HOME`, when supplied by the user, is treated as ordinary runtime environment. Explicit Actor/Profile environment takes precedence over the host default.
 - `mcp.env` must persist `${CCCC_HOME}`, `${CCCC_GROUP_ID}`, and `${CCCC_ACTOR_ID}` placeholders so each actor process resolves its own CCCC identity.
 
 #### `runtime_hermes_prepare`
@@ -3174,6 +3212,7 @@ Result:
 Notes:
 - Setup MAY invoke `hermes mcp add cccc ...` and answer Hermes' discovery prompt only when `auto_enable_tools`/`yes` is true.
 - Discovery uses concrete CCCC env values, then CCCC normalizes saved Hermes MCP env back to actor-time placeholders.
+- Hermes and other runtime MCP configuration/check helpers are finite commands: input, both output streams, and exit share a deadline. Their owned process group / Windows Job is released on completion or timeout. Captured output is bounded to 2,000,000 bytes per stream; oversized output is an explicit command error, never partial setup evidence.
 
 #### `runtime_hermes_mcp_test`
 
@@ -4040,7 +4079,7 @@ Notes:
 
 Args:
 ```ts
-{ group_id: string; by?: string; ops: Array<Record<string, unknown>>; dry_run?: boolean }
+{ group_id: string; by?: string; ops: Array<Record<string, unknown>>; dry_run?: boolean; if_version?: string }
 ```
 
 Operation item shape (normative minimum):
@@ -4050,7 +4089,9 @@ type ContextOpV1 = { op: string } & Record<string, unknown>
 
 Notes:
 - Unknown op names SHOULD be rejected.
-- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v2 operation list.
+- See `docs/standards/CCCC_CONTEXT_OPS_V1.md` for the v3 operation list and permission/storage failure semantics.
+- `if_version` is compared with the current locked snapshot; a mismatch returns `version_conflict`.
+- Invalid or unauthorized batches do not persist. Unreadable canonical state and persistence failures return `io_error`; after such a failure, reload before retrying because per-file atomic writes do not imply multi-file rollback.
 
 Result:
 ```ts
@@ -4774,6 +4815,16 @@ Result:
 { snapshot: Record<string, unknown> }
 ```
 
+Snapshot metadata counts and hashes the canonical Event array in ledger append
+order, including sealed plain or gzip segments. Snapshot and compaction MUST
+reject malformed JSON and records that cannot be decoded as Event objects before
+publishing snapshot metadata or rotating the active file. They MUST NOT silently
+omit unreadable records from a successful integrity report. Maintenance scans do
+not require a full-history query index. Stored records MUST contain their
+nonempty `id` and `ts`; maintenance MUST NOT invent those fields using construction
+defaults. Deterministic defaults for omitted optional fields and the snapshot hash
+format remain unchanged for canonical records.
+
 #### `ledger_compact`
 
 Args:
@@ -4984,6 +5035,7 @@ Streaming mode:
 - When `kinds` is provided, only matching event kinds SHOULD be emitted.
 - If `by` identifies an `actor_id`, a daemon MAY apply the same recipient-routing visibility rules used by messaging (e.g., only emit `chat.message`/`system.notify` addressed to that actor and exclude the actor’s own `chat.message` events). This stream filter is independent of the Mail-only Inbox projection.
 - Resume (`since_event_id` / `since_ts`) is best-effort in v1; clients MUST be able to reconcile using `inbox_peek`.
+- Ledger compaction preserves event IDs. An established follower MUST retain unseen events across rotation and refill, and MUST NOT advance its cursor when a busy writer defers polling. A missing previously observed cursor is an explicit recovery error, not permission to skip events.
 - The stream ends when the client closes the connection or the daemon exits.
 - To protect daemon responsiveness, a daemon MAY drop slow subscribers (clients SHOULD reconnect and reconcile).
 
@@ -5213,6 +5265,13 @@ A non-local Web binding or a configured public URL requires at least one adminis
 
 Start remote access according to configured provider/mode.
 
+Tailscale start/stop commands have a 30-second deadline and bounded captured
+output. Missing executables report `remote_access_not_installed`; command
+failure or timeout reports `remote_access_start_failed` / `remote_access_stop_failed`.
+An error does not mark the desired enabled state as successfully changed. A
+timeout does not roll back external network changes; inspect Tailscale before
+retrying. Other providers retain their own lifecycle semantics.
+
 Args:
 ```ts
 { by?: string }
@@ -5276,6 +5335,9 @@ Stable error classes:
     cut: boolean
     disabled: boolean
     in_reach: boolean
+    reach_enabled: boolean
+    reach_status: "off" | "connecting" | "online" | "offline" | "unknown"
+    checked_at?: string
     reach_supported: boolean
     account_reachable?: boolean | null
     account_origin?: string | null
@@ -5292,7 +5354,32 @@ Stable error classes:
 }
 ```
 
-`membership_status` is user-only because `web_url` contains a local bearer credential. Implementations MUST reject non-user callers before assembling it. The URL is assembled locally and MUST NOT be stored on the account plane. It is null while logged out. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+`membership_status` is user-only. Implementations MUST reject non-user callers before assembling it. `hostname` is the reserved, tokenless device origin; its presence does not prove that DNS or a tunnel has been provisioned. `web_url` is the tokenless Web sign-in address, assembled locally and null while logged out. It MUST NOT contain a bearer credential. The Web port can separately issue a short-lived, one-time Web login grant for the current authorized administrator. Website account sign-in does not authenticate a browser to the local CCCC Web. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+
+`reach_enabled` is the saved Reach intent; `in_reach` only identifies the selected
+provider. Neither proves connectivity. `reach_status` is an ephemeral projection:
+`off` when stopped or unlinked/cut, `connecting` immediately after an accepted
+start, `offline` when enabled but the helper is absent or the account reports a
+disconnected/unprovisioned tunnel, and `unknown` when the running helper has no
+current connection confirmation. `online=true` and `reach_status=online` require
+enabled Reach, a live tracked helper, and current account-side connection
+evidence. A successful process start or an unavailable status service MUST NOT
+produce `online=true`. Mutating operations do not claim unperformed connection
+checks. `checked_at` is the UTC time of a completed status refresh, including a
+failed account check; it is not a cached last-success timestamp.
+
+The account device API adds `connection: not_started | online | offline | unknown`
+alongside its existing fields. Native clients preserve `unknown`, including
+unrecognized future states; when the field is absent on an older issuer, they
+use the existing `online` boolean. This is an additive v1 change.
+
+Tunnel connection evidence is not proof of origin application availability or
+browser authorization. Clients label it accordingly and offer the Web sign-in
+flow for an actual access check. After an explicit start, clients MAY perform
+bounded status confirmation while the panel is visible; they MUST stop on a
+deadline and MUST NOT reissue Reach start or change configuration as a retry.
+Disconnected Reach still owns its provider/binding settings until explicitly
+stopped; configuration controls must not infer ownership from `online`.
 
 `account_reachable` is ephemeral evidence from the current status refresh; it is
 omitted when no linked-device probe applies, `true` after a valid account-plane
@@ -5320,7 +5407,14 @@ with membership mutations rather than treating it as a side-effect-free read.
 
 `membership_login` starts RFC 8628 device-code login against `CCCC_ACCOUNT_ORIGIN` and returns `membership.pending` (`verification_uri`, optional `verification_uri_complete`, `user_code`, `interval`). While an unexpired, still-pollable grant exists, another `membership_login` MUST replay it rather than issue a second device code or retarget it to a different origin. Both verification URLs MUST be absolute HTTP(S) URLs on the configured account origin; clients reject an off-origin authorization URL before storing or opening it. The selected account origin is persisted with the pending login and resulting device grant. Polling and every later authenticated device or Reach request MUST use that issuer-bound origin; a changed daemon environment or per-request override MUST NOT retarget an existing bearer token. The CLI or Web client opens `verification_uri_complete` when present and otherwise presents `verification_uri` plus `user_code`. The advertised interval is a minimum and MUST NOT be capped downward. On `slow_down`, subsequent polling waits MUST increase by at least five seconds. `authorization_pending`, `slow_down`, transport failures, and 5xx responses preserve the pending grant. `access_denied` and `expired_token` are terminal for that grant: the daemon MUST clear the matching pending state before returning the error so the next `membership_login` can issue a fresh code. Once a grant has been committed, an exact or late `membership_login_poll` MUST replay the logged-in status instead of failing because the pending code was consumed.
 
-`membership_logout` first stops any tracked Reach helper, then retires the issuer-bound account device through the account plane, and only then clears local membership secrets and retired Reach URLs. Network or account errors preserve the local credential so the user can retry; an already absent or disabled remote device is treated as retired. The result includes a warning that the next login is a new device and hostname.
+`membership_logout` first stops any tracked Reach helper and persists disabled
+Reach intent, then retires the issuer-bound account device through the account
+plane, and only then clears local membership secrets and retired Reach URLs.
+Network or account errors preserve the local credential so the user can retry,
+but MUST NOT re-enable local Reach through background recovery. An unrelated
+remote-access provider is preserved. An already absent or disabled remote device
+is treated as retired. The result includes a warning that the next login is a
+new device and hostname.
 
 Requests send `CCCC-Membership-Version: 1`. An account plane that no longer supports the client returns `membership_unsupported_version`. `CCCC_ACCOUNT_ORIGIN` MUST be an HTTP(S) origin without user information, a non-root path, query, or fragment. It MUST use HTTPS, except that loopback HTTP is allowed for local development. Clients MUST NOT follow account-plane redirects because authenticated requests carry a device bearer token.
 
@@ -5347,9 +5441,32 @@ Installs the pinned `cloudflared` binary under `CCCC_HOME` after verifying its p
 { by?: string }
 ```
 
-`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier and an owner-only proof key. Reach MUST send a fresh random challenge, and the loopback `/api/v1/ready` response MUST return the recorded identifier plus an HMAC-SHA256 proof bound to that challenge before Reach may start. The verifier MUST NOT send the expected identifier or proof key to the listener; a live PID, accepting TCP port, or reflected request value alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble local token-bearing URLs. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
+`reach on` requires an administrator Access Token, a logged-in device that is not disabled, and an account origin. It MUST refuse if `CCCC_WEB_ALLOW_UNAUTHENTICATED` is set or if `tailscale` is already enabled. An enabled `manual` public URL remains active while Reach is prepared and is replaced only after the Reach helper starts successfully; any pre-commit failure MUST preserve the manual provider and URL. It installs the pinned `cloudflared` if missing, and refuses a version/hash mismatch unless `membership_reach_install` (`cccc reach install`) was used. The account-plane request includes the port of the currently live, identity-verified Web listener as `origin_port` (1–65535), not merely the desired setting or environment default. The runtime descriptor MUST contain an unguessable Web-instance identifier and an owner-only proof key. Reach MUST send a fresh random challenge, and the loopback `/api/v1/ready` response MUST return the recorded identifier plus an HMAC-SHA256 proof bound to that challenge before Reach may start. The verifier MUST NOT send the expected identifier or proof key to the listener; a live PID, accepting TCP port, or reflected request value alone is not proof that the listener belongs to CCCC. The account plane MUST route the named tunnel to `127.0.0.1:<origin_port>` and MUST NOT accept an arbitrary origin host. A returned Reach hostname MUST normalize to one HTTPS origin without user information, a non-root path, query, or fragment before it can be stored or used to assemble public URLs and origin-bound Web login links. On success it sets `remote_access.provider=reach` and writes `web_public_url`.
 
-The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires a live tracked helper and, when the account service supplies connection status, a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+The tunnel token MUST NOT appear in process arguments; supported helpers use a permission-restricted token file. Before signaling a persisted helper PID, an implementation MUST verify the live executable against the exact managed executable recorded when the helper started (or use an in-process child handle it still owns); process names and argument substrings are insufficient. A mismatch preserves tracking and returns an error instead of killing an unrelated process. `reach off` keeps `provider=reach`, but reports success only after the tracked helper has exited and its tracking files are retired. A persisted `enabled` flag alone is not proof that Reach is online: status requires enabled Reach, a live tracked helper, and confirmation of a connected named tunnel at the account plane. If any authenticated device-status or Reach-issuance response reports the device disabled or definitively missing, the helper is stopped, Reach-owned public state is cleared, and status is `cut` before the operation returns.
+
+The daemon MUST reconcile saved `provider=reach, enabled=true` intent after
+restart without a CLI action, open browser, or status poll. Only a linked,
+non-disabled device with an administrator Access Token may restore. A running,
+identity-checked tracked helper is left running; cloudflared owns its transport
+reconnection. When the helper has exited, restoration waits for the signed live
+Web binding, verifies the already-installed pinned helper, and requests fresh
+credentials from the bound account issuer using that Web port. Automatic
+restoration MUST NOT download or upgrade helpers. Missing/mismatched helpers
+remain offline with an actionable error and require explicit installation.
+
+Restoration is single-flight. Account requests have a fifteen-second deadline and
+run outside dispatcher permits; failed attempts back off from five seconds to
+at most sixty seconds. Local reconciliation checks run every five seconds when
+idle, without cloud calls for a running helper or disabled Reach. Background
+work MUST NOT queue a global writer behind Actor startup. Before applying a
+result it MUST serialize with membership/settings mutations and recheck the
+saved intent, issuer/device binding, administrator prerequisite, live Web port,
+and shutdown state. A result superseded by off/logout/relink/configuration
+changes is discarded; it MUST NOT resurrect access or overwrite the newer
+state. Definitive device rejection clears the matching Reach intent as above;
+transient failures preserve it for retry. Status polling observes this work
+and MUST NOT trigger restoration. Helper startup alone is not online evidence.
 
 Membership state lives in `CCCC_HOME/secrets/membership.json`. Every
 read-modify-write mutation MUST hold
@@ -5451,6 +5568,15 @@ legacy state after a canonical terminal decision.
 
 The Rust WebSocket owner and MCP bridge share live reverse-session state through
 these daemon-internal operations:
+
+Internal session completion, polling, close and readiness operations synchronize through the
+session runtime's mutex and generation checks, without acquiring outer Group or global lifecycle
+permits. A completion or poll must not wait behind a global mutation which is itself waiting for
+the delivery to finish. Session open and delivery retain their outer global read permits, so
+initiating work still participates in lifecycle draining. Terminal attachment ownership inspection
+likewise uses the terminal resource's own synchronization.
+This exception does not relax ordinary message, settings, capability mutation, or Group lifecycle
+serialization and does not grant terminal write permission.
 
 - `group_bridge_session_open`: register a live route identified by `group_id`,
   `remote_group_id`, and `remote_peer_id`; returns a new opaque `generation`.
@@ -6620,3 +6746,53 @@ Response line:
 ```json
 {"v":1,"ok":false,"result":{},"error":{"code":"missing_group_id","message":"missing group_id","details":{}}}
 ```
+
+
+### External ASR Web boundary
+
+External provider credentials are Web-owned configuration, not daemon IPC or
+Group settings. Administrator-only Web routes are:
+
+- `GET /api/v1/voice/asr/providers`: redacted provider configuration and credential-presence flags.
+- `PUT /api/v1/voice/asr/providers/{provider}`: update Bailian/Volcengine configuration; omitted/blank secrets preserve existing values; `clear_credentials=true` explicitly clears credentials.
+- `POST /api/v1/voice/asr/providers/{provider}/probe`: test the saved connection without audio.
+
+Group assistant settings select `recognition_backend=external_provider_asr` and
+`external_asr_provider=bailian|volcengine`; they never carry provider secrets.
+The existing leased `/transcriptions/ws` route accepts this backend and preserves
+`ready`, `partial`, `final`, `final_asr_text`, `error`, and `closed` semantics.
+External document checkpoints use `external_provider_asr_streaming` and explicit
+`auto_document_max_window_seconds` scheduling (10–300 seconds; absent means 300).
+An explicit null disables periodic submission until stop/recovery. Stable sentences
+MUST be buffered and flushed in audio-time order; periodic ticks MUST flush due
+text even when the provider sends no further sentences. Stop/recovery MUST flush
+pending text regardless of this setting. Provider completion MUST NOT bypass
+checkpoint recovery: retries retain segment IDs, and a connected browser MUST
+receive `final_asr_text` with persistence status even after the final packet's
+checkpoint failed. These checkpoints have
+`transcript_stage=live`; complete final revisions use
+`external_provider_asr_final`, `transcript_stage=final`, and
+`supersede_stage=live`. Late live input MUST NOT create another semantic input
+once that session has a final cloud revision. Provider errors are sanitized;
+`recovered_text` on an error contains only recognized non-document speech for
+recovery into the originating composer, not an automatic Agent request.
+
+A complete final revision MUST NOT be submitted while any nonempty cloud
+checkpoint lacks acknowledgement. Final revision persistence is not proof of
+checkpoint or semantic-input delivery. In this case `final_asr_text` MUST report
+`transcript_persistence=failed`, `transcript_persisted=false`, and
+`transcript_pending_segments`, in audio-time order. Each pending record contains
+the original daemon `segment_id`, `text`, `start_ms`, and `end_ms`; an uncertain
+write acknowledgement MUST retain its original idempotency key too.
+
+The browser retries these records sequentially through the existing transcript
+append operation using the recording's Group, session, document, language, and
+model. Each retry is stable live input (`is_final=true`, `flush=true`,
+`transcript_stage=live`, backend `external_provider_asr_streaming`). Only after
+all acknowledgements may a complete final result be retried as `final-asr`.
+Pending checkpoints take precedence over `partial=true`: partial results MUST
+also recover their pending records, but MUST NOT submit a superseding final
+revision. A failed browser checkpoint retry stops the sequence and retains the
+remaining IDs and text in its error details. The Web UI reports failure and
+returns this unconfirmed text to the original Group's composer for user recovery;
+it MUST NOT dispatch it automatically, mark it committed, or retry indefinitely.

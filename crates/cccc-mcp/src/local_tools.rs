@@ -18,8 +18,8 @@ pub async fn call(
         "cccc_repo" | "cccc_repo_edit" => crate::repo::call(&root, action(&args), &args)?,
         "cccc_shell" => one_shot(&root, command(&args)?, timeout(&args)).await?,
         "cccc_git" => git(&root, &args).await?,
-        "cccc_exec_command" => crate::local_sessions::start(&root, &args)?,
-        "cccc_write_stdin" => crate::local_sessions::write(&args)?,
+        "cccc_exec_command" => crate::local_sessions::start(home, &root, &args)?,
+        "cccc_write_stdin" => crate::local_sessions::write(home, &args)?,
         "cccc_code_exec" => crate::code_mode::start(home, client, &root, &args).await?,
         "cccc_code_wait" => crate::code_mode::wait(home, client, &args).await?,
         "cccc_apply_patch" => apply_patch(&root, &args).await?,
@@ -51,15 +51,23 @@ async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathB
 
 async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, String> {
     let (program, arguments) = cmd.split_first().ok_or("command is required")?;
-    let mut command = tokio::process::Command::new(program);
+    let mut command = std::process::Command::new(program);
     command.args(arguments).current_dir(root);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(seconds), command.output())
-        .await
-        .map_err(|_| format!("command timed out after {seconds}s"))?
-        .map_err(|error| error.to_string())?;
-    Ok(
-        json!({"exit_code":output.status.code(),"stdout":bounded(&output.stdout),"stderr":bounded(&output.stderr)}),
+    let output = cccc_runtime::capture_command(
+        &mut command,
+        None,
+        std::time::Duration::from_secs(seconds),
+        2_000_000,
     )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(json!({
+        "exit_code":output.status.code(),
+        "stdout":String::from_utf8_lossy(&output.stdout),
+        "stderr":String::from_utf8_lossy(&output.stderr),
+        "stdout_truncated":output.stdout_truncated,
+        "stderr_truncated":output.stderr_truncated,
+    }))
 }
 
 async fn git(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
@@ -155,26 +163,16 @@ async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Result<Value, St
         let changed = apply_codex_patch(root, patch)?;
         return Ok(json!({"applied":true,"files":changed}));
     }
-    let mut child = tokio::process::Command::new("git")
-        .args(["apply", "-"])
-        .current_dir(root)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    use tokio::io::AsyncWriteExt;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("git apply stdin unavailable")?
-        .write_all(patch.as_bytes())
-        .await
-        .map_err(|error| error.to_string())?;
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut command = std::process::Command::new("git");
+    command.args(["apply", "-"]).current_dir(root);
+    let output = cccc_runtime::capture_command(
+        &mut command,
+        Some(patch.as_bytes()),
+        std::time::Duration::from_secs(timeout(args)),
+        2_000_000,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
@@ -424,14 +422,100 @@ fn timeout(args: &Map<String, Value>) -> u64 {
         .unwrap_or(30)
         .clamp(1, 600)
 }
-fn bounded(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(&bytes[..bytes.len().min(2_000_000)]).into_owned()
-}
 
 #[cfg(test)]
 mod tests {
     use super::{apply_codex_patch, command, file_message_mode, timeout};
     use serde_json::json;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timed_out_shell_cannot_continue_writing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let error = super::one_shot(
+            temp.path(),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "sleep 1.3; printf late > marker".into(),
+            ],
+            1,
+        )
+        .await
+        .expect_err("timeout");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(error.contains("timed out"));
+        assert!(
+            !temp.path().join("marker").exists(),
+            "timed-out tool continued mutating files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_shell_cannot_continue_writing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let pending = super::one_shot(
+            temp.path(),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "sleep 0.3; printf late > marker".into(),
+            ],
+            10,
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), pending)
+                .await
+                .is_err()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(
+            !temp.path().join("marker").exists(),
+            "cancelled tool continued mutating files"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_reports_truncated_output_and_preserves_failure_status() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output = super::one_shot(
+            temp.path(),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "head -c 2000001 /dev/zero; printf error >&2; exit 7".into(),
+            ],
+            3,
+        )
+        .await
+        .expect("captured failure");
+        assert_eq!(output["exit_code"], 7);
+        assert_eq!(output["stdout"].as_str().expect("stdout").len(), 2_000_000);
+        assert_eq!(output["stdout_truncated"], true);
+        assert_eq!(output["stderr"], "error");
+        assert_eq!(output["stderr_truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn unified_patch_uses_the_finite_command_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("file.txt"), "before\n").expect("fixture");
+        let args = json!({"patch":"diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-before\n+after\n"}).as_object().cloned().expect("args");
+        let result = super::apply_patch(temp.path(), &args)
+            .await
+            .expect("apply unified diff");
+        assert_eq!(result["applied"], true);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("file.txt")).expect("file"),
+            "after\n"
+        );
+        assert!(
+            super::apply_patch(temp.path(), &args).await.is_err(),
+            "rejected patch must remain an error"
+        );
+    }
 
     #[test]
     fn shell_timeout_uses_the_schema_field_and_keeps_the_legacy_alias() {

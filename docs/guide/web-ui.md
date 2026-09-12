@@ -27,8 +27,10 @@ The Web UI has these main areas:
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Settings and more** collects theme, text size, language, account and the full settings entry.
-Appearance choices show their current values and can be selected directly. Narrow headers use
-the existing overflow menu, with the same appearance choices and access rules.
+Appearance choices use application menus for theme, text size and language. Selecting an
+option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
+options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
+sheet with the same choices and access rules; choice panels are portalled above its scroll area.
 **Pause Delivery** pauses message delivery; **Stop All Agents** stops the Actors themselves.
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
@@ -394,6 +396,27 @@ Click on an agent's tab to see its terminal output.
 1. Type in the message input at the bottom
 2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
+On desktop, the input grows with its contents up to a compact height by default.
+Drag the separator above the composer to set its actual height, including for an
+empty draft. That manual height stays in place while typing or clearing the input.
+Double-click or press Enter on the focused separator to restore automatic sizing.
+Up/Down adjust by 16 base pixels; Home selects the minimum and End the maximum.
+The manual preference is stored locally in base-font pixels and scales with text
+size. Its effective height is recalculated as the panel shrinks, capped at 60% of
+the panel while reserving message space and accounting for other composer rows.
+The separator is absent below 768 px; mobile message scrolling and the existing
+input expansion control remain unchanged.
+
+On phones narrower than 640 px, the Voice Secretary sheet keeps language,
+microphone and device refresh on one row. Prompt-mode help starts collapsed;
+the Activity area uses the remaining height and scrolls independently, so the
+last reply can be read without scrolling the control header. Instruction mode
+places the compact text input and Send button side by side. Document mode stacks
+the heading, view switch, metadata and actions at full width; paths wrap, markdown
+headings use smaller phone sizes, and document content scrolls within the available
+space. Wider layouts use
+the existing workspace arrangement.
+
 Recipient chips are one-shot: a successful send clears the selection, and switching Groups does not
 restore a previous manual recipient. Unsent message text and attachments still remain as per-Group
 drafts.
@@ -567,7 +590,7 @@ CCCC keeps the token policy simple:
 - localhost-only: direct loopback browser requests are passwordless and use a non-persistent local administrator principal
 - LAN/private network and public URL/tunnel/reverse proxy: an Admin Access Token is mandatory before exposure
 
-`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure also requires `CCCC_REMOTE_ALLOW_INSECURE=1`; prefer an HTTPS reverse proxy, tunnel, or encrypted overlay. Neither override is offered as a Web UI toggle.
+`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is only an unsafe listener override; it never grants API authorization or bypasses first-admin bootstrap. Plain HTTP manual LAN exposure is allowed by default for private-network use, but still requires an Admin Access Token before remote APIs can be used. Prefer an HTTPS reverse proxy, tunnel, or encrypted overlay for untrusted networks.
 
 CCCC adds `frame-ancestors 'self'`, `SAMEORIGIN`, `nosniff`, `no-referrer`, a restrictive permissions policy, and HSTS on HTTPS responses. Supervised CCCC Web processes trust reverse-proxy forwarding headers automatically only while the effective listener is loopback. A supervised LAN/wildcard listener or externally managed reverse proxy must explicitly set `CCCC_WEB_TRUST_PROXY_HEADERS=1` and must overwrite—not append—client-supplied `Forwarded` and `X-Forwarded-*` headers. Direct public listeners should leave this flag unset.
 
@@ -579,15 +602,69 @@ a tab. The temporary header token is removed from browser session storage after
 the cookie is established. Access tokens are not accepted in ordinary API, SSE,
 or WebSocket query strings and should never be placed in shared URLs.
 
-Reach follows the same rule. Its status payload exposes only a tokenless public
+For managed remote access, open **Settings → Web Access** and link this installation
+to your CCCC account in the Reach section. Approve the request on the website,
+then return to the same local panel. If an administrator Access Token already
+exists, reuse it; otherwise complete the displayed token prerequisite. Choose
+**Turn on remote access** explicitly. Account registration only reserves the
+device address; enabling Reach creates its DNS record and tunnel.
+
+Once enabled, Reach restores automatically when CCCC restarts and its Web
+listener is ready. Keep CCCC running on this computer; opening the settings
+panel is not required. Temporary network/account failures retry in the
+background, with a delay of up to one minute between failed attempts. An
+already-running tunnel helper handles its own network reconnection.
+Turning Reach off, unlinking the account, or cutting the device prevents
+automatic restoration. If unlinking cannot complete because the account service
+is unavailable, Reach stays off and the device credential is retained so you can
+retry unlinking. If the installed helper is missing or no longer matches
+this CCCC version, install it explicitly with `cccc reach install`; automatic
+restoration does not download or upgrade executables.
+
+The panel confirms the connection with at most six status checks over 45 seconds.
+It pauses checks while hidden and never restarts or provisions a tunnel as a
+retry. If confirmation ends without a connection, check this computer's network
+and CCCC process, then use **Check connection**. A stopped helper offers an
+explicit startup retry in addition to daemon recovery. **Turn off** remains available, and other provider/binding
+settings remain locked while Reach is enabled even if the tunnel disconnects.
+
+**Tunnel connected** means the account service observed a connected tunnel. Open
+Web from another network to confirm application access; website account login
+does not sign the browser into this device. The displayed check time is the last
+status observation, not a continuous availability guarantee.
+
+Reach follows the same credential rule. Its status payload exposes only a tokenless public
 address. Clicking **Open Web** or **Copy Admin Link** asks the local authenticated
 Rust Web session for a 120-second, one-time exchange code bound to that Reach
 origin. The public endpoint consumes the code once, establishes the HttpOnly
 cookie, and redirects to a clean `/ui/` URL.
 
-Cookie-authenticated Rust Web writes require an exact allowed `Origin`, with a
+A passwordless localhost administrator reuses an existing administrator Access
+Token for this exchange; no new long-lived token is created. A remotely signed-in
+administrator remains bound to their own active token. Revoking that token also
+invalidates outstanding links backed by it.
+
+Cookie-authenticated Rust Web writes and WebSocket connections require an exact allowed `Origin`, with a
 same-origin `Referer` accepted only as a fallback. This check is independent of
 CORS and blocks same-site sibling domains from submitting state-changing forms.
+
+Cross-origin browser clients can opt in through `CCCC_WEB_CORS_ORIGINS`, a
+comma-separated list of exact origins (scheme, host and port). Named origins
+support credentials and are also accepted by Cookie write and Cookie-authenticated
+WebSocket origin checks. Include only trusted client sites.
+
+`CCCC_WEB_ALLOW_ANY_ORIGIN=1` instead enables wildcard HTTP CORS without
+credentials, for clients that explicitly supply an `Authorization: Bearer ...`
+access token and omit browser credentials. It does not bypass Cookie write or
+Cookie-authenticated WebSocket origin checks, create an authenticated principal, or expose the local
+passwordless principal to other sites. Local passwordless reads with an Origin
+or Referer must identify the same loopback origin, just as writes do. Browser
+WebSocket clients using cookies still need a same-origin connection or a named
+trusted origin. Explicit Bearer-authenticated WebSocket clients do not require an
+Origin match; token and Group permissions still apply.
+If both settings are present, wildcard HTTP CORS takes precedence; use only
+`CCCC_WEB_CORS_ORIGINS` for cross-origin Cookie sessions. Both settings are off
+by default and require restarting the Web process to change CORS responses.
 
 #### Reverse proxy headers
 
@@ -609,8 +686,9 @@ Do not pass through client-supplied `X-Forwarded-*` values. The trusted proxy
 must overwrite them. CCCC also accepts RFC 7239 `Forwarded` with `host` and
 `proto`, and handles comma-separated multi-proxy `X-Forwarded-*` chains by
 using the first browser-facing value. A mismatch is rejected with
-`origin_not_allowed` for WebSockets or `csrf_origin_invalid` for Cookie writes;
-the server log records both the received and reconstructed origins.
+`csrf_origin_invalid` for Cookie-authenticated writes and WebSockets. If a proxy
+cannot preserve the public host, configure its exact browser origin in
+`CCCC_WEB_CORS_ORIGINS` instead of disabling source protection.
 
 A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::fs::{read_json, write_json};
@@ -40,9 +40,27 @@ fn snapshot_locked(
     reason: &str,
     ledger_path: &Path,
 ) -> io::Result<LedgerSnapshot> {
-    ledger::validate_jsonl(ledger_path)?;
-    let events = ledger::read_all(ledger_path)?;
-    let bytes = serde_json::to_vec(&events).map_err(io::Error::other)?;
+    // Validate and hash the canonical Event array in one pass. Maintenance
+    // needs no random-access index and must not certify skipped bad records.
+    let mut digest = Sha256::new();
+    let mut event_count = 0;
+    let mut last_event_id = String::new();
+    {
+        let mut writer = BufWriter::new(&mut digest);
+        writer.write_all(b"[")?;
+        ledger::visit_validated(ledger_path, |event| {
+            if event_count > 0 {
+                writer.write_all(b",")?;
+            }
+            serde_json::to_writer(&mut writer, &event).map_err(io::Error::other)?;
+            event_count += 1;
+            last_event_id = event.id;
+            Ok(())
+        })?;
+        writer.write_all(b"]")?;
+        writer.flush()?;
+    }
+    let sha256 = format!("{:x}", digest.finalize());
     let state = store.state_dir(group_id)?.join("ledger/snapshots");
     fs::create_dir_all(&state)?;
     let name = format!("{}.json", stamp());
@@ -52,12 +70,9 @@ fn snapshot_locked(
         group_id: group_id.into(),
         created_at: utc_now(),
         reason: reason.into(),
-        event_count: events.len(),
-        last_event_id: events
-            .last()
-            .map(|event| event.id.clone())
-            .unwrap_or_default(),
-        sha256: format!("{:x}", Sha256::digest(bytes)),
+        event_count,
+        last_event_id,
+        sha256,
         path: format!("state/ledger/snapshots/{name}"),
     };
     write_json(&path, &snapshot)?;
@@ -315,10 +330,169 @@ fn count_segment_lines(path: &Path, compressed: bool) -> io::Result<u64> {
 mod tests {
     use super::*;
     use cccc_contracts::Event;
-    use std::io::Write as _;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn snapshot_does_not_populate_the_query_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("streaming snapshot", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let event = Event::new("chat.message", &group.group_id);
+        ledger::append(&path, &event).expect("append");
+        crate::ledger_index::invalidate_path(&path);
+
+        let actual = snapshot(&home, &group.group_id, "fixture").expect("snapshot");
+        assert_eq!(actual.last_event_id, event.id);
+        assert!(
+            !crate::ledger_index::is_cached(&path),
+            "maintenance must not retain the entire history in a query index"
+        );
+    }
+
+    #[test]
+    fn snapshot_preserves_empty_and_gzip_canonical_hashes_and_default_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("canonical snapshot", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let empty = snapshot(&home, &group.group_id, "empty").expect("snapshot");
+        assert_eq!(empty.event_count, 0);
+        assert_eq!(empty.last_event_id, "");
+        assert_eq!(empty.sha256, format!("{:x}", Sha256::digest(b"[]")));
+
+        let raw = json!({
+            "id":"archived", "ts":"2026-09-08T00:00:00Z", "kind":"chat.message",
+            "group_id":group.group_id, "data":{"text":"历史\n\"quoted\"", "number":1.25}
+        });
+        let first: Event = serde_json::from_value(raw.clone()).expect("default fields");
+        let segments = store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("ledger/segments");
+        fs::create_dir_all(&segments).expect("segments");
+        let archived = segments.join("ledger.20260908T000000Z.000001.jsonl.gz");
+        let mut gzip = flate2::write::GzEncoder::new(
+            fs::File::create(&archived).expect("archive"),
+            flate2::Compression::default(),
+        );
+        write!(gzip, "\r\n  {raw}\r\n\t\n").expect("archived record");
+        gzip.finish().expect("gzip");
+        let last = Event::new("chat.message", &group.group_id);
+        // A complete final JSON object without a newline remains readable.
+        fs::write(&path, serde_json::to_vec(&last).expect("event")).expect("active");
+        let expected = vec![first, last];
+        let actual = snapshot(&home, &group.group_id, "fixture").expect("snapshot");
+        assert_eq!(actual.event_count, 2);
+        assert_eq!(actual.last_event_id, expected[1].id);
+        assert_eq!(
+            actual.sha256,
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&expected).expect("array"))
+            )
+        );
+
+        fs::write(&archived, b"broken gzip").expect("corrupt archive");
+        assert!(snapshot(&home, &group.group_id, "corrupt").is_err());
+    }
+
+    #[test]
+    fn maintenance_rejects_json_objects_that_cannot_be_read_as_events() {
+        for invalid in [
+            json!({"kind":false,"group_id":"fixture"}),
+            json!({"kind":"chat.message","group_id":"fixture","unknown":true}),
+            json!([
+                1,
+                "id",
+                "2026-09-08T00:00:00Z",
+                "chat.message",
+                "fixture",
+                "",
+                "user",
+                {}
+            ]),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let home = HomeLayout::from_path(temp.path()).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let group = store.create("invalid event", "").expect("group");
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .expect("ledger"),
+                "{invalid}"
+            )
+            .expect("invalid event fixture");
+            let original = fs::read(&path).expect("original");
+            assert!(snapshot(&home, &group.group_id, "fixture").is_err());
+            assert!(compact(&home, &group.group_id, "fixture").is_err());
+            assert_eq!(fs::read(&path).expect("unchanged ledger"), original);
+            assert!(
+                !store
+                    .state_dir(&group.group_id)
+                    .expect("state")
+                    .join("ledger/snapshot.latest.json")
+                    .exists()
+            );
+        }
+    }
+
+    #[test]
+    fn maintenance_rejects_records_without_persisted_identity() {
+        for field in ["id", "ts"] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let home = HomeLayout::from_path(temp.path()).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let group = store.create("missing identity", "").expect("group");
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            let mut value =
+                serde_json::to_value(Event::new("chat.message", &group.group_id)).expect("event");
+            value.as_object_mut().expect("object").remove(field);
+            let original = serde_json::to_vec(&value).expect("record");
+            fs::write(&path, &original).expect("fixture");
+            assert!(
+                snapshot(&home, &group.group_id, "missing identity").is_err(),
+                "{field} must not be generated while certifying persisted history"
+            );
+            assert_eq!(fs::read(&path).expect("unchanged ledger"), original);
+        }
+    }
+
+    #[test]
+    fn snapshot_hash_matches_the_canonical_event_array_across_archives() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("snapshot hash", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut expected = ledger::read_all(&path).expect("initial history");
+        for text in ["南京天气 \"quoted\"\nsecond line", "after rotation"] {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.data.insert("text".into(), text.into());
+            ledger::append(&path, &event).expect("append");
+            expected.push(event);
+            if text.starts_with("南京") {
+                compact(&home, &group.group_id, "fixture").expect("compact");
+            }
+        }
+        let actual = snapshot(&home, &group.group_id, "fixture").expect("snapshot");
+        assert_eq!(actual.event_count, expected.len());
+        assert_eq!(actual.last_event_id, expected.last().expect("last").id);
+        assert_eq!(
+            actual.sha256,
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&expected).expect("canonical event array"))
+            )
+        );
+    }
 
     #[test]
     fn compact_writes_python_compatible_segment_and_manifest() {

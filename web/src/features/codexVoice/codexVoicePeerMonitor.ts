@@ -13,6 +13,7 @@ export class CodexVoicePeerMonitor {
   }): void {
     const { peer, audio, resumeAudio, onPhase, onFailure, isStopping } = args;
     peer.ontrack = (event) => {
+      if (isStopping()) return;
       audio.srcObject = event.streams[0] || new MediaStream([event.track]);
       void resumeAudio();
     };

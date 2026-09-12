@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::fs::with_exclusive_lock;
@@ -23,11 +27,11 @@ pub(super) const PLACEHOLDERS: [(&str, &str); 3] = [
     ("CCCC_ACTOR_ID", "${CCCC_ACTOR_ID}"),
 ];
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "runtime_hermes_status" => status(home),
-        "runtime_hermes_prepare" => prepare(home, request),
-        "runtime_hermes_mcp_test" => mcp_test(home, request),
+        "runtime_hermes_status" => Operation::new(Read, |home, _request| status(home)),
+        "runtime_hermes_prepare" => Operation::new(Write, prepare),
+        "runtime_hermes_mcp_test" => Operation::new(Write, mcp_test),
         _ => return None,
     })
 }

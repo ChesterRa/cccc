@@ -258,6 +258,8 @@ async fn web_session(
     Json(json!({"ok":true,"result":{"web_access_session":{
         "login_active": access_token_count > 0,
         "current_browser_signed_in":authenticated,
+        "is_admin":principal.as_ref().is_some_and(|item| item.is_admin),
+        "principal_kind":principal.as_ref().map(|item| if item.raw_token.is_empty() {"local"} else {"token"}).unwrap_or("anonymous"),
         "access_token_count":if disclose_details {access_token_count}else{0},
         "bootstrap_required":bootstrap_required,
         "can_access_global_settings":bootstrap_required || principal.as_ref().is_some_and(|item| item.is_admin),

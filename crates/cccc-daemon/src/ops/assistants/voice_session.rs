@@ -1,6 +1,7 @@
-use cccc_contracts::DaemonRequest;
-use cccc_core::{HomeLayout, assistant_state};
+use cccc_contracts::{DaemonRequest, Event};
+use cccc_core::{HomeLayout, assistant_state, ledger};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 
@@ -181,6 +182,8 @@ pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let completion = completion_event(&group_id, &session_id, request, &patch)?;
+    let completion_event_id = completion.as_ref().map(|event| event.id.clone());
     let allowed = [
         "status",
         "capture_mode",
@@ -239,10 +242,77 @@ pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .expect("updated session retained"))
     })
     .map_err(OpError::io)?;
-    object(json!({
+    if let Some(event) = completion {
+        // The dispatcher holds the Group write permit across state and event
+        // persistence. A failed append is returned to the caller; the same
+        // completion can be retried without duplicating a published event.
+        let path = crate::dispatch::store(home)?
+            .ledger_path(&group_id)
+            .map_err(OpError::io)?;
+        if ledger::find_event(&path, &event.id)
+            .map_err(OpError::io)?
+            .is_none()
+        {
+            ledger::append(&path, &event).map_err(OpError::io)?;
+        }
+    }
+    let mut result = object(json!({
         "group_id":group_id,
         "session":sanitize_document_session(&session, "").unwrap_or(session)
-    }))
+    }))?;
+    if let Some(event_id) = completion_event_id {
+        result.insert("completion_event_id".into(), json!(event_id));
+    }
+    Ok(result)
+}
+
+fn completion_event(
+    group_id: &str,
+    session_id: &str,
+    request: &DaemonRequest,
+    patch: &serde_json::Map<String, Value>,
+) -> Result<Option<Event>, OpError> {
+    let Some(action) = request.args.get("completion_event") else {
+        return Ok(None);
+    };
+    let ready = match action.as_str() {
+        Some("diarization_ready") => true,
+        Some("diarization_failed") => false,
+        _ => return Err(OpError::new("invalid_args", "invalid completion_event")),
+    };
+    if patch.get("diarization_ready").and_then(Value::as_bool) != Some(ready)
+        || patch.get("status").and_then(Value::as_str) != Some("closed")
+    {
+        return Err(OpError::new(
+            "invalid_args",
+            "completion_event requires a matching closed diarization projection",
+        ));
+    }
+    let action = if ready {
+        "diarization_ready"
+    } else {
+        "diarization_failed"
+    };
+    let mut event = Event::new("assistant.voice.session", group_id);
+    event.id = format!(
+        "{:x}",
+        Sha256::digest(format!(
+            "voice-diarization:{group_id}:{session_id}:{action}"
+        ))
+    );
+    event.by = "system".into();
+    let error = patch.get("diarization_error");
+    event.data = json!({
+        "action":action,
+        "session_id":session_id,
+        "document_path":patch.get("document_path").and_then(Value::as_str).unwrap_or(""),
+        "error_code":error.and_then(|value| value["code"].as_str()).unwrap_or(""),
+        "error_message":error.and_then(|value| value["message"].as_str()).unwrap_or("")
+    })
+    .as_object()
+    .cloned()
+    .expect("completion event data");
+    Ok(Some(event))
 }
 
 pub(super) fn prune_sessions(sessions: &mut Vec<Value>) {

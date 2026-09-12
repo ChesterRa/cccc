@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import * as api from "../../../services/api";
 import type { MembershipState } from "../../../types";
-import { membershipApprovalUrl } from "./reachMembershipModel";
+import {
+  membershipApprovalUrl,
+  membershipOwnsReach,
+  membershipReachStatus,
+} from "./reachMembershipModel";
 
 function pollDelayMs(membership: MembershipState | null): number {
   const configured = Number(membership?.pending?.interval ?? 5);
@@ -43,6 +47,9 @@ export interface MembershipController {
   membershipPollReady: boolean;
   reachBusy: boolean;
   reachAction: "starting" | "stopping" | null;
+  reachChecking: boolean;
+  reachCheckExpired: boolean;
+  checkReach: () => void;
   refresh: () => Promise<MembershipState | null>;
   connect: () => Promise<boolean>;
   poll: () => Promise<boolean>;
@@ -58,18 +65,46 @@ export function useMembershipController(active = true): MembershipController {
   const [membershipError, setMembershipError] = useState("");
   const [reachBusy, setReachBusy] = useState(false);
   const [reachAction, setReachAction] = useState<"starting" | "stopping" | null>(null);
+  const [checksRemaining, setChecksRemaining] = useState(0);
+  const [reachCheckExpired, setReachCheckExpired] = useState(false);
+  const checkDeadline = useRef(0);
+  const checkGeneration = useRef(0);
+  const requestGeneration = useRef(0);
+  const statusRequest = useRef<AbortController | null>(null);
   const [pollNotBefore, setPollNotBefore] = useState(0);
   const [, setClock] = useState(0);
   const pollNotBeforeRef = useRef(0);
   const pollFailureCountRef = useRef(0);
 
-  const applyMembership = useCallback((next: MembershipState | null) => {
-    pollFailureCountRef.current = 0;
-    const nextPollAt = !next?.logged_in && next?.pending ? Date.now() + pollDelayMs(next) : 0;
-    pollNotBeforeRef.current = nextPollAt;
-    setPollNotBefore(nextPollAt);
-    setMembership(next);
+  const cancelReachCheck = useCallback(() => {
+    checkGeneration.current += 1;
+    setChecksRemaining(0);
+    setReachCheckExpired(false);
   }, []);
+
+  const applyMembership = useCallback(
+    (next: MembershipState | null) => {
+      pollFailureCountRef.current = 0;
+      const nextPollAt = !next?.logged_in && next?.pending ? Date.now() + pollDelayMs(next) : 0;
+      pollNotBeforeRef.current = nextPollAt;
+      setPollNotBefore(nextPollAt);
+      setMembership(next);
+      // Manual refresh and automatic checks must settle the same state. Also
+      // invalidate pending check callbacks so they cannot restore an old warning.
+      if (
+        next &&
+        (!next.logged_in ||
+          next.cut ||
+          next.disabled ||
+          membershipReachStatus(next) === "online" ||
+          next.cloudflared?.running === false ||
+          !membershipOwnsReach(next))
+      ) {
+        cancelReachCheck();
+      }
+    },
+    [cancelReachCheck],
+  );
 
   const deferPollAfterFailure = useCallback(() => {
     const failureCount = Math.min(pollFailureCountRef.current + 1, 4);
@@ -80,32 +115,97 @@ export function useMembershipController(active = true): MembershipController {
     setPollNotBefore(nextPollAt);
   }, [membership]);
 
-  const refresh = useCallback(async (): Promise<MembershipState | null> => {
-    setMembershipBusy(true);
-    try {
-      const response = await api.fetchMembership();
-      if (!response.ok || !response.result?.membership) {
-        setMembershipError(response.error?.message || t("webAccess.reach.loadFailed"));
+  const refresh = useCallback(
+    async (timeoutMs = 5_000): Promise<MembershipState | null> => {
+      const generation = ++requestGeneration.current;
+      statusRequest.current?.abort();
+      const controller = new AbortController();
+      statusRequest.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+      setMembershipBusy(true);
+      try {
+        const response = await api.fetchMembership(controller.signal);
+        if (generation !== requestGeneration.current) return null;
+        if (!response.ok || !response.result?.membership) {
+          setMembershipError(response.error?.message || t("webAccess.reach.loadFailed"));
+          return null;
+        }
+        applyMembership(response.result.membership);
+        setMembershipError("");
+        return response.result.membership;
+      } catch {
+        if (generation !== requestGeneration.current) return null;
+        setMembershipError(t("webAccess.reach.loadFailed"));
         return null;
+      } finally {
+        window.clearTimeout(timeout);
+        if (generation === requestGeneration.current) setMembershipBusy(false);
       }
-      applyMembership(response.result.membership);
-      setMembershipError("");
-      return response.result.membership;
-    } catch {
-      setMembershipError(t("webAccess.reach.loadFailed"));
-      return null;
-    } finally {
-      setMembershipBusy(false);
-    }
-  }, [applyMembership, t]);
+    },
+    [applyMembership, t],
+  );
 
   useEffect(() => {
     if (!active) return;
     void refresh();
+    return () => {
+      requestGeneration.current += 1;
+      statusRequest.current?.abort();
+    };
   }, [active, refresh]);
+
+  const checkReach = useCallback(() => {
+    checkGeneration.current += 1;
+    checkDeadline.current = Date.now() + 45_000;
+    setReachCheckExpired(false);
+    setChecksRemaining(6);
+  }, []);
+
+  useEffect(() => {
+    if (!active || !checksRemaining || membershipBusy || reachBusy) return;
+    const generation = checkGeneration.current;
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (document.hidden) return;
+      timer = window.setTimeout(
+        async () => {
+          if (Date.now() >= checkDeadline.current) {
+            setChecksRemaining(0);
+            setReachCheckExpired(true);
+            return;
+          }
+          const next = await refresh(Math.min(5_000, checkDeadline.current - Date.now()));
+          if (generation !== checkGeneration.current) return;
+          // A failed local request may still be queued in the daemon. Do not
+          // pile up more requests; leave an explicit, manually retryable result.
+          if (!next) {
+            setChecksRemaining(0);
+            setReachCheckExpired(true);
+            return;
+          }
+          if (checksRemaining === 1 || Date.now() >= checkDeadline.current) {
+            setChecksRemaining(0);
+            setReachCheckExpired(true);
+          } else {
+            setChecksRemaining(checksRemaining - 1);
+          }
+        },
+        checksRemaining === 6 ? 0 : 5_000,
+      );
+    };
+    schedule();
+    document.addEventListener("visibilitychange", schedule);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", schedule);
+    };
+  }, [active, checksRemaining, membershipBusy, reachBusy, refresh]);
 
   const connect = useCallback(async (): Promise<boolean> => {
     if (membershipBusy) return false;
+    cancelReachCheck();
+    requestGeneration.current += 1;
     const popup = openPendingWindow();
     setMembershipBusy(true);
     setMembershipError("");
@@ -139,7 +239,15 @@ export function useMembershipController(active = true): MembershipController {
     } finally {
       setMembershipBusy(false);
     }
-  }, [applyMembership, i18n.language, i18n.resolvedLanguage, membership, membershipBusy, t]);
+  }, [
+    applyMembership,
+    cancelReachCheck,
+    i18n.language,
+    i18n.resolvedLanguage,
+    membership,
+    membershipBusy,
+    t,
+  ]);
 
   const poll = useCallback(async (): Promise<boolean> => {
     const now = Date.now();
@@ -182,6 +290,8 @@ export function useMembershipController(active = true): MembershipController {
 
   const disconnect = useCallback(async (): Promise<boolean> => {
     if (membershipBusy) return false;
+    cancelReachCheck();
+    requestGeneration.current += 1;
     setMembershipBusy(true);
     setMembershipError("");
     try {
@@ -198,10 +308,12 @@ export function useMembershipController(active = true): MembershipController {
     } finally {
       setMembershipBusy(false);
     }
-  }, [applyMembership, membershipBusy, t]);
+  }, [applyMembership, cancelReachCheck, membershipBusy, t]);
 
   const startReach = useCallback(async (): Promise<boolean> => {
-    if (reachBusy) return false;
+    if (reachBusy || membershipBusy) return false;
+    cancelReachCheck();
+    requestGeneration.current += 1;
     setReachBusy(true);
     setReachAction("starting");
     setMembershipError("");
@@ -212,6 +324,7 @@ export function useMembershipController(active = true): MembershipController {
         return false;
       }
       applyMembership(response.result.membership);
+      checkReach();
       return true;
     } catch {
       setMembershipError(t("webAccess.reach.startFailed"));
@@ -220,10 +333,12 @@ export function useMembershipController(active = true): MembershipController {
       setReachBusy(false);
       setReachAction(null);
     }
-  }, [applyMembership, reachBusy, t]);
+  }, [applyMembership, cancelReachCheck, checkReach, membershipBusy, reachBusy, t]);
 
   const stopReach = useCallback(async (): Promise<boolean> => {
-    if (reachBusy) return false;
+    if (reachBusy || membershipBusy) return false;
+    cancelReachCheck();
+    requestGeneration.current += 1;
     setReachBusy(true);
     setReachAction("stopping");
     setMembershipError("");
@@ -242,7 +357,7 @@ export function useMembershipController(active = true): MembershipController {
       setReachBusy(false);
       setReachAction(null);
     }
-  }, [applyMembership, reachBusy, t]);
+  }, [applyMembership, cancelReachCheck, membershipBusy, reachBusy, t]);
 
   return {
     membership,
@@ -251,6 +366,9 @@ export function useMembershipController(active = true): MembershipController {
     membershipPollReady,
     reachBusy,
     reachAction,
+    reachChecking: checksRemaining > 0,
+    reachCheckExpired,
+    checkReach,
     refresh,
     connect,
     poll,

@@ -23,12 +23,19 @@ pub(super) fn prepare(
     let executable = resolve_runtime_executable(&configured[0], environment)?;
     let (arguments, has_web_search) = codex_global_arguments(&configured[1..])?;
     let model = model_from_arguments(&arguments);
-    let mut remote_tui_prefix = vec![executable.to_string_lossy().into_owned()];
+    // Operators manage updates. Keep the startup menu from consuming delivered
+    // messages as upgrade choices; explicit arguments can override this default.
+    let mut remote_tui_prefix = vec![
+        executable.to_string_lossy().into_owned(),
+        "-c".into(),
+        "check_for_update_on_startup=false".into(),
+    ];
     remote_tui_prefix.extend(arguments);
     if !has_web_search {
         remote_tui_prefix.extend(["-c".into(), "web_search=\"live\"".into()]);
     }
-    remote_tui_prefix.extend([
+    // Remote resume clients cannot override permissions owned by app-server.
+    let permission_overrides = [
         "--dangerously-bypass-approvals-and-sandbox".into(),
         "-c".into(),
         "shell_environment_policy.inherit=all".into(),
@@ -36,8 +43,9 @@ pub(super) fn prepare(
         "approval_policy=\"never\"".into(),
         "-c".into(),
         "sandbox_mode=\"danger-full-access\"".into(),
-    ]);
+    ];
     let mut app_server = remote_tui_prefix.clone();
+    app_server.extend(permission_overrides);
     app_server.extend([
         "app-server".into(),
         "--listen".into(),

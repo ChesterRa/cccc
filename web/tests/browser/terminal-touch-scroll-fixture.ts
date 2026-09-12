@@ -13,7 +13,12 @@ const term = new Terminal({
 });
 const host = document.getElementById("terminal")!;
 term.open(host);
-attachTerminalTouchScroll(term);
+let writable = true;
+attachTerminalTouchScroll(term, () => writable);
+function setAccess(canControl: boolean, ownsWriter: boolean) {
+  term.options.disableStdin = !canControl;
+  writable = ownsWriter;
+}
 const input: string[] = [];
 const wheels: number[] = [];
 term.onData((data) => input.push(data));
@@ -50,6 +55,6 @@ function snapshot() {
   };
 }
 
-Object.assign(window, { touchScrollFixture: { configure, snapshot } });
+Object.assign(window, { touchScrollFixture: { configure, snapshot, setAccess } });
 await configure("x10", false);
 host.dataset.ready = "true";

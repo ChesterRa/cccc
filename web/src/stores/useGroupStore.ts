@@ -65,13 +65,12 @@ function stableSerialize(value: unknown): string {
     .join(",")}}`;
 }
 
-function buildHeadlessEventSignature(event: HeadlessStreamEvent): string {
+function buildHeadlessEventIdentity(event: HeadlessStreamEvent): string {
   return [
     String(event.id || "").trim(),
     String(event.ts || "").trim(),
     String(event.actor_id || "").trim(),
     String(event.type || "").trim(),
-    stableSerialize(event.data || {}),
   ].join("|");
 }
 
@@ -345,10 +344,15 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       const currentByActor = bucket.rawHeadlessEventsByActorId || {};
       const currentEvents = Array.isArray(currentByActor[actorId]) ? currentByActor[actorId] : [];
-      const nextSignature = buildHeadlessEventSignature(event);
-      const exists = currentEvents.some(
-        (candidate) => buildHeadlessEventSignature(candidate) === nextSignature,
-      );
+      const nextIdentity = buildHeadlessEventIdentity(event);
+      let nextData: string | undefined;
+      const exists = currentEvents.some((candidate) => {
+        if (buildHeadlessEventIdentity(candidate) !== nextIdentity) return false;
+        // Most arrivals have a new identity. Only serialize payloads when they
+        // can be replays; retain payload comparison for updates under the same ID.
+        nextData ??= stableSerialize(event.data || {});
+        return stableSerialize(candidate.data || {}) === nextData;
+      });
       if (exists) return state;
       const nextEvents = currentEvents.concat([event]);
       return (

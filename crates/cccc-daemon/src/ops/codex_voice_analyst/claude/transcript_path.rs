@@ -2,9 +2,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Relocate a stale resume pointer only before the follower opens its file.
-/// Once opened, keep that file pinned while Agent View still publishes the old
-/// missing path. A new pointer or a recreated old file must be validated again.
+/// Find a unique session file after a move. The follower separately verifies
+/// file containment and consumed history before adopting a different path.
 pub(super) async fn recover_missing(
     config_dir: &Path,
     session_id: &str,
@@ -14,18 +13,25 @@ pub(super) async fn recover_missing(
     resuming: bool,
 ) -> io::Result<PathBuf> {
     match tokio::fs::symlink_metadata(&published).await {
-        Ok(_) if stale.as_ref() == Some(&published) && current.is_some() => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Claude's stale transcript path reappeared while the session was active",
-        )),
+        Ok(_)
+            if stale.as_ref() == Some(&published)
+                && current != Some(published.as_path())
+                && current.is_some_and(|path| path.exists()) =>
+        {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Claude's stale transcript path reappeared while the session was active",
+            ))
+        }
         Ok(_) => Ok(published),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if stale.as_ref() == Some(&published)
                 && let Some(current) = current
+                && tokio::fs::symlink_metadata(current).await.is_ok()
             {
                 return Ok(current.to_path_buf());
             }
-            if !resuming || current.is_some() {
+            if !resuming && current.is_none() {
                 return Err(io::Error::new(
                     error.kind(),
                     format!("Claude transcript is missing: {}", published.display()),

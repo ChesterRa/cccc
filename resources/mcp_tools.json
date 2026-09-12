@@ -2178,7 +2178,7 @@
   },
   {
     "name": "cccc_context_sync",
-    "description": "Low-level atomic batch sync for context ops. Prefer coordination/task/agent_state for normal updates; use this only for deliberate one-shot multi-op writes.",
+    "description": "Low-level ordered batch sync for context ops. All operations are validated and authorized before writing. Prefer coordination/task/agent_state for normal updates; reload context after a storage error before retrying.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2385,7 +2385,7 @@
   },
   {
     "name": "cccc_agent_state",
-    "description": "Per-actor working-memory tool: action=get|update|clear. Keep hot fields fresh; use warm fields only when they improve recovery, recall, or signal quality. update returns the post-write agent_state and context_hygiene confirmation.",
+    "description": "Per-actor working-memory tool: action=get|update|clear. Keep hot fields fresh; use warm fields only when they improve recovery, recall, or signal quality. update returns the write confirmation and context version; use get when you need the current stored state.",
     "inputSchema": {
       "type": "object",
       "properties": {

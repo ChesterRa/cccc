@@ -393,6 +393,68 @@ mod tests {
         task.await.expect("stream task").expect("stream handler");
     }
 
+    #[tokio::test]
+    async fn live_stream_preserves_unseen_events_across_compaction_and_refill() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("stream rotation", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(
+            &path,
+            &message(&group.group_id, "old", "user", &"old ".repeat(100)),
+        )
+        .expect("initial");
+        let request = DaemonRequest {
+            v: 1,
+            op: "events_stream".into(),
+            args: json!({"group_id":group.group_id,"by":"user"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let (shutdown, receiver) = watch::channel(false);
+        let task = tokio::spawn(handle(
+            BufReader::new(server),
+            home.clone(),
+            request,
+            receiver,
+        ));
+        let mut client = BufReader::new(client);
+        let mut line = String::new();
+        client.read_line(&mut line).await.expect("handshake");
+        assert!(
+            serde_json::from_str::<DaemonResponse>(&line)
+                .expect("handshake JSON")
+                .ok
+        );
+        let mut expected = Vec::new();
+        for index in 0..41 {
+            let id = format!("live-{index}");
+            ledger::append(&path, &message(&group.group_id, &id, "user", "live")).expect("append");
+            expected.push(id);
+            if matches!(index, 0 | 10) {
+                cccc_core::ledger_archive::compact(&home, &group.group_id, "fixture")
+                    .expect("compact");
+            }
+        }
+        let received = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut actual = Vec::new();
+            for _ in &expected {
+                line.clear();
+                client.read_line(&mut line).await.expect("stream event");
+                let item: Value = serde_json::from_str(&line).expect("event JSON");
+                actual.push(item["event"]["id"].as_str().expect("event id").to_owned());
+            }
+            actual
+        })
+        .await;
+        shutdown.send(true).expect("shutdown");
+        task.await.expect("handler task").expect("handler");
+        assert_eq!(received.expect("stream timed out"), expected);
+    }
+
     #[test]
     fn rejects_an_explicit_unsupported_kind() {
         let error = requested_kinds(Some(&json!(["chat.stream"]))).expect_err("invalid kinds");

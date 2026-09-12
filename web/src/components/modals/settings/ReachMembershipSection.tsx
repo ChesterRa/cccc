@@ -7,6 +7,8 @@ import {
   membershipAdminWebUrl,
   membershipApprovalUrl,
   membershipPanelKind,
+  membershipOwnsReach,
+  membershipReachStatus,
   membershipPublicAddress,
   type MembershipState,
 } from "./reachMembershipModel";
@@ -20,6 +22,9 @@ interface ReachMembershipSectionProps {
   hasAdminToken: boolean;
   reachBusy: boolean;
   reachAction: "starting" | "stopping" | null;
+  reachChecking: boolean;
+  reachCheckExpired: boolean;
+  onCheckReach: () => void;
   onConnectAccount: () => void;
   onPollAccount: () => void;
   onOpenAccount: () => void;
@@ -39,6 +44,9 @@ export function ReachMembershipSection({
   hasAdminToken,
   reachBusy,
   reachAction,
+  reachChecking,
+  reachCheckExpired,
+  onCheckReach,
   onConnectAccount,
   onPollAccount,
   onOpenAccount,
@@ -67,29 +75,31 @@ export function ReachMembershipSection({
   const unsafeHostname = Boolean(hostname) && !hostnameLooksTokenless(hostname);
   const pendingCode = String(membership?.pending?.user_code || "").trim();
   const reachSupported = membership?.reach_supported !== false;
-  const canStop = kind === "online" || Boolean(membership?.in_reach);
+  const reachStatus = membershipReachStatus(membership);
+  const canStop = membershipOwnsReach(membership);
+  const canStart = kind === "offline" && (!canStop || membership?.cloudflared?.running === false);
+  const checkedAt = membership?.checked_at ? new Date(membership.checked_at) : null;
   const visibleError = membershipError;
 
-  const statusLabel =
-    reachAction === "starting"
+  const statusLabel = reachChecking
+    ? t("webAccess.reach.checking")
+    : reachAction === "starting"
       ? t("webAccess.reach.statusStarting")
       : reachAction === "stopping"
         ? t("webAccess.reach.statusStopping")
         : !reachSupported && (kind === "offline" || kind === "online")
           ? t("webAccess.reach.statusUnsupported")
-          : kind === "online"
-            ? t("webAccess.reach.statusOnline")
+          : kind === "online" || kind === "offline"
+            ? t(`webAccess.reach.connectionStatus.${reachStatus}`)
             : kind === "cut"
               ? t("webAccess.reach.statusCut")
-              : kind === "offline"
-                ? t("webAccess.reach.statusOffline")
-                : kind === "pending"
-                  ? t("webAccess.reach.statusPending")
-                  : kind === "unavailable"
-                    ? t("webAccess.reach.statusUnavailable")
-                    : kind === "loading"
-                      ? t("webAccess.reach.statusLoading")
-                      : t("webAccess.reach.statusLoggedOut");
+              : kind === "pending"
+                ? t("webAccess.reach.statusPending")
+                : kind === "unavailable"
+                  ? t("webAccess.reach.statusUnavailable")
+                  : kind === "loading"
+                    ? t("webAccess.reach.statusLoading")
+                    : t("webAccess.reach.statusLoggedOut");
 
   const stateHelp =
     kind === "logged_out"
@@ -104,11 +114,13 @@ export function ReachMembershipSection({
               ? t("webAccess.reach.loadFailed")
               : !reachSupported
                 ? t("webAccess.reach.unsupported")
-                : kind === "online"
-                  ? t("webAccess.reach.online")
-                  : !hasAdminToken
-                    ? t("webAccess.reach.adminTokenRequired")
-                    : t("webAccess.reach.loggedInOffline");
+                : reachChecking
+                  ? t("webAccess.reach.checkingHelp")
+                  : reachStatus !== "off"
+                    ? t(`webAccess.reach.connectionHelp.${reachStatus}`)
+                    : !hasAdminToken
+                      ? t("webAccess.reach.adminTokenRequired")
+                      : t("webAccess.reach.loggedInOffline");
 
   const copyValue = async (id: "public" | "admin", value: string) => {
     const ok = await copyTextToClipboard(value);
@@ -210,7 +222,7 @@ export function ReachMembershipSection({
               {t("webAccess.reach.checkAgain")}
             </button>
           ) : null}
-          {kind === "offline" && reachSupported && !hasAdminToken ? (
+          {canStart && reachSupported && !hasAdminToken ? (
             <button
               type="button"
               onClick={onCreateAdminToken}
@@ -220,14 +232,14 @@ export function ReachMembershipSection({
               {t("webAccess.reach.createAdminToken")}
             </button>
           ) : null}
-          {kind === "offline" && reachSupported && hasAdminToken ? (
+          {canStart && reachSupported && hasAdminToken && !reachChecking ? (
             <button
               type="button"
               onClick={onReachOn}
               disabled={reachBusy || membershipBusy}
               className={primaryButtonClass(reachBusy)}
             >
-              {t("webAccess.reach.start")}
+              {t(canStop ? "webAccess.reach.retryStart" : "webAccess.reach.start")}
             </button>
           ) : null}
           {kind === "online" && adminWebUrl ? (
@@ -238,6 +250,16 @@ export function ReachMembershipSection({
               className={primaryButtonClass(webLoginBusy)}
             >
               {t("webAccess.reach.openWeb")}
+            </button>
+          ) : null}
+          {canStop ? (
+            <button
+              type="button"
+              onClick={onCheckReach}
+              disabled={reachChecking || reachBusy || membershipBusy}
+              className={secondaryButtonClass()}
+            >
+              {t(reachChecking ? "webAccess.reach.checking" : "webAccess.reach.checkConnection")}
             </button>
           ) : null}
           {canStop ? (
@@ -257,6 +279,18 @@ export function ReachMembershipSection({
           ) : null}
         </div>
       </div>
+
+      {checkedAt && Number.isFinite(checkedAt.getTime()) ? (
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+          {t("webAccess.reach.checkedAt", { time: checkedAt.toLocaleTimeString(language) })}
+        </p>
+      ) : null}
+
+      {reachCheckExpired ? (
+        <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300" role="status">
+          {t("webAccess.reach.checkExpired")}
+        </p>
+      ) : null}
 
       {visibleError ? (
         <p className="mt-3 text-xs leading-5 text-red-600 dark:text-red-300" role="alert">

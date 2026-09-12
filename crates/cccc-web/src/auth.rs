@@ -61,23 +61,8 @@ pub async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !websocket_origin_allowed(&state, &request) {
-        tracing::warn!(
-            origin = request
-                .headers()
-                .get(header::ORIGIN)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default(),
-            served_origin = ?crate::request_origin::served_origin(&state, request.headers()),
-            path = request.uri().path(),
-            "rejected WebSocket origin"
-        );
-        return failure_text(
-            StatusCode::FORBIDDEN,
-            "origin_not_allowed",
-            "WebSocket origin is not allowed",
-        );
-    }
+    // Explicit bearer clients may connect through host-rewriting proxies.
+    // Browser cookies still require source validation, including WebSocket GETs.
     let store = match AccessTokenStore::new(state.home.clone()) {
         Ok(store) => store,
         Err(error) => return auth_store_failure(error),
@@ -122,13 +107,13 @@ pub async fn authorize(
     if principal.is_some()
         && !is_public(request.method(), request.uri().path())
         && matches!(token_source, TokenSource::Cookie | TokenSource::Local)
-        && is_unsafe_method(request.method())
+        && (is_unsafe_method(request.method()) || is_websocket_upgrade(&request))
         && !crate::request_origin::cookie_csrf_allowed(&state, request.headers())
     {
         return failure_text(
             StatusCode::FORBIDDEN,
             "csrf_origin_invalid",
-            "Cookie-authenticated write requests require an allowed Origin or Referer",
+            "Cookie-authenticated writes and WebSockets require an allowed Origin or Referer",
         );
     }
     let bootstrap_cookie = principal.as_ref().and_then(|principal| {
@@ -184,32 +169,12 @@ pub async fn authorize(
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
 }
 
-fn websocket_origin_allowed(state: &AppState, request: &Request) -> bool {
-    websocket_origin_allowed_with_proxy(
-        request,
-        crate::request_origin::proxy_headers_trusted(state),
-    )
-}
-
-fn websocket_origin_allowed_with_proxy(request: &Request, trust_proxy: bool) -> bool {
-    let websocket = request
+fn is_websocket_upgrade(request: &Request) -> bool {
+    request
         .headers()
         .get(header::UPGRADE)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
-    if !websocket {
-        return true;
-    }
-    let Some(origin) = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return true;
-    };
-    crate::request_origin::origin_allowed_with_proxy(request.headers(), origin, trust_proxy)
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }
 
 fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Response {
@@ -295,7 +260,8 @@ fn accepts_local_principal(method: &Method, path: &str) -> bool {
 }
 
 fn requires_admin(method: &Method, path: &str) -> bool {
-    path.starts_with("/api/v1/access-tokens")
+    path.starts_with("/api/v1/voice/asr/providers")
+        || path.starts_with("/api/v1/access-tokens")
         || path.starts_with("/api/v1/actor_profiles")
         || path.starts_with("/api/v1/nomcp/")
         || path.starts_with("/api/v1/web-model/")

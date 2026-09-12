@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{GlobalWrite, Read, Write},
+};
 use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
 use cccc_core::{GroupStore, HomeLayout};
 use cccc_core::{assistant_state, voice_recording_lease};
@@ -24,47 +28,49 @@ use crate::dispatch::{
 use crate::ops::actor_delivery;
 
 const KEY: &str = "assistants";
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "assistant_state" | "assistant_index"
             if string_arg(request, "view").as_deref() == Some("voice_session") =>
         {
-            voice_session::view(home, request)
+            Operation::new(Write, voice_session::view)
         }
-        "assistant_state" | "assistant_index" => document_reconcile::run(home, request)
-            .and_then(|_| voice_settings::index(home, request)),
-        "assistant_settings_update" => voice_settings::update(home, request),
-        "assistant_status_update" => voice_settings::status(home, request),
-        "assistant_voice_recording_lease" => recording_lease(home, request),
-        "assistant_voice_transcript_append" => voice_input::append(home, request),
-        "assistant_voice_session_transcript_clear" => {
+        "assistant_state" | "assistant_index" => Operation::new(Write, |home, request| {
+            document_reconcile::run(home, request)
+                .and_then(|_| voice_settings::index(home, request))
+        }),
+        "assistant_settings_update" => Operation::new(Write, voice_settings::update),
+        "assistant_status_update" => Operation::new(Write, voice_settings::status),
+        "assistant_voice_recording_lease" => Operation::new(GlobalWrite, recording_lease),
+        "assistant_voice_transcript_append" => Operation::new(Write, voice_input::append),
+        "assistant_voice_session_transcript_clear" => Operation::new(Write, |home, request| {
             authorize_voice_session_mutation(home, request, "user")
                 .and_then(|_| voice_session::clear_transcript(home, request))
-        }
-        "assistant_voice_session_update" => {
+        }),
+        "assistant_voice_session_update" => Operation::new(Write, |home, request| {
             authorize_voice_session_mutation(home, request, "assistant:voice_secretary")
                 .and_then(|_| voice_session::update(home, request))
-        }
-        "assistant_voice_document_list" => documents(home, request),
-        "assistant_voice_document_select" => select(home, request),
-        "assistant_voice_document_input_read" => voice_input::read(home, request),
-        "assistant_voice_document_save" => save(home, request),
-        "assistant_voice_document_instruction" => voice_ask::input(home, request),
-        "assistant_voice_document_archive" => archive(home, request),
+        }),
+        "assistant_voice_document_list" => Operation::new(Read, documents),
+        "assistant_voice_document_select" => Operation::new(Write, select),
+        "assistant_voice_document_input_read" => Operation::new(Read, voice_input::read),
+        "assistant_voice_document_save" => Operation::new(Write, save),
+        "assistant_voice_document_instruction" => Operation::new(Write, voice_ask::input),
+        "assistant_voice_document_archive" => Operation::new(Write, archive),
         "assistant_voice_input_append"
             if string_arg(request, "kind")
                 .or_else(|| string_arg(request, "input_kind"))
                 .as_deref()
                 == Some("voice_instruction") =>
         {
-            voice_ask::input(home, request)
+            Operation::new(Write, voice_ask::input)
         }
-        "assistant_voice_input_append" => prompt_refine::input(home, request),
-        "assistant_voice_prompt_draft_submit" => prompt_refine::submit(home, request),
-        "assistant_voice_prompt_draft_ack" => prompt_refine::ack(home, request),
-        "assistant_voice_instruction_feedback" => voice_ask::feedback(home, request),
-        "assistant_voice_ask_requests_clear" => voice_ask::clear(home, request),
-        "assistant_voice_request" => voice_request(home, request),
+        "assistant_voice_input_append" => Operation::new(Write, prompt_refine::input),
+        "assistant_voice_prompt_draft_submit" => Operation::new(Write, prompt_refine::submit),
+        "assistant_voice_prompt_draft_ack" => Operation::new(Write, prompt_refine::ack),
+        "assistant_voice_instruction_feedback" => Operation::new(Write, voice_ask::feedback),
+        "assistant_voice_ask_requests_clear" => Operation::new(Write, voice_ask::clear),
+        "assistant_voice_request" => Operation::new(Write, voice_request),
         _ => return None,
     })
 }

@@ -559,6 +559,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn group_and_global_subscribers_keep_events_across_coalesced_rotations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("coalesced rotations", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut initial = Event::new("chat.message", &group.group_id);
+        initial
+            .data
+            .insert("text".into(), "old ".repeat(100).into());
+        ledger::append(&path, &initial).expect("initial");
+        let hub = LedgerEventHub::new(home.clone());
+        let mut local = hub
+            .subscribe_group(&group.group_id)
+            .expect("group subscription");
+        let mut global = hub.subscribe_global();
+        let mut expected = Vec::new();
+        // No await until both rotations and the refill are complete: the
+        // current-thread monitor must recover all coalesced writes at once.
+        for count in [1, 20, 100] {
+            for _ in 0..count {
+                let event = Event::new("chat.message", &group.group_id);
+                ledger::append(&path, &event).expect("append");
+                expected.push(event.id);
+            }
+            if count != 100 {
+                cccc_core::ledger_archive::compact(&home, &group.group_id, "fixture")
+                    .expect("compact");
+            }
+        }
+        for receiver in [&mut local, &mut global] {
+            let mut actual = Vec::new();
+            for _ in &expected {
+                actual.push(
+                    tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+                        .await
+                        .expect("delivery timeout")
+                        .expect("event")
+                        .id,
+                );
+            }
+            assert_eq!(actual, expected);
+            assert!(receiver.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn active_feed_rescan_recovers_an_unobserved_append() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

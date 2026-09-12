@@ -85,6 +85,13 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     terminalWritableRef.current = writable;
     setTerminalWritable(writable);
   }, []);
+  const canSendInput = useCallback(
+    () =>
+      canControlRef.current &&
+      terminalWritableRef.current &&
+      wsRef.current?.readyState === WebSocket.OPEN,
+    [],
+  );
 
   useEffect(() => {
     isRunningRef.current = isRunning;
@@ -519,6 +526,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     connectionFailed,
     terminalReady,
     terminalWritable,
+    canSendInput,
     requestReconnect,
     requestTakeover,
     sendInterrupt,

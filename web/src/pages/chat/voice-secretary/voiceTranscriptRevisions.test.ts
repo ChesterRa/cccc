@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { voiceTranscriptItemsFromMeetingSession } from "./voiceComposerUtils";
+import { mergeVoiceTranscriptItems, replaceVoiceTranscriptSessionItems } from "./voiceStreamModel";
 import { projectVoiceTranscriptRevisions } from "./voiceTranscriptRevisions";
 
 describe("projectVoiceTranscriptRevisions", () => {
@@ -91,15 +92,53 @@ describe("projectVoiceTranscriptRevisions", () => {
 
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
-      id: "final-asr",
+      id: JSON.stringify(["session-1", "final-asr"]),
       text: "最终文本。",
       source: "assistant_service_local_asr_final",
       sourceLabel: "Final SenseVoice",
     });
     expect(items[1]).toMatchObject({
-      id: "other-session-live",
+      id: JSON.stringify(["session-2", "other-session-live"]),
       text: "另一场会议的实时文本",
       sourceLabel: "Live Paraformer",
     });
+  });
+  it("keeps both recordings across final revision, document reload, and repeated text", () => {
+    const documentPath = "docs/voice-secretary/meeting.md";
+    const recording = (id: string, text: string) => ({
+      session_id: id,
+      capture_mode: "document",
+      document_path: documentPath,
+      segments: [
+        {
+          session_id: id,
+          segment_id: "final-asr",
+          transcript_stage: "final",
+          supersede_stage: "live",
+          text,
+          created_at: "2026-09-10T09:50:33Z",
+        },
+      ],
+    });
+    const first = recording("recording-1", "第一次录音");
+    const second = recording("recording-2", "第二次录音");
+    const firstItems = voiceTranscriptItemsFromMeetingSession(first);
+    const secondItems = voiceTranscriptItemsFromMeetingSession(second);
+    const saved = replaceVoiceTranscriptSessionItems(firstItems, secondItems);
+    expect(saved.map((item) => item.text).sort()).toEqual(["第一次录音", "第二次录音"].sort());
+    const restored = voiceTranscriptItemsFromMeetingSession({
+      ...first,
+      session_id: "document-aggregate",
+      segments: [...first.segments, ...second.segments],
+    });
+    expect(restored.map((item) => item.sessionId)).toEqual(["recording-1", "recording-2"]);
+    expect(new Set(restored.map((item) => item.id)).size).toBe(2);
+    expect(mergeVoiceTranscriptItems(saved, restored)).toHaveLength(2);
+    const repeatedText = voiceTranscriptItemsFromMeetingSession({
+      ...first,
+      session_id: "document-aggregate",
+      segments: [...first.segments, ...recording("recording-2", "第一次录音").segments],
+    });
+    expect(mergeVoiceTranscriptItems([], repeatedText)).toHaveLength(2);
   });
 });

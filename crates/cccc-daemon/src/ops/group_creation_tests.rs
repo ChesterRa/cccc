@@ -1,4 +1,4 @@
-use super::{CreationSteps, RealCreationSteps, create_using, handle};
+use super::{CreationSteps, RealCreationSteps, create_using, resolve_operation};
 use crate::dispatch::{OpError, dispatch};
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, Registry, Scope, active};
@@ -37,7 +37,10 @@ fn missing_parent_does_not_create_group_or_recursive_directories() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let target = temp.path().join("missing/project");
-    let result = handle(&home, &request(json!({"title":"demo","path":target}))).expect("handled");
+    let request = request(json!({"title":"demo","path":target}));
+    let result = resolve_operation(&request)
+        .expect("handled")
+        .execute(&home, &request);
     assert!(result.is_err());
     assert!(!temp.path().join("missing").exists());
     assert!(

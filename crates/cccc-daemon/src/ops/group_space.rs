@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::space_credentials;
 use cccc_core::{GroupStore, HomeLayout};
@@ -60,22 +64,26 @@ const LOCAL_FILE_EXTENSIONS: &[&str] = &[
     ".webm",
 ];
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "group_space_status" => status(home, request),
-        "group_space_capabilities" => capabilities(home, request),
-        "group_space_bind" => bind(home, request),
-        "group_space_ingest" => operations::ingest(home, request),
-        "group_space_query" => operations::query(home, request),
-        "group_space_sources" => operations::sources(home, request),
-        "group_space_artifact" => operations::artifact(home, request),
-        "group_space_jobs" => operations::jobs(home, request),
-        "group_space_sync" => operations::sync(home, request),
-        "group_space_provider_credential_status" => provider_ops::credential_status(home, request),
-        "group_space_provider_credential_update" => provider_ops::credential_update(home, request),
-        "group_space_provider_health_check" => provider_ops::provider_health(home, request),
-        "group_space_spaces" => provider_ops::spaces(home, request),
-        "group_space_provider_auth" => provider_ops::provider_auth(home, request),
+        "group_space_status" => Operation::new(Read, status),
+        "group_space_capabilities" => Operation::new(Read, capabilities),
+        "group_space_bind" => Operation::new(Write, bind),
+        "group_space_ingest" => Operation::new(Write, operations::ingest),
+        "group_space_query" => Operation::new(Read, operations::query),
+        "group_space_sources" => Operation::new(Write, operations::sources),
+        "group_space_artifact" => Operation::new(Write, operations::artifact),
+        "group_space_jobs" => Operation::new(Write, operations::jobs),
+        "group_space_sync" => Operation::new(Write, operations::sync),
+        "group_space_provider_credential_status" => {
+            Operation::new(Read, provider_ops::credential_status)
+        }
+        "group_space_provider_credential_update" => {
+            Operation::new(Write, provider_ops::credential_update)
+        }
+        "group_space_provider_health_check" => Operation::new(Write, provider_ops::provider_health),
+        "group_space_spaces" => Operation::new(Write, provider_ops::spaces),
+        "group_space_provider_auth" => Operation::new(Write, provider_ops::provider_auth),
         _ => return None,
     })
 }
@@ -322,8 +330,10 @@ mod tests {
                 json!({"group_id":group.group_id,"action":"retry","job_id":"job-fixture","by":"peer"}),
             ),
         ] {
-            let error = handle(&home, &request(op, args))
+            let request = request(op, args);
+            let error = resolve_operation(&request)
                 .expect("known group-space operation")
+                .execute(&home, &request)
                 .expect_err("peer mutation must be rejected before provider access");
             assert_eq!(error.code, "space_permission_denied", "{op}");
         }

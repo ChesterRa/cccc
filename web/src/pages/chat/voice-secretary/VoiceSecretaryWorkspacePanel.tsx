@@ -94,14 +94,19 @@ export function VoiceSecretaryWorkspacePanel({
   );
   return (
     <section
+      data-voice-document-panel
       className={classNames(
         "flex min-h-0 flex-col rounded-[24px] border p-3",
         isDark ? "border-white/10 bg-black/10" : "border-black/[0.06] bg-white/70",
       )}
     >
-      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-1 pb-3">
-        <div className="min-w-0 flex-1">
+      <div
+        data-voice-document-header
+        className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-1 pb-3"
+      >
+        <div data-voice-document-heading className="min-w-0 flex-1">
           <div
+            data-voice-document-title
             className={classNames(
               "break-words text-xl font-semibold tracking-[-0.02em]",
               isDark ? "text-slate-100" : "text-gray-900",
@@ -109,12 +114,13 @@ export function VoiceSecretaryWorkspacePanel({
           >
             {documentDisplayTitle}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div data-voice-document-meta className="mt-2 flex flex-wrap items-center gap-1.5">
             <div
               className={classNames(
                 "inline-flex rounded-full border p-0.5",
                 isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
               )}
+              data-voice-document-views
               role="group"
               aria-label={t("voiceSecretaryWorkspaceViewSelector", {
                 defaultValue: "Voice Secretary workspace view",
@@ -246,6 +252,7 @@ export function VoiceSecretaryWorkspacePanel({
                   "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium",
                   isDark ? "bg-black/20 text-slate-300" : "bg-[rgb(245,245,245)] text-gray-600",
                 )}
+                data-voice-document-location
                 title={activeDocumentPath || undefined}
               >
                 <span className="shrink-0">
@@ -256,7 +263,10 @@ export function VoiceSecretaryWorkspacePanel({
                       })}
                 </span>
                 {activeDocumentPath ? (
-                  <span className="min-w-0 truncate font-normal text-[var(--color-text-muted)]">
+                  <span
+                    data-voice-document-path
+                    className="min-w-0 truncate font-normal text-[var(--color-text-muted)]"
+                  >
                     {activeDocumentPath}
                   </span>
                 ) : null}
@@ -264,7 +274,10 @@ export function VoiceSecretaryWorkspacePanel({
             ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <div
+          data-voice-document-actions
+          className="flex shrink-0 flex-wrap items-center justify-end gap-2"
+        >
           {view === "document" && documentRemoteChanged ? (
             <button
               type="button"

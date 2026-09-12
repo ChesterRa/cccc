@@ -281,6 +281,9 @@ function voiceTranscriptItemsLookDuplicated(
   left: VoiceTranscriptItem,
   right: VoiceTranscriptItem,
 ): boolean {
+  const leftSession = String(left.sessionId || "").trim();
+  const rightSession = String(right.sessionId || "").trim();
+  if (leftSession && rightSession && leftSession !== rightSession) return false;
   if (left.id && right.id && left.id === right.id) return true;
   if (
     normalizedComparableTranscriptText(left.text) !== normalizedComparableTranscriptText(right.text)

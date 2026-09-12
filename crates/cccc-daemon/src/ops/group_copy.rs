@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{GlobalWrite, Read, Write},
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use cccc_contracts::DaemonRequest;
@@ -9,12 +13,14 @@ use uuid::Uuid;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "group_copy_export" => export(home, request, false),
-        "group_copy_export_file" => export(home, request, true),
-        "group_copy_preview_import" => preview(home, request),
-        "group_copy_import" => import(home, request),
+        "group_copy_export" => Operation::new(Read, |home, request| export(home, request, false)),
+        "group_copy_export_file" => {
+            Operation::new(Write, |home, request| export(home, request, true))
+        }
+        "group_copy_preview_import" => Operation::new(Read, preview),
+        "group_copy_import" => Operation::new(GlobalWrite, import),
         _ => return None,
     })
 }

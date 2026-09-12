@@ -16,6 +16,9 @@ mod control;
 mod transcript;
 mod transcript_ack;
 mod transcript_buffer;
+mod transcript_continuity;
+#[cfg(all(test, unix))]
+mod transcript_move_client_tests;
 mod transcript_path;
 
 pub(super) use command::prepare;
@@ -1090,6 +1093,7 @@ struct TranscriptFollower {
     skip_existing: bool,
     discovered_from_store: bool,
     stale_published_path: Option<PathBuf>,
+    continuity: transcript_continuity::Continuity,
 }
 
 impl TranscriptFollower {
@@ -1111,6 +1115,7 @@ impl TranscriptFollower {
             skip_existing,
             discovered_from_store: false,
             stale_published_path: None,
+            continuity: transcript_continuity::Continuity::default(),
         }
     }
 
@@ -1144,6 +1149,16 @@ impl TranscriptFollower {
     }
 
     async fn poll(&mut self) -> io::Result<Vec<Value>> {
+        let active = self.path.is_some();
+        let result = self.poll_inner().await;
+        if active {
+            self.continuity.settle(result)
+        } else {
+            result
+        }
+    }
+
+    async fn poll_inner(&mut self) -> io::Result<Vec<Value>> {
         self.discover_path().await?;
         let Some(path) = self.path.as_ref() else {
             return Ok(Vec::new());
@@ -1174,6 +1189,7 @@ impl TranscriptFollower {
         let mut bytes = Vec::with_capacity(wanted as usize);
         file.take(wanted).read_to_end(&mut bytes).await?;
         self.offset = self.offset.saturating_add(bytes.len() as u64);
+        self.continuity.consume(&bytes);
         self.partial.extend(bytes);
         let records =
             transcript_buffer::take_records(&mut self.partial, MAX_TRANSCRIPT_LINE_BYTES)?;
@@ -1268,10 +1284,41 @@ impl TranscriptFollower {
                 "Claude transcript escaped the configured session store",
             ));
         }
-        let file = tokio::fs::File::open(&canonical).await?;
+        let mut file = tokio::fs::File::open(&canonical).await?;
         let metadata = file.metadata().await?;
         let identity = transcript_file_identity(&file).await?;
         if let Some(current) = self.path.as_ref() {
+            if current != &canonical {
+                // A move must retire the old path and leave exactly one session file.
+                match tokio::fs::symlink_metadata(current).await {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Claude transcript move left competing history files",
+                        ));
+                    }
+                }
+                let candidate = transcript_path::find(&self.config_dir, &self.session_id)?
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "Claude relocated transcript is missing",
+                        )
+                    })?;
+                if tokio::fs::canonicalize(candidate).await? != canonical {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Claude transcript relocation candidate changed",
+                    ));
+                }
+                self.continuity.verify(&mut file, self.offset).await?;
+                self.identity = Some(identity);
+                self.path = Some(canonical);
+                self.stale_published_path = None;
+                return Ok(());
+            }
             if current != &canonical || self.identity.as_ref() != Some(&identity) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -1286,6 +1333,7 @@ impl TranscriptFollower {
             0
         };
         self.skip_existing = false;
+        self.continuity.initialize(&mut file, self.offset).await?;
         self.identity = Some(identity);
         self.path = Some(canonical);
         Ok(())
@@ -2015,6 +2063,14 @@ mod tests {
             completed = event.message["method"] == "turn/completed";
         }
         assert_eq!(final_text.as_deref(), Some("managed answer"));
+        if !fail_transcript {
+            transcript_move_client_tests::verify_round_trip(
+                &launched.protocol,
+                &transcript_path,
+                &state_path,
+            )
+            .await;
+        }
         let session = Arc::new(super::super::AnalystSession {
             binding: super::super::WorkspaceBinding { root: workspace },
             generation: "generation-12345678".into(),

@@ -66,10 +66,6 @@ impl Publisher {
                 }));
             }
         }
-        self.previous.insert(group.group_id.clone(), snapshot);
-        if payloads.is_empty() {
-            return;
-        }
         let mut event = Event::new("actor.activity", &group.group_id);
         event.by = "system".into();
         event.data = json!({"actors":payloads})
@@ -79,12 +75,17 @@ impl Publisher {
         let result = store
             .ledger_path(&group.group_id)
             .and_then(|path| ledger::append(&path, &event));
-        if let Err(error) = result {
-            tracing::warn!(
+        match result {
+            Ok(()) => {
+                // Only committed events advance the publication cursor. A
+                // failed append is retried by the next ordinary status tick.
+                self.previous.insert(group.group_id.clone(), snapshot);
+            }
+            Err(error) => tracing::warn!(
                 %error,
                 group_id = %group.group_id,
                 "failed to append actor.activity"
-            );
+            ),
         }
     }
 }
@@ -120,6 +121,51 @@ mod tests {
     use cccc_core::actors;
     use cccc_runtime::LaunchSpec;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn retries_failed_publication_without_repeating_committed_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("activity retry", "").expect("group");
+        let mut publisher = Publisher::default();
+        publisher.previous.insert(
+            group.group_id.clone(),
+            BTreeMap::from([(
+                "peer".into(),
+                Fingerprint {
+                    state: "working".into(),
+                    runner: "pty".into(),
+                },
+            )]),
+        );
+        // A stopped Actor still needs its transition published after a transient
+        // storage error. Obstruct only this fixture's ledger writer lock.
+        let lock = store
+            .group_dir(&group.group_id)
+            .expect("group path")
+            .join("state/ledger/ledger.lock");
+        std::fs::create_dir_all(&lock).expect("obstruct writer");
+        publisher
+            .tick(&home)
+            .expect("failed publication is isolated");
+        std::fs::remove_dir(&lock).expect("restore writer");
+        publisher.tick(&home).expect("recovery tick");
+        publisher.tick(&home).expect("stable tick");
+
+        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "actor.activity")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events.len(),
+            1,
+            "retry must publish the lost transition once"
+        );
+        assert_eq!(events[0].data["actors"][0]["id"], "peer");
+        assert_eq!(events[0].data["actors"][0]["running"], false);
+    }
 
     #[test]
     fn publishes_initial_and_stopped_runtime_snapshots_once() {

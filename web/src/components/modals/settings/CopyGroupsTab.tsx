@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import { useGroupStore } from "../../../stores/useGroupStore";
 import { CheckIcon, DownloadIcon, FileIcon } from "../../Icons";
+import { CreateGroupDirectoryBrowser } from "../CreateGroupDirectoryBrowser";
+import { driveSuggestions } from "../createGroupDirectoryModel";
+import { useWorkspaceDirectoryPicker } from "./useWorkspaceDirectoryPicker";
 import {
   labelClass,
   primaryButtonClass,
@@ -48,6 +51,19 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState("");
+  const {
+    open: workspacePickerOpen,
+    items: workspaceDirItems,
+    currentDir: workspaceCurrentDir,
+    parentDir: workspaceParentDir,
+    locations: workspaceLocations,
+    error: workspacePickerError,
+    busy: workspacePickerBusy,
+    show: openWorkspacePicker,
+    close: closeWorkspacePicker,
+    fetchDirectory: fetchWorkspaceDirectory,
+    createDirectory: createWorkspaceDirectory,
+  } = useWorkspaceDirectoryPicker();
   const stagedUploadIdRef = useRef("");
   const previewRequestSeqRef = useRef(0);
 
@@ -342,12 +358,66 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
                       <label className={labelClass(isDark)}>{t("copyGroups.workspaceRoot")}</label>
-                      <input
-                        className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
-                        value={workspaceRoot}
-                        onChange={(e) => setWorkspaceRoot(e.target.value)}
-                        placeholder={sourceRoot || t("copyGroups.workspacePlaceholder")}
-                      />
+                      <div className="mt-1 flex gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
+                          value={workspaceRoot}
+                          onChange={(e) => setWorkspaceRoot(e.target.value)}
+                          placeholder={sourceRoot || t("copyGroups.workspacePlaceholder")}
+                        />
+                        <button
+                          type="button"
+                          className={secondaryButtonClass("sm")}
+                          disabled={busy || workspacePickerBusy}
+                          onClick={() =>
+                            void openWorkspacePicker(workspaceRoot.trim() || sourceRoot)
+                          }
+                        >
+                          {t("copyGroups.chooseFolder")}
+                        </button>
+                      </div>
+                      {workspacePickerOpen ? (
+                        <div className="mt-2 space-y-2 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2">
+                          <CreateGroupDirectoryBrowser
+                            dirItems={workspaceDirItems}
+                            currentDir={workspaceCurrentDir}
+                            parentDir={workspaceParentDir}
+                            driveLocations={driveSuggestions(workspaceLocations)}
+                            error={workspacePickerError}
+                            creatingDirectory={workspacePickerBusy}
+                            onSelect={() => {}}
+                            onFetch={(path) => void fetchWorkspaceDirectory(path)}
+                            onCreateDirectory={createWorkspaceDirectory}
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="min-w-0 truncate font-mono text-xs text-[var(--color-text-muted)]">
+                              {workspaceCurrentDir}
+                            </span>
+                            <div className="flex shrink-0 gap-2">
+                              <button
+                                type="button"
+                                className={secondaryButtonClass("sm")}
+                                onClick={() => closeWorkspacePicker()}
+                              >
+                                {t("common:cancel")}
+                              </button>
+                              <button
+                                type="button"
+                                className={primaryButtonClass(
+                                  !workspaceCurrentDir || workspacePickerBusy,
+                                )}
+                                disabled={!workspaceCurrentDir || workspacePickerBusy}
+                                onClick={() => {
+                                  setWorkspaceRoot(workspaceCurrentDir);
+                                  closeWorkspacePicker();
+                                }}
+                              >
+                                {t("copyGroups.useFolder")}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div>
                       <label className={labelClass(isDark)}>{t("copyGroups.groupTitle")}</label>

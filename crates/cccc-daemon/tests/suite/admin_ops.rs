@@ -33,12 +33,26 @@ fn membership_account_server(responses: Vec<(u16, &'static str)>) -> String {
 }
 
 #[test]
-fn remote_access_requires_secure_configuration_and_token() {
+fn remote_access_requires_admin_token_for_remote_exposure() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("home");
     let initial = ok(&home, "remote_access_state", json!({}));
     assert_eq!(initial.result["remote_access"]["provider"], "off");
+
+    let lan = ok(
+        &home,
+        "remote_access_configure",
+        json!({
+            "provider":"manual",
+            "web_host":"0.0.0.0",
+            "web_port":8848,
+            "require_access_token":true,
+            "by":"user"
+        }),
+    );
+    assert_eq!(lan.result["remote_access"]["status"], "stopped");
+    assert_eq!(lan.result["remote_access"]["status_reason"], "stopped");
 
     let insecure = raw(
         &home,

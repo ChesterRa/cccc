@@ -12,3 +12,22 @@ pub(crate) fn wait_interruptibly(delay: Duration, cancelled: &AtomicBool) -> boo
     }
     false
 }
+
+/// Waiting for another input transaction must remain cancellable too.
+pub(crate) fn lock_interruptibly<'a, T>(
+    mutex: &'a std::sync::Mutex<T>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<std::sync::MutexGuard<'a, T>>, crate::RuntimeError> {
+    loop {
+        if cancelled() {
+            return Ok(None);
+        }
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(Some(guard)),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err(crate::RuntimeError::Poisoned),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+}

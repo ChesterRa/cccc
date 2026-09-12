@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
@@ -534,12 +534,12 @@ fn environment_flag(name: &str) -> bool {
 }
 
 fn configured_cors_layer() -> Option<CorsLayer> {
-    if request_origin::allow_any_origin() {
+    if environment_flag("CCCC_WEB_ALLOW_ANY_ORIGIN") {
         return Some(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::any())
-                .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_methods(AllowMethods::mirror_request())
+                .allow_headers(AllowHeaders::mirror_request()),
         );
     }
     let origins = std::env::var("CCCC_WEB_CORS_ORIGINS")
@@ -552,8 +552,8 @@ fn configured_cors_layer() -> Option<CorsLayer> {
     (!origins.is_empty()).then(|| {
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
-            .allow_methods(Any)
-            .allow_headers(Any)
+            .allow_methods(AllowMethods::mirror_request())
+            .allow_headers(AllowHeaders::mirror_request())
             .allow_credentials(true)
     })
 }

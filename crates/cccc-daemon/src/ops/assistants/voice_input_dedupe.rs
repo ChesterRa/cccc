@@ -27,7 +27,10 @@ pub(super) fn should_skip(values: &[Value], record: &Value, policy: Policy) -> b
         Policy::FinalRevision => values.iter().any(session_asr),
         Policy::LiveCheckpoint => values.iter().any(|item| {
             session_asr(item)
-                && item["trigger"]["recognition_backend"] == "assistant_service_local_asr_final"
+                && matches!(
+                    item["trigger"]["recognition_backend"].as_str(),
+                    Some("assistant_service_local_asr_final" | "external_provider_asr_final")
+                )
         }),
     }
 }
@@ -37,6 +40,23 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn cloud_final_revision_blocks_late_live_semantic_input() {
+        let values = vec![
+            json!({"session_id":"cloud","kind":"asr_transcript","trigger":{"recognition_backend":"external_provider_asr_final"}}),
+        ];
+        assert!(super::should_skip(
+            &values,
+            &json!({"session_id":"cloud"}),
+            super::Policy::LiveCheckpoint
+        ));
+        assert!(!super::should_skip(
+            &values,
+            &json!({"session_id":"other"}),
+            super::Policy::LiveCheckpoint
+        ));
+    }
 
     #[test]
     fn final_and_live_race_settles_to_one_session_input_in_either_order() {

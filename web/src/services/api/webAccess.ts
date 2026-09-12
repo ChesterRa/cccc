@@ -71,8 +71,8 @@ export async function fetchRemoteAccessState() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access");
 }
 
-export async function fetchMembership() {
-  return apiJson<{ membership: MembershipState }>("/api/v1/membership");
+export async function fetchMembership(signal?: AbortSignal) {
+  return apiJson<{ membership: MembershipState }>("/api/v1/membership", { signal });
 }
 
 export async function startMembershipLogin() {

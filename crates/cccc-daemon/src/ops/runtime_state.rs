@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{ActorRuntime, DaemonRequest, Event, RunnerKind, utc_now};
 use cccc_core::integration_state;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
@@ -12,16 +16,18 @@ const KEY: &str = "runtime_states";
 const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 const MAX_TURN_EVENTS: usize = 20;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "headless_status" => headless_status(home, request),
-        "headless_set_status" => headless_set_status(home, request),
-        "web_model_delivery_preferences_get" => delivery_preferences_get(home, request),
-        "web_model_delivery_preferences_update" => delivery_preferences_update(home, request),
-        "runtime_wait_next_turn" => wait_next_turn(home, request),
-        "web_model_runtime_recover_turn" => recover_turn(home, request),
-        "web_model_browser_delivery_record" => record_browser_delivery(home, request),
-        "runtime_complete_turn" => complete_turn(home, request),
+        "headless_status" => Operation::new(Read, headless_status),
+        "headless_set_status" => Operation::new(Write, headless_set_status),
+        "web_model_delivery_preferences_get" => Operation::new(Read, delivery_preferences_get),
+        "web_model_delivery_preferences_update" => {
+            Operation::new(Write, delivery_preferences_update)
+        }
+        "runtime_wait_next_turn" => Operation::new(Write, wait_next_turn),
+        "web_model_runtime_recover_turn" => Operation::new(Read, recover_turn),
+        "web_model_browser_delivery_record" => Operation::new(Write, record_browser_delivery),
+        "runtime_complete_turn" => Operation::new(Write, complete_turn),
         _ => return None,
     })
 }
@@ -331,12 +337,14 @@ fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
-    let all_events = ledger::read_all(&ledger_path).map_err(OpError::io)?;
-    let messages = all_events
-        .iter()
-        .filter(|event| requested.contains(&event.id))
-        .cloned()
-        .collect::<Vec<_>>();
+    let messages = ledger::inspect(&ledger_path, |events, _| {
+        events
+            .iter()
+            .filter(|event| requested.contains(&event.id))
+            .cloned()
+            .collect::<Vec<_>>()
+    })
+    .map_err(OpError::io)?;
     if messages.len() != requested.len() {
         let missing = event_ids
             .iter()
@@ -569,23 +577,26 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
         .map_err(OpError::io)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
-    let events = ledger::read_all(&ledger_path).map_err(OpError::io)?;
-    for event_id in &event_ids {
-        let Some(event) = events.iter().find(|event| event.id == *event_id) else {
-            return Err(OpError::new(
-                "event_not_found",
-                format!("event not found: {event_id}"),
-            ));
-        };
-        if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
-            || !turn_event_targets_actor(&group, event, &actor_id)
-        {
-            return Err(OpError::new(
-                "event_not_for_actor",
-                format!("event is not addressed to actor: {actor_id}"),
-            ));
+    ledger::inspect(&ledger_path, |events, _| {
+        for event_id in &event_ids {
+            let Some(event) = events.iter().find(|event| event.id == *event_id) else {
+                return Err(OpError::new(
+                    "event_not_found",
+                    format!("event not found: {event_id}"),
+                ));
+            };
+            if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
+                || !turn_event_targets_actor(&group, event, &actor_id)
+            {
+                return Err(OpError::new(
+                    "event_not_for_actor",
+                    format!("event is not addressed to actor: {actor_id}"),
+                ));
+            }
         }
-    }
+        Ok::<_, OpError>(())
+    })
+    .map_err(OpError::io)??;
     let browser_delivery = parse_browser_delivery(request)?
         .ok_or_else(|| OpError::new("missing_browser_delivery", "browser_delivery is required"))?;
     let event = super::runtime_completion::append_browser_delivery(

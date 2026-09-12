@@ -43,6 +43,7 @@ mod im;
 pub(crate) mod local_headless;
 mod maintenance;
 mod membership;
+pub(crate) use membership::ReachRestore;
 pub(crate) use membership::validated_live_web_binding;
 mod membership_account;
 mod membership_cloudflared;
@@ -76,41 +77,41 @@ mod working_state;
 mod working_state_tests;
 
 use cccc_contracts::DaemonRequest;
-use cccc_core::HomeLayout;
 
-use crate::dispatch::{OpError, OpResult};
+pub(crate) mod operation;
+use operation::Operation;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpResult>, OpError> {
-    for handler in [
-        group_creation::handle,
-        groups::handle,
-        hermes_runtime::handle,
-        group_copy::handle,
-        group_bridge::handle,
-        group_scopes::handle,
-        group_space::handle,
-        actors::handle,
-        automation_config::handle,
-        assistants::handle,
-        capabilities::handle,
-        messaging::handle,
-        presentation::handle,
-        profiles::handle,
-        diagnostics::handle,
-        remote_access::handle,
-        membership::handle,
-        runtime_state::handle,
-        maintenance::handle,
-        im::handle,
-        memory::handle,
-        context::handle,
-        settings::handle,
-        voice_notifications::handle,
-        terminal::handle,
+pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
+    for resolver in [
+        group_creation::resolve_operation,
+        groups::resolve_operation,
+        hermes_runtime::resolve_operation,
+        group_copy::resolve_operation,
+        group_bridge::resolve_operation,
+        group_scopes::resolve_operation,
+        group_space::resolve_operation,
+        actors::resolve_operation,
+        automation_config::resolve_operation,
+        assistants::resolve_operation,
+        capabilities::resolve_operation,
+        messaging::resolve_operation,
+        presentation::resolve_operation,
+        profiles::resolve_operation,
+        diagnostics::resolve_operation,
+        remote_access::resolve_operation,
+        membership::resolve_operation,
+        runtime_state::resolve_operation,
+        maintenance::resolve_operation,
+        im::resolve_operation,
+        memory::resolve_operation,
+        context::resolve_operation,
+        settings::resolve_operation,
+        voice_notifications::resolve_operation,
+        terminal::resolve_operation,
     ] {
-        if let Some(result) = handler(home, request) {
-            return Ok(Some(result));
+        if let Some(operation) = resolver(request) {
+            return Some(operation);
         }
     }
-    Ok(None)
+    None
 }

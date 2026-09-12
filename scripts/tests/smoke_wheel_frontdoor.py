@@ -261,7 +261,10 @@ class InstalledWheelSmoke:
         raise RuntimeError(f"Rust Web health did not become ready: {last_error}")
 
     def expect_update_refusal(self) -> None:
-        result = self.cccc("update", "--check", check=False)
+        inspection = self.cccc("update", "--check", "--offline")
+        if "Installation: pip" not in inspection.stdout or "not checked (offline)" not in inspection.stdout:
+            raise RuntimeError(f"pip update inspection omitted ownership or freshness:\n{inspection.stdout}")
+        result = self.cccc("update", check=False)
         if result.returncode == 0:
             raise RuntimeError("pip-owned CCCC unexpectedly accepted standalone self-update")
         if 'python -m pip install --upgrade "cccc-pair>=0.4.36"' not in result.stdout:

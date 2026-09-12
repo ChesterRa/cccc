@@ -132,7 +132,7 @@ fn valid_error_code(code: &str) -> bool {
 
 pub async fn run_stdio(home: HomeLayout) -> Result<()> {
     let result = run_stdio_loop(&home).await;
-    code_mode::shutdown(&home).await;
+    shutdown(&home).await;
     result
 }
 
@@ -166,7 +166,14 @@ async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
 }
 
 pub async fn shutdown(home: &HomeLayout) {
+    let command_home = home.clone();
+    let commands = tokio::task::spawn_blocking(move || local_sessions::shutdown(&command_home));
     code_mode::shutdown(home).await;
+    match commands.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("[cccc] local command shutdown failed: {error}"),
+        Err(error) => eprintln!("[cccc] local command cleanup worker failed: {error}"),
+    }
 }
 
 pub async fn handle_request(home: &HomeLayout, request: &Value) -> Value {

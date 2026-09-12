@@ -1,4 +1,5 @@
 {
+  "resizeComposer": "Resize input area (double-click or press Enter for automatic height)",
   "openSidebar": "Open sidebar",
   "closeSidebar": "Close sidebar",
   "collapseSidebar": "Collapse sidebar",

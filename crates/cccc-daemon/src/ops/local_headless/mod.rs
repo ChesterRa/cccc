@@ -78,6 +78,20 @@ fn managed_runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
+fn run_managed_launch<F, T>(future: F) -> std::io::Result<T>
+where
+    F: Future<Output = std::io::Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    // Runtime::block_on polls its root future on the caller. Grok ACP binds
+    // itself to the spawning OS thread on Linux, so a restore/request thread
+    // must only wait here; the daemon-lifetime workers must perform the launch.
+    let task = managed_runtime().spawn(future);
+    block_on_managed(task).map_err(|error| {
+        std::io::Error::other(format!("managed Agent launch task failed: {error}"))
+    })?
+}
+
 fn block_on_managed<F>(future: F) -> F::Output
 where
     F: Future + Send,

@@ -48,9 +48,12 @@ pub struct SetupArgs {
 pub struct UpdateArgs {
     #[arg(long, value_enum)]
     pub channel: Option<ReleaseChannelArg>,
-    /// Show the standalone installation and release channel without changing files.
+    /// Check the latest channel release and installation without changing files.
     #[arg(long)]
     pub check: bool,
+    /// Show local installation details without requesting release metadata.
+    #[arg(long, requires = "check")]
+    pub offline: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -254,6 +257,22 @@ mod tests {
             Some(CommandKind::Update(UpdateArgs {
                 check: true,
                 channel: None,
+                offline: false,
+            }))
+        ));
+    }
+
+    #[test]
+    fn offline_update_requires_an_explicit_read_only_check() {
+        assert!(Cli::try_parse_from(["cccc", "update", "--offline"]).is_err());
+        let cli =
+            Cli::try_parse_from(["cccc", "update", "--check", "--offline"]).expect("offline check");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Update(UpdateArgs {
+                check: true,
+                offline: true,
+                ..
             }))
         ));
     }

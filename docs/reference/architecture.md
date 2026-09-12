@@ -20,9 +20,9 @@
 
 ### Ledger
 
-- Single source of truth: `~/.cccc/groups/<group_id>/ledger.jsonl`
-- All messages, events, and decisions are recorded here
-- Supports snapshot/compaction
+- Authoritative message and collaboration event history: `~/.cccc/groups/<group_id>/ledger.jsonl`
+- Append-only events support history, delivery/read/reply projections, and audit
+- Group configuration lives in `group.yaml`; tasks and coordination state live in `context/`. The ledger alone is not a backup of all CCCC state.
 
 ## Directory Layout
 
@@ -71,47 +71,140 @@ stores. Canonical data wins on conflicts, migration is idempotent, and subsequen
 writes go only to the canonical path. Frozen 0.4.35 homes and native tests cover
 the supported migration boundary, including group-copy packages.
 
-## Architecture Layers
+## Architecture and Ownership
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Ports (Entry)                       │
-│   Web UI (React)  │  CLI  │  IM Bridge  │  MCP Server   │
-├─────────────────────────────────────────────────────────┤
-│                    Native Daemon                         │
-│   IPC Server  │  Delivery  │  Automation  │  Runners    │
-│               │            │              │  Browser    │
-├─────────────────────────────────────────────────────────┤
-│                      Kernel                              │
-│   Group  │  Actor  │  Ledger  │  Inbox  │  Permissions  │
-├─────────────────────────────────────────────────────────┤
-│                    Contracts (v1)                        │
-│   Event  │  Message  │  Actor  │  IPC                   │
-└─────────────────────────────────────────────────────────┘
+CCCC is a modular native application. One daemon owns the shared collaboration
+control plane; entry points and integration hosts use its IPC contract. A Rust
+crate boundary is not necessarily a process boundary.
+
+```text
+Browser UI ── HTTP / WebSocket / SSE ── Web host
+                                           │
+CLI and MCP collaboration tools ─────────── IPC ── Daemon
+                                                    │
+                                      Group / Context / Ledger
+                                                    │
+                                      Actor runtime supervision
 ```
 
-### Contracts Layer
+The Web host also owns browser and media integrations, including Voice Analyst
+sessions and IM workers. These resources are not roster Actors. MCP additionally
+hosts local command tools. Persistent command sessions carry their owning Home;
+MCP shutdown releases only those sessions, leaving other hosts and Actor/Analyst
+runtimes alone. Their process-local state does not replace Group
+configuration, message history, authorization, or delivery facts.
 
-- Rust contract types define wire structures
-- Versioned standards: `docs/standards/`; implementation: `crates/cccc-contracts/`
-- Stable boundary, no business implementation
+Finite MCP shell/Git commands and daemon MCP-setup helpers share the runtime's
+bounded command capture function. It feeds stdin while draining both output
+streams, applies one deadline, and releases the existing process-group / Windows
+Job owner on completion or cancellation. Shell results report truncation; setup
+helpers reject oversized output rather than interpreting partial configuration.
+The synchronous adapter is scoped to the call and adds no permanent executor.
+This boundary is intentionally separate from persistent sessions and provider
+commands such as Claude Agent View background launch, which must retain their
+provider-owned service after the launcher exits.
 
-### Kernel
+### Logical Modules
 
-- Group/Scope/Ledger/Inbox/Permissions
-- Depends on contracts, not on specific ports
+| Module | Responsibility | Boundary |
+|---|---|---|
+| `cccc-contracts` | Event, Actor, IPC envelope and shared wire types | No port or provider dependency |
+| `cccc-core` | Group, Context, ledger, permissions and durable stores | Shared semantics and persistence; no Web/CLI dependency |
+| `cccc-runtime` | Native process, PTY, terminal history, input and attachment ownership | OS and terminal mechanisms; not the managed provider protocol layer |
+| `cccc-client` | Daemon discovery and IPC transport | Distinguishes connection failure from an unknown result after submission |
+| `cccc-daemon` | Operation authorization, lifecycle, delivery, automation and managed provider adapters | Shared control-plane authority |
+| `cccc-web` | Web API, UI assets, browser/media/IM integration hosts | Uses daemon operations for shared mutations; retains its own live resources |
+| `cccc-mcp` | Agent tool surface and local tool execution | Collaboration tools map to daemon semantics |
+| `cccc-cli` | Public executable and process composition | Builds and launches the product entry points |
 
-### Daemon
+Managed provider protocols currently live under the daemon's
+`ops/codex_voice_analyst/` module and are shared by Actor and Voice Analyst
+sessions. The historical module name does not imply that Actor execution depends
+on an active Voice call. Codex, ACP, Claude and OpenCode-family protocol differences
+remain local to their adapters; the Web host reuses the Analyst library code in
+its own process.
 
-- Single-writer principle: all ledger writes go through the daemon
-- IPC + supervision + delivery/automation
-- Manages actor lifecycle, including CLI runtimes and ChatGPT Web Model browser delivery
+### State Authority
 
-### Ports (Entry)
+| Fact | Owner / authoritative representation | Derived or temporary state |
+|---|---|---|
+| Group and Actor configuration | Daemon operations and `group.yaml` | Registry summaries and UI snapshots |
+| Tasks and coordination context | Context operations and `context/` with `ctxv:*` revisions | Rendered prompts and context views |
+| Messages, delivery/read/reply events | Daemon and Group ledger | Search indexes, inbox projections and notification eligibility |
+| Runtime execution | Owning host and provider session | Status snapshots, retained terminal output and activity previews |
+| Browser interaction and media | Browser / Web host | Selected view, transcript display, media tracks and connections |
 
-- Only interact with daemon via IPC
-- Hold no business state
-- Web Model remote MCP is an actor-bound web port surface; authorization still resolves through the daemon and group actor state
+State files use their own atomic-write and concurrency mechanisms. This is not a
+fully event-sourced application or a transaction spanning all files. Operations
+must expose partial failure and preserve the identity needed for safe recovery.
+For example, a Web diarization completion updates its canonical session and asks
+the daemon to append the completion event in the same operation; the Web host
+never appends that event independently.
+
+Context authorizes operations in order against one locked working copy, then
+persists only after the complete batch passes validation. Unreadable canonical
+files fail explicitly. A revision is reserved before payload writes so an I/O
+failure cannot leave changed files accepting an old compare-and-swap token;
+callers reload after such an error because there is no multi-file rollback.
+
+Ledger followers use the stable append/compaction lock for their initial
+snapshot. Established polling skips a busy writer without advancing its cursor,
+so another Group can still be polled. Ordinary appends use byte offsets; archive
+source changes use the existing reverse reader and stop at the last event ID.
+This preserves unseen events across rotation/refill without loading the old
+historical prefix into an index or adding a second replay store. Compressed
+archives require sequential decompression; their retained output still begins
+at the cursor.
+
+Maintenance validates and hashes ledger records in one streaming pass under the
+writer lock. It does not populate the query index or retain the entire history;
+unreadable Event objects fail before snapshot publication or rotation. Queries
+that need random access still use the existing weighted index cache. Delivery,
+turn recovery, queue counts, and reminder projections borrow that index and copy
+only their results. They release the read guard before appending new events.
+Reminder scans stop before loading history when no Actor is eligible. These
+boundaries avoid repeated full-history copies without introducing a second cache
+or changing the ledger's authority; large active query indexes still consume
+memory proportional to their history.
+
+Cold or invalidated query indexes capture source revisions and events under the
+same shared append/compaction lock. Appenders release the writer lock before
+updating the index; a late callback cannot apply an already-indexed event again.
+Cache removal updates its bookkeeping under the global mutex, then releases the
+removed index outside that mutex so deallocation does not block other Groups.
+The cache budget is an eviction policy, not a process RSS ceiling: active readers
+and one oversized history can retain additional memory.
+
+### Dispatch and Lifecycle
+
+Each ordinary operation declares its handler and access policy together in a
+pure resolver. The dispatcher uses that declaration to acquire global or Group
+read/write permits before executing the handler. Adding an operation does not
+require updating a separate operation-name whitelist. Cross-Group mutations
+retain global serialization; authorization remains in the operation itself.
+
+Some live resources own their synchronization. Completion, polling and input
+paths that must stay available during lifecycle draining use that resource
+ownership explicitly. New Bridge work still participates in global draining.
+MCP catalog discovery during Actor startup cannot wait behind a global writer
+that is itself waiting for startup to finish. Terminal I/O and cancellation must
+not retain the session state mutex while blocked on a child process.
+
+The `term_attach` and `events_stream` operations upgrade the connection protocol
+and are handled by dedicated stream owners before ordinary dispatch. Their
+subscription/attachment lifetimes differ from a request/response permit.
+
+Finite auxiliary probes also have explicit limits: DeepSeek's Node version probe
+has a five-second deadline and bounded output, and Tailscale up/down has a
+30-second deadline using the same owned-command capture. A Tailscale timeout is
+an uncertain external outcome, not a rollback or an automatic retry. Persistent
+provider services and tunnel supervisors keep their own lifecycle interfaces.
+
+
+The dependency direction and single local control plane are deliberate. Moving
+media into the daemon, introducing a generic provider plugin system, or turning
+all durable state into event replay requires a concrete benefit beyond tidier
+layer diagrams.
 
 ## Ledger Schema (v1)
 
@@ -273,9 +366,10 @@ The surface is best understood as capability groups instead of a fixed namespace
 crates/
 ├── cccc-contracts/        # Versioned wire types
 ├── cccc-core/             # Durable state and kernel
-├── cccc-daemon/           # Single-writer daemon and delivery
-├── cccc-runtime/          # Native terminal and managed provider sessions
-├── cccc-web/              # Native Web API and embedded UI
+├── cccc-daemon/           # Control plane, delivery and managed provider adapters
+├── cccc-runtime/          # Native process and terminal mechanisms
+├── cccc-client/           # Daemon IPC transport
+├── cccc-web/              # Web API, embedded UI and integration hosts
 ├── cccc-mcp/              # MCP server
 └── cccc-cli/              # Public cccc executable
 ```

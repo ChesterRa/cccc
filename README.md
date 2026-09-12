@@ -93,8 +93,10 @@ cccc update
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Use `cccc update --check` to inspect a website-installer deployment before
-updating it. A pip-owned command deliberately refuses standalone self-update
+Use `cccc update --check` to query the latest channel release and inspect the
+installation owner and native platform requirements without changing the installation
+or running services. It also works for pip-owned commands. Add `--offline` for
+local details without a network request. A pip-owned command refuses standalone self-update
 and prints the package-manager command instead. Both channels install the same
 native product, but each remains owned by the installer that created it. Before
 a pip upgrade, run `cccc daemon stop` and close any foreground CCCC process so
@@ -103,6 +105,12 @@ switch from pip to the website installer in the same command directory, first
 run `python -m pip uninstall cccc-pair`; the standalone installer deliberately
 refuses to overwrite pip-owned files, even with
 `CCCC_ALLOW_REPLACE_EXISTING=1`.
+
+If an older `cccc update` stays on `0.4.35`, use the version-constrained pip
+command above in the Python environment that owns that installation.
+`0.4.35` was the last portable Python release; an unsupported platform can
+silently select it with an unconstrained pip upgrade. The minimum version makes
+that mismatch an explicit error. See the [upgrade FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35).
 
 ### Launch
 
@@ -350,7 +358,7 @@ For accessing the Web UI from outside localhost:
 - Rust launch uses `--host` / `--port` overrides first, then the saved Web Access binding (including legacy Python `settings.yaml`), then `CCCC_WEB_HOST` / `CCCC_WEB_PORT`.
 - `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.
 - `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
-- Token policy is origin-aware: direct loopback browser requests use the local in-memory administrator principal without writing a token, while LAN/public/proxied requests remain fail-closed. Plain HTTP LAN exposure additionally requires the explicit `CCCC_REMOTE_ALLOW_INSECURE=1` override; public exposure must terminate HTTPS through a trusted tunnel or reverse proxy.
+- Token policy is origin-aware: direct loopback browser requests use the local in-memory administrator principal without writing a token, while LAN/public/proxied requests remain fail-closed. Plain HTTP LAN exposure is supported for trusted private networks but still requires an administrator access token; public exposure must terminate HTTPS through a trusted tunnel or reverse proxy.
 - Group Bridge pairing is also fail-closed: expired invitations are rejected, credential claim is a ten-minute proof-bound idempotent POST, Rust v2 sessions authenticate a signed challenge/hello/ready transcript and persist downgrade pins on both peers, and public bridge endpoints require HTTPS/WSS.
 - External reverse proxies must overwrite client forwarding headers and set `CCCC_WEB_TRUST_PROXY_HEADERS=1`; supervised CCCC Web processes configure this trust boundary automatically.
 

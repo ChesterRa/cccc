@@ -51,6 +51,20 @@ impl ContextStore {
         by: &str,
         dry_run: bool,
     ) -> io::Result<ContextSyncResult> {
+        self.sync_checked(group_id, operations, if_version, by, dry_run, |_, _| Ok(()))
+    }
+
+    /// Authorize each operation against the preceding operations' in-memory
+    /// result, under the same storage lock. Nothing is persisted on rejection.
+    pub fn sync_checked(
+        &self,
+        group_id: &str,
+        operations: &[Map<String, Value>],
+        if_version: Option<&str>,
+        by: &str,
+        dry_run: bool,
+        authorize: impl FnMut(&ContextDoc, &Map<String, Value>) -> io::Result<()>,
+    ) -> io::Result<ContextSyncResult> {
         let paths = self.paths(group_id)?;
         with_exclusive_lock(&paths.lock_file, || {
             migrate_legacy_json(&paths)?;
@@ -60,7 +74,8 @@ impl ContextStore {
                 return Err(io::Error::other("version_conflict"));
             }
             let mut document = before.clone();
-            let changes = apply_all(&mut document, operations, by)?;
+            let changes = apply_all(&mut document, operations, by, authorize)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
             yaml_storage::touch_updated_at(&mut document);
             let version = if dry_run {
                 current_version

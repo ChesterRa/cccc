@@ -6,6 +6,12 @@ export type DocumentFinalAsrDisposition =
 export function documentFinalAsrDisposition(
   payload: Record<string, unknown>,
 ): DocumentFinalAsrDisposition {
+  if (
+    Array.isArray(payload.transcript_pending_segments) &&
+    payload.transcript_pending_segments.length > 0
+  ) {
+    return "retry_persistence";
+  }
   if (payload.partial === true) return "preserve_live";
   if (payload.transcript_persistence === "persisted" && payload.transcript_persisted === true) {
     return "restore_persisted";

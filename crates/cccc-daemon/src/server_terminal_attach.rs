@@ -7,6 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
 const OUTPUT_PAGE_BYTES: usize = 64 * 1024;
+const INPUT_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub(crate) async fn handle<S>(
     mut stream: BufReader<S>,
@@ -31,7 +32,7 @@ where
     let (read, write) = tokio::io::split(stream);
     tokio::select! {
         result = pump_output(write, &mut attachment) => result,
-        result = pump_input(read, input, home) => result,
+        result = pump_input(read, input, INPUT_WRITE_TIMEOUT) => result,
         changed = shutdown.changed() => {
             changed.ok();
             Ok(())
@@ -169,7 +170,11 @@ where
     Ok(())
 }
 
-async fn pump_input<R>(mut read: R, input: TerminalInput, _home: HomeLayout) -> Result<()>
+async fn pump_input<R>(
+    mut read: R,
+    input: TerminalInput,
+    write_timeout: std::time::Duration,
+) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
@@ -181,9 +186,16 @@ where
         }
         let data = buffer[..count].to_vec();
         let writer = input.clone();
-        tokio::task::spawn_blocking(move || writer.write(&data))
-            .await
-            .map_err(|error| anyhow!("terminal input task failed: {error}"))??;
+        // A stalled write prevents reading EOF from a disconnected client.
+        // End this attachment after a bounded input wait; dropping its writer
+        // ownership also cancels the Linux PTY task. Do not replay partial input.
+        tokio::time::timeout(
+            write_timeout,
+            tokio::task::spawn_blocking(move || writer.write(&data)),
+        )
+        .await
+        .map_err(|_| anyhow!("terminal input stalled"))?
+        .map_err(|error| anyhow!("terminal input task failed: {error}"))??;
     }
 }
 
@@ -207,4 +219,63 @@ fn requested_size(request: &DaemonRequest) -> Option<(u16, u16)> {
             .and_then(|value| u16::try_from(value).ok())
     };
     Some((dimension("cols", 10)?, dimension("rows", 2)?))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn disconnected_backpressured_input_has_a_bounded_attachment_lifetime() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group = "g_terminal_input_deadline";
+        let actor = "peer";
+        cccc_runtime::start(cccc_runtime::LaunchSpec {
+            group_id: group.into(),
+            actor_id: actor.into(),
+            runner: RunnerKind::Pty,
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "stty raw -echo; touch ready; sleep 30".into(),
+            ],
+            cwd: temp.path().into(),
+            env: Default::default(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("terminal");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while !temp.path().join("ready").exists() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let attachment =
+            cccc_runtime::attach(group, actor, TerminalAttachMode::Control, false, None)
+                .expect("attachment");
+        let id = attachment.attachment_id();
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        client
+            .write_all(&vec![b'x'; 64 * 1024])
+            .await
+            .expect("buffer input");
+        drop(client);
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            pump_input(server, attachment.input(), Duration::from_millis(50)),
+        )
+        .await;
+        // The outer stream select drops this owner on the pump's error.
+        drop(attachment);
+        let released = !cccc_runtime::attachment_writable(group, actor, id).expect("ownership");
+        cccc_runtime::stop(group, actor).expect("cleanup");
+        assert!(released);
+        assert_eq!(
+            result
+                .expect("bounded input pump")
+                .expect_err("stalled input")
+                .to_string(),
+            "terminal input stalled"
+        );
+    }
 }

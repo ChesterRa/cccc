@@ -31,7 +31,11 @@ impl IndexCache {
         }
     }
 
-    fn entry(&mut self, path: &Path, source_bytes: u64) -> Arc<RwLock<LedgerIndex>> {
+    fn entry(
+        &mut self,
+        path: &Path,
+        source_bytes: u64,
+    ) -> (Arc<RwLock<LedgerIndex>>, Vec<CacheEntry>) {
         self.clock = self.clock.wrapping_add(1);
         let index = if let Some(cached) = self.entries.get_mut(path) {
             let source_bytes = source_bytes.max(cached.source_bytes);
@@ -55,8 +59,8 @@ impl IndexCache {
             self.source_bytes = self.source_bytes.saturating_add(source_bytes);
             index
         };
-        self.evict(path);
-        index
+        let retired = self.evict(path);
+        (index, retired)
     }
 
     fn get(&mut self, path: &Path) -> Option<Arc<RwLock<LedgerIndex>>> {
@@ -71,13 +75,13 @@ impl IndexCache {
         path: &Path,
         source_bytes: u64,
         expected: &Arc<RwLock<LedgerIndex>>,
-    ) {
+    ) -> Vec<CacheEntry> {
         self.clock = self.clock.wrapping_add(1);
         let Some(cached) = self.entries.get_mut(path) else {
-            return;
+            return Vec::new();
         };
         if !Arc::ptr_eq(&cached.index, expected) {
-            return;
+            return Vec::new();
         }
         self.source_bytes = self
             .source_bytes
@@ -85,16 +89,17 @@ impl IndexCache {
             .saturating_add(source_bytes);
         cached.source_bytes = source_bytes;
         cached.last_used = self.clock;
-        self.evict(path);
+        self.evict(path)
     }
 
-    fn remove(&mut self, path: &Path) {
-        if let Some(removed) = self.entries.remove(path) {
-            self.source_bytes = self.source_bytes.saturating_sub(removed.source_bytes);
-        }
+    fn remove(&mut self, path: &Path) -> Option<CacheEntry> {
+        let removed = self.entries.remove(path)?;
+        self.source_bytes = self.source_bytes.saturating_sub(removed.source_bytes);
+        Some(removed)
     }
 
-    fn evict(&mut self, protected: &Path) {
+    fn evict(&mut self, protected: &Path) -> Vec<CacheEntry> {
+        let mut retired = Vec::new();
         while self.entries.len() > self.max_entries
             || (self.source_bytes > self.weight_limit() && self.entries.len() > 1)
         {
@@ -107,8 +112,11 @@ impl IndexCache {
                 .min_by_key(|(_, cached)| cached.last_used)
                 .map(|(path, _)| path.clone());
             let Some(candidate) = candidate else { break };
-            self.remove(&candidate);
+            if let Some(removed) = self.remove(&candidate) {
+                retired.push(removed);
+            }
         }
+        retired
     }
 
     fn weight_limit(&self) -> u64 {
@@ -129,10 +137,14 @@ fn cache() -> &'static Mutex<IndexCache> {
 }
 
 pub(super) fn entry(path: &Path, source_bytes: u64) -> Arc<RwLock<LedgerIndex>> {
-    cache()
+    let (index, retired) = cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(path, source_bytes)
+        .entry(path, source_bytes);
+    // Large indexes can contain millions of allocations. Free them after the
+    // cache lock is released so unrelated Groups can keep reading.
+    drop(retired);
+    index
 }
 
 pub(super) fn get(path: &Path) -> Option<Arc<RwLock<LedgerIndex>>> {
@@ -143,17 +155,19 @@ pub(super) fn get(path: &Path) -> Option<Arc<RwLock<LedgerIndex>>> {
 }
 
 pub(super) fn update_weight(path: &Path, source_bytes: u64, expected: &Arc<RwLock<LedgerIndex>>) {
-    cache()
+    let retired = cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .update_weight(path, source_bytes, expected);
+    drop(retired);
 }
 
 pub(super) fn invalidate(path: &Path) {
-    cache()
+    let retired = cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(path);
+    drop(retired);
 }
 
 #[cfg(test)]
@@ -180,7 +194,7 @@ mod tests {
     fn retains_one_oversized_entry_alongside_budgeted_smaller_entries() {
         let mut cache = IndexCache::new(2, 10);
         let path = Path::new("oversized");
-        let active = cache.entry(path, 20);
+        let active = cache.entry(path, 20).0;
         cache.update_weight(path, 20, &active);
         cache.entry(Path::new("small"), 2);
 
@@ -225,8 +239,8 @@ mod tests {
         let mut cache = IndexCache::new(1, 10);
         let first = Path::new("first");
         let second = Path::new("second");
-        let active = cache.entry(first, 4);
-        let second_index = cache.entry(second, 4);
+        let active = cache.entry(first, 4).0;
+        let second_index = cache.entry(second, 4).0;
         assert_eq!(cache.entries.len(), 2);
 
         drop(active);

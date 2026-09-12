@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, ResourceOwned, Write},
+};
 use cccc_contracts::{ActorRole, DaemonRequest, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use serde_json::{Value, json};
@@ -11,18 +15,22 @@ mod session_control;
 #[cfg(all(test, unix))]
 use session_control::write;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "terminal_status" => session_control::status(request),
-        "term_attachment_status" => session_control::attachment_status(request),
-        "terminal_tail" => tail(home, request),
-        "terminal_snapshot" => snapshot(home, request),
-        "terminal_replay" => replay(home, request),
-        "terminal_history" => history(home, request),
-        "terminal_since" => since(home, request),
-        "terminal_write" => session_control::write(home, request),
-        "term_resize" | "terminal_resize" => session_control::resize(home, request),
-        "terminal_clear" => session_control::clear(home, request),
+        "terminal_status" => {
+            Operation::new(Read, |_home, request| session_control::status(request))
+        }
+        "term_attachment_status" => Operation::new(ResourceOwned, |_home, request| {
+            session_control::attachment_status(request)
+        }),
+        "terminal_tail" => Operation::new(Read, tail),
+        "terminal_snapshot" => Operation::new(Read, snapshot),
+        "terminal_replay" => Operation::new(Read, replay),
+        "terminal_history" => Operation::new(Read, history),
+        "terminal_since" => Operation::new(Read, since),
+        "terminal_write" => Operation::new(ResourceOwned, session_control::write),
+        "term_resize" | "terminal_resize" => Operation::new(Write, session_control::resize),
+        "terminal_clear" => Operation::new(Write, session_control::clear),
         _ => return None,
     })
 }

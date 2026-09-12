@@ -286,6 +286,7 @@
   "voiceSecretaryTranscript": "文字起こし",
   "voiceSecretaryTranscriptPlaceholder": "安定した文字起こしがここに表示されます。音声秘書は作業ドキュメントを自動更新します。",
   "voiceSecretaryTranscriptAppendFailed": "音声秘書の transcript segment 保存に失敗しました。",
+  "voiceSecretaryCheckpointRecoveryFilled": "保存を確認できなかった文字起こしを元のグループの入力欄に戻しました。送信前に内容をご確認ください。",
   "voiceSecretaryPrivacyHint": "元の文字起こしは assistant sidecar に残し、ユーザー向けの成果物は markdown 作業ドキュメントとして扱います。",
   "voiceSecretaryWorkingDocument": "作業ドキュメント",
   "voiceSecretaryWorkdocTitle": "Voice Secretary 作業稿",
@@ -584,5 +585,7 @@
     "empty": "この Group にはまだ Actor がいません。",
     "connecting": "接続中…",
     "switchTo": "{{view}}に切り替え"
-  }
+  },
+  "voiceSecretaryExternalAsrNotReady": "設定 > アシスタントで Bailian または Volcengine の認証情報を設定してください。",
+  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR に接続できません。サーバーのネットワークとプロバイダー設定を確認してください。"
 }

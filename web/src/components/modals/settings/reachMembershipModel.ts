@@ -2,6 +2,21 @@ import type { MembershipState } from "../../../types";
 
 export type { MembershipState };
 
+export function membershipReachStatus(membership: MembershipState | null | undefined) {
+  if (!membership?.logged_in || membership.cut || membership.disabled) return "off";
+  return membership.reach_status ?? (membership.online ? "online" : "off");
+}
+
+// Configuration ownership survives a disconnected tunnel. Keep conflicting
+// binding/provider controls out of the way until Reach has actually stopped.
+export function membershipOwnsReach(membership: MembershipState | null | undefined): boolean {
+  return Boolean(
+    membership?.reach_enabled ||
+    membership?.cloudflared?.running ||
+    (membership?.reach_enabled === undefined && membership?.in_reach),
+  );
+}
+
 export function hostnameLooksTokenless(hostname: string): boolean {
   const value = String(hostname || "").trim();
   if (!value) return true;

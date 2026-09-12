@@ -1,5 +1,6 @@
 // Full AppShell / chat / terminal components. Every transport is synthetic and local to this page.
 import { createRef, useEffect, useState, type ComponentProps } from "react";
+import { Terminal } from "@xterm/xterm";
 import i18next from "../../src/i18n";
 import { MobileMenuSheet } from "../../src/components/layout/MobileMenuSheet";
 import { AppShell } from "../../src/components/app/AppShell";
@@ -17,11 +18,17 @@ import type { Actor, GroupDoc, GroupMeta, LedgerEvent } from "../../src/types";
 import "../../src/index.css";
 
 const probe = {
+  terminals: [] as Terminal[],
   sockets: [] as FixtureSocket[],
   requests: [] as { path: string; method: string; body: unknown }[],
   errors: [] as string[],
   actions: [] as string[],
   externalWriters: new Set<string>(),
+};
+const openTerminal = Terminal.prototype.open;
+Terminal.prototype.open = function (parent) {
+  openTerminal.call(this, parent);
+  probe.terminals.push(this);
 };
 window.addEventListener("error", (event) => probe.errors.push(event.message));
 window.addEventListener("unhandledrejection", (event) => probe.errors.push(String(event.reason)));

@@ -85,6 +85,47 @@ describe("useGroupStore selection and archive persistence", () => {
     });
   });
 
+  it("deduplicates raw replays while retaining changed payloads under the same identity", () => {
+    useGroupStore.setState({ chatByGroup: {} });
+    const append = useGroupStore.getState().appendHeadlessEvent;
+    const event = {
+      id: "event-1",
+      ts: "2026-09-08T00:00:00Z",
+      actor_id: "peer-1",
+      type: "stream.delta",
+      data: { text: "南京天气", detail: { value: 24, unit: "C" } },
+    };
+    append(event, "g-raw");
+    const state = useGroupStore.getState();
+    append({ ...event, data: { detail: { unit: "C", value: 24 }, text: "南京天气" } }, "g-raw");
+    expect(useGroupStore.getState()).toBe(state);
+    append({ ...event, data: { ...event.data, text: "南京天气更新" } }, "g-raw");
+    append({ ...event, id: "event-2" }, "g-raw");
+    const events =
+      useGroupStore.getState().chatByGroup["g-raw"].rawHeadlessEventsByActorId["peer-1"];
+    expect(events.map((item) => item.data.text)).toEqual(["南京天气", "南京天气更新", "南京天气"]);
+  });
+
+  it("keeps raw replay identity scoped to the Group and Actor, including events without IDs", () => {
+    useGroupStore.setState({ chatByGroup: {} });
+    const append = useGroupStore.getState().appendHeadlessEvent;
+    const event = {
+      ts: "2026-09-08T00:00:00Z",
+      actor_id: "peer-1",
+      type: "stream.delta",
+      data: { text: "hello" },
+    };
+    append(event, "g-one");
+    append(event, "g-two");
+    append({ ...event, actor_id: "peer-2" }, "g-one");
+    append(event, "g-one");
+    append({ ...event, ts: "2026-09-08T00:00:01Z" }, "g-one");
+    const buckets = useGroupStore.getState().chatByGroup;
+    expect(buckets["g-one"].rawHeadlessEventsByActorId["peer-1"]).toHaveLength(2);
+    expect(buckets["g-one"].rawHeadlessEventsByActorId["peer-2"]).toHaveLength(1);
+    expect(buckets["g-two"].rawHeadlessEventsByActorId["peer-1"]).toHaveLength(1);
+  });
+
   it("applies delivery and first-terminal reply facts to message obligations", () => {
     const source: LedgerEvent = {
       id: "message-1",

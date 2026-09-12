@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
@@ -15,19 +19,27 @@ const WEB_MODEL_TARGETS_KEY: &str = "web_model_browser_targets";
 const WEB_MODEL_DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 const RUNTIME_STATES_KEY: &str = "runtime_states";
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "actor_list" => list(home, request),
-        "actor_prompt" => prompt(home, request),
-        "actor_add" => add(home, request),
-        "actor_update" => update(home, request),
-        "actor_remove" => remove(home, request),
-        "actor_start" => lifecycle(home, request, "actor.start"),
-        "actor_stop" => lifecycle(home, request, "actor.stop"),
-        "actor_restart" => lifecycle(home, request, "actor.restart"),
-        "actor_new_session" => lifecycle(home, request, "actor.new_session"),
-        "actor_env_private_keys" => actor_secrets::keys(home, request),
-        "actor_env_private_update" => actor_secrets::update(home, request),
+        "actor_list" => Operation::new(Read, list),
+        "actor_prompt" => Operation::new(Read, prompt),
+        "actor_add" => Operation::new(Write, add),
+        "actor_update" => Operation::new(Write, update),
+        "actor_remove" => Operation::new(Write, remove),
+        "actor_start" => Operation::new(Write, |home, request| {
+            lifecycle(home, request, "actor.start")
+        }),
+        "actor_stop" => Operation::new(Write, |home, request| {
+            lifecycle(home, request, "actor.stop")
+        }),
+        "actor_restart" => Operation::new(Write, |home, request| {
+            lifecycle(home, request, "actor.restart")
+        }),
+        "actor_new_session" => Operation::new(Write, |home, request| {
+            lifecycle(home, request, "actor.new_session")
+        }),
+        "actor_env_private_keys" => Operation::new(Read, actor_secrets::keys),
+        "actor_env_private_update" => Operation::new(Write, actor_secrets::update),
         _ => return None,
     })
 }

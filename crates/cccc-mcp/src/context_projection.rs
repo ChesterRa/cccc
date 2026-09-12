@@ -15,6 +15,9 @@ pub(crate) fn apply(
         return;
     }
     match tool_name {
+        "cccc_context_get" if !bool_argument(arguments, "include_archived", false) => {
+            hide_archived_tasks(result);
+        }
         "cccc_coordination" => project_coordination(result, arguments),
         "cccc_agent_state" => project_agent_state(result, arguments),
         _ => {}

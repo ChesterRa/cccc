@@ -1,3 +1,7 @@
+use super::operation::{
+    Operation,
+    Policy::{Read, Write},
+};
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout, settings};
 use serde_json::{Value, json};
@@ -7,11 +11,11 @@ use std::path::PathBuf;
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 mod tail;
 
-pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "debug_snapshot" => snapshot(home, request),
-        "debug_tail_logs" => tail_logs(home, request),
-        "debug_clear_logs" => clear_logs(home, request),
+        "debug_snapshot" => Operation::new(Read, snapshot),
+        "debug_tail_logs" => Operation::new(Read, tail_logs),
+        "debug_clear_logs" => Operation::new(Write, clear_logs),
         _ => return None,
     })
 }

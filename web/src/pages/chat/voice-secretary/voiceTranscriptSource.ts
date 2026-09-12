@@ -2,6 +2,8 @@ export function voiceTranscriptSourceLabel(source: string): string {
   const value = String(source || "").trim();
   if (value === "assistant_service_local_asr_final") return "Final SenseVoice";
   if (value === "assistant_service_local_asr_streaming") return "Live Paraformer";
+  if (value === "external_provider_asr_final") return "Final Cloud ASR";
+  if (value === "external_provider_asr_streaming") return "Live Cloud ASR";
   if (value === "browser_asr") return "Browser ASR";
   return value ? "ASR" : "";
 }

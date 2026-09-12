@@ -1012,6 +1012,10 @@ export type MembershipState = {
   cut?: boolean;
   disabled?: boolean;
   in_reach?: boolean;
+  reach_enabled?: boolean;
+  reach_status?: "off" | "connecting" | "online" | "offline" | "unknown";
+  checked_at?: string | null;
+  cloudflared?: { running: boolean; installed?: boolean; matches_pin?: boolean };
   reach_supported?: boolean;
   account_reachable?: boolean | null;
   account_origin?: string | null;

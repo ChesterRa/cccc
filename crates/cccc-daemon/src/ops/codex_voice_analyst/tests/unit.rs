@@ -13,7 +13,7 @@ fn workspace_binding_requires_an_existing_directory() {
 }
 
 #[test]
-fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
+fn default_launch_keeps_permission_overrides_on_app_server_only() {
     let executable = std::env::current_exe().expect("test executable");
     let prepared = launch_command::prepare(
         &[executable.to_string_lossy().into_owned()],
@@ -27,7 +27,18 @@ fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
     );
     assert_eq!(
         &prepared.app_server[prepared.remote_tui_prefix.len()..],
-        ["app-server", "--listen", "ws://127.0.0.1:0"]
+        [
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            "shell_environment_policy.inherit=all",
+            "-c",
+            "approval_policy=\"never\"",
+            "-c",
+            "sandbox_mode=\"danger-full-access\"",
+            "app-server",
+            "--listen",
+            "ws://127.0.0.1:0"
+        ]
     );
     assert!(
         prepared
@@ -35,6 +46,31 @@ fn default_launch_uses_one_effective_prefix_for_app_server_and_remote_tui() {
             .windows(2)
             .any(|pair| pair == ["-c", "web_search=\"live\""])
     );
+    assert_eq!(
+        &prepared.remote_tui_prefix[1..3],
+        ["-c", "check_for_update_on_startup=false"]
+    );
+}
+
+#[test]
+fn startup_update_default_preserves_explicit_overrides() {
+    let executable = std::env::current_exe().expect("test executable");
+    for value in ["true", "false"] {
+        let config = format!("check_for_update_on_startup={value}");
+        for flags in [
+            vec!["-c".to_owned(), config.clone()],
+            vec!["--config".to_owned(), config.clone()],
+            vec![format!("--config={config}")],
+        ] {
+            let mut configured = vec![executable.to_string_lossy().into_owned()];
+            configured.extend(flags.clone());
+            let prepared = launch_command::prepare(&configured, &BTreeMap::new()).expect("command");
+            for command in [&prepared.remote_tui_prefix, &prepared.app_server] {
+                assert_eq!(&command[1..3], ["-c", "check_for_update_on_startup=false"]);
+                assert_eq!(&command[3..3 + flags.len()], flags.as_slice());
+            }
+        }
+    }
 }
 
 #[test]
@@ -56,24 +92,21 @@ fn app_server_launch_matches_the_codex_actor_yolo_policy() {
         prepared.remote_tui_prefix,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--search",
             "--profile",
             "voice",
             "-c",
             "model=\"gpt-5.6-sol\"",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-c",
-            "shell_environment_policy.inherit=all",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "sandbox_mode=\"danger-full-access\"",
         ]
     );
     assert_eq!(
         prepared.app_server,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--search",
             "--profile",
             "voice",
@@ -149,19 +182,43 @@ fn app_server_replaces_actor_host_policy_but_preserves_user_model_options() {
         prepared.remote_tui_prefix,
         vec![
             executable.to_string_lossy().as_ref(),
+            "-c",
+            "check_for_update_on_startup=false",
             "--model",
             "gpt-test",
             "-c",
             "web_search=\"live\"",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-c",
-            "shell_environment_policy.inherit=all",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "sandbox_mode=\"danger-full-access\"",
         ]
     );
+}
+
+#[test]
+fn configured_permission_flags_never_reach_the_remote_tui() {
+    let executable = std::env::current_exe().expect("test executable");
+    let configured = vec![executable.to_string_lossy().into_owned()];
+    let expected = launch_command::prepare(&configured, &BTreeMap::new()).expect("default command");
+    for flags in [
+        vec!["--yolo"],
+        vec!["--dangerously-bypass-approvals-and-sandbox"],
+        vec!["-a", "on-request"],
+        vec!["--ask-for-approval", "on-request"],
+        vec!["--ask-for-approval=on-request"],
+        vec!["-s", "read-only"],
+        vec!["--sandbox", "read-only"],
+        vec!["--sandbox=read-only"],
+        vec!["-c", "approval_policy=\"on-request\""],
+        vec!["--config", "sandbox_mode=\"read-only\""],
+        vec!["--config=approval_policy=\"on-request\""],
+        vec!["--config=sandbox_mode=\"read-only\""],
+        vec!["-c", "shell_environment_policy.inherit=none"],
+        vec!["--config", "shell_environment_policy={inherit=\"none\"}"],
+        vec!["--config=shell_environment_policy.inherit=none"],
+    ] {
+        let mut command = configured.clone();
+        command.extend(flags.iter().map(|flag| (*flag).to_owned()));
+        let prepared = launch_command::prepare(&command, &BTreeMap::new()).expect("command");
+        assert_eq!(prepared, expected, "configured flags: {flags:?}");
+    }
 }
 
 #[test]
