@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -483,7 +484,10 @@ try:
     choose("调度类型", "一次性调度")
     choose("一次性模式", "精确时间")
     # datetime-local 是浏览器分段控件，普通文本 fill 会清空而非提交年份。
-    browser("find", "role", "spinbutton", "click", "--name", "年")
+    # 原生日期分段的可访问名称随浏览器语言变化，不由 CCCC 页面语言决定。
+    year_names = re.findall(r'spinbutton "([^"\n]*(?:Year|年)[^"\n]*)"', browser("snapshot"))
+    assert len(year_names) == 1, year_names
+    browser("find", "role", "spinbutton", "click", "--name", year_names[0], "--exact")
     browser("press", "ArrowDown")
     browser("press", "Tab")
     assert evaluate("Date.parse(document.querySelector('input[type=datetime-local]').value) < Date.now()")

@@ -1,34 +1,32 @@
 # CLI 管理最终检查与跨平台验收
 
-状态：2026-09-11 已补平台筛选、Windows 路径与 Actor 回归，以及跨平台真实 Web 验收入口，正在验证；尚未全部通过，不能放行。功能合同见 [CLI 管理规格](cli-management.md)，有日期的既有证据见 [Web 验收记录](cli-management-web-acceptance.md)。本页是放行清单，不是测试通过报告。
+本页是放行清单，不是测试通过报告。功能合同见 [CLI 管理规格](cli-management.md)；实际提交、执行位置、通过/失败及未测范围统一记录在 [本轮验收结果](cli-management-web-acceptance.md#跨平台修复复测2026-09-12)，不在多个表格重复维护时间性状态。
 
-本轮阶段结果：指定 Linux 测试机的完整原生 CI 与真实 Web 验收已通过，供应商链路正在绑定修正后二进制复测。个人 Fork Windows 验证已通过前端、原生七组、CLI 管理核心/Daemon 与 Actor 来源切换回归；真实供应商 12 项通过，DeepSeek、Hermes 和 GUI 安装夹具仍有待修正项，尚未放行。中间候选仅推送个人 Fork 独立验证分支，没有更新上游 PR 或日常部署。
-
-Windows 实测修正范围：锁竞争判定沿用原生 `fs2::lock_contended_error`；卸载兼容规范化路径但保留归属校验。安装环境参照原生 Claude launcher 保留 `APPDATA`、`LOCALAPPDATA`，不继承模型凭据；Hermes 的 Git 克隆目标使用固定工作目录下的相对名称，避免把 Windows 扩展路径作为 Git 参数。GUI Python 替身显式以 UTF-8 运行。这些修正仍须分别通过原生回归、真实安装及网页复测；不能以原因已定位代替通过。
+Windows 修复覆盖原生文件锁冲突、状态读写协调、规范化路径、Windows 安装环境及 Hermes Git 目标路径；日期控件验收按浏览器实际可访问名称定位。具体原因与证据见本轮验收结果；不能以原因已定位代替通过。
 
 真实 Web 自动化入口：[cli-management.py](../../web/tests/browser/cli-management.py) 与同目录的受控安装替身。必须在指定测试环境、全新目录运行；它不访问模型，也不能替代真实供应商安装验收。Windows Actor 回归入口为 `windows_managed_actor_update_uninstall_and_external_fallback`。
 
 ## 1. 执行边界与顺序
 
-- 禁止在开发者本机、WSL 或本机容器运行测试与验证。指定 Linux 测试机先执行所有可执行的 CI 检查及真实 GUI 验收；Windows 专属检查在个人 Fork 的 GitHub 托管 Windows 运行器执行。
+- 禁止在开发者本机、WSL 或本机容器运行测试与验证。指定 Linux 测试机先执行所有可执行的 CI 检查及真实 GUI 验收；Windows 专属检查在指定 Windows 测试机执行。自有 Windows 测试机已取代此前个人 Fork 托管运行器的预检方案。
 - 使用独立 Home、目录、端口、外部安装夹具及凭据为空的环境；不覆盖标准实例，不安装到日常工作实例的全局 CLI 目录。供应商安装与合成夹具分开记载，不需要模型登录的用例不能借机复制生产凭据。
 - 每次读取候选版本的 [.github/workflows/ci.yml](../../.github/workflows/ci.yml)，以其实际命令、工具链、环境变量和串行约束为准。优先复用 [原生检查入口](../../scripts/pre_commit_checks.sh) 及其调用脚本；该入口不等价于全部 CI，缺项必须补跑，不新建另一套产品调度或测试框架。
-- Linux 检查通过并完成完整 Git 历史及最终提交安全扫描、人工检查后，候选代码才可上传至个人 Fork 的独立验证分支。该分支不能是上游 PR 来源分支。Windows 与 GUI 检查通过后才更新上游 PR；保留上游 CI，不通过减少用例或关闭 job 绕过失败。
+- Linux、Windows 与 GUI 检查通过，并完成完整 Git 历史及最终提交安全扫描、人工检查后，才更新获准的既有 PR 来源分支；保留上游 CI，不通过减少用例或关闭 job 绕过失败。
 - 保存源码提交、程序/网页产物标识、OS/架构、工具版本及结果。复用 Web 产物时必须来自同一候选源码。尚未执行、因依赖受阻、失败、跳过与通过分别报告；任何必测项缺失都不宣称最终完成。
 
 ## 2. GitHub CI 对照清单
 
 当前检查基线：`1bd0e24f`，Rust 1.88.0、Node 24.19.0、Python 3.14；这些是本轮记录，不是冻结以后上游工具链。每次更新基线重新核对。缓存上传、artifact 传输不算独立测试；下载 Web artifact 在自有环境可等价使用同一源码构建的 Web bundle。
 
-| 编号 / 原生作业 | 最终必须覆盖的内容 | 执行位置 | 当前状态 |
-|---|---|---|---|
-| CI-01 quality | `python -m ruff check scripts tests`；`python -m pytest -q` 全部工具及 workflow 合同测试 | Linux 测试机 | 本轮通过：111 项 |
-| CI-02 web | `npm ci --prefix web`；`npm -C web run check`、`test`、`run build` | Linux 测试机 | 本轮通过：1518 项及检查/构建 |
-| CI-03 package | 原生四组打包工具测试、用 `/bin/true` 构造 smoke wheel、verify_native_wheel、twine check、归档布局断言；不能只跑 pytest 而省略 shell/Python 断言 | Linux 测试机 | 本轮通过 |
-| CI-04 rust-linux | fmt、全 workspace/all-targets Clippy；install_unix/release_assets 脚本；全 workspace 测试；Daemon 串行；combined daemon/Web 生命周期单独串行 | Linux 测试机 | 本轮通过；容器须有标准 init |
-| CI-05 rust-linux 原生 CLI | 按 workflow 的固定版本安装 Codex/Claude/Kilo；设置原有四个 live 开关及 CCCC_LAUNCHER_PATH，真实运行无模型访问的 session 冒烟组 | Linux 测试机隔离环境 | 本轮通过；隔离 npm prefix 已加入 PATH |
-| CI-06 windows-smoke | 下面列出的原生七组 Windows 检查，不改失败标准、不用 Linux 替代 | 个人 Fork Windows 运行器 | 编译修订已完成，待真实 Windows 执行 |
-| CI-07 ci-required | 核对上述原生 job 均成功；自有预检不能把未运行 Windows 写成成功 | 最终证据汇总及 GitHub 原生门禁 | 待完成 |
+| 编号 / 原生作业 | 最终必须覆盖的内容 | 执行位置 |
+|---|---|---|
+| CI-01 quality | `python -m ruff check scripts tests`；`python -m pytest -q` 全部工具及 workflow 合同测试 | Linux 测试机 |
+| CI-02 web | `npm ci --prefix web`；`npm -C web run check`、`test`、`run build` | Linux 测试机 |
+| CI-03 package | 原生四组打包工具测试、用 `/bin/true` 构造 smoke wheel、verify_native_wheel、twine check、归档布局断言；不能只跑 pytest 而省略 shell/Python 断言 | Linux 测试机 |
+| CI-04 rust-linux | fmt、全 workspace/all-targets Clippy；install_unix/release_assets 脚本；全 workspace 测试；Daemon 串行；combined daemon/Web 生命周期单独串行；容器使用标准 init | Linux 测试机 |
+| CI-05 rust-linux 原生 CLI | 按 workflow 的固定版本安装 Codex/Claude/Kilo；将隔离 npm prefix 加入 PATH，设置原有四个 live 开关及 CCCC_LAUNCHER_PATH，真实运行无模型访问的 session 冒烟组 | Linux 测试机隔离环境 |
+| CI-06 windows-smoke | 下面列出的原生七组 Windows 检查，不改失败标准、不用 Linux 替代 | Windows 测试机 |
+| CI-07 ci-required | 核对上述原生 job 均成功；自有预检不能把未运行 Windows 写成成功 | 最终证据汇总及 GitHub 原生门禁 |
 
 Windows 原生七组：PTY UTF-8 消息投递、挂起进程启动、Owned Job 后代回收、控制台 UTF-8 编码恢复、Web 启动失败释放 Daemon、Daemon 异常退出回收进程树、Kilo npm 入口启动。具体命令直接沿用 workflow；它们不是 CLI 管理全部功能测试。
 
@@ -50,40 +48,40 @@ Nightly、Release、Pages 发布不属于本 PR 主 CI；不为预检发布 Rele
 - 后端操作入口及自动更新计划使用一致的平台支持判断；不支持项不能因直接请求、旧计划或旧记录而启动安装命令。历史操作和失败原因仍可诊断，不为隐藏条目删除用户资料。
 - 每个声明支持的 Windows CLI 都要验证真实安装来源；夹具只证明管理机制，不代替供应商分发测试。上游暂时下载失败应记为受阻，不能改成该平台“不支持”。
 
-| 编号 | Windows 功能检查 | 当前状态 |
-|---|---|---|
-| WIN-01 | 原生二进制构建、`--version`、独立 Daemon/Web 启停；未安装 mise 时原有 CCCC 功能可用，管理操作明确提示依赖缺失 | 待执行 |
-| WIN-02 | 平台清单与真实包匹配；不支持项的直接请求及旧计划不执行，原生 Runtime/外部 Actor 仍可使用 | 平台筛选已实现，Windows 待执行 |
-| WIN-03 | 各支持项首装、更新与版本探针、失败保留旧选择、卸载及重启后持久化；记录下载/校验/退出结果 | 待执行 |
-| WIN-04 | 默认 Actor 实际使用受管程序；卸载后回落外部；显式外部命令遵守原生优先级；用进程路径/版本证据而非仅 PATH 字符串 | 待执行 |
-| WIN-05 | `.exe`/`.cmd`、含空格及中文路径、大小写、分隔符、CRLF、符号链接或 junction 的适用边界；不强制开启系统级权限来让用例通过 | 待执行 |
-| WIN-06 | 活动进程拒绝卸载、自然退出和失败启动释放使用锁、停止失败不提前释放、外部文件与登录/会话夹具前后不变 | 待执行 |
-| WIN-07 | 日志脱敏/分页/半行、操作归档、状态损坏与恢复、计划持久化及串行执行；后台故障不扩散到原有 Runtime 列表 | 待执行 |
+| 编号 | Windows 功能检查 |
+|---|---|
+| WIN-01 | 原生二进制构建、`--version`、独立 Daemon/Web 启停；未安装 mise 时原有 CCCC 功能可用，管理操作明确提示依赖缺失 |
+| WIN-02 | 平台清单与真实包匹配；不支持项的直接请求及旧计划不执行，原生 Runtime/外部 Actor 仍可使用 |
+| WIN-03 | 各支持项首装、更新与版本探针、失败保留旧选择、卸载及重启后持久化；记录下载/校验/退出结果 |
+| WIN-04 | 默认 Actor 实际使用受管程序；卸载后回落外部；显式外部命令遵守原生优先级；用进程路径/版本证据而非仅 PATH 字符串 |
+| WIN-05 | `.exe`/`.cmd`、含空格及中文路径、大小写、分隔符、CRLF、符号链接或 junction 的适用边界；不强制开启系统级权限来让用例通过 |
+| WIN-06 | 活动进程拒绝卸载、自然退出和失败启动释放使用锁、停止失败不提前释放、外部文件与登录/会话夹具前后不变 |
+| WIN-07 | 日志脱敏/分页/半行、操作归档、状态损坏与恢复、计划持久化及串行执行；后台故障不扩散到原有 Runtime 列表 |
 
 Unix 专属夹具应使用正确的条件编译，Windows 要保留可跨平台的主体回归或等价 Windows 用例；不能将整个新增测试模块禁用来掩盖 Windows 编译错误。
 
 ## 4. Windows GUI 必测用例
 
-Windows GUI 验收必须在 Windows 运行器上启动真实 `cccc.exe` 的 Daemon/Web，并用该 Windows 环境里的真实浏览器驱动原生页面。允许无头浏览器，不要求远程桌面；不是改 User-Agent，也不是仅渲染组件或伪造平台 API。跨平台自动化入口已实现，Windows 尚待执行；下表的待执行状态不是入口不存在。截图、DOM、后台状态及文件/进程证据按同一用例关联。故障注入可用夹具，不能把 API 调用替代应由网页完成的点击。
+Windows GUI 验收必须在 Windows 测试机上启动真实 `cccc.exe` 的 Daemon/Web，并用该 Windows 环境里的真实浏览器驱动原生页面。允许无头浏览器，不要求远程桌面；不是改 User-Agent，也不是仅渲染组件或伪造平台 API。截图、DOM、后台状态及文件/进程证据按同一用例关联。故障注入可用夹具，不能把 API 调用替代应由网页完成的点击。
 
-| 编号 | 操作及预期 | 必须交叉核对 | 当前状态 |
-|---|---|---|---|
-| WGUI-01 | 打开全局 CLI 管理，仅显示服务端平台可安装子集，不显示 Web Model/Custom；Actor 原有 Runtime 选择不被删减 | 支持矩阵、管理 API、原生 Runtime API、DOM | 入口已实现，Windows 待执行 |
-| WGUI-02 | 外部安装显示正确；网页安装受管副本，状态由排队到成功，默认来源与 Windows 路径准确 | 真实文件、版本、进程；外部副本前后校验一致 | 入口已实现，Windows 待执行 |
-| WGUI-03 | 网页创建/启动 Actor 使用受管版本；更新后新启动使用新版本，旧 Actor 不被强停 | 启动进程路径/PID/版本及安装选择 | 入口已实现，Windows 待执行 |
-| WGUI-04 | 卸载确认取消零操作；活动 Actor 拒绝；停止后卸载成功，再启动使用外部版本或明确不可用 | 锁、删除范围、外部程序与登录/会话夹具不变 | 入口已实现，Windows 待执行 |
-| WGUI-05 | 安装/更新失败、同版本修复、缺少 mise、网络错误均准确呈现，不把请求已接收当成功 | 操作终态、旧选择、退出码和错误日志 | 入口已实现，Windows 待执行 |
-| WGUI-06 | 添加计划默认 03:00 且未启用；间隔/周/月/一次性/复杂 cron、启停/删除/冲突/刷新正确；关闭网页后仍触发、多个 CLI 串行 | 持久化、时区、source_rule、实际执行时间区间；不支持或已卸载项不执行 | 入口已实现，Windows 待执行 |
-| WGUI-07 | 操作记录五种状态、手动/计划来源、三种时间、近期/全部及归档日志正确；重复点击/重试不重复执行 | 页面与后台记录逐条一致、重启不丢失 | 入口已实现，Windows 待执行 |
-| WGUI-08 | 日志不串任务；前后翻页、刷新、失败恢复、半行游标不前进时禁用下一页；合成敏感值不暴露 | 浏览器实际请求 offset 与任务 ID、脱敏内容、CRLF/Unicode | 入口已实现，Windows 待执行 |
-| WGUI-09 | 中英日、明暗主题、窄屏、键盘、滚动、原生日期/时间控件和确认框可用；没有 Windows 路径撑破布局 | 截图、焦点、DOM、浏览器控制台 | 入口已实现，Windows 待执行 |
-| WGUI-10 | 管理员/受限身份、CSRF、过期保存、状态损坏、重启中断及恢复符合原生合同；其他设置和 Actor 基本操作正常 | UI、真实后端拒绝/恢复、既有状态不变 | 入口已实现，Windows 待执行 |
+| 编号 | 操作及预期 | 必须交叉核对 |
+|---|---|---|
+| WGUI-01 | 打开全局 CLI 管理，仅显示服务端平台可安装子集，不显示 Web Model/Custom；Actor 原有 Runtime 选择不被删减 | 支持矩阵、管理 API、原生 Runtime API、DOM |
+| WGUI-02 | 外部安装显示正确；网页安装受管副本，状态由排队到成功，默认来源与 Windows 路径准确 | 真实文件、版本、进程；外部副本前后校验一致 |
+| WGUI-03 | 网页创建/启动 Actor 使用受管版本；更新后新启动使用新版本，旧 Actor 不被强停 | 启动进程路径/PID/版本及安装选择 |
+| WGUI-04 | 卸载确认取消零操作；活动 Actor 拒绝；停止后卸载成功，再启动使用外部版本或明确不可用 | 锁、删除范围、外部程序与登录/会话夹具不变 |
+| WGUI-05 | 安装/更新失败、同版本修复、缺少 mise、网络错误均准确呈现，不把请求已接收当成功 | 操作终态、旧选择、退出码和错误日志 |
+| WGUI-06 | 添加计划默认 03:00 且未启用；间隔/周/月/一次性/复杂 cron、启停/删除/冲突/刷新正确；关闭网页后仍触发、多个 CLI 串行 | 持久化、时区、source_rule、实际执行时间区间；不支持或已卸载项不执行 |
+| WGUI-07 | 操作记录五种状态、手动/计划来源、三种时间、近期/全部及归档日志正确；重复点击/重试不重复执行 | 页面与后台记录逐条一致、重启不丢失 |
+| WGUI-08 | 日志不串任务；前后翻页、刷新、失败恢复、半行游标不前进时禁用下一页；合成敏感值不暴露 | 浏览器实际请求 offset 与任务 ID、脱敏内容、CRLF/Unicode |
+| WGUI-09 | 中英日、明暗主题、窄屏、键盘、滚动、原生日期/时间控件和确认框可用；没有 Windows 路径撑破布局 | 截图、焦点、DOM、浏览器控制台 |
+| WGUI-10 | 管理员/受限身份、CSRF、过期保存、状态损坏、重启中断及恢复符合原生合同；其他设置和 Actor 基本操作正常 | UI、真实后端拒绝/恢复、既有状态不变 |
 
 Linux 也须执行同等适用的真实 GUI 场景，不能因增加 Windows 而减少原有 W01～W17 覆盖。平台判断另做跨浏览器环境的后端不变性回归；Windows 浏览器访问 Linux 服务不是 Windows 服务端验收。
 
 ## 5. 最终报告与放行
 
-最终报告逐项填写：候选 SHA、平台/架构、工具链、原生 CI 作业、逐 CLI 结果、GUI 用例、命令或自动化入口、退出码、日志/截图、未测项及阻塞原因。个人 Fork Windows run 链接不替代真实安装和 GUI 用例证据。原始秘密及内部地址不进入公开报告。
+最终报告逐项填写：候选 SHA、平台/架构、工具链、原生 CI 作业、逐 CLI 结果、GUI 用例、命令或自动化入口、退出码、日志/截图、未测项及阻塞原因。GitHub run 链接不替代真实安装和 GUI 用例证据。筛选到零项测试不算专项通过，必须核对完整测试名与实际执行数量。原始秘密及内部地址不进入公开报告。
 
 - 任一适用 CI、已声明支持的 CLI 安装链路或 GUI 必测用例失败/未执行，均不能写“全部通过”。
 - 没有 Windows 真实后端与浏览器证据时，不能写“Windows GUI 已验收”；既有 Linux 及本机隔离组件证据只保留历史用途。

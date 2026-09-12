@@ -105,8 +105,7 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
-    use cccc_core::{GroupStore, Scope};
+    use cccc_contracts::ActorRuntime;
     use chrono::Utc;
 
     fn installed(home: &HomeLayout, id: &str) -> PathBuf {
@@ -309,6 +308,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn real_pty_actor_blocks_removal_even_when_its_configuration_changes() {
+        use cccc_contracts::{Actor, RunnerKind};
+        use cccc_core::{GroupStore, Scope};
+
         let temp = tempfile::tempdir().expect("real pty actor");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("real pty actor");
         let executable = installed(&home, "pty-install");

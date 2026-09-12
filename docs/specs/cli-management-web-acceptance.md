@@ -2,9 +2,34 @@
 
 ## 当前最终验收入口
 
-2026-09-11 已确认增加按服务端平台筛选 CLI、Windows 原生测试及 Windows GUI 测试。统一验收入口为 [最终检查与跨平台验收](cli-management-final-checks.md)。跨平台真实浏览器入口已实现，Linux 正在完成全流程复测；WGUI-01～WGUI-10 的 Windows 运行仍待执行，不能把 Linux 结果当作 Windows 验收。
+放行条件见 [最终检查与跨平台验收](cli-management-final-checks.md)，当前执行状态只在下一节维护。Windows 使用指定的自有测试机，不再使用个人 Fork 托管运行器预检；正常上游 CI 保留。
 
 本文其余章节保存各轮历史结果。特别是下方 W01～W17 的“通过”仅适用于对应历史 Linux 环境；“17 项”是当时 Linux 清单，不是 Windows 固定数量。第二轮 PR 复审的 2015 项及隔离组件浏览器验证在本机 WSL 执行，不符合随后确认的测试机执行规则，不是当前最终验收或 Windows 验收通过证明。
+
+## 跨平台修复复测（2026-09-12）
+
+产品代码基线为 `a20cb802`；之后仅修正测试专用导入、浏览器日期分段定位及验收文档。Linux 使用指定 Ubuntu 测试机内的 Debian 12 隔离容器（带标准 init），Windows 使用指定 Windows Server 2025 Standard x64 测试机；本机未执行测试。Rust 1.88.0、Node 24.19.0、Python 3.14，浏览器驱动为 agent-browser 0.37.1。
+
+| 范围 | 本轮结果与边界 |
+|---|---|
+| Linux quality / Web / package | Ruff 与 111 项 Python 测试、1518 项 Web 测试及原生 check/build、25 项打包定向测试及完整 smoke wheel/归档验证通过；后续改动未涉及这些产品实现 |
+| Linux Rust | 格式、全目标 Clippy、安装与发布脚本、完整 workspace、Daemon 全套串行回归及组合进程生命周期 3 项全部通过；按 CI 固定版本运行 Codex 1 项、Claude 1 项与 Kilo 筛选组 3 项通过。完整检查脚本退出码 0，最后的测试专用导入调整另经全目标 Clippy 与格式检查通过 |
+| Windows 原生 CI 七组 | 全部通过：PTY UTF-8、挂起启动、Owned Job、控制台编码、组合 Web 启动失败清理、Daemon 异常退出清理、Kilo npm 启动；同源码 `cccc.exe` 构建通过 |
+| Windows CLI 管理 | 核心 18 项、Daemon 22 项通过；另 1 项真实安装入口保持显式实验室要求，结果见下行。Actor 专项使用完整测试名实际执行 1 项通过，验证受管首版、更新版、显式外部命令、活动卸载拒绝与停止后卸载回落；零项筛选结果不计入通过 |
+| Windows 真实供应商 | 14 项：Amp、Antigravity、Auggie、Claude、Cline、Codex、Copilot、DeepSeek、Devin、Grok、Hermes、Kilo、Kimi、OpenCode。逐项完成真实首装、更新、损坏后的同版本修复、卸载；最终受管选择均为空。供应商分发结果绑定 `82d668e6` 的安装实现；此后安装命令与来源未变，仅状态只读入口与测试修正另行回归 |
+| Linux / Windows 真实 GUI | 两端均以真实 CCCC 后端和浏览器执行完整 `web/tests/browser/cli-management.py`，最终退出码均为 0；平台清单、安装/更新/失败保护/修复/卸载、Actor 来源与外部文件保护、后台串行计划、操作记录/日志/归档、故障恢复/重启中断、三语主题及受限身份均通过，保留截图、状态和实际进程标记证据 |
+
+修复和失败记录：
+
+- Windows 原生锁冲突沿用 `fs2::lock_contended_error`；读取与写入共用 CLI 管理状态锁，锁内入口使用 `load_unlocked`，避免重入死锁。未启用 CLI 管理时读取不创建目录或锁文件；只读列表故障隔离回归保持原生合同。
+- 规范化路径继续用于归属校验，子进程命令和 PATH 才恢复为 Windows 可执行形式；卸载仍校验受管归属。保留安装所需 APPDATA/LOCALAPPDATA，不继承供应商凭据；Hermes 使用固定工作目录中的相对 Git 克隆目标。
+- 两处故障注入夹具改为直接读取已提交 JSON，避免在刻意破坏锁文件后又通过正常加锁入口准备数据；没有放宽实际 API 的失败/恢复断言。
+- Windows 新 SSH 会话缺少 NASM PATH 的环境错误已补齐并重跑。Linux 浏览器首次启动在链接期间超时，诊断后从新目录重跑通过。日期分段的可访问名称因浏览器语言不同而为“年”或“Year Year”，测试从实际快照定位，两端重跑通过；未改产品日期控件。
+- 本功能新增的 Windows 测试无用导入已清理。其他上游模块仍有既有 Windows 编译警告；没有通过全局 suppress、关闭 CI 或删测试消除它们。
+
+本轮 Linux/Windows x64 测试机预检及真实 GUI 验收通过；未验证 macOS、ARM64、供应商订阅登录或模型推理，不把合成安装夹具当作供应商分发证据。不改公共 cron、原生 CI workflow、连接器或日常实例。最终全历史扫描及推送/远端 CI 状态另在发布核查中记录；测试机预检不冒充远端 CI 已通过，也不代表已经部署。
+
+术语检查：受管安装、CLI 更新、CLI 自动更新计划、CLI 操作记录、Actor、Runtime 和原生会话的定义不变；平台安装清单不删减原生 Runtime 产品能力。历史“升级”仅保留在旧记录或兼容说明中。
 
 ## 第二轮 PR 复审修订（2026-09-11，未部署）
 
