@@ -131,7 +131,13 @@ pub fn read_log(home: &HomeLayout, id: &str, offset: u64) -> io::Result<Value> {
 }
 
 pub fn load(home: &HomeLayout) -> io::Result<State> {
-    fs::with_exclusive_lock(&root(home).join("state.lock"), || load_unlocked(home))
+    // 保持只读目录的既有合同：CLI 管理尚未使用时，查询不得创建状态目录或锁文件。
+    // 一旦目录存在，读取与写入共用同一把锁，避免读到半提交的状态。
+    let root = root(home);
+    if !root.exists() {
+        return Ok(State::default());
+    }
+    fs::with_exclusive_lock(&root.join("state.lock"), || load_unlocked(home))
 }
 
 fn load_unlocked(home: &HomeLayout) -> io::Result<State> {
