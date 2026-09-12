@@ -38,11 +38,22 @@ fn cancel_flags() -> &'static RwLock<HashMap<Key, Arc<AtomicBool>>> {
     FLAGS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+#[cfg(test)]
 pub fn start(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     cwd: &Path,
+) -> std::io::Result<()> {
+    start_with_resources(home, group, actor, cwd, Vec::new())
+}
+
+fn start_with_resources(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: &Path,
+    retained_files: Vec<std::fs::File>,
 ) -> std::io::Result<()> {
     let key = (group.group_id.clone(), actor.id.clone());
     stop(&group.group_id, &actor.id);
@@ -71,7 +82,7 @@ pub fn start(
     let command = launch_command::resolve(actor, &env)?;
     let env = env.into_iter().collect::<Vec<_>>();
     supervisor
-        .start(&command, cwd, &env)
+        .start_with_resources(&command, cwd, &env, retained_files)
         .map_err(std::io::Error::other)?;
     if let Err(error) = supervisor.handshake(cwd, Duration::from_secs(5)) {
         let _ = supervisor.stop();

@@ -12,6 +12,7 @@ struct Registry {
     closed: bool,
     next_id: u64,
     resources: HashMap<u64, Resource>,
+    retained_files: HashMap<u64, Vec<std::fs::File>>,
 }
 
 fn registry() -> MutexGuard<'static, Registry> {
@@ -31,6 +32,26 @@ pub struct OwnedProcessTree {
 }
 
 impl OwnedProcessTree {
+    /// 可选资源跟随本次进程身份；停止失败或仅发出信号时不释放。
+    pub fn retain_files(&self, files: Vec<std::fs::File>) {
+        if !files.is_empty() {
+            registry()
+                .retained_files
+                .entry(self.id)
+                .or_default()
+                .extend(files);
+        }
+    }
+
+    /// 仅在拥有者已通过 wait/try_wait 确认退出后调用。
+    pub fn release_files_after_exit(&self) {
+        registry().retained_files.remove(&self.id);
+    }
+
+    pub(crate) fn has_retained_files(&self) -> bool {
+        registry().retained_files.contains_key(&self.id)
+    }
+
     pub fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
         Self::spawn_registered(command, 0)
     }
@@ -100,6 +121,7 @@ impl OwnedProcessTree {
         let result = poll()?;
         if result.is_some() {
             registry.terminate(self.id)?;
+            registry.retained_files.remove(&self.id);
         }
         Ok(result)
     }

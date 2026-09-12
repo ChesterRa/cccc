@@ -73,6 +73,7 @@ impl AnalystSession {
             tracing::warn!(%error, %group_id, %actor_id, "failed to persist Grok managed session");
         }
         Ok(Self {
+            cli_usage: Default::default(),
             #[cfg(test)]
             binding,
             generation,

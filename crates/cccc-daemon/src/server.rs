@@ -39,6 +39,7 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
     std::fs::write(&lifecycle.paths.pid, format!("{}\n", std::process::id()))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
+    let cli_management = crate::ops::cli_management::Worker::start(lifecycle.paths.home.clone());
     let dispatch_locks = DispatchLocks::default();
     let group_bridge_sessions =
         crate::group_bridge_sessions::SessionManager::start(lifecycle.paths.home.clone());
@@ -63,6 +64,7 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
         .await
     };
     actor_activity.finish().await;
+    cli_management.finish().await;
     group_bridge_sessions.shutdown().await;
     lifecycle.finish(result)
 }

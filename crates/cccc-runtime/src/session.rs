@@ -55,6 +55,7 @@ impl Session {
         spec: LaunchSpec,
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
+        retained_files: Vec<std::fs::File>,
     ) -> Result<Self, RuntimeError> {
         let prepared_command = crate::prepare_pty_command(&spec.command, &spec.env);
         let (program, args) = prepared_command
@@ -78,47 +79,54 @@ impl Session {
         command.env("CCCC_ACTOR_ID", &spec.actor_id);
         command.env("CCCC_RUNNER", runner_name(spec.runner));
         command.env("TERM", "xterm-256color");
-        let (child, process_tree) = OwnedProcessTree::spawn_pty(|| {
+        let (mut child, process_tree) = OwnedProcessTree::spawn_pty(|| {
             pair.slave
                 .spawn_command(command)
                 .map_err(|e| std::io::Error::other(e.to_string()))
         })?;
+        let has_resources = !retained_files.is_empty();
+        process_tree.retain_files(retained_files);
         let pid = child.process_id();
-        #[cfg(target_os = "linux")]
-        let (reader, writer) = {
-            let (reader, writer) = crate::pty_io::open(pair.master.as_ref())?;
-            (
-                Box::new(reader) as Box<dyn std::io::Read + Send>,
-                Box::new(writer) as Box<dyn crate::pty_input::PtyInput>,
-            )
-        };
-        #[cfg(not(target_os = "linux"))]
-        let (reader, writer) = (
-            pair.master
-                .try_clone_reader()
-                .map_err(|error| std::io::Error::other(error.to_string()))?,
-            pair.master
-                .take_writer()
-                .map_err(|error| std::io::Error::other(error.to_string()))?,
-        );
-        #[cfg(not(target_os = "linux"))]
-        let writer =
-            Box::new(crate::pty_input::NativeInput(writer)) as Box<dyn crate::pty_input::PtyInput>;
-        let writer = Arc::new(Mutex::new(writer));
-        let input_gate = Arc::new(Mutex::new(()));
-        let history = SessionHistory::new_at_with_size(
-            history_config,
-            history_cursor_floor,
-            spec.cols,
-            spec.rows,
-        )?;
-        let reader = OutputReader::start(
-            format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
-            reader,
-            history.clone(),
-            Arc::clone(&writer),
-            Arc::clone(&input_gate),
-        )?;
+        let prepared = (|| -> Result<_, RuntimeError> {
+            #[cfg(target_os = "linux")]
+            let (reader, writer) = {
+                let (reader, writer) = crate::pty_io::open(pair.master.as_ref())?;
+                (
+                    Box::new(reader) as Box<dyn std::io::Read + Send>,
+                    Box::new(writer) as Box<dyn crate::pty_input::PtyInput>,
+                )
+            };
+            #[cfg(not(target_os = "linux"))]
+            let (reader, writer) = (
+                pair.master
+                    .try_clone_reader()
+                    .map_err(|error| std::io::Error::other(error.to_string()))?,
+                pair.master
+                    .take_writer()
+                    .map_err(|error| std::io::Error::other(error.to_string()))?,
+            );
+            #[cfg(not(target_os = "linux"))]
+            let writer = Box::new(crate::pty_input::NativeInput(writer))
+                as Box<dyn crate::pty_input::PtyInput>;
+            let writer = Arc::new(Mutex::new(writer));
+            let input_gate = Arc::new(Mutex::new(()));
+            let history = SessionHistory::new_at_with_size(
+                history_config,
+                history_cursor_floor,
+                spec.cols,
+                spec.rows,
+            )?;
+            let reader = OutputReader::start(
+                format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
+                reader,
+                history.clone(),
+                Arc::clone(&writer),
+                Arc::clone(&input_gate),
+            )?;
+            Ok((writer, input_gate, history, reader))
+        })();
+        let (writer, input_gate, history, reader) =
+            finish_resource_setup(prepared, has_resources, child.as_mut(), &process_tree)?;
         Ok(Self {
             status: SessionStatus {
                 group_id: spec.group_id,
@@ -153,16 +161,24 @@ impl Session {
 
     pub fn stop(&mut self) -> Result<SessionStatus, RuntimeError> {
         self.process_tree.terminate()?;
+        if self.process_tree.has_retained_files() {
+            // 仅资源接入路径提前确认自然退出；不以旧 running 状态跳过回收。
+            self.status();
+        }
         if self.status.running {
-            self.child
-                .kill()
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            if let Err(error) = self.child.kill() {
+                if self.process_tree.has_retained_files() {
+                    self.status();
+                }
+                return Err(std::io::Error::other(error.to_string()).into());
+            }
             let exit = self
                 .child
                 .wait()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
+            self.process_tree.release_files_after_exit();
         }
         self.finish_output()?;
         Ok(self.status.clone())
@@ -301,7 +317,9 @@ impl Drop for Session {
         let _ = self.process_tree.terminate();
         if self.status.running {
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            if self.child.wait().is_ok() {
+                self.process_tree.release_files_after_exit();
+            }
             self.status.running = false;
         }
         let _ = self.finish_output();
@@ -312,5 +330,62 @@ fn runner_name(runner: RunnerKind) -> &'static str {
     match runner {
         RunnerKind::Pty => "pty",
         RunnerKind::Headless => "headless",
+    }
+}
+
+fn finish_resource_setup<T>(
+    result: Result<T, RuntimeError>,
+    has_resources: bool,
+    child: &mut dyn portable_pty::Child,
+    tree: &OwnedProcessTree,
+) -> Result<T, RuntimeError> {
+    // 不改变无附加资源的原生错误路径；退出未确认时保留资源。
+    if result.is_err() && has_resources && tree.terminate().is_ok() && child.wait().is_ok() {
+        tree.release_files_after_exit();
+    }
+    result
+}
+
+#[cfg(all(test, unix))]
+mod resource_tests {
+    use super::*;
+
+    #[test]
+    fn failed_initialization_reaps_the_child_and_releases_resources() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let file = std::fs::File::create(temp.path().join("usage")).expect("resource");
+        let mut session = Session::start_with_history(
+            crate::test_support::spec(&temp, "resource-failure", "actor", "sleep 60"),
+            None,
+            0,
+            vec![file],
+        )
+        .expect("session");
+        let result: Result<(), RuntimeError> = finish_resource_setup(
+            Err(std::io::Error::other("injected reader setup failure").into()),
+            true,
+            session.child.as_mut(),
+            &session.process_tree,
+        );
+        assert!(result.is_err());
+        assert!(session.child.try_wait().expect("exit").is_some());
+        assert!(!session.process_tree.has_retained_files());
+        session.status.running = false;
+    }
+
+    #[test]
+    fn stopping_after_natural_exit_releases_resources() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let file = std::fs::File::create(temp.path().join("usage")).expect("resource");
+        let mut session = Session::start_with_history(
+            crate::test_support::spec(&temp, "resource-exit", "actor", "exit 0"),
+            None,
+            0,
+            vec![file],
+        )
+        .expect("session");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = session.stop();
+        assert!(!session.process_tree.has_retained_files());
     }
 }

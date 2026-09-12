@@ -122,6 +122,7 @@ impl ElicitationAction {
 }
 
 pub(crate) struct AnalystSession {
+    cli_usage: std::sync::Mutex<Vec<std::fs::File>>,
     #[cfg(test)]
     binding: WorkspaceBinding,
     generation: String,

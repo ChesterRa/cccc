@@ -81,7 +81,8 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    super::local_headless::start(home, group, &actor).map_err(OpError::io)
+    super::local_headless::start(home, group, &actor).map_err(OpError::io)?;
+    Ok(())
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
@@ -92,6 +93,8 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         actor.command.clone()
     };
     let cwd = working_directory(group, &actor)?;
+    let usage = super::cli_management::usage::acquire_in(home, actor.runtime, &actor.command, &cwd)
+        .map_err(OpError::io)?;
     let mut env = environment::launch_env(home, group, &actor);
     super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     let _start_permit = crate::runtime_start_gate::permit(home)
@@ -99,7 +102,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let command = cccc_runtime::resolve_command_executable(&command, &env);
     let history =
         terminal_history::config(home, &group.group_id, &actor.id).map_err(OpError::io)?;
-    cccc_runtime::start_with_history(
+    let status = cccc_runtime::start_with_history_and_resources(
         LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
@@ -111,8 +114,10 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             rows: 40,
         },
         history,
+        usage,
     )
-    .map_err(runtime_error)
+    .map_err(runtime_error)?;
+    Ok(status)
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {

@@ -13,6 +13,42 @@ fn shell(script: &str) -> (Child, OwnedProcessTree) {
     .expect("spawn child process")
 }
 
+#[test]
+fn retained_files_follow_process_generation_and_wait_not_stop_request() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let lock = |name: &str| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(temp.path().join(name))
+            .expect("lock file")
+    };
+    let first = lock("first");
+    let second = lock("second");
+    let (mut old, owner) = shell("sleep 60");
+    let (mut replacement, next) = shell("sleep 60");
+    owner.retain_files(vec![first]);
+    next.retain_files(vec![second]);
+    // 两次启动独立持有；取消/停止信号不是退出证据。
+    assert!(registry().retained_files.contains_key(&owner.id));
+    owner.terminate().expect("signal old");
+    assert!(registry().retained_files.contains_key(&owner.id));
+    let failed: io::Result<Option<()>> =
+        owner.try_wait(|| Err(io::Error::other("injected wait failure")));
+    assert!(failed.is_err());
+    assert!(registry().retained_files.contains_key(&owner.id));
+    old.wait().expect("confirm old exit");
+    owner.release_files_after_exit();
+    assert!(!registry().retained_files.contains_key(&owner.id));
+    assert!(registry().retained_files.contains_key(&next.id));
+    next.terminate().expect("signal replacement");
+    next.try_wait(|| replacement.wait().map(Some))
+        .expect("confirm replacement exit");
+    assert!(!registry().retained_files.contains_key(&next.id));
+}
+
 fn expect_pipe_closes(stdout: impl Read + Send + 'static) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {

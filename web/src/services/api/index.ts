@@ -6,6 +6,7 @@ export * from "./actors";
 export * from "./context";
 export * from "./tasks";
 export * from "./system";
+export * from "./cliManagement";
 export * from "./messaging";
 export * from "./im";
 export * from "./webAccess";

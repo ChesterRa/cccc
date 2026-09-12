@@ -5,7 +5,7 @@ use std::path::Path;
 const CHUNK_BYTES: usize = 64 * 1024;
 const MAX_TAIL_BYTES: usize = 8 * 1024 * 1024;
 
-pub(super) fn read_last_lines(path: &Path, limit: usize) -> io::Result<Vec<String>> {
+pub(crate) fn read_last_lines(path: &Path, limit: usize) -> io::Result<Vec<String>> {
     if limit == 0 {
         return Ok(Vec::new());
     }

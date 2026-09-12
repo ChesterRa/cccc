@@ -487,6 +487,10 @@ Multi-level task tree. Root tasks = phases/stages. Child tasks = execution units
 
 Access via the gear icon:
 
+### CLI Management
+
+See [CLI Management (中文)](cli-management.md) for installation, updates, managed uninstallation, schedules, and operation logs.
+
 ### Copy Groups
 
 Use **Copy Groups** when you need to duplicate, migrate, or back up a working group.

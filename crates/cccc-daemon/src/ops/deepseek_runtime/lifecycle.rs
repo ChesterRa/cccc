@@ -1,4 +1,4 @@
-use super::{running, start, stop};
+use super::{running, start_with_resources, stop};
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_runtime, actor_secrets};
 use cccc_contracts::{Actor, ActorRuntime};
@@ -25,6 +25,15 @@ pub fn apply(
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
     let mut actor = resolve_launch_actor(home, group, actor)?;
+    // 仅为使用保护预解析目录；原生目录错误仍在 setup/preflight 后返回。
+    let cwd = actor_runtime::working_directory(group, &actor);
+    let usage = crate::ops::cli_management::usage::acquire_in(
+        home,
+        actor.runtime,
+        &actor.command,
+        cwd.as_deref().unwrap_or(home.root()),
+    )
+    .map_err(OpError::io)?;
     actor.normalize_runtime_constraints();
     if actor.command.is_empty() {
         actor.command = cccc_runtime::default_command(actor.runtime);
@@ -32,15 +41,17 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     actor.env = launch_env(home, group, &actor);
     let executable = crate::ops::codex_mcp::resolve_cccc_executable()
         .ok_or_else(|| setup_required("CCCC executable is not available for DeepSeek setup"))?;
-    crate::deepseek_setup::ensure(home, &mut actor.env, &executable).map_err(setup_required)?;
+    crate::deepseek_setup::ensure_for_command(home, &actor.command, &mut actor.env, &executable)
+        .map_err(setup_required)?;
     let session_root = actor
         .env
         .get("CCCC_DEEPSEEK_SESSION_ROOT")
         .ok_or_else(|| setup_required("DeepSeek session root is not configured"))?;
     std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
-    let cwd = actor_runtime::working_directory(group, &actor)?;
-    start(home, group, &actor, &cwd).map_err(OpError::io)
+    let cwd = cwd?;
+    start_with_resources(home, group, &actor, &cwd, usage).map_err(OpError::io)?;
+    Ok(())
 }
 
 fn resolve_launch_actor(
@@ -48,7 +59,7 @@ fn resolve_launch_actor(
     group: &GroupDoc,
     actor: &Actor,
 ) -> Result<Actor, OpError> {
-    let mut actor = actor_profile_runtime::resolve(home, actor)?;
+    let mut actor = actor.clone();
     let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
     let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
     actor.env.extend(profile_secrets);

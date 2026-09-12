@@ -92,6 +92,11 @@ const WebModelConnectorsTab = lazy(() =>
 const DeveloperTab = lazy(() =>
   import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
 );
+const CliManagementTab = lazy(() =>
+  import("./modals/settings/CliManagementTab").then((module) => ({
+    default: module.CliManagementTab,
+  })),
+);
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -1057,6 +1062,7 @@ export function SettingsModal({
             { id: "account" as const, label: t("tabs.account") },
             { id: "capabilities" as const, label: t("tabs.capabilities") },
             { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
+            { id: "cliManagement" as const, label: t("tabs.cliManagement") },
           ]
         : []),
       // Non-admin signed-in users see My Profiles; admin already has Actor Profiles covering all
@@ -1464,6 +1470,8 @@ export function SettingsModal({
                     onOpenWebAccess={() => setGlobalTab("webAccess")}
                   />
                 )}
+
+                {activeTab === "cliManagement" && <CliManagementTab isDark={isDark} />}
 
                 {activeTab === "developer" && (
                   <DeveloperTab

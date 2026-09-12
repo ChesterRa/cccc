@@ -2072,6 +2072,7 @@ mod tests {
             .await;
         }
         let session = Arc::new(super::super::AnalystSession {
+            cli_usage: Default::default(),
             binding: super::super::WorkspaceBinding { root: workspace },
             generation: "generation-12345678".into(),
             runtime: cccc_contracts::ActorRuntime::Claude,
