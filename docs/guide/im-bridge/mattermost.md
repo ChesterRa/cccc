@@ -1,6 +1,6 @@
 # Mattermost 接入
 
-本 Fork 的 Mattermost 补丁已完成连接器技术及用户验收；不代表上游正式版本已支持。证据等级和已知使用边界以[验收记录](../../specs/mattermost-im-acceptance.md)为准。
+本文适用于包含 Mattermost 连接器的 CCCC 构建；使用前请确认 IM Bridge 的平台列表中可以选择 Mattermost。证据等级和已知使用边界以[验收记录](../../specs/mattermost-im-acceptance.md)为准。
 
 Mattermost 连接器把一个 CCCC Group 接入 Mattermost，使用 Bot Token、REST 和 WebSocket。无需向公网暴露回调接口，也不增加会议编排或新的智能体运行层。
 
