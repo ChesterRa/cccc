@@ -19,6 +19,23 @@ export type IMConfigDraft = {
 
 export type IMConfigSaveRequest = IMConfigDraft & { groupId: string; platform: IMPlatform };
 
+export function isValidMattermostUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !!url.hostname &&
+      !url.username &&
+      !url.password &&
+      !url.href.includes("?") &&
+      !url.href.includes("#") &&
+      !url.pathname.replace(/\/+$/, "").endsWith("/api/v4")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function canStartIMBridge(platform: IMPlatform, weixinLoggedIn: boolean): boolean {
   return platform !== "weixin" || weixinLoggedIn;
 }

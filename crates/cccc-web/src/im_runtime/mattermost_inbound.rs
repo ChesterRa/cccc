@@ -71,6 +71,10 @@ impl MattermostInbound {
         let thread_id = field(&post, "root_id");
         let raw = field(&post, "message");
         let text = strip_leading_mention(raw, &self.api.username);
+        let has_files = post["file_ids"].as_array().is_some_and(|v| !v.is_empty());
+        if text.is_empty() && !has_files {
+            return Ok(());
+        }
         let mut channel_type = field(data, "channel_type").to_owned();
         if !matches!(channel_type.as_str(), "O" | "P" | "D" | "G") {
             let channel = self
@@ -103,7 +107,6 @@ impl MattermostInbound {
         if is_bot {
             return Ok(());
         }
-        let has_files = post["file_ids"].as_array().is_some_and(|v| !v.is_empty());
         let decision_text = if text.is_empty() && has_files {
             "[attachment]"
         } else {

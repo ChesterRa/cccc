@@ -18,7 +18,7 @@ import {
   settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
-import { canStartIMBridge } from "./imBridgeConfig";
+import { canStartIMBridge, isValidMattermostUrl } from "./imBridgeConfig";
 import { imRevokeKey, revokeIMChatAuthorization } from "./imBridgeRevoke";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
@@ -63,6 +63,7 @@ interface IMBridgeTabProps {
   onLogoutWeixin: () => void;
   // Actions
   imBusy: boolean;
+  imConfigError?: string;
   onSaveConfig: () => void;
   onRemoveConfig: () => void;
   onStartBridge: () => void;
@@ -168,6 +169,7 @@ export function IMBridgeTab({
   onVerifyWeixin,
   onLogoutWeixin,
   imBusy,
+  imConfigError,
   onSaveConfig,
   onRemoveConfig,
   onStartBridge,
@@ -231,7 +233,7 @@ export function IMBridgeTab({
       return true;
     }
     if (!imBotTokenEnv) return false;
-    if (imPlatform === "mattermost" && !imMattermostUrl.trim()) return false;
+    if (imPlatform === "mattermost" && !isValidMattermostUrl(imMattermostUrl)) return false;
     if (imPlatform === "slack" && !imAppTokenEnv) return false;
     return true;
   };
@@ -241,6 +243,11 @@ export function IMBridgeTab({
     imPlatform === "slack" ||
     imPlatform === "discord" ||
     imPlatform === "mattermost";
+
+  const mattermostUrlInvalid =
+    imPlatform === "mattermost" &&
+    !!imMattermostUrl.trim() &&
+    !isValidMattermostUrl(imMattermostUrl);
 
   // Authorized chats state
   const [authChats, setAuthChats] = useState<api.IMAuthorizedChat[]>([]);
@@ -556,7 +563,12 @@ export function IMBridgeTab({
                     value={imMattermostUrl}
                     onChange={(e) => setImMattermostUrl(e.target.value)}
                     placeholder="https://mattermost.example.com"
-                    aria-describedby="im-mattermost-url-hint"
+                    aria-invalid={mattermostUrlInvalid}
+                    aria-describedby={
+                      mattermostUrlInvalid
+                        ? "im-mattermost-url-hint im-mattermost-url-error"
+                        : "im-mattermost-url-hint"
+                    }
                     className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
                   />
                   <p
@@ -565,8 +577,20 @@ export function IMBridgeTab({
                   >
                     {t("imBridge.mattermostUrlHint")}
                   </p>
+                  {mattermostUrlInvalid && (
+                    <p
+                      id="im-mattermost-url-error"
+                      role="alert"
+                      className="mt-2 break-words text-xs text-red-600 dark:text-red-400"
+                    >
+                      {t("imBridge.mattermostUrlInvalid")}
+                    </p>
+                  )}
                   <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                     {t("imBridge.mattermostUsageHint")}
+                  </p>
+                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
+                    {t("imBridge.mattermostBotIsolationHint")}
                   </p>
                 </div>
               )}
@@ -929,7 +953,9 @@ export function IMBridgeTab({
                   ) : (
                     <button
                       onClick={onStartBridge}
-                      disabled={imBusy || !bridgeCanStart}
+                      disabled={
+                        imBusy || !bridgeCanStart || (imPlatform === "mattermost" && !canSaveIM())
+                      }
                       className={primaryButtonClass(imBusy)}
                       title={!bridgeCanStart ? t("imBridge.weixinLoginRequired") : undefined}
                     >
@@ -948,6 +974,12 @@ export function IMBridgeTab({
               )}
             </div>
           </div>
+
+          {imPlatform === "mattermost" && imConfigError && (
+            <p role="alert" className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
+              {imConfigError}
+            </p>
+          )}
 
           {/* Pending Requests */}
           {imStatus?.configured && !usesAutomaticAuthorization && (

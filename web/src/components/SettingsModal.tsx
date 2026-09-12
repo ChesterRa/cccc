@@ -189,6 +189,9 @@ export function SettingsModal({
   const [imWeixinAccountId, setImWeixinAccountId] = useState("");
   const [weixinLoginStatus, setWeixinLoginStatus] = useState<WeixinLoginStatus | null>(null);
   const [imBusy, setImBusy] = useState(false);
+  const [imConfigError, setImConfigError] = useState<{ groupId: string; message: string } | null>(
+    null,
+  );
   const imLoadSeq = useRef(0);
   const weixinAutoStartRef = useRef(false);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
@@ -288,6 +291,7 @@ export function SettingsModal({
   }, [isOpen, groupId]);
 
   const resetIMState = () => {
+    setImConfigError(null);
     setImStatus(null);
     setImPlatform("telegram");
     setImBotTokenEnv("");
@@ -690,6 +694,7 @@ export function SettingsModal({
   // Handle platform change with config caching
   const handlePlatformChange = (newPlatform: IMPlatform) => {
     if (newPlatform === imPlatform) return;
+    setImConfigError(null);
 
     // 1. Save current platform config to drafts
     setImConfigDrafts((prev) => ({ ...prev, [imPlatform]: getCurrentIMConfigDraft() }));
@@ -721,10 +726,20 @@ export function SettingsModal({
   const handleSaveIMConfig = async () => {
     if (!groupId) return;
     setImBusy(true);
+    setImConfigError(null);
     try {
       const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
       if (resp.ok) await loadIMStatus();
+      else if (imPlatform === "mattermost") {
+        setImConfigError({
+          groupId,
+          message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
+        });
+      }
     } catch (e) {
+      if (imPlatform === "mattermost") {
+        setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
+      }
       console.error("Failed to save IM config:", e);
     } finally {
       setImBusy(false);
@@ -734,6 +749,7 @@ export function SettingsModal({
   const handleRemoveIMConfig = async () => {
     if (!groupId) return;
     setImBusy(true);
+    setImConfigError(null);
     try {
       const resp = await api.unsetIMConfig(groupId);
       if (resp.ok) {
@@ -762,15 +778,25 @@ export function SettingsModal({
     if (!groupId) return;
     if (!canStartIMBridge(imPlatform, !!weixinLoginStatus?.logged_in)) return;
     setImBusy(true);
+    setImConfigError(null);
     try {
       const resp = await saveAndStartIMBridge(getCurrentIMSaveRequest());
       await loadIMStatus();
+      if (!resp.ok && imPlatform === "mattermost") {
+        setImConfigError({
+          groupId,
+          message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
+        });
+      }
       if (!resp.ok && imPlatform === "weixin") {
         setWeixinLoginStatus(
           toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
         );
       }
     } catch (e) {
+      if (imPlatform === "mattermost") {
+        setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
+      }
       console.error("Failed to start bridge:", e);
     } finally {
       setImBusy(false);
@@ -1310,6 +1336,11 @@ export function SettingsModal({
                     isDark={isDark}
                     groupId={groupId}
                     imStatus={imStatus}
+                    imConfigError={
+                      imConfigError && imConfigError.groupId === groupId
+                        ? imConfigError.message
+                        : undefined
+                    }
                     imPlatform={imPlatform}
                     onPlatformChange={handlePlatformChange}
                     imBotTokenEnv={imBotTokenEnv}

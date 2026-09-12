@@ -147,6 +147,46 @@ describe("IMBridgeTab revoke loading identity", () => {
       (button) => button.textContent === "Revoke" || button.textContent === "...",
     ) as HTMLButtonElement[];
   }
+
+  it("blocks invalid Mattermost save and start, then recovers after correction", async () => {
+    const draft = { ...props(), imPlatform: "mattermost" as const, imBotTokenEnv: "MM_TEST_TOKEN" };
+    draft.imStatus = { ...draft.imStatus!, running: false };
+    const button = (key: string) =>
+      [...container.querySelectorAll("button")].find((item) => item.textContent === key)!;
+    for (const url of [
+      "not-a-url",
+      "ftp://example.test",
+      "https://example.test/api/v4",
+      "https://example.test?",
+    ]) {
+      draft.imMattermostUrl = url;
+      await act(async () => root.render(<IMBridgeTab {...draft} />));
+      expect(button("imBridge.saveConfig").disabled).toBe(true);
+      expect(button("imBridge.startBridge").disabled).toBe(true);
+      expect(container.querySelector("#im-mattermost-url")?.getAttribute("aria-invalid")).toBe(
+        "true",
+      );
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        "imBridge.mattermostUrlInvalid",
+      );
+    }
+    draft.imMattermostUrl = "https://example.test/sub/";
+    await act(async () => root.render(<IMBridgeTab {...draft} />));
+    expect(button("imBridge.saveConfig").disabled).toBe(false);
+    expect(button("imBridge.startBridge").disabled).toBe(false);
+    expect(container.querySelector("#im-mattermost-url-error")).toBeNull();
+    expect(container.textContent).toContain("imBridge.mattermostBotIsolationHint");
+  });
+
+  it("displays configuration errors only on Mattermost", async () => {
+    const draft = { ...props(), imConfigError: "测试保存失败", imPlatform: "mattermost" as const };
+    await act(async () => root.render(<IMBridgeTab {...draft} />));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("测试保存失败");
+    await act(async () => root.render(<IMBridgeTab {...draft} imPlatform="telegram" />));
+    expect(container.textContent).not.toContain("测试保存失败");
+    await act(async () => root.render(<IMBridgeTab {...draft} imConfigError="" />));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 });
 
 function props(): ComponentProps<typeof IMBridgeTab> {

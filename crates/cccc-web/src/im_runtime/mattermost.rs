@@ -1058,6 +1058,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_posts_are_ignored_but_attachment_only_requests_still_require_authorization() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let mut inbound = MattermostInbound::new(
+            home.clone(),
+            &group,
+            DaemonClient::new(home.clone()),
+            fixture.api.clone(),
+            MattermostReactions::new(home, &group, fixture.api.clone()),
+            &Map::new(),
+        );
+        for channel in ["O", "P", "D", "G"] {
+            for text in [
+                "",
+                " \t\n ",
+                "@cccc_bot",
+                "@cccc_bot \t\n",
+                "@cccc_bot @cccc_bot: ",
+            ] {
+                let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":text,"type":"","file_ids":[]});
+                let event = json!({"event":"posted","data":{"channel_type":channel,"post":post.to_string()}});
+                inbound.handle(&event).await.expect("empty post ignored");
+            }
+        }
+        assert!(fixture.state.posts.lock().expect("posts").is_empty());
+        assert!(
+            fixture
+                .state
+                .reactions
+                .lock()
+                .expect("reactions")
+                .is_empty()
+        );
+        assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+
+        for (index, channel) in ["O", "P", "D", "G"].iter().enumerate() {
+            let text = if matches!(*channel, "D" | "G") {
+                ""
+            } else {
+                "@cccc_bot"
+            };
+            let post = json!({"id":format!("{}{}", "p".repeat(25), index),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":text,"type":"","file_ids":["f".repeat(26)]});
+            let event =
+                json!({"event":"posted","data":{"channel_type":channel,"post":post.to_string()}});
+            inbound
+                .handle(&event)
+                .await
+                .expect("attachment request checks authorization");
+        }
+        assert_eq!(fixture.state.posts.lock().expect("posts").len(), 4);
+        assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+    }
+
+    #[tokio::test]
     async fn edited_unaddressed_and_bot_posts_are_ignored_and_duplicates_do_not_reply_twice() {
         let fixture = fixture().await;
         let (_temp, home, group) = scope();
