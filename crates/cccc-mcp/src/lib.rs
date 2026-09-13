@@ -23,10 +23,15 @@ use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{Mutex, Semaphore};
+use tokio::task::JoinSet;
 
 const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
 const DEFAULT_LEGACY_PROTOCOL_VERSION: &str = SUPPORTED_LEGACY_PROTOCOL_VERSIONS[0];
+// Match tunnel-client's default active-request bound without allowing unbounded local work.
+const MAX_CONCURRENT_STDIO_REQUESTS: usize = 10;
 const CORE_TOOL_NAMES: &[&str] = &[
     "cccc_help",
     "cccc_bootstrap",
@@ -140,7 +145,9 @@ pub async fn run_stdio(home: HomeLayout) -> Result<()> {
 async fn run_stdio_loop(home: &HomeLayout, gateway: bool) -> Result<()> {
     let client = DaemonClient::new(home.clone());
     let mut input = BufReader::new(tokio::io::stdin()).lines();
-    let mut output = tokio::io::stdout();
+    let output = Arc::new(Mutex::new(tokio::io::stdout()));
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_STDIO_REQUESTS));
+    let mut requests = JoinSet::new();
     while let Some(line) = input.next_line().await? {
         if line.trim().is_empty() {
             continue;
@@ -148,24 +155,40 @@ async fn run_stdio_loop(home: &HomeLayout, gateway: bool) -> Result<()> {
         let request: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(error) => {
+                let mut output = output.lock().await;
                 write_response(&mut output, &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":error.to_string()}})).await?;
                 continue;
             }
         };
         if !request.is_object() {
             let response = handle(home, &client, &request, None).await;
+            let mut output = output.lock().await;
             write_response(&mut output, &response).await?;
             continue;
         }
         if request.get("id").is_none() {
             continue;
         }
-        let response = if gateway {
-            session_gateway::handle(home, &client, &request).await
-        } else {
-            handle(home, &client, &request, None).await
-        };
-        write_response(&mut output, &response).await?;
+        let permit = Arc::clone(&permits).acquire_owned().await?;
+        let home = home.clone();
+        let client = client.clone();
+        let output = Arc::clone(&output);
+        requests.spawn(async move {
+            let _permit = permit;
+            let response = if gateway {
+                session_gateway::handle(&home, &client, &request).await
+            } else {
+                handle(&home, &client, &request, None).await
+            };
+            let mut output = output.lock().await;
+            write_response(&mut output, &response).await
+        });
+        while let Some(result) = requests.try_join_next() {
+            result??;
+        }
+    }
+    while let Some(result) = requests.join_next().await {
+        result??;
     }
     Ok(())
 }

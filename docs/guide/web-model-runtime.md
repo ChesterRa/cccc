@@ -48,10 +48,10 @@ return delivery is needed.
 
 In a ChatGPT conversation that has the App enabled:
 
-- `cccc_group_create(path, title?, chat_url?)` creates the project group and its
+- `cccc_group_create(path, title?, chat_url?, capture_callback?)` creates the project group and its
   web Foreman, then binds the calling conversation. Repeating the same request
   reuses the group and does not change the installation's global active group.
-- `cccc_group_bind(group, chat_url?)` binds an unowned existing group or updates
+- `cccc_group_bind(group, chat_url?, capture_callback?)` binds an unowned existing group or updates
   this conversation's own return target. It does not take over another Chat or
   silently replace a local Foreman.
 - A group already owned by another Chat is never reassigned silently. To move
@@ -59,11 +59,29 @@ In a ChatGPT conversation that has the App enabled:
   `Settings > Global > ChatGPT Web Model` first; the new Chat can then bind the
   group with `cccc_group_bind(group, chat_url?)`.
 
+When no return target is saved, the macOS gateway reads only the titles and URLs
+of already-open Edge/Chrome tabs and offers a one-time native selection. Select
+the calling Chat; CCCC checks the selected tab has not changed and saves its URL
+against the same group/member binding. It never guesses from the active tab or
+title, reads page content, changes browser permissions, opens a browser, or adds
+a watcher. An existing target (including new-chat delivery) is left untouched.
+The one-use `cccc_session_bind` route uses the same capture step.
+
 `inbound_bound` confirms tool access only. `callback_target_ready` confirms a
-saved stable `/c/...` URL, not a successful browser delivery. Without a URL the
-status is `needs_chat_url`: local member management and dispatch work, but the
-browser cannot wake that Chat. After changing Chats, explicitly save the new
-return target; the previous Chat's target is no longer eligible for delivery.
+saved stable `/c/...` URL, not browser login or successful delivery. Bootstrap
+also returns `session.callback_target_ready` and `session.callback_url` for Web
+Model members. Once saved, normal calls reuse the address without a picker.
+Cancellation, a 45-second selection timeout, a missing local tab, or unsupported
+platform leaves the address unset and local dispatch available; the result's
+`callback_capture.status` describes what happened. Do not retry a cancelled
+selection automatically. A changed binding or explicit target during selection
+is never overwritten.
+
+For remote/headless use, `capture_callback=false` skips local interaction; the
+existing explicit `chat_url` option remains available. A new phone-only chat
+must first be opened on the Mac for selection, or supply its URL explicitly.
+After changing Chats, capture the new return target; the previous Chat's target
+is no longer eligible for delivery.
 
 The bound Foreman can manage local members of its own group, including their
 configuration. It cannot select another group by supplying a different group ID.

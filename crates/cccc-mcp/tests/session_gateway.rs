@@ -171,7 +171,17 @@ impl Gateway {
             .expect("response present");
         serde_json::from_str(&line).expect("JSON response")
     }
-    async fn tool(&mut self, name: &str, args: Value, session: Option<&str>) -> Value {
+    async fn tool(&mut self, name: &str, mut args: Value, session: Option<&str>) -> Value {
+        // Synthetic protocol checks never display a real user's local tab picker.
+        if matches!(
+            name,
+            "cccc_group_create" | "cccc_group_bind" | "cccc_session_bind"
+        ) {
+            args.as_object_mut()
+                .expect("tool args")
+                .entry("capture_callback")
+                .or_insert(json!(false));
+        }
         self.call(request(name, args, session)).await
     }
 
@@ -387,6 +397,8 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
             assert_eq!(payload(&a)["role"], "foreman");
             assert_eq!(payload(&a)["can_dispatch"], true);
             assert_eq!(payload(&a)["callback_target_ready"], false);
+            let initial = gateway.tool("cccc_bootstrap", json!({}), Some("chat-first-a")).await;
+            assert_eq!(payload(&initial)["session"]["callback_target_ready"], false);
             assert_eq!(
                 cccc_core::active::get(&home).expect("active group"),
                 None,
@@ -430,6 +442,9 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
                 .await;
             assert_eq!(payload(&target)["callback_target_ready"], true, "{target}");
             assert_eq!(payload(&target)["status"], "configured");
+            let ready = gateway.tool("cccc_bootstrap", json!({}), Some("chat-first-a")).await;
+            assert_eq!(payload(&ready)["session"]["callback_target_ready"], true);
+            assert_eq!(payload(&ready)["session"]["callback_url"], "https://chatgpt.com/c/stable-chat-first-a");
             let steal = gateway
                 .tool("cccc_group_bind",
                     json!({"group":ga}),
@@ -686,4 +701,58 @@ async fn unbound_chat_first_bind_keeps_conflict_semantics_and_rejects_unusable_w
         assert_eq!(payload(&boot)["session"]["role"], "foreman");
         gateway.stop().await;
     }).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn slow_call_does_not_serialize_other_gateway_requests() {
+    let temp = tempfile::tempdir().expect("isolated gateway");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    with_daemon(
+        HomeLayout::from_path(temp.path().join("home")).expect("home"),
+        |home, _| async move {
+            let mut gateway = Gateway::start(&home);
+            let session = Some("concurrent-callback-chat");
+            let created = gateway
+                .tool("cccc_group_create", json!({"path":project}), session)
+                .await;
+            assert_eq!(payload(&created)["can_dispatch"], true);
+            let mut slow = request(
+                "cccc_shell",
+                json!({"command":"/bin/sh -c 'sleep 3; printf slow-complete'","timeout_s":10}),
+                session,
+            );
+            slow["id"] = json!(10);
+            let fast = json!({"jsonrpc":"2.0","id":11,"method":"tools/list"});
+            gateway
+                .input
+                .write_all(format!("{slow}\n{fast}\n").as_bytes())
+                .await
+                .expect("write both");
+            gateway.input.flush().await.expect("flush");
+            let first =
+                tokio::time::timeout(Duration::from_millis(1500), gateway.output.next_line())
+                    .await
+                    .expect("fast request must not wait for local interaction")
+                    .expect("read")
+                    .expect("response");
+            assert_eq!(
+                serde_json::from_str::<Value>(&first).expect("json")["id"],
+                11
+            );
+            let second = tokio::time::timeout(Duration::from_secs(10), gateway.output.next_line())
+                .await
+                .expect("slow request finishes")
+                .expect("read")
+                .expect("response");
+            let second: Value = serde_json::from_str(&second).expect("json");
+            assert_eq!(second["id"], 10);
+            assert_ne!(second["result"]["isError"], true, "{second}");
+            assert_eq!(payload(&second)["stdout"], "slow-complete", "{second}");
+            assert_eq!(payload(&second)["exit_code"], 0);
+            gateway.stop().await;
+        },
+    )
+    .await;
 }
