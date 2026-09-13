@@ -56,10 +56,6 @@ pub(super) enum DeliveryOutcome {
     Stopped,
 }
 
-pub(super) async fn ensure_worker(state: AppState, group_id: String, actor_id: String) {
-    spawn_worker(state, group_id, actor_id);
-}
-
 pub(super) fn retryable_pre_send_deferral(evidence: &Value) -> bool {
     matches!(
         evidence["submission_evidence"].as_str(),
@@ -80,7 +76,7 @@ fn requires_browser_action(evidence: &Value) -> bool {
     )
 }
 
-fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
+pub(super) async fn ensure_worker(state: AppState, group_id: String, actor_id: String) {
     let session_key = key(&group_id, &actor_id);
     let Some(worker) = SessionGuard::acquire(&WORKERS, session_key) else {
         return;

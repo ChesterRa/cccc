@@ -171,13 +171,7 @@ async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRes
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
     validate_actor(&state, &group_id, &actor_id)?;
-    pause_automation(&state.home, "user_closed_browser")
-        .map_err(|e| ApiError::bad(e.to_string()))?;
-    state
-        .browser_surfaces
-        .close(surface_key())
-        .await
-        .map_err(|error| ApiError::bad(error.to_string()))?;
+    pause_and_close_browser(&state).await?;
     payload(&state, &group_id, &actor_id, false).await
 }
 
@@ -465,15 +459,20 @@ async fn shared_open(
     shared_payload(&state, query.inspect).await
 }
 
-async fn shared_close(State(state): State<AppState>) -> ApiResult {
-    let _operation = state.browser_surfaces.web_model_operation.lock().await;
-    pause_automation(&state.home, "user_closed_browser")
-        .map_err(|e| ApiError::bad(e.to_string()))?;
+// Both explicit close endpoints hold web_model_operation before entering here.
+async fn pause_and_close_browser(state: &AppState) -> Result<(), ApiError> {
+    pause_automation(&state.home, "user_closed_browser").map_err(io_error)?;
     state
         .browser_surfaces
         .close(surface_key())
         .await
         .map_err(|error| ApiError::bad(error.to_string()))?;
+    Ok(())
+}
+
+async fn shared_close(State(state): State<AppState>) -> ApiResult {
+    let _operation = state.browser_surfaces.web_model_operation.lock().await;
+    pause_and_close_browser(&state).await?;
     shared_payload(&state, false).await
 }
 

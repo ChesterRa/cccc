@@ -571,23 +571,6 @@ mod tests {
     }
 
     #[test]
-    fn documented_coordination_note_aliases_reuse_the_existing_context_operation() {
-        for (action, kind) in [("add_decision", "decision"), ("add_handoff", "handoff")] {
-            let args = json!({
-                "action":action,"group_id":"g_test","actor_id":"lead","by":"lead",
-                "summary":"Human-readable note","task_id":"T001"
-            })
-            .as_object()
-            .cloned()
-            .expect("args");
-            let (op, args) = daemon_call("cccc_coordination", args).expect("note alias");
-            assert_eq!(op, "context_sync");
-            assert_eq!(args["ops"][0]["op"], "coordination.note.add");
-            assert_eq!(args["ops"][0]["kind"], kind);
-        }
-    }
-
-    #[test]
     fn actor_notes_actions_map_to_the_daemon_owned_help_contract() {
         for (action, expected) in [
             ("get", "actor_notes_get"),

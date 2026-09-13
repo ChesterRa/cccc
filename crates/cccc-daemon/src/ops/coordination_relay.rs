@@ -1060,13 +1060,8 @@ fn handled_source_ids(
     for event in events {
         if event.kind == "chat.message"
             && event.data.get("relay_kind").and_then(Value::as_str) == Some("decision_reminder")
-            && event
-                .data
-                .get("relay_handoff_ids")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
+            && event_string_list(event, "relay_handoff_ids")
+                .iter()
                 .any(|id| handoff_ids.iter().any(|candidate| candidate == id))
         {
             ids.insert(event.id.clone());
@@ -1325,6 +1320,25 @@ fn current_group_state(
     }))
 }
 
+fn task_is_live(task: &Map<String, Value>) -> bool {
+    !matches!(
+        task.get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("planned"),
+        "done" | "archived"
+    )
+}
+
+fn task_needs_actor(task: &Map<String, Value>) -> bool {
+    !matches!(
+        task.get("waiting_on").and_then(Value::as_str),
+        Some("user" | "external")
+    ) && task
+        .get("blocked_by")
+        .and_then(Value::as_array)
+        .is_none_or(|items| items.is_empty())
+}
+
 fn task_group_state(home: &HomeLayout, group: &GroupDoc) -> Result<Value, OpError> {
     let document = ContextStore::new(home.clone())
         .map_err(OpError::io)?
@@ -1333,14 +1347,7 @@ fn task_group_state(home: &HomeLayout, group: &GroupDoc) -> Result<Value, OpErro
     let live = document
         .tasks
         .iter()
-        .filter(|task| {
-            !matches!(
-                task.get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("planned"),
-                "done" | "archived"
-            )
-        })
+        .filter(|task| task_is_live(task))
         .collect::<Vec<_>>();
     if live.is_empty() {
         return Ok(json!({
@@ -1355,15 +1362,7 @@ fn task_group_state(home: &HomeLayout, group: &GroupDoc) -> Result<Value, OpErro
         .unwrap_or_default();
     let actor_work = live
         .iter()
-        .filter(|task| {
-            !matches!(
-                task.get("waiting_on").and_then(Value::as_str),
-                Some("user" | "external")
-            ) && task
-                .get("blocked_by")
-                .and_then(Value::as_array)
-                .is_none_or(|items| items.is_empty())
-        })
+        .filter(|task| task_needs_actor(task))
         .map(|task| {
             let owner = ["assignee", "handoff_to"]
                 .iter()
@@ -1453,18 +1452,7 @@ fn actor_may_idle_in_context(
         return false;
     }
     !document.tasks.iter().any(|task| {
-        let live_actor_work = !matches!(
-            task.get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("planned"),
-            "done" | "archived"
-        ) && !matches!(
-            task.get("waiting_on").and_then(Value::as_str),
-            Some("user" | "external")
-        ) && task
-            .get("blocked_by")
-            .and_then(Value::as_array)
-            .is_none_or(|items| items.is_empty());
+        let live_actor_work = task_is_live(task) && task_needs_actor(task);
         if !live_actor_work {
             return false;
         }
@@ -1509,25 +1497,10 @@ fn group_safe_to_idle(document: &ContextDoc, decision: &str, other_handoffs: usi
     if decision == "continue" || other_handoffs > 0 {
         return false;
     }
-    let mut live = document.tasks.iter().filter(|task| {
-        !matches!(
-            task.get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("planned"),
-            "done" | "archived"
-        )
-    });
+    let mut live = document.tasks.iter().filter(|task| task_is_live(task));
     match decision {
         "complete" => live.count() == 0,
-        "wait_user" | "blocked" => live.all(|task| {
-            matches!(
-                task.get("waiting_on").and_then(Value::as_str),
-                Some("user" | "external")
-            ) || task
-                .get("blocked_by")
-                .and_then(Value::as_array)
-                .is_some_and(|items| !items.is_empty())
-        }),
+        "wait_user" | "blocked" => live.all(|task| !task_needs_actor(task)),
         _ => false,
     }
 }
@@ -1822,13 +1795,8 @@ fn reminder_event_for_handoff<'a>(events: &'a [Event], handoff_id: &str) -> Opti
     events.iter().rev().find(|event| {
         event.kind == "chat.message"
             && event.data.get("relay_kind").and_then(Value::as_str) == Some("decision_reminder")
-            && event
-                .data
-                .get("relay_handoff_ids")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
+            && event_string_list(event, "relay_handoff_ids")
+                .iter()
                 .any(|id| id == handoff_id)
     })
 }

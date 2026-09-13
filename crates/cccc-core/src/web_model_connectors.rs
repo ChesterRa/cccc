@@ -1159,6 +1159,20 @@ mod tests {
         }
     }
 
+    // Shared by our two cross-process lock tests; always reap the owned child.
+    fn wait_for_test_child(mut child: std::process::Child) -> std::process::Output {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().expect("child completion status").is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill(); // The child may have exited since try_wait.
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.wait_with_output().expect("reap test child")
+    }
+
     #[test]
     fn session_binding_respects_the_existing_lock_across_processes() {
         use std::process::{Command, Stdio};
@@ -1174,7 +1188,7 @@ mod tests {
         }
         let (_temp, home, _) = session_fixture();
         let code = issue(&home, "route-a");
-        let (mut child, blocked) = fs::with_exclusive_lock(&lock_path(&home), || {
+        let (child, blocked) = fs::with_exclusive_lock(&lock_path(&home), || {
             let mut child = Command::new(std::env::current_exe()?)
                 .args(["--exact", "web_model_connectors::tests::session_binding_respects_the_existing_lock_across_processes"])
                 .env(CHILD_HOME, home.root())
@@ -1194,18 +1208,7 @@ mod tests {
                 && child.try_wait()?.is_none();
             Ok((child, blocked))
         }).expect("hold existing store lock");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("child status") {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("child did not resume after the store lock was released");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let status = wait_for_test_child(child).status;
         assert!(
             blocked,
             "another process bypassed the existing connector lock"
@@ -1490,16 +1493,7 @@ mod tests {
                 })
                 .expect("other group write");
             drop(permit);
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while child.try_wait().expect("completion status").is_none()
-                && Instant::now() < deadline
-            {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            if child.try_wait().expect("final status").is_none() {
-                let _ = child.kill();
-            }
-            let output = child.wait_with_output().expect("reap child");
+            let output = wait_for_test_child(child);
             assert!(blocked, "{action}: writer bypassed Send gate");
             assert!(
                 output.status.success(),

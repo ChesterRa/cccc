@@ -763,16 +763,7 @@ impl BrowserSurfaces {
     }
 
     pub(crate) async fn relay_surface_idle(&self, key: &str) -> Result<bool> {
-        let page = self.page(key).await?;
-        if sign_in_required(&page).await? {
-            return Ok(false);
-        }
-        let snapshot = inspect_submission(&page, "__cccc_relay_idle_probe__", &[]).await?;
-        Ok(!snapshot.running
-            && !snapshot.stop_visible
-            && snapshot.page_blocker.is_empty()
-            && snapshot.composer_chars == 0
-            && composer_present(&page).await?)
+        Ok(self.relay_surface_deferral(key).await?.is_none())
     }
 
     pub(crate) async fn relay_surface_deferral(&self, key: &str) -> Result<Option<Value>> {

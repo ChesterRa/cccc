@@ -185,86 +185,120 @@ pub(crate) fn raw_call(home: &HomeLayout, op: &str, args: Map<String, Value>) ->
 }
 
 #[test]
-fn browser_pre_submit_failure_keeps_promoted_mail_retryable() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let created = call(&home, "group_create", json!({"title":"browser retry"}));
-    let gid = created.result["group"]["group_id"].as_str().expect("group");
-    call(
-        &home,
-        "actor_add",
-        json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}}),
-    );
-    call(
-        &home,
-        "actor_start",
-        json!({"group_id":gid,"actor_id":"web","by":"user"}),
-    );
-    let source = call(
-        &home,
-        "send",
-        json!({"group_id":gid,"by":"user","to":["web"],"text":"retain this report","message_mode":"mail"}),
-    );
-    let source_id = source.result["event"]["id"].as_str().expect("source");
-    call(
-        &home,
-        "inbox_read",
-        json!({"group_id":gid,"actor_id":"web","by":"web"}),
-    );
-    call(
-        &home,
-        "message_deliver",
-        json!({"group_id":gid,"by":"user","source_event_id":source_id,"actor_ids":["web"]}),
-    );
-    let wait = json!({"group_id":gid,"actor_id":"web","by":"web","transport":"web_model_browser"});
-    let first = call(&home, "runtime_wait_next_turn", wait.clone()).result["turn"].clone();
-    assert_eq!(first["event_ids"], json!([source_id]));
-    let failure = json!({"group_id":gid,"actor_id":"web","by":"web","turn_id":first["turn_id"],"event_ids":[source_id],"delivery_id":"pre-submit-test","browser_delivery":{"state":"failed","detail":"not_sent_chat_busy","provider":"chatgpt"}});
-    call(&home, "web_model_browser_delivery_record", failure.clone());
-    let retry = call(&home, "runtime_wait_next_turn", wait.clone());
-    assert_eq!(
-        retry.result["status"], "work_available",
-        "failed browser handoff still owns the active turn: {:?}",
-        retry.result
-    );
-    assert_eq!(
-        retry.result["turn"]["event_ids"],
-        json!([source_id]),
-        "read Mail vanished from pending deliveries"
-    );
-    // Retry uses the same deterministic batch, but not a duplicate message.
-    assert_eq!(retry.result["turn"]["turn_id"], first["turn_id"]);
-    let mut submitted = failure.clone();
-    submitted["browser_delivery"]["state"] = json!("submitted");
-    call(&home, "web_model_browser_delivery_record", submitted);
-    call(
-        &home,
-        "runtime_complete_turn",
-        json!({"group_id":gid,"actor_id":"web","by":"web","turn_id":first["turn_id"],"event_ids":[source_id],"delivery_id":"pre-submit-test","status":"done"}),
-    );
-    assert_eq!(
-        call(&home, "runtime_wait_next_turn", wait.clone()).result["status"],
-        "idle"
-    );
-    let store = GroupStore::new(home.clone()).expect("store");
-    let events =
-        cccc_core::ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("events");
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.kind == "chat.message")
-            .count(),
-        1
-    );
-    assert_eq!(
+fn missing_target_and_presend_failure_keep_read_or_unread_mail_retryable() {
+    for read_mail in [false, true] {
+        let temp = tempfile::tempdir().expect("isolated mail state");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let created = call(&home, "group_create", json!({"title":"browser retry"}));
+        let gid = created.result["group"]["group_id"].as_str().expect("group");
         call(
             &home,
-            "inbox_peek",
-            json!({"group_id":gid,"actor_id":"web","by":"web"})
+            "actor_add",
+            json!({"group_id":gid,"actor_id":"web","runtime":"web_model",
+            "by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}}),
+        );
+        call(
+            &home,
+            "actor_start",
+            json!({"group_id":gid,"actor_id":"web","by":"user"}),
+        );
+        let source = call(
+            &home,
+            "send",
+            json!({"group_id":gid,"by":"user","to":["web"],
+            "text":"retain this report","message_mode":"mail"}),
+        );
+        let id = source.result["event"]["id"].as_str().expect("source");
+        let actor = json!({"group_id":gid,"actor_id":"web","by":"web"});
+        if read_mail {
+            call(&home, "inbox_read", actor.clone());
+        }
+        let promoted = call(
+            &home,
+            "message_deliver",
+            json!({"group_id":gid,"by":"user",
+            "source_event_id":id,"actor_ids":["web"]}),
+        );
+        assert_eq!(
+            promoted.result["delivery_state"], "failed",
+            "missing target retained a claim"
+        );
+        let path = GroupStore::new(home.clone())
+            .expect("store")
+            .ledger_path(gid)
+            .expect("ledger");
+        let events = cccc_core::ledger::read_all(&path).expect("events");
+        let failure = events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "runtime.delivery" && event.data["source_event_id"] == id)
+            .expect("failed promotion");
+        assert_eq!(failure.data["state"], "failed");
+        assert!(
+            failure.data["reason"]
+                .as_str()
+                .is_some_and(|text| text.contains("target"))
+        );
+        let home = HomeLayout::from_path(home.root().to_path_buf()).expect("reopen state");
+        cccc_core::web_model_connectors::save_browser_target(
+            &home,
+            gid,
+            "web",
+            Some(json!({"kind":"existing_chat","url":"https://chatgpt.com/c/test-callback"})),
         )
-        .result["messages"],
-        json!([])
-    );
+        .expect("configure callback");
+        let mut wait = actor.clone();
+        wait["transport"] = json!("web_model_browser");
+        let reserved = call(&home, "runtime_wait_next_turn", wait.clone());
+        assert_eq!(reserved.result["status"], "work_available");
+        let turn = &reserved.result["turn"];
+        assert_eq!(turn["event_ids"], json!([id]));
+        let mut record = json!({"group_id":gid,"actor_id":"web","by":"web",
+            "turn_id":turn["turn_id"],"event_ids":[id],"delivery_id":"pre-submit-test",
+            "browser_delivery":{"state":"failed","detail":"not_sent_chat_busy","provider":"chatgpt"}});
+        call(&home, "web_model_browser_delivery_record", record.clone());
+        let retry = call(&home, "runtime_wait_next_turn", wait.clone());
+        assert_eq!(
+            retry.result["status"], "work_available",
+            "failed handoff owns the turn"
+        );
+        assert_eq!(
+            retry.result["turn"]["event_ids"],
+            json!([id]),
+            "original mail lost"
+        );
+        assert_eq!(retry.result["turn"]["turn_id"], turn["turn_id"]);
+        record["browser_delivery"]["state"] = json!("submitted");
+        call(&home, "web_model_browser_delivery_record", record);
+        call(
+            &home,
+            "runtime_complete_turn",
+            json!({"group_id":gid,"actor_id":"web","by":"web",
+            "turn_id":turn["turn_id"],"event_ids":[id],"delivery_id":"pre-submit-test","status":"done"}),
+        );
+        assert_eq!(
+            call(&home, "runtime_wait_next_turn", wait).result["status"],
+            "idle"
+        );
+        let events = cccc_core::ledger::read_all(&path).expect("final ledger");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "chat.message")
+                .count(),
+            1
+        );
+        let unread = call(&home, "inbox_peek", actor);
+        let mail = unread.result["messages"].as_array().expect("mail");
+        assert_eq!(
+            mail.len(),
+            usize::from(!read_mail),
+            "delivery changed read state"
+        );
+        if !read_mail {
+            assert_eq!(mail[0]["id"], id);
+        }
+    }
 }
 
 #[test]

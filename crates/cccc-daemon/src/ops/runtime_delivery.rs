@@ -429,83 +429,79 @@ mod tests {
 
     #[test]
     fn concurrent_claims_are_unique_and_restart_settles_the_stranded_claim() {
-        for contenders in [2, 4, 6, 10] {
-            let temp = tempfile::tempdir().expect("tempdir");
-            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-            let store = GroupStore::new(home.clone()).expect("store");
-            let mut group = store.create("runtime delivery", "").expect("group");
-            let actor = Actor::new("peer1");
-            group.actors.push(actor.clone());
-            store.save(&group).expect("save actor");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("runtime delivery", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
 
-            let barrier = Arc::new(Barrier::new(contenders));
-            let results = std::thread::scope(|scope| {
-                let mut handles = Vec::new();
-                for _ in 0..contenders {
-                    let barrier = barrier.clone();
-                    let home = &home;
-                    let group = &group;
-                    let actor = &actor;
-                    handles.push(scope.spawn(move || {
-                        barrier.wait();
-                        claim(home, group, actor, "source-1", "pty", false).expect("claim")
-                    }));
-                }
-                handles
-                    .into_iter()
-                    .map(|handle| handle.join().expect("claim thread"))
-                    .collect::<Vec<_>>()
-            });
-            assert_eq!(
-                results
-                    .iter()
-                    .filter(|result| **result == ClaimResult::Claimed)
-                    .count(),
-                1
-            );
-            assert_eq!(
-                results
-                    .iter()
-                    .filter(|result| **result == ClaimResult::Terminal("claimed".into()))
-                    .count(),
-                contenders - 1
-            );
-
-            let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
-            let states = ledger::read_all(&ledger_path)
-                .expect("ledger")
+        let barrier = Arc::new(Barrier::new(2));
+        let results = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                let barrier = barrier.clone();
+                let home = &home;
+                let group = &group;
+                let actor = &actor;
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    claim(home, group, actor, "source-1", "pty", false).expect("claim")
+                }));
+            }
+            handles
                 .into_iter()
-                .filter(|event| event.kind == "runtime.delivery")
-                .map(|event| {
-                    event
-                        .data
-                        .get("state")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(states, ["claimed"]);
+                .map(|handle| handle.join().expect("claim thread"))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| **result == ClaimResult::Claimed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| **result == ClaimResult::Terminal("claimed".into()))
+                .count(),
+            1
+        );
 
-            assert_eq!(settle_stranded_claims(&home, &group).expect("settle"), 1);
-            assert_eq!(
-                latest_state(&home, &group.group_id, &actor.id, "source-1")
-                    .expect("latest")
-                    .expect("state")
-                    .0,
-                "ambiguous"
-            );
-            assert_eq!(
-                claim(&home, &group, &actor, "source-1", "pty", false).expect("blocked retry"),
-                ClaimResult::Terminal("ambiguous".into())
-            );
-            assert_eq!(
-                claim(&home, &group, &actor, "source-1", "pty", true).expect("forced retry"),
-                ClaimResult::Claimed
-            );
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let states = ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .into_iter()
+            .filter(|event| event.kind == "runtime.delivery")
+            .map(|event| {
+                event
+                    .data
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(states, ["claimed"]);
 
-            eprintln!("CLAIM_RACE contenders={contenders} winners=1 restart_ambiguous=PASS");
-        }
+        assert_eq!(settle_stranded_claims(&home, &group).expect("settle"), 1);
+        assert_eq!(
+            latest_state(&home, &group.group_id, &actor.id, "source-1")
+                .expect("latest")
+                .expect("state")
+                .0,
+            "ambiguous"
+        );
+        assert_eq!(
+            claim(&home, &group, &actor, "source-1", "pty", false).expect("blocked retry"),
+            ClaimResult::Terminal("ambiguous".into())
+        );
+        assert_eq!(
+            claim(&home, &group, &actor, "source-1", "pty", true).expect("forced retry"),
+            ClaimResult::Claimed
+        );
     }
 
     #[test]

@@ -198,7 +198,7 @@ fn notify_web_foreman(
     // use indexed turn ownership if the group exceeds 2,000 messages per member turn.
     let (recent, _) =
         ledger::tail_filtered(&store.ledger_path(group_id)?, 2_000, Some("chat.message"))?;
-    let reports = recent
+    let mut reports = recent
         .iter()
         .filter(|event| {
             event.by == actor_id
@@ -211,70 +211,59 @@ fn notify_web_foreman(
         })
         .cloned()
         .collect::<Vec<_>>();
-    if !reports.is_empty() {
-        if delivery_enabled {
-            for report in &reports {
-                if report.data.get("message_mode").and_then(Value::as_str) != Some("mail") {
-                    continue;
-                }
-                // Reuse every visible report. Mail alone cannot wake an idle browser
-                // Foreman; native delivery promotion preserves both message and cursor.
-                let request=DaemonRequest {v:1,op:"message_deliver".into(),args:json!({
-                    "group_id":group_id,"by":actor_id,"source_event_id":report.id,"actor_ids":[lead.id]
-                }).as_object().cloned().expect("report delivery request")};
-                let result = super::super::messaging::resolve_operation(&request)
-                    .expect("native message delivery")
-                    .execute(home, &request);
-                if let Err(error) = result {
-                    if !matches!(
-                        error.code.as_str(),
-                        "already_delivered" | "delivery_in_progress" | "delivery_ambiguous"
-                    ) {
-                        return Err(std::io::Error::other(format!(
-                            "{}: {}",
-                            error.code, error.message
-                        )));
-                    }
+    if reports.is_empty() {
+        if !delivery_enabled {
+            return Ok(());
+        }
+        let key = super::super::message_idempotency::tracked_client_id(
+            group_id,
+            actor_id,
+            &format!("completion:{}", turn.turn_id),
+        );
+        let request = DaemonRequest { v:1, op:"send".into(), args:json!({
+            "group_id":group_id,"by":"system","to":[lead.id],"message_mode":"send","client_id":key,
+            "text":format!("[CCCC] Member {actor_id} ended this turn ({status}). Please review its actual result and decide the next step; this notice does not mark the task complete."),
+            "source_actor_id":actor_id,"source_turn_id":turn.turn_id
+        }).as_object().cloned().expect("completion request") };
+        let sent = super::super::messaging::send(home, &request, "chat.message")
+            .map_err(|error| std::io::Error::other(format!("{}: {}", error.code, error.message)))?;
+        let event: cccc_contracts::Event =
+            serde_json::from_value(sent.get("event").cloned().unwrap_or(Value::Null))
+                .map_err(std::io::Error::other)?;
+        reports.push(event);
+    } else if delivery_enabled {
+        for report in &reports {
+            if report.data.get("message_mode").and_then(Value::as_str) != Some("mail") {
+                continue;
+            }
+            // Reuse every visible report. Mail alone cannot wake an idle browser
+            // Foreman; native delivery promotion preserves both message and cursor.
+            let request=DaemonRequest {v:1,op:"message_deliver".into(),args:json!({
+                "group_id":group_id,"by":actor_id,"source_event_id":report.id,"actor_ids":[lead.id]
+            }).as_object().cloned().expect("report delivery request")};
+            let result = super::super::messaging::resolve_operation(&request)
+                .expect("native message delivery")
+                .execute(home, &request);
+            if let Err(error) = result {
+                if !matches!(
+                    error.code.as_str(),
+                    "already_delivered" | "delivery_in_progress" | "delivery_ambiguous"
+                ) {
+                    return Err(std::io::Error::other(format!(
+                        "{}: {}",
+                        error.code, error.message
+                    )));
                 }
             }
         }
-        super::super::coordination_relay::record_handoff(
-            home,
-            &group,
-            actor_id,
-            &lead.id,
-            &turn.turn_id,
-            &reports,
-            status,
-        )
-        .map_err(|error| std::io::Error::other(format!("{}: {}", error.code, error.message)))?;
-        return Ok(());
     }
-    if !delivery_enabled {
-        return Ok(());
-    }
-    let key = super::super::message_idempotency::tracked_client_id(
-        group_id,
-        actor_id,
-        &format!("completion:{}", turn.turn_id),
-    );
-    let request = DaemonRequest { v:1, op:"send".into(), args:json!({
-        "group_id":group_id,"by":"system","to":[lead.id],"message_mode":"send","client_id":key,
-        "text":format!("[CCCC] Member {actor_id} ended this turn ({status}). Please review its actual result and decide the next step; this notice does not mark the task complete."),
-        "source_actor_id":actor_id,"source_turn_id":turn.turn_id
-    }).as_object().cloned().expect("completion request") };
-    let sent = super::super::messaging::send(home, &request, "chat.message")
-        .map_err(|error| std::io::Error::other(format!("{}: {}", error.code, error.message)))?;
-    let event: cccc_contracts::Event =
-        serde_json::from_value(sent.get("event").cloned().unwrap_or(Value::Null))
-            .map_err(std::io::Error::other)?;
     super::super::coordination_relay::record_handoff(
         home,
         &group,
         actor_id,
         &lead.id,
         &turn.turn_id,
-        &[event],
+        &reports,
         status,
     )
     .map(|_| ())
@@ -336,246 +325,129 @@ mod tests {
         );
     }
     #[test]
-    fn multiple_member_outputs_remain_visible_and_share_one_durable_handoff() {
-        use cccc_contracts::{Actor, ActorRuntime, Event};
-        use cccc_core::{GroupStore, HomeLayout, actors, ledger};
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("multiple reports", "").expect("group");
-        let mut lead = Actor::new("web-lead");
-        lead.runtime = ActorRuntime::WebModel;
-        actors::add(&mut group, lead).expect("lead");
-        actors::add(&mut group, Actor::new("worker")).expect("worker");
-        group.running = true;
-        store.save(&group).expect("save");
-        let path = store.ledger_path(&group.group_id).expect("ledger");
-        let turn = ActiveTurn {
-            turn_id: "turn-multi".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        let mut source_ids = Vec::new();
-        for (index, mode) in ["mail", "send"].into_iter().enumerate() {
-            let mut report = Event::new("chat.message", &group.group_id);
-            report.by = "worker".into();
-            report.data = json!({
-                "to":["web-lead"],"message_mode":mode,
-                "text":format!("Human-visible output {}", index + 1)
-            })
-            .as_object()
-            .cloned()
-            .expect("report");
-            source_ids.push(report.id.clone());
-            ledger::append(&path, &report).expect("append report");
-        }
-        let completed = json!({"params":{"turn":{"id":"turn-multi","status":"completed"}}});
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
-            .expect("complete multi-report turn");
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
-            .expect("repeat completion");
-        let events = ledger::read_all(&path).expect("ledger");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event.kind == "chat.message")
-                .count(),
-            2,
-            "visible outputs were duplicated or replaced"
-        );
-        let handoffs = events
-            .iter()
-            .filter(|event| event.kind == "coordination.handoff")
-            .collect::<Vec<_>>();
-        assert_eq!(handoffs.len(), 1);
-        assert_eq!(handoffs[0].data["source_event_ids"], json!(source_ids));
-        assert!(events.iter().any(|event| {
-            event.kind == "runtime.delivery"
-                && event.data.get("source_event_id") == Some(&json!(source_ids[0]))
-        }));
-    }
-
-    #[test]
-    fn completion_notice_is_durable_deduplicated_and_does_not_replace_a_report() {
+    fn completed_turns_keep_original_reports_and_promote_only_unpaused_mail() {
         use cccc_contracts::{Actor, ActorRuntime, Event, GroupState};
         use cccc_core::{GroupStore, HomeLayout, actors, ledger};
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let mut group = store.create("handoff", "").expect("group");
-        let mut lead = Actor::new("web-lead");
-        lead.runtime = ActorRuntime::WebModel;
-        actors::add(&mut group, lead).expect("lead");
-        actors::add(&mut group, Actor::new("worker")).expect("worker");
-        group.running = true;
-        store.save(&group).expect("save");
-        let path = store.ledger_path(&group.group_id).expect("ledger");
-        let turn = ActiveTurn {
-            turn_id: "turn-one".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        let completed = json!({"params":{"turn":{"id":"turn-one","status":"completed"}}});
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed).expect("notice");
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed).expect("duplicate");
-        let notices = ledger::tail_filtered(&path, 100, Some("chat.message"))
-            .expect("messages")
-            .0;
-        assert_eq!(notices.len(), 1);
-        assert_eq!(notices[0].data["to"], json!(["web-lead"]));
-        assert_eq!(notices[0].data["message_mode"], "send");
-        let first_handoffs = ledger::tail_filtered(&path, 100, Some("coordination.handoff"))
-            .expect("handoffs")
-            .0;
-        assert_eq!(first_handoffs.len(), 1);
-        assert_eq!(
-            first_handoffs[0].data["source_event_ids"],
-            json!([notices[0].id])
-        );
-        assert_eq!(first_handoffs[0].data["target_actor_id"], "web-lead");
-        let turn = ActiveTurn {
-            turn_id: "turn-two".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        let mut report = Event::new("chat.message", &group.group_id);
-        report.by = "worker".into();
-        report.data = json!({"to":["web-lead"],"message_mode":"send","text":"Actual result"})
-            .as_object()
-            .cloned()
-            .expect("report");
-        ledger::append(&path, &report).expect("report event");
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
-            .expect("already reported");
-        assert_eq!(
-            ledger::tail_filtered(&path, 100, Some("chat.message"))
-                .expect("messages")
-                .0
-                .len(),
-            2
-        );
-        let mailed_turn = ActiveTurn {
-            turn_id: "turn-mail".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        let mut mailed = Event::new("chat.message", &group.group_id);
-        mailed.by = "worker".into();
-        mailed.data =
-            json!({"to":["web-lead"],"message_mode":"mail","text":"Final report by mail"})
+
+        for (paused, modes) in [
+            (false, &[][..]),
+            (false, &["send"][..]),
+            (false, &["mail"][..]),
+            (false, &["mail", "send"][..]),
+            (true, &[][..]),
+            (true, &["mail"][..]),
+        ] {
+            let temp = tempfile::tempdir().expect("isolated turn");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let mut group = store.create("completion", "").expect("group");
+            let mut lead = Actor::new("web-lead");
+            lead.runtime = ActorRuntime::WebModel;
+            actors::add(&mut group, lead).expect("lead");
+            actors::add(&mut group, Actor::new("worker")).expect("worker");
+            group.running = true;
+            if paused {
+                group.state = GroupState::Paused;
+            }
+            store.save(&group).expect("save");
+            let path = store.ledger_path(&group.group_id).expect("ledger");
+            let mut old = Event::new("chat.message", &group.group_id);
+            old.by = "worker".into();
+            old.ts = (chrono::Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+            old.data = json!({"to":["web-lead"],"message_mode":"mail","text":"Earlier turn"})
                 .as_object()
                 .cloned()
-                .expect("mail");
-        ledger::append(&path, &mailed).expect("mail event");
-        notify_web_foreman(&home, &group.group_id, "worker", &mailed_turn, &completed)
-            .expect("promote mail");
-        notify_web_foreman(&home, &group.group_id, "worker", &mailed_turn, &completed)
-            .expect("promotion repeat");
-        let events = ledger::tail(&path, 100).expect("ledger");
-        assert_eq!(
-            events
+                .expect("old report");
+            ledger::append(&path, &old).expect("old turn output");
+            let turn = ActiveTurn {
+                turn_id: "current-turn".into(),
+                started_at: cccc_contracts::utc_now(),
+            };
+            let reports = modes
+                .iter()
+                .map(|mode| {
+                    let mut event = Event::new("chat.message", &group.group_id);
+                    event.by = "worker".into();
+                    event.data =
+                        json!({"to":["web-lead"],"message_mode":mode,"text":"Actual result"})
+                            .as_object()
+                            .cloned()
+                            .expect("report");
+                    ledger::append(&path, &event).expect("original report");
+                    event
+                })
+                .collect::<Vec<_>>();
+            let completed = json!({"params":{"turn":{"id":turn.turn_id,"status":"completed"}}});
+            for _ in 0..2 {
+                notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
+                    .expect("completion is repeatable");
+            }
+            let events = ledger::read_all(&path).expect("ledger");
+            let messages = events
                 .iter()
                 .filter(|event| event.kind == "chat.message")
-                .count(),
-            3,
-            "mail promotion duplicated the report"
-        );
-        assert!(
-            events.iter().any(|event| event.kind == "runtime.delivery"
-                && event.data.get("source_event_id") == Some(&json!(mailed.id))),
-            "mailed final report never entered the native delivery path"
-        );
-        let handoffs = events
-            .iter()
-            .filter(|event| event.kind == "coordination.handoff")
-            .collect::<Vec<_>>();
-        assert_eq!(handoffs.len(), 3, "one durable handoff per completed turn");
-        assert!(
-            handoffs
+                .collect::<Vec<_>>();
+            let handoffs = events
                 .iter()
-                .any(|event| event.data["source_event_ids"] == json!([report.id]))
-        );
-        assert!(
-            handoffs
-                .iter()
-                .any(|event| event.data["source_event_ids"] == json!([mailed.id]))
-        );
-        let context = cccc_core::context::ContextStore::new(home.clone())
-            .expect("context store")
-            .load(&group.group_id)
-            .expect("context");
-        assert_eq!(
-            context.coordination["recent_handoffs"]
-                .as_array()
-                .expect("handoff notes")
-                .len(),
-            3
-        );
-        group.state = GroupState::Paused;
-        store.save(&group).expect("pause");
-        let turn = ActiveTurn {
-            turn_id: "turn-three".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed).expect("paused");
-        assert_eq!(
-            ledger::tail_filtered(&path, 100, Some("chat.message"))
-                .expect("messages")
-                .0
-                .len(),
-            3
-        );
-    }
-
-    #[test]
-    fn paused_completion_preserves_an_existing_report_as_a_handoff_without_waking() {
-        use cccc_contracts::{Actor, ActorRuntime, Event, GroupState};
-        use cccc_core::{GroupStore, HomeLayout, actors, ledger};
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("group store");
-        let mut group = store.create("paused report", "").expect("group");
-        let mut lead = Actor::new("web-lead");
-        lead.runtime = ActorRuntime::WebModel;
-        actors::add(&mut group, lead).expect("lead");
-        actors::add(&mut group, Actor::new("worker")).expect("worker");
-        group.running = true;
-        group.state = GroupState::Paused;
-        store.save(&group).expect("save group");
-        let path = store.ledger_path(&group.group_id).expect("ledger");
-        let turn = ActiveTurn {
-            turn_id: "turn-paused-report".into(),
-            started_at: cccc_contracts::utc_now(),
-        };
-        let mut report = Event::new("chat.message", &group.group_id);
-        report.by = "worker".into();
-        report.data = json!({
-            "to":["web-lead"],"message_mode":"mail",
-            "text":"The paused work produced a real result that must survive resume."
-        })
-        .as_object()
-        .cloned()
-        .expect("report");
-        ledger::append(&path, &report).expect("append report");
-        let completed = json!({"params":{"turn":{"id":"turn-paused-report","status":"completed"}}});
-        notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
-            .expect("paused completion");
-        let events = ledger::read_all(&path).expect("events");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event.kind == "chat.message")
-                .count(),
-            1,
-            "pause added a duplicate visible message"
-        );
-        let handoff = events
-            .iter()
-            .find(|event| event.kind == "coordination.handoff")
-            .expect("durable handoff");
-        assert_eq!(handoff.data["source_event_ids"], json!([report.id]));
-        assert!(
-            !events.iter().any(|event| {
-                event.kind == "runtime.delivery"
-                    && event.data.get("source_event_id") == Some(&json!(report.id))
-            }),
-            "pause woke the browser instead of only preserving responsibility"
-        );
+                .filter(|event| event.kind == "coordination.handoff")
+                .collect::<Vec<_>>();
+            let fallback = reports.is_empty() && !paused;
+            assert_eq!(
+                messages.len(),
+                1 + reports.len() + usize::from(fallback),
+                "output replaced or duplicated: paused={paused}, modes={modes:?}"
+            );
+            let expected_handoffs = usize::from(fallback || !reports.is_empty());
+            assert_eq!(handoffs.len(), expected_handoffs, "one handoff per turn");
+            if expected_handoffs == 1 {
+                let source_ids = if fallback {
+                    let notice = messages
+                        .iter()
+                        .find(|event| event.by == "system")
+                        .expect("fallback notice");
+                    assert_eq!(notice.data["to"], json!(["web-lead"]));
+                    assert_eq!(notice.data["message_mode"], "send");
+                    vec![notice.id.clone()]
+                } else {
+                    reports.iter().map(|report| report.id.clone()).collect()
+                };
+                assert_eq!(handoffs[0].data["source_event_ids"], json!(source_ids));
+                assert_eq!(handoffs[0].data["target_actor_id"], "web-lead");
+            }
+            for report in &reports {
+                assert!(
+                    messages
+                        .iter()
+                        .any(|event| event.id == report.id && event.data == report.data),
+                    "original report changed"
+                );
+                let promoted = events.iter().any(|event| {
+                    event.kind == "runtime.delivery" && event.data["source_event_id"] == report.id
+                });
+                assert_eq!(
+                    promoted,
+                    !paused && report.data["message_mode"] == "mail",
+                    "wrong promotion: paused={paused}, modes={modes:?}"
+                );
+            }
+            assert!(
+                !events.iter().any(|event| event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == old.id),
+                "earlier turn was promoted"
+            );
+            let context = cccc_core::context::ContextStore::new(home.clone())
+                .expect("context store")
+                .load(&group.group_id)
+                .expect("context");
+            assert_eq!(
+                context
+                    .coordination
+                    .get("recent_handoffs")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+                expected_handoffs,
+                "context and ledger disagree"
+            );
+        }
     }
 }

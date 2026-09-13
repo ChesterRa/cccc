@@ -201,6 +201,18 @@ impl Fixture {
         )
     }
 
+    fn notice(&self, handoff: &Event, kind: RelayNotice) -> Event {
+        send_relay_notice(
+            &self.home,
+            &self.group.group_id,
+            "web-lead",
+            &self.events(),
+            std::slice::from_ref(handoff),
+            kind,
+        )
+        .expect("relay notification")
+    }
+
     fn events(&self) -> Vec<Event> {
         ledger::read_all(&self.path()).expect("ledger")
     }
@@ -1239,15 +1251,7 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
     let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "turn-escalation-recovery");
     let handoff_id = handoff.data["handoff_id"].as_str().expect("handoff id");
-    let reminder = send_relay_notice(
-        &fixture.home,
-        &fixture.group.group_id,
-        "web-lead",
-        &fixture.events(),
-        std::slice::from_ref(&handoff),
-        RelayNotice::Reminder,
-    )
-    .expect("reminder");
+    let reminder = fixture.notice(&handoff, RelayNotice::Reminder);
     for id in [&report.id, &reminder.id] {
         fixture.append_delivery(id, "accepted", 0);
     }
@@ -1280,30 +1284,14 @@ fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
     let fixture = Fixture::new("repair old false escalation");
     let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "old-bad-delivery");
-    let reminder = send_relay_notice(
-        &fixture.home,
-        &fixture.group.group_id,
-        "web-lead",
-        &fixture.events(),
-        std::slice::from_ref(&handoff),
-        RelayNotice::Reminder,
-    )
-    .expect("old reminder");
+    let reminder = fixture.notice(&handoff, RelayNotice::Reminder);
     let append = |state: &str| {
         for id in [&report.id, &reminder.id] {
             fixture.append_delivery(id, state, 0);
         }
     };
     append("ambiguous");
-    let escalation = send_relay_notice(
-        &fixture.home,
-        &fixture.group.group_id,
-        "web-lead",
-        &fixture.events(),
-        std::slice::from_ref(&handoff),
-        RelayNotice::Escalation,
-    )
-    .expect("old erroneous escalation");
+    let escalation = fixture.notice(&handoff, RelayNotice::Escalation);
     ensure_handoff_note(
         &fixture.home,
         &fixture.group,

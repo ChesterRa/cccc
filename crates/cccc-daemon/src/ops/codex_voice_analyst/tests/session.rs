@@ -316,115 +316,78 @@ async fn disconnected_start_is_reported_and_the_ambiguous_delegation_is_not_repl
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn local_headless_uses_native_turns_for_first_followup_and_retry() {
-    let (endpoint, server, turn_starts, _) = fake_app_server().await;
-    let session = AnalystSession::connect(ConnectConfig {
-        binding: WorkspaceBinding {
-            root: std::env::current_dir().expect("cwd"),
-        },
-        generation: "generation-delivery".into(),
-        endpoint,
-        remote_tui_prefix: vec!["codex".into()],
-        environment: Default::default(),
-        resume_thread_id: None,
-        process: None,
-        delegations: HashMap::new(),
-        purpose: SessionPurpose::VoiceAnalyst,
-    })
-    .await
-    .expect("connect");
-    let startup = std::sync::Mutex::new(Some("startup context".to_owned()));
-    let cancelled = std::sync::atomic::AtomicBool::new(false);
-    let mut first = cccc_contracts::Event::new("chat.message", "g_test");
-    first.id = "source-first".into();
-    let mut followup = cccc_contracts::Event::new("chat.message", "g_test");
-    followup.id = "source-followup".into();
-
-    assert!(crate::ops::local_headless::submit_managed_prompt(
-        &session,
-        &startup,
-        std::slice::from_ref(&first),
-        "first task",
-        &cancelled,
-        "g_test",
-        "worker",
-    ));
-    assert!(crate::ops::local_headless::submit_managed_prompt(
-        &session,
-        &startup,
-        std::slice::from_ref(&followup),
-        "follow-up task",
-        &cancelled,
-        "g_test",
-        "worker",
-    ));
-    assert!(crate::ops::local_headless::submit_managed_prompt(
-        &session,
-        &startup,
-        std::slice::from_ref(&followup),
-        "retry text is ignored",
-        &cancelled,
-        "g_test",
-        "worker",
-    ));
-
-    assert_eq!(turn_starts.load(Ordering::SeqCst), 2);
-    assert_eq!(*startup.lock().expect("startup prompt"), None);
-    session
-        .stop(session.generation())
+async fn local_headless_native_delivery_preserves_retry_and_startup_ownership() {
+    for disconnect in [false, true] {
+        let (endpoint, server, turn_starts) = if disconnect {
+            fake_disconnecting_app_server().await
+        } else {
+            let (endpoint, server, starts, _) = fake_app_server().await;
+            (endpoint, server, starts)
+        };
+        let session = AnalystSession::connect(ConnectConfig {
+            binding: WorkspaceBinding {
+                root: std::env::current_dir().expect("cwd"),
+            },
+            generation: "generation-delivery".into(),
+            endpoint,
+            remote_tui_prefix: vec!["codex".into()],
+            environment: Default::default(),
+            resume_thread_id: None,
+            process: None,
+            delegations: HashMap::new(),
+            purpose: SessionPurpose::VoiceAnalyst,
+        })
         .await
-        .expect("stop session");
-    server.abort();
-    let _ = server.await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn local_headless_keeps_a_failed_native_delivery_retryable() {
-    let (endpoint, server, turn_starts) = fake_disconnecting_app_server().await;
-    let session = AnalystSession::connect(ConnectConfig {
-        binding: WorkspaceBinding {
-            root: std::env::current_dir().expect("cwd"),
-        },
-        generation: "generation-delivery-failure".into(),
-        endpoint,
-        remote_tui_prefix: vec!["codex".into()],
-        environment: Default::default(),
-        resume_thread_id: None,
-        process: None,
-        delegations: HashMap::new(),
-        purpose: SessionPurpose::VoiceAnalyst,
-    })
-    .await
-    .expect("connect");
-    let startup = std::sync::Mutex::new(Some("startup context".to_owned()));
-    let cancelled = std::sync::atomic::AtomicBool::new(false);
-    let mut source = cccc_contracts::Event::new("chat.message", "g_test");
-    source.id = "source-disconnected".into();
-
-    assert!(!crate::ops::local_headless::submit_managed_prompt(
-        &session,
-        &startup,
-        std::slice::from_ref(&source),
-        "must not be acknowledged",
-        &cancelled,
-        "g_test",
-        "worker",
-    ));
-    assert_eq!(turn_starts.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        startup.lock().expect("startup prompt").as_deref(),
-        Some("startup context")
-    );
-    assert!(!crate::ops::local_headless::submit_managed_prompt(
-        &session,
-        &startup,
-        std::slice::from_ref(&source),
-        "must not be replayed ambiguously",
-        &cancelled,
-        "g_test",
-        "worker",
-    ));
-    assert_eq!(turn_starts.load(Ordering::SeqCst), 1);
-    let _ = session.stop(session.generation()).await;
-    server.await.expect("disconnecting server");
+        .expect("connect");
+        let startup = std::sync::Mutex::new(Some("startup context".to_owned()));
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let steps = if disconnect {
+            &[
+                ("source-disconnected", "must not be acknowledged", 1),
+                ("source-disconnected", "must not be replayed ambiguously", 1),
+            ][..]
+        } else {
+            &[
+                ("source-first", "first task", 1),
+                ("source-followup", "follow-up task", 2),
+                ("source-followup", "retry text is ignored", 2),
+            ][..]
+        };
+        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
+            for (id, text, starts) in steps {
+                let mut source = cccc_contracts::Event::new("chat.message", "g_test");
+                source.id = (*id).into();
+                assert_eq!(
+                    crate::ops::local_headless::submit_managed_prompt(
+                        &session,
+                        &startup,
+                        &[source],
+                        text,
+                        &cancelled,
+                        "g_test",
+                        "worker",
+                    ),
+                    !disconnect,
+                    "disconnect={disconnect}, source={id}"
+                );
+                assert_eq!(turn_starts.load(Ordering::SeqCst), *starts);
+                assert_eq!(
+                    startup.lock().expect("startup").as_deref(),
+                    disconnect.then_some("startup context")
+                );
+            }
+        }))
+        .await;
+        let stopped = session.stop(session.generation()).await;
+        if !disconnect {
+            server.abort();
+        }
+        let server_result = server.await;
+        result.expect("native delivery assertions");
+        if disconnect {
+            server_result.expect("disconnecting server");
+        } else {
+            stopped.expect("stop session");
+        }
+    }
 }
