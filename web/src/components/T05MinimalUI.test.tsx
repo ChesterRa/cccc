@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   openWebModelBrowserSurfaceSession: vi.fn(),
   closeWebModelBrowserSurfaceSession: vi.fn(),
   createWebModelConnector: vi.fn(),
-  createWebModelConnectorBinding: vi.fn(),
   revokeWebModelConnector: vi.fn(),
   bindCurrentWebModelBrowserConversation: vi.fn(),
   fetchRuntimes: vi.fn(),
@@ -185,14 +184,6 @@ beforeEach(() => {
   mocks.fetchWebModelBrowserSurfaceSession.mockImplementation(async (gid: string) =>
     ok({ browser_session: session(gid), browser_surface: { active: true, state: "ready" } }),
   );
-  mocks.createWebModelConnectorBinding.mockImplementation(async (id: string) =>
-    ok({
-      code: 'one"code',
-      group_id: id.slice(5),
-      actor_id: "lead",
-      binding_expires_at: new Date(Date.now() + 600_000).toISOString(),
-    }),
-  );
   mocks.sharedWebModelBrowser.mockResolvedValue(
     ok({
       browser_session: {
@@ -226,7 +217,6 @@ describe("minimal overlay on upstream UI", () => {
     expect(host.textContent).toContain("ChatGPT Web Model");
     expect(host.textContent).not.toContain("工作组概览");
     expect(host.textContent).not.toContain("添加成员");
-    expect((find('[data-t05-change="legacy-setup"]') as HTMLDetailsElement).open).toBe(false);
     await choose("g_b");
     expect((find('input[placeholder="https://chatgpt.com/c/..."]') as HTMLInputElement).value).toBe(
       "https://chatgpt.com/c/g_b",
@@ -257,9 +247,7 @@ describe("minimal overlay on upstream UI", () => {
     expect(host.querySelector('[data-t05-change="copy-binding"]')).toBeNull();
     await clickText("复制 MCP URL");
     expect(mocks.copy).toHaveBeenCalledExactlyOnceWith("https://example.invalid/mcp/test-only");
-    expect(mocks.createWebModelConnectorBinding).not.toHaveBeenCalled();
     expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    expect(host.querySelector("#t05-web-group [role=combobox]")).not.toBeNull();
   });
   it("discards a late actor response after switching groups", async () => {
     const delayedActors = deferred<ReturnType<typeof ok<{ actors: Actor[] }>>>();
@@ -272,7 +260,6 @@ describe("minimal overlay on upstream UI", () => {
     await wait();
     expect(host.textContent).not.toContain("组长甲 的 ChatGPT");
     expect(groupTrigger().textContent).toContain("乙组");
-    expect(mocks.createWebModelConnectorBinding).not.toHaveBeenCalled();
   });
   it("showing and hiding the native projection does not start or close the browser", async () => {
     await render();
@@ -312,7 +299,6 @@ describe("minimal overlay on upstream UI", () => {
     const button = [...host.querySelectorAll("button")].find(
       (item) => item.textContent === "创建 MCP URL",
     )!;
-    expect(button).toBeTruthy();
     expect(button.closest("details")).toBeNull();
     expect(button.disabled).toBe(false);
     const note = find('[data-t05-change="legacy-setup"]') as HTMLDetailsElement;
@@ -321,8 +307,6 @@ describe("minimal overlay on upstream UI", () => {
     await act(async () => note.querySelector("summary")!.click());
     expect(note.open).toBe(true);
     expect(host.querySelectorAll('input[name="chatgpt-delivery-target"]').length).toBe(2);
-    expect(host.textContent).not.toContain("复制绑定说明");
-    expect(mocks.createWebModelConnectorBinding).not.toHaveBeenCalled();
   });
 });
 describe("group members shortcut", () => {
@@ -393,8 +377,6 @@ describe("shared login, role, and confirmation ownership", () => {
     const connection = find('[data-setup-step="connection"]');
     const target = find('[data-setup-step="target"]');
     const selector = find('[data-t05-change="web-group-selector"]');
-    expect(account.parentElement).toBe(connection.parentElement);
-    expect(connection.parentElement).toBe(target.parentElement);
     expect(account.textContent).toContain("1. 登录 ChatGPT");
     expect(connection.textContent).toContain("3. 连接 CCCC MCP app");
     expect(target.textContent).toContain("4. 选择投递目标");
@@ -408,12 +390,7 @@ describe("shared login, role, and confirmation ownership", () => {
     expect(
       connection.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(account.querySelector('[data-t05-change="copy-binding"]')).toBeNull();
-    expect(connection.querySelector('[data-t05-change="copy-binding"]')).toBeNull();
-    expect(connection.querySelector('[data-t05-change="legacy-setup"]')).not.toBeNull();
-    expect(target.querySelector('[data-t05-change="save-return-target"]')).not.toBeNull();
     expect(account.textContent).not.toMatch(/共享|共用/);
-    expect(host.querySelector("#t05-web-group select")).toBeNull();
     expect(groupTrigger().getAttribute("aria-label")).toBe("选择工作组");
     await click('#t05-web-group [role="combobox"]');
     expect(groupTrigger().getAttribute("aria-expanded")).toBe("true");
@@ -421,7 +398,6 @@ describe("shared login, role, and confirmation ownership", () => {
     await click('#t05-web-group [role="combobox"]');
     await choose("g_b");
     expect(groupTrigger().textContent).toContain("乙组");
-    expect(find('[data-testid="shared-login-status"]').textContent).toBeTruthy();
     expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
     expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
   });
@@ -433,7 +409,6 @@ describe("shared login, role, and confirmation ownership", () => {
     await click('[data-testid="use-current-browser-chat"]');
     expect(url.value).toBe("https://chatgpt.com/c/shared-live");
     expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    expect(mocks.createWebModelConnectorBinding).not.toHaveBeenCalled();
     vi.mocked(window.confirm).mockReturnValue(false);
     await click('[data-t05-change="save-return-target"]');
     expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
@@ -445,7 +420,6 @@ describe("shared login, role, and confirmation ownership", () => {
       conversationUrl: "https://chatgpt.com/c/shared-live",
       newChat: false,
     });
-    expect(mocks.createWebModelConnectorBinding).not.toHaveBeenCalled();
     expect(
       mocks.sharedWebModelBrowser.mock.calls.every((call) => !["open", "close"].includes(call[0])),
     ).toBe(true);

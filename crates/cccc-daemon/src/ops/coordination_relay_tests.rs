@@ -45,27 +45,40 @@ impl Fixture {
             .expect("context")
     }
 
-    fn task(&self, title: &str, assignee: &str) -> String {
-        let result = ContextStore::new(self.home.clone())
+    fn sync(&self, by: &str, op: Value) -> ContextDoc {
+        ContextStore::new(self.home.clone())
             .expect("context store")
             .sync(
                 &self.group.group_id,
-                &[json!({
-                    "op":"task.create","title":title,"outcome":format!("Finish {title}"),
-                    "status":"active","assignee":assignee,"waiting_on":"actor"
-                })
-                .as_object()
-                .cloned()
-                .expect("task op")],
+                &[op.as_object().cloned().expect("op object")],
                 None,
-                "web-lead",
+                by,
                 false,
             )
-            .expect("create task");
-        result.context.tasks.last().expect("task")["id"]
+            .expect("context sync")
+            .context
+    }
+
+    fn task(&self, title: &str, assignee: &str) -> String {
+        let context = self.sync(
+            "web-lead",
+            json!({
+                "op":"task.create","title":title,"outcome":format!("Finish {title}"),
+                "status":"active","assignee":assignee,"waiting_on":"actor"
+            }),
+        );
+        context.tasks.last().expect("task")["id"]
             .as_str()
             .expect("task id")
             .to_owned()
+    }
+
+    fn pause(&mut self) {
+        self.group.state = GroupState::Paused;
+        GroupStore::new(self.home.clone())
+            .expect("store")
+            .save(&self.group)
+            .expect("pause group");
     }
 
     fn report(&self, actor_id: &str, text: &str, task_id: Option<&str>) -> Event {
@@ -115,6 +128,65 @@ impl Fixture {
         .expect("claim source");
     }
 
+    fn append_delivery(&self, source_event_id: &str, state: &str, seconds_ago: i64) {
+        let mut delivery = Event::new("runtime.delivery", &self.group.group_id);
+        delivery.ts = (Utc::now() - Duration::seconds(seconds_ago)).to_rfc3339();
+        delivery.by = "system".into();
+        delivery.data = json!({
+            "actor_id":"web-lead","source_event_id":source_event_id,
+            "state":state,"transport":"web_model_browser"
+        })
+        .as_object()
+        .cloned()
+        .expect("delivery data");
+        ledger::append(&self.path(), &delivery).expect("append delivery");
+    }
+
+    fn delivery_state(&self, source_event_id: &str) -> String {
+        super::super::runtime_delivery::latest_state(
+            &self.home,
+            &self.group.group_id,
+            "web-lead",
+            source_event_id,
+        )
+        .expect("delivery state")
+        .expect("delivery recorded for source")
+        .0
+    }
+
+    fn pending_sources(&self) -> Vec<Event> {
+        super::super::runtime_delivery::pending_sources(
+            &self.home,
+            &self.group,
+            actors::find(&self.group, "web-lead").expect("lead"),
+            20,
+        )
+        .expect("pending sources")
+    }
+
+    fn status(&self) -> Map<String, Value> {
+        status(
+            &self.home,
+            &DaemonRequest {
+                v: 1,
+                op: "coordination_relay_status".into(),
+                args: json!({"group_id":self.group.group_id,"actor_id":"web-lead","by":"web-lead"})
+                    .as_object()
+                    .cloned()
+                    .expect("status args"),
+            },
+        )
+        .expect("relay status")
+    }
+
+    fn remind(&self, browser_idle: bool) -> Map<String, Value> {
+        remind_due(
+            &self.home,
+            &remind_request(&self.group.group_id, browser_idle),
+        )
+        .expect("relay reminder check")
+    }
+
     fn decide(&self, value: Value) -> Result<Map<String, Value>, OpError> {
         let mut args = value.as_object().cloned().expect("decision args");
         args.insert("group_id".into(), json!(self.group.group_id));
@@ -146,6 +218,101 @@ fn relay_events<'a>(events: &'a [Event], kind: &str) -> Vec<&'a Event> {
     events.iter().filter(|event| event.kind == kind).collect()
 }
 
+fn remind_request(group_id: &str, browser_idle: bool) -> DaemonRequest {
+    DaemonRequest {
+        v: 1,
+        op: "coordination_relay_remind".into(),
+        args: json!({
+            "group_id":group_id,"actor_id":"web-lead","by":"web-lead",
+            "browser_idle":browser_idle
+        })
+        .as_object()
+        .cloned()
+        .expect("reminder request"),
+    }
+}
+
+fn handoff_id(handoff: &Event) -> &str {
+    handoff.data["handoff_id"].as_str().expect("handoff id")
+}
+
+fn handoff_note<'a>(context: &'a ContextDoc, handoff_id: &str) -> &'a Value {
+    context.coordination["recent_handoffs"]
+        .as_array()
+        .expect("handoff notes")
+        .iter()
+        .find(|note| note["id"] == handoff_id)
+        .expect("handoff note")
+}
+
+fn lead_messages<'a>(events: &'a [Event], to: &str) -> Vec<&'a Event> {
+    events
+        .iter()
+        .filter(|event| {
+            event.kind == "chat.message"
+                && event.by == "web-lead"
+                && event.data["to"] == json!([to])
+        })
+        .collect()
+}
+
+fn relay_notes<'a>(events: &'a [Event], relay_kind: &str) -> Vec<&'a Event> {
+    events
+        .iter()
+        .filter(|event| event.data.get("relay_kind").and_then(Value::as_str) == Some(relay_kind))
+        .collect()
+}
+
+fn interrupted_continue(
+    fixture: &Fixture,
+    report: &Event,
+    handoff: &Event,
+    next_text: &str,
+) -> Map<String, Value> {
+    let source_event_ids = vec![report.id.clone()];
+    let handoff_ids = vec![handoff_id(handoff).to_owned()];
+    let decision_id = decision_id(&fixture.group.group_id, "web-lead", &source_event_ids);
+    let request = DaemonRequest {
+        v: 1,
+        op: "coordination_decide".into(),
+        args: json!({
+            "decision":"continue","summary":"Run the final verification.",
+            "next_actor_id":"worker-b","next_title":"Final verification",
+            "next_text":next_text
+        })
+        .as_object()
+        .cloned()
+        .expect("continue request"),
+    };
+    let fingerprint = decision_fingerprint(
+        "continue",
+        "",
+        "worker-b",
+        "Final verification",
+        next_text,
+        &request,
+    );
+    let scope = DecisionScope {
+        home: &fixture.home,
+        group_id: &fixture.group.group_id,
+        actor_id: "web-lead",
+        decision_id: &decision_id,
+        request_fingerprint: &fingerprint,
+        source_event_ids: &source_event_ids,
+        handoff_ids: &handoff_ids,
+    };
+    tracked_continue(
+        &scope,
+        &request,
+        ContinueSpec {
+            actor_id: "worker-b",
+            title: "Final verification",
+            text: next_text,
+        },
+    )
+    .expect("simulated interrupted continue dispatch")
+}
+
 #[test]
 fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates() {
     let fixture = Fixture::new("relay continue");
@@ -157,17 +324,7 @@ fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates
     );
     fixture.handoff(&report, "turn-continue");
     fixture.claim_for_web(&report);
-    assert_eq!(
-        super::super::runtime_delivery::pending_sources(
-            &fixture.home,
-            &fixture.group,
-            actors::find(&fixture.group, "web-lead").expect("lead"),
-            20,
-        )
-        .expect("pending before decision")
-        .len(),
-        1
-    );
+    assert_eq!(fixture.pending_sources().len(), 1);
 
     let request = json!({
         "event_ids":[report.id],"decision":"continue",
@@ -193,26 +350,13 @@ fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates
     assert_eq!(task(&context, &next_task)["waiting_on"], "actor");
     let events = fixture.events();
     assert_eq!(relay_events(&events, DECISION_KIND).len(), 1);
+    let delegated = lead_messages(&events, "worker-b");
     assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && event.by == "web-lead"
-                    && event.data["to"] == json!(["worker-b"])
-            })
-            .count(),
+        delegated.len(),
         1,
         "continue must have one visible task message"
     );
-    let delegated = events
-        .iter()
-        .find(|event| {
-            event.kind == "chat.message"
-                && event.by == "web-lead"
-                && event.data["to"] == json!(["worker-b"])
-        })
-        .expect("delegated message");
+    let delegated = delegated[0];
     assert_eq!(
         delegated.data["text"],
         "Run all affected Rust tests and report any regression with exact evidence."
@@ -223,27 +367,9 @@ fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates
             .unwrap_or_default()
             .contains("Previous handoff reviewed")
     );
-    assert_eq!(
-        super::super::runtime_delivery::latest_state(
-            &fixture.home,
-            &fixture.group.group_id,
-            "web-lead",
-            &report.id,
-        )
-        .expect("delivery state")
-        .expect("accepted state")
-        .0,
-        "accepted"
-    );
+    assert_eq!(fixture.delivery_state(&report.id), "accepted");
     assert!(
-        super::super::runtime_delivery::pending_sources(
-            &fixture.home,
-            &fixture.group,
-            actors::find(&fixture.group, "web-lead").expect("lead"),
-            20,
-        )
-        .expect("pending after decision")
-        .is_empty(),
+        fixture.pending_sources().is_empty(),
         "handled report was still eligible for browser wake"
     );
 
@@ -251,17 +377,9 @@ fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates
     assert_eq!(replay["replayed"], true);
     let context = fixture.context();
     assert_eq!(context.tasks.len(), 2, "replay created another next task");
-    let events = fixture.events();
-    assert_eq!(relay_events(&events, DECISION_KIND).len(), 1);
+    assert_eq!(relay_events(&fixture.events(), DECISION_KIND).len(), 1);
     assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && event.by == "web-lead"
-                    && event.data["to"] == json!(["worker-b"])
-            })
-            .count(),
+        lead_messages(&fixture.events(), "worker-b").len(),
         1,
         "replay duplicated the visible task message"
     );
@@ -306,17 +424,7 @@ fn wait_user_records_machine_state_without_duplicating_the_original_output() {
         1,
         "decide duplicated the original visible report"
     );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && event.by == "web-lead"
-                    && event.data["to"] == json!(["user"])
-            })
-            .count(),
-        0
-    );
+    assert!(lead_messages(&events, "user").is_empty());
 }
 
 #[test]
@@ -348,21 +456,10 @@ fn task_updates_require_an_explicit_reference_and_preserve_other_members_work() 
     assert_eq!(result.code, "relay_work_remains");
     assert_eq!(task(&fixture.context(), &source_task)["status"], "active");
 
-    ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .sync(
-            &fixture.group.group_id,
-            &[
-                json!({"op":"task.move","task_id":unrelated_task,"status":"done"})
-                    .as_object()
-                    .cloned()
-                    .expect("task move"),
-            ],
-            None,
-            "worker-b",
-            false,
-        )
-        .expect("finish unrelated task");
+    fixture.sync(
+        "worker-b",
+        json!({"op":"task.move","task_id":unrelated_task,"status":"done"}),
+    );
     let result = fixture
         .decide(json!({
             "event_ids":[report.id],"task_id":source_task,"decision":"complete",
@@ -464,21 +561,10 @@ fn complete_refuses_to_hide_other_live_work_then_succeeds_after_it_is_done() {
         "rejected complete was shown to the user"
     );
 
-    ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .sync(
-            &fixture.group.group_id,
-            &[
-                json!({"op":"task.move","task_id":other_task,"status":"done"})
-                    .as_object()
-                    .cloned()
-                    .expect("task move"),
-            ],
-            None,
-            "worker-b",
-            false,
-        )
-        .expect("finish other task");
+    fixture.sync(
+        "worker-b",
+        json!({"op":"task.move","task_id":other_task,"status":"done"}),
+    );
     let completed = fixture.decide(request).expect("complete decision");
     assert_eq!(completed["relay"]["decision"], "complete");
     assert_eq!(completed["relay"]["safe_to_idle"], true);
@@ -489,40 +575,14 @@ fn complete_refuses_to_hide_other_live_work_then_succeeds_after_it_is_done() {
 fn relay_status_reports_current_group_responsibility_not_only_pending_handoffs() {
     let mut fixture = Fixture::new("current responsibility");
     let task_id = fixture.task("Actor still owns work", "worker-a");
-    let active = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead"})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        },
-    )
-    .expect("active state");
+    let active = fixture.status();
     assert_eq!(active["count"], 0);
     assert_eq!(active["safe_to_idle"], false);
     assert_eq!(active["responsibility"]["kind"], "actor_work");
     assert_eq!(active["responsibility"]["tasks"][0]["task_id"], task_id);
 
-    fixture.group.state = cccc_contracts::GroupState::Paused;
-    GroupStore::new(fixture.home.clone())
-        .expect("store")
-        .save(&fixture.group)
-        .expect("pause");
-    let paused = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead"})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        },
-    )
-    .expect("paused state");
+    fixture.pause();
+    let paused = fixture.status();
     assert_eq!(paused["safe_to_idle"], true);
     assert_eq!(paused["responsibility"]["kind"], "user_pause");
 }
@@ -532,11 +592,7 @@ fn user_pause_blocks_continue_and_automatic_reminders_without_losing_the_handoff
     let mut fixture = Fixture::new("paused relay");
     let report = fixture.report("worker-a", "Ready for the next task.", None);
     fixture.handoff(&report, "turn-paused");
-    fixture.group.state = cccc_contracts::GroupState::Paused;
-    GroupStore::new(fixture.home.clone())
-        .expect("store")
-        .save(&fixture.group)
-        .expect("pause group");
+    fixture.pause();
     let error = fixture
         .decide(json!({
             "event_ids":[report.id],"decision":"continue","summary":"Continue",
@@ -547,49 +603,11 @@ fn user_pause_blocks_continue_and_automatic_reminders_without_losing_the_handoff
     assert_eq!(fixture.context().tasks.len(), 0);
     assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
 
-    let mut delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    delivery.ts = (Utc::now() - Duration::seconds(30)).to_rfc3339();
-    delivery.by = "system".into();
-    delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":report.id,
-        "state":"accepted","transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("delivery");
-    ledger::append(&fixture.path(), &delivery).expect("delivery");
-    let reminder = remind_due(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_remind".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("args"),
-        },
-    )
-    .expect("paused reminder check");
+    fixture.append_delivery(&report.id, "accepted", 30);
+    let reminder = fixture.remind(false);
     assert_eq!(reminder["reminded"], false);
     assert_eq!(reminder["reason"], "actor_inactive");
-    assert_eq!(
-        status(
-            &fixture.home,
-            &DaemonRequest {
-                v: 1,
-                op: "coordination_relay_status".into(),
-                args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead"})
-                    .as_object()
-                    .cloned()
-                    .expect("status args"),
-            },
-        )
-        .expect("status")["count"],
-        1,
-        "pause discarded the handoff"
-    );
+    assert_eq!(fixture.status()["count"], 1, "pause discarded the handoff");
 }
 
 #[test]
@@ -676,16 +694,11 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
     );
     assert_eq!(consumed.read_event.expect("read event").kind, "mail.read");
     assert_eq!(
-        super::super::runtime_delivery::pending_sources(
-            &fixture.home,
-            &fixture.group,
-            actors::find(&fixture.group, "web-lead").expect("lead"),
-            20,
-        )
-        .expect("pending after read")
-        .iter()
-        .map(|event| &event.id)
-        .collect::<Vec<_>>(),
+        fixture
+            .pending_sources()
+            .iter()
+            .map(|event| &event.id)
+            .collect::<Vec<_>>(),
         [&report.id],
         "read was incorrectly treated as acknowledgement"
     );
@@ -697,14 +710,7 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
         }))
         .expect("decision after read");
     assert!(
-        super::super::runtime_delivery::pending_sources(
-            &fixture.home,
-            &fixture.group,
-            actors::find(&fixture.group, "web-lead").expect("lead"),
-            20,
-        )
-        .expect("pending after decision")
-        .is_empty(),
+        fixture.pending_sources().is_empty(),
         "explicit handling did not suppress the later browser wake"
     );
     assert_eq!(
@@ -739,43 +745,10 @@ fn status_reconciles_a_durable_decision_whose_transport_acceptance_was_interrupt
     .cloned()
     .expect("decision data");
     ledger::append(&fixture.path(), &decision).expect("durable decision");
-    assert_eq!(
-        super::super::runtime_delivery::latest_state(
-            &fixture.home,
-            &fixture.group.group_id,
-            "web-lead",
-            &report.id,
-        )
-        .expect("state")
-        .expect("claim")
-        .0,
-        "claimed"
-    );
-    let result = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead"})
-                .as_object()
-                .cloned()
-                .expect("status args"),
-        },
-    )
-    .expect("self-healing status");
+    assert_eq!(fixture.delivery_state(&report.id), "claimed");
+    let result = fixture.status();
     assert_eq!(result["count"], 0);
-    assert_eq!(
-        super::super::runtime_delivery::latest_state(
-            &fixture.home,
-            &fixture.group.group_id,
-            "web-lead",
-            &report.id,
-        )
-        .expect("state")
-        .expect("accepted")
-        .0,
-        "accepted"
-    );
+    assert_eq!(fixture.delivery_state(&report.id), "accepted");
 }
 
 #[test]
@@ -788,29 +761,9 @@ fn delivered_unresolved_handoff_gets_one_reminder_and_decision_resolves_it_too()
         Some(&task_id),
     );
     let handoff = fixture.handoff(&report, "turn-reminder");
-    let mut delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    delivery.ts = (Utc::now() - Duration::seconds(30)).to_rfc3339();
-    delivery.by = "system".into();
-    delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":report.id,
-        "delivery_id":"delivery-old","state":"accepted","transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("delivery");
-    ledger::append(&fixture.path(), &delivery).expect("old delivery");
+    fixture.append_delivery(&report.id, "accepted", 30);
 
-    let reminder_request = DaemonRequest {
-        v: 1,
-        op: "coordination_relay_remind".into(),
-        args: json!({
-            "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-        })
-        .as_object()
-        .cloned()
-        .expect("reminder request"),
-    };
-    let first = remind_due(&fixture.home, &reminder_request).expect("first reminder");
+    let first = fixture.remind(false);
     assert_eq!(first["reminded"], true);
     let reminder_id = first["reminder_event"]["id"]
         .as_str()
@@ -822,17 +775,9 @@ fn delivered_unresolved_handoff_gets_one_reminder_and_decision_resolves_it_too()
             .expect("reminder text")
             .contains("call cccc_coordination")
     );
-    let second = remind_due(&fixture.home, &reminder_request).expect("second reminder check");
+    let second = fixture.remind(false);
     assert_eq!(second["reminded"], false);
-    assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| event.data.get("relay_kind").and_then(Value::as_str)
-                == Some("decision_reminder"))
-            .count(),
-        1
-    );
+    assert_eq!(relay_notes(&fixture.events(), "decision_reminder").len(), 1);
 
     fixture
         .decide(json!({
@@ -840,26 +785,9 @@ fn delivered_unresolved_handoff_gets_one_reminder_and_decision_resolves_it_too()
             "summary":"Please approve the final rollout."
         }))
         .expect("resolve reminder");
-    assert_eq!(
-        super::super::runtime_delivery::latest_state(
-            &fixture.home,
-            &fixture.group.group_id,
-            "web-lead",
-            &reminder_id,
-        )
-        .expect("reminder delivery")
-        .expect("reminder accepted")
-        .0,
-        "accepted"
-    );
-    let handoff_id = handoff.data["handoff_id"].as_str().expect("handoff id");
+    assert_eq!(fixture.delivery_state(&reminder_id), "accepted");
     let context = fixture.context();
-    let note = context.coordination["recent_handoffs"]
-        .as_array()
-        .expect("handoffs")
-        .iter()
-        .find(|note| note["id"] == handoff_id)
-        .expect("resolved handoff note");
+    let note = handoff_note(&context, handoff_id(&handoff));
     assert_eq!(note["status"], "resolved");
 }
 
@@ -874,16 +802,11 @@ fn repeated_completion_after_a_decision_never_reopens_the_resolved_handoff() {
             "summary":"Please approve the verified result."
         }))
         .expect("decision");
-    let version_before = ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .version(&fixture.context())
-        .expect("version");
+    let store = ContextStore::new(fixture.home.clone()).expect("context store");
+    let version_before = store.version(&fixture.context()).expect("version");
     fixture.handoff(&report, "turn-resolved-replay");
     let context = fixture.context();
-    let version_after = ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .version(&context)
-        .expect("version");
+    let version_after = store.version(&context).expect("version");
     assert_eq!(
         version_before, version_after,
         "duplicate completion rewrote context"
@@ -928,18 +851,7 @@ fn one_visible_output_resolves_every_message_in_the_same_member_handoff() {
     expected_ids.sort();
     assert_eq!(result["relay"]["source_event_ids"], json!(expected_ids));
     for event_id in [&first.id, &second.id] {
-        assert_eq!(
-            super::super::runtime_delivery::latest_state(
-                &fixture.home,
-                &fixture.group.group_id,
-                "web-lead",
-                event_id,
-            )
-            .expect("delivery")
-            .expect("accepted")
-            .0,
-            "accepted"
-        );
+        assert_eq!(fixture.delivery_state(event_id), "accepted");
     }
 }
 
@@ -1029,53 +941,12 @@ fn a_partially_dispatched_continue_cannot_be_changed_to_wait_user() {
         None,
     );
     let handoff = fixture.handoff(&report, "turn-continue-partial");
-    let source_event_ids = vec![report.id.clone()];
-    let handoff_ids = vec![
-        handoff.data["handoff_id"]
-            .as_str()
-            .expect("handoff id")
-            .to_owned(),
-    ];
-    let decision_id = decision_id(&fixture.group.group_id, "web-lead", &source_event_ids);
-    let request = DaemonRequest {
-        v: 1,
-        op: "coordination_decide".into(),
-        args: json!({
-            "decision":"continue","summary":"Run the final verification.",
-            "next_actor_id":"worker-b","next_title":"Final verification",
-            "next_text":"Run the full affected regression and report exact evidence."
-        })
-        .as_object()
-        .cloned()
-        .expect("request"),
-    };
-    let fingerprint = decision_fingerprint(
-        "continue",
-        "",
-        "worker-b",
-        "Final verification",
+    let sent = interrupted_continue(
+        &fixture,
+        &report,
+        &handoff,
         "Run the full affected regression and report exact evidence.",
-        &request,
     );
-    let scope = DecisionScope {
-        home: &fixture.home,
-        group_id: &fixture.group.group_id,
-        actor_id: "web-lead",
-        decision_id: &decision_id,
-        request_fingerprint: &fingerprint,
-        source_event_ids: &source_event_ids,
-        handoff_ids: &handoff_ids,
-    };
-    let sent = tracked_continue(
-        &scope,
-        &request,
-        ContinueSpec {
-            actor_id: "worker-b",
-            title: "Final verification",
-            text: "Run the full affected regression and report exact evidence.",
-        },
-    )
-    .expect("simulate crash after next work was sent");
     assert_eq!(sent["message_sent"], true);
 
     let conflict = fixture
@@ -1086,14 +957,7 @@ fn a_partially_dispatched_continue_cannot_be_changed_to_wait_user() {
         .expect_err("real next work must not be contradicted by a later wait decision");
     assert_eq!(conflict.code, "relay_decision_conflict");
     assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
-    assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| event.kind == "chat.message" && event.data["to"] == json!(["worker-b"]))
-            .count(),
-        1
-    );
+    assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
 }
 
 #[test]
@@ -1126,53 +990,12 @@ fn the_same_partially_dispatched_continue_recovers_without_duplicate_work() {
         None,
     );
     let handoff = fixture.handoff(&report, "turn-continue-recovery");
-    let source_event_ids = vec![report.id.clone()];
-    let handoff_ids = vec![
-        handoff.data["handoff_id"]
-            .as_str()
-            .expect("handoff id")
-            .to_owned(),
-    ];
-    let decision_id = decision_id(&fixture.group.group_id, "web-lead", &source_event_ids);
-    let request = DaemonRequest {
-        v: 1,
-        op: "coordination_decide".into(),
-        args: json!({
-            "decision":"continue","summary":"Run the final verification.",
-            "next_actor_id":"worker-b","next_title":"Final verification",
-            "next_text":"Run the affected regression and report exact evidence."
-        })
-        .as_object()
-        .cloned()
-        .expect("request"),
-    };
-    let fingerprint = decision_fingerprint(
-        "continue",
-        "",
-        "worker-b",
-        "Final verification",
+    interrupted_continue(
+        &fixture,
+        &report,
+        &handoff,
         "Run the affected regression and report exact evidence.",
-        &request,
     );
-    let scope = DecisionScope {
-        home: &fixture.home,
-        group_id: &fixture.group.group_id,
-        actor_id: "web-lead",
-        decision_id: &decision_id,
-        request_fingerprint: &fingerprint,
-        source_event_ids: &source_event_ids,
-        handoff_ids: &handoff_ids,
-    };
-    tracked_continue(
-        &scope,
-        &request,
-        ContinueSpec {
-            actor_id: "worker-b",
-            title: "Final verification",
-            text: "Run the affected regression and report exact evidence.",
-        },
-    )
-    .expect("simulate interrupted continue");
     let result = fixture
         .decide(json!({
             "event_ids":[report.id],"decision":"continue",
@@ -1193,14 +1016,7 @@ fn the_same_partially_dispatched_continue_recovers_without_duplicate_work() {
         })
         .count();
     assert_eq!(relay_tasks, 1);
-    assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| event.kind == "chat.message" && event.data["to"] == json!(["worker-b"]))
-            .count(),
-        1
-    );
+    assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
 }
 
 #[test]
@@ -1215,23 +1031,14 @@ fn a_task_only_partial_continue_blocks_a_different_decision() {
         "web-lead",
         &decision_id,
     );
-    ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .sync(
-            &fixture.group.group_id,
-            &[json!({
-                "op":"task.create","title":"Prepared follow-up","outcome":"Finish it",
-                "status":"active","assignee":"worker-b","waiting_on":"actor",
-                "client_request_id":client_id
-            })
-            .as_object()
-            .cloned()
-            .expect("task operation")],
-            None,
-            "web-lead",
-            false,
-        )
-        .expect("prepare task-only partial effect");
+    fixture.sync(
+        "web-lead",
+        json!({
+            "op":"task.create","title":"Prepared follow-up","outcome":"Finish it",
+            "status":"active","assignee":"worker-b","waiting_on":"actor",
+            "client_request_id":client_id
+        }),
+    );
     let conflict = fixture
         .decide(json!({
             "event_ids":[report.id],"decision":"wait_user",
@@ -1284,20 +1091,7 @@ fn resolving_one_handoff_does_not_tell_the_foreman_to_idle_with_another_pending(
         "foreman_review"
     );
 
-    let pending = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status request"),
-        },
-    )
-    .expect("status");
+    let pending = fixture.status();
     assert_eq!(pending["count"], 1);
     assert_eq!(pending["caller_may_idle"], false);
 
@@ -1314,22 +1108,13 @@ fn resolving_one_handoff_does_not_tell_the_foreman_to_idle_with_another_pending(
 #[test]
 fn unassigned_live_work_remains_the_foremans_triage_responsibility() {
     let fixture = Fixture::new("unassigned responsibility");
-    ContextStore::new(fixture.home.clone())
-        .expect("context")
-        .sync(
-            &fixture.group.group_id,
-            &[json!({
-                "op":"task.create","title":"Unassigned follow-up","outcome":"Find an owner",
-                "status":"active","waiting_on":"actor"
-            })
-            .as_object()
-            .cloned()
-            .expect("task")],
-            None,
-            "web-lead",
-            false,
-        )
-        .expect("create unassigned work");
+    fixture.sync(
+        "web-lead",
+        json!({
+            "op":"task.create","title":"Unassigned follow-up","outcome":"Find an owner",
+            "status":"active","waiting_on":"actor"
+        }),
+    );
     let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
         .expect("group responsibility");
     assert_eq!(state["safe_to_idle"], false);
@@ -1351,42 +1136,22 @@ fn repeated_status_reads_do_not_reappend_completed_delivery_facts() {
             "summary":"Please approve the verified result."
         }))
         .expect("decision");
-    let accepted_before = fixture
-        .events()
-        .iter()
-        .filter(|event| {
-            event.kind == "runtime.delivery"
-                && event.data["source_event_id"] == report.id
-                && event.data["state"] == "accepted"
-        })
-        .count();
-    assert_eq!(accepted_before, 1);
+    let accepted_deliveries = || {
+        fixture
+            .events()
+            .iter()
+            .filter(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == report.id
+                    && event.data["state"] == "accepted"
+            })
+            .count()
+    };
+    assert_eq!(accepted_deliveries(), 1);
     for _ in 0..20 {
-        status(
-            &fixture.home,
-            &DaemonRequest {
-                v: 1,
-                op: "coordination_relay_status".into(),
-                args: json!({
-                    "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-                })
-                .as_object()
-                .cloned()
-                .expect("status"),
-            },
-        )
-        .expect("stable status");
+        fixture.status();
     }
-    let accepted_after = fixture
-        .events()
-        .iter()
-        .filter(|event| {
-            event.kind == "runtime.delivery"
-                && event.data["source_event_id"] == report.id
-                && event.data["state"] == "accepted"
-        })
-        .count();
-    assert_eq!(accepted_after, 1);
+    assert_eq!(accepted_deliveries(), 1);
 }
 
 #[test]
@@ -1409,20 +1174,7 @@ fn an_in_turn_decision_does_not_reopen_the_same_report_at_member_completion() {
         "completed",
     )
     .expect("late managed completion handoff");
-    let state = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("status");
+    let state = fixture.status();
     assert_eq!(state["count"], 0, "late completion reopened handled output");
     assert_eq!(state["requires_decision"], false);
 }
@@ -1452,20 +1204,7 @@ fn a_new_output_after_an_early_decision_remains_a_separate_review_obligation() {
         "completed",
     )
     .expect("actual turn handoff");
-    let pending = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("pending status");
+    let pending = fixture.status();
     assert_eq!(pending["count"], 1);
     assert_eq!(
         pending["pending"][0]["source_event_ids"],
@@ -1481,20 +1220,7 @@ fn a_new_output_after_an_early_decision_remains_a_separate_review_obligation() {
             "summary":"Please also review the second result."
         }))
         .expect("second output decision");
-    let final_state = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("final status");
+    let final_state = fixture.status();
     assert_eq!(final_state["count"], 0);
 }
 
@@ -1507,52 +1233,19 @@ fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
         None,
     );
     let handoff = fixture.handoff(&report, "turn-escalation");
-    let mut source_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    source_delivery.ts = (Utc::now() - Duration::seconds(90)).to_rfc3339();
-    source_delivery.by = "system".into();
-    source_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":report.id,
-        "delivery_id":"delivery-escalation-source","state":"accepted",
-        "transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("source delivery");
-    ledger::append(&fixture.path(), &source_delivery).expect("source delivery");
-    let request = |browser_idle| DaemonRequest {
-        v: 1,
-        op: "coordination_relay_remind".into(),
-        args: json!({
-            "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead",
-            "browser_idle":browser_idle
-        })
-        .as_object()
-        .cloned()
-        .expect("reminder request"),
-    };
-    let reminded = remind_due(&fixture.home, &request(false)).expect("initial reminder");
+    fixture.append_delivery(&report.id, "accepted", 90);
+    let reminded = fixture.remind(false);
     assert_eq!(reminded["reminded"], true);
     assert_eq!(reminded["escalated"], false);
     let reminder_id = reminded["reminder_event"]["id"]
         .as_str()
         .expect("reminder id")
         .to_owned();
-    let mut reminder_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    reminder_delivery.ts = (Utc::now() - Duration::seconds(40)).to_rfc3339();
-    reminder_delivery.by = "system".into();
-    reminder_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":reminder_id,
-        "delivery_id":"delivery-escalation-reminder","state":"accepted",
-        "transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("reminder delivery");
-    ledger::append(&fixture.path(), &reminder_delivery).expect("reminder delivery");
+    fixture.append_delivery(&reminder_id, "accepted", 40);
 
-    let busy = remind_due(&fixture.home, &request(false)).expect("busy check");
+    let busy = fixture.remind(false);
     assert_eq!(busy["escalated"], false, "a working web page was escalated");
-    let escalated = remind_due(&fixture.home, &request(true)).expect("idle escalation");
+    let escalated = fixture.remind(true);
     assert_eq!(escalated["reminded"], false);
     assert_eq!(escalated["escalated"], true);
     let escalation_id = escalated["escalation_event"]["id"]
@@ -1566,58 +1259,26 @@ fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
             .is_some_and(|text| text.contains("No model will be woken repeatedly"))
     );
 
-    let state = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("escalated status");
+    let state = fixture.status();
     assert_eq!(state["count"], 1);
     assert_eq!(state["requires_decision"], false);
     assert_eq!(state["awaiting_user_intervention"], true);
     assert_eq!(state["caller_may_idle"], true);
     assert_eq!(state["safe_to_idle"], true);
     assert_eq!(state["responsibility"]["kind"], "user_intervention");
-    let handoff_id = handoff.data["handoff_id"].as_str().expect("handoff id");
-    let note = fixture.context().coordination["recent_handoffs"]
-        .as_array()
-        .expect("handoff notes")
-        .iter()
-        .find(|note| note["id"] == handoff_id)
-        .expect("escalated note")
-        .clone();
+    let context = fixture.context();
+    let note = handoff_note(&context, handoff_id(&handoff));
     assert_eq!(note["status"], "waiting_user");
     assert_eq!(note["escalation_event_id"], escalation_id);
     assert!(
-        super::super::runtime_delivery::pending_sources(
-            &fixture.home,
-            &fixture.group,
-            actors::find(&fixture.group, "web-lead").expect("lead"),
-            20,
-        )
-        .expect("pending after escalation")
-        .is_empty(),
+        fixture.pending_sources().is_empty(),
         "the user escalation re-entered the web model queue and could create a loop"
     );
 
-    let repeated = remind_due(&fixture.home, &request(true)).expect("repeat escalation");
+    let repeated = fixture.remind(true);
     assert_eq!(repeated["escalated"], false);
     assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| {
-                event.data.get("relay_kind").and_then(Value::as_str) == Some("decision_escalation")
-            })
-            .count(),
+        relay_notes(&fixture.events(), "decision_escalation").len(),
         1
     );
 
@@ -1627,20 +1288,7 @@ fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
             "summary":"Please choose the next step for the preserved result."
         }))
         .expect("explicit decision after user resumes the foreman");
-    let resolved = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("resolved status");
+    let resolved = fixture.status();
     assert_eq!(resolved["count"], 0);
 }
 
@@ -1650,48 +1298,14 @@ fn user_escalation_does_not_hide_another_actors_live_work() {
     let live_task = fixture.task("Independent implementation", "worker-b");
     let report = fixture.report("worker-a", "A different result needs intervention.", None);
     let handoff = fixture.handoff(&report, "turn-escalation-with-live-work");
-    let mut source_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    source_delivery.ts = (Utc::now() - Duration::seconds(90)).to_rfc3339();
-    source_delivery.by = "system".into();
-    source_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":report.id,
-        "delivery_id":"delivery-live-source","state":"accepted","transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("source delivery");
-    ledger::append(&fixture.path(), &source_delivery).expect("source delivery");
-    let request = |browser_idle| DaemonRequest {
-        v: 1,
-        op: "coordination_relay_remind".into(),
-        args: json!({
-            "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead",
-            "browser_idle":browser_idle
-        })
-        .as_object()
-        .cloned()
-        .expect("request"),
-    };
-    let reminder = remind_due(&fixture.home, &request(false)).expect("reminder");
+    fixture.append_delivery(&report.id, "accepted", 90);
+    let reminder = fixture.remind(false);
     let reminder_id = reminder["reminder_event"]["id"]
         .as_str()
         .expect("reminder id")
         .to_owned();
-    let mut reminder_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    reminder_delivery.ts = (Utc::now() - Duration::seconds(40)).to_rfc3339();
-    reminder_delivery.by = "system".into();
-    reminder_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":reminder_id,
-        "delivery_id":"delivery-live-reminder","state":"accepted","transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("reminder delivery");
-    ledger::append(&fixture.path(), &reminder_delivery).expect("reminder delivery");
-    assert_eq!(
-        remind_due(&fixture.home, &request(true)).expect("escalation")["escalated"],
-        true
-    );
+    fixture.append_delivery(&reminder_id, "accepted", 40);
+    assert_eq!(fixture.remind(true)["escalated"], true);
     let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
         .expect("combined responsibility");
     assert_eq!(
@@ -1776,20 +1390,7 @@ fn a_verbose_member_turn_keeps_all_human_outputs_inside_one_decidable_handoff() 
             "summary":"All 25 visible output parts were reviewed. Please choose the rollout window."
         }))
         .expect("one decision resolves the full member turn");
-    let status = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("status");
+    let status = fixture.status();
     assert_eq!(status["count"], 0);
     assert_eq!(
         fixture
@@ -1820,13 +1421,7 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
     )
     .expect("reminder");
     for id in [&report.id, &reminder.id] {
-        let mut delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-        delivery.data = json!({"actor_id":"web-lead","source_event_id":id,
-            "state":"accepted","transport":"web_model_browser"})
-        .as_object()
-        .cloned()
-        .expect("delivery");
-        ledger::append(&fixture.path(), &delivery).expect("confirmed receipt");
+        fixture.append_delivery(id, "accepted", 0);
     }
     let mut escalation = Event::new("chat.message", &fixture.group.group_id);
     escalation.by = "system".into();
@@ -1845,28 +1440,10 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
         "pending_review"
     );
 
-    let result = status(
-        &fixture.home,
-        &DaemonRequest {
-            v: 1,
-            op: "coordination_relay_status".into(),
-            args: json!({
-                "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"
-            })
-            .as_object()
-            .cloned()
-            .expect("status"),
-        },
-    )
-    .expect("status repairs context");
+    let result = fixture.status();
     assert_eq!(result["awaiting_user_intervention"], true);
-    let after = fixture.context();
-    let note = after.coordination["recent_handoffs"]
-        .as_array()
-        .expect("handoffs")
-        .iter()
-        .find(|note| note["id"] == handoff_id)
-        .expect("repaired note");
+    let context = fixture.context();
+    let note = handoff_note(&context, handoff_id);
     assert_eq!(note["status"], "waiting_user");
     assert_eq!(note["escalation_event_id"], escalation.id);
 }
@@ -1878,18 +1455,7 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
     let fixture = Fixture::new("concurrent relay reminders");
     let report = fixture.report("worker-a", "The completed result needs a decision.", None);
     fixture.handoff(&report, "turn-concurrent-reminder");
-    let mut source_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    source_delivery.ts = (Utc::now() - Duration::seconds(90)).to_rfc3339();
-    source_delivery.by = "system".into();
-    source_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":report.id,
-        "delivery_id":"delivery-concurrent-source","state":"accepted",
-        "transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("source delivery");
-    ledger::append(&fixture.path(), &source_delivery).expect("source delivery");
+    fixture.append_delivery(&report.id, "accepted", 90);
 
     let barrier = Arc::new(Barrier::new(10));
     let reminder_results = std::thread::scope(|scope| {
@@ -1900,20 +1466,7 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
                 let group_id = fixture.group.group_id.clone();
                 scope.spawn(move || {
                     barrier.wait();
-                    remind_due(
-                        home,
-                        &DaemonRequest {
-                            v: 1,
-                            op: "coordination_relay_remind".into(),
-                            args: json!({
-                                "group_id":group_id,"actor_id":"web-lead","by":"web-lead",
-                                "browser_idle":false
-                            })
-                            .as_object()
-                            .cloned()
-                            .expect("request"),
-                        },
-                    )
+                    remind_due(home, &remind_request(&group_id, false))
                 })
             })
             .collect::<Vec<_>>()
@@ -1926,26 +1479,10 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
         "{reminder_results:?}"
     );
     let events = fixture.events();
-    let reminders = events
-        .iter()
-        .filter(|event| {
-            event.data.get("relay_kind").and_then(Value::as_str) == Some("decision_reminder")
-        })
-        .collect::<Vec<_>>();
+    let reminders = relay_notes(&events, "decision_reminder");
     assert_eq!(reminders.len(), 1);
     let reminder_id = reminders[0].id.clone();
-    let mut reminder_delivery = Event::new("runtime.delivery", &fixture.group.group_id);
-    reminder_delivery.ts = (Utc::now() - Duration::seconds(40)).to_rfc3339();
-    reminder_delivery.by = "system".into();
-    reminder_delivery.data = json!({
-        "actor_id":"web-lead","source_event_id":reminder_id,
-        "delivery_id":"delivery-concurrent-reminder","state":"accepted",
-        "transport":"web_model_browser"
-    })
-    .as_object()
-    .cloned()
-    .expect("reminder delivery");
-    ledger::append(&fixture.path(), &reminder_delivery).expect("reminder delivery");
+    fixture.append_delivery(&reminder_id, "accepted", 40);
 
     let barrier = Arc::new(Barrier::new(10));
     let escalation_results = std::thread::scope(|scope| {
@@ -1956,20 +1493,7 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
                 let group_id = fixture.group.group_id.clone();
                 scope.spawn(move || {
                     barrier.wait();
-                    remind_due(
-                        home,
-                        &DaemonRequest {
-                            v: 1,
-                            op: "coordination_relay_remind".into(),
-                            args: json!({
-                                "group_id":group_id,"actor_id":"web-lead","by":"web-lead",
-                                "browser_idle":true
-                            })
-                            .as_object()
-                            .cloned()
-                            .expect("request"),
-                        },
-                    )
+                    remind_due(home, &remind_request(&group_id, true))
                 })
             })
             .collect::<Vec<_>>()
@@ -1981,14 +1505,8 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
         escalation_results.iter().all(Result::is_ok),
         "{escalation_results:?}"
     );
-    let events = fixture.events();
     assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.data.get("relay_kind").and_then(Value::as_str) == Some("decision_escalation")
-            })
-            .count(),
+        relay_notes(&fixture.events(), "decision_escalation").len(),
         1
     );
 }

@@ -720,14 +720,7 @@ async fn shared_web_model_operations_preserve_busy_drafts_and_serialize_manual_n
         first.expect("first open")["started_at"],
         second.expect("reuse")["started_at"]
     );
-    let page = manager
-        .sessions
-        .lock()
-        .await
-        .get(SHARED_WEB_MODEL_KEY)
-        .expect("shared session")
-        .page
-        .clone();
+    let page = manager.page(SHARED_WEB_MODEL_KEY).await.expect("test page");
     let result = manager
         .submit_prompt_with_attachment(
             SHARED_WEB_MODEL_KEY,
@@ -792,7 +785,7 @@ async fn guest_composer_is_not_authenticated_delivery() {
         assert_eq!(readiness["login_required"],true);
         let result=work.submit_prompt_with_attachment("guest-check",&url,"must not enter guest chat",None,"guest-report").await.expect("preflight");
         assert!(matches!(result,prompt_submission::PromptSubmissionOutcome::Deferred(_)),"guest report was submitted");
-        let page=work.sessions.lock().await.get("guest-check").expect("session").page.clone();
+        let page=work.page("guest-check").await.expect("test page");
         let untouched:bool=page.evaluate("!window.sent && document.querySelector('textarea').value === ''").await.expect("read").into_value().expect("bool");
         assert!(untouched,"guest preflight touched the composer or Send");
         page.evaluate("document.querySelector('[data-mobile-auth-entry-action]').remove();document.querySelector('main').insertAdjacentHTML('beforeend','<div data-message-author-role=assistant><button data-testid=login-button>Log in</button></div>')").await.expect("fixture login recovery");
@@ -825,7 +818,7 @@ async fn cross_chat_delivery_does_not_navigate_away_from_a_draft() {
     let outcome=tokio::spawn(async move {
         let result=work.submit_prompt_with_attachment("draft-routing",&destination,"REPORT_B",None,"cross-draft").await.expect("submission check");
         assert!(matches!(result,prompt_submission::PromptSubmissionOutcome::Deferred(_)),"B delivery navigated away from A's unsent draft");
-        let page=work.sessions.lock().await.get("draft-routing").expect("session").page.clone();
+        let page=work.page("draft-routing").await.expect("test page");
         assert_eq!(page.url().await.expect("url").expect("URL"),format!("{source}/"));
         let draft:String=page.evaluate("document.querySelector('textarea').value").await.expect("draft").into_value().expect("text");
         assert_eq!(draft,"UNSENT_A_DRAFT");
@@ -852,163 +845,49 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
     let (url,server)=local_page(r#"<!doctype html><html><body><form onsubmit="event.preventDefault();window.sent=(window.sent||0)+1;const turn=document.createElement('section');turn.dataset.testid='conversation-turn-1';turn.dataset.turnId='request-client-0';const e=document.createElement('div');e.dataset.messageAuthorRole='user';e.textContent=document.querySelector('textarea').value;turn.append(e);document.body.append(turn);document.querySelector('textarea').value='';setTimeout(()=>{const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-answer';answer.textContent='Received';turn.append(answer);window.accepted=true},600)"><textarea id="prompt-textarea" style="width:500px;height:100px"></textarea><button id="composer-submit-button" type="submit" aria-label="Send prompt">Send</button></form></body></html>"#).await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
+    let key = "background-submit";
+    let prompt = "Browser batch background events=background-once";
     manager
-        .open(
-            "background-submit",
-            &temp.path().join("profile"),
-            &url,
-            800,
-            600,
-        )
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
         .await
         .expect("browser");
-    let page = manager
-        .sessions
-        .lock()
-        .await
-        .get("background-submit")
-        .expect("session")
-        .page
-        .clone();
-    // An inactive tab need not deliver IntersectionObserver callbacks. Model
-    // that condition deterministically; never bring a user's window to front.
-    page.evaluate("window.IntersectionObserver=class{observe(){} unobserve(){} disconnect(){}};")
-        .await
-        .expect("suspend observer fixture");
-    let outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(6),
-        manager.submit_prompt_with_attachment(
-            "background-submit",
-            &url,
-            "Browser batch background events=background-once",
-            None,
-            "background-once",
-        ),
-    )
-    .await;
-    let receipt_evidence = match &outcome {
-        Ok(Ok(prompt_submission::PromptSubmissionOutcome::Verified(evidence))) => {
-            Some(evidence.clone())
+    let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
+        let page = manager.page(key).await.expect("page");
+        // Inactive tabs may never deliver visual observer callbacks.
+        page.evaluate("window.IntersectionObserver=class{observe(){} unobserve(){} disconnect(){}};")
+            .await.expect("suspend visual observer");
+        let submit = || manager.submit_prompt_with_attachment(key, &url, prompt, None, "background-once");
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(6), submit())
+            .await.expect("background send timeout").expect("send");
+        let PromptSubmissionOutcome::Verified(evidence) = outcome else {
+            panic!("background send must wait for server evidence, not visual observers");
+        };
+        assert!(page.evaluate("Boolean(window.accepted)").await.expect("server acknowledgement")
+            .into_value::<bool>().expect("boolean"), "optimistic echo is not acceptance");
+        let started = std::time::Instant::now();
+        assert!(manager.relay_receipt_stable_before_close(key, &evidence).await.expect("close check"));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(800), "receipt was not observed long enough");
+        assert!(matches!(submit().await.expect("repeat"), PromptSubmissionOutcome::Verified(_)));
+        page.evaluate("document.querySelector('[data-turn-id]').dataset.turnId='request-client-pending'; const old=document.querySelector('[data-message-author-role=assistant]'); document.body.prepend(old)")
+            .await.expect("provisional echo with unrelated old answer");
+        assert!(!manager.relay_receipt_stable_before_close(key, &evidence).await.expect("provisional close check"));
+        assert!(matches!(submit().await.expect("provisional duplicate"), PromptSubmissionOutcome::Ambiguous(_)),
+            "provisional echo must neither be accepted nor sent again");
+        assert_eq!(page.evaluate("window.sent||0").await.expect("send counter")
+            .into_value::<u64>().expect("count"), 1, "duplicate submission");
+        for response_started in [false, true] {
+            let stored = json!({
+                "baseline":{"user_message_count":0},
+                "observed":{"user_message_count":1,"echo_found":true,
+                    "latest_turn_id":"request-client-pending","response_started":response_started}
+            });
+            assert_eq!(prompt_submission::stored_verified_submission_evidence(&stored).is_some(),
+                response_started, "only a server response can confirm a provisional container");
         }
-        _ => None,
-    };
-    let close_check_started = std::time::Instant::now();
-    let close_ready = match receipt_evidence.as_ref() {
-        Some(evidence) => manager
-            .relay_receipt_stable_before_close("background-submit", evidence)
-            .await
-            .unwrap_or(false),
-        None => false,
-    };
-    let close_check_ms = close_check_started.elapsed().as_millis();
-    let confirmed = page
-        .evaluate("Boolean(window.accepted)")
-        .await
-        .expect("server acknowledgement fixture")
-        .into_value::<bool>()
-        .expect("boolean");
-    let count: u64 = page
-        .evaluate("window.sent||0")
-        .await
-        .expect("send count")
-        .into_value()
-        .expect("count");
-    let repeated = if outcome.as_ref().is_ok_and(|result| {
-        matches!(
-            result,
-            Ok(prompt_submission::PromptSubmissionOutcome::Verified(_))
-        )
-    }) {
-        Some(
-            manager
-                .submit_prompt_with_attachment(
-                    "background-submit",
-                    &url,
-                    "Browser batch background events=background-once",
-                    None,
-                    "background-once",
-                )
-                .await,
-        )
-    } else {
-        None
-    };
-    page.evaluate(
-        "document.querySelector('[data-turn-id]').dataset.turnId='request-client-pending'; const old=document.querySelector('[data-message-author-role=assistant]'); document.body.prepend(old)",
-    )
-    .await
-    .expect("provisional duplicate fixture");
-    let provisional_close_ready = match receipt_evidence.as_ref() {
-        Some(evidence) => manager
-            .relay_receipt_stable_before_close("background-submit", evidence)
-            .await
-            .unwrap_or(false),
-        None => false,
-    };
-    let provisional = manager
-        .submit_prompt_with_attachment(
-            "background-submit",
-            &url,
-            "Browser batch background events=background-once",
-            None,
-            "background-once",
-        )
-        .await;
-    let final_count: u64 = page
-        .evaluate("window.sent||0")
-        .await
-        .expect("final count")
-        .into_value()
-        .expect("count");
-    let _ = manager.close("background-submit").await;
+    })).await;
+    manager.close(key).await.expect("close browser");
     server.abort();
-    assert!(
-        matches!(
-            outcome,
-            Ok(Ok(prompt_submission::PromptSubmissionOutcome::Verified(_)))
-        ),
-        "background submission waited for a visual observer instead of invoking the checked Send control"
-    );
-    assert!(
-        confirmed,
-        "optimistic client echo was mistaken for a completed submission"
-    );
-    assert!(close_ready, "stable server receipt was not safe to close");
-    assert!(
-        close_check_ms >= 800,
-        "browser close guard observed the receipt for only {close_check_ms}ms"
-    );
-    assert!(
-        !provisional_close_ready,
-        "a provisional echo was treated as stable enough to close"
-    );
-    assert!(
-        matches!(
-            provisional,
-            Ok(prompt_submission::PromptSubmissionOutcome::Ambiguous(_))
-        ),
-        "a provisional echo must neither be accepted nor sent again"
-    );
-    assert!(prompt_submission::stored_verified_submission_evidence(&json!({
-        "baseline":{"user_message_count":0},
-        "observed":{"user_message_count":1,"echo_found":true,"latest_turn_id":"request-client-pending"}
-    })).is_none(), "persisted optimistic evidence was promoted to accepted");
-    assert!(prompt_submission::stored_verified_submission_evidence(&json!({
-        "baseline":{"user_message_count":0},
-        "observed":{"user_message_count":1,"echo_found":true,"latest_turn_id":"request-client-pending","response_started":true}
-    })).is_some(), "a server response was ignored because its container kept a provisional id");
-    assert_eq!(count, 1);
-    assert!(matches!(
-        repeated,
-        Some(Ok(prompt_submission::PromptSubmissionOutcome::Verified(_)))
-    ));
-    assert_eq!(
-        final_count, 1,
-        "an existing message echo was sent a second time"
-    );
-    eprintln!(
-        "BACKGROUND_SUBMISSION: suspended visual observer, one verified send, duplicate observation does not resend"
-    );
+    result.expect("background submission and close assertions");
 }
 
 #[tokio::test]
@@ -1020,84 +899,28 @@ async fn relay_idle_probe_requires_an_empty_non_generating_composer() {
     .await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
+    let key = "relay-idle";
     manager
-        .open("relay-idle", &temp.path().join("profile"), &url, 800, 600)
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
         .await
         .expect("browser");
-    assert!(
-        !manager
-            .relay_surface_idle("relay-idle")
-            .await
-            .expect("busy probe")
-    );
-    assert_eq!(
-        manager
-            .relay_surface_deferral("relay-idle")
-            .await
-            .expect("busy evidence")
-            .expect("busy deferral")["submission_evidence"],
-        "not_sent_chat_busy"
-    );
-    let page = manager
-        .sessions
-        .lock()
-        .await
-        .get("relay-idle")
-        .expect("session")
-        .page
-        .clone();
-    page.evaluate("document.querySelector('#busy').remove();document.querySelector('textarea').value='HUMAN DRAFT'")
-        .await
-        .expect("draft fixture");
-    assert!(
-        !manager
-            .relay_surface_idle("relay-idle")
-            .await
-            .expect("draft probe")
-    );
-    assert_eq!(
-        manager
-            .relay_surface_deferral("relay-idle")
-            .await
-            .expect("draft evidence")
-            .expect("draft deferral")["submission_evidence"],
-        "not_sent_composer_occupied"
-    );
-    page.evaluate("document.querySelector('textarea').value=''")
-        .await
-        .expect("clear fixture");
-    assert!(
-        manager
-            .relay_surface_idle("relay-idle")
-            .await
-            .expect("idle probe")
-    );
-    assert!(
-        manager
-            .relay_surface_deferral("relay-idle")
-            .await
-            .expect("idle evidence")
-            .is_none()
-    );
-    page.evaluate("document.querySelector('textarea').remove()")
-        .await
-        .expect("missing input");
-    assert!(
-        !manager
-            .relay_surface_idle("relay-idle")
-            .await
-            .expect("unready is not idle")
-    );
-    assert_eq!(
-        manager
-            .relay_surface_deferral("relay-idle")
-            .await
-            .expect("unready evidence")
-            .expect("deferred")["submission_evidence"],
-        "not_sent_composer_unavailable"
-    );
-    manager.close("relay-idle").await.expect("close browser");
+    let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
+        let page = manager.page(key).await.expect("page");
+        for (change, reason) in [
+            ("", Some("not_sent_chat_busy")),
+            ("document.querySelector('#busy').remove();document.querySelector('textarea').value='HUMAN DRAFT'", Some("not_sent_composer_occupied")),
+            ("document.querySelector('textarea').value=''", None),
+            ("document.querySelector('textarea').remove()", Some("not_sent_composer_unavailable")),
+        ] {
+            if !change.is_empty() { page.evaluate(change).await.expect("fixture transition"); }
+            assert_eq!(manager.relay_surface_idle(key).await.expect("idle probe"), reason.is_none());
+            let actual = manager.relay_surface_deferral(key).await.expect("deferral");
+            assert_eq!(actual.as_ref().and_then(|value| value["submission_evidence"].as_str()), reason);
+        }
+    })).await;
+    manager.close(key).await.expect("close browser");
     server.abort();
+    result.expect("idle state assertions");
 }
 
 #[tokio::test]
@@ -1111,14 +934,7 @@ async fn redirect_before_send_never_dispatches_to_another_conversation() {
         .ensure_open("redirect", &temp.path().join("chrome"), &url, 800, 600)
         .await
         .expect("chrome");
-    let page = manager
-        .sessions
-        .lock()
-        .await
-        .get("redirect")
-        .expect("session")
-        .page
-        .clone();
+    let page = manager.page("redirect").await.expect("test page");
     let result = manager
         .submit_prompt_with_attachment_before_dispatch(
             "redirect",
@@ -1211,14 +1027,7 @@ document.body.append(m);i.value=''}</script></body>"#,
                 "CONNECTED_WAIT cycle={cycle} pid={pid} exit_status=None; live page verified next"
             );
         }
-        let page = manager
-            .sessions
-            .lock()
-            .await
-            .get("exit-restart")
-            .expect("session")
-            .page
-            .clone();
+        let page = manager.page("exit-restart").await.expect("test page");
         let work = async {
             if cycle == 0 {
                 page.evaluate("document.cookie='cccc_exit_cookie=retained; path=/; max-age=600';localStorage.setItem('cccc-exit','retained')")
@@ -1305,14 +1114,7 @@ async fn sidebar_titles_and_history_controls_are_not_generation_stop_controls() 
         .relay_surface_deferral("sidebar-stop")
         .await
         .expect("real stop");
-    let page = manager
-        .sessions
-        .lock()
-        .await
-        .get("sidebar-stop")
-        .expect("session")
-        .page
-        .clone();
+    let page = manager.page("sidebar-stop").await.expect("test page");
     page.evaluate("document.querySelector('#busy').remove()")
         .await
         .expect("finish answer");

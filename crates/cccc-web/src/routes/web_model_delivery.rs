@@ -1714,6 +1714,31 @@ mod retry_integration_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::{Duration, timeout};
 
+    async fn web_group(state: &AppState, title: &str) -> String {
+        let call =
+            |op, args: Value| daemon_call(state, op, args.as_object().cloned().expect("args"));
+        let created = call("group_create", json!({"title":title}))
+            .await
+            .expect("group");
+        let gid = created["group"]["group_id"].as_str().expect("group id");
+        call(
+            "actor_add",
+            json!({
+                "group_id":gid,"actor_id":"web","runtime":"web_model","by":"user",
+                "env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}
+            }),
+        )
+        .await
+        .expect("web member");
+        call(
+            "actor_start",
+            json!({"group_id":gid,"actor_id":"web","by":"user"}),
+        )
+        .await
+        .expect("start member");
+        gid.to_owned()
+    }
+
     async fn wait_for_original_receipt(state: &AppState, gid: &str, id: &str) {
         let store = GroupStore::new(state.home.clone()).expect("store");
         timeout(Duration::from_secs(12), async {
@@ -1838,9 +1863,10 @@ mod retry_integration_tests {
 
     #[tokio::test]
     async fn real_browser_deferral_resumes_the_same_report_once() {
-        if crate::system_browser_path().is_none() {
-            return;
-        }
+        assert!(
+            crate::system_browser_path().is_some(),
+            "real Chrome required"
+        );
         let harness = browser_harness("test-browser-retry", Duration::from_millis(10)).await;
         let state = harness.state.clone();
         let home = harness.home.clone();
@@ -1901,17 +1927,8 @@ mod retry_integration_tests {
                     values.as_object().cloned().expect("test arguments"),
                 )
             };
-            let created = call("group_create", json!({"title":"real browser retry"}))
-                .await
-                .expect("create group");
-            let gid = created["group"]["group_id"].as_str().expect("group id");
-            call("actor_add",json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}})).await.expect("actor");
-            call(
-                "actor_start",
-                json!({"group_id":gid,"actor_id":"web","by":"user"}),
-            )
-            .await
-            .expect("start");
+            let group_id = web_group(&state, "real browser retry").await;
+            let gid = group_id.as_str();
             web_model_connectors::save_browser_target(
                 &home,
                 gid,
@@ -2050,146 +2067,40 @@ mod retry_integration_tests {
             .await
             .expect("mail unchanged");
             assert_eq!(mail["messages"].as_array().expect("messages").len(), 1);
-            let initial_browser = browser.info(surface_key()).await;
-            for round in 2..=20 {
-                let source = call(
-                    "send",
-                    json!({"group_id":gid,"by":"user","to":["web"],
-                    "text":format!("CONTINUOUS_REPORT_{round}"),"message_mode":"mail"}),
-                )
-                .await
-                .expect("next report");
-                let event_id = source["event"]["id"].as_str().expect("next report id");
-                call(
-                    "message_deliver",
-                    json!({"group_id":gid,"by":"user",
-                    "source_event_id":event_id,"actor_ids":["web"]}),
-                )
-                .await
-                .expect("next report promotion");
-                let attempt = deliver_pending(&state, gid, "web")
-                    .await
-                    .expect("next handoff");
-                // The supervisor may start another short visit. Either contender may send;
-                // assert the original's durable receipt, never who won admission.
-                assert!(matches!(
-                    attempt,
-                    DeliveryOutcome::Submitted | DeliveryOutcome::Idle
-                ));
-                wait_for_original_receipt(&state, gid, event_id).await;
-                assert!(matches!(
-                    deliver_pending(&state, gid, "web")
-                        .await
-                        .expect("duplicate poll"),
-                    DeliveryOutcome::Idle
-                ));
-                assert_eq!(
-                    count.load(Ordering::SeqCst),
-                    round,
-                    "duplicate or missing round {round}"
-                );
-                assert_eq!(
-                    browser.info(surface_key()).await["started_at"],
-                    initial_browser["started_at"],
-                    "browser restarted for an ordinary next report"
-                );
-                assert!(
-                    !IN_FLIGHT
-                        .get()
-                        .expect("guard store")
-                        .lock()
-                        .expect("guard lock")
-                        .contains(&key(gid, "web")),
-                    "completed turn retained the browser guard"
-                );
-            }
-            let all =
-                ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("all rounds");
-            assert_eq!(all.iter().filter(|e| e.kind == "chat.message").count(), 20);
-            assert_eq!(
-                all.iter()
-                    .filter(|e| e.kind == "runtime.delivery" && e.data["state"] == "accepted")
-                    .count(),
-                20
-            );
-            let unread = call(
-                "inbox_peek",
-                json!({"group_id":gid,"actor_id":"web","by":"web"}),
+            // One subsequent handoff checks release of the previous delivery guard.
+            // Batched contention and draft retries are covered by the two-group test.
+            let next = call(
+                "send",
+                json!({
+                    "group_id":gid,"by":"user","to":["web"],
+                    "text":"NEXT_REPORT","message_mode":"mail"
+                }),
             )
             .await
-            .expect("unread after rounds");
-            assert_eq!(
-                unread["messages"].as_array().expect("unread").len(),
-                20,
-                "delivery consumed Mail"
-            );
-            // Repeated real events request short visits.
-            // Losing admission must not remove the current owner or cross Send.
-            browser
-                .command(surface_key(), &json!({"t":"click","x":100,"y":110}))
-                .await
-                .expect("focus fixture composer");
-            browser
-                .command(surface_key(), &json!({"t":"text","text":"PRESERVE_DRAFT"}))
-                .await
-                .expect("fixture draft");
-            let final_source=call("send",json!({"group_id":gid,"by":"user","to":["web"],"text":"CONTENDED_WORKER_REPORT","message_mode":"mail"})).await.expect("contended Mail");
-            let final_id = final_source["event"]["id"].as_str().expect("event");
+            .expect("next report");
+            let next_id = next["event"]["id"].as_str().expect("next report id");
             call(
                 "message_deliver",
-                json!({"group_id":gid,"by":"user","source_event_id":final_id,"actor_ids":["web"]}),
+                json!({
+                    "group_id":gid,"by":"user","source_event_id":next_id,"actor_ids":["web"]
+                }),
             )
             .await
-            .expect("promote contended Mail");
-            for _ in 0..20 {
-                deliver_pending(&state, gid, "web")
-                    .await
-                    .expect("manual delivery visit");
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let log =
-                ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("worker events");
-            let attempts = log
-                .iter()
-                .filter(|event| {
-                    event.kind == "web_model.browser_delivery.submitting"
-                        && event.data["event_ids"]
-                            .as_array()
-                            .is_some_and(|ids| ids.iter().any(|id| id == final_id))
-                })
-                .count();
-            assert_eq!(
-                attempts, 0,
-                "draft protection must not cross the Send boundary"
-            );
-            assert_eq!(
-                log.iter()
-                    .filter(|event| event.kind == "runtime.delivery"
-                        && event.data["source_event_id"] == final_id
-                        && event.data["state"] == "claimed")
-                    .count(),
-                1,
-                "duplicate worker admissions reclaimed the same source"
-            );
-            assert_eq!(count.load(Ordering::SeqCst), 20, "draft was overwritten");
-            browser
-                .command(surface_key(), &json!({"t":"click","x":390,"y":28}))
-                .await
-                .expect("clear fixture draft");
+            .expect("promote next report");
             deliver_pending(&state, gid, "web")
                 .await
-                .expect("manual delivery visit");
-            timeout(Duration::from_secs(8), async {
-                while count.load(Ordering::SeqCst) != 21 {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            })
-            .await
-            .expect("periodic supervision resumes original Mail without another source message");
-            assert_eq!(count.load(Ordering::SeqCst), 21);
-            eprintln!(
-                "REAL_CHROME_AND_DAEMON: 20 handoffs; 20 duplicate visit requests never cross a protected draft; draft release delivers original report once"
+                .expect("next handoff");
+            wait_for_original_receipt(&state, gid, next_id).await;
+            assert!(matches!(
+                deliver_pending(&state, gid, "web")
+                    .await
+                    .expect("duplicate visit"),
+                DeliveryOutcome::Idle
+            ));
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                2,
+                "duplicate or missing handoff"
             );
         };
         // Cleanup runs even if a test assertion panics in the task.
@@ -2261,10 +2172,7 @@ mod retry_integration_tests {
             let call=|op,values:Value|daemon_call(&state,op,values.as_object().cloned().expect("args"));
             let mut groups=Vec::new();
             for name in ["a","b"] {
-                let created=call("group_create",json!({"title":name})).await.expect("group");
-                let gid=created["group"]["group_id"].as_str().expect("gid").to_owned();
-                call("actor_add",json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}})).await.expect("actor");
-                call("actor_start",json!({"group_id":gid,"actor_id":"web","by":"user"})).await.expect("start");
+                let gid = web_group(&state, name).await;
                 web_model_connectors::save_browser_target(&state.home,&gid,"web",Some(json!({"kind":"existing_chat","url":format!("{url}/{name}")}))).expect("target");
                 assert!(matches!(deliver_pending(&state,&gid,"web").await.expect("no work"),DeliveryOutcome::Idle));
                 groups.push(gid);
@@ -2336,7 +2244,7 @@ mod retry_integration_tests {
             super::super::web_model_browser::ensure_open_for_actor(&state,&groups[0],"web",800,600).await.expect("explicit setup");
             visit_pending(&state,&groups[0],"web",true).await.expect("empty manual setup");
             assert_eq!(state.browser_surfaces.info(surface_key()).await["active"],true);
-            let page=state.browser_surfaces.sessions.lock().await.get(surface_key()).expect("manual page").page.clone();
+            let page=state.browser_surfaces.sessions.lock().await.get(surface_key()).expect("test page").page.clone();
             page.evaluate("document.querySelector('textarea').value='HUMAN_DRAFT'").await.expect("own fixture draft");
             call("send",json!({"group_id":groups[0],"by":"user","to":["web"],"text":"AFTER_DRAFT","message_mode":"send"})).await.expect("report during setup");
             visit_pending(&state,&groups[0],"web",true).await.expect("protected draft");
@@ -2359,9 +2267,10 @@ mod retry_integration_tests {
 
     #[tokio::test]
     async fn two_group_ten_report_draft_wait_has_one_worker_per_group() {
-        if crate::system_browser_path().is_none() {
-            return;
-        }
+        assert!(
+            crate::system_browser_path().is_some(),
+            "real Chrome required"
+        );
         let harness = browser_harness("two-group-browser", Duration::from_millis(10)).await;
         let state = harness.state.clone();
         let home = harness.home.clone();
@@ -2410,20 +2319,7 @@ mod retry_integration_tests {
             };
             let mut groups = Vec::new();
             for label in ["a", "b"] {
-                let created = call("group_create", json!({"title":format!("fixture-{label}")}))
-                    .await
-                    .expect("group");
-                let gid = created["group"]["group_id"]
-                    .as_str()
-                    .expect("group ID")
-                    .to_owned();
-                call("actor_add",json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}})).await.expect("actor");
-                call(
-                    "actor_start",
-                    json!({"group_id":gid,"actor_id":"web","by":"user"}),
-                )
-                .await
-                .expect("start");
+                let gid = web_group(&state, &format!("fixture-{label}")).await;
                 web_model_connectors::save_browser_target(
                     &home,
                     &gid,
@@ -2520,30 +2416,9 @@ mod retry_integration_tests {
             })
             .await
             .expect("both original batches resume");
-            // Wait until the native completion records, not just the page echoes, settle.
-            timeout(Duration::from_secs(5), async {
-                loop {
-                    let accepted = groups
-                        .iter()
-                        .map(|(_, gid)| {
-                            ledger::read_all(&store.ledger_path(gid).expect("ledger"))
-                                .expect("events")
-                                .into_iter()
-                                .filter(|event| {
-                                    event.kind == "runtime.delivery"
-                                        && event.data["state"] == "accepted"
-                                })
-                                .count()
-                        })
-                        .sum::<usize>();
-                    if accepted == 10 {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            })
-            .await
-            .expect("all ten reports accepted");
+            for (gid, id, _) in &sources {
+                wait_for_original_receipt(&state, gid, id).await;
+            }
             let received = records.lock().expect("records").clone();
             for (label, gid) in &groups {
                 let own = received
@@ -2594,7 +2469,7 @@ mod retry_integration_tests {
                 .lock()
                 .await
                 .get(surface_key())
-                .expect("session")
+                .expect("test page")
                 .page
                 .clone();
             page.evaluate("document.body.insertAdjacentHTML('beforeend','<button id=busy aria-label=\"Stop streaming\">Stop</button>')").await.expect("busy page");
@@ -2630,22 +2505,7 @@ mod retry_integration_tests {
                     .await
                     .expect("manual delivery visit");
             }
-            timeout(Duration::from_secs(12), async {
-                loop {
-                    let events =
-                        ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("events");
-                    if events.iter().any(|e| {
-                        e.kind == "runtime.delivery"
-                            && e.data["source_event_id"] == id
-                            && e.data["state"] == "accepted"
-                    }) {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-            })
-            .await
-            .expect("retained report resumes without a new event");
+            wait_for_original_receipt(&state, gid, id).await;
             let received = records.lock().expect("records").clone();
             assert_eq!(
                 received.len(),
@@ -2667,9 +2527,10 @@ mod retry_integration_tests {
 
     #[tokio::test]
     async fn composer_failure_retries_original_report_without_a_false_receipt() {
-        if crate::system_browser_path().is_none() {
-            return;
-        }
+        assert!(
+            crate::system_browser_path().is_some(),
+            "real Chrome required"
+        );
         let harness = browser_harness("presend", Duration::from_millis(20)).await;
         let state = harness.state.clone();
         let home = harness.home.clone();
@@ -2690,23 +2551,8 @@ mod retry_integration_tests {
         let operation = async {
             let call =
                 |op, args: Value| daemon_call(&state, op, args.as_object().cloned().expect("args"));
-            let g = call("group_create", json!({"title":"pre-send recovery"}))
-                .await
-                .expect("group");
-            let gid = g["group"]["group_id"].as_str().expect("gid");
-            call(
-                "actor_add",
-                json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user",
-                "env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}}),
-            )
-            .await
-            .expect("actor");
-            call(
-                "actor_start",
-                json!({"group_id":gid,"actor_id":"web","by":"user"}),
-            )
-            .await
-            .expect("start");
+            let group_id = web_group(&state, "pre-send recovery").await;
+            let gid = group_id.as_str();
             web_model_connectors::save_browser_target(
                 &home,
                 gid,
@@ -2758,7 +2604,7 @@ mod retry_integration_tests {
                 .lock()
                 .await
                 .get(surface_key())
-                .expect("session")
+                .expect("test page")
                 .page
                 .clone();
             server_ready.store(true, Ordering::SeqCst);
@@ -2995,17 +2841,8 @@ mod retry_integration_tests {
         let operation = async {
             let call =
                 |op, args: Value| daemon_call(&state, op, args.as_object().cloned().expect("args"));
-            let group = call("group_create", json!({"title":"rebind race"}))
-                .await
-                .expect("group");
-            let gid = group["group"]["group_id"].as_str().expect("gid");
-            call("actor_add",json!({"group_id":gid,"actor_id":"web","runtime":"web_model","by":"user","env":{"CCCC_WEB_MODEL_DELIVERY_MODE":"browser"}})).await.expect("actor");
-            call(
-                "actor_start",
-                json!({"group_id":gid,"actor_id":"web","by":"user"}),
-            )
-            .await
-            .expect("start");
+            let group_id = web_group(&state, "rebind race").await;
+            let gid = group_id.as_str();
             let (connector, _) = web_model_connectors::create(&home, gid, "web", "chatgpt", "test")
                 .expect("connector");
             let cid = connector["connector_id"].as_str().expect("cid");
@@ -3034,7 +2871,7 @@ mod retry_integration_tests {
                 .lock()
                 .await
                 .get(surface_key())
-                .expect("F1 browser fixture value")
+                .expect("test page")
                 .page
                 .clone();
             if matches!(
@@ -3136,19 +2973,6 @@ mod retry_integration_tests {
                 .expect("count")
                 .into_value::<u64>()
                 .expect("F1 browser fixture value");
-            if already_sent {
-                eprintln!(
-                    "REBIND_AFTER_SEND source={} sends_in_original_chat={sends} outcome_submitted={}",
-                    source["event"]["id"],
-                    matches!(delivered, Ok(DeliveryOutcome::Submitted))
-                );
-            } else {
-                eprintln!(
-                    "REBIND_AFTER_STAGE source={} sends_after_old_chat_revoked={sends} outcome_submitted={}",
-                    source["event"]["id"],
-                    matches!(delivered, Ok(DeliveryOutcome::Submitted))
-                );
-            }
             let store = GroupStore::new(home.clone()).expect("store");
             let ledger_path = store.ledger_path(gid).expect("ledger");
             let source_id = source["event"]["id"]

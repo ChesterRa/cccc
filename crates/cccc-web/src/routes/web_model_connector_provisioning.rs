@@ -171,24 +171,6 @@ pub(super) async fn prepare_binding(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn public_connector_contains_binding_status_without_private_binding_material() {
-        let item = serde_json::json!({"connector_id":"wmc_test","group_id":"g_test","actor_id":"lead",
-            "secret":"private-secret","secret_hash":"private-hash","session_hash":"private-session",
-            "binding_code_hash":"private-code","previous_session_hash":"previous-private-session",
-            "session_bound_at":"2026-09-05T00:00:00Z"});
-        let result = super::public(&item, "");
-        assert_eq!(result["session_bound"], true);
-        for name in [
-            "secret",
-            "secret_hash",
-            "session_hash",
-            "binding_code_hash",
-            "previous_session_hash",
-        ] {
-            assert!(result.get(name).is_none(), "private field {name}");
-        }
-    }
     #[tokio::test]
     async fn revoke_waits_for_send_without_blocking_the_async_executor() {
         use cccc_core::{GroupStore, HomeLayout, web_model_connectors};

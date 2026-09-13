@@ -66,7 +66,13 @@ async fn local_binding_endpoint_is_group_specific_authenticated_and_redacts_iden
     let list = json_body(list).await;
     let item = &list["result"]["connectors"][0];
     assert_eq!(item["session_bound"], true);
-    for name in ["session_hash", "previous_session_hash", "binding_code_hash"] {
+    for name in [
+        "secret",
+        "secret_hash",
+        "session_hash",
+        "previous_session_hash",
+        "binding_code_hash",
+    ] {
         assert!(item.get(name).is_none());
     }
     assert!(!list.to_string().contains("test-conversation"));
