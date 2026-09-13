@@ -27,6 +27,7 @@ vi.mock("../services/api", async (importOriginal) => ({
   fetchObservability: vi.fn(),
   fetchActors: vi.fn(),
   setIMConfig: vi.fn(),
+  startIMBridge: vi.fn(),
 }));
 
 describe("SettingsModal Mattermost draft group isolation", () => {
@@ -56,6 +57,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     vi.mocked(api.fetchObservability).mockResolvedValue(unavailable);
     vi.mocked(api.fetchActors).mockResolvedValue({ ok: true, result: { actors: [] } });
     vi.mocked(api.setIMConfig).mockResolvedValue({ ok: true, result: {} });
+    vi.mocked(api.startIMBridge).mockResolvedValue({ ok: true, result: {} });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -107,6 +109,56 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     expect(props().imMattermostUrl).toBe("");
     expect(props().imBotTokenEnv).toBe("");
   });
+
+  it.each(["telegram", "mattermost"] as const)(
+    "preserves the Mattermost draft when Start cannot save over %s",
+    async (platform) => {
+      vi.mocked(api.fetchIMConfig).mockResolvedValue({
+        ok: true,
+        result: {
+          im: { platform, bot_token_env: "OLD_TOKEN", mattermost_url: "https://old.example.test" },
+        },
+      });
+      await renderGroup("group-a");
+      await choose("mattermost");
+      await act(async () => {
+        props().setImMattermostUrl("https://draft.example.test");
+        props().setImBotTokenEnv("DRAFT_TOKEN");
+      });
+      vi.mocked(api.setIMConfig).mockResolvedValue({
+        ok: false,
+        error: { code: "save_failed", message: "保存失败，请重试" },
+      });
+      const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
+      await act(async () => props().onStartBridge());
+      expect(api.startIMBridge).not.toHaveBeenCalled();
+      expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
+      expect(props().imPlatform).toBe("mattermost");
+      expect(props().imMattermostUrl).toBe("https://draft.example.test");
+      expect(props().imBotTokenEnv).toBe("DRAFT_TOKEN");
+      expect(props().imConfigError).toBe("保存失败，请重试");
+
+      vi.mocked(api.setIMConfig).mockResolvedValue({ ok: true, result: {} });
+      vi.mocked(api.fetchIMConfig).mockResolvedValue({
+        ok: true,
+        result: {
+          im: {
+            platform: "mattermost",
+            bot_token_env: "DRAFT_TOKEN",
+            mattermost_url: "https://draft.example.test",
+          },
+        },
+      });
+      vi.mocked(api.startIMBridge).mockResolvedValue({
+        ok: false,
+        error: { code: "connect_failed", message: "连接失败" },
+      });
+      await act(async () => props().onStartBridge());
+      expect(api.startIMBridge).toHaveBeenCalledOnce();
+      expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads + 1);
+      expect(props().imConfigError).toBe("连接失败");
+    },
+  );
 
   it("restores same-group edits but never saves another group's cached URL or token", async () => {
     await renderGroup("group-a");

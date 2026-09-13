@@ -27,6 +27,64 @@ use tokio_tungstenite::{
 pub(super) const PLATFORM: &str = "mattermost";
 type Socket = WebSocketStream<reqwest::Upgraded>;
 
+#[derive(Clone)]
+struct WorkerState {
+    config: Map<String, Value>,
+    generations: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    generation: u64,
+}
+
+impl WorkerState {
+    fn is_current(&self, group_id: &str, state: &Value) -> bool {
+        state.get("config").and_then(Value::as_object) == Some(&self.config)
+            && self.generations.lock().is_ok_and(|generations| {
+                generations.get(group_id).copied() == Some(self.generation)
+            })
+    }
+}
+
+#[derive(Debug, Default)]
+struct SocketCursor {
+    connection_id: String,
+    next_sequence: u64,
+    missed_events: bool,
+}
+
+const RECOVERY_GAP: &str = "Mattermost WebSocket recovery cache expired; some messages may be missing. Please resend unanswered requests.";
+
+impl SocketCursor {
+    // Mattermost 的 seq 是连接级序号，不是 post_id；非 posted 事件也必须推进。
+    fn accept(&mut self, event: &Value) -> Result<bool, &'static str> {
+        if event.get("seq_reply").is_some() {
+            return Ok(false);
+        }
+        if field(event, "event") == "hello" {
+            let id = field(&event["data"], "connection_id");
+            if !valid_id(id) {
+                return Err("Mattermost hello has no valid connection id");
+            }
+            if !self.connection_id.is_empty() && self.connection_id != id {
+                self.missed_events = true;
+                self.next_sequence = 0;
+            }
+            self.connection_id = id.to_owned();
+        }
+        let sequence = event["seq"]
+            .as_u64()
+            .ok_or("Mattermost event has no valid sequence")?;
+        if sequence < self.next_sequence {
+            return Ok(false);
+        }
+        if sequence != self.next_sequence {
+            return Err("Mattermost WebSocket sequence gap; reconnecting to recover missed events");
+        }
+        self.next_sequence = sequence
+            .checked_add(1)
+            .ok_or("Mattermost event sequence overflow")?;
+        Ok(true)
+    }
+}
+
 #[derive(Debug)]
 enum SocketError {
     Retry(String),
@@ -60,6 +118,7 @@ pub(super) struct MattermostApi {
     token: String,
     pub bot_id: String,
     pub username: String,
+    worker: Option<WorkerState>,
 }
 
 impl MattermostApi {
@@ -73,13 +132,15 @@ impl MattermostApi {
         log_error(home, group_id, operation, error, &self.token);
     }
 
-    pub(super) async fn authenticate(config: &Map<String, Value>) -> Result<Self, String> {
+    pub(super) async fn authenticate(
+        config: &Map<String, Value>,
+        token: String,
+    ) -> Result<Self, String> {
         let site = config
             .get("mattermost_url")
             .and_then(Value::as_str)
             .and_then(cccc_core::im_state::normalize_mattermost_url)
             .ok_or("Mattermost site URL is invalid")?;
-        let token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
         let http = reqwest::Client::builder()
             .http1_only()
             .redirect(reqwest::redirect::Policy::none())
@@ -93,6 +154,7 @@ impl MattermostApi {
             token,
             bot_id: String::new(),
             username: String::new(),
+            worker: None,
         };
         let user = api.json(Method::GET, "users/me", None).await?;
         api.bot_id = field(&user, "id").to_owned();
@@ -201,11 +263,15 @@ impl MattermostApi {
         Ok(())
     }
 
-    async fn socket(&self) -> Result<Socket, SocketError> {
+    async fn open_socket(&self, cursor: &SocketCursor) -> Result<Socket, SocketError> {
         // HTTP 升级复用 reqwest 的 TLS、HTTP_PROXY/HTTPS_PROXY/NO_PROXY，无额外代理服务。
         let key = generate_key();
         let response = self
             .request(Method::GET, "websocket")
+            .query(&[
+                ("connection_id", cursor.connection_id.clone()),
+                ("sequence_number", cursor.next_sequence.to_string()),
+            ])
             .header("connection", "Upgrade")
             .header("upgrade", "websocket")
             .header("sec-websocket-version", "13")
@@ -236,7 +302,12 @@ impl MattermostApi {
             );
         }
         let upgraded = response.upgrade().await.map_err(http_error)?;
-        let mut socket = WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await;
+        Ok(WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
+    }
+
+    async fn socket(&self) -> Result<(Socket, SocketCursor), SocketError> {
+        let mut cursor = SocketCursor::default();
+        let mut socket = self.open_socket(&cursor).await?;
         tokio::time::timeout(Duration::from_secs(15), async {
             loop {
                 match socket.next().await {
@@ -244,6 +315,7 @@ impl MattermostApi {
                         let event: Value = serde_json::from_str(&text)
                             .map_err(|_| "Invalid Mattermost WebSocket JSON")?;
                         if field(&event, "event") == "hello" {
+                            cursor.accept(&event)?;
                             return Ok::<(), SocketError>(());
                         }
                         if event.get("error").is_some_and(|v| !v.is_null()) {
@@ -267,7 +339,7 @@ impl MattermostApi {
         })
         .await
         .map_err(|_| "Mattermost WebSocket hello timed out")??;
-        Ok(socket)
+        Ok((socket, cursor))
     }
 }
 
@@ -303,6 +375,11 @@ pub(super) async fn start_registered(
         group_id,
         config,
         registry.ledger_events.clone(),
+        WorkerState {
+            config: config.clone(),
+            generations: registry.generations.clone(),
+            generation,
+        },
     )
     .await
     {
@@ -367,19 +444,22 @@ fn update_start_state(
     .map_err(|error| error.to_string())
 }
 
-pub(super) async fn start(
+async fn start(
     home: HomeLayout,
     daemon: DaemonClient,
     group_id: &str,
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
+    worker: WorkerState,
 ) -> Result<Vec<JoinHandle<()>>, String> {
-    let token = resolve_config_credential(config, "bot_token", "bot_token_env").unwrap_or_default();
-    let api = MattermostApi::authenticate(config)
+    let token = resolve_config_credential(config, "bot_token", "bot_token_env")
+        .inspect_err(|error| log_error(&home, group_id, "credential", error, ""))?;
+    let mut api = MattermostApi::authenticate(config, token.clone())
         .await
         .inspect_err(|error| {
             log_error(&home, group_id, "authenticate", error, &token);
         })?;
+    api.worker = Some(worker);
     let socket = api
         .socket()
         .await
@@ -408,7 +488,7 @@ pub(super) async fn start(
         while let Some(event) = inbound_rx.recv().await {
             if let Err(error) = inbound.handle(&event).await {
                 inbound_api.log_error(&inbound_home, &inbound_group, "inbound", &error);
-                persist_error(&inbound_home, &inbound_group, Some(&error));
+                inbound_api.persist_error(&inbound_home, &inbound_group, Some(&error));
             }
         }
     });
@@ -421,6 +501,7 @@ pub(super) async fn start(
         Duration::from_secs(30),
     ));
     let cleanup = reactions.cleanup_task();
+    let error_api = api.clone();
     let outbound = spawn_outbound_matching(
         home.clone(),
         group_id.to_owned(),
@@ -432,12 +513,13 @@ pub(super) async fn start(
             let reactions = reactions.clone();
             let home = home.clone();
             let token = token.clone();
+            let error_api = error_api.clone();
             async move {
                 for target in targets {
                     let result = sender.send_target(&target, &event).await;
                     if let Err(error) = &result {
                         log_error(&home, &event.group_id, "send", error, &token);
-                        persist_error(&home, &event.group_id, Some(error));
+                        error_api.persist_error(&home, &event.group_id, Some(error));
                     }
                     if completes_processing(&event) {
                         reactions
@@ -457,34 +539,55 @@ fn verify_identity(
     api: &MattermostApi,
     config: &Map<String, Value>,
 ) -> Result<(), String> {
+    verify_identity_with(home, group_id, api, config, |path, identity| {
+        cccc_core::fs::write_json_committed(path, identity)
+    })
+}
+
+fn verify_identity_with(
+    home: &HomeLayout,
+    group_id: &str,
+    api: &MattermostApi,
+    config: &Map<String, Value>,
+    commit: impl FnOnce(&std::path::Path, &Value) -> std::io::Result<()>,
+) -> Result<(), String> {
     let store = GroupStore::new(home.clone()).map_err(|e| e.to_string())?;
     let path = store
         .state_dir(group_id)
         .map_err(|e| e.to_string())?
         .join("mattermost_identity.json");
     let expected = json!({"site":api.site,"bot_id":api.bot_id});
-    let previous: Value = match cccc_core::fs::read_json(&path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
-        Err(error) => return Err(format!("Cannot read Mattermost identity: {error}")),
-    };
-    cccc_core::im_state::update(&store, group_id, |state| {
-        // 配置已被另一个保存请求替换时，本次启动不能修改新配置的授权。
-        if state.get("config").and_then(Value::as_object) != Some(config) {
-            return Err(std::io::Error::other(
-                "Mattermost configuration changed during startup",
-            ));
-        }
-        if previous != expected {
-            for key in ["authorized", "pending", "subscribers"] {
-                state[key] = json!([]);
+    // 整段串行化，而非只锁读写之一。不能把身份写入移到 im_state::update
+    // 回调内：回调结束后才提交授权，必须保留“先清授权，后记身份”的失败安全顺序。
+    cccc_core::fs::with_exclusive_lock(&path.with_extension("lock"), || {
+        let previous: Value = match cccc_core::fs::read_json(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+            Err(error) => return Err(error),
+        };
+        cccc_core::im_state::update(&store, group_id, |state| {
+            // 配置已被另一个保存请求替换时，本次启动不能修改新配置的授权。
+            if state.get("config").and_then(Value::as_object) != Some(config)
+                || api
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| !worker.is_current(group_id, state))
+            {
+                return Err(std::io::Error::other(
+                    "Mattermost configuration changed during startup",
+                ));
             }
-        }
-        Ok(())
+            if previous != expected {
+                for key in ["authorized", "pending", "subscribers"] {
+                    state[key] = json!([]);
+                }
+            }
+            Ok(())
+        })?;
+        // 先持久清除旧授权，再记录身份；中途失败重试时只会再次清除，不会错误复用。
+        commit(&path, &expected)
     })
-    .map_err(|e| e.to_string())?;
-    // 先持久清除旧授权，再记录身份；中途失败重试时只会再次清除，不会错误复用。
-    cccc_core::fs::write_json_committed(&path, &expected).map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())
 }
 
 // CLI 的组合 Web 入口没有 tracing subscriber；组日志必须独立于该全局初始化。
@@ -536,15 +639,25 @@ fn append_log(home: &HomeLayout, group_id: &str, line: &str) -> std::io::Result<
     })
 }
 
-pub(super) fn persist_error(home: &HomeLayout, group_id: &str, error: Option<&str>) {
-    let result = GroupStore::new(home.clone()).and_then(|store| {
-        cccc_core::im_state::update(&store, group_id, |state| {
-            state["last_error"] = error.map_or(Value::Null, |v| json!(v));
-            Ok(())
-        })
-    });
-    if let Err(error) = result {
-        eprintln!("Mattermost error state write failed ({:?})", error.kind());
+impl MattermostApi {
+    fn persist_error(&self, home: &HomeLayout, group_id: &str, error: Option<&str>) {
+        // 单独的 API 客户端不拥有运行状态；仅已登记启动的 worker 可以写回。
+        let Some(worker) = &self.worker else {
+            return;
+        };
+        let result = GroupStore::new(home.clone()).and_then(|store| {
+            cccc_core::im_state::update(&store, group_id, |state| {
+                if !worker.is_current(group_id, state) {
+                    return Err(std::io::Error::other("Mattermost worker was superseded"));
+                }
+                state["last_error"] =
+                    error.map_or(Value::Null, |v| json!(v.replace(&self.token, "[REDACTED]")));
+                Ok(())
+            })
+        });
+        if let Err(error) = result {
+            eprintln!("Mattermost error state write failed ({:?})", error.kind());
+        }
     }
 }
 
@@ -552,10 +665,11 @@ async fn socket_loop(
     home: HomeLayout,
     group_id: String,
     api: MattermostApi,
-    mut socket: Socket,
+    connection: (Socket, SocketCursor),
     inbound: mpsc::Sender<Value>,
     heartbeat_interval: Duration,
 ) {
+    let (mut socket, mut cursor) = connection;
     loop {
         let mut heartbeat = tokio::time::interval(heartbeat_interval);
         let mut last_received = tokio::time::Instant::now();
@@ -573,10 +687,29 @@ async fn socket_loop(
                     match message {
                         Some(Ok(Message::Text(text))) => {
                             match serde_json::from_str::<Value>(&text) {
-                                Ok(event) => if field(&event, "event") == "posted" {
-                                    if let Some(capacity) = permit.take() { capacity.send(event); }
-                                },
-                                Err(_) => log_error(&home, &group_id, "decode", "invalid Mattermost event JSON", &api.token),
+                                Ok(event) => {
+                                    if event.get("error").is_some_and(|v| !v.is_null()) {
+                                        let error = "Mattermost WebSocket authentication failed";
+                                        api.persist_error(&home, &group_id, Some(error));
+                                        api.log_error(&home, &group_id, "authenticate", error);
+                                        return;
+                                    }
+                                    let had_gap = cursor.missed_events;
+                                    match cursor.accept(&event) {
+                                        Ok(true) => {
+                                            if !had_gap && cursor.missed_events {
+                                                api.log_error(&home, &group_id, "recovery", RECOVERY_GAP);
+                                                api.persist_error(&home, &group_id, Some(RECOVERY_GAP));
+                                            }
+                                            if field(&event, "event") == "posted" {
+                                                if let Some(capacity) = permit.take() { capacity.send(event); }
+                                            }
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => break error,
+                                    }
+                                }
+                                Err(_) => break "invalid Mattermost event JSON",
                             }
                         }
                         Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() { break "Mattermost pong failed"; } }
@@ -591,19 +724,27 @@ async fn socket_loop(
                 }
             }
         };
-        persist_error(&home, &group_id, Some(error));
+        api.persist_error(&home, &group_id, Some(error));
         log_error(&home, &group_id, "disconnect", error, &api.token);
+        drop(permit);
+        // 先关闭旧连接，允许服务端将其转为可恢复状态；重连不等待 hello，
+        // 同 ID 恢复会直接发缓存事件，无积压时甚至暂时没有任何应用事件。
+        drop(socket);
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            match api.socket().await {
+            match api.open_socket(&cursor).await {
                 Ok(next) => {
                     socket = next;
-                    persist_error(&home, &group_id, None);
+                    api.persist_error(
+                        &home,
+                        &group_id,
+                        cursor.missed_events.then_some(RECOVERY_GAP),
+                    );
                     break;
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    persist_error(&home, &group_id, Some(&message));
+                    api.persist_error(&home, &group_id, Some(&message));
                     log_error(&home, &group_id, "reconnect", &message, &api.token);
                     if matches!(error, SocketError::Authentication(_)) {
                         return;
@@ -758,6 +899,7 @@ mod tests {
         ws_mode: AtomicUsize,
         ws_connections: AtomicUsize,
         ws_attempts: AtomicUsize,
+        ws_queries: Mutex<Vec<std::collections::HashMap<String, String>>>,
         blocked_identity: AtomicBool,
         identity_entered: tokio::sync::Notify,
         release_identity: tokio::sync::Notify,
@@ -792,9 +934,36 @@ mod tests {
         fixture_for_bot("test-token", &"b".repeat(26)).await
     }
 
+    async fn authenticate(config: &Map<String, Value>) -> Result<MattermostApi, String> {
+        let token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
+        MattermostApi::authenticate(config, token).await
+    }
+
+    fn worker_state(home: &HomeLayout, group: &str) -> WorkerState {
+        let store = GroupStore::new(home.clone()).expect("store");
+        cccc_core::im_state::update(&store, group, |state| {
+            if !state["config"].is_object() {
+                state["config"] = json!({"platform":"mattermost"});
+            }
+            Ok(())
+        })
+        .expect("config");
+        WorkerState {
+            config: cccc_core::im_state::load(&store, group).expect("state")["config"]
+                .as_object()
+                .expect("config")
+                .clone(),
+            generation: 1,
+            generations: Arc::new(Mutex::new([(group.to_owned(), 1)].into_iter().collect())),
+        }
+    }
+
     async fn fixture_for_bot(token: &str, bot_id: &str) -> Fixture {
         async fn ws(
             State(state): State<Arc<MockState>>,
+            axum::extract::Query(query): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >,
             headers: HeaderMap,
             upgrade: WebSocketUpgrade,
         ) -> Response {
@@ -805,6 +974,7 @@ mod tests {
                 format!("Bearer {}", state.token).as_str()
             );
             let mode = state.ws_mode.load(Ordering::SeqCst);
+            state.ws_queries.lock().expect("queries").push(query);
             state.ws_attempts.fetch_add(1, Ordering::SeqCst);
             if let Some(status) = match mode {
                 1 => Some(StatusCode::UNAUTHORIZED),
@@ -820,18 +990,35 @@ mod tests {
                 let text = match mode {
                     2 => json!({"error":{"message":"测试认证拒绝"}}).to_string(),
                     4 => "invalid-json".to_owned(),
-                    _ => json!({"event":"hello"}).to_string(),
+                    10 if connection > 0 => json!({"event":"hello","data":{"connection_id":"n".repeat(26)},"seq":0}).to_string(),
+                    _ => json!({"event":"hello","data":{"connection_id":"s".repeat(26)},"seq":0}).to_string(),
                 };
-                socket
-                    .send(axum::extract::ws::Message::Text(text.into()))
-                    .await
-                    .expect("Mattermost test operation");
-                if mode == 3 && connection == 0 {
+                if !(mode == 9 && connection > 0) {
+                    socket
+                        .send(axum::extract::ws::Message::Text(text.into()))
+                        .await
+                        .expect("Mattermost test operation");
+                }
+                if mode == 9 {
+                    // 首次连接 seq=1 后故意缺 seq=2；恢复必须带 next=2，且没有 hello。
+                    let sequences: &[u64] = if connection == 0 { &[1, 3] } else { &[1, 2, 2, 3, 4] };
+                    for seq in sequences {
+                        let event = if *seq == 3 {
+                            json!({"event":"status_change","seq":seq})
+                        } else {
+                            let post = json!({"id":format!("{seq:026}"),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot /help","type":""});
+                            json!({"event":"posted","seq":seq,"data":{"channel_type":"O","post":post.to_string()}})
+                        };
+                        let _ = socket.send(axum::extract::ws::Message::Text(event.to_string().into())).await;
+                    }
+                }
+                if (mode == 3 && connection == 0) || (mode == 10 && connection < 2) {
                     let _ = socket.send(axum::extract::ws::Message::Close(None)).await;
                     return;
                 }
                 let events = state.ws_events.lock().expect("events").clone();
-                for event in events {
+                for (index, mut event) in events.into_iter().enumerate() {
+                    event["seq"] = json!(index + 1);
                     socket.send(axum::extract::ws::Message::Text(event.to_string().into())).await.expect("event");
                 }
                 let mut heartbeat = tokio::time::interval(Duration::from_millis(30));
@@ -977,6 +1164,7 @@ mod tests {
             token: token.to_owned(),
             bot_id: bot_id.to_owned(),
             username: "cccc_bot".into(),
+            worker: None,
         };
         Fixture { api, state, task }
     }
@@ -1030,7 +1218,16 @@ mod tests {
                 0o600
             );
         }
-        persist_error(&home, &group, None);
+        let worker = worker_state(&home, &group);
+        let api = MattermostApi {
+            http: reqwest::Client::new(),
+            site: String::new(),
+            token: "synthetic-secret".into(),
+            bot_id: String::new(),
+            username: String::new(),
+            worker: Some(worker),
+        };
+        api.persist_error(&home, &group, None);
         assert_eq!(std::fs::read_to_string(&path).expect("retained log"), raw);
     }
 
@@ -1086,7 +1283,7 @@ mod tests {
         let fixture = fixture().await;
         // 故意向明文测试端口发 TLS，不能靠关闭证书验证使其通过。
         let config = json!({"mattermost_url":fixture.api.site.replacen("http://", "https://", 1),"bot_token":"tls-test-secret"});
-        let result = MattermostApi::authenticate(config.as_object().expect("config")).await;
+        let result = authenticate(config.as_object().expect("config")).await;
         let error = match result {
             Ok(_) => panic!("TLS 协议错误不应认证成功"),
             Err(error) => error,
@@ -1101,7 +1298,7 @@ mod tests {
         const CASE: &str = "CCCC_MM_PROXY_TEST_CASE";
         if let Ok(case) = std::env::var(CASE) {
             let config = json!({"mattermost_url":std::env::var("CCCC_MM_PROXY_TEST_SITE").expect("site"),"bot_token":"test-token"});
-            let result = MattermostApi::authenticate(config.as_object().expect("config")).await;
+            let result = authenticate(config.as_object().expect("config")).await;
             if case == "rejected" {
                 let error = match result {
                     Ok(_) => panic!("失效代理不应认证成功"),
@@ -1408,7 +1605,7 @@ mod tests {
             })
             .expect("config");
             let saved = cccc_core::im_state::load(&store, group).expect("saved");
-            let api = MattermostApi::authenticate(saved["config"].as_object().expect("config"))
+            let api = authenticate(saved["config"].as_object().expect("config"))
                 .await
                 .expect("identity");
             assert_eq!(api.bot_id, fixture.api.bot_id);
@@ -1441,7 +1638,7 @@ mod tests {
             before_second
         );
         let wrong = json!({"mattermost_url":first.api.site,"bot_token":second.api.token});
-        let result = MattermostApi::authenticate(wrong.as_object().expect("config")).await;
+        let result = authenticate(wrong.as_object().expect("config")).await;
         assert!(result.err().expect("wrong bot credential").contains("401"));
     }
 
@@ -1489,6 +1686,7 @@ mod tests {
             token: "synthetic-token".into(),
             bot_id: "b".repeat(26),
             username: "cccc_bot".into(),
+            worker: None,
         };
         let result = api.post(&"c".repeat(26), "", "仅创建一次", &[]).await;
         server.abort();
@@ -1511,7 +1709,7 @@ mod tests {
             std::fs::read_to_string(std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("凭据文件"))
                 .expect("凭据");
         let config = json!({"mattermost_url":site,"bot_token":token.trim()});
-        let api = MattermostApi::authenticate(config.as_object().expect("config"))
+        let api = authenticate(config.as_object().expect("config"))
             .await
             .expect("api");
         let (_temp, home, group) = scope();
@@ -1828,10 +2026,11 @@ mod tests {
 
     #[tokio::test]
     async fn disconnected_socket_reconnects_and_clears_persisted_error() {
-        let fixture = fixture().await;
+        let mut fixture = fixture().await;
         fixture.state.ws_mode.store(3, Ordering::SeqCst);
         let (_temp, home, group) = scope();
         let store = GroupStore::new(home.clone()).expect("store");
+        fixture.api.worker = Some(worker_state(&home, &group));
         let socket = fixture.api.socket().await.expect("首次连接");
         let (inbound, _receiver) = mpsc::channel(128);
         let task = tokio::spawn(socket_loop(
@@ -1919,7 +2118,7 @@ mod tests {
         let token_path = std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("测试 Bot 凭据文件");
         let token = std::fs::read_to_string(token_path).expect("读取测试 Bot 凭据");
         let config = json!({"mattermost_url":site,"bot_token":token.trim()});
-        let api = MattermostApi::authenticate(config.as_object().expect("配置"))
+        let api = authenticate(config.as_object().expect("配置"))
             .await
             .expect("测试 Bot 身份");
         let (_temp, home, group) = scope();
@@ -2003,20 +2202,18 @@ mod tests {
     async fn verifies_bot_and_websocket_with_site_subpath() {
         let fixture = fixture().await;
         let config = json!({"mattermost_url":fixture.api.site,"bot_token":"test-token"});
-        let api =
-            MattermostApi::authenticate(config.as_object().expect("Mattermost test operation"))
-                .await
-                .expect("Mattermost test operation");
+        let api = authenticate(config.as_object().expect("Mattermost test operation"))
+            .await
+            .expect("Mattermost test operation");
         assert_eq!(api.bot_id, "b".repeat(26));
-        let mut socket = api.socket().await.expect("Mattermost test operation");
+        let (mut socket, _) = api.socket().await.expect("Mattermost test operation");
         socket.close(None).await.expect("Mattermost test operation");
         let mut invalid = config.clone();
         invalid["bot_token"] = json!("wrong-token");
-        let error =
-            MattermostApi::authenticate(invalid.as_object().expect("Mattermost test operation"))
-                .await
-                .err()
-                .expect("Mattermost test operation");
+        let error = authenticate(invalid.as_object().expect("Mattermost test operation"))
+            .await
+            .err()
+            .expect("Mattermost test operation");
         assert!(error.contains("401"));
         assert!(!error.contains("wrong-token"));
     }
@@ -2331,7 +2528,8 @@ mod tests {
             DaemonClient::new(home.clone()),
             &group,
             config,
-            crate::ledger_event_hub::LedgerEventHub::new(home),
+            crate::ledger_event_hub::LedgerEventHub::new(home.clone()),
+            worker_state(&home, &group),
         )
         .await
         .expect("start");
@@ -2430,5 +2628,365 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn stale_runtime_errors_and_identity_cannot_mutate_current_state() {
+        let mut fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let store = GroupStore::new(home.clone()).expect("store");
+        let worker = worker_state(&home, &group);
+        fixture.api.worker = Some(worker.clone());
+        fixture
+            .api
+            .persist_error(&home, &group, Some("test-token failure"));
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("state")["last_error"],
+            "[REDACTED] failure"
+        );
+        // 相同配置的新启动也必须挡住旧写入，包括清空错误。
+        worker
+            .generations
+            .lock()
+            .expect("generations")
+            .insert(group.clone(), 2);
+        let expected = cccc_core::im_state::load(&store, &group).expect("state");
+        for error in [Some("old error"), None] {
+            fixture.api.persist_error(&home, &group, error);
+        }
+        assert!(verify_identity(&home, &group, &fixture.api, &worker.config).is_err());
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("state"),
+            expected
+        );
+        assert!(
+            !store
+                .state_dir(&group)
+                .expect("dir")
+                .join("mattermost_identity.json")
+                .exists()
+        );
+        // 配置变更也能独立阻止旧状态写回，不依赖先停 worker。
+        worker
+            .generations
+            .lock()
+            .expect("generations")
+            .insert(group.clone(), 1);
+        cccc_core::im_state::update(&store, &group, |s| {
+            s["config"] = json!({"platform":"telegram"});
+            Ok(())
+        })
+        .expect("save");
+        let expected = cccc_core::im_state::load(&store, &group).expect("state");
+        for error in [Some("old error"), None] {
+            fixture.api.persist_error(&home, &group, error);
+        }
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("state"),
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_commit_is_serialized_and_failure_keeps_authorization_cleared() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let store = GroupStore::new(home.clone()).expect("store");
+        let config = worker_state(&home, &group).config;
+        let authorized = json!([{"platform":"mattermost","chat_id":"c".repeat(26),"thread_id":0,"authorized_at":1}]);
+        cccc_core::im_state::update(&store, &group, |s| {
+            s["authorized"] = authorized.clone();
+            Ok(())
+        })
+        .expect("authorize");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let old_home = home.clone();
+        let old_group = group.clone();
+        let old_api = fixture.api.clone();
+        let old_config = config.clone();
+        let old = std::thread::spawn(move || {
+            verify_identity_with(
+                &old_home,
+                &old_group,
+                &old_api,
+                &old_config,
+                |path, identity| {
+                    let store = GroupStore::new(old_home.clone())?;
+                    assert_eq!(
+                        cccc_core::im_state::load(&store, &old_group)?["authorized"],
+                        json!([])
+                    );
+                    entered_tx.send(()).expect("entered");
+                    release_rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("release old commit");
+                    cccc_core::fs::write_json_committed(path, identity)
+                },
+            )
+        });
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("old commit reached");
+        let mut new_api = fixture.api.clone();
+        new_api.bot_id = "n".repeat(26);
+        let new_home = home.clone();
+        let new_group = group.clone();
+        let new_config = config.clone();
+        let new_api_task = new_api.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let new = std::thread::spawn(move || {
+            started_tx.send(()).expect("started");
+            let result = verify_identity(&new_home, &new_group, &new_api_task, &new_config);
+            finished_tx.send(()).expect("finished");
+            result
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("new started");
+        let blocked = finished_rx
+            .recv_timeout(Duration::from_millis(150))
+            .is_err();
+        release_tx.send(()).expect("release");
+        old.join().expect("old thread").expect("old commit");
+        new.join().expect("new thread").expect("new commit");
+        assert!(
+            blocked,
+            "new identity must not overtake an old in-flight commit"
+        );
+        let path = store
+            .state_dir(&group)
+            .expect("dir")
+            .join("mattermost_identity.json");
+        let identity: Value = cccc_core::fs::read_json(&path).expect("identity");
+        assert_eq!(identity["bot_id"], new_api.bot_id);
+        cccc_core::im_state::update(&store, &group, |s| {
+            s["authorized"] = authorized.clone();
+            Ok(())
+        })
+        .expect("authorize new");
+        verify_identity(&home, &group, &new_api, &config).expect("restart new");
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("state")["authorized"],
+            authorized
+        );
+        assert!(
+            verify_identity_with(&home, &group, &fixture.api, &config, |_, _| Err(
+                std::io::Error::other("injected identity write failure")
+            ))
+            .is_err()
+        );
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("state")["authorized"],
+            json!([])
+        );
+        assert_eq!(
+            cccc_core::fs::read_json::<Value>(&path).expect("identity"),
+            identity
+        );
+    }
+
+    #[test]
+    fn socket_cursor_handles_replies_duplicates_gaps_and_new_connections() {
+        let mut cursor = SocketCursor::default();
+        assert!(
+            cursor
+                .accept(&json!({"event":"hello","data":{"connection_id":"s".repeat(26)},"seq":0}))
+                .expect("hello")
+        );
+        assert!(
+            !cursor
+                .accept(&json!({"seq_reply":1,"status":"OK"}))
+                .expect("reply")
+        );
+        assert!(
+            cursor
+                .accept(&json!({"event":"status_change","seq":1}))
+                .expect("status")
+        );
+        assert!(
+            !cursor
+                .accept(&json!({"event":"posted","seq":1}))
+                .expect("duplicate")
+        );
+        assert!(cursor.accept(&json!({"event":"posted","seq":3})).is_err());
+        assert_eq!(cursor.next_sequence, 2);
+        assert!(
+            cursor
+                .accept(&json!({"event":"posted","seq":2}))
+                .expect("recovered")
+        );
+        assert!(
+            cursor
+                .accept(&json!({"event":"hello","data":{"connection_id":"n".repeat(26)},"seq":0}))
+                .expect("new hello")
+        );
+        assert!(cursor.missed_events);
+        assert_eq!(cursor.next_sequence, 1);
+        assert!(cursor.accept(&json!({"event":"posted"})).is_err());
+        assert_eq!(cursor.next_sequence, 1);
+        assert!(!SocketCursor::default().missed_events);
+    }
+
+    #[tokio::test]
+    #[ignore = "仅在明确授权的测试站点和频道运行；保留一条 Bot 自发测试帖子，不调用模型"]
+    async fn live_native_websocket_recovers_post_sent_while_disconnected() {
+        let site = std::env::var("CCCC_MM_TEST_SITE").expect("测试站点");
+        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("测试频道");
+        let token =
+            std::fs::read_to_string(std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("凭据文件"))
+                .expect("读取凭据");
+        let config = json!({"mattermost_url":site,"bot_token":token.trim()});
+        let api = authenticate(config.as_object().expect("配置"))
+            .await
+            .expect("Bot 身份");
+        let (socket, mut cursor) = api.socket().await.expect("初连");
+        let connection_id = cursor.connection_id.clone();
+        drop(socket);
+        let post_id = api
+            .post(
+                &channel,
+                "",
+                "CCCC 连接器协议测试：验证断线期间的消息补收。本条由测试 Bot 发送，不调用模型。",
+                &[],
+            )
+            .await
+            .expect("断线期间发帖");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let mut recovered = api.open_socket(&cursor).await.expect("恢复连接");
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while let Some(message) = recovered.next().await {
+                match message.expect("事件帧") {
+                    Message::Text(text) => {
+                        let event: Value = serde_json::from_str(&text).expect("JSON");
+                        if cursor.accept(&event).expect("连续序号")
+                            && field(&event, "event") == "posted"
+                        {
+                            let post: Value =
+                                serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+                            if field(&post, "id") == post_id {
+                                return;
+                            }
+                        }
+                    }
+                    Message::Ping(data) => recovered.send(Message::Pong(data)).await.expect("pong"),
+                    _ => {}
+                }
+            }
+            panic!("补收前连接结束");
+        })
+        .await
+        .expect("实际服务器补收测试帖");
+        assert_eq!(cursor.connection_id, connection_id);
+        assert!(!cursor.missed_events);
+        recovered.close(None).await.expect("关闭测试连接");
+    }
+
+    #[tokio::test]
+    async fn websocket_recovers_without_hello_and_preserves_order_and_current_authorization() {
+        let mut fixture = fixture().await;
+        fixture.state.ws_mode.store(9, Ordering::SeqCst);
+        let (_temp, home, group) = scope();
+        fixture.api.worker = Some(worker_state(&home, &group));
+        let socket = fixture.api.socket().await.expect("initial hello");
+        let (sender, mut receiver) = mpsc::channel(1);
+        let task = tokio::spawn(socket_loop(
+            home.clone(),
+            group.clone(),
+            fixture.api.clone(),
+            socket,
+            sender,
+            Duration::from_secs(30),
+        ));
+        let checked = tokio::time::timeout(Duration::from_secs(12), async {
+            let mut events = Vec::new();
+            for expected in [1, 2, 4] {
+                let event = receiver.recv().await.expect("recovered event");
+                assert_eq!(event["seq"], expected);
+                events.push(event);
+            }
+            let queries = fixture.state.ws_queries.lock().expect("queries").clone();
+            assert_eq!(queries.len(), 2);
+            assert_eq!(queries[0]["connection_id"], "");
+            assert_eq!(queries[1]["connection_id"], "s".repeat(26));
+            assert_eq!(queries[1]["sequence_number"], "2");
+            assert!(
+                receiver.try_recv().is_err(),
+                "duplicates and non-posted events must not enter inbound"
+            );
+            let store = GroupStore::new(home.clone()).expect("store");
+            assert!(
+                cccc_core::im_state::load(&store, &group).expect("state")["last_error"].is_null()
+            );
+            let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+            let mut inbound = MattermostInbound::new(
+                home.clone(),
+                &group,
+                DaemonClient::new(home.clone()),
+                fixture.api.clone(),
+                reactions,
+                &Map::new(),
+            );
+            let mut recovered = events[1].clone();
+            let mut post: Value =
+                serde_json::from_str(field(&recovered["data"], "post")).expect("post");
+            post["message"] = json!("@cccc_bot 未授权补收附件");
+            post["file_ids"] = json!(["f".repeat(26)]);
+            recovered["data"]["post"] = json!(post.to_string());
+            inbound
+                .handle(&recovered)
+                .await
+                .expect("current authorization");
+            assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+            assert!(
+                field(&fixture.state.posts.lock().expect("posts")[0], "message")
+                    .contains("not authorized")
+            );
+        })
+        .await;
+        task.abort();
+        let _ = task.await;
+        checked.expect("native recovery");
+    }
+
+    #[tokio::test]
+    async fn lost_recovery_cache_remains_visible_after_later_reconnect() {
+        let mut fixture = fixture().await;
+        fixture.state.ws_mode.store(10, Ordering::SeqCst);
+        let (_temp, home, group) = scope();
+        fixture.api.worker = Some(worker_state(&home, &group));
+        let store = GroupStore::new(home.clone()).expect("store");
+        let socket = fixture.api.socket().await.expect("initial");
+        let (sender, _receiver) = mpsc::channel(1);
+        let task = tokio::spawn(socket_loop(
+            home,
+            group.clone(),
+            fixture.api.clone(),
+            socket,
+            sender,
+            Duration::from_secs(30),
+        ));
+        let checked = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if fixture.state.ws_connections.load(Ordering::SeqCst) >= 3
+                    && cccc_core::im_state::load(&store, &group).expect("state")["last_error"]
+                        == RECOVERY_GAP
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let log = std::fs::read_to_string(
+                store.state_dir(&group).expect("dir").join("im_bridge.log"),
+            )
+            .expect("log");
+            assert!(log.contains(RECOVERY_GAP));
+            assert!(!log.contains("test-token"));
+        })
+        .await;
+        task.abort();
+        let _ = task.await;
+        checked.expect("loss reported and retained");
     }
 }

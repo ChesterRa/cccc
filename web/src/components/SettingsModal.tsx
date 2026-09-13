@@ -789,7 +789,21 @@ export function SettingsModal({
     setImBusy(true);
     setImConfigError(null);
     try {
-      const resp = await saveAndStartIMBridge(getCurrentIMSaveRequest());
+      // Mattermost 保存失败时保留当前草稿；回读会把它替换成旧平台/配置。
+      if (imPlatform === "mattermost") {
+        const saved = await saveIMConfigDraft(getCurrentIMSaveRequest());
+        if (!saved.ok) {
+          setImConfigError({
+            groupId,
+            message: saved.error?.message || t("imBridge.mattermostConfigFailed"),
+          });
+          return;
+        }
+      }
+      const resp =
+        imPlatform === "mattermost"
+          ? await api.startIMBridge(groupId)
+          : await saveAndStartIMBridge(getCurrentIMSaveRequest());
       await loadIMStatus();
       if (!resp.ok && imPlatform === "mattermost") {
         setImConfigError({

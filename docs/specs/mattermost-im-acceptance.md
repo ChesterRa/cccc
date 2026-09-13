@@ -2,6 +2,31 @@
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
 
+## PR #103 本轮修复与原生断线补收（2026-09-13，测试机验证完成）
+
+修复基线 `3a34c9fb85c418b2add27e78b32afa2b1f688f58`。本轮修改尚未提交或推送，不合并、不发布、不更换日常实例；仍仅在指定 Linux/Windows 测试机验证。
+
+| 范围 | 新增或补强的验证 |
+|---|---|
+| 身份写入竞争 | `identity_commit_is_serialized_and_failure_keeps_authorization_cleared` 在旧身份提交点阻塞，证明新提交不能越过它；随后重启新身份保留授权。注入身份文件写入失败，验证旧授权已清除而新身份未误记 |
+| 过期错误和身份 | `stale_runtime_errors_and_identity_cannot_mutate_current_state` 验证同配置新代次、不同平台新配置两条路径，旧错误写入/清除及旧身份均不能改当前状态；当前错误文本脱敏 |
+| 保存失败保留草稿 | 实际 `SettingsModal` 增两个用例：旧配置分别为 Telegram/Mattermost 时，Start 保存失败不回读、不调用启动、不丢平台/URL/凭据引用/错误。修正后重新保存、启动失败及状态回读继续正确。独立严格类型检查包括这些测试夹具 |
+| 原生序号与补收 | `socket_cursor_handles_replies_duplicates_gaps_and_new_connections` 和 `websocket_recovers_without_hello_and_preserves_order_and_current_authorization` 验证下一序号、响应包、非帖子事件、重复/缺口、无 hello 恢复首帖、有界队列顺序；补收内容仍受当前授权限制，未授权附件不下载 |
+| 缓存失效提示 | `lost_recovery_cache_remains_visible_after_later_reconnect` 验证新连接 ID 重置序号，之后再次普通重连仍保留缺口提示；日志不含合成 Token |
+| 实际平台协议 | 新 `live_native_websocket_recovers_post_sent_while_disconnected` 默认忽略，仅显式授权运行：断开独立连接，由测试 Bot 在指定测试频道自发一帖，再用同一 ID/下一序号实际补收；不调用模型、不影响日常连接。与故障模拟分开记录 |
+| 两平台真实 Web | 浏览器脚本增加“在旧 Telegram/Mattermost 配置之上启动保存失败”的真实页面操作、启动请求计数、草稿/持久配置/错误截图；保留三语、窄屏、跨组草稿和其余原生配置回归 |
+
+最终结果：
+
+- Linux：针对性 IM runtime 201 项通过（增加新 live 用例前默认忽略 2 项）；4 项实际 SettingsModal 用例及独立夹具严格类型检查通过。随后 Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,526 项前端单测及生产构建、25 项打包用例和 wheel/Twine、Rust fmt/严格 Clippy、安装器/发布资产、完整非 daemon workspace、daemon 串行全量（525 项库测试）、3 项自启动与 CI 要求的 Codex/Claude/Kilo 原生检查均通过，`ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`。Kilo 筛选中的 OpenCode 条件项未启用，不称为真实 OpenCode 联调。
+- Windows：核心 IM 8 项、完整 IM runtime 200 项（3 项 live 默认忽略）、七组 Windows smoke 共 11 项及原生构建通过，`ALL_WINDOWS_CHECKS_PASS`。测试数量与 Linux 的差异来自平台条件编译；没有为通过测试放宽条件或修改既有断言。
+- Linux/Windows 真实 Web：`START_SAVE_DRAFT_GUI_PASS`、`CROSS_GROUP_GUI_PASS`、`GUI_PASS` 全部通过。原生设置页的保存/启动失败及重试、两种旧平台草稿保留、持久配置不变、三语、窄屏和保持挂载时跨组切换均验证。截图分别检查 Linux 深色和 Windows 浅色；截图前滚动到原生错误区域，不更改产品布局。
+- 真实 Mattermost：显式运行新 live 用例，1 项通过，实际补收断线期间由测试 Bot 发送的帖子，连接 ID 保持不变、事件序号连续，`LIVE_NATIVE_RECOVERY_PASS`。只在已授权测试频道保留一条自发协议帖，不调用模型、不重启 Mattermost、不修改日常 Bot 配置；临时凭据副本已移除。
+- 两平台测试源码与工作区传输快照的 2,025 个受版本控制文件一致，PowerShell/CMD/BAT 按 Git 文本规则规范化 CRLF；四份文档中的 57 条本地引用有效。Linux GUI 二进制与完整构建 SHA-256 一致。
+- 首轮命令因登录 shell 重置 PATH 未找到 Cargo，改用原验证容器的非登录 shell 后继续；首次 Rust 编译指出两个入站测试仍使用旧认证签名，补齐合成 Token 后通过。失败轮次保留，不冒称首次通过，也不修改工具链或依赖。Windows 第一轮 GUI 已通过，随后只为让截图包含错误区域补滚动并重跑，产品代码未因此改变。
+
+本轮没有提交、推送、触发 GitHub CI、合并或发布。连接器原生固定重连间隔及其他平台行为不变；未替换日常开发/标准对照实例。未来推送仍须对最终 Git 历史执行独立秘密扫描，本次源码对照不是安全扫描。
+
 ## PR #103 第三轮审核修订复验（2026-09-13）
 
 基于 `436028de741031be7b6048bf0cb2f58f261ef64a` 修复本轮三项意见，继续更新原 PR，不涉及 CLI 管理、其他连接器行为或日常部署。

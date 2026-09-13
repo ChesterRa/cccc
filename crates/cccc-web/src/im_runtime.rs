@@ -107,7 +107,9 @@ impl ImWorkerRegistry {
                 let result = registry
                     .start(home.clone(), client, &group_id, &config)
                     .await;
-                if string(&config, "platform") != "mattermost"
+                // These adapters commit start state under their configuration/generation guard.
+                const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
+                if !SELF_COMMIT_PLATFORMS.contains(&string(&config, "platform").as_str())
                     && let Ok(store) = GroupStore::new(home)
                     && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
                         if !value.is_object() {
@@ -395,7 +397,7 @@ impl ImWorkerRegistry {
     }
 
     // Mattermost saves call this inside the existing configuration lock, before writing.
-    pub(crate) fn invalidate_mattermost_start(&self, group_id: &str) {
+    pub(crate) fn invalidate_start(&self, group_id: &str) {
         self.generations
             .lock()
             .expect("IM generation registry poisoned")

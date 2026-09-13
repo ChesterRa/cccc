@@ -99,7 +99,7 @@ async fn set(
     );
     update(&state, &group_id, |value| {
         if value["config"]["platform"] == "mattermost" {
-            state.im_workers.invalidate_mattermost_start(&group_id);
+            state.im_workers.invalidate_start(&group_id);
         }
         let state = object(value);
         state.insert("config".into(), Value::Object(config.clone()));

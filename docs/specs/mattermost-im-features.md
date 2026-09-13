@@ -47,7 +47,7 @@
 | F21 | 出站排除人类/IM 入站，平台入站过滤 Bot，避免回流；[C1][C6][C8] | 识别本 Bot、其他 Bot、系统事件；平台权限为前提 | 可直接实现；代码已接入；验收通过，证据见右列 | T10、T15 |
 | F22 | Telegram/Discord/飞书/钉钉处理反应、关联完成/失败、超时清理；[C19][C21] | MM 创建/删除 Bot 自己的 reaction；反应不是任务取消或精确执行证明；[M7] | 可等价实现；代码已接入；验收通过，证据见右列 | T16 |
 | F23 | 运行期 event hub lag 后按游标从 ledger 补读；[C1] | 直接复用公共外发 worker，不另走 SSE/SDK | 可直接实现；代码已接入；验收通过，证据见右列 | T17 |
-| F24 | 连接重试/重连、认证失败、启动错误；不同平台策略不同；[C6][C8] | WS 连接/认证/心跳，REST 限流与错误处理；[M8] | 可等价实现；代码已接入；验收通过，证据见右列 | T03、T17 |
+| F24 | 连接重试/重连、认证失败、启动错误；不同平台策略不同；Discord 依赖原生恢复会话；[C6][C8] | WS 连接/认证/心跳、原生连接 ID/下一序号恢复；缓存失效明确报告，非全量历史补拉；REST 限流与错误处理；[M8][M9] | 现行合同见规格；新补收能力与本轮复验单独记录，不以旧验收代替 | T03、T17 |
 | F25 | tracing 日志、last_error、运行状态、CLI logs；[C1][C3][C4] | 日志及已有状态入口呈现 MM 错误，脱敏且不吞失败 | 可直接实现；代码已接入；验收通过，证据见右列 | T03、T14、T17 |
 | F26 | 组配置、authorized/pending/subscribers 持久化与共享锁更新；[C22] | 增 MM 平台和字段，复用公共文件形状，不建独立数据库 | 可直接实现；代码已接入；验收通过，证据见右列 | T04、T05 |
 
@@ -134,3 +134,4 @@
 [M6]: https://docs.mattermost.com/api/reference/upload-file
 [M7]: https://raw.githubusercontent.com/mattermost/mattermost/v11.9.0/api/v4/source/reactions.yaml
 [M8]: https://docs.mattermost.com/api/reference/connect-web-socket
+[M9]: https://github.com/mattermost/mattermost/blob/v11.9.0/server/channels/app/platform/web_conn.go

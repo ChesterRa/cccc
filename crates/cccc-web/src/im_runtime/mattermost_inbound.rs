@@ -413,9 +413,10 @@ mod tests {
             axum::serve(listener, app).await.expect("server");
         });
         let config = json!({"mattermost_url":site,"bot_token":"test-token"});
-        let api = MattermostApi::authenticate(config.as_object().expect("config"))
-            .await
-            .expect("api");
+        let api =
+            MattermostApi::authenticate(config.as_object().expect("config"), "test-token".into())
+                .await
+                .expect("api");
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
@@ -486,9 +487,10 @@ mod tests {
             axum::serve(listener, app).await.expect("server");
         });
         let config = json!({"mattermost_url":site,"bot_token":"test-token"});
-        let api = MattermostApi::authenticate(config.as_object().expect("config"))
-            .await
-            .expect("api");
+        let api =
+            MattermostApi::authenticate(config.as_object().expect("config"), "test-token".into())
+                .await
+                .expect("api");
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
