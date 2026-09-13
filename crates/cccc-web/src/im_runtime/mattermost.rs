@@ -931,6 +931,8 @@ mod tests {
         release_download: tokio::sync::Notify,
         uploads: Mutex<Vec<Vec<u8>>>,
         downloads: Mutex<usize>,
+        inbound_files: Mutex<std::collections::HashMap<String, Value>>,
+        file_stream_entered: tokio::sync::Notify,
         rate_requests: Mutex<usize>,
         reactions: Mutex<Vec<(Method, String, Value)>>,
         forbidden: AtomicBool,
@@ -1115,7 +1117,37 @@ mod tests {
                 if state.blocked_download.load(Ordering::SeqCst) {
                     state.release_download.notified().await;
                 }
-                return StatusCode::NOT_FOUND.into_response();
+                let id = path.split('/').nth(5).expect("文件 ID");
+                let file = state
+                    .inbound_files
+                    .lock()
+                    .expect("测试附件")
+                    .get(id)
+                    .cloned();
+                let Some(file) = file else {
+                    return StatusCode::NOT_FOUND.into_response();
+                };
+                if path.ends_with("/info") {
+                    return axum::Json(file).into_response();
+                }
+                let data = field(&file, "data").as_bytes().to_vec();
+                let mode = field(&file, "body_mode").to_owned();
+                if mode == "http_error" {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+                if mode.is_empty() {
+                    return data.into_response();
+                }
+                let body = async_stream::stream! {
+                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(data));
+                    state.file_stream_entered.notify_one();
+                    if mode == "blocked" {
+                        state.release_download.notified().await;
+                    } else if mode == "stream_error" {
+                        yield Err(std::io::Error::other("测试流中断"));
+                    }
+                };
+                return axum::body::Body::from_stream(body).into_response();
             }
             let raw = axum::body::to_bytes(request.into_body(), 20 * 1024 * 1024)
                 .await
@@ -1220,6 +1252,250 @@ mod tests {
             state["subscribers"] = target;
             Ok(())
         }).expect("authorize target");
+    }
+
+    fn attachment_request(
+        fixture: &Fixture,
+        home: &HomeLayout,
+        group: &str,
+    ) -> (MattermostInbound, Value) {
+        authorize_target(home, group, "", false);
+        let files = [
+            ("f", "first", "材料.txt", "text/plain"),
+            ("g", "second", "图片.png", "image/png"),
+        ];
+        *fixture.state.inbound_files.lock().expect("测试附件") = files.into_iter().map(|(id, data, name, mime)| {
+            let id = id.repeat(26);
+            (id.clone(), json!({"id":id,"post_id":"p".repeat(26),"name":name,"mime_type":mime,"size":data.len(),"data":data}))
+        }).collect();
+        let config = json!({"files":{"max_mb":1}});
+        let inbound = MattermostInbound::new(
+            home.clone(),
+            group,
+            DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(3)),
+            fixture.api.clone(),
+            MattermostReactions::new(home.clone(), group, fixture.api.clone()),
+            config.as_object().expect("配置"),
+        );
+        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot /send @user 看附件","type":"","file_ids":["f".repeat(26),"g".repeat(26)]});
+        (
+            inbound,
+            json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}}),
+        )
+    }
+
+    fn blob_names(home: &HomeLayout, group: &str) -> std::collections::BTreeSet<String> {
+        let path = GroupStore::new(home.clone())
+            .expect("GroupStore")
+            .state_dir(group)
+            .expect("状态目录")
+            .join("blobs");
+        std::fs::read_dir(path)
+            .expect("Blob 目录")
+            .map(|entry| {
+                entry
+                    .expect("Blob 文件")
+                    .file_name()
+                    .to_str()
+                    .expect("文件名")
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn later_attachment_failure_cleans_staging_without_deleting_existing_blobs() {
+        for mode in [
+            "http_error",
+            "source",
+            "size",
+            "length",
+            "chunked",
+            "stream_error",
+            "invalid_id",
+            "existing",
+        ] {
+            let fixture = fixture().await;
+            let (_temp, home, group) = scope();
+            let (mut inbound, mut event) = attachment_request(&fixture, &home, &group);
+            let existing = (mode == "existing").then(|| {
+                cccc_core::blobs::store(&home, &group, b"first").expect("已被其他消息使用的 Blob")
+            });
+            {
+                let mut files = fixture.state.inbound_files.lock().expect("附件");
+                let second = files.get_mut(&"g".repeat(26)).expect("第二附件");
+                match mode {
+                    "source" => second["post_id"] = json!("q".repeat(26)),
+                    "size" => second["size"] = json!(1024 * 1024 + 1),
+                    "length" | "chunked" => {
+                        second["data"] = json!("x".repeat(1024 * 1024 + 1));
+                        if mode == "chunked" {
+                            second["body_mode"] = json!(mode);
+                        }
+                    }
+                    "existing" => second["body_mode"] = json!("http_error"),
+                    "invalid_id" => {
+                        let mut post: Value =
+                            serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+                        post["file_ids"][1] = json!("invalid");
+                        event["data"]["post"] = json!(post.to_string());
+                    }
+                    _ => second["body_mode"] = json!(mode),
+                }
+            }
+            let error = inbound.handle(&event).await.expect_err("第二附件失败");
+            assert!(
+                !error.contains("submission outcome is unknown"),
+                "{mode}: 未进入 daemon 提交"
+            );
+            assert!(!error.contains("test-token"));
+            let names = blob_names(&home, &group);
+            if let Some(blob) = existing {
+                assert_eq!(names, [blob.sha256].into_iter().collect(), "{mode}");
+                let path = cccc_core::blobs::resolve(&home, &group, &blob.path).expect("原文件");
+                assert_eq!(std::fs::read(path).expect("原内容"), b"first");
+            } else {
+                assert!(
+                    names.is_empty(),
+                    "{mode}: 不保留最终文件或临时文件 {names:?}"
+                );
+            }
+            let store = GroupStore::new(home).expect("GroupStore");
+            let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger"))
+                .expect("事件");
+            assert!(
+                !events.iter().any(|event| event.kind == "chat.message"),
+                "{mode}"
+            );
+            let posts = fixture.state.posts.lock().expect("反馈");
+            assert_eq!(posts.len(), 1, "{mode}");
+            assert!(
+                field(&posts[0], "message").contains("未能交给 CCCC"),
+                "{mode}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_later_attachment_removes_pending_uploads() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let (mut inbound, event) = attachment_request(&fixture, &home, &group);
+        fixture
+            .state
+            .inbound_files
+            .lock()
+            .expect("附件")
+            .get_mut(&"g".repeat(26))
+            .expect("第二附件")["body_mode"] = json!("blocked");
+        let task = tokio::spawn(async move { inbound.handle(&event).await });
+        let entered = tokio::time::timeout(
+            Duration::from_secs(5),
+            fixture.state.file_stream_entered.notified(),
+        )
+        .await;
+        let pending = blob_names(&home, &group);
+        task.abort();
+        let cancelled = task.await.expect_err("取消任务");
+        fixture.state.release_download.notify_one();
+        entered.expect("第二附件已开始传输");
+        assert!(cancelled.is_cancelled());
+        assert!(!pending.is_empty(), "第一附件暂存仍在");
+        assert!(
+            pending.iter().all(|name| name.len() != 64),
+            "尚无最终内容寻址文件"
+        );
+        assert!(blob_names(&home, &group).is_empty(), "原生析构清理全部暂存");
+        assert!(fixture.state.posts.lock().expect("反馈").is_empty());
+        let store = GroupStore::new(home).expect("GroupStore");
+        let events =
+            cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger")).expect("事件");
+        assert!(!events.iter().any(|event| event.kind == "chat.message"));
+    }
+
+    #[tokio::test]
+    async fn completed_attachments_are_committed_together_with_full_metadata() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        home.initialize().expect("Home");
+        let (mut inbound, event) = attachment_request(&fixture, &home, &group);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("监听");
+        let address = cccc_contracts::DaemonAddress {
+            v: 1,
+            transport: cccc_contracts::Transport::Tcp,
+            path: String::new(),
+            host: "127.0.0.1".into(),
+            port: listener.local_addr().expect("地址").port(),
+            pid: std::process::id(),
+            version: "test".into(),
+            ts: "test".into(),
+        };
+        std::fs::write(
+            home.daemon_dir().join("ccccd.addr.json"),
+            serde_json::to_vec(&address).expect("地址 JSON"),
+        )
+        .expect("地址文件");
+        let server_home = home.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("接受请求");
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.expect("请求");
+            let request: cccc_contracts::DaemonRequest =
+                serde_json::from_str(&line).expect("请求 JSON");
+            let response = cccc_daemon::handle_request(&server_home, &request);
+            assert!(response.ok, "{:?}", response.error);
+            let mut bytes = serde_json::to_vec(&response).expect("响应");
+            bytes.push(b'\n');
+            stream.get_mut().write_all(&bytes).await.expect("写响应");
+        });
+        let result = inbound.handle(&event).await;
+        if result.is_err() {
+            server.abort();
+        }
+        result.expect("两附件入账");
+        server.await.expect("真实 daemon 请求处理完成");
+        inbound
+            .handle(&event)
+            .await
+            .expect("重复事件不再下载或提交");
+        assert_eq!(*fixture.state.downloads.lock().expect("下载次数"), 4);
+        assert_eq!(blob_names(&home, &group).len(), 2, "只有两个最终 Blob");
+        let store = GroupStore::new(home.clone()).expect("GroupStore");
+        let events =
+            cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger")).expect("事件");
+        let messages: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "chat.message")
+            .collect();
+        assert_eq!(messages.len(), 1);
+        let attachments = messages[0].data["attachments"].as_array().expect("附件");
+        assert_eq!(attachments.len(), 2);
+        for (attachment, (id, data, title, mime, kind)) in attachments.iter().zip([
+            ("f", "first", "材料.txt", "text/plain", "file"),
+            ("g", "second", "图片.png", "image/png", "image"),
+        ]) {
+            use sha2::Digest;
+            assert_eq!(attachment["source_media_id"], id.repeat(26));
+            assert_eq!(attachment["title"], title);
+            assert_eq!(attachment["mime_type"], mime);
+            assert_eq!(attachment["kind"], kind);
+            assert_eq!(attachment["bytes"], data.len());
+            assert_eq!(
+                attachment["sha256"],
+                format!("{:x}", sha2::Sha256::digest(data.as_bytes()))
+            );
+            let path = cccc_core::blobs::resolve(
+                &home,
+                &group,
+                attachment["path"].as_str().expect("路径"),
+            )
+            .expect("Blob 路径");
+            assert_eq!(std::fs::read(path).expect("内容"), data.as_bytes());
+        }
     }
 
     #[tokio::test]

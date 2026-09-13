@@ -1,11 +1,13 @@
-use super::inbound_attachments::{AttachmentSpec, MAX_ATTACHMENT_BYTES, store_stream};
+use super::inbound_attachments::{
+    AttachmentSpec, MAX_ATTACHMENT_BYTES, finish_upload, stage_stream,
+};
 use super::mattermost::{MattermostApi, MattermostReactions, PLATFORM, field, valid_id};
 use super::{
     InboundDecision, InboundMetadata, authorized_chats, dispatch_inbound_with,
     inbound_decision_for_thread, target_key,
 };
 use cccc_client::DaemonClient;
-use cccc_core::HomeLayout;
+use cccc_core::{HomeLayout, blobs::BlobUpload};
 use futures_util::StreamExt;
 use reqwest::Method;
 use serde_json::{Map, Value};
@@ -180,7 +182,7 @@ impl MattermostInbound {
                 let key = target_key(chat_id, thread_id);
                 self.reactions.start(&key, post_id).await;
                 let result = async {
-                    let mut attachments = Vec::new();
+                    let mut staged = Vec::new();
                     if has_files && !self.files_enabled {
                         return Err(
                             "Mattermost attachment forwarding is disabled for this group"
@@ -193,8 +195,8 @@ impl MattermostInbound {
                                 .as_str()
                                 .filter(|v| valid_id(v))
                                 .ok_or("Invalid Mattermost file id")?;
-                            attachments.push(
-                                materialize_file(
+                            staged.push(
+                                stage_file(
                                     &self.home,
                                     &self.group_id,
                                     &self.api,
@@ -206,6 +208,12 @@ impl MattermostInbound {
                             );
                         }
                     }
+                    // 全部下载、验证成功后再保存；失败或取消时由原生临时文件析构清理。
+                    // 最终 Blob 可被既有消息共用，不在后续提交失败时回滚删除。
+                    let attachments = staged
+                        .into_iter()
+                        .map(|(upload, spec)| finish_upload(upload, spec))
+                        .collect::<Result<Vec<_>, _>>()?;
                     // daemon 可能先发布回答再返回提交结果，完成反应必须等待 ID 绑定。
                     let _binding = self.reactions.binding.lock().await;
                     let event_id = dispatch_inbound_with(
@@ -345,14 +353,14 @@ fn accepts_message(channel_type: &str, raw: &str, text: &str, username: &str) ->
         })
 }
 
-async fn materialize_file(
+async fn stage_file(
     home: &HomeLayout,
     group_id: &str,
     api: &MattermostApi,
     id: &str,
     post_id: &str,
     limit: u64,
-) -> Result<Value, String> {
+) -> Result<(BlobUpload, AttachmentSpec), String> {
     let file = api
         .json(Method::GET, &format!("files/{id}/info"), None)
         .await?;
@@ -401,7 +409,7 @@ async fn materialize_file(
             });
         std::future::ready(Some(result))
     });
-    store_stream(home, group_id, stream, spec).await
+    Ok((stage_stream(home, group_id, stream).await?, spec))
 }
 
 #[cfg(test)]
@@ -494,7 +502,7 @@ mod tests {
         let group = store.create("forbidden files", "").expect("group");
         for forbidden_info in [true, false] {
             reject_info.store(forbidden_info, Ordering::SeqCst);
-            let error = materialize_file(
+            let error = stage_file(
                 &home,
                 &group.group_id,
                 &api,
@@ -503,7 +511,8 @@ mod tests {
                 100,
             )
             .await
-            .expect_err("403");
+            .err()
+            .expect("403");
             assert!(error.contains("403"));
             assert!(!error.contains("test-token"));
             assert_eq!(
@@ -566,7 +575,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
         let group = store.create("files", "").expect("group");
-        let error = materialize_file(
+        let error = stage_file(
             &home,
             &group.group_id,
             &api,
@@ -575,7 +584,8 @@ mod tests {
             4,
         )
         .await
-        .expect_err("size limit");
+        .err()
+        .expect("size limit");
         assert!(error.contains("configured size limit"));
         let blobs = store
             .state_dir(&group.group_id)
@@ -583,7 +593,7 @@ mod tests {
             .join("blobs");
         assert_eq!(std::fs::read_dir(&blobs).expect("blobs").count(), 0);
 
-        let file = materialize_file(
+        let (upload, spec) = stage_file(
             &home,
             &group.group_id,
             &api,
@@ -593,6 +603,7 @@ mod tests {
         )
         .await
         .expect("download");
+        let file = finish_upload(upload, spec).expect("保存已验证附件");
         assert_eq!(file["title"], "中文.txt");
         assert_eq!(file["mime_type"], "text/plain");
         assert_eq!(file["bytes"], 6);
@@ -601,7 +612,7 @@ mod tests {
             cccc_core::blobs::resolve(&home, &group.group_id, file["path"].as_str().expect("path"))
                 .expect("blob");
         assert_eq!(std::fs::read(path).expect("read"), b"abcdef");
-        let error = materialize_file(
+        let error = stage_file(
             &home,
             &group.group_id,
             &api,
@@ -610,7 +621,8 @@ mod tests {
             6,
         )
         .await
-        .expect_err("wrong source post");
+        .err()
+        .expect("wrong source post");
         assert!(error.contains("does not belong to the source post"));
         server.abort();
     }

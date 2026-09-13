@@ -2,6 +2,26 @@
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
 
+## 多附件暂存回归（2026-09-14，review7，完整检查分组完成，含原样复验）
+
+基于 `ae7149a6`，只调整 Mattermost 入站附件保存时机，及原生附件 helper 的最小等价提取；新增五个测试，旧单文件测试仅适配分开的暂存/保存调用，不删改原断言。不改变其他平台的 `store_stream` 保存语义、UI、配置、依赖或日常部署。
+
+| 功能与用例 | 实际检查的结果 |
+|---|---|
+| F17/T14：`later_attachment_failure_cleans_staging_without_deleting_existing_blobs` | 八种情形：第二文件 HTTP 失败、错误源帖、声明大小超限、HTTP 长度超限、未知长度流超限、流失败、非法 ID，以及预存同内容 Blob；失败无入账、有安全提示、新增临时/最终文件均不保留，预存 Blob 内容不变 |
+| F17/T14：`cancelling_later_attachment_removes_pending_uploads` | 等第二附件进入流传输后取消；第一附件仍暂存、未保存最终文件，取消后临时文件清空，无入账；使用原生任务取消和临时文件析构 |
+| F17/T13：`completed_attachments_are_committed_together_with_full_metadata` | 模拟 Mattermost REST 对接真实 daemon 请求处理，一条 Ledger 消息含两个有序附件；检查标题、类型、MIME、字节数、SHA-256、源文件 ID 与实际内容，重复事件不再次下载或入账 |
+| 共享旧路径：`store_stream_preserves_existing_attachment_contract` | 分块读取后的元数据与原生 `store_bytes` 一致，覆盖 MIME 推断、有效/空白来源 ID、摘要、内容寻址去重和文件内容 |
+| 共享旧路径：`store_stream_cleans_partial_upload_on_read_and_size_errors` | 已写部分内容后出现读取故障或累计体积超限，原错误字符串保持，原生临时文件清理，无最终文件 |
+
+Linux 首次编译因四处旧测试仍调用更名前函数而失败；只更新调用方式，再跑附件相关筛选，23 项通过、0 失败。原始失败日志保留，不能写成首次即通过。Windows 已完成核心 IM 8 项、完整 IM 209 项（3 项真实站点用例默认忽略）、七组原生 smoke 共 11 项、fmt 及构建，全部通过。
+
+Linux 完整 CI 等价检查中，quality/Web/package、fmt/Clippy、安装器通过，随后原生 MCP `shared_runtime_is_sandboxed_and_persists_actor_store` 在五秒等待后返回 `running` 而不是 `completed`，该组为 81 通过/1 失败。`crates/cccc-mcp` 与上游基线无差异；原样单项复验通过（1 项），再原样执行完整 Rust 脚本通过，包括 MCP 82 项、daemon 库 525 项、其余 workspace/集成/自启动及原生离线 CLI 检查。保留首次失败，不修改共享代码/断言、不增加超时或跳过用例；复验通过也不能宣称已经证明或修复首次失败原因。
+
+适用 CI 检查分组均取得通过结果：Ruff、Python 111 项、Web 检查/1,526 项测试/生产构建、25 项打包用例及 wheel/Twine、Rust fmt/严格 Clippy/安装器/完整回归、Windows 上述检查与构建。CI 固定版本 Codex/Claude 各 1 项、Kilo 筛选 3 项通过；其中 OpenCode 条件项未启用，不把条件返回当成 OpenCode 实测。结论不是“首次完整脚本全绿”；本轮代码在两台测试机一致，未把测试期间的记录文档更新当成产品行为变更。最终提交的全历史扫描、推送及新 GitHub CI 状态另行登记，不引用上一提交的 CI 绿灯证明这次补丁。
+
+以上新增用例为受控协议与文件系统测试，其中成功路径实际调用 daemon 并检查 Ledger；不是重新开展真实 Mattermost/Actor 或浏览器验收。保存阶段磁盘故障和 daemon 提交之间的原子性不在本修复范围，禁止通过删除共享最终 Blob 伪造回滚保证。术语沿用既有词汇，无新增领域定义。
+
 ## 本次推送前完整检查（2026-09-13，review6）
 
 用户在 V01 完成后授权推送，范围为 `5ca137b1` 之后的两份 Mattermost Rust 文件及四份对应文档，继续更新原 PR #103；不合并、不发布 Release、不更换日常部署。产品代码与上述 review5/V01 候选内容相同，本阶段只补充检查记录。
