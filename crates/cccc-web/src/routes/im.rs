@@ -13,7 +13,14 @@ use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
 
 const PLATFORMS: &[&str] = &[
-    "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin",
+    "telegram",
+    "slack",
+    "discord",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "weixin",
+    "mattermost",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +98,9 @@ async fn set(
         current.get("config").and_then(Value::as_object),
     );
     update(&state, &group_id, |value| {
+        if value["config"]["platform"] == "mattermost" {
+            state.im_workers.invalidate_start(&group_id);
+        }
         let state = object(value);
         state.insert("config".into(), Value::Object(config.clone()));
         state.insert("enabled".into(), Value::Bool(false));
@@ -151,6 +161,16 @@ async fn set_running(
             .and_then(Value::as_object)
             .cloned()
             .ok_or_else(|| ApiError::bad("IM bridge is not configured"))?;
+        // Mattermost commits its result under the configuration lock and native generation guard.
+        // A superseded request must not write either its success or its error over a newer action.
+        if config.get("platform").and_then(Value::as_str) == Some("mattermost") {
+            state
+                .im_workers
+                .start(state.home.clone(), state.client.clone(), &group_id, &config)
+                .await
+                .map_err(ApiError::bad)?;
+            return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
+        }
         if let Err(error) = state
             .im_workers
             .start(state.home.clone(), state.client.clone(), &group_id, &config)

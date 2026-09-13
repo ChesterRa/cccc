@@ -18,6 +18,7 @@ The IM Bridge allows you to:
 | [Telegram](./telegram) | ✅ | Edited message | Lossless 4,096-character chunks |
 | [Slack](./slack) | ✅ | `chat.update` | Lossless 4,000-character chunks |
 | [Discord](./discord) | ✅ | Edited message | Lossless 2,000-character chunks |
+| [Mattermost](./mattermost) | ✅ | Edited message | Lossless 16,383-character chunks (default) |
 | [Feishu/Lark](./feishu) | ✅ | Edited message (with `im:message:update`) | Lossless 30,720-character chunks |
 | [DingTalk](./dingtalk) | ✅ | AI Card Streaming | Lossless 4,096-character / 64-line chunks |
 | [WeCom](./wecom) | ✅ | Native stream reply | Lossless 2,048-character / 64-line chunks |

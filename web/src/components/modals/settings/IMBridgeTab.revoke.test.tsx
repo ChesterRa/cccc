@@ -117,11 +117,76 @@ describe("IMBridgeTab revoke loading identity", () => {
     expect(container.textContent).not.toContain("Revoke");
   });
 
+  it("requires a Mattermost site and token using the existing configuration controls", async () => {
+    const mattermostProps = props();
+    mattermostProps.imPlatform = "mattermost";
+    mattermostProps.imBotTokenEnv = "MATTERMOST_BOT_TOKEN";
+    mattermostProps.onSaveConfig = vi.fn();
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    const saveButton = () =>
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "imBridge.saveConfig",
+      )!;
+    expect(saveButton().disabled).toBe(true);
+    expect(container.querySelector('input[type="url"]')?.id).toBe("im-mattermost-url");
+    expect(container.textContent).toContain("imBridge.mattermostUsageHint");
+
+    mattermostProps.imMattermostUrl = "https://mm.example.test/chat";
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    expect(saveButton().disabled).toBe(false);
+    await act(async () => saveButton().click());
+    expect(mattermostProps.onSaveConfig).toHaveBeenCalledOnce();
+
+    mattermostProps.imBotTokenEnv = "";
+    await act(async () => root.render(<IMBridgeTab {...mattermostProps} />));
+    expect(saveButton().disabled).toBe(true);
+  });
+
   function revokeButtons(): HTMLButtonElement[] {
     return [...container.querySelectorAll("button")].filter(
       (button) => button.textContent === "Revoke" || button.textContent === "...",
     ) as HTMLButtonElement[];
   }
+
+  it("blocks invalid Mattermost save and start, then recovers after correction", async () => {
+    const draft = { ...props(), imPlatform: "mattermost" as const, imBotTokenEnv: "MM_TEST_TOKEN" };
+    draft.imStatus = { ...draft.imStatus!, running: false };
+    const button = (key: string) =>
+      [...container.querySelectorAll("button")].find((item) => item.textContent === key)!;
+    for (const url of [
+      "not-a-url",
+      "ftp://example.test",
+      "https://example.test/api/v4",
+      "https://example.test?",
+    ]) {
+      draft.imMattermostUrl = url;
+      await act(async () => root.render(<IMBridgeTab {...draft} />));
+      expect(button("imBridge.saveConfig").disabled).toBe(true);
+      expect(button("imBridge.startBridge").disabled).toBe(true);
+      expect(container.querySelector("#im-mattermost-url")?.getAttribute("aria-invalid")).toBe(
+        "true",
+      );
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        "imBridge.mattermostUrlInvalid",
+      );
+    }
+    draft.imMattermostUrl = "https://example.test/sub/";
+    await act(async () => root.render(<IMBridgeTab {...draft} />));
+    expect(button("imBridge.saveConfig").disabled).toBe(false);
+    expect(button("imBridge.startBridge").disabled).toBe(false);
+    expect(container.querySelector("#im-mattermost-url-error")).toBeNull();
+    expect(container.textContent).toContain("imBridge.mattermostBotIsolationHint");
+  });
+
+  it("displays configuration errors only on Mattermost", async () => {
+    const draft = { ...props(), imConfigError: "测试保存失败", imPlatform: "mattermost" as const };
+    await act(async () => root.render(<IMBridgeTab {...draft} />));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("测试保存失败");
+    await act(async () => root.render(<IMBridgeTab {...draft} imPlatform="telegram" />));
+    expect(container.textContent).not.toContain("测试保存失败");
+    await act(async () => root.render(<IMBridgeTab {...draft} imConfigError="" />));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 });
 
 function props(): ComponentProps<typeof IMBridgeTab> {
@@ -143,6 +208,8 @@ function props(): ComponentProps<typeof IMBridgeTab> {
     setImBotTokenEnv: noop,
     imAppTokenEnv: "",
     setImAppTokenEnv: noop,
+    imMattermostUrl: "",
+    setImMattermostUrl: noop,
     imFeishuDomain: "",
     setImFeishuDomain: noop,
     imFeishuAppId: "",

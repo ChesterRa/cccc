@@ -24,6 +24,9 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod mattermost;
+mod mattermost_inbound;
+mod mattermost_outbound;
 mod outbound_attachment;
 mod outbound_chunks;
 mod outbound_message;
@@ -104,7 +107,10 @@ impl ImWorkerRegistry {
                 let result = registry
                     .start(home.clone(), client, &group_id, &config)
                     .await;
-                if let Ok(store) = GroupStore::new(home)
+                // These adapters commit start state under their configuration/generation guard.
+                const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
+                if !SELF_COMMIT_PLATFORMS.contains(&string(&config, "platform").as_str())
+                    && let Ok(store) = GroupStore::new(home)
                     && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
                         if !value.is_object() {
                             *value = json!({});
@@ -254,6 +260,10 @@ impl ImWorkerRegistry {
                 .install(group_id, generation, worker(tasks, no_op_stopper()))
                 .await;
         }
+        if platform == "mattermost" {
+            return mattermost::start_registered(self, home, client, group_id, config, generation)
+                .await;
+        }
         if platform == "feishu" {
             let tasks =
                 feishu::start(home, client, group_id, config, self.ledger_events.clone()).await?;
@@ -384,6 +394,14 @@ impl ImWorkerRegistry {
             .get(group_id)
             .copied()
             == Some(generation)
+    }
+
+    // Mattermost saves call this inside the existing configuration lock, before writing.
+    pub(crate) fn invalidate_start(&self, group_id: &str) {
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .remove(group_id);
     }
 
     fn lifecycle_lock(&self, group_id: &str) -> Arc<tokio::sync::Mutex<()>> {

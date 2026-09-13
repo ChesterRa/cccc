@@ -1364,6 +1364,7 @@ export type IMPlatform =
   | "telegram"
   | "slack"
   | "discord"
+  | "mattermost"
   | "feishu"
   | "dingtalk"
   | "wecom"
@@ -1377,9 +1378,10 @@ export type IMConfig = {
   // Canonical token fields
   bot_token?: string;
   app_token?: string;
-  // Token env fields (Slack/Telegram/Discord)
+  // Token env fields (Slack/Telegram/Discord/Mattermost)
   bot_token_env?: string;
   app_token_env?: string;
+  mattermost_url?: string;
   // Feishu fields
   feishu_domain?: string;
   feishu_app_id?: string;

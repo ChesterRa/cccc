@@ -46,7 +46,14 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let platform = required_arg(request, "platform")?.to_ascii_lowercase();
     if !matches!(
         platform.as_str(),
-        "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom" | "weixin"
+        "telegram"
+            | "slack"
+            | "discord"
+            | "feishu"
+            | "dingtalk"
+            | "wecom"
+            | "weixin"
+            | "mattermost"
     ) {
         return Err(OpError::new("invalid_args", "unsupported IM platform"));
     }

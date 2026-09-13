@@ -11,7 +11,14 @@ const RUST_SHADOW_KEY: &str = "im_bridge";
 const PENDING_TTL_SECONDS: f64 = 600.0;
 const DURABLE_KEYS: &[&str] = &["config", "enabled", "authorized", "pending", "subscribers"];
 const SUPPORTED_PLATFORMS: &[&str] = &[
-    "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin",
+    "telegram",
+    "slack",
+    "discord",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "weixin",
+    "mattermost",
 ];
 const CONFIG_INPUT_KEYS: &[&str] = &[
     "token_env",
@@ -43,6 +50,7 @@ const CONFIG_INPUT_KEYS: &[&str] = &[
     "wecom_agent_id",
     "weixin_account_id",
     "weixin_command",
+    "mattermost_url",
 ];
 
 #[derive(Clone, Copy)]
@@ -72,7 +80,7 @@ pub fn canonicalize_config(platform: &str, raw: &Map<String, Value>) -> Option<M
         output.insert("files".into(), Value::Object(files.clone()));
     }
     match platform.as_str() {
-        "telegram" | "discord" | "slack" => {
+        "telegram" | "discord" | "slack" | "mattermost" => {
             set_secret_ref(
                 &mut output,
                 "bot_token_env",
@@ -86,6 +94,12 @@ pub fn canonicalize_config(platform: &str, raw: &Map<String, Value>) -> Option<M
                     "app_token",
                     first_string(raw, &["app_token_env", "app_token"]),
                 );
+            }
+            if platform == "mattermost"
+                && let Some(value) = first_string(raw, &["mattermost_url"])
+            {
+                let value = normalize_mattermost_url(&value).unwrap_or(value);
+                output.insert("mattermost_url".into(), json!(value));
             }
         }
         "feishu" => {
@@ -203,6 +217,14 @@ pub fn has_required_credentials(platform: &str, config: &Map<String, Value>) -> 
     };
     match platform.trim().to_ascii_lowercase().as_str() {
         "telegram" | "discord" => has("bot_token", "bot_token_env"),
+        "mattermost" => {
+            has("bot_token", "bot_token_env")
+                && config
+                    .get("mattermost_url")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_mattermost_url)
+                    .is_some()
+        }
         "slack" => has("bot_token", "bot_token_env") && has("app_token", "app_token_env"),
         "feishu" => {
             has("feishu_app_id", "feishu_app_id_env")
@@ -648,6 +670,22 @@ fn is_env_var_name(value: &str) -> bool {
         && chars.all(|value| value == '_' || value.is_ascii_uppercase() || value.is_ascii_digit())
 }
 
+/// 站点地址保留安装子路径，禁止携带秘密或把 API URL 当作站点。
+pub fn normalize_mattermost_url(value: &str) -> Option<String> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path().trim_end_matches('/').ends_with("/api/v4")
+    {
+        return None;
+    }
+    Some(url.as_str().trim_end_matches('/').to_owned())
+}
+
 fn normalize_feishu_domain(value: String) -> String {
     let mut value = value.trim().to_ascii_lowercase();
     while value.ends_with('/') {
@@ -698,6 +736,62 @@ fn coerce_bool(value: &Value, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mattermost_configuration_requires_site_and_preserves_token_references() {
+        for (key, value, expected_key) in [
+            ("token_env", "MATTERMOST_TOKEN", "bot_token_env"),
+            ("bot_token", "test-token", "bot_token"),
+        ] {
+            let mut raw = json!({"mattermost_url":" https://MM.example.test/chat/ ",
+                "files":{"enabled":false,"max_mb":7}});
+            raw[key] = json!(value);
+            let config = canonicalize_config("Mattermost", raw.as_object().expect("config"))
+                .expect("platform");
+            assert_eq!(config["mattermost_url"], "https://mm.example.test/chat");
+            assert_eq!(config[expected_key], value);
+            assert_eq!(config["files"]["max_mb"], 7);
+            assert!(!config.contains_key("token_env"));
+            assert!(has_required_credentials("mattermost", &config));
+        }
+        for raw in [
+            json!({}),
+            json!({"bot_token_env":"MM_TOKEN"}),
+            json!({"mattermost_url":"https://mm.example.test"}),
+        ] {
+            let config = canonicalize_config("mattermost", raw.as_object().expect("config"))
+                .expect("platform");
+            assert!(!has_required_credentials("mattermost", &config));
+        }
+    }
+
+    #[test]
+    fn mattermost_site_rejects_credentials_query_and_non_http_schemes() {
+        for value in [
+            "",
+            "mm.example.test",
+            "file:///tmp/mm",
+            "ftp://mm.example.test",
+            "https://user:secret@mm.example.test",
+            "https://mm.example.test?token=secret",
+            "https://mm.example.test/#section",
+            "https://mm.example.test/api/v4/",
+        ] {
+            assert_eq!(normalize_mattermost_url(value), None, "{value}");
+            let config = canonicalize_config(
+                "mattermost",
+                json!({"mattermost_url":value,"bot_token_env":"MM_TOKEN"})
+                    .as_object()
+                    .expect("config"),
+            )
+            .expect("platform");
+            assert!(!has_required_credentials("mattermost", &config), "{value}");
+        }
+        assert_eq!(
+            normalize_mattermost_url("http://127.0.0.1:8065/"),
+            Some("http://127.0.0.1:8065".into())
+        );
+    }
     use crate::{HomeLayout, integration_state};
     use tempfile::TempDir;
 
