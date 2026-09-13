@@ -162,9 +162,31 @@ async fn visit_pending(
                 .is_some_and(|b| b["composer_chars"].as_u64().unwrap_or(0) > 0);
             // Close only after the receipt transaction above has settled, not
             // merely because a second page inspection looks different.
-            pending_receipt = target["last_submission_evidence"]["submission_evidence"]
-                == "optimistic_echo_unconfirmed";
-            // An optimistic bubble is still an in-flight Send, not idle time.
+            let submission = &target["last_submission_evidence"];
+            pending_receipt = submission["submission_evidence"] == "optimistic_echo_unconfirmed";
+            let close_receipt_check = target["last_delivery_status"] == "submitted"
+                && matches!(
+                    submission["submission_evidence"].as_str(),
+                    Some("message_echo" | "user_message_count_increased")
+                )
+                && submission["receipt_needles"]
+                    .as_array()
+                    .is_some_and(|needles| !needles.is_empty());
+            if !has_draft && !pending_receipt && close_receipt_check {
+                pending_receipt = match state
+                    .browser_surfaces
+                    .relay_receipt_stable_before_close(surface_key(), submission)
+                    .await
+                {
+                    Ok(stable) => !stable,
+                    Err(error) => {
+                        tracing::debug!(%error, "could not confirm a stable browser receipt before close");
+                        true
+                    }
+                };
+            }
+            // An optimistic or unstable receipt is still an in-flight Send,
+            // not idle time. Only the final browser close pays this guard.
             if !has_draft && !pending_receipt {
                 state
                     .browser_surfaces

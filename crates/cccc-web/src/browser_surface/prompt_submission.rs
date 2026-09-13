@@ -18,6 +18,7 @@ const SEND_CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SUBMISSION_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const SEND_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
+const RECEIPT_STABILITY_INTERVAL: Duration = Duration::from_secs(1);
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const BOUND_CONVERSATION_ERROR_MARKER: &str = "chatgpt_bound_conversation_unavailable:";
 
@@ -239,13 +240,16 @@ impl BrowserSurfaces {
                 )));
             }
             self.record_page_state(key, &page).await;
-            return Ok(PromptSubmissionOutcome::Verified(evidence(
-                true,
-                "existing:message_echo",
-                "message_echo",
-                "",
-                &existing,
-                &existing,
+            return Ok(PromptSubmissionOutcome::Verified(with_receipt_needles(
+                evidence(
+                    true,
+                    "existing:message_echo",
+                    "message_echo",
+                    "",
+                    &existing,
+                    &existing,
+                ),
+                &needles,
             )));
         }
 
@@ -535,24 +539,30 @@ impl BrowserSurfaces {
             ));
         }
         if observed.echo_found && !provisional_submission(&observed) {
-            return PromptSubmissionOutcome::Verified(evidence(
-                true,
-                attempt.action,
-                "message_echo",
-                attempt.input,
-                attempt.baseline,
-                &observed,
+            return PromptSubmissionOutcome::Verified(with_receipt_needles(
+                evidence(
+                    true,
+                    attempt.action,
+                    "message_echo",
+                    attempt.input,
+                    attempt.baseline,
+                    &observed,
+                ),
+                attempt.needles,
             ));
         }
         if let Some(submission_evidence) = verified_submission_evidence(attempt.baseline, &observed)
         {
-            return PromptSubmissionOutcome::Verified(evidence(
-                true,
-                attempt.action,
-                submission_evidence,
-                attempt.input,
-                attempt.baseline,
-                &observed,
+            return PromptSubmissionOutcome::Verified(with_receipt_needles(
+                evidence(
+                    true,
+                    attempt.action,
+                    submission_evidence,
+                    attempt.input,
+                    attempt.baseline,
+                    &observed,
+                ),
+                attempt.needles,
             ));
         }
         if let Some(submission_evidence) = weak_submission_evidence(attempt.baseline, &observed) {
@@ -606,26 +616,25 @@ impl BrowserSurfaces {
                     }
                     if snapshot.echo_found && !provisional_submission(&snapshot) {
                         self.record_page_state(key, page).await;
-                        return PromptSubmissionOutcome::Verified(evidence(
-                            true,
-                            action,
-                            "message_echo",
-                            input,
-                            baseline,
-                            &snapshot,
+                        return PromptSubmissionOutcome::Verified(with_receipt_needles(
+                            evidence(true, action, "message_echo", input, baseline, &snapshot),
+                            needles,
                         ));
                     }
                     if let Some(submission_evidence) =
                         verified_submission_evidence(baseline, &snapshot)
                     {
                         self.record_page_state(key, page).await;
-                        return PromptSubmissionOutcome::Verified(evidence(
-                            true,
-                            action,
-                            submission_evidence,
-                            input,
-                            baseline,
-                            &snapshot,
+                        return PromptSubmissionOutcome::Verified(with_receipt_needles(
+                            evidence(
+                                true,
+                                action,
+                                submission_evidence,
+                                input,
+                                baseline,
+                                &snapshot,
+                            ),
+                            needles,
                         ));
                     }
                     weak_evidence = weak_submission_evidence(baseline, &snapshot)
@@ -787,6 +796,42 @@ impl BrowserSurfaces {
         evidence["submitted"] = json!(false);
         evidence["submission_evidence"] = json!(reason);
         Ok(Some(evidence))
+    }
+
+    pub(crate) async fn relay_receipt_stable_before_close(
+        &self,
+        key: &str,
+        evidence: &Value,
+    ) -> Result<bool> {
+        let needles = evidence["receipt_needles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if needles.is_empty() {
+            return Ok(false);
+        }
+        let expected_url = evidence["tab_url"].as_str().unwrap_or("");
+        let page = self.page(key).await?;
+        let deadline = Instant::now() + RECEIPT_STABILITY_INTERVAL;
+        loop {
+            let snapshot = inspect_submission(&page, "", &needles).await?;
+            let stable = snapshot.echo_found
+                && !provisional_submission(&snapshot)
+                && snapshot.page_blocker.is_empty()
+                && (expected_url.is_empty() || same_page(expected_url, &snapshot.url));
+            if !stable {
+                self.record_page_state(key, &page).await;
+                return Ok(false);
+            }
+            if Instant::now() >= deadline {
+                self.record_page_state(key, &page).await;
+                return Ok(true);
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
     }
 
     pub(crate) async fn relay_target_deferral(
@@ -1317,6 +1362,17 @@ fn evidence(
         "baseline":baseline,
         "observed":current
     })
+}
+
+fn with_receipt_needles(mut evidence: Value, needles: &[String]) -> Value {
+    let receipt_needles = needles
+        .iter()
+        .filter(|needle| needle.starts_with("Browser batch ") || needle.starts_with("events="))
+        .collect::<Vec<_>>();
+    if !receipt_needles.is_empty() {
+        evidence["receipt_needles"] = json!(receipt_needles);
+    }
+    evidence
 }
 
 fn with_attachment_evidence(

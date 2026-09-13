@@ -880,12 +880,27 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
         manager.submit_prompt_with_attachment(
             "background-submit",
             &url,
-            "BACKGROUND_REPORT",
+            "Browser batch background events=background-once",
             None,
             "background-once",
         ),
     )
     .await;
+    let receipt_evidence = match &outcome {
+        Ok(Ok(prompt_submission::PromptSubmissionOutcome::Verified(evidence))) => {
+            Some(evidence.clone())
+        }
+        _ => None,
+    };
+    let close_check_started = std::time::Instant::now();
+    let close_ready = match receipt_evidence.as_ref() {
+        Some(evidence) => manager
+            .relay_receipt_stable_before_close("background-submit", evidence)
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
+    let close_check_ms = close_check_started.elapsed().as_millis();
     let confirmed = page
         .evaluate("Boolean(window.accepted)")
         .await
@@ -909,7 +924,7 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
                 .submit_prompt_with_attachment(
                     "background-submit",
                     &url,
-                    "BACKGROUND_REPORT",
+                    "Browser batch background events=background-once",
                     None,
                     "background-once",
                 )
@@ -923,11 +938,18 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
     )
     .await
     .expect("provisional duplicate fixture");
+    let provisional_close_ready = match receipt_evidence.as_ref() {
+        Some(evidence) => manager
+            .relay_receipt_stable_before_close("background-submit", evidence)
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
     let provisional = manager
         .submit_prompt_with_attachment(
             "background-submit",
             &url,
-            "BACKGROUND_REPORT",
+            "Browser batch background events=background-once",
             None,
             "background-once",
         )
@@ -950,6 +972,15 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
     assert!(
         confirmed,
         "optimistic client echo was mistaken for a completed submission"
+    );
+    assert!(close_ready, "stable server receipt was not safe to close");
+    assert!(
+        close_check_ms >= 800,
+        "browser close guard observed the receipt for only {close_check_ms}ms"
+    );
+    assert!(
+        !provisional_close_ready,
+        "a provisional echo was treated as stable enough to close"
     );
     assert!(
         matches!(
