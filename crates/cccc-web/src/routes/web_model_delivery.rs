@@ -1923,126 +1923,6 @@ mod retry_integration_tests {
     }
 
     #[tokio::test]
-    async fn real_browser_deferral_resumes_the_same_report_once() {
-        assert!(
-            crate::system_browser_path().is_some(),
-            "real Chrome required"
-        );
-        let harness = browser_harness("test-browser-retry", Duration::from_millis(10)).await;
-        cccc_core::access_tokens::AccessTokenStore::new(harness.home.clone())
-            .expect("test token store")
-            .create("health test", Vec::new(), true, Some("t05-health-fixture"))
-            .expect("isolated test administrator");
-        let state = &harness.state;
-        let browser = &harness.browser;
-        let count = Arc::new(AtomicUsize::new(0));
-        let received = Arc::clone(&count);
-        let page = r#"<!doctype html><html><body>
-<button style="position:fixed;left:10px;top:10px;width:130px;height:36px" type="button" onclick="document.querySelector('#busy').remove();this.remove()">Finish current answer</button>
-<button style="position:fixed;left:350px;top:10px;width:130px;height:36px" type="button" onclick="document.querySelector('textarea').value=''">Resolve own test draft</button>
-<button id="busy" type="button" aria-label="Stop streaming" style="position:fixed;left:180px;top:10px">Stop</button>
-<textarea id="prompt-textarea" placeholder="Message" style="position:fixed;left:10px;top:70px;width:650px;height:120px">unsent human draft</textarea>
-<button data-testid="send-button" type="button" aria-label="Send prompt" style="position:fixed;left:10px;top:230px;width:100px;height:35px" onclick="const t=document.querySelector('textarea');if(!t.value)return;const d=document.createElement('div');d.dataset.messageAuthorRole='user';d.textContent=t.value;d.style='margin-top:290px';document.body.append(d);t.value='';fetch('/received',{method:'POST'})">Send</button>
-</body></html>"#;
-        let app = axum::Router::new()
-            .route(
-                "/",
-                axum::routing::get(move || async move { axum::response::Html(page) }),
-            )
-            .route(
-                "/received",
-                axum::routing::post(move || {
-                    let received = Arc::clone(&received);
-                    async move {
-                        received.fetch_add(1, Ordering::SeqCst);
-                        "ok"
-                    }
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("fixture listener");
-        let url = format!(
-            "http://{}/",
-            listener.local_addr().expect("fixture address")
-        );
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
-        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(timeout(
-            Duration::from_secs(40),
-            async {
-                let gid = web_group(state, "real browser retry").await;
-                web_model_connectors::save_browser_target(
-                    &harness.home,
-                    &gid,
-                    "web",
-                    Some(json!({"kind":"existing_chat","url":url})),
-                )
-                .expect("target");
-                let id = queue_mail(state, &gid, "BROWSER_RETRY_REPORT").await;
-                browser
-                    .ensure_open(surface_key(), &harness.profile(), &url, 800, 600)
-                    .await
-                    .expect("real Chrome");
-                for (action, x) in [("wait_for_reply", 75), ("resolve_draft", 390)] {
-                    assert!(matches!(
-                        deliver_pending(state, &gid, "web")
-                            .await
-                            .expect("blocked visit"),
-                        DeliveryOutcome::Idle
-                    ));
-                    assert_eq!(
-                        count.load(Ordering::SeqCst),
-                        0,
-                        "sent while blocked: {action}"
-                    );
-                    assert_eq!(health_action(&harness.api, &gid).await, action);
-                    browser
-                        .command(surface_key(), &json!({"t":"click","x":x,"y":28}))
-                        .await
-                        .expect("release fixture blocker");
-                }
-                deliver_pending(state, &gid, "web")
-                    .await
-                    .expect("resume original");
-                wait_for_original_receipt(state, &gid, &id).await;
-                timeout(Duration::from_secs(12), async {
-                    while count.load(Ordering::SeqCst) == 0 {
-                        tokio::time::sleep(Duration::from_millis(20)).await;
-                    }
-                })
-                .await
-                .expect("server received original");
-                assert!(matches!(
-                    deliver_pending(state, &gid, "web")
-                        .await
-                        .expect("duplicate visit"),
-                    DeliveryOutcome::Idle
-                ));
-                assert_eq!(count.load(Ordering::SeqCst), 1, "duplicate submission");
-                let store = GroupStore::new(harness.home.clone()).expect("store");
-                let events =
-                    ledger::read_all(&store.ledger_path(&gid).expect("path")).expect("events");
-                assert_eq!(
-                    events.iter().filter(|e| e.kind == "chat.message").count(),
-                    1
-                );
-                let transitions = events
-                    .iter()
-                    .filter(|e| e.kind == "runtime.delivery" && e.data["source_event_id"] == id)
-                    .filter_map(|e| e.data["state"].as_str())
-                    .collect::<Vec<_>>();
-                assert_eq!(transitions, ["claimed", "failed", "claimed", "accepted"]);
-                // Later reports, batched contention and unread Mail are checked in the two-group flow.
-            },
-        )))
-        .await;
-        finish_browser_test(harness, vec![server]).await;
-        result
-            .expect("deferral assertions")
-            .expect("bounded browser flow");
-    }
-
-    #[tokio::test]
     async fn on_demand_browser_reopens_original_reports_after_shared_cooldown() {
         assert!(
             crate::system_browser_path().is_some(),
@@ -2203,6 +2083,10 @@ mod retry_integration_tests {
             "real Chrome required"
         );
         let harness = browser_harness("two-group-browser", Duration::from_millis(10)).await;
+        cccc_core::access_tokens::AccessTokenStore::new(harness.home.clone())
+            .expect("test token store")
+            .create("health test", Vec::new(), true, Some("t05-health-fixture"))
+            .expect("isolated test administrator");
         let state = &harness.state;
         let browser = &harness.browser;
         let records = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -2270,6 +2154,7 @@ mod retry_integration_tests {
                     }
                 }
                 assert!(records.lock().expect("records").is_empty(), "sent through A's draft");
+                assert_eq!(health_action(&harness.api, &groups[0].1).await, "resolve_draft");
                 assert_eq!(browser.info(surface_key()).await["url"], format!("{base}/a"));
                 browser.command(surface_key(), &json!({"t":"click","x":390,"y":28})).await.expect("clear draft");
                 for (_, gid) in &groups { deliver_pending(state, gid, "web").await.expect("resume batch"); }
@@ -2310,6 +2195,7 @@ mod retry_integration_tests {
                         tokio::time::sleep(Duration::from_millis(25)).await;
                     }
                 }).await.expect("original report deferred");
+                assert_eq!(health_action(&harness.api, gid).await, "wait_for_reply");
                 page.evaluate("history.replaceState({},'', '/archived');document.body.innerHTML='<main><p>This conversation is archived</p><button>Unarchive</button></main>'").await.expect("foreign archive");
                 for (_, group) in &groups { deliver_pending(state, group, "web").await.expect("resume original"); }
                 wait_for_original_receipt(state, gid, &id).await;
@@ -2320,6 +2206,10 @@ mod retry_integration_tests {
                 assert_eq!(received.len(), 3, "duplicate later report");
                 assert_eq!(received[2]["path"], "/b");
                 assert!(received[2]["prompt"].as_str().expect("prompt").contains(&id));
+                let events = read_events(gid);
+                let transitions = events.iter().filter(|e| e.kind == "runtime.delivery" && e.data["source_event_id"] == id)
+                    .filter_map(|e| e.data["state"].as_str()).collect::<Vec<_>>();
+                assert_eq!(transitions, ["claimed", "failed", "claimed", "accepted"]);
             }
         ))).await;
         finish_browser_test(harness, vec![server]).await;

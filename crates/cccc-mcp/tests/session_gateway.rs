@@ -171,6 +171,10 @@ impl Gateway {
             .expect("response present");
         serde_json::from_str(&line).expect("JSON response")
     }
+    async fn tool(&mut self, name: &str, args: Value, session: Option<&str>) -> Value {
+        self.call(request(name, args, session)).await
+    }
+
     async fn stop(mut self) {
         self.input.shutdown().await.expect("close input");
         drop(self.input);
@@ -233,57 +237,49 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
         let b = Some("synthetic-chat-b");
         let code = issue();
         let bound = g
-            .call(request("cccc_session_bind", json!({"code":code}), a))
+            .tool("cccc_session_bind", json!({"code":code}), a)
             .await;
         assert_eq!(payload(&bound)["bound"], true, "{bound}");
         assert_eq!(payload(&bound)["group_id"], gid);
         let boot = g
-            .call(request(
-                "cccc_bootstrap",
+            .tool("cccc_bootstrap",
                 json!({"by":"user","actor_id":"user"}),
-                a,
-            ))
+                a,)
             .await;
         assert_eq!(payload(&boot)["session"]["group_id"], gid, "{boot}");
         assert_eq!(payload(&boot)["session"]["actor_id"], "web-lead");
         assert!(!boot.to_string().contains("must-not-leak"));
         assert_eq!(
             error(
-                &g.call(request("cccc_bootstrap", json!({"group_id":foreign}), a))
+                &g.tool("cccc_bootstrap", json!({"group_id":foreign}), a)
                     .await
             ),
             "group_scope_mismatch"
         );
         assert_eq!(
             error(
-                &g.call(request(
-                    "cccc_message_send",
+                &g.tool("cccc_message_send",
                     json!({"dst_group_id":foreign,"text":"no","to":["user"]}),
-                    a
-                ))
+                    a)
                 .await
             ),
             "group_scope_mismatch"
         );
         let nested = g
-            .call(request(
-                "cccc_capability_use",
+            .tool("cccc_capability_use",
                 json!({"tool_name":"cccc_project_info","tool_arguments":{"group_id":foreign}}),
-                a,
-            ))
+                a,)
             .await;
         assert_eq!(error(&nested), "group_scope_mismatch", "{nested}");
         let listed = g
-            .call(request(
-                "cccc_capability_use",
+            .tool("cccc_capability_use",
                 json!({"tool_name":"cccc_group","tool_arguments":{"action":"list"}}),
-                a,
-            ))
+                a,)
             .await;
         assert!(!listed.to_string().contains("must-not-leak"), "{listed}");
         assert_eq!(
             error(
-                &g.call(request("cccc_session_bind", json!({"code":code}), b))
+                &g.tool("cccc_session_bind", json!({"code":code}), b)
                     .await
             ),
             "session_binding_code_invalid"
@@ -294,7 +290,7 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
             json!({"group_id":gid,"by":"user","to":["web-lead"],"text":"local-report","message_mode":"mail"}),
         )
         .await;
-        let inbox = g.call(request("cccc_inbox_read", json!({}), a)).await;
+        let inbox = g.tool("cccc_inbox_read", json!({}), a).await;
         assert!(inbox.to_string().contains("local-report"), "{inbox}");
         // Real code-mode calls must preserve the conversation scope through nested tools.
         let source = format!(
@@ -307,11 +303,9 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
             serde_json::to_string(&foreign).expect("quoted id")
         );
         let code_result = g
-            .call(request(
-                "cccc_code_exec",
+            .tool("cccc_code_exec",
                 json!({"source":source,"yield_time_ms":5000}),
-                a,
-            ))
+                a,)
             .await;
         assert_eq!(
             payload(&code_result)["status"],
@@ -323,26 +317,26 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
         assert!(output.contains("group_scope_mismatch"));
         assert!(!code_result.to_string().contains("UNEXPECTED"));
         let pending = g
-            .call(request("cccc_code_exec", json!({"source":"await new Promise(resolve=>setTimeout(resolve,2000)); text(await tools.cccc_bootstrap({}));", "yield_time_ms":0}), a))
+            .tool("cccc_code_exec", json!({"source":"await new Promise(resolve=>setTimeout(resolve,2000)); text(await tools.cccc_bootstrap({}));", "yield_time_ms":0}), a)
             .await;
         let pending_cell = payload(&pending)["cell_id"].clone();
         assert_eq!(payload(&pending)["running"], true, "{pending}");
         let replacement = issue();
         assert_eq!(
             payload(
-                &g.call(request("cccc_session_bind", json!({"code":replacement}), b))
+                &g.tool("cccc_session_bind", json!({"code":replacement}), b)
                     .await
             )["bound"],
             true
         );
         assert_eq!(
-            error(&g.call(request("cccc_bootstrap", json!({}), a)).await),
+            error(&g.tool("cccc_bootstrap", json!({}), a).await),
             "session_binding_required"
         );
-        let boot = g.call(request("cccc_bootstrap", json!({}), b)).await;
+        let boot = g.tool("cccc_bootstrap", json!({}), b).await;
         assert_eq!(payload(&boot)["session"]["group_id"], gid);
         let old_cell = g
-            .call(request("cccc_code_wait", json!({"cell_id":pending_cell}), b))
+            .tool("cccc_code_wait", json!({"cell_id":pending_cell}), b)
             .await;
         assert_eq!(
             payload(&old_cell)["status"],
@@ -353,7 +347,7 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
         g.stop().await;
         let mut g = Gateway::start(&home);
         assert_eq!(
-            payload(&g.call(request("cccc_bootstrap", json!({}), b)).await)["session"]["group_id"],
+            payload(&g.tool("cccc_bootstrap", json!({}), b).await)["session"]["group_id"],
             gid
         );
         GroupStore::new(home.clone())
@@ -364,7 +358,7 @@ async fn real_stdio_gateway_binds_reads_mail_rejects_cross_group_and_invalidates
             })
             .expect("disable");
         assert_eq!(
-            error(&g.call(request("cccc_bootstrap", json!({}), b)).await),
+            error(&g.tool("cccc_bootstrap", json!({}), b).await),
             "connector_actor_unavailable"
         );
         g.stop().await;
@@ -383,7 +377,7 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
             let mut gateway = Gateway::start(&home);
             let create = json!({"path":project,"title":"Chat first A"});
             let a = gateway
-                .call(request("cccc_group_create", create.clone(), Some("chat-first-a")))
+                .tool("cccc_group_create", create.clone(), Some("chat-first-a"))
                 .await;
             assert_eq!(payload(&a)["status"], "needs_chat_url", "{a}");
             let ga = payload(&a)["group_id"]
@@ -399,23 +393,21 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
                 "Chat-first creation changed the global active group"
             );
             let again = gateway
-                .call(request("cccc_group_create", create, Some("chat-first-a")))
+                .tool("cccc_group_create", create, Some("chat-first-a"))
                 .await;
             assert_eq!(payload(&again)["group_id"], ga);
             assert_eq!(payload(&again)["reused"], true);
             let b = gateway
-                .call(request(
-                    "cccc_group_create",
+                .tool("cccc_group_create",
                     json!({"path":project,"title":"Chat first B"}),
-                    Some("chat-first-b"),
-                ))
+                    Some("chat-first-b"),)
                 .await;
             let gb = payload(&b)["group_id"]
                 .as_str()
                 .expect("group B")
                 .to_owned();
             assert_ne!(ga, gb);
-            let add = gateway.call(request("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"local-worker","runtime":"opencode","title":"Local worker"}}), Some("chat-first-a"))).await;
+            let add = gateway.tool("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"local-worker","runtime":"opencode","title":"Local worker"}}), Some("chat-first-a")).await;
             assert_ne!(add["result"]["isError"], true, "{add}");
             assert!(
                 load_group(&home, &ga)
@@ -425,35 +417,29 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
                         && actor.runtime == cccc_contracts::ActorRuntime::Opencode),
                 "{add}"
             );
-            let second_web = gateway.call(request("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"second-web","runtime":"web_model"}}), Some("chat-first-a"))).await;
+            let second_web = gateway.tool("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"second-web","runtime":"web_model"}}), Some("chat-first-a")).await;
             assert_eq!(
                 error(&second_web),
                 "chatgpt_web_model_singleton",
                 "{second_web}"
             );
             let target = gateway
-                .call(request(
-                    "cccc_group_bind",
+                .tool("cccc_group_bind",
                     json!({"group":ga,"chat_url":"https://chatgpt.com/c/stable-chat-first-a"}),
-                    Some("chat-first-a"),
-                ))
+                    Some("chat-first-a"),)
                 .await;
             assert_eq!(payload(&target)["callback_target_ready"], true, "{target}");
             assert_eq!(payload(&target)["status"], "configured");
             let steal = gateway
-                .call(request(
-                    "cccc_group_bind",
+                .tool("cccc_group_bind",
                     json!({"group":ga}),
-                    Some("third-chat"),
-                ))
+                    Some("third-chat"),)
                 .await;
             assert_eq!(error(&steal), "group_already_bound", "{steal}");
             let invalid = gateway
-                .call(request(
-                    "cccc_group_create",
+                .tool("cccc_group_create",
                     json!({"path":project,"chat_url":"https://example.com/c/wrong"}),
-                    Some("fourth-chat"),
-                ))
+                    Some("fourth-chat"),)
                 .await;
             assert_eq!(error(&invalid), "invalid_chat_url", "{invalid}");
             assert_eq!(
@@ -497,14 +483,14 @@ async fn concurrent_gateways_keep_groups_separate_and_create_once() {
                 let create = json!({"path":path,"title":format!("concurrent-{slot}")});
                 barrier.wait().await;
                 let result = g
-                    .call(request("cccc_group_create", create.clone(), Some(&session)))
+                    .tool("cccc_group_create", create.clone(), Some(&session))
                     .await;
                 let id = payload(&result)["group_id"]
                     .as_str()
                     .expect("created group")
                     .to_owned();
                 let retry = g
-                    .call(request("cccc_group_create", create, Some(&session)))
+                    .tool("cccc_group_create", create, Some(&session))
                     .await;
                 assert_eq!(
                     payload(&retry)["group_id"],
@@ -516,7 +502,7 @@ async fn concurrent_gateways_keep_groups_separate_and_create_once() {
                 let foreign = ids.lock().await[(slot + 1) % 10].clone();
                 for round in 0..5 {
                     let state = g
-                        .call(request("cccc_bootstrap", json!({}), Some(&session)))
+                        .tool("cccc_bootstrap", json!({}), Some(&session))
                         .await;
                     assert_eq!(
                         payload(&state)["session"]["group_id"],
@@ -524,11 +510,9 @@ async fn concurrent_gateways_keep_groups_separate_and_create_once() {
                         "binding drifted on round {round}"
                     );
                     let wrong = g
-                        .call(request(
-                            "cccc_bootstrap",
+                        .tool("cccc_bootstrap",
                             json!({"group_id":foreign}),
-                            Some(&session),
-                        ))
+                            Some(&session),)
                         .await;
                     assert_eq!(error(&wrong), "group_scope_mismatch");
                 }
@@ -540,7 +524,7 @@ async fn concurrent_gateways_keep_groups_separate_and_create_once() {
                 )
                 .await;
                 let mail = g
-                    .call(request("cccc_inbox_read", json!({}), Some(&session)))
+                    .tool("cccc_inbox_read", json!({}), Some(&session))
                     .await;
                 let messages = payload(&mail)["messages"].as_array().expect("Mail");
                 assert_eq!(messages.len(), 1, "wrong group's inbox or duplicate report");
@@ -568,11 +552,11 @@ async fn concurrent_gateways_keep_groups_separate_and_create_once() {
                 let mut g = Gateway::start(&home);
                 barrier.wait().await;
                 let result = g
-                    .call(request(
+                    .tool(
                         "cccc_group_create",
                         json!({"path":path,"title":"one-racing-chat"}),
                         Some("one-synthetic-chat"),
-                    ))
+                    )
                     .await;
                 let id = payload(&result)["group_id"]
                     .as_str()
@@ -624,35 +608,35 @@ async fn both_binding_routes_preserve_the_local_foreman_and_web_peer_permissions
             if use_code {
                 let (entry, _) = web_model_connectors::create(&home, &gid, "web-peer", "chatgpt", "Web member").expect("connector");
                 let code = web_model_connectors::prepare_binding(&home, entry["connector_id"].as_str().expect("connector ID"), 600).expect("code");
-                let bound = gateway.call(request("cccc_session_bind", json!({"code":code["code"]}), chat)).await;
+                let bound = gateway.tool("cccc_session_bind", json!({"code":code["code"]}), chat).await;
                 assert_eq!(payload(&bound)["bound"], true, "{bound}");
             }
-            let bound = gateway.call(request("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/peer-chat"}), chat)).await;
+            let bound = gateway.tool("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/peer-chat"}), chat).await;
             let binding = payload(&bound);
             assert_eq!((&binding["role"], &binding["actor_id"], &binding["status"]),
                 (&json!("peer"), &json!("web-peer"), &json!("configured")), "{bound}");
             assert_eq!(binding["callback_target_ready"], true);
             assert_eq!(binding["reused"], true);
-            let boot = gateway.call(request("cccc_bootstrap", json!({}), chat)).await;
+            let boot = gateway.tool("cccc_bootstrap", json!({}), chat).await;
             assert_eq!(payload(&boot)["session"]["role"], "peer", "{boot}");
             assert_eq!(payload(&boot)["session"]["actor_id"], "web-peer");
-            let report = gateway.call(request("cccc_message_send", json!({"to":["user"],"mode":"send","text":"peer report"}), chat)).await;
+            let report = gateway.tool("cccc_message_send", json!({"to":["user"],"mode":"send","text":"peer report"}), chat).await;
             assert_ne!(report["result"]["isError"], true, "{report}");
-            let forbidden = gateway.call(request("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"forbidden","runtime":"custom","by":"user"}}), chat)).await;
+            let forbidden = gateway.tool("cccc_capability_use", json!({"tool_name":"cccc_actor","tool_arguments":{"action":"add","actor_id":"forbidden","runtime":"custom","by":"user"}}), chat).await;
             assert_eq!(forbidden["result"]["isError"], true, "peer acquired administration: {forbidden}");
             let group = load_group(&home, &gid);
             assert_eq!(group.actors[0].id, "local-lead", "replaced local foreman");
             assert_eq!(group.actors.len(), 2, "changed member list");
             assert!(group.extra["web_model_browser_targets"].get("local-lead").is_none());
-            let rebind = gateway.call(request("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/peer-chat-2"}), chat)).await;
+            let rebind = gateway.tool("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/peer-chat-2"}), chat).await;
             assert_eq!(payload(&rebind)["actor_id"], "web-peer", "{rebind}");
             assert_eq!(payload(&rebind)["callback_target_ready"], true);
             assert_eq!(load_group(&home, &gid).extra["web_model_browser_targets"]["web-peer"]["url"],
                 "https://chatgpt.com/c/peer-chat-2", "return target was not saved");
             let other = daemon_group(&client, &elsewhere, "elsewhere").await;
-            let cross = gateway.call(request("cccc_group_bind", json!({"group":other}), chat)).await;
+            let cross = gateway.tool("cccc_group_bind", json!({"group":other}), chat).await;
             assert_eq!(error(&cross), "session_already_bound", "{cross}");
-            let unchanged = gateway.call(request("cccc_bootstrap", json!({}), chat)).await;
+            let unchanged = gateway.tool("cccc_bootstrap", json!({}), chat).await;
             assert_eq!(payload(&unchanged)["session"]["actor_id"], "web-peer");
             gateway.stop().await;
         }).await;
@@ -683,21 +667,21 @@ async fn unbound_chat_first_bind_keeps_conflict_semantics_and_rejects_unusable_w
                 }
                 _ => {}
             }
-            let bind = gateway.call(request("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/shape"}), chat)).await;
+            let bind = gateway.tool("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/shape"}), chat).await;
             assert_eq!(error(&bind), expected, "{shape}: {bind}");
-            let boot = gateway.call(request("cccc_bootstrap", json!({}), chat)).await;
+            let boot = gateway.tool("cccc_bootstrap", json!({}), chat).await;
             assert_eq!(error(&boot), "session_binding_required", "rejected shape left session bound: {shape}");
             let connectors = web_model_connectors::load(&home).expect("connectors");
             assert!(connectors.iter().all(|entry| entry["group_id"] != gid || entry["revoked"] == true), "rejected shape gained connector: {shape}");
         }
         let gid = daemon_group(&client, &project, "web only").await;
         add_actor(&client, &gid, "web-solo", "web_model", None).await;
-        let bound = gateway.call(request("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/web-solo"}), chat)).await;
+        let bound = gateway.tool("cccc_group_bind", json!({"group":gid,"chat_url":"https://chatgpt.com/c/web-solo"}), chat).await;
         assert_eq!(payload(&bound)["role"], "foreman");
         assert_eq!(payload(&bound)["actor_id"], "web-solo");
         assert_eq!(payload(&bound)["status"], "configured");
         assert_eq!(load_group(&home, &gid).actors.len(), 1);
-        let boot = gateway.call(request("cccc_bootstrap", json!({}), chat)).await;
+        let boot = gateway.tool("cccc_bootstrap", json!({}), chat).await;
         assert_eq!(payload(&boot)["session"]["actor_id"], "web-solo");
         assert_eq!(payload(&boot)["session"]["role"], "foreman");
         gateway.stop().await;

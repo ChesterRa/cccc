@@ -1380,23 +1380,21 @@ mod tests {
                 crate::integration_state::group_get(&store, group_id, "web_model_browser_targets")
                     .expect("target before late response");
             let before_connectors = load(&home).expect("connectors before late response");
-            for status in [
-                "submitted",
-                "failed",
-                "deferred",
-                "completion_ambiguous",
-                "pending_new_chat_bind",
-            ] {
-                assert!(!update_browser_target(&home, group_id, "web-lead", &owner,
-                    json!({"last_delivery_status":status,"url":"https://chatgpt.com/c/late-old-url"}).as_object().expect("F1 connector fixture value")).expect("conditional patch"), "{action}: {status}");
-                assert!(
-                    !update_browser_connector(&home, group_id, "web-lead", &owner, |item| {
-                        item["last_call_status"] = json!(status);
-                    })
-                    .expect("conditional activity"),
-                    "{action}: {status}"
-                );
-            }
+            // Ownership is checked before either payload is inspected; repeated status strings add no branch.
+            assert!(!update_browser_target(&home, group_id, "web-lead", &owner,
+                json!({"last_delivery_status":"submitted", "url":"https://chatgpt.com/c/late-old-url"})
+                    .as_object().expect("late patch")).expect("conditional patch"), "{action}");
+            assert!(
+                !update_browser_connector(
+                    &home,
+                    group_id,
+                    "web-lead",
+                    &owner,
+                    |item| item["last_call_status"] = json!("submitted")
+                )
+                .expect("conditional activity"),
+                "{action}"
+            );
             assert_eq!(
                 crate::integration_state::group_get(&store, group_id, "web_model_browser_targets")
                     .expect("target after"),

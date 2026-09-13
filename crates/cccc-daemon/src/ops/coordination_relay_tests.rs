@@ -81,7 +81,7 @@ impl Fixture {
             .expect("pause group");
     }
 
-    fn report(&self, actor_id: &str, text: &str, task_id: Option<&str>) -> Event {
+    fn report(&self, actor_id: &str, task_id: Option<&str>) -> Event {
         let mut refs = Vec::new();
         if let Some(task_id) = task_id {
             refs.push(json!({
@@ -92,7 +92,7 @@ impl Fixture {
         let mut report = Event::new("chat.message", &self.group.group_id);
         report.by = actor_id.into();
         report.data = json!({
-            "to":["web-lead"],"message_mode":"mail","text":text,"refs":refs
+            "to":["web-lead"],"message_mode":"mail","text":"Member result","refs":refs
         })
         .as_object()
         .cloned()
@@ -317,11 +317,7 @@ fn interrupted_continue(
 fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates() {
     let fixture = Fixture::new("relay continue");
     let source_task = fixture.task("Implement relay", "worker-a");
-    let report = fixture.report(
-        "worker-a",
-        "Implemented the relay and verified the focused tests. Review the diff before merging.",
-        Some(&source_task),
-    );
+    let report = fixture.report("worker-a", Some(&source_task));
     fixture.handoff(&report, "turn-continue");
     fixture.claim_for_web(&report);
     assert_eq!(fixture.pending_sources().len(), 1);
@@ -409,7 +405,7 @@ fn status_decisions_update_only_their_task_and_never_duplicate_the_report() {
         let fixture = Fixture::new("relay decision states");
         let source_task = fixture.task("Source task", "worker-a");
         let other_task = fixture.task("Other live work", "worker-b");
-        let report = fixture.report("worker-a", "Source task finished.", Some(&source_task));
+        let report = fixture.report("worker-a", Some(&source_task));
         fixture.handoff(&report, "turn-states");
 
         if reason.is_some() {
@@ -481,7 +477,7 @@ fn task_updates_require_an_explicit_reference_and_preserve_other_members_work() 
     let fixture = Fixture::new("relay task ownership");
     let source_task = fixture.task("Unreferenced source task", "worker-a");
     let unrelated_task = fixture.task("Unrelated task", "worker-b");
-    let report = fixture.report("worker-a", "Source task finished.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "turn-owned-task");
 
     let error = fixture
@@ -525,7 +521,7 @@ fn unreferenced_reports_never_infer_task_ownership_from_a_single_active_task() {
     let stray_task = fixture.task("Only active task", "worker-a");
     // The report carries no task_ref, its handoff has no task_ids, and there is
     // no reply_to chain to an original assignment.
-    let report = fixture.report("worker-a", "Unrelated status note.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "turn-no-task-link");
 
     let result = fixture
@@ -555,7 +551,7 @@ fn unreferenced_reports_never_infer_task_ownership_from_a_single_active_task() {
 #[test]
 fn replays_keep_machine_intent_and_recompute_current_safety() {
     let fixture = Fixture::new("replay intent");
-    let first = fixture.report("worker-a", "A visible report already exists.", None);
+    let first = fixture.report("worker-a", None);
     let early = fixture
         .decide(json!({"event_ids":[first.id],"decision":"wait_user"}))
         .expect("summary is not required");
@@ -573,7 +569,7 @@ fn replays_keep_machine_intent_and_recompute_current_safety() {
         "the decision duplicated the original visible report"
     );
 
-    let second = fixture.report("worker-a", "The provider is unavailable.", None);
+    let second = fixture.report("worker-a", None);
     fixture
         .decide(json!({"event_ids":[second.id],"decision":"blocked",
             "reason":"The provider returns HTTP 503."}))
@@ -618,7 +614,7 @@ fn replays_keep_machine_intent_and_recompute_current_safety() {
 #[test]
 fn status_reconciles_an_interrupted_acceptance_and_never_rewrites_it_twice() {
     let fixture = Fixture::new("decision acceptance recovery");
-    let report = fixture.report("worker-a", "Reviewed output.", None);
+    let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "turn-recovery");
     fixture.claim_for_web(&report);
     let decision_id = "decision-recovery";
@@ -661,11 +657,7 @@ fn status_reconciles_an_interrupted_acceptance_and_never_rewrites_it_twice() {
 fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake() {
     let fixture = Fixture::new("read then decide");
     let task_id = fixture.task("Review report", "worker-a");
-    let report = fixture.report(
-        "worker-a",
-        "Read this report through CCCC while the web model is still answering.",
-        Some(&task_id),
-    );
+    let report = fixture.report("worker-a", Some(&task_id));
     fixture.handoff(&report, "turn-read");
     fixture.claim_for_web(&report);
     let request = DaemonRequest {
@@ -740,7 +732,7 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
 #[test]
 fn handled_reports_stay_handled_across_late_duplicate_and_larger_handoffs() {
     let fixture = Fixture::new("handled report stability");
-    let first = fixture.report("worker-a", "The result is ready for user review.", None);
+    let first = fixture.report("worker-a", None);
     fixture
         .decide(json!({"event_ids":[first.id],"decision":"wait_user",
             "summary":"Please review the completed result."}))
@@ -768,11 +760,7 @@ fn handled_reports_stay_handled_across_late_duplicate_and_larger_handoffs() {
             .is_some_and(|id| !id.is_empty())
     );
 
-    let second = fixture.report(
-        "worker-a",
-        "A second result arrived before the turn ended.",
-        None,
-    );
+    let second = fixture.report("worker-a", None);
     record_handoff(
         &fixture.home,
         &fixture.group,
@@ -806,13 +794,7 @@ fn handled_reports_stay_handled_across_late_duplicate_and_larger_handoffs() {
 fn one_decision_resolves_a_whole_verbose_member_turn() {
     let fixture = Fixture::new("verbose member handoff");
     let reports = (0..25)
-        .map(|index| {
-            fixture.report(
-                "worker-a",
-                &format!("Visible result part {index}: evidence and remaining risk."),
-                None,
-            )
-        })
+        .map(|_| fixture.report("worker-a", None))
         .collect::<Vec<_>>();
     let handoff = record_handoff(
         &fixture.home,
@@ -864,7 +846,7 @@ fn one_decision_resolves_a_whole_verbose_member_turn() {
 #[test]
 fn only_the_foreman_may_decide_and_continue_requires_concrete_work() {
     let fixture = Fixture::new("relay permissions");
-    let report = fixture.report("worker-a", "Ready for review.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "turn-permission");
     let mut args = json!({
         "group_id":fixture.group.group_id,"by":"worker-a",
@@ -897,11 +879,7 @@ fn only_the_foreman_may_decide_and_continue_requires_concrete_work() {
 #[test]
 fn interrupted_continue_partials_block_contradictions_and_recover_without_duplicates() {
     let fixture = Fixture::new("interrupted continue dispatch");
-    let report = fixture.report(
-        "worker-a",
-        "The implementation needs one final verification.",
-        None,
-    );
+    let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "turn-continue-partial");
     let next_text = "Run the affected regression and report exact evidence.";
     let sent = interrupted_continue(&fixture, &report, &handoff, next_text);
@@ -939,7 +917,7 @@ fn interrupted_continue_partials_block_contradictions_and_recover_without_duplic
     assert_eq!(relay_tasks, 1);
     assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
 
-    let follow_up = fixture.report("worker-a", "A follow-up task was prepared.", None);
+    let follow_up = fixture.report("worker-a", None);
     fixture.handoff(&follow_up, "turn-task-only");
     let follow_up_decision =
         decision_id(&fixture.group.group_id, "web-lead", &[follow_up.id.clone()]);
@@ -990,8 +968,8 @@ fn generic_context_sync_cannot_write_private_relay_machine_state() {
 #[test]
 fn resolving_one_handoff_does_not_tell_the_foreman_to_idle_with_another_pending() {
     let fixture = Fixture::new("multiple relay obligations");
-    let first = fixture.report("worker-a", "First result needs a decision.", None);
-    let second = fixture.report("worker-b", "Second result also needs a decision.", None);
+    let first = fixture.report("worker-a", None);
+    let second = fixture.report("worker-b", None);
     fixture.handoff(&first, "turn-first-obligation");
     fixture.handoff(&second, "turn-second-obligation");
 
@@ -1052,7 +1030,7 @@ fn assigned_and_unassigned_work_stay_the_foremans_responsibility() {
 #[test]
 fn a_paused_group_blocks_continue_and_reminders_but_keeps_decisions_safe() {
     let mut fixture = Fixture::new("paused relay");
-    let report = fixture.report("worker-a", "Please review before resuming.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "paused-active-turn");
     fixture.claim_for_web(&report);
     let wait_request = DaemonRequest {
@@ -1113,7 +1091,7 @@ fn a_paused_group_blocks_continue_and_reminders_but_keeps_decisions_safe() {
 #[test]
 fn an_ignored_reminder_escalates_once_and_any_decision_resolves_it() {
     let fixture = Fixture::new("relay reminder lifecycle");
-    let report = fixture.report("worker-a", "The completed result needs a decision.", None);
+    let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "turn-reminder");
     fixture.append_delivery(&report.id, "accepted", 30);
 
@@ -1146,7 +1124,7 @@ fn an_ignored_reminder_escalates_once_and_any_decision_resolves_it() {
         "resolved"
     );
 
-    let ignored = fixture.report("worker-a", "A different result needs intervention.", None);
+    let ignored = fixture.report("worker-a", None);
     let escalated_handoff = fixture.handoff(&ignored, "turn-escalation");
     fixture.append_delivery(&ignored.id, "accepted", 90);
     let second = fixture.remind(false);
@@ -1212,7 +1190,7 @@ fn live_work_and_pending_reviews_are_never_hidden_by_each_other() {
             "review plus live task"
         });
         let live_task = fixture.task("Independent live work", "worker-b");
-        let report = fixture.report("worker-a", "A completed result needs review.", None);
+        let report = fixture.report("worker-a", None);
         let handoff = fixture.handoff(&report, "turn-combined");
         if escalated {
             fixture.append_delivery(&report.id, "accepted", 90);
@@ -1258,15 +1236,16 @@ fn live_work_and_pending_reviews_are_never_hidden_by_each_other() {
 #[test]
 fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
     let fixture = Fixture::new("escalation context recovery");
-    let report = fixture.report("worker-a", "The result needs human intervention.", None);
+    let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "turn-escalation-recovery");
     let handoff_id = handoff.data["handoff_id"].as_str().expect("handoff id");
-    let reminder = send_decision_reminder(
+    let reminder = send_relay_notice(
         &fixture.home,
         &fixture.group.group_id,
         "web-lead",
         &fixture.events(),
         std::slice::from_ref(&handoff),
+        RelayNotice::Reminder,
     )
     .expect("reminder");
     for id in [&report.id, &reminder.id] {
@@ -1299,14 +1278,15 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
 #[test]
 fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
     let fixture = Fixture::new("repair old false escalation");
-    let report = fixture.report("worker-a", "Original still not delivered", None);
+    let report = fixture.report("worker-a", None);
     let handoff = fixture.handoff(&report, "old-bad-delivery");
-    let reminder = send_decision_reminder(
+    let reminder = send_relay_notice(
         &fixture.home,
         &fixture.group.group_id,
         "web-lead",
         &fixture.events(),
         std::slice::from_ref(&handoff),
+        RelayNotice::Reminder,
     )
     .expect("old reminder");
     let append = |state: &str| {
@@ -1315,12 +1295,13 @@ fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
         }
     };
     append("ambiguous");
-    let escalation = send_user_escalation(
+    let escalation = send_relay_notice(
         &fixture.home,
         &fixture.group.group_id,
         "web-lead",
         &fixture.events(),
         std::slice::from_ref(&handoff),
+        RelayNotice::Escalation,
     )
     .expect("old erroneous escalation");
     ensure_handoff_note(
@@ -1350,7 +1331,7 @@ fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
 #[test]
 fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
     let fixture = Fixture::new("concurrent relay reminders");
-    let report = fixture.report("worker-a", "The result needs a decision.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "turn-concurrent-reminder");
     fixture.append_delivery(&report.id, "accepted", 90);
     for (idle, kind) in [(false, "decision_reminder"), (true, "decision_escalation")] {
@@ -1385,7 +1366,7 @@ fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
 #[test]
 fn concurrent_identical_decisions_commit_one_machine_decision_without_duplicate_output() {
     let fixture = Fixture::new("concurrent identical decision");
-    let report = fixture.report("worker-a", "Ready for approval.", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "turn-concurrent-decision");
     let barrier = std::sync::Barrier::new(10);
     let results = std::thread::scope(|scope| {
@@ -1411,12 +1392,12 @@ fn concurrent_identical_decisions_commit_one_machine_decision_without_duplicate_
 #[test]
 fn replay_cannot_claim_success_for_a_batch_containing_a_new_report() {
     let fixture = Fixture::new("mixed handled and new sources");
-    let first = fixture.report("worker-a", "Already reviewed.", None);
+    let first = fixture.report("worker-a", None);
     fixture.handoff(&first, "first-turn");
     fixture
         .decide(json!({"event_ids":[first.id],"decision":"wait_user"}))
         .expect("first decision");
-    let second = fixture.report("worker-b", "New result still needs review.", None);
+    let second = fixture.report("worker-b", None);
     let handoff = fixture.handoff(&second, "second-turn");
     let error = fixture
         .decide(json!({
@@ -1439,7 +1420,7 @@ fn replay_cannot_claim_success_for_a_batch_containing_a_new_report() {
 #[test]
 fn unconfirmed_delivery_never_claims_the_foreman_received_a_report_or_reminder() {
     let fixture = Fixture::new("unconfirmed transport is not receipt");
-    let report = fixture.report("worker-a", "Original report", None);
+    let report = fixture.report("worker-a", None);
     fixture.handoff(&report, "unconfirmed-turn");
     for state in ["claimed", "failed", "ambiguous"] {
         fixture.append_delivery(&report.id, state, 180);

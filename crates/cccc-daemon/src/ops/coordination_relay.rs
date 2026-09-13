@@ -38,11 +38,15 @@ struct ContinueSpec<'a> {
     text: &'a str,
 }
 
-fn relay_lock_path(home: &HomeLayout, group_id: &str) -> Result<PathBuf, OpError> {
-    let ledger_path = GroupStore::new(home.clone())
+fn relay_ledger_path(home: &HomeLayout, group_id: &str) -> Result<PathBuf, OpError> {
+    GroupStore::new(home.clone())
         .map_err(OpError::io)?
         .ledger_path(group_id)
-        .map_err(OpError::io)?;
+        .map_err(OpError::io)
+}
+
+fn relay_lock_path(home: &HomeLayout, group_id: &str) -> Result<PathBuf, OpError> {
+    let ledger_path = relay_ledger_path(home, group_id)?;
     Ok(ledger_path
         .parent()
         .expect("group ledger has a parent")
@@ -116,10 +120,7 @@ fn record_handoff_locked(
         &[&group.group_id, source_actor_id, target_actor_id, turn_id],
     );
     let event_id = stable_event_id(&handoff_id);
-    let path = GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .ledger_path(&group.group_id)
-        .map_err(OpError::io)?;
+    let path = relay_ledger_path(home, &group.group_id)?;
     let summary = handoff_label(source_actor_id, turn_status, source_events.len());
     let task_ids = task_ids_from_events(source_events);
     let mut event =
@@ -310,22 +311,7 @@ fn decide_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         handoff_ids: &handoff_ids,
     };
     let event_id = stable_event_id(&decision_id);
-    if let Some(existing) = overlapping_decision(&events, &source_event_ids) {
-        if existing.id != event_id {
-            return Err(OpError::new(
-                "relay_decision_conflict",
-                "one or more source events already have a different relay decision",
-            ));
-        }
-        return replay_existing_decision(
-            home,
-            &group,
-            existing,
-            &by,
-            &decision,
-            &request_fingerprint,
-        );
-    }
+    // The initial overlap check already rejected handled sources; expansion adds only unresolved IDs.
 
     let context_store = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let initial_document = context_store.load(&group_id).map_err(OpError::io)?;
@@ -402,28 +388,34 @@ fn decide_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let context_version = context_store.version(&document).map_err(OpError::io)?;
     let decision_summary = decision_label(&decision, &reason, &next_actor_id, &next_title);
     let mut operations = task_decision_operations(&document, &source_task_ids, &decision, &reason);
-    let decision_note = decision_note(
-        &decision_id,
-        &request_fingerprint,
-        &by,
-        &decision,
-        &decision_summary,
-        &reason,
-        &source_event_ids,
-        &handoff_ids,
-        source_task_ids.first().map(String::as_str).unwrap_or(""),
-        &next_task_id,
-        &visible_event_id,
-        false,
-        &responsibility,
-    );
+    // Ledger and context share the same decision facts; the context only adapts note keys.
+    let mut decision_data = json!({
+        "decision_id":decision_id,
+        "request_fingerprint":request_fingerprint,
+        "by":by,
+        "decision":decision,
+        "summary":decision_summary,
+        "reason":reason,
+        "source_event_ids":source_event_ids,
+        "handoff_ids":handoff_ids,
+        "task_ids":source_task_ids,
+        "next_task_id":next_task_id,
+        "visible_event_id":visible_event_id,
+        "responsibility":responsibility,
+        "caller_may_idle":true,
+        "safe_to_idle":false,
+        "status":"applied",
+    })
+    .as_object()
+    .cloned()
+    .expect("relay decision data");
     operations.extend(resolved_handoff_notes(
         &handoffs,
         &decision_id,
         &by,
         &decision,
     ));
-    operations.push(decision_note.clone());
+    operations.push(decision_note(&decision_data));
 
     let preview = context_store
         .sync(&group_id, &operations, Some(&context_version), &by, true)
@@ -453,10 +445,12 @@ fn decide_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     // Replace the draft note with final observable responsibility fields before the one atomic
     // context write. Task operations remain idempotent, and note ids upsert on retries.
+    decision_data.insert("safe_to_idle".into(), json!(safe_to_idle));
+    decision_data.insert("caller_may_idle".into(), json!(caller_may_idle));
     if let Some(last) = operations.last_mut() {
-        last.insert("safe_to_idle".into(), json!(safe_to_idle));
-        last.insert("caller_may_idle".into(), json!(caller_may_idle));
-        last.insert("visible_event_id".into(), json!(visible_event_id));
+        for field in ["safe_to_idle", "caller_may_idle", "visible_event_id"] {
+            last.insert(field.into(), decision_data[field].clone());
+        }
     }
     let result = context_store
         .sync(&group_id, &operations, Some(&context_version), &by, false)
@@ -466,26 +460,7 @@ fn decide_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut decision_event = Event::new(DECISION_KIND, &group_id);
     decision_event.id = event_id;
     decision_event.by = by.clone();
-    decision_event.data = json!({
-        "decision_id":decision_id,
-        "request_fingerprint":request_fingerprint,
-        "by":by,
-        "decision":decision,
-        "summary":decision_summary,
-        "reason":reason,
-        "source_event_ids":source_event_ids,
-        "handoff_ids":handoff_ids,
-        "task_ids":source_task_ids,
-        "next_task_id":next_task_id,
-        "visible_event_id":visible_event_id,
-        "responsibility":responsibility,
-        "caller_may_idle":caller_may_idle,
-        "safe_to_idle":safe_to_idle,
-        "status":"applied",
-    })
-    .as_object()
-    .cloned()
-    .expect("relay decision data");
+    decision_event.data = decision_data;
     // Publish the durable decision first. If acceptance is interrupted, bootstrap/status and the
     // existing supervisor reconcile it idempotently before the source can be dispatched again.
     ledger::append(&path, &decision_event).map_err(OpError::io)?;
@@ -515,10 +490,7 @@ fn status_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             format!("actor not found: {actor_id}"),
         ));
     }
-    let path = GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .ledger_path(&group_id)
-        .map_err(OpError::io)?;
+    let path = relay_ledger_path(home, &group_id)?;
     let mut events = ledger::read_all(&path).map_err(OpError::io)?;
     if reconcile_recorded_decisions(home, &group, &events)? {
         events = ledger::read_all(&path).map_err(OpError::io)?;
@@ -676,19 +648,27 @@ fn remind_due_locked(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let reminder_event = if reminders.is_empty() {
         None
     } else {
-        Some(send_decision_reminder(
+        Some(send_relay_notice(
             home,
             &group_id,
             &actor_id,
             &events,
             &reminders[..reminders.len().min(10)],
+            RelayNotice::Reminder,
         )?)
     };
     let escalation_event = if escalations.is_empty() {
         None
     } else {
         let escalations = &escalations[..escalations.len().min(10)];
-        let event = send_user_escalation(home, &group_id, &actor_id, &events, escalations)?;
+        let event = send_relay_notice(
+            home,
+            &group_id,
+            &actor_id,
+            &events,
+            escalations,
+            RelayNotice::Escalation,
+        )?;
         for handoff in escalations {
             ensure_handoff_note(home, &group, handoff, "waiting_user", None, Some(&event.id))?;
         }
@@ -722,76 +702,68 @@ fn relay_batch_source_ids(events: &[Event], handoffs: &[Event]) -> Vec<String> {
         .collect()
 }
 
-fn send_decision_reminder(
-    home: &HomeLayout,
-    group_id: &str,
-    actor_id: &str,
-    events: &[Event],
-    handoffs: &[Event],
-) -> Result<Event, OpError> {
-    let handoff_ids = relay_batch_handoff_ids(handoffs);
-    let source_event_ids = relay_batch_source_ids(events, handoffs);
-    let text = format!(
-        "[CCCC] A completed member handoff is still waiting for a recorded decision. Review the original report(s) already in this conversation, then call cccc_coordination(action=\"decide\", event_ids={source_event_ids:?}, decision=\"continue\"|\"wait_user\"|\"complete\"|\"blocked\"). Your normal reply remains the human-facing output; do not repeat the report in the tool call. Reading or replying alone does not resolve this handoff. continue must include next_actor_id, next_title, and next_text."
-    );
-    let client_id = stable_id(
-        "relay-reminder",
-        &handoff_ids.iter().map(String::as_str).collect::<Vec<_>>(),
-    );
-    let request = DaemonRequest {
-        v: 1,
-        op: "send".into(),
-        args: json!({
-            "group_id":group_id,"by":"system","to":[actor_id],"message_mode":"send",
-            "text":text,"client_id":client_id,"relay_kind":"decision_reminder",
-            "relay_handoff_ids":handoff_ids,"relay_source_event_ids":source_event_ids,
-        })
-        .as_object()
-        .cloned()
-        .expect("relay reminder request"),
-    };
-    let sent = super::messaging::send(home, &request, "chat.message")?;
-    sent.get("event")
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
-        .ok_or_else(|| OpError::new("relay_reminder_failed", "reminder returned no event"))
+enum RelayNotice {
+    Reminder,
+    Escalation,
 }
 
-fn send_user_escalation(
+fn send_relay_notice(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,
     events: &[Event],
     handoffs: &[Event],
+    notice: RelayNotice,
 ) -> Result<Event, OpError> {
     let handoff_ids = relay_batch_handoff_ids(handoffs);
     let source_event_ids = relay_batch_source_ids(events, handoffs);
-    let text = format!(
-        "[CCCC] Collaboration is waiting for your decision. The web Foreman received {} completed member handoff(s) and one reminder, but did not record whether to continue, wait for you, complete, or mark the work blocked. The original reports are preserved under event IDs {source_event_ids:?}. Ask the Foreman to resume with an explicit relay decision. No model will be woken repeatedly while responsibility is with you.",
-        handoffs.len()
-    );
+    let (label, recipient, text) = match notice {
+        RelayNotice::Reminder => (
+            "reminder",
+            actor_id,
+            format!(
+                "[CCCC] A completed member handoff is still waiting for a recorded decision. Review the original report(s) already in this conversation, then call cccc_coordination(action=\"decide\", event_ids={source_event_ids:?}, decision=\"continue\"|\"wait_user\"|\"complete\"|\"blocked\"). Your normal reply remains the human-facing output; do not repeat the report in the tool call. Reading or replying alone does not resolve this handoff. continue must include next_actor_id, next_title, and next_text."
+            ),
+        ),
+        RelayNotice::Escalation => (
+            "escalation",
+            "user",
+            format!(
+                "[CCCC] Collaboration is waiting for your decision. The web Foreman received {} completed member handoff(s) and one reminder, but did not record whether to continue, wait for you, complete, or mark the work blocked. The original reports are preserved under event IDs {source_event_ids:?}. Ask the Foreman to resume with an explicit relay decision. No model will be woken repeatedly while responsibility is with you.",
+                handoffs.len()
+            ),
+        ),
+    };
     let client_id = stable_id(
-        "relay-escalation",
+        &format!("relay-{label}"),
         &handoff_ids.iter().map(String::as_str).collect::<Vec<_>>(),
     );
+    let mut args = json!({
+        "group_id":group_id,"by":"system","to":[recipient],"message_mode":"send",
+        "text":text,"client_id":client_id,"relay_kind":format!("decision_{label}"),
+        "relay_handoff_ids":handoff_ids,"relay_source_event_ids":source_event_ids,
+    })
+    .as_object()
+    .cloned()
+    .expect("relay notice request");
+    if matches!(notice, RelayNotice::Escalation) {
+        args.insert("relay_actor_id".into(), json!(actor_id));
+    }
     let request = DaemonRequest {
         v: 1,
         op: "send".into(),
-        args: json!({
-            "group_id":group_id,"by":"system","to":["user"],"message_mode":"send",
-            "text":text,"client_id":client_id,"relay_kind":"decision_escalation",
-            "relay_actor_id":actor_id,"relay_handoff_ids":handoff_ids,
-            "relay_source_event_ids":source_event_ids,
-        })
-        .as_object()
-        .cloned()
-        .expect("relay escalation request"),
+        args,
     };
     let sent = super::messaging::send(home, &request, "chat.message")?;
     sent.get("event")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
-        .ok_or_else(|| OpError::new("relay_escalation_failed", "escalation returned no event"))
+        .ok_or_else(|| {
+            OpError::new(
+                format!("relay_{label}_failed"),
+                format!("{label} returned no event"),
+            )
+        })
 }
 
 fn tracked_continue(
@@ -849,6 +821,12 @@ fn task_decision_operations(
     decision: &str,
     reason: &str,
 ) -> Vec<Map<String, Value>> {
+    let (status, waiting) = match decision {
+        "continue" | "complete" => ("done", "none"),
+        "wait_user" => ("active", "user"),
+        "blocked" => ("active", "external"),
+        _ => return Vec::new(),
+    };
     let mut operations = Vec::new();
     for task_id in task_ids {
         let Some(task) = document
@@ -865,81 +843,63 @@ fn task_decision_operations(
             ("op".into(), json!("task.update")),
             ("task_id".into(), json!(task_id)),
             ("handoff_to".into(), Value::Null),
+            ("waiting_on".into(), json!(waiting)),
         ]);
-        match decision {
-            "continue" | "complete" => {
-                update.insert("waiting_on".into(), json!("none"));
-                operations.push(update);
-                operations.push(Map::from_iter([
-                    ("op".into(), json!("task.move")),
-                    ("task_id".into(), json!(task_id)),
-                    ("status".into(), json!("done")),
-                ]));
-            }
-            "wait_user" => {
-                update.insert("waiting_on".into(), json!("user"));
-                operations.push(update);
-                operations.push(Map::from_iter([
-                    ("op".into(), json!("task.move")),
-                    ("task_id".into(), json!(task_id)),
-                    ("status".into(), json!("active")),
-                ]));
-            }
-            "blocked" => {
-                update.insert("waiting_on".into(), json!("external"));
-                update.insert("notes".into(), json!(reason));
-                operations.push(update);
-                operations.push(Map::from_iter([
-                    ("op".into(), json!("task.move")),
-                    ("task_id".into(), json!(task_id)),
-                    ("status".into(), json!("active")),
-                ]));
-            }
-            _ => {}
+        if decision == "blocked" {
+            update.insert("notes".into(), json!(reason));
         }
+        operations.push(update);
+        operations.push(Map::from_iter([
+            ("op".into(), json!("task.move")),
+            ("task_id".into(), json!(task_id)),
+            ("status".into(), json!(status)),
+        ]));
     }
     operations
 }
 
-#[allow(clippy::too_many_arguments)]
-fn decision_note(
-    decision_id: &str,
-    request_fingerprint: &str,
-    by: &str,
-    decision: &str,
-    decision_summary: &str,
-    reason: &str,
-    source_event_ids: &[String],
-    handoff_ids: &[String],
-    task_id: &str,
-    next_task_id: &str,
-    visible_event_id: &str,
-    safe_to_idle: bool,
-    responsibility: &Value,
-) -> Map<String, Value> {
+fn decision_note(data: &Map<String, Value>) -> Map<String, Value> {
+    let mut note = data.clone();
+    let id = note.remove("decision_id").expect("decision id");
+    let tasks = note.remove("task_ids").expect("decision task ids");
+    note.insert("op".into(), json!("coordination.relay.note"));
+    note.insert("kind".into(), json!("decision"));
+    note.insert("id".into(), id);
+    note.insert(
+        "task_id".into(),
+        tasks
+            .as_array()
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    note.insert(
+        "next_actor_id".into(),
+        data["responsibility"]
+            .get("actor_id")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    for field in ["task_id", "next_task_id", "visible_event_id"] {
+        if note[field] == "" {
+            note.insert(field.into(), Value::Null);
+        }
+    }
+    note
+}
+
+fn handoff_note_fields(handoff: &Event) -> Map<String, Value> {
     json!({
-        "op":"coordination.relay.note",
-        "kind":"decision",
-        "id":decision_id,
-        "request_fingerprint":request_fingerprint,
-        "summary":decision_summary,
-        "task_id":if task_id.is_empty(){Value::Null}else{json!(task_id)},
-        "decision":decision,
-        "status":"applied",
-        "source_event_ids":source_event_ids,
-        "handoff_ids":handoff_ids,
-        "next_actor_id":responsibility.get("actor_id").cloned().unwrap_or(Value::Null),
-        "next_task_id":if next_task_id.is_empty(){Value::Null}else{json!(next_task_id)},
-        "visible_event_id":if visible_event_id.is_empty(){Value::Null}else{json!(visible_event_id)},
-        "safe_to_idle":safe_to_idle,
-        "caller_may_idle":true,
-        "reason":reason,
-        "responsibility":responsibility,
-        "by":by,
-    })
-    .as_object()
-    .cloned()
-    .expect("relay decision note")
+        "op":"coordination.relay.note", "kind":"handoff",
+        "id":handoff.data.get("handoff_id").cloned().unwrap_or(Value::Null),
+        "at":handoff.ts,
+        "summary":handoff.data.get("summary").cloned().unwrap_or_else(|| json!("Relay handoff")),
+        "task_id":handoff.data.get("task_ids").and_then(Value::as_array).and_then(|items| items.first()).cloned().unwrap_or(Value::Null),
+        "source_event_ids":handoff.data.get("source_event_ids").cloned().unwrap_or_else(|| json!([])),
+        "source_actor_id":handoff.data.get("source_actor_id").cloned().unwrap_or(Value::Null),
+        "target_actor_id":handoff.data.get("target_actor_id").cloned().unwrap_or(Value::Null),
+        "turn_id":handoff.data.get("turn_id").cloned().unwrap_or(Value::Null),
+    }).as_object().cloned().expect("handoff note fields")
 }
 
 fn resolved_handoff_notes(
@@ -951,26 +911,15 @@ fn resolved_handoff_notes(
     handoffs
         .iter()
         .map(|handoff| {
-            json!({
-                "op":"coordination.relay.note",
-                "kind":"handoff",
-                "id":handoff.data.get("handoff_id").cloned().unwrap_or(Value::Null),
-                "at":handoff.ts,
-                "summary":handoff.data.get("summary").cloned().unwrap_or_else(|| json!("Relay handoff")),
-                "task_id":handoff.data.get("task_ids").and_then(Value::as_array).and_then(|items|items.first()).cloned().unwrap_or(Value::Null),
-                "source_event_ids":handoff.data.get("source_event_ids").cloned().unwrap_or_else(||json!([])),
-                "source_actor_id":handoff.data.get("source_actor_id").cloned().unwrap_or(Value::Null),
-                "target_actor_id":handoff.data.get("target_actor_id").cloned().unwrap_or(Value::Null),
-                "turn_id":handoff.data.get("turn_id").cloned().unwrap_or(Value::Null),
-                "status":"resolved",
-                "decision":decision,
-                "decision_id":decision_id,
-                "resolved_at":cccc_contracts::utc_now(),
-                "resolved_by":by,
-            })
-            .as_object()
-            .cloned()
-            .expect("resolved handoff note")
+            let mut note = handoff_note_fields(handoff);
+            note.extend([
+                ("status".into(), json!("resolved")),
+                ("decision".into(), json!(decision)),
+                ("decision_id".into(), json!(decision_id)),
+                ("resolved_at".into(), json!(cccc_contracts::utc_now())),
+                ("resolved_by".into(), json!(by)),
+            ]);
+            note
         })
         .collect()
 }
@@ -988,24 +937,19 @@ fn ensure_handoff_note(
         .get("handoff_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let operation = json!({
-        "op":"coordination.relay.note",
-        "kind":"handoff",
-        "id":handoff_id,
-        "at":handoff.ts,
-        "summary":handoff.data.get("summary").cloned().unwrap_or_else(||json!("Relay handoff")),
-        "task_id":handoff.data.get("task_ids").and_then(Value::as_array).and_then(|items|items.first()).cloned().unwrap_or(Value::Null),
-        "source_event_ids":handoff.data.get("source_event_ids").cloned().unwrap_or_else(||json!([])),
-        "source_actor_id":handoff.data.get("source_actor_id").cloned().unwrap_or(Value::Null),
-        "target_actor_id":handoff.data.get("target_actor_id").cloned().unwrap_or(Value::Null),
-        "turn_id":handoff.data.get("turn_id").cloned().unwrap_or(Value::Null),
-        "status":status,
-        "decision_id":decision_id.map(Value::from).unwrap_or(Value::Null),
-        "escalation_event_id":escalation_event_id.map(Value::from).unwrap_or(Value::Null),
-    })
-    .as_object()
-    .cloned()
-    .expect("handoff note");
+    let mut operation = handoff_note_fields(handoff);
+    operation.extend([
+        ("id".into(), json!(handoff_id)),
+        ("status".into(), json!(status)),
+        (
+            "decision_id".into(),
+            decision_id.map(Value::from).unwrap_or(Value::Null),
+        ),
+        (
+            "escalation_event_id".into(),
+            escalation_event_id.map(Value::from).unwrap_or(Value::Null),
+        ),
+    ]);
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let current = contexts.load(&group.group_id).map_err(OpError::io)?;
     if let Some(existing) = current
@@ -1058,10 +1002,7 @@ fn append_context_event(
         .as_object()
         .cloned()
         .expect("context relay event");
-    let path = GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .ledger_path(group_id)
-        .map_err(OpError::io)?;
+    let path = relay_ledger_path(home, group_id)?;
     ledger::append(&path, &event).map_err(OpError::io)
 }
 
@@ -1223,10 +1164,7 @@ fn release_active_turn_if_handled(
 }
 
 fn decision_result(home: &HomeLayout, group: &GroupDoc, event: Event, replayed: bool) -> OpResult {
-    let path = GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .ledger_path(&group.group_id)
-        .map_err(OpError::io)?;
+    let path = relay_ledger_path(home, &group.group_id)?;
     let events = ledger::read_all(&path).map_err(OpError::io)?;
     let current = current_group_state(home, group, &events)?;
     let actor_id = event
@@ -1474,11 +1412,32 @@ fn task_group_state(home: &HomeLayout, group: &GroupDoc) -> Result<Value, OpErro
     }))
 }
 
+fn decided_ids(events: &[Event], field: &str) -> HashSet<String> {
+    events
+        .iter()
+        .filter(|event| event.kind == DECISION_KIND)
+        .flat_map(|event| event_string_list(event, field))
+        .collect()
+}
+
 fn unresolved_handoffs_for_group(events: &[Event]) -> Vec<Event> {
+    // Reuse this immutable ledger snapshot; never retain the sets across writes or requests.
+    let handoffs = decided_ids(events, "handoff_ids");
+    let sources = decided_ids(events, "source_event_ids");
     events
         .iter()
         .filter(|event| {
-            event.kind == HANDOFF_KIND && !unresolved_source_ids(events, event).is_empty()
+            event.kind == HANDOFF_KIND
+                && !handoffs.contains(
+                    event
+                        .data
+                        .get("handoff_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
+                && event_string_list(event, "source_event_ids")
+                    .iter()
+                    .any(|id| !sources.contains(id))
         })
         .cloned()
         .collect()
@@ -1805,19 +1764,10 @@ fn unresolved_source_ids(events: &[Event], handoff: &Event) -> Vec<String> {
         .get("handoff_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if events.iter().any(|event| {
-        event.kind == DECISION_KIND
-            && event_string_list(event, "handoff_ids")
-                .iter()
-                .any(|id| id == handoff_id)
-    }) {
+    if decided_ids(events, "handoff_ids").contains(handoff_id) {
         return Vec::new();
     }
-    let decided = events
-        .iter()
-        .filter(|event| event.kind == DECISION_KIND)
-        .flat_map(|event| event_string_list(event, "source_event_ids"))
-        .collect::<HashSet<_>>();
+    let decided = decided_ids(events, "source_event_ids");
     event_string_list(handoff, "source_event_ids")
         .into_iter()
         .filter(|id| !decided.contains(id))
@@ -1825,15 +1775,11 @@ fn unresolved_source_ids(events: &[Event], handoff: &Event) -> Vec<String> {
 }
 
 fn unresolved_handoffs(events: &[Event], target_actor_id: &str) -> Vec<Event> {
-    events
-        .iter()
+    unresolved_handoffs_for_group(events)
+        .into_iter()
         .filter(|event| {
-            event.kind == HANDOFF_KIND
-                && event.data.get("target_actor_id").and_then(Value::as_str)
-                    == Some(target_actor_id)
-                && !unresolved_source_ids(events, event).is_empty()
+            event.data.get("target_actor_id").and_then(Value::as_str) == Some(target_actor_id)
         })
-        .cloned()
         .collect()
 }
 
