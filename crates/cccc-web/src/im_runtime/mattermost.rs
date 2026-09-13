@@ -27,6 +27,16 @@ use tokio_tungstenite::{
 pub(super) const PLATFORM: &str = "mattermost";
 type Socket = WebSocketStream<reqwest::Upgraded>;
 
+async fn socket_send(
+    socket: &mut (impl futures_util::Sink<Message> + Unpin),
+    message: Message,
+) -> Result<(), &'static str> {
+    tokio::time::timeout(Duration::from_secs(5), socket.send(message))
+        .await
+        .map_err(|_| "Mattermost WebSocket write timed out")?
+        .map_err(|_| "Mattermost WebSocket write failed")
+}
+
 #[derive(Clone)]
 struct WorkerState {
     config: Map<String, Value>,
@@ -712,7 +722,7 @@ async fn socket_loop(
                                 Err(_) => break "invalid Mattermost event JSON",
                             }
                         }
-                        Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() { break "Mattermost pong failed"; } }
+                        Some(Ok(Message::Ping(data))) => { if let Err(error) = socket_send(&mut socket, Message::Pong(data)).await { break error; } }
                         Some(Ok(Message::Close(_))) | None => break "Mattermost WebSocket disconnected",
                         Some(Err(_)) => break "Mattermost WebSocket read failed",
                         _ => {}
@@ -720,7 +730,7 @@ async fn socket_loop(
                 }
                 _ = heartbeat.tick() => {
                     if permit.is_some() && last_received.elapsed() > heartbeat_interval * 3 { break "Mattermost WebSocket heartbeat timed out"; }
-                    if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break "Mattermost WebSocket ping failed"; }
+                    if let Err(error) = socket_send(&mut socket, Message::Ping(Vec::new().into())).await { break error; }
                 }
             }
         };
@@ -803,7 +813,15 @@ impl MattermostReactions {
             .update_where(key, |r| r.post_id == post_id, |r| r.event_id = event_id);
     }
     pub(super) async fn fail_post(&self, key: &str, post_id: &str) {
-        self.finish(self.active.take_where(key, |r| r.post_id == post_id), false)
+        self.finish(
+            self.active.take_where(key, |r| r.post_id == post_id),
+            Some(false),
+        )
+        .await;
+    }
+    pub(super) async fn unknown_post(&self, key: &str, post_id: &str) {
+        // 已失去受理结果时仅撤掉处理中标记，不将可能成功的提交标为失败。
+        self.finish(self.active.take_where(key, |r| r.post_id == post_id), None)
             .await;
     }
     async fn complete(&self, key: &str, reply_to: Option<&str>, success: bool) {
@@ -814,7 +832,7 @@ impl MattermostReactions {
             None => None,
         };
         drop(binding);
-        self.finish(reaction, success).await;
+        self.finish(reaction, Some(success)).await;
     }
     async fn emoji(&self, post_id: &str, emoji: &str) -> Result<(), String> {
         self.api
@@ -826,7 +844,7 @@ impl MattermostReactions {
             .await?;
         Ok(())
     }
-    async fn finish(&self, reaction: Option<MattermostReaction>, success: bool) {
+    async fn finish(&self, reaction: Option<MattermostReaction>, success: Option<bool>) {
         let Some(reaction) = reaction else {
             return;
         };
@@ -845,6 +863,9 @@ impl MattermostReactions {
                 &self.api.token,
             );
         }
+        let Some(success) = success else {
+            return;
+        };
         if let Err(error) = reaction_request(self.emoji(
             &reaction.post_id,
             if success { "white_check_mark" } else { "x" },
@@ -866,7 +887,7 @@ impl MattermostReactions {
             let reactions = reactions.clone();
             async move {
                 for reaction in reactions.active.take_expired() {
-                    reactions.finish(Some(reaction), false).await;
+                    reactions.finish(Some(reaction), Some(false)).await;
                 }
             }
         })
@@ -914,6 +935,7 @@ mod tests {
         reactions: Mutex<Vec<(Method, String, Value)>>,
         forbidden: AtomicBool,
         other_user_is_bot: AtomicBool,
+        fail_lookup: AtomicUsize,
         failed_posts: AtomicUsize,
         token: String,
         bot_id: String,
@@ -1075,7 +1097,17 @@ mod tests {
                     .into_response();
             }
             if path.starts_with("/sub/api/v4/users/") && method == Method::GET {
+                if state.fail_lookup.load(Ordering::SeqCst) == 2 {
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 return axum::Json(json!({"id":path.rsplit('/').next(),"is_bot":state.other_user_is_bot.load(Ordering::SeqCst)}))
+                    .into_response();
+            }
+            if path.starts_with("/sub/api/v4/channels/") && method == Method::GET {
+                if state.fail_lookup.load(Ordering::SeqCst) == 1 {
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                return axum::Json(json!({"id":path.rsplit('/').next(),"type":"O"}))
                     .into_response();
             }
             if path.starts_with("/sub/api/v4/files/") && method == Method::GET {
@@ -1178,6 +1210,317 @@ mod tests {
             .create("Mattermost", "")
             .expect("Mattermost test operation");
         (temp, home, group.group_id)
+    }
+
+    fn authorize_target(home: &HomeLayout, group: &str, thread_id: &str, paused: bool) {
+        let store = GroupStore::new(home.clone()).expect("store");
+        cccc_core::im_state::update(&store, group, |state| {
+            let target = json!([{"platform":"mattermost","chat_id":"c".repeat(26),"thread_id":thread_id,"authorized_at":1,"paused":paused}]);
+            state["authorized"] = target.clone();
+            state["subscribers"] = target;
+            Ok(())
+        }).expect("authorize target");
+    }
+
+    #[tokio::test]
+    async fn socket_write_deadline_covers_ping_and_pong_and_can_be_cancelled() {
+        // 不依赖内核缓冲大小；阻塞真实生产发送函数使用的 Sink::poll_flush。
+        for message in [
+            Message::Ping(Vec::new().into()),
+            Message::Pong(Vec::new().into()),
+        ] {
+            let mut sink = Box::pin(futures_util::sink::unfold((), |(), _: Message| {
+                std::future::pending::<Result<(), std::io::Error>>()
+            }));
+            let result =
+                tokio::time::timeout(Duration::from_secs(7), socket_send(&mut sink, message))
+                    .await
+                    .expect("bounded write");
+            assert_eq!(result, Err("Mattermost WebSocket write timed out"));
+        }
+        let task = tokio::spawn(async {
+            let mut sink = Box::pin(futures_util::sink::unfold((), |(), _: Message| {
+                std::future::pending::<Result<(), std::io::Error>>()
+            }));
+            socket_send(&mut sink, Message::Ping(Vec::new().into())).await
+        });
+        tokio::task::yield_now().await;
+        task.abort();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .expect("cancel write")
+                .expect_err("cancelled")
+                .is_cancelled()
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_failure_feedback_respects_addressing_authorization_and_thread() {
+        for (failure, authorized, paused, thread, raw, expected) in [
+            (2, true, false, "", "@cccc_bot hello", true),
+            (1, true, false, "", "@cccc_bot hello", true),
+            (2, false, false, "", "@cccc_bot hello", false),
+            (2, true, true, "", "@cccc_bot hello", false),
+            (
+                2,
+                true,
+                false,
+                "tttttttttttttttttttttttttt",
+                "@cccc_bot hello",
+                false,
+            ),
+            (2, true, false, "", "普通频道聊天", false),
+            (1, true, false, "", "未知类型不推断私聊", false),
+        ] {
+            let fixture = fixture().await;
+            fixture.state.fail_lookup.store(failure, Ordering::SeqCst);
+            let (_temp, home, group) = scope();
+            if authorized {
+                authorize_target(&home, &group, "", paused);
+            }
+            let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+            let mut inbound = MattermostInbound::new(
+                home.clone(),
+                &group,
+                DaemonClient::new(home.clone()),
+                fixture.api.clone(),
+                reactions,
+                &Map::new(),
+            );
+            let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":thread,"message":raw,"file_ids":["f".repeat(26)],"type":""});
+            let event = json!({"event":"posted","data":{"channel_type":if failure == 1 { "" } else { "O" },"post":post.to_string()}});
+            let store = GroupStore::new(home.clone()).expect("store");
+            let before = cccc_core::im_state::load(&store, &group).expect("state");
+            let _ = inbound.handle(&event).await;
+            let posts = fixture.state.posts.lock().expect("posts");
+            assert_eq!(
+                posts.len(),
+                usize::from(expected),
+                "failure={failure}, authorized={authorized}, paused={paused}, thread={thread}, raw={raw}"
+            );
+            if expected {
+                assert!(field(&posts[0], "message").contains("尚未提交给 CCCC"));
+                assert_eq!(field(&posts[0], "channel_id"), "c".repeat(26));
+            }
+            assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+            assert!(
+                fixture
+                    .state
+                    .reactions
+                    .lock()
+                    .expect("reactions")
+                    .is_empty()
+            );
+            assert_eq!(
+                cccc_core::im_state::load(&store, &group).expect("state"),
+                before
+            );
+            assert!(
+                cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
+                    .expect("events")
+                    .iter()
+                    .all(|event| event.kind != "chat.message")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_error_reply_failure_is_bounded_and_cached_bots_are_ignored() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        authorize_target(&home, &group, "", false);
+        let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+        let mut inbound = MattermostInbound::new(
+            home.clone(),
+            &group,
+            DaemonClient::new(home.clone()),
+            fixture.api.clone(),
+            reactions,
+            &Map::new(),
+        );
+        let mut post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot /help","type":""});
+        fixture
+            .state
+            .other_user_is_bot
+            .store(true, Ordering::SeqCst);
+        let event = |post: &Value, channel_type: &str| json!({"event":"posted","data":{"channel_type":channel_type,"post":post.to_string()}});
+        inbound
+            .handle(&event(&post, "O"))
+            .await
+            .expect("ignore bot");
+        fixture.state.fail_lookup.store(1, Ordering::SeqCst);
+        inbound
+            .handle(&event(&post, ""))
+            .await
+            .expect("ignore cached bot without lookup");
+        post["user_id"] = json!(fixture.api.bot_id);
+        inbound
+            .handle(&event(&post, ""))
+            .await
+            .expect("ignore self");
+        assert!(fixture.state.posts.lock().expect("posts").is_empty());
+        post["user_id"] = json!("v".repeat(26));
+        fixture.state.fail_create.store(true, Ordering::SeqCst);
+        inbound
+            .handle(&event(&post, ""))
+            .await
+            .expect_err("lookup failure");
+        assert_eq!(fixture.state.failed_posts.load(Ordering::SeqCst), 1);
+        let path = GroupStore::new(home)
+            .expect("store")
+            .state_dir(&group)
+            .expect("state")
+            .join("im_bridge.log");
+        assert!(
+            std::fs::read_to_string(path)
+                .expect("log")
+                .contains("lookup_error_reply")
+        );
+    }
+
+    #[tokio::test]
+    async fn daemon_failure_is_private_and_lost_acceptance_is_not_retried() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for lose_reply in [false, true] {
+            let mut fixture = fixture().await;
+            let (_temp, home, group) = scope();
+            home.initialize().expect("home");
+            authorize_target(&home, &group, "", false);
+            fixture.api.worker = Some(worker_state(&home, &group));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listen");
+            let address = cccc_contracts::DaemonAddress {
+                v: 1,
+                transport: cccc_contracts::Transport::Tcp,
+                path: String::new(),
+                host: "127.0.0.1".into(),
+                port: listener.local_addr().expect("address").port(),
+                pid: std::process::id(),
+                version: "test".into(),
+                ts: "test".into(),
+            };
+            std::fs::write(
+                home.daemon_dir().join("ccccd.addr.json"),
+                serde_json::to_vec(&address).expect("address JSON"),
+            )
+            .expect("address file");
+            let server_home = home.clone();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.expect("request");
+                let request: cccc_contracts::DaemonRequest =
+                    serde_json::from_str(&line).expect("request JSON");
+                let response = cccc_daemon::handle_request(&server_home, &request);
+                assert_eq!(response.ok, lose_reply, "{:?}", response.error);
+                if !lose_reply {
+                    assert!(
+                        response
+                            .error
+                            .as_ref()
+                            .expect("rejection")
+                            .message
+                            .contains("synthetic-private-recipient")
+                    );
+                    let mut bytes = serde_json::to_vec(&response).expect("response");
+                    bytes.push(b'\n');
+                    stream
+                        .get_mut()
+                        .write_all(&bytes)
+                        .await
+                        .expect("response write");
+                }
+                drop(stream); // 已提交的真实 daemon 操作丢失响应，不模拟成拒绝。
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(400), listener.accept())
+                        .await
+                        .is_err(),
+                    "must not resubmit"
+                );
+            });
+            let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+            let mut inbound = MattermostInbound::new(
+                home.clone(),
+                &group,
+                DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(3)),
+                fixture.api.clone(),
+                reactions,
+                &Map::new(),
+            );
+            let text = if lose_reply {
+                "@cccc_bot /send @user synthetic-private-body"
+            } else {
+                "@cccc_bot /send @synthetic-private-recipient synthetic-private-body"
+            };
+            let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":text,"type":""});
+            let event =
+                json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}});
+            let error = inbound.handle(&event).await.expect_err("safe failure");
+            fixture.api.log_error(&home, &group, "inbound", &error);
+            fixture.api.persist_error(&home, &group, Some(&error));
+            if lose_reply {
+                inbound
+                    .handle(&event)
+                    .await
+                    .expect("duplicate uncertain post is ignored");
+            }
+            server.await.expect("daemon fixture");
+            let store = GroupStore::new(home).expect("store");
+            let log = std::fs::read_to_string(
+                store
+                    .state_dir(&group)
+                    .expect("state dir")
+                    .join("im_bridge.log"),
+            )
+            .expect("log");
+            let state = cccc_core::im_state::load(&store, &group).expect("state");
+            let posts = fixture.state.posts.lock().expect("posts");
+            assert_eq!(posts.len(), 1);
+            for recorded in [
+                &error,
+                &log,
+                &state["last_error"].to_string(),
+                &posts[0].to_string(),
+            ] {
+                assert!(
+                    !recorded.contains("synthetic-private"),
+                    "private input in error output"
+                );
+                assert!(
+                    !recorded.contains("test-token"),
+                    "bot credential in error output"
+                );
+            }
+            assert!(error.contains(&"p".repeat(26)), "safe source ID retained");
+            assert!(field(&posts[0], "message").contains(if lose_reply {
+                "无法确认"
+            } else {
+                "未接受这次请求"
+            }));
+            let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
+                .expect("events");
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.kind == "chat.message")
+                    .count(),
+                usize::from(lose_reply)
+            );
+            if lose_reply {
+                assert!(
+                    !fixture
+                        .state
+                        .reactions
+                        .lock()
+                        .expect("reactions")
+                        .iter()
+                        .any(|(_, _, body)| field(body, "emoji_name") == "x")
+                );
+            }
+        }
     }
 
     #[test]

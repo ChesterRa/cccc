@@ -1,8 +1,8 @@
 use super::inbound_attachments::{AttachmentSpec, MAX_ATTACHMENT_BYTES, store_stream};
 use super::mattermost::{MattermostApi, MattermostReactions, PLATFORM, field, valid_id};
 use super::{
-    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision_for_thread,
-    target_key,
+    InboundDecision, InboundMetadata, authorized_chats, dispatch_inbound_with,
+    inbound_decision_for_thread, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -10,6 +10,21 @@ use futures_util::StreamExt;
 use reqwest::Method;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+const SUBMISSION_UNKNOWN: &str = "Mattermost daemon submission outcome is unknown";
+const RECIPIENT_REJECTED: &str = "Mattermost daemon rejected the recipient";
+
+fn submission_error(error: String) -> String {
+    // 共享错误可能包含 /send 的用户输入；只在 Mattermost 边界收敛，禁止原样落日志。
+    if error.starts_with("unknown or ambiguous recipient: ") {
+        RECIPIENT_REJECTED.to_owned()
+    } else if error == "IM command has no message payload" {
+        "Mattermost message has no payload".to_owned()
+    } else {
+        // String 合同已丢失错误类型；包括 OutcomeUnknown 在内的其他错误保守处理。
+        SUBMISSION_UNKNOWN.to_owned()
+    }
+}
 
 pub(super) struct MattermostInbound {
     home: HomeLayout,
@@ -75,12 +90,24 @@ impl MattermostInbound {
         if text.is_empty() && !has_files {
             return Ok(());
         }
+        if self.users.get(sender) == Some(&true) {
+            return Ok(());
+        }
         let mut channel_type = field(data, "channel_type").to_owned();
         if !matches!(channel_type.as_str(), "O" | "P" | "D" | "G") {
-            let channel = self
+            let channel = match self
                 .api
                 .json(Method::GET, &format!("channels/{chat_id}"), None)
-                .await?;
+                .await
+            {
+                Ok(channel) => channel,
+                Err(error) => {
+                    self.lookup_failed(&post, "").await;
+                    return Err(format!(
+                        "Mattermost channel lookup failed: {error}; post_id={post_id}"
+                    ));
+                }
+            };
             channel_type = field(&channel, "type").to_owned();
         }
         if !accepts_message(&channel_type, raw, text, &self.api.username) {
@@ -89,11 +116,21 @@ impl MattermostInbound {
         let is_bot = match self.users.get(sender) {
             Some(is_bot) => *is_bot,
             None => {
-                let user = self
+                let user = match self
                     .api
                     .json(Method::GET, &format!("users/{sender}"), None)
-                    .await?;
+                    .await
+                {
+                    Ok(user) => user,
+                    Err(error) => {
+                        self.lookup_failed(&post, &channel_type).await;
+                        return Err(format!(
+                            "Mattermost sender lookup failed: {error}; post_id={post_id}"
+                        ));
+                    }
+                };
                 if field(&user, "id") != sender {
+                    self.lookup_failed(&post, &channel_type).await;
                     return Err("Mattermost sender identity mismatch".into());
                 }
                 let is_bot = user["is_bot"].as_bool().unwrap_or(false);
@@ -184,7 +221,8 @@ impl MattermostInbound {
                             attachments,
                         },
                     )
-                    .await?;
+                    .await
+                    .map_err(submission_error)?;
                     self.reactions.bind(&key, post_id, event_id);
                     Ok(())
                 }
@@ -192,17 +230,21 @@ impl MattermostInbound {
                 match result {
                     Ok(()) => {}
                     Err(error) => {
-                        self.reactions.fail_post(&key, post_id).await;
-                        // 不回显 daemon/远端响应中的私人信息，完整错误仅进入本机错误日志。
-                        if let Err(reply_error) = self
-                            .api
-                            .post(
-                                chat_id,
-                                thread_id,
-                                "消息或附件未能交给 CCCC，请检查连接器错误后重试。",
-                                &[],
-                            )
-                            .await
+                        let reply = if error == SUBMISSION_UNKNOWN {
+                            self.reactions.unknown_post(&key, post_id).await;
+                            self.remember(post_id);
+                            "无法确认消息是否已交给 CCCC。请先查看 CCCC 中是否已受理或已有回答，不要直接重复发送。"
+                        } else {
+                            self.reactions.fail_post(&key, post_id).await;
+                            if error == RECIPIENT_REJECTED {
+                                "CCCC 未接受这次请求：请检查 /send 指定的智能体是否存在且名称唯一，修正后再发送。"
+                            } else {
+                                "消息或附件未能交给 CCCC，请检查连接器错误后重试。"
+                            }
+                        };
+                        // 错误已在提交边界转换为安全类别，聊天和日志均不接收原始 daemon 文本。
+                        if let Err(reply_error) =
+                            self.api.post(chat_id, thread_id, reply, &[]).await
                         {
                             self.api.log_error(
                                 &self.home,
@@ -211,19 +253,48 @@ impl MattermostInbound {
                                 &reply_error,
                             );
                         }
-                        return Err(error);
+                        return Err(format!("{error}; post_id={post_id}"));
                     }
                 }
             }
         }
-        self.seen.insert(post_id.to_owned());
+        self.remember(post_id);
+        Ok(())
+    }
+
+    async fn lookup_failed(&self, post: &Value, channel_type: &str) {
+        let raw = field(post, "message");
+        let chat_id = field(post, "channel_id");
+        let thread_id = field(post, "root_id");
+        // 使用只读授权查询，不调用会创建配对申请或修改订阅的命令决策器。
+        if !accepts_message(
+            channel_type,
+            raw,
+            strip_leading_mention(raw, &self.api.username),
+            &self.api.username,
+        ) || !authorized_chats(&self.home, &self.group_id, PLATFORM)
+            .iter()
+            .any(|chat| chat.key() == target_key(chat_id, thread_id))
+        {
+            return;
+        }
+        if let Err(error) = self.api.post(chat_id, thread_id,
+            "暂时无法核验本条消息的频道或发送者，尚未提交给 CCCC。请稍后重试；若持续失败，请查看连接器错误。", &[]).await
+        {
+            self.api.log_error(&self.home, &self.group_id, "lookup_error_reply", &error);
+        }
+    }
+
+    fn remember(&mut self, post_id: &str) {
+        if !self.seen.insert(post_id.to_owned()) {
+            return;
+        }
         self.order.push_back(post_id.to_owned());
         while self.order.len() > 8192 {
             if let Some(id) = self.order.pop_front() {
                 self.seen.remove(&id);
             }
         }
-        Ok(())
     }
 }
 

@@ -2,7 +2,57 @@
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
 
-## PR #103 本轮修复与原生断线补收（2026-09-13，测试机验证完成）
+## 本次推送前完整检查（2026-09-13，review6）
+
+用户在 V01 完成后授权推送，范围为 `5ca137b1` 之后的两份 Mattermost Rust 文件及四份对应文档，继续更新原 PR #103；不合并、不发布 Release、不更换日常部署。产品代码与上述 review5/V01 候选内容相同，本阶段只补充检查记录。
+
+- Linux 测试机按当前 `.github/workflows/ci.yml` 补齐：Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,526 项前端测试及生产构建、25 项打包用例、wheel 校验与 Twine；Rust fmt、workspace/all-targets 严格 Clippy、安装器及发布资产、非 daemon workspace、daemon 串行全量（库测试 525 项）、独立自启动 3 项均取得通过结果。
+- CI 固定版本 Codex 0.153.2、Claude 2.1.261、Kilo 7.5.14 在隔离容器执行原生会话检查，Codex/Claude 各 1 项、Kilo 筛选 3 项通过。筛选中的 OpenCode 条件项未启用，不能据此称 OpenCode 实测通过；实际测试使用原生离线探针或本地模拟模型，没有复制用户凭据或调用付费推理。
+- Windows 测试机重新运行核心 IM 8 项、完整 IM runtime 204 项（3 项真实站点用例默认忽略）、当前 CI 的七组 Windows smoke 共 11 项，以及 fmt 和原生构建，全部通过。仍保留已有 daemon 测试编译警告，不称全程零警告。两平台 GUI 与 V01 的相同产品代码证据见下一节，未为此次推送重复创建真实 Bot。
+- **失败和复验不能省略**：首次 Linux workspace 的 `shared_runtime_is_sandboxed_and_persists_actor_store` 在等待后返回 `running`，而断言要求 `completed`；原样单项复验通过，随后完整非 daemon workspace 重跑也通过（MCP 库 82 项）。该次重跑后，自启动的 `daemon_stop_waits_for_the_combined_web_process_to_exit` 曾报 daemon 未就绪；原样重跑完整三项自启动用例通过。两项测试及对应共享实现与本分支上游基线一致；启动测试只等待 daemon 状态而非 Web 完成启动，存在时序窗口，但首次失败的确切原因尚未证明。没有改断言、扩大超时、跳过失败项或夹带共享修复。
+
+准确结论是**同一产品源码的适用检查分组均已取得通过结果，包含两项失败后的原样复验**，不是一条完整脚本首次全绿，也不表示上述不稳定性已修复。Linux 最终二进制 SHA-256 仍为 `6f4e209d6573b894c8fcca0d8b7297a6f5a2aba47e6601d19a47302ab2d65d04`。推送前仍须对最终提交及完整 Git 历史执行秘密扫描；实际远端提交、扫描结果和正常 CI 状态在内部发布记录登记，不把待触发 GitHub CI 写成已通过。
+
+## 连接器设计规范复核修订（2026-09-13，代码回归与 V01 业务补收完成）
+
+修改前提交 `5ca137b1`，只修改 Mattermost 入口、入站和对应文档。不改变共享错误、其他连接器、公共 `seen` 或既有日常部署；该修复及 V01 阶段未执行提交、推送和 PR 操作，后续发布前复验单独记录。
+
+| 范围 | 新增用例及证据边界 |
+|---|---|
+| 用户输入进入错误 | `daemon_failure_is_private_and_lost_acceptance_is_not_retried` 使用真实 daemon 收件人解析产生含合成私人目标的拒绝，断言本地错误、组日志、`last_error`、聊天提示均不含该输入或合成 Bot Token，并保留安全帖子 ID |
+| 已受理但响应丢失 | 同一用例让真实 daemon 入账后断开 TCP，检查仅一次提交、仅一条 Ledger 消息、重投同一源帖子不再次提交；聊天显示无法确认，而非建议直接重试；不添加失败反应。**不是实际 Actor 回答验收** |
+| 早期查询失败 | `lookup_failure_feedback_respects_addressing_authorization_and_thread` 覆盖频道/发送者查询失败、授权/未授权、暂停、线程不匹配、未点名、未知频道类型；零附件下载、零模型提交、不修改授权 |
+| 反馈失败与 Bot 过滤 | `lookup_error_reply_failure_is_bounded_and_cached_bots_are_ignored` 检查自身/缓存中其他 Bot 不反馈，反馈被服务器拒绝时仅尝试一次并记录错误 |
+| 受控阻塞写入 | `socket_write_deadline_covers_ping_and_pong_and_can_be_cancelled` 使用阻塞 Sink 调用生产发送函数，验证 Ping/Pong 均在 5 秒超时且可取消；原有重连、序号、背压及停止回归保留。**不等于真实网络写入卡死复现** |
+| 真实业务补收 | 随后使用专用 Bot、私有频道、独立 Group 和真实 Codex Actor 完成 V01；正向链路及恢复前撤销授权两项均通过，方法和边界见下文，不以 Bot 自发帖协议验收替代 |
+
+结果（仅对应本节修订，不沿用下节历史的全量 CI 声明）：
+
+- Linux：Mattermost 定向 41 项通过，完整 IM runtime 205 项通过，均默认忽略 3 项真实站点用例；核心 IM 8 项、workspace/all-targets 严格 Clippy、格式检查与原生二进制构建通过。
+- Windows：完整 IM runtime 204 项通过（默认忽略 3 项 live），核心 IM 8 项、挂起进程启动/Job 子进程回收/组合 Web 绑定失败退出 3 项、格式检查与原生二进制构建通过。数量差异来自条件编译。
+- 两平台 agent-browser 配置页均取得 `START_SAVE_DRAFT_GUI_PASS`、`CROSS_GROUP_GUI_PASS`、`GUI_PASS`。覆盖三语、窄屏、原生地址校验、保存/启动故障与修正、草稿/持久状态、跨组隔离；分别查看 Linux 浅色及 Windows 深色中文错误截图。使用隔离 Home 和合成配置，不调用模型，不替换日常实例。
+- 真实 Mattermost 协议补收单独显式运行 1 项通过；使用已配置 Bot 在原测试频道自发一帖，同连接 ID 恢复。临时凭据副本已清除，未修改服务器配置。**仍不是 V01 人类→Actor 业务链路验收。**
+- 首轮 V01 因缺少人类账号登录态暂停；用户随后授权使用现有测试管理员登录并创建专用 Bot，经正常登录及 MFA 后完成下述补验，没有关闭认证或重置用户密码。
+
+上述修复及 V01 阶段没有运行仓库 Python 测试集、前端单元测试、打包或全部 daemon/workspace 测试，不宣称当时已重跑整条 GitHub CI。没有提交、推送或更新日常部署。
+
+### V01：真实人类身份请求、断线补收和 Actor 回复
+
+在指定 Linux 测试机运行与上述 review5 相同的二进制，SHA-256 为 `6f4e209d6573b894c8fcca0d8b7297a6f5a2aba47e6601d19a47302ab2d65d04`。仅新建隔离测试容器/Home/工作目录、专用私有频道及 Bot；使用已配置的 Codex CLI 0.147.0 登录副本，不复制旧会话。通过原生 Group、Actor、`/subscribe`、待确认配对与撤销接口配置，不直接写授权文件或 Ledger。
+
+人类输入由自动化工具操作已登录的人类测试账号浏览器，通过 Mattermost 同源发帖接口发送；不是人工亲试，也不是 Bot 自发帖。故障代理只中断该隔离实例通往 Mattermost 的 TLS 隧道，不解密 TLS、不重启 worker、不修改服务器或产品代码。
+
+| 场景 | 实际结果 |
+|---|---|
+| 断网期间提问 | 断开隧道后发送唯一编号请求；断网期间 Ledger 无此消息。恢复后同一源帖子 ID 对应恰好 1 条人类入账 |
+| 真实 Actor 回答 | 原生 Codex Actor 实际执行 1 轮，通过 `cccc_message` 回复该 Ledger 事件；Actor 回复 1 条，Mattermost 回帖 1 条，主时间线可见，`root_id` 为空。浏览器定点快照及截图确认正文显示 |
+| 撤权后恢复 | 再次断网并发送另一编号，恢复前通过原生 API 撤销授权及订阅；恢复后收到未授权提示，证明帖子确实被恢复处理，而非连接仍然断开 |
+| 拒绝调用与重复检查 | 撤权恢复后观察 70 秒：该请求 0 条 Ledger 入账、0 条 Actor 回复；Codex 会话的 `task_started` / `task_complete` 数均保持 1，Actor PID 不变。第一次请求及其回复仍各 1 条 |
+| 清理 | 停止独立 Group、桥接和容器；撤销新 Bot Token 后实际返回 HTTP 401，活动测试 Token 为 0；专用 Bot 停用。管理员浏览器正常退出后 `users/me` 返回 401，临时 Codex 登录副本删除，日常实例未重启 |
+
+结果为 `V01_PASS`。原始帖子 ID、Ledger 事件 ID、时间线、会话事件计数及截图只保存在内部验收证据，不把凭据、私有站点或会话写入公开仓库。这只证明本次缓存有效期内的两条有限场景，不保证所有故障下 exactly-once，也不覆盖进程重启后的重放或服务端恢复缓存失效。此次没有更改产品代码，因此不重复前述两平台构建/回归，也不把 Linux 真实站点验收写成 Windows 现场验收。
+
+## PR #103 本轮修复与原生断线补收（2026-09-13，历史验证已完成）
 
 修复基线 `3a34c9fb85c418b2add27e78b32afa2b1f688f58`。本轮修改尚未提交或推送，不合并、不发布、不更换日常实例；仍仅在指定 Linux/Windows 测试机验证。
 
