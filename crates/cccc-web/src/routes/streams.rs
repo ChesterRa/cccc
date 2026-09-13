@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, HeaderName};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
@@ -13,6 +13,9 @@ use tokio::sync::broadcast;
 use crate::AppState;
 use crate::api::ApiError;
 use crate::auth::Principal;
+use crate::connect_frames::{
+    LIVE_ACCESS_INTERVAL, ResourceFrameQuery, live_access, live_group_access,
+};
 
 const GLOBAL_EVENT_NAME: &str = "event";
 const GROUP_LEDGER_EVENT_NAME: &str = "ledger";
@@ -63,16 +66,31 @@ pub fn routes() -> Router<AppState> {
 async fn global_events(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
+    Query(frame): Query<ResourceFrameQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut receiver = state.ledger_events.subscribe_global();
     let shutdown_guard = state.shutdown.clone();
     let mut shutdown = state.shutdown.subscribe();
     let stream = async_stream::stream! {
         let _shutdown_guard = shutdown_guard;
+        let Some(mut principal) = live_access(&state, &principal, frame.connect_frame.as_deref()) else {
+            yield Ok(stream_error("auth_required", "Web access expired; reopen this workbench".into()));
+            return;
+        };
+        let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
+        access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         yield Ok(connected_event());
         loop {
             let received = tokio::select! {
                 _ = shutdown.recv() => break,
+                _ = access_poll.tick() => {
+                    let Some(current) = live_access(&state, &principal, frame.connect_frame.as_deref()) else {
+                        yield Ok(stream_error("auth_required", "Web access was revoked; sign in again".into()));
+                        break;
+                    };
+                    principal = current;
+                    continue;
+                },
                 received = receiver.recv() => received,
             };
             match received {
@@ -97,6 +115,8 @@ async fn group_events(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
+    Query(frame): Query<ResourceFrameQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let mut receiver = state
         .ledger_events
@@ -113,12 +133,18 @@ async fn group_events(
     let mut shutdown = state.shutdown.subscribe();
     let stream = async_stream::stream! {
         let _shutdown_guard = shutdown_guard;
+        let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
+        access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         yield Ok(connected_event());
         let mut cursor = last_event_id;
         let mut replayed = HashSet::new();
         let mut replayed_order = VecDeque::new();
         if !cursor.is_empty() {
             loop {
+                if !live_group_access(&state, &principal, &group_id, frame.connect_frame.as_deref()) {
+                    yield Ok(stream_error("auth_required", "Web access expired; reopen this Group".into()));
+                    return;
+                }
                 let page = match event_hub.replay_after(&group_id, &cursor, 2048) {
                     Ok(page) => page,
                     Err(error) => {
@@ -140,6 +166,13 @@ async fn group_events(
         loop {
             let received = tokio::select! {
                 _ = shutdown.recv() => break,
+                _ = access_poll.tick() => {
+                    if !live_group_access(&state, &principal, &group_id, frame.connect_frame.as_deref()) {
+                        yield Ok(stream_error("auth_required", "Web access expired; reopen this Group".into()));
+                        break;
+                    }
+                    continue;
+                },
                 received = receiver.recv() => received,
             };
             match received {
@@ -157,6 +190,10 @@ async fn group_events(
                     let Ok(replacement) = event_hub.subscribe_group(&group_id) else { break; };
                     receiver = replacement;
                     loop {
+                        if !live_group_access(&state, &principal, &group_id, frame.connect_frame.as_deref()) {
+                            yield Ok(stream_error("auth_required", "Web access expired; reopen this Group".into()));
+                            return;
+                        }
                         let page = match event_hub.replay_after(&group_id, &cursor, 2048) {
                             Ok(page) => page,
                             Err(error) => {

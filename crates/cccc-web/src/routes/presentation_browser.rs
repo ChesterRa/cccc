@@ -1,5 +1,5 @@
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -17,6 +17,7 @@ struct SlotQuery {
     mode: String,
     #[serde(default)]
     viewer_mode: String,
+    connect_frame: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -103,6 +104,7 @@ async fn upgrade(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Query(query): Query<SlotQuery>,
+    Extension(principal): Extension<crate::auth::Principal>,
     ws: WebSocketUpgrade,
 ) -> Response {
     if state.web_mode.is_read_only() {
@@ -123,7 +125,22 @@ async fn upgrade(
         Err(error) => return error.into_response(),
     };
     let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
-    ws.on_upgrade(move |socket| serve(socket, state, key(&group_id, &slot), vnc, query.viewer_mode))
+    ws.on_upgrade(move |socket| async move {
+        crate::connect_frames::while_group_access(
+            &state,
+            &principal,
+            &group_id,
+            query.connect_frame.as_deref(),
+            serve(
+                socket,
+                state.clone(),
+                key(&group_id, &slot),
+                vnc,
+                query.viewer_mode,
+            ),
+        )
+        .await;
+    })
 }
 
 async fn serve(socket: WebSocket, state: AppState, key: String, vnc: bool, viewer_mode: String) {

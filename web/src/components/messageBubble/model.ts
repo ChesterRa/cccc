@@ -28,20 +28,21 @@ export function getSenderDisplayName({
   senderId,
   senderActor,
   senderTitle,
-  group_bridgeSourceName,
+  remoteSourceName,
   groupLabelById = {},
   displayNameMap,
 }: {
   senderId: string;
   senderActor: Actor | null;
   senderTitle?: string;
-  group_bridgeSourceName?: string;
+  remoteSourceName?: string;
   groupLabelById?: Record<string, string>;
   displayNameMap: Map<string, string>;
 }): string {
   if (!senderId || senderId === "user") return senderId;
-  const sourceName = String(group_bridgeSourceName || "").trim();
-  if (senderId.startsWith("group_bridge:") && sourceName) return sourceName;
+  const sourceName = String(remoteSourceName || "").trim();
+  if ((senderId.startsWith("group_bridge:") || senderId.startsWith("connect:")) && sourceName)
+    return sourceName;
   const [senderGroupId, senderActorId] = senderId.split("::", 2);
   const senderGroupLabel = String(groupLabelById[senderGroupId] || "").trim();
   if (senderGroupLabel && senderActorId) {

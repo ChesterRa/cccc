@@ -12,5 +12,4 @@ export * from "./webAccess";
 export * from "./webModel";
 export * from "./groupSpace";
 export * from "./diagnostics";
-export * from "./groupBridge";
 export * from "./codexVoice";

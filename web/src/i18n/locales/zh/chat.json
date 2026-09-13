@@ -587,5 +587,26 @@
     "switchTo": "切换到{{view}}"
   },
   "voiceSecretaryExternalAsrNotReady": "请先在设置 > 助手中配置百炼或火山的凭证。",
-  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR 连接失败，请检查服务端网络和供应商配置。"
+  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR 连接失败，请检查服务端网络和供应商配置。",
+  "voiceSecretaryOpenInstanceForMicrophone": "要使用麦克风，请单独打开此实例。",
+  "connectDelivery": {
+    "queued": "等待远端投递",
+    "sent": "已送达远端工作组",
+    "failed": "远端投递失败",
+    "unconfirmed": "远端投递结果未确认",
+    "queuedHint": "已保存到本地，最多自动重试投递 15 分钟。",
+    "sentHint": "目标工作组已收到消息，不代表 Actor 已阅读或回复。",
+    "failedHint": "消息未送达。解决故障后可重新发送。",
+    "unconfirmedHint": "投递期限内未收到回执。目标可能已收到消息，请先确认再重发。"
+  },
+  "connectCancellation": {
+    "queued": "取消待同步",
+    "queuedHint": "本地已取消，正在等待对方工作组确认；这不会停止 Actor 的任务。",
+    "sent": "取消已确认",
+    "sentHint": "双方工作组已记录取消，Actor 已经开始的任务会继续运行。",
+    "failed": "取消未送达",
+    "failedHint": "本地已取消，但对方工作组未接受取消请求。",
+    "unconfirmed": "取消结果未确认",
+    "unconfirmedHint": "本地已取消，无法确认对方是否收到，请勿假定对方已停止等待回复。"
+  }
 }

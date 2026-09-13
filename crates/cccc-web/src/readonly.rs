@@ -79,13 +79,8 @@ fn is_read_only_safe(method: &Method, path: &str) -> bool {
 }
 
 fn is_mutating_get(path: &str) -> bool {
-    matches!(
-        path,
-        "/api/v1/registry/reconcile"
-            | "/api/v1/fs/scope_root"
-            | "/api/group-bridge/session/ws"
-            | "/api/group-bridge/session/ws/v2"
-    ) || (path.contains("/codex_voice/calls/") && path.ends_with("/events"))
+    matches!(path, "/api/v1/registry/reconcile" | "/api/v1/fs/scope_root")
+        || (path.contains("/codex_voice/calls/") && path.ends_with("/events"))
         || path
             .strip_prefix("/nomcp/s/")
             .and_then(|rest| rest.strip_suffix("/send"))
@@ -136,8 +131,6 @@ mod tests {
         for path in [
             "/api/v1/registry/reconcile",
             "/nomcp/s/session-1/send",
-            "/api/group-bridge/session/ws",
-            "/api/group-bridge/session/ws/v2",
             "/api/v1/codex_voice/calls/generation/events",
         ] {
             assert!(!is_read_only_safe(&Method::GET, path), "{path}");

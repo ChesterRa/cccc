@@ -2876,6 +2876,7 @@ Notes:
 - `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
 - When `profile_id` is used, `env_private` is rejected (linked actor private env is profile-controlled).
 - The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
+- Actor records also expose an opaque `generation` UUID for delayed remote recipient binding. Add assigns a fresh value, including when a supplied record came from an earlier Actor; update cannot overwrite it. Restart and ordinary edits preserve it. Existing records without this field use their original creation identity until they are recreated. This does not replace the ledger-based inbox boundary above.
 - A new actor generation MUST NOT inherit Web Model delivery preferences or persisted runner/turn status left by an earlier generation with the same actor id.
 - For a Web Model actor, successful add MUST establish the current generation's missing browser target as canonical empty state. A legacy actor-scoped browser shadow MUST NOT populate the new generation merely because it uses the same actor id.
 - Adding an enabled actor to an `active` or `idle` group MAY start it immediately and transition the group's runtime to running. Adding one to a `paused` or `stopped` group MUST only persist the actor and MUST NOT change the group lifecycle state.
@@ -2976,7 +2977,7 @@ Notes:
 - Realtime Voice owns the intent decision to create a Voice Analyst delegation; it does not own provider scheduling. Once `delegation.created` exists, CCCC MUST immediately hand the exact correlated input to the managed Runtime and MUST NOT hide it in a server-side wait-for-idle queue. An active Runtime with a verified exact-turn steer operation MAY receive the input through that operation; otherwise CCCC MUST write the exact payload and submit sequence to the same verified native terminal session, after which the Runtime owns the steer-versus-queue decision. CCCC MUST register correlation before the write, project whichever authoritative turn consumes it, and report success only after the Runtime control operation or complete terminal submit sequence was accepted. A missing, closed, or rejecting Runtime input path MUST return an explicit delivery error; busy state alone MUST NOT drop, delay, merge, or reject the delegation.
 - Voice Analyst Runtime settings MUST NOT change while a Realtime Voice call is active. After the call stops, active or queued Analyst work MUST block an ordinary settings update rather than being discarded implicitly. An interactive administrator MAY explicitly confirm discarding that work as part of the same settings transaction; CCCC MUST then stop the old managed session before applying the replacement and MUST report whether unfinished work was discarded. Candidate-launch failure MUST restore the prior settings and Runtime, but MUST NOT claim that explicitly discarded work was recovered.
 - Claude transcript entries MUST use the provider `promptId` as the durable provider-turn identity and MUST NOT infer identity from the Agent View summary headline. A human prompt observed before control acceptance is an external turn. Because the authenticated `reply` response does not expose that `promptId`, CCCC MAY return a stable local turn receipt as soon as the control request is accepted, but Voice ownership, progress, and results become authoritative only when the next transcript user record exactly matches the one pending controlled prompt and supplies its provider identifier. A competing prompt plus successful control acceptance is ambiguous and MUST invalidate the managed session rather than replaying the delivery. A controlled request that never starts, or settles without exposing the matching transcript, MUST fail within bounded post-acceptance or post-settlement intervals; active provider work MUST NOT expire solely because its turn is long. `turn_duration`, the provider interruption marker, and an explicit failure record are terminal authority. The state file and selected transcript file identity MUST be revalidated while following the session. An active transcript MAY relocate inside the configured Claude project store only after the old path disappears, a unique same-session file is found, and its entire consumed byte prefix matches the observer’s retained SHA-256 digest. The reader MUST preserve its byte offset and partial record without replaying history. A missing or incomplete relocation destination MUST settle within a bounded 10-second grace period; sustained loss, consumed-history mismatch, ambiguous candidates, same-path replacement, truncation of the active file, or malformed tail records MUST invalidate the session. Relocation alone MUST NOT stop or recreate the provider session.
-- A native-terminal delivery MUST wait for the TUI's advertised input mode before writing any payload; a PTY handle alone does not prove input readiness. Readiness waiting MUST be bounded and cancellable and MUST NOT inject a probe prompt, fall through on timeout, or wait for provider work to finish. Actor deliveries remain unaccepted on readiness failure; Voice native-input deliveries report an explicit error without writing the payload.
+- A managed-runtime native-terminal delivery MUST wait for the TUI's advertised input mode before writing any payload; a PTY handle alone does not prove input readiness. Readiness waiting MUST be bounded and cancellable and MUST NOT inject a probe prompt, fall through on timeout, or wait for provider work to finish. Actor deliveries remain unaccepted on readiness failure; Voice native-input deliveries report an explicit error without writing the payload.
 - A Claude receipt MAY name an empty session that has never created a transcript. Before respawning it, CCCC MUST inspect the existing durable job metadata: only positive empty-input evidence with no transcript path, consumed transcript bytes, output, or token usage permits transcript-free recovery. An absent/null or numeric zero output-token counter does not indicate usage; nonzero or malformed counters MUST retain strict transcript validation. Unknown or materialized history MUST retain strict transcript validation, including a transcript written before Agent View publishes its path. This exception MUST preserve the exact provider session ID and MUST NOT replay old input or create a replacement conversation silently.
 - Observer failure MUST NOT be treated as proof of provider process exit. Actor and Analyst teardown MUST use confirmed provider stop, and a failed stop MUST retain retryable ownership rather than mark the job stopped. Normal managed-client shutdown MUST explicitly terminate event readers even when the session still retains the event sender; observers MUST distinguish expected closure from a failure and MUST NOT emit duplicate stop events.
 - Managed protocol output received before a protocol-originated request is admitted MUST be buffered within fixed byte and event-count bounds. This rule applies to Voice Analyst and internal control requests; Actor message delivery uses the native-TUI rule above. Once the provider authoritatively accepts a protocol request, CCCC MUST publish buffered lifecycle updates in order. A bounded post-response drain MAY be enabled only as an explicit provider-specific normalization policy.
@@ -2990,6 +2991,9 @@ Notes:
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
 - A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
+- Unmanaged native PTY Actors, including Antigravity, retain the shared best-effort input-mode wait and automatic submission path. Startup context MUST accompany the first task in one submission; starting an idle Actor MUST NOT submit a model prompt. Antigravity delivery does not depend on terminal display text or a per-process Web confirmation. Native login/trust setup must be completed before delivery; paste mode alone does not prove that setup is complete. PTY handoff evidence is not a provider receipt. Custom terminal programs retain their separate preamble submission contract.
+- Antigravity Actor startup and CLI setup MUST use native `agy mcp add` and verify the effective CCCC MCP configuration before launch. A conflicting project `.agents/mcp_config.json` entry or malformed configuration MUST fail without being overwritten. Global setup MUST preserve unrelated servers and serialize updates across instances. Its `cccc mcp` entry MUST resolve via the owning Actor launcher on PATH and inherit instance/Actor identity rather than pinning it in shared configuration. The complete startup prompt remains attached to the first task; a bounded, cancellable settling interval before the first payload addresses the observed early paste-mode initialization window. Later deliveries MAY include a conditional bootstrap reminder. Neither pacing nor that reminder changes PTY handoff evidence into a provider receipt.
+- Antigravity preparation also disables the native `showFeedbackSurvey` user preference, because its rating overlay can consume terminal input. Other preferences and user-owned symlinks MUST be preserved; invalid settings MUST fail explicitly without being replaced. This user-wide change also applies to standalone AGY sessions and MUST be documented as such. It does not add a UI-text readiness detector, a survey-dismissal keystroke, or automatic replay of accepted input.
 - The `kimi` runtime targets the current Kimi Code native TUI. Actor startup and CLI setup MUST share MCP configuration at `KIMI_CODE_HOME/mcp.json` (defaulting to the user's `.kimi-code/mcp.json`), preserve unrelated servers, and reject malformed documents without overwriting them. A project `.kimi-code/mcp.json` entry for `cccc` takes precedence; a conflicting project entry MUST fail setup without modification, unless it is the user-level configuration file itself. CCCC MUST NOT infer the active client from legacy directories or invoke the removed `kimi mcp add` command. MCP setup MUST NOT write provider trust records. Native input-mode signals do not establish first-use initialization readiness; users must finish startup dialogs before PTY delivery. Kimi's explicit session arguments are preserved, but CCCC does not claim managed session-ID capture or automatic resume for this runtime.
 - A `deepseek` actor has no native terminal surface and MUST use CCCC's structured ACP surface. The daemon MUST install and resolve CCCC's pinned ACP composition from `CCCC_HOME/runtimes/deepseek/<release>` and MUST NOT modify the user's `DSH_HOME`, home-level npm project, or attached project.
 - The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
@@ -3151,7 +3155,7 @@ Result:
 
 Notes:
 - Supported for Antigravity, `claude`, `codex`, Grok, OpenCode, and Kilo actors.
-- A running Antigravity actor starts a fresh provider conversation through its native `/clear` boundary while preserving the authenticated PTY process. A stopped Antigravity actor starts normally with the same runtime settings.
+- Antigravity uses its ordinary process lifecycle: stop the existing process if present, then start the actor with the same runtime settings and a fresh deferred bootstrap. CCCC does not issue a native `/clear` command or claim automatic Antigravity session resume.
 - Other supported runtimes stop the current actor process if present, clear CCCC's saved runtime session metadata for that actor, then start the actor with the same runtime settings.
 - Does not delete provider-side conversation/session history.
 
@@ -3550,7 +3554,7 @@ conforming. After a message operation has durable success evidence (an accepted
 event, successful queued/retrying/sent receipt, or equivalent file-send
 wrapper), its MCP result MUST add `post_message_nudge` with
 `kind="whole_situation_reconstruction"`. Partial failures, failed receipts, and
-embedded Group Bridge reply errors MUST NOT claim completion or add that field.
+embedded delivery errors MUST NOT claim completion or add that field.
 This private result context is independent of the passive `mail_pending`
 summary, so a successful operation MAY carry both.
 
@@ -3558,7 +3562,7 @@ summary, so a successful operation MAY carry both.
 
 Validate a Web-owned staged upload before its temporary files are committed to
 the group blob store. This operation is side-effect free and exists so both Web
-implementations use the selected daemon's canonical send, reply, and Group Bridge
+implementations use the selected daemon's canonical send and reply
 rules rather than reimplementing message policy in the HTTP port.
 
 Args:
@@ -3597,8 +3601,8 @@ The operation MUST perform the deterministic validation used by the eventual
 Insight, and content, without waking actors, changing group state, writing the
 ledger, storing blobs, or starting delivery. `send` and `reply` additionally
 perform successful-idempotency lookup and MUST return a duplicate result before
-an upload is committed. Group Bridge retry and receipt idempotency remain owned
-by `send_cross_group`. The HTTP port MUST discard its staged files on rejection
+an upload is committed. Local cross-group uploads are unsupported and rejected.
+Connect reply uploads use the canonical reply authorization. The HTTP port MUST discard its staged files on rejection
 or duplicate replay. The eventual operation MUST validate again at the commit
 boundary; preflight is not a reservation.
 
@@ -3643,11 +3647,10 @@ Result:
 
 #### `reply`
 
-Append a `chat.message` with `reply_to` and `quote_text`. When `reply_to`
-references an inbound `group_bridge_session` event, the daemon MUST resolve the
-active trust from the preserved source group and peer, keep one local reply
-record, and relay the reply to the preserved remote event and recipient. The
-`group_bridge:<peer>` provenance sender is never a local recipient token.
+Append a `chat.message` with `reply_to` and `quote_text`. Connect replies derive
+the qualified destination and participant from the original local event, as
+specified in [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md). Historical manual Bridge
+routes are rejected; their provenance sender is never a local recipient token.
 
 Args:
 ```ts
@@ -3656,7 +3659,7 @@ Args:
   reply_to: string
   text: string
   by?: string
-  to?: string[]                 // local: original sender; Group Bridge: preserved remote return target
+  to?: string[]                 // local: original sender; Connect: original remote participant
   message_mode?: "send" | "mail" // default: "send"
   attachments?: unknown[]
   refs?: ReferenceV1[]
@@ -3679,7 +3682,6 @@ Result:
 {
   event: CCCSEventV1 // kind="chat.message"
   message_mode: "send" | "mail"
-  group_bridge_reply?: { receipt?: unknown, error?: unknown }
 }
 ```
 
@@ -3757,8 +3759,8 @@ Notes:
 - Local `user` / `system` principals and registered source actors, including
   peers, may send cross-group messages; unknown source actors are rejected. The
   foreman-only group administration permission does not apply to message delivery.
-- Attachments are supported only when the destination is an active remote Group
-  Bridge route. Local cross-group forwarding rejects attachments.
+- Local cross-group forwarding rejects attachments. Connect sends use their
+  qualified instance/Group destination and bounded attachment contract.
 
 #### Agent Insight Profile marker
 
@@ -3766,8 +3768,8 @@ Notes:
 
 The check MUST occur after routing and successful-idempotency lookup, but before this request creates a new message, task, actor wake, or remote outbox entry. The recommended error code is `peer_insight_required`, with `details.delivery_state="not_sent"` and `details.new_side_effects=false`. Invalid Insight type or length SHOULD use `invalid_insight` instead. Existing accepted idempotent operations MUST replay their original result without being reinterpreted by a newer profile requirement.
 
-Group Bridge peers MUST advertise the current message contract version before
-messages are exchanged. There is no legacy field mapping or silent downgrade.
+Connect peers MUST satisfy the current account and peer protocol version gates
+before messages are exchanged. There is no fallback to manual Bridge.
 
 #### `reply_request_cancel`
 
@@ -5303,6 +5305,14 @@ Result:
 
 ### 8.17.1 Membership reach
 
+The device-authenticated Connect directory, read-only `connect_status` and
+`connect_catalog` operations, durable `connect_send` / `connect_send_files`
+acceptance, ordinary `reply` / `reply_request_cancel` and upload-preflight integration,
+`connect_delivery` / `connect_cancellation` status projections, failure notification
+recovery, and signed internal `connect_peer_receive` catalog/message/receipt/cancel port
+are specified in [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md). Connect is an in-progress
+extension; it does not give device credentials Web administrator authority.
+
 Optional extension for third-party deployments. The bundled native
 implementation implements the complete operation set below. Deployments without
 membership MAY return `unknown_op`.
@@ -5407,6 +5417,18 @@ with membership mutations rather than treating it as a side-effect-free read.
 
 `membership_login` starts RFC 8628 device-code login against `CCCC_ACCOUNT_ORIGIN` and returns `membership.pending` (`verification_uri`, optional `verification_uri_complete`, `user_code`, `interval`). While an unexpired, still-pollable grant exists, another `membership_login` MUST replay it rather than issue a second device code or retarget it to a different origin. Both verification URLs MUST be absolute HTTP(S) URLs on the configured account origin; clients reject an off-origin authorization URL before storing or opening it. The selected account origin is persisted with the pending login and resulting device grant. Polling and every later authenticated device or Reach request MUST use that issuer-bound origin; a changed daemon environment or per-request override MUST NOT retarget an existing bearer token. The CLI or Web client opens `verification_uri_complete` when present and otherwise presents `verification_uri` plus `user_code`. The advertised interval is a minimum and MUST NOT be capped downward. On `slow_down`, subsequent polling waits MUST increase by at least five seconds. `authorization_pending`, `slow_down`, transport failures, and 5xx responses preserve the pending grant. `access_denied` and `expired_token` are terminal for that grant: the daemon MUST clear the matching pending state before returning the error so the next `membership_login` can issue a fresh code. Once a grant has been committed, an exact or late `membership_login_poll` MUST replay the logged-in status instead of failing because the pending code was consumed.
 
+After a successful user-requested login grant (or its replay), the local daemon
+initializes one administrator Access Token if none exists, under the existing
+Token store lock. Existing administrator and scoped Tokens are preserved. CLI
+login and Web login use the same initialization. Status reads and background
+reconnection/directory refresh never create Tokens. The Web port binds a login
+cookie only for an already verified direct-loopback local administrator; account
+membership alone does not grant an anonymous remote browser administrator access.
+Explicit local Web `reach on` can also initialize a previously linked installation
+before the daemon's normal remote-access gate. Tokens never enter account requests
+or public URLs. Initialization failure is returned and can be retried without
+reissuing the already committed account grant.
+
 `membership_logout` first stops any tracked Reach helper and persists disabled
 Reach intent, then retires the issuer-bound account device through the account
 plane, and only then clears local membership secrets and retired Reach URLs.
@@ -5474,129 +5496,35 @@ read-modify-write mutation MUST hold
 including issuer-bound `account_origin`, `device_token`, `tunnel_token`, and
 `pending_login`.
 
-### 8.17.2 Group Bridge delivery compatibility
+### 8.17.2 CCCC Connect and manual Bridge retirement
 
-The daemon accepts these Group Bridge operations:
+[CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md) defines current same-account discovery,
+qualified messaging, delivery receipts, browser authorization, and revocation.
+Manual pairing/session operations, `remote_send`, `remote_delivery_status`,
+`send_cross_group_remote_record`, and remote arbitrary-tool endpoints are removed.
+They MUST NOT be used as fallback routes for Connect or local cross-group sends.
 
-- `remote_send`: send a payload through an active registration or trust. It
-  requires `group_id`, `registration_id`, `idempotency_key`, and an explicit
-  `payload.to` recipient list.
-- `remote_delivery_status`: return the stored receipt identified by
-  `registration_id` and `idempotency_key`.
-- `group_bridge_receive_remote_send`: authenticate an already-resolved inbound
-  session using `target_group_id`, `src_group_id`, `remote_peer_id`, and append
-  its payload idempotently to the target group.
+Before serving requests, the daemon retires old pairing, registration,
+credential, and delivery state under the Home lock. It preserves the stable
+instance private key and original Group ledgers. Pending operations are never
+replayed or converted into account authority. Confirmed outcomes remain confirmed;
+unattempted queued work ends failed; possibly transmitted work ends unconfirmed.
+Final `chat.cross_group_receipt` events preserve source scope and operation IDs,
+carry `group_bridge_retired=true`, and precede removal of source state. Cleanup
+is idempotent across interruption and ledger rotation. Deleted Groups are not
+recreated. Unreadable or unprojectable records remain for inspection and retry
+at next startup, with a warning; they neither revive old workers nor prevent
+ordinary local startup. A deduplicated internal `system.notify` informs the user
+in each affected Group. Secrets and original payloads MUST NOT appear in it.
 
-Implementations MUST persist delivery receipts and MUST NOT create duplicate
-events when the same registration and idempotency key are retried.
-The canonical receipt lifecycle is `queued`, `sending`, `retrying`, `sent`, or
-`failed`; `sent` and `failed` are terminal.
-The daemon owns bounded recovery of non-terminal receipts. It periodically
-retries due `queued`/`retrying` receipts, recovers stale `sending` receipts, and
-honors a persisted `next_attempt_at` when present. A live reverse-session
-reconnect MAY accelerate recovery. Web process lifetime and caller activity
-MUST NOT be required for an accepted outbox item to make progress.
-
-Pairing and session authentication fail closed. A pairing invite
-MUST carry a parseable future `expires_at`; missing, malformed, or expired
-values are invalid. Approval MAY open a bounded credential-claim window. A POST
-with the same request id, invite id, and pairing code MAY return the same raw
-credential again within that window so transport failures are recoverable; the
-credential MUST NOT appear in status GET responses or after the window expires.
-An approved, unclaimed compatibility record that predates `claim_expires_at`
-MAY receive one persisted bounded migration window. Implementations MUST NOT
-start that window when a different record is accessed, MUST NOT extend the
-migrated deadline on later status or claim retries, and malformed or explicitly
-expired deadlines MUST remain invalid.
-
-The Rust v2 WebSocket endpoint MUST send a fresh signed per-connection challenge
-before the client hello. The challenge signature covers the v2 protocol id,
-message contract version, nonce, issue/expiry times, and server peer id; the
-client MUST verify that peer id against its persisted trust. The hello signature
-covers the v2 protocol id, route identity, message contract version, challenge
-nonce and issue time, plus a fresh client nonce. After accepting the hello, the
-server MUST sign a `ready` confirmation over both signed messages, the route,
-and that client nonce; the client MUST verify this confirmation before routing
-messages. This transcript proof makes a captured challenge or ready unusable on
-another connection. A challenge expires before session readiness.
-Rust clients try v2 first and fall back to v1 only when the endpoint is absent or
-requires legacy authentication. New servers MAY accept a legacy v1 hello for an
-active trust that has never completed v2; a successful v2 handshake MUST persist
-`min_session_protocol=2` on both peers, and every later v1 downgrade for that
-trust MUST fail before opening a v1 WebSocket. The server MUST durably persist
-its pin before sending the successful `ready`, and the client MUST durably
-persist its pin before publishing the session as connected. An upgraded socket
-that does not complete the signed hello within a bounded handshake timeout MUST
-be closed without opening a daemon session.
-WebSocket bearer credentials MUST use the Authorization header, never a query
-parameter.
-
-For a new outbound message, the source-group `chat.message` MUST be appended
-idempotently before any remote transport side effect. Its event ID MUST be sent
-as `src_event_id` alongside `src_group_id`, and every subsequent retry for the
-same registration and idempotency key MUST reuse that source event. A successful
-remote receipt MUST be projected into the source ledger as one idempotent
-`chat.cross_group_receipt`; transport state belongs in that receipt, not in the
-immutable source message. A remote reply may reuse the local reply event that was
-already appended instead of creating a second source message.
-The source-group record is a human-visible audit record, not a local copy of the
-remote delivery contract: it MUST use local `to=["user"]` and
-`message_mode="send"`, while `dst_to` and `dst_message_mode` preserve the remote
-audience and mode. The remote payload and destination event independently apply
-the one-audience-domain and agent-only Mail rules.
-The receipt field `projected` is local bookkeeping only. Implementations MUST
-ignore a peer-supplied `projected` value and establish projection from trusted
-local receipt state or the source ledger.
-
-The persistence authority is this set of purpose-specific files in `CCCC_HOME`:
-
-- `group_bridge_identity.yaml`
-- `group_bridge_pairing.yaml` for invites, requests, trusts, and outbounds
-- `group_bridge_registrations.yaml`
-- `group_bridge_credentials.yaml` for raw bearer and remote-send secrets
-- `group_bridge_receipts.yaml`, keyed by
-  `registration_id::idempotency_key`
-
-Registrations MUST contain only an opaque `credential_ref`; raw credentials
-MUST NOT be written into pairing or registration records. The former Rust
-`settings.yaml:group_bridge` section is a migration source only. Canonical
-records win conflicts, including terminal trust states (`revoked`, `rejected`,
-`expired`, or `disabled`) matched by registration or route identity. An
-implementation MUST commit the canonical files before clearing that legacy
-section, and MUST NOT recreate an active registration, credential, or trust from
-legacy state after a canonical terminal decision.
-
-The Rust WebSocket owner and MCP bridge share live reverse-session state through
-these daemon-internal operations:
-
-Internal session completion, polling, close and readiness operations synchronize through the
-session runtime's mutex and generation checks, without acquiring outer Group or global lifecycle
-permits. A completion or poll must not wait behind a global mutation which is itself waiting for
-the delivery to finish. Session open and delivery retain their outer global read permits, so
-initiating work still participates in lifecycle draining. Terminal attachment ownership inspection
-likewise uses the terminal resource's own synchronization.
-This exception does not relax ordinary message, settings, capability mutation, or Group lifecycle
-serialization and does not grant terminal write permission.
-
-- `group_bridge_session_open`: register a live route identified by `group_id`,
-  `remote_group_id`, and `remote_peer_id`; returns a new opaque `generation`.
-- `group_bridge_session_close`: remove the route only when its `generation`
-  still matches. A stale socket MUST NOT close a replacement session.
-- `group_bridge_session_ready`: report whether that exact route currently has a
-  live session lease.
-- `group_bridge_session_poll`: let the owning WebSocket take the next queued
-  server-to-peer request for its generation.
-- `group_bridge_session_complete`: resolve a request using `response_to` and a
-  peer-provided `result`.
-- `group_bridge_session_deliver`: enqueue a `remote_send` request and await its
-  response for at most `timeout_ms`.
-
-These operations are runtime-only and MUST NOT treat persisted trust status as
-proof of reachability. Opening a replacement generation, closing the active
-generation, and completing a response MUST wake pending callers immediately.
-Delivery failures use `peer_session_unavailable` when no live lease exists or
-disconnects, `peer_session_timeout` when the peer does not answer in time, and
-`peer_session_failed` when a session is replaced or returns an invalid result.
+`ledger_statuses` exposes `retired_bridge=true` for affected historical messages;
+queries with `with_obligation_status` decorate those messages with
+`_retired_bridge=true`. Consumers preserve that marker across raw replay and
+hide the reply action. `reply` and its upload preflight independently reject
+retired provenance or archived retirement receipts with `group_bridge_retired`,
+before writes, even when a local Group happens to share the old destination ID.
+Historical sender names and reference text remain readable. Ordinary local
+cross-group send and cancellation are preserved.
 
 ### 8.18 Group Space (Provider-Backed Shared Memory, dual-lane NotebookLM)
 

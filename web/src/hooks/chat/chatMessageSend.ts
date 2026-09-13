@@ -159,11 +159,7 @@ export async function dispatchPreparedMessage(input: {
         };
       }
       for (const target of crossTargets) {
-        const recipients = target.recipientTokens?.length
-          ? target.recipientTokens
-          : target.isRemote
-            ? ["@foreman"]
-            : input.crossTo;
+        const recipients = target.recipientTokens?.length ? target.recipientTokens : input.crossTo;
         response = await api.sendCrossGroupMessage(
           input.selectedGroupId,
           target.groupId,

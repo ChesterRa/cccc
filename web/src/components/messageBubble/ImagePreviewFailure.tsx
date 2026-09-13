@@ -1,5 +1,6 @@
 import { classNames } from "../../utils/classNames";
 import { ImageIcon } from "../Icons";
+import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 
 export function ImagePreviewFailure({
   href,
@@ -27,7 +28,7 @@ export function ImagePreviewFailure({
   const isGridLayout = layout === "grid";
 
   return (
-    <a
+    <AuthenticatedDownloadLink
       href={href}
       className={classNames(
         "group flex w-full flex-col overflow-hidden rounded-xl border p-2 text-left transition-colors",
@@ -93,6 +94,6 @@ export function ImagePreviewFailure({
           {alt}
         </div>
       </div>
-    </a>
+    </AuthenticatedDownloadLink>
   );
 }

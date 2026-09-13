@@ -587,5 +587,26 @@
     "switchTo": "Switch to {{view}}"
   },
   "voiceSecretaryExternalAsrNotReady": "Configure Bailian or Volcengine credentials in Settings > Assistants first.",
-  "voiceSecretaryExternalAsrConnectionFailed": "External ASR connection failed. Check the server network and provider configuration."
+  "voiceSecretaryExternalAsrConnectionFailed": "External ASR connection failed. Check the server network and provider configuration.",
+  "voiceSecretaryOpenInstanceForMicrophone": "For microphone capture, open this instance separately.",
+  "connectDelivery": {
+    "queued": "Queued for remote delivery",
+    "sent": "Delivered to remote Group",
+    "failed": "Remote delivery failed",
+    "unconfirmed": "Remote delivery unconfirmed",
+    "queuedHint": "Saved locally. Delivery retries automatically for up to 15 minutes.",
+    "sentHint": "The target Group received the message. This does not mean an Actor has read or answered it.",
+    "failedHint": "The message was not delivered. Send a new message after resolving the failure.",
+    "unconfirmedHint": "The delivery window ended without a receipt. The target may have received it; check before sending again."
+  },
+  "connectCancellation": {
+    "queued": "Cancellation pending",
+    "queuedHint": "Cancelled here. Waiting for the other Group to confirm; this does not stop an Actor task.",
+    "sent": "Cancellation confirmed",
+    "sentHint": "Both Groups recorded the cancellation. Any Actor task already running continues.",
+    "failed": "Cancellation not delivered",
+    "failedHint": "Cancelled here, but the other Group did not accept the cancellation.",
+    "unconfirmed": "Cancellation unconfirmed",
+    "unconfirmedHint": "Cancelled here. The other Group may have received it; do not assume it has stopped waiting."
+  }
 }

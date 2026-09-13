@@ -49,7 +49,7 @@ import {
   readChatGptAppPermissionHintDismissed,
 } from "../../utils/chatGptAppPermissionHint";
 import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
-import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
+import { type ComposerMentionKind } from "./chatMentionSuggestions";
 import { PresentationTrigger } from "../../components/presentation/PresentationTrigger";
 import { MobilePresentationSurface } from "../../components/presentation/MobilePresentationSurface";
 
@@ -254,8 +254,6 @@ export function ChatTab({
     clearQuotedVoiceDocumentRef,
     toTokens,
     toggleRecipient,
-    selectedRemoteGroupIds,
-    toggleRemoteGroupRecipient,
     clearRecipients,
     messageMode,
     setMessageMode,
@@ -297,18 +295,7 @@ export function ChatTab({
     scrollRef,
   });
 
-  const remoteRouteGroups = useMemo(
-    () => composerRouteGroups.filter((group) => group.group_bridge_remote),
-    [composerRouteGroups],
-  );
-  const messageGroupLabelById = useMemo(() => {
-    const labels = { ...groupLabelById };
-    for (const group of remoteRouteGroups) {
-      const groupId = String(group.group_id || "").trim();
-      if (groupId) labels[groupId] = getGroupRouteDisplayName(group);
-    }
-    return labels;
-  }, [groupLabelById, remoteRouteGroups]);
+  const messageGroupLabelById = groupLabelById;
 
   const { t } = useTranslation("chat");
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
@@ -1141,9 +1128,6 @@ export function ChatTab({
             onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
             toTokens={toTokens}
             onToggleRecipient={toggleRecipient}
-            remoteGroups={remoteRouteGroups}
-            selectedRemoteGroupIds={selectedRemoteGroupIds}
-            onToggleRemoteGroup={toggleRemoteGroupRecipient}
             onClearRecipients={clearRecipients}
             composerFiles={composerFiles}
             onRemoveComposerFile={removeComposerFile}

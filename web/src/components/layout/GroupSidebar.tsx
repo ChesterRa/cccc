@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Monitor } from "lucide-react";
+import { instanceName } from "../../features/connect/instanceName";
 import { useTranslation } from "react-i18next";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
@@ -22,8 +24,11 @@ import { CodexVoiceSidebarDock } from "../../features/codexVoice/CodexVoiceShell
 import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { SidebarMobileOverlay } from "./SidebarMobileOverlay";
+import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
+import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
 export interface GroupSidebarProps {
+  connect?: ConnectWorkbench;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
   selectedGroupId: string;
@@ -45,6 +50,7 @@ export interface GroupSidebarProps {
 }
 
 export function GroupSidebar({
+  connect,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -339,13 +345,32 @@ export function GroupSidebar({
         <div className={groupSidebarScrollClass(isCollapsed)}>
           {!isCollapsed && (
             <div className="px-2 pb-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
-                {t("workingGroups")}
-              </div>
+              {connect?.ownInstance ? (
+                <div
+                  className="flex min-h-10 min-w-0 items-center gap-2 text-sm text-[var(--color-text-secondary)]"
+                  title={[connect.ownInstance.display_name, connect.ownInstance.public_origin]
+                    .filter(Boolean)
+                    .join(" · ")}
+                >
+                  <Monitor size={16} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {instanceName(connect.ownInstance, connect.instances)}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
+                    {t("connect.thisInstance")}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
+                  {t("workingGroups")}
+                </div>
+              )}
             </div>
           )}
 
-          {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
+          <div className={!isCollapsed && connect?.ownInstance ? "pl-3" : undefined}>
+            {renderGroupList(isCollapsed ? collapsedGroups : workingGroups, "working")}
+          </div>
 
           {!isCollapsed && archivedGroups.length > 0 && (
             <div className="mt-4">
@@ -403,6 +428,15 @@ export function GroupSidebar({
               )}
             </div>
           )}
+          {connect ? (
+            <ConnectSidebar
+              workbench={connect}
+              collapsed={isCollapsed}
+              onSelected={() => {
+                if (window.matchMedia("(max-width: 767px)").matches) onClose();
+              }}
+            />
+          ) : null}
         </div>
 
         {!readOnly && codexVoice ? (

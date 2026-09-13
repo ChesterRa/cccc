@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as api from "../services/api";
-import { shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
 import {
   buildComposerSendRecipientTokens,
   shouldRestoreComposerAfterFailedSend,
@@ -113,55 +112,5 @@ describe("useChatTab request triggers", () => {
     expect(result.response.ok).toBe(false);
     expect(shouldRestoreComposerAfterFailedSend(result.successfulSendCount)).toBe(false);
     expect(shouldRestoreComposerAfterFailedSend(0)).toBe(true);
-  });
-
-  it("allows attachment sends to remote group chips while blocking local cross-group attachments", async () => {
-    const file = new File(["payload"], "payload.txt", { type: "text/plain" });
-    expect(
-      shouldBlockLocalCrossGroupAttachments({
-        attachmentCount: 1,
-        targets: [{ isCrossGroup: true, isRemote: false }],
-      }),
-    ).toBe(true);
-    expect(
-      shouldBlockLocalCrossGroupAttachments({
-        attachmentCount: 1,
-        targets: [{ isCrossGroup: true, isRemote: true }],
-      }),
-    ).toBe(false);
-    vi.mocked(api.sendCrossGroupMessage).mockResolvedValue({ ok: true, result: {} });
-
-    await dispatchPreparedMessage({
-      selectedGroupId: "g_local",
-      text: "hello",
-      localTo: [],
-      crossTo: [],
-      files: [file],
-      messageMode: "send",
-      localId: "local_1",
-      refs: [],
-      replyTarget: null,
-      remoteReplyGroupId: "",
-      remoteReplyTo: [],
-      sendPlanTargets: [
-        {
-          groupId: "g_remote",
-          isCrossGroup: true,
-          isRemote: true,
-          source: "remote_chip",
-          recipientTokens: ["@foreman"],
-        },
-      ],
-      sendsCrossGroup: true,
-    });
-
-    expect(api.sendCrossGroupMessage).toHaveBeenCalledWith(
-      "g_local",
-      "g_remote",
-      "hello",
-      ["@foreman"],
-      "send",
-      [file],
-    );
   });
 });

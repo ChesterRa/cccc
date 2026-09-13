@@ -12,7 +12,7 @@ import type {
   RuntimeInfo,
   StreamingActivity,
 } from "../types";
-import type { ChatWindowState, GroupChatBucket } from "./groupStoreCore";
+import type { ChatWindowState, GroupChatBucket, ObligationStatusPatch } from "./groupStoreCore";
 
 export interface GroupState {
   groups: GroupMeta[];
@@ -124,11 +124,7 @@ export interface GroupState {
   setGroupPresentation: (presentation: GroupPresentation | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
   updateReadStatus: (eventId: string, actorId: string, groupId?: string) => void;
-  updateObligationStatus: (
-    eventId: string,
-    patch: { actorId?: string; replied?: true; cancelled?: true; deliveryState?: string },
-    groupId?: string,
-  ) => void;
+  updateObligationStatus: (eventId: string, patch: ObligationStatusPatch, groupId?: string) => void;
   setHasMoreHistory: (v: boolean, groupId?: string) => void;
   setIsLoadingHistory: (v: boolean, groupId?: string) => void;
   setIsChatWindowLoading: (v: boolean, groupId?: string) => void;

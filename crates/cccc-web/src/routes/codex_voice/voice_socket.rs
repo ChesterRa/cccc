@@ -116,7 +116,7 @@ pub(super) async fn serve(
                 if !send_json(&mut socket, json!({"type":"notification_status", "paused":paused})).await { break; }
             }
             _ = notification_output.tick() => {
-                if !principal.current_voice_admin(&state.home).unwrap_or(false) { break; }
+                if !principal.current_admin(&state.home).unwrap_or(false) { break; }
                 match send_notification_results(&mut socket, &state.home, &generation).await {
                     Ok(()) => output_failed = false,
                     Err(error) if !output_failed => {
@@ -138,7 +138,7 @@ pub(super) async fn serve(
                 if !send_json(&mut socket, json!({"type":"heartbeat"})).await { break; }
             }
             browser = socket.recv() => {
-                if !principal.current_voice_admin(&state.home).unwrap_or(false) { break; }
+                if !principal.current_admin(&state.home).unwrap_or(false) { break; }
                 let Some(Ok(browser)) = browser else { break; };
                 let text = match browser {
                     Message::Text(text) => text,

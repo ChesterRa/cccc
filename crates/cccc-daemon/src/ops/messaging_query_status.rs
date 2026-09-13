@@ -10,6 +10,21 @@ pub(super) fn decorate(
     events: Vec<Event>,
 ) -> Result<Vec<Value>, OpError> {
     let include = [
+        (
+            "with_obligation_status",
+            "retired_bridge",
+            "_retired_bridge",
+        ),
+        (
+            "with_obligation_status",
+            "connect_cancellation",
+            "_connect_cancellation",
+        ),
+        (
+            "with_obligation_status",
+            "connect_delivery",
+            "_connect_delivery",
+        ),
         ("with_read_status", "read_status", "_read_status"),
         (
             "with_obligation_status",

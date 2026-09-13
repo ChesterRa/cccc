@@ -24,9 +24,9 @@ fn connected_voice_principal_loses_authority_when_its_token_is_revoked() {
         is_admin: true,
         raw_token: token.token.clone(),
     };
-    assert!(principal.current_voice_admin(&home).expect("current"));
+    assert!(principal.current_admin(&home).expect("current"));
     store.delete(&token.token_id()).expect("revoke");
-    assert!(!principal.current_voice_admin(&home).expect("revoked"));
+    assert!(!principal.current_admin(&home).expect("revoked"));
     assert!(
         principal.is_admin,
         "the initial WebSocket identity alone is insufficient"

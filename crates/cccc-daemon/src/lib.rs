@@ -1,7 +1,7 @@
+mod connect_transport;
 pub mod deepseek_setup;
 mod dispatch;
 mod dispatch_concurrency;
-mod group_bridge_sessions;
 mod ops;
 mod paths;
 mod process;

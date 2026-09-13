@@ -87,7 +87,7 @@ async fn configured_origin_worker() {
                 request = if bearer {
                     request.header(header::AUTHORIZATION, format!("Bearer {}", token.token))
                 } else {
-                    request.header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                    request.header(header::COOKIE, format!("cccc_access_8848={}", token.token))
                 };
                 let response = app
                     .clone()
@@ -177,7 +177,7 @@ async fn configured_origin_worker() {
             }
             .header(header::HOST, "cccc.example")
             .header(header::ORIGIN, origin)
-            .header(header::COOKIE, format!("cccc_access_token={}", token.token));
+            .header(header::COOKIE, format!("cccc_access_80={}", token.token));
             if websocket {
                 request = request.header(header::UPGRADE, "websocket");
             }

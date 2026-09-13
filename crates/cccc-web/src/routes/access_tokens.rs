@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::access_token_support::{
-    clean_groups, cookie, error, mask, server_error, store, valid_id,
+    clean_groups, cookie, cookie_name, error, expired_cookie, mask, server_error, store, valid_id,
 };
 use crate::AppState;
 use crate::auth::Principal;
@@ -62,6 +62,7 @@ async fn list(State(state): State<AppState>) -> Response {
 
 async fn create(
     State(state): State<AppState>,
+    principal: Option<Extension<Principal>>,
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> Response {
@@ -82,8 +83,15 @@ async fn create(
                 "the first access token must be an administrator",
             );
         }
+        let local = principal.as_ref().is_some_and(|value| {
+            value.is_admin && value.raw_token.is_empty() && value.user_id == "local"
+        });
         let supplied = body.bootstrap_token.as_deref().unwrap_or_default();
-        match cccc_core::web_bootstrap::consume_web_bootstrap_token(&state.home, supplied) {
+        match if local {
+            Ok(true)
+        } else {
+            cccc_core::web_bootstrap::consume_web_bootstrap_token(&state.home, supplied)
+        } {
             Ok(true) => {}
             Ok(false) => {
                 return error(
@@ -112,8 +120,15 @@ async fn create(
         Ok(token) => {
             let body = Json(json!({"ok":true,"result":{"access_token":token}}));
             if first_admin {
+                let _ = cccc_core::web_bootstrap::ensure_web_bootstrap_token(&state.home);
                 let secure = crate::request_origin::is_https(&state, &headers);
-                return ([(header::SET_COOKIE, cookie(&token.token, secure))], body)
+                return (
+                    [(
+                        header::SET_COOKIE,
+                        cookie(&token.token, secure, &cookie_name(&state, &headers)),
+                    )],
+                    body,
+                )
                     .into_response();
             }
             body.into_response()
@@ -320,6 +335,7 @@ async fn exchange(
     if let Ok(value) = axum::http::HeaderValue::from_str(&cookie(
         &token.token,
         crate::request_origin::is_https(&state, &headers),
+        &cookie_name(&state, &headers),
     )) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
@@ -344,8 +360,11 @@ fn runtime_visibility(home: &cccc_core::HomeLayout) -> Value {
     })
 }
 
-async fn logout() -> Response {
-    let cookie = "cccc_access_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let cookie = expired_cookie(
+        crate::request_origin::is_https(&state, &headers),
+        &cookie_name(&state, &headers),
+    );
     (
         [(header::SET_COOKIE, cookie)],
         Json(json!({"ok":true,"result":{"signed_out":true}})),

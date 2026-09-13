@@ -177,3 +177,122 @@ async fn wait_for_daemon(home: &HomeLayout) {
     }
     panic!("daemon address was not created");
 }
+
+#[tokio::test]
+async fn local_first_admin_creation_needs_no_copied_bootstrap_code() {
+    let (_temp, home) = home();
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post("/api/v1/access-tokens")
+                .header(header::HOST, "127.0.0.1:8848")
+                .header(header::ORIGIN, "http://127.0.0.1:8848")
+                .header(header::CONTENT_TYPE, "application/json")
+                .extension(peer("127.0.0.1:42000"))
+                .body(Body::from(r#"{"user_id":"owner","is_admin":true}"#))
+                .expect("fixture operation"),
+        )
+        .await
+        .expect("fixture operation");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().contains_key(header::SET_COOKIE));
+    assert_eq!(
+        AccessTokenStore::new(home.clone())
+            .expect("fixture operation")
+            .list()
+            .expect("fixture operation")
+            .len(),
+        1
+    );
+    assert!(!home.root().join("web_bootstrap_token").exists());
+}
+
+#[tokio::test]
+async fn remote_or_cross_origin_first_admin_creation_still_requires_bootstrap() {
+    for (origin, peer_address, forwarded) in [
+        ("http://attacker.example", "127.0.0.1:42000", false),
+        ("http://127.0.0.1:8848", "192.0.2.1:42000", false),
+        ("http://127.0.0.1:8848", "127.0.0.1:42000", true),
+    ] {
+        let (_temp, home) = home();
+        let mut request = Request::post("/api/v1/access-tokens")
+            .header(header::HOST, "127.0.0.1:8848")
+            .header(header::ORIGIN, origin)
+            .header(header::CONTENT_TYPE, "application/json")
+            .extension(peer(peer_address));
+        if forwarded {
+            request = request.header("x-forwarded-for", "192.0.2.1");
+        }
+        let response = cccc_web::app(home.clone())
+            .oneshot(
+                request
+                    .body(Body::from(r#"{"user_id":"owner","is_admin":true}"#))
+                    .expect("fixture operation"),
+            )
+            .await
+            .expect("fixture operation");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            AccessTokenStore::new(home)
+                .expect("fixture operation")
+                .list()
+                .expect("fixture operation")
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn confirmed_local_account_link_initializes_one_admin_and_binds_browser() {
+    let (_temp, home) = home();
+    cccc_core::membership::save(
+        &home,
+        &cccc_core::membership::MembershipState {
+            logged_in: true,
+            device_id: Some("fixture-device".into()),
+            device_token: Some("fixture-device-token".into()),
+            account_origin: Some("http://127.0.0.1:9".into()),
+            ..Default::default()
+        },
+    )
+    .expect("fixture operation");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let app = cccc_web::app(home.clone());
+    let store = AccessTokenStore::new(home.clone()).expect("fixture operation");
+    let mut issued = None;
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/membership/login/poll")
+                    .header(header::HOST, "127.0.0.1:8848")
+                    .header(header::ORIGIN, "http://127.0.0.1:8848")
+                    .extension(peer("127.0.0.1:42000"))
+                    .body(Body::empty())
+                    .expect("fixture operation"),
+            )
+            .await
+            .expect("fixture operation");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key(header::SET_COOKIE));
+        let tokens = store.list().expect("fixture operation");
+        assert_eq!(tokens.len(), 1);
+        if let Some(previous) = &issued {
+            assert_eq!(&tokens[0].token_id(), previous);
+        }
+        issued = Some(tokens[0].token_id());
+    }
+    assert!(!home.root().join("web_bootstrap_token").exists());
+    let _ = cccc_client::DaemonClient::new(home)
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await;
+    daemon
+        .await
+        .expect("fixture operation")
+        .expect("fixture operation");
+}

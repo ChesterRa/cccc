@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { LedgerEvent } from "../../types";
+import type { ChatMessageData, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
 import { ActorAvatar } from "../ActorAvatar";
@@ -58,7 +58,10 @@ export function MessageMetadataHeader({
           sizeClassName="h-6 w-6"
           textClassName="text-[10px]"
         />
-        <span className={classNames("shrink-0 text-xs font-medium", senderTextClass)}>
+        <span
+          className={classNames("min-w-0 truncate text-xs font-medium", senderTextClass)}
+          title={senderDisplayName}
+        >
           {senderDisplayName}
         </span>
         {remoteBadgeLabel ? (
@@ -80,7 +83,7 @@ export function MessageMetadataHeader({
     <div className="hidden min-w-0 items-center gap-2 px-1 sm:flex">
       <span
         className={classNames(
-          "shrink-0 text-[11px] font-semibold tracking-[0.01em]",
+          "min-w-0 truncate text-[11px] font-semibold tracking-[0.01em]",
           isUserMessage
             ? isDark
               ? "text-[var(--color-text-secondary)]"
@@ -184,6 +187,12 @@ export function MessageFooter({
     </div>
   );
 
+  const connectDelivery =
+    event._connect_delivery ??
+    ((event.data as ChatMessageData | undefined)?.dst_instance_id
+      ? { state: "queued" as const }
+      : undefined);
+  const connectCancellation = event._connect_cancellation;
   const deliveryLabel = webModelDeliveryStatus
     ? t(`webModelDelivery.${webModelDeliveryStatus.state}`)
     : "";
@@ -203,6 +212,8 @@ export function MessageFooter({
       className={classNames(
         "mt-2 flex flex-wrap items-center gap-2 px-1 text-[10px] transition-opacity",
         webModelDeliveryStatus ||
+          connectDelivery ||
+          connectCancellation ||
           isMail ||
           obligationSummary ||
           visibleReadStatusEntries.length > 0 ||
@@ -222,6 +233,29 @@ export function MessageFooter({
           >
             <InboxIcon size={11} aria-hidden="true" />
             <span>{t("modeMail")}</span>
+          </span>
+        ) : null}
+        {connectDelivery ? (
+          <span
+            className={classNames(
+              "max-w-full rounded-full border px-2.5 py-1 text-[10px] font-semibold",
+              connectDelivery.state === "failed"
+                ? "border-rose-500/20 text-rose-700 dark:text-rose-300"
+                : "border-[var(--glass-border-subtle)]",
+            )}
+            title={connectDelivery.error || t(`connectDelivery.${connectDelivery.state}Hint`)}
+          >
+            {t(`connectDelivery.${connectDelivery.state}`)}
+          </span>
+        ) : null}
+        {connectCancellation ? (
+          <span
+            className="max-w-full rounded-full border border-[var(--glass-border-subtle)] px-2.5 py-1 text-[10px] font-semibold"
+            title={
+              connectCancellation.error || t(`connectCancellation.${connectCancellation.state}Hint`)
+            }
+          >
+            {t(`connectCancellation.${connectCancellation.state}`)}
           </span>
         ) : null}
         {webModelDeliveryStatus ? (

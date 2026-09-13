@@ -16,14 +16,12 @@ import {
 } from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
-import type { Actor, GroupMeta, LedgerEvent, MessageRef } from "../types";
-import * as api from "../services/api";
+import type { Actor, LedgerEvent, MessageRef } from "../types";
 import { formatSendMessageError, shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import type { ComposerAgentMentionToken, ComposerGroupMentionToken } from "./composerGroupMentions";
 import {
-  buildComposerGroupBridgeRouteRefs,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
@@ -31,12 +29,8 @@ import { buildComposerLocalGroupRouteRefs } from "./composerLocalGroupRouteRefs"
 import { buildComposerSendPlanTargets } from "./composerSendPlan";
 import {
   buildComposerMentionSuggestions,
-  buildGroupBridgeRouteGroups,
-  mergeComposerRouteGroups,
   type ComposerMentionKind,
 } from "../pages/chat/chatMentionSuggestions";
-import type { GroupBridgeTrust } from "../services/api/groupBridge";
-import { subscribeGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
 import {
   completeCanonicalOutboxReconciliation,
   reconcileCanonicalOutboxEvent,
@@ -48,7 +42,6 @@ import {
   type ChatSendScrollRequest,
 } from "../utils/chatSendScrollRequest";
 
-import { buildComposerTrustFetchGroupId } from "./chat/chatTabBasics";
 import { shouldFollowChatSendFromViewport } from "./chat/chatSendAutoFollow";
 import {
   buildComposerSendRecipientTokens,
@@ -107,8 +100,6 @@ export function useChatTab({
   const { t } = useTranslation(["chat", "common"]);
   const [sendScrollRequest, setSendScrollRequest] = useState<ChatSendScrollRequest | null>(null);
   const nextSendScrollRequestIdRef = useRef(0);
-  const [group_bridgeTrusts, setGroupBridgeTrusts] = useState<GroupBridgeTrust[]>([]);
-  const [selectedRemoteGroupIds, setSelectedRemoteGroupIds] = useState<string[]>([]);
   // ============ Stores ============
   const {
     events,
@@ -320,53 +311,7 @@ export function useChatTab({
     });
   }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
 
-  const refreshGroupBridgeTrusts = useCallback(() => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) {
-      setGroupBridgeTrusts([]);
-      return;
-    }
-    let cancelled = false;
-    void api.fetchGroupBridgeTrusts(buildComposerTrustFetchGroupId(gid)).then((resp) => {
-      if (cancelled) return;
-      setGroupBridgeTrusts(resp.ok ? resp.result.trusts || [] : []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedGroupId]);
-
-  useEffect(() => refreshGroupBridgeTrusts(), [refreshGroupBridgeTrusts]);
-
-  useEffect(() => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) return;
-    return subscribeGroupBridgePairingChanged(gid, refreshGroupBridgeTrusts);
-  }, [refreshGroupBridgeTrusts, selectedGroupId]);
-
-  const remoteRouteGroups = useMemo(
-    () => buildGroupBridgeRouteGroups(group_bridgeTrusts),
-    [group_bridgeTrusts],
-  );
-
-  const composerRouteGroups: GroupMeta[] = useMemo(
-    () => mergeComposerRouteGroups(groups, remoteRouteGroups),
-    [remoteRouteGroups, groups],
-  );
-
-  useEffect(() => {
-    setSelectedRemoteGroupIds([]);
-  }, [selectedGroupId]);
-
-  useEffect(() => {
-    const validRemoteIds = new Set(
-      remoteRouteGroups.map((group) => String(group.group_id || "").trim()).filter(Boolean),
-    );
-    setSelectedRemoteGroupIds((current) => {
-      const next = current.filter((groupId) => validRemoteIds.has(groupId));
-      return next.length === current.length ? current : next;
-    });
-  }, [remoteRouteGroups]);
+  const composerRouteGroups = groups;
 
   // Message-body mentions are text helpers: @ autocompletes names/references, # adds delegation hints.
   const mentionSuggestions = useMemo(() => {
@@ -516,17 +461,7 @@ export function useChatTab({
     [toTokens, setToText],
   );
 
-  const toggleRemoteGroupRecipient = useCallback((groupId: string) => {
-    const gid = String(groupId || "").trim();
-    if (!gid) return;
-    setSelectedRemoteGroupIds((current) => {
-      if (current.includes(gid)) return current.filter((item) => item !== gid);
-      return [...current, gid];
-    });
-  }, []);
-
   const clearRecipients = useCallback(() => {
-    setSelectedRemoteGroupIds([]);
     setToText("");
   }, [setToText]);
 
@@ -577,7 +512,6 @@ export function useChatTab({
     if (!draftTextSnapshot && draftFilesSnapshot.length === 0) return;
     const dstGroup = routingSnapshot.destGroupId;
     const isCrossGroup = routingSnapshot.isCrossGroup;
-    const selectedRemoteGroupIdsSnapshot = selectedRemoteGroupIds.slice();
     const toTextSnapshot = composerStateSnapshot.toText;
     const localToTokensSnapshot = buildComposerSendRecipientTokens({
       toText: toTextSnapshot,
@@ -598,9 +532,6 @@ export function useChatTab({
       text: composerStateSnapshot.composerText,
       groupMentionTokens: composerGroupMentionTokens,
       groups: composerRouteGroups,
-      remoteGroupIds: selectedRemoteGroupIdsSnapshot,
-      includeSelectedGroup:
-        selectedRemoteGroupIdsSnapshot.length > 0 && localToTokensSnapshot.length > 0,
     });
     const sendsCrossGroup = sendPlanTargets.some((target) => target.isCrossGroup);
     const sendsLocal = sendPlanTargets.some((target) => !target.isCrossGroup);
@@ -641,11 +572,6 @@ export function useChatTab({
         tokens: composerGroupMentionTokens,
         groups: composerRouteGroups,
       }),
-      ...buildComposerGroupBridgeRouteRefs({
-        text: composerStateSnapshot.composerText,
-        tokens: composerGroupMentionTokens,
-        groups: composerRouteGroups,
-      }),
     ];
     const messageModeSnapshot = replyTargetSnapshot
       ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
@@ -653,7 +579,10 @@ export function useChatTab({
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
     const assistantTargets =
-      sendsLocal && !sendsCrossGroup && messageModeSnapshot !== "mail"
+      sendsLocal &&
+      !sendsCrossGroup &&
+      !replyTargetSnapshot?.connectInstanceId &&
+      messageModeSnapshot !== "mail"
         ? resolveAssistantTargets(localToTokensSnapshot)
         : [];
 
@@ -697,14 +626,12 @@ export function useChatTab({
       );
       setComposerGroupMentionTokens(groupMentionTokensSnapshot);
       setComposerAgentMentionTokens(agentMentionTokensSnapshot);
-      setSelectedRemoteGroupIds(selectedRemoteGroupIdsSnapshot);
     };
 
     const applyImmediateComposerFeedback = (shouldLockBottom: boolean) => {
       clearComposer();
       setComposerGroupMentionTokens([]);
       setComposerAgentMentionTokens([]);
-      setSelectedRemoteGroupIds([]);
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
@@ -743,7 +670,7 @@ export function useChatTab({
       })
     ) {
       showError(
-        "Local cross-group send does not support attachments yet. Use a remote Group Bridge target or send without attachments.",
+        "Local cross-group send does not support attachments yet. Send without attachments.",
       );
       return;
     }
@@ -884,7 +811,6 @@ export function useChatTab({
     composerGroupMentionTokens,
     composerAgentMentionTokens,
     composerRouteGroups,
-    selectedRemoteGroupIds,
     chatAtBottomRef,
     chatViewKey,
   ]);
@@ -985,8 +911,6 @@ export function useChatTab({
     clearQuotedVoiceDocumentRef: () => setQuotedVoiceDocumentRef(null),
     toTokens,
     toggleRecipient,
-    selectedRemoteGroupIds,
-    toggleRemoteGroupRecipient,
     clearRecipients,
     messageMode,
     setMessageMode,

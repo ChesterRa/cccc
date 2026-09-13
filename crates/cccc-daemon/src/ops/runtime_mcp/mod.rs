@@ -23,6 +23,7 @@ fn setup_lock() -> &'static Mutex<()> {
 pub(super) fn prepare(
     home: &HomeLayout,
     runtime: ActorRuntime,
+    launch_command: &[String],
     cwd: &Path,
     env: &mut BTreeMap<String, String>,
 ) -> Result<(), OpError> {
@@ -52,6 +53,10 @@ pub(super) fn prepare(
         home.root().to_string_lossy().into_owned(),
     );
 
+    if runtime == ActorRuntime::Antigravity {
+        return ensure_antigravity(launch_command, cwd, env, &executable);
+    }
+
     match runtime {
         ActorRuntime::Claude
         | ActorRuntime::Codex
@@ -79,6 +84,33 @@ pub(super) fn prepare(
             ensure_persistent(runtime, cwd, env, &executable)
         }
     }
+}
+
+fn ensure_antigravity(
+    launch_command: &[String],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    executable: &Path,
+) -> Result<(), OpError> {
+    let runtime = ActorRuntime::Antigravity;
+    let mut command = cccc_core::runtime_mcp::add_command(runtime, executable)
+        .expect("Antigravity native setup command");
+    if let Some(program) = launch_command.first() {
+        command[0].clone_from(program);
+    }
+    cccc_core::runtime_mcp::ensure_antigravity(cwd, env, || {
+        run_checked(
+            runtime,
+            "add CCCC MCP entry",
+            &command,
+            cwd,
+            env,
+            SETUP_TIMEOUT,
+        )
+        .map_err(|error| io::Error::other(error.message))
+    })
+    .map(|_| ())
+    .map_err(|error| OpError::new("runtime_mcp_setup_failed", error.to_string()))
 }
 
 fn ensure_persistent(
@@ -280,6 +312,57 @@ fn run_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_uses_selected_cli_before_launch_and_rechecks_its_config() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        let provider_home = temp.path().join("provider");
+        let script = temp.path().join("selected-agy");
+        std::fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import sys,os,json,pathlib
+assert sys.argv[1:]==['mcp','add','cccc','cccc','mcp']
+assert os.environ['CCCC_GROUP_ID']=='group-fixture'
+assert os.environ['CCCC_ACTOR_ID']=='actor-fixture'
+root=pathlib.Path(os.environ['HOME']);path=root/'.gemini/config/mcp_config.json'
+path.parent.mkdir(parents=True,exist_ok=True)
+path.write_text(json.dumps({'mcpServers':{'cccc':{'command':'cccc','args':['mcp']}}}))
+(root/'selected-invoked').touch()
+"#,
+        )
+        .expect("CLI fixture");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("executable");
+        let default_cli = temp.path().join("agy");
+        std::fs::write(&default_cli, b"#!/bin/sh\nexit 99\n").expect("unused default CLI");
+        std::fs::set_permissions(&default_cli, std::fs::Permissions::from_mode(0o700))
+            .expect("default executable");
+        let search_path = std::env::join_paths(std::iter::once(temp.path().to_path_buf()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").expect("test PATH")),
+        ))
+        .expect("fixture PATH");
+        let env = BTreeMap::from([
+            ("HOME".into(), provider_home.display().to_string()),
+            ("USERPROFILE".into(), provider_home.display().to_string()),
+            ("CCCC_GROUP_ID".into(), "group-fixture".into()),
+            ("CCCC_ACTOR_ID".into(), "actor-fixture".into()),
+            ("PATH".into(), search_path.to_string_lossy().into_owned()),
+        ]);
+        let command = [
+            script.display().to_string(),
+            "--dangerously-skip-permissions".into(),
+        ];
+        ensure_antigravity(&command, &cwd, &env, Path::new("/fixture/cccc")).expect("native setup");
+        assert!(provider_home.join("selected-invoked").is_file());
+        std::fs::remove_file(&script).expect("remove fixture CLI");
+        ensure_antigravity(&command, &cwd, &env, Path::new("/fixture/cccc"))
+            .expect("ready entry needs no subprocess");
+    }
 
     #[test]
     fn kimi_actor_setup_uses_the_code_config_without_invoking_a_cli() {

@@ -4,10 +4,10 @@ export type ChatTFunction = (key: string, options?: Record<string, unknown>) => 
 
 export function shouldBlockLocalCrossGroupAttachments(input: {
   attachmentCount: number;
-  targets: Array<{ isCrossGroup?: boolean; isRemote?: boolean }>;
+  targets: Array<{ isCrossGroup?: boolean }>;
 }): boolean {
   if (input.attachmentCount <= 0) return false;
-  return input.targets.some((target) => Boolean(target.isCrossGroup) && !target.isRemote);
+  return input.targets.some((target) => Boolean(target.isCrossGroup));
 }
 
 export function supportsChatStreamingPlaceholder(

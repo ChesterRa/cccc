@@ -594,6 +594,16 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     break;
                 };
                 vec![job]
+            } else if deferred.len() >= BATCH_CAPACITY {
+                // Failed startup or paused delivery must not grow this batch
+                // beyond its limit by draining the bounded channel on retries.
+                if !actor_delivery_worker::interruptible_sleep(
+                    deferred_retry_delay(deferred_failures),
+                    &thread_cancelled,
+                ) {
+                    break;
+                }
+                std::mem::take(&mut deferred)
             } else {
                 match receiver.recv_timeout(deferred_retry_delay(deferred_failures)) {
                     Ok(job) => {
@@ -696,7 +706,13 @@ mod tests {
         let report = dispatch(&home, &group, &event);
         assert_eq!(report.state, "mail");
         assert_eq!(report.queued, 0);
-        assert!(in_flight().lock().expect("in flight").is_empty());
+        assert!(
+            !in_flight()
+                .lock()
+                .expect("in flight")
+                .iter()
+                .any(|item| item.0 == group.group_id)
+        );
     }
 
     #[test]
@@ -837,6 +853,12 @@ mod tests {
             .0,
             "failed"
         );
-        assert!(in_flight().lock().expect("in flight").is_empty());
+        assert!(
+            !in_flight()
+                .lock()
+                .expect("in flight")
+                .iter()
+                .any(|item| item.0 == group.group_id)
+        );
     }
 }

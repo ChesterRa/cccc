@@ -131,7 +131,7 @@ export default defineConfig({
             { text: 'Operations Runbook', link: '/guide/operations' },
             { text: 'Web UI', link: '/guide/web-ui' },
             { text: 'Supported Runtimes', link: '/guide/runtimes' },
-            { text: 'Group Bridge', link: '/guide/group-bridge' },
+            { text: 'CCCC Connect', link: '/guide/connect' },
             { text: 'ChatGPT Web Model Runtime', link: '/guide/web-model-runtime' },
             { text: 'Group Space + NotebookLM', link: '/guide/group-space-notebooklm' },
             { text: 'Capability Allowlist', link: '/guide/capability-allowlist' },

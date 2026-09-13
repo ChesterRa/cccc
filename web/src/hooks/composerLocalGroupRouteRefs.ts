@@ -25,7 +25,7 @@ export function buildComposerLocalGroupRouteRefs({
 
   return targets.flatMap((token) => {
     const group = groupsById.get(token.groupId);
-    if (!group || group.group_bridge_remote) return [];
+    if (!group) return [];
     const title = String(group.title || "").trim() || String(group.topic || "").trim();
     return [
       {

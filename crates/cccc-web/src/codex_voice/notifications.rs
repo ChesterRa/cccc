@@ -46,12 +46,12 @@ impl ActiveSession {
         home: &HomeLayout,
         principal: &crate::auth::Principal,
     ) -> Result<()> {
-        if !principal.current_voice_admin(home)? {
+        if !principal.current_admin(home)? {
             return Ok(());
         }
         store::scan(home).context("scan Voice ledger increments")?;
         for item in store::snapshot(home)?.messages {
-            if !self.info().connected || !principal.current_voice_admin(home)? {
+            if !self.info().connected || !principal.current_admin(home)? {
                 break;
             }
             if item.handoff.is_some() {

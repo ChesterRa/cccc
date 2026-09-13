@@ -4,15 +4,12 @@
 import { useEffect, useRef } from "react";
 import * as api from "../services/api";
 import { publishCapabilityChanged } from "../utils/capabilityEvents";
-import { publishGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
 import { refreshGlobalEventsFallback } from "./globalEventFallback";
 import {
   shouldKeepGlobalEventsConnected,
   shouldRefreshActorsAfterGlobalEvent,
   shouldRefreshCapabilitiesAfterGlobalEvent,
   shouldRefreshCapabilitiesAfterGlobalEventsOpen,
-  shouldRefreshGroupBridgePairingAfterGlobalEvent,
-  shouldRefreshGroupBridgePairingAfterGlobalEventsOpen,
   shouldRefreshGroupsAfterGlobalEvent,
   shouldRefreshGroupsAfterGlobalEventsOpen,
 } from "./globalEventRefreshPolicy";
@@ -101,12 +98,6 @@ export function useGlobalEvents({
       publishCapabilityChanged(gid);
     }
 
-    function refreshSelectedGroupBridgePairing() {
-      const gid = String(selectedGroupIdRef.current || "").trim();
-      if (!gid) return;
-      publishGroupBridgePairingChanged(gid);
-    }
-
     function scheduleFallbackPoll() {
       if (fallbackTimer) return;
       fallbackTimer = window.setTimeout(() => {
@@ -144,11 +135,6 @@ export function useGlobalEvents({
           if (shouldRefreshCapabilitiesAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
             refreshSelectedCapabilities();
           }
-          if (
-            shouldRefreshGroupBridgePairingAfterGlobalEvent(ev, selectedGroupIdRef.current || "")
-          ) {
-            refreshSelectedGroupBridgePairing();
-          }
         } catch {
           /* ignore parse errors */
         }
@@ -158,8 +144,6 @@ export function useGlobalEvents({
         const shouldRefreshCapabilities = shouldRefreshCapabilitiesAfterGlobalEventsOpen(
           hasConnectedOnceRef.current,
         );
-        const shouldRefreshGroupBridgePairing =
-          shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
         errorCount = 0; // Reset on successful connection
         fallbackDelayMs = 10000;
         clearFallbackTimer();
@@ -172,9 +156,6 @@ export function useGlobalEvents({
         }
         if (shouldRefreshCapabilities) {
           refreshSelectedCapabilities();
-        }
-        if (shouldRefreshGroupBridgePairing) {
-          refreshSelectedGroupBridgePairing();
         }
       };
       es.onerror = () => {

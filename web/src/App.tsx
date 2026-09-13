@@ -39,10 +39,18 @@ import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 import { getEffectiveComposerDestGroupId } from "./stores/useComposerStore";
 import { buildReplyComposerState } from "./utils/chatReply";
 import { useShallow } from "zustand/react/shallow";
+import { useConnectWorkbench } from "./features/connect/useConnectWorkbench";
+import { ConnectRemotePanel } from "./features/connect/ConnectRemotePanel";
 
 // ============ Main App Component ============
 
-export default function App() {
+export default function App({
+  connectEmbedded = false,
+  onOpenParentSidebar,
+}: {
+  connectEmbedded?: boolean;
+  onOpenParentSidebar?: () => void;
+}) {
   // Theme
   const { theme, setTheme, isDark } = useTheme();
   const { textScale, setTextScale } = useTextScale();
@@ -319,7 +327,7 @@ export default function App() {
     },
   });
 
-  const { canManageGroups, ccccHome, fetchDirSuggestions } = useAppChrome({
+  const { canManageGroups, ccccHome, fetchDirSuggestions, refreshWebAccessSession } = useAppChrome({
     parseUrlDeepLink,
     refreshGroups,
     setWebReadOnly,
@@ -330,6 +338,8 @@ export default function App() {
     addActorOpen,
     editingActor,
   });
+  const connect = useConnectWorkbench(!connectEmbedded && !webReadOnly, refreshWebAccessSession);
+  const remoteSelected = Boolean(connect.selected);
 
   const { handleTouchStart, handleTouchEnd } = useSwipeNavigation({
     tabs: allTabs,
@@ -360,7 +370,7 @@ export default function App() {
   const hasComposerFiles = composerFiles.length > 0;
 
   useAppGroupLifecycle({
-    selectedGroupId,
+    selectedGroupId: remoteSelected ? "" : selectedGroupId,
     destGroupId,
     sendGroupId,
     hasReplyTarget,
@@ -388,7 +398,14 @@ export default function App() {
       <AppBackground isDark={isDark} />
 
       <AppShell
-        canUseVoice={canManageGroups}
+        connectEmbedded={connectEmbedded}
+        connect={connectEmbedded ? undefined : connect}
+        remoteWorkspace={
+          remoteSelected ? (
+            <ConnectRemotePanel workbench={connect} onOpenSidebar={() => setSidebarOpen(true)} />
+          ) : undefined
+        }
+        canUseVoice={canManageGroups && !connectEmbedded}
         onOpenVoiceSource={openMessageWindow}
         orderedGroups={orderedGroups}
         archivedGroupIds={archivedGroupIds}
@@ -430,7 +447,10 @@ export default function App() {
         chatAtBottomRef={chatAtBottomRef}
         onThemeChange={setTheme}
         onTextScaleChange={setTextScale}
-        onSelectGroup={setSelectedGroupId}
+        onSelectGroup={(groupId) => {
+          connect.selectLocal();
+          setSelectedGroupId(groupId);
+        }}
         onWarmGroup={(gid) => void warmGroup(gid)}
         onCreateGroup={
           !webReadOnly && canManageGroups
@@ -446,7 +466,7 @@ export default function App() {
         onReorderGroupsInSection={reorderGroupsInSection}
         onArchiveGroup={archiveGroup}
         onRestoreGroup={restoreGroup}
-        onOpenSidebar={() => setSidebarOpen(true)}
+        onOpenSidebar={onOpenParentSidebar || (() => setSidebarOpen(true))}
         onOpenGroupEdit={
           canManageGroups
             ? () => {

@@ -48,11 +48,7 @@ async fn normal_mode_does_not_apply_read_only_guard() {
 async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
     let (_temp, home) = home();
     let app = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit);
-    for path in [
-        "/api/v1/registry/reconcile",
-        "/nomcp/s/session-1/send",
-        "/api/group-bridge/session/ws",
-    ] {
+    for path in ["/api/v1/registry/reconcile", "/nomcp/s/session-1/send"] {
         let response = app
             .clone()
             .oneshot(Request::get(path).body(Body::empty()).expect("request"))

@@ -37,7 +37,7 @@ export function isReplyRequestCancelledEvent(
   ev: unknown,
 ): ev is BaseLedgerEvent & {
   kind: "chat.reply_request.cancelled";
-  data: { source_event_id?: string };
+  data: { source_event_id?: string; connect_cancel?: unknown };
 } {
   return (
     ev !== null &&

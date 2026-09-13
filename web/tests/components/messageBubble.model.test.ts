@@ -59,7 +59,7 @@ describe("messageBubble model", () => {
         senderId: "group_bridge:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
         senderActor: null,
         senderTitle: "",
-        group_bridgeSourceName: "CCCC Cross Test",
+        remoteSourceName: "CCCC Cross Test",
         displayNameMap: new Map(),
       }),
     ).toBe("CCCC Cross Test");

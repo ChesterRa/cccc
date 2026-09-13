@@ -52,6 +52,8 @@ struct StatusSnapshot<'a> {
     reply_positions: ReplyPositions,
     delivery_statuses: DeliveryStatuses,
     cancellation_positions: CancellationPositions,
+    connect_receipts: HashMap<String, Value>,
+    retired_bridge: HashSet<String>,
 }
 
 impl StatusSnapshot<'_> {
@@ -78,6 +80,11 @@ impl StatusSnapshot<'_> {
             let actor_generations = inbox::actor_generation_positions(events);
             let (delivery_statuses, reply_positions, cancellation_positions) =
                 collect_message_outcomes(events);
+            let connect_receipts = events.iter().filter(|event| event.kind == "chat.cross_group_receipt" && event.by == "system" && event.data.get("transport").and_then(Value::as_str) == Some("connect")).filter_map(|event| {
+                let source = event.data.get("source_event_id")?.as_str()?;
+                Some((source.to_owned(), json!({"state":event.data.get("status"), "error":event.data.get("error"), "remote_event_id":event.data.get("remote_event_id")})))
+            }).collect();
+            let retired_bridge = events.iter().filter(|event| cccc_core::group_bridge_retirement::is_retired_receipt(event)).filter_map(|event| event.data.get("source_event_id")?.as_str().map(str::to_owned)).collect();
             use_snapshot(&StatusSnapshot {
                 group,
                 events,
@@ -87,6 +94,8 @@ impl StatusSnapshot<'_> {
                 reply_positions,
                 delivery_statuses,
                 cancellation_positions,
+                connect_receipts,
+                retired_bridge,
             })
         })
         .map_err(OpError::io)
@@ -104,6 +113,11 @@ impl StatusSnapshot<'_> {
     fn status(&self, event: &Event) -> Value {
         let recipients = self.actor_recipients(event);
         let mut status = Map::new();
+        if self.retired_bridge.contains(&event.id)
+            || cccc_core::group_bridge_retirement::is_retired_message(event)
+        {
+            status.insert("retired_bridge".into(), json!(true));
+        }
         if event.data.get("message_mode").and_then(Value::as_str) == Some("mail") {
             let read_status = recipients
                 .iter()
@@ -111,7 +125,40 @@ impl StatusSnapshot<'_> {
                 .collect::<Map<_, _>>();
             status.insert("read_status".into(), Value::Object(read_status));
         }
+        if event.data.contains_key("connect_message")
+            && let Some(position) = self.cancellation_positions.get(&event.id)
+            && let Some(cancel) = self.events.get(*position)
+            && cancel.data.contains_key("connect_cancel")
+        {
+            let propagation = if cancel.data.contains_key("connect_cancel_sha256") {
+                json!({"state":"sent"})
+            } else {
+                self.connect_receipts
+                    .get(&cancel.id)
+                    .cloned()
+                    .unwrap_or_else(|| json!({"state":"queued"}))
+            };
+            status.insert("connect_cancellation".into(), propagation);
+        }
         if is_cross_group_source(event) {
+            if let Ok(message) = super::connect_messages::stored_message(event) {
+                status.insert(
+                    "connect_delivery".into(),
+                    self.connect_receipts
+                        .get(&event.id)
+                        .cloned()
+                        .unwrap_or_else(|| json!({"state":"queued"})),
+                );
+                let replies = self.reply_positions.get(&event.id);
+                let cancellation = self.cancellation_positions.get(&event.id).copied();
+                let reply_requested = message.message_mode == "request_reply";
+                let obligations=message.recipients.iter().map(|actor| {
+                    let key=connect_reply_author(&message.target.instance_id,actor);
+                    let (replied,cancelled)=terminal_outcome(replies.and_then(|actors|actors.get(&key)).copied(),cancellation);
+                    (actor.id.clone(),json!({"replied":replied,"reply_requested":reply_requested,"cancelled":reply_requested && cancelled,"delivery_state":""}))
+                }).collect::<Map<_,_>>();
+                status.insert("obligation_status".into(), Value::Object(obligations));
+            }
             return Value::Object(status);
         }
 
@@ -206,10 +253,20 @@ fn collect_message_outcomes(
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
             {
+                let author = super::connect_messages::stored_message(event)
+                    .ok()
+                    .filter(|message| {
+                        event.by == format!("connect:{}", message.source.instance_id)
+                            && message.reply_to.is_some()
+                    })
+                    .map(|message| {
+                        connect_reply_author(&message.source.instance_id, &message.sender)
+                    })
+                    .unwrap_or_else(|| event.by.clone());
                 replies
                     .entry(source_event_id.to_owned())
                     .or_default()
-                    .entry(event.by.clone())
+                    .entry(author)
                     .or_insert(position);
             }
             continue;
@@ -276,6 +333,10 @@ fn is_cross_group_source(event: &Event) -> bool {
         .get("dst_group_id")
         .and_then(Value::as_str)
         .is_some_and(|group_id| !group_id.trim().is_empty())
+}
+
+fn connect_reply_author(instance: &str, actor: &cccc_contracts::connect::ConnectActor) -> String {
+    format!("connect:{instance}:{}:{}", actor.id, actor.generation)
 }
 
 #[cfg(test)]

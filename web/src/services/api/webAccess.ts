@@ -114,7 +114,9 @@ export async function createMembershipReachWebLogin() {
 
 export async function fetchWebAccessSession() {
   return reuseRecentReadRequest(webAccessSessionRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
-    apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session"),
+    apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session", {
+      signal: AbortSignal.timeout(10000),
+    }),
   );
 }
 

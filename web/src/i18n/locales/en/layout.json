@@ -108,5 +108,24 @@
   "recoveryLocalStep4": "Read the one-time code from {{bootstrapPath}} and use it to create a new Admin Access Token.",
   "recoveryRemoteTitle": "If you are on a remote URL",
   "recoveryRemoteBody": "On the machine running CCCC, back up or remove {{path}} (or CCCC_HOME/access_tokens.yaml), reload this page, then use the one-time code from {{bootstrapPath}} (or CCCC_HOME/web_bootstrap_token) to create a new Admin Access Token in Settings > Web Access.",
-  "recoverySecurityNote": "This is a local administrator recovery path. It does not provide any in-page reset action."
+  "recoverySecurityNote": "This is a local administrator recovery path. It does not provide any in-page reset action.",
+  "connect": {
+    "adminRequired": "This workspace requires the target instance’s administrator access token. A restricted token can be used by opening the instance separately.",
+    "enterAdminToken": "Sign in to this instance as administrator",
+    "targetLoginHint": "The token is sent only to this instance. Your entry instance’s token does not unlock it.",
+    "openSeparately": "Open separately",
+    "reopen": "This connection has ended. Retry to reopen the instance.",
+    "unavailable": "This instance is unavailable. Check its account connection and Remote Access.",
+    "frameUnavailable": "The embedded workspace did not respond. Retry, or open the instance separately.",
+    "retry": "Retry",
+    "noRemoteAccess": "Remote Access is off",
+    "adminView": "Administrator view",
+    "signIn": "Sign in to view groups",
+    "thisInstance": "This instance",
+    "downloadFailed": "Download failed ({{status}}). Please retry.",
+    "downloading": "Downloading…",
+    "savedGroups": "Saved group list · access checked when opened",
+    "collapseGroups": "Collapse groups in {{name}}",
+    "expandGroups": "Expand groups in {{name}}"
+  }
 }

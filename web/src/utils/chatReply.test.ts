@@ -20,7 +20,7 @@ describe("buildReplyComposerState", () => {
     expect(state?.toText).toBe("@foreman");
   });
 
-  it("does not prefill local recipients when replying to group_bridge messages", () => {
+  it("disables replies to retired Group Bridge messages", () => {
     const event: LedgerEvent = {
       id: "evt_local",
       kind: "chat.message",
@@ -39,11 +39,10 @@ describe("buildReplyComposerState", () => {
       default_send_to: "foreman",
     } as never);
 
-    expect(state?.toText).toBe("");
-    expect(state?.replyTarget?.eventId).toBe("evt_local");
+    expect(state).toBeNull();
   });
 
-  it("treats local replies with inherited group_bridge metadata as local actor messages", () => {
+  it("does not route historical remote replies to a same-ID local Actor", () => {
     const event: LedgerEvent = {
       id: "evt_reply",
       kind: "chat.message",
@@ -62,7 +61,35 @@ describe("buildReplyComposerState", () => {
       default_send_to: "foreman",
     } as never);
 
-    expect(state?.toText).toBe("peer1");
-    expect(state?.replyTarget?.eventId).toBe("evt_reply");
+    expect(state).toBeNull();
   });
+});
+
+it.each([
+  { src_instance_id: "other-instance", src_group_id: "g_local", src_event_id: "remote-event" },
+  {
+    dst_instance_id: "other-instance",
+    dst_group_id: "g_local",
+    dst_to: ["worker"],
+    remote_event_id: "remote-event",
+  },
+])("keeps Connect replies anchored to the local event despite colliding Group IDs", (route) => {
+  const state = buildReplyComposerState(
+    {
+      id: "local-event",
+      kind: "chat.message",
+      by: "user",
+      data: { ...route, text: "question", to: ["worker"] },
+    },
+    "g_local",
+    [{ id: "worker", title: "Unrelated local worker" } as never],
+    undefined,
+  );
+  expect(state).toMatchObject({
+    destGroupId: "g_local",
+    toText: "",
+    replyTarget: { eventId: "local-event" },
+  });
+  expect(state?.replyTarget.remoteDstGroupId).toBeUndefined();
+  expect(state?.replyTarget.remoteReplyToEventId).toBeUndefined();
 });

@@ -108,5 +108,24 @@
   "recoveryLocalStep4": "读取 {{bootstrapPath}} 中的一次性验证码，并用它创建新的管理员访问令牌。",
   "recoveryRemoteTitle": "如果你当前是远程访问",
   "recoveryRemoteBody": "请在运行 CCCC 的机器上备份或移除 {{path}}（或 CCCC_HOME/access_tokens.yaml），刷新页面后打开“设置 > Web 访问”，再读取 {{bootstrapPath}}（或 CCCC_HOME/web_bootstrap_token）中的一次性验证码来创建新的管理员访问令牌。",
-  "recoverySecurityNote": "这是本机管理员恢复路径，不提供任何网页内的一键重置能力。"
+  "recoverySecurityNote": "这是本机管理员恢复路径，不提供任何网页内的一键重置能力。",
+  "connect": {
+    "adminRequired": "此工作台需要目标实例的管理员 Access Token。受限 Token 请在单独打开的实例页面使用。",
+    "enterAdminToken": "以管理员身份登录此实例",
+    "targetLoginHint": "Token 仅发送给此实例，入口实例的 Token 无法解锁它。",
+    "openSeparately": "单独打开",
+    "reopen": "此连接已结束。点击重试可重新打开该实例。",
+    "unavailable": "此实例暂时不可用，请检查其账户连接和远程访问状态。",
+    "frameUnavailable": "嵌入的工作台没有响应，请重试或单独打开此实例。",
+    "retry": "重试",
+    "noRemoteAccess": "远程访问已关闭",
+    "adminView": "管理员视图",
+    "signIn": "登录后查看工作组",
+    "thisInstance": "当前实例",
+    "downloadFailed": "下载失败（{{status}}），请重试。",
+    "downloading": "下载中…",
+    "savedGroups": "已保存的组列表 · 打开时重新检查权限",
+    "collapseGroups": "收起 {{name}} 的工作组",
+    "expandGroups": "展开 {{name}} 的工作组"
+  }
 }

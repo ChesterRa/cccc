@@ -1,3 +1,4 @@
+import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { FloatingPortal } from "@floating-ui/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -279,7 +280,7 @@ export function ImagePreview({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <a
+                  <AuthenticatedDownloadLink
                     href={downloadHref}
                     download={downloadName}
                     className={classNames(
@@ -291,7 +292,7 @@ export function ImagePreview({
                     title={t("download", { name: alt })}
                   >
                     {t("download", { name: alt })}
-                  </a>
+                  </AuthenticatedDownloadLink>
 
                   <button
                     type="button"

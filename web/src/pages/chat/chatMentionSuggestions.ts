@@ -1,5 +1,4 @@
 import type { Actor, GroupMeta } from "../../types";
-import type { GroupBridgeTrust } from "../../services/api/groupBridge";
 
 export type ComposerMentionKind = "agent" | "group";
 
@@ -77,86 +76,16 @@ function buildGroupMentionSuggestions(
       const title = String(group.title || "").trim();
       const topic = String(group.topic || "").trim();
       const label = getGroupRouteDisplayName(group);
-      const remoteEndpoint = String(group.group_bridge_remote_endpoint || "").trim();
-      const remotePeerId = String(group.group_bridge_remote_peer_id || "").trim();
       return {
         kind: "group" as const,
         value: groupId,
         label,
-        badgeKind: group.group_bridge_remote ? ("remote" as const) : undefined,
-        description: group.group_bridge_remote ? groupId : remoteEndpoint || topic || undefined,
-        meta: group.group_bridge_remote
-          ? remotePeerId || undefined
-          : label !== groupId
-            ? groupId
-            : undefined,
-        keywords: [groupId, title, topic, remoteEndpoint, remotePeerId].filter(Boolean),
+        description: topic || undefined,
+        meta: label !== groupId ? groupId : undefined,
+        keywords: [groupId, title, topic].filter(Boolean),
       };
     })
     .filter((item) => matchesMentionFilter(item, needle));
-}
-
-function endpointDisplayName(endpoint: string): string {
-  const value = String(endpoint || "").trim();
-  if (!value) return "";
-  try {
-    return new URL(value.includes("://") ? value : `https://${value}`).host;
-  } catch {
-    return value.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  }
-}
-
-function normalizeGroupBridgeAccessLevel(value: unknown): "messages" | "read" | "full" | "unknown" {
-  const level = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (level === "messages") return "messages";
-  if (level === "read" || level === "full") return level;
-  return "unknown";
-}
-
-export function buildGroupBridgeRouteGroups(
-  trusts: GroupBridgeTrust[] | undefined | null,
-): GroupMeta[] {
-  const out: GroupMeta[] = [];
-  for (const trust of trusts || []) {
-    if (String(trust.status || "").trim() !== "active") continue;
-    const groupId = String(trust.remote_group_id || "").trim();
-    if (!groupId) continue;
-    const title = String(trust.remote_group_title || "").trim();
-    const endpoint = String(trust.remote_endpoint || "").trim();
-    const endpointName = endpointDisplayName(endpoint);
-    const peerId = String(trust.remote_peer_id || "").trim();
-    out.push({
-      group_id: groupId,
-      title: title || endpointName || "Remote CCCC group",
-      topic: groupId,
-      group_bridge_remote: true,
-      group_bridge_local_group_id: String(trust.group_id || "").trim(),
-      group_bridge_remote_endpoint: endpoint,
-      group_bridge_remote_peer_id: peerId,
-      group_bridge_trust_id: String(trust.trust_id || "").trim(),
-      group_bridge_registration_id: String(trust.registration_id || "").trim(),
-      group_bridge_access_level: normalizeGroupBridgeAccessLevel(trust.remote_access_level),
-    });
-  }
-  return out;
-}
-
-export function mergeComposerRouteGroups(
-  localGroups: GroupMeta[],
-  group_bridgeGroups: GroupMeta[],
-): GroupMeta[] {
-  const byId = new Map<string, GroupMeta>();
-  for (const group of localGroups || []) {
-    const groupId = String(group.group_id || "").trim();
-    if (groupId) byId.set(groupId, group);
-  }
-  for (const group of group_bridgeGroups || []) {
-    const groupId = String(group.group_id || "").trim();
-    if (groupId && !byId.has(groupId)) byId.set(groupId, group);
-  }
-  return [...byId.values()];
 }
 
 function containsRouteToken(text: string, token: string): boolean {

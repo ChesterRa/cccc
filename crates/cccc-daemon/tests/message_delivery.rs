@@ -1434,71 +1434,6 @@ fn local_cross_group_reply_request_cancellation_reaches_the_relayed_event_once()
 }
 
 #[test]
-fn remote_cross_group_record_validates_insight_before_source_write() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
-    let source = call(
-        &home,
-        "group_create",
-        json!({"title":"remote-source","by":"user"}),
-    );
-    let source_id = source.result["group"]["group_id"]
-        .as_str()
-        .expect("source id");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let source_ledger = store.ledger_path(source_id).expect("source ledger");
-    let before = ledger::read_all(&source_ledger)
-        .expect("source events")
-        .len();
-
-    let rejected = call_raw(
-        &home,
-        "send_cross_group_remote_record",
-        json!({
-            "group_id":source_id,"dst_group_id":"remote-group","by":"user",
-            "to":["reviewer"],"text":"review this","message_mode":"mail",
-            "require_peer_insight":true
-        }),
-    );
-    assert_eq!(
-        rejected.error.as_ref().map(|error| error.code.as_str()),
-        Some("peer_insight_required")
-    );
-    assert_eq!(
-        ledger::read_all(&source_ledger)
-            .expect("source events")
-            .len(),
-        before
-    );
-
-    let accepted = call(
-        &home,
-        "send_cross_group_remote_record",
-        json!({
-            "group_id":source_id,"dst_group_id":"remote-group","by":"user",
-            "to":["reviewer"],"text":"review this","require_peer_insight":true,
-            "message_mode":"mail","insight":"The remote reviewer owns the requested decision."
-        }),
-    );
-    assert_eq!(
-        accepted.result["source_event"]["data"]["to"],
-        json!(["user"])
-    );
-    assert_eq!(
-        accepted.result["source_event"]["data"]["dst_to"],
-        json!(["reviewer"])
-    );
-    assert_eq!(
-        accepted.result["source_event"]["data"]["message_mode"],
-        "send"
-    );
-    assert_eq!(
-        accepted.result["source_event"]["data"]["dst_message_mode"],
-        "mail"
-    );
-}
-
-#[test]
 fn tracked_send_creates_links_and_recovers_idempotently() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -2202,4 +2137,153 @@ fn call_raw(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
         args: args.as_object().cloned().unwrap_or_else(Map::new),
     };
     cccc_daemon::handle_request(home, &request)
+}
+
+#[test]
+fn antigravity_recovers_failed_startup_with_bounded_automatic_delivery() {
+    // Public CLI resolution is part of native MCP preparation. Give this test
+    // its own launcher without changing the environment of parallel tests.
+    if std::env::var_os("CCCC_TEST_AGY_DELIVERY_CHILD").is_none() {
+        let temp = tempfile::tempdir().expect("launcher fixture");
+        let launcher = temp.path().join("cccc");
+        std::fs::write(&launcher, b"fixture launcher (never invoked)").expect("launcher");
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "antigravity_recovers_failed_startup_with_bounded_automatic_delivery",
+                "--nocapture",
+            ])
+            .env("CCCC_TEST_AGY_DELIVERY_CHILD", "1")
+            .env("CCCC_LAUNCHER_PATH", launcher)
+            .output()
+            .expect("isolated test process");
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"startup-recovery","by":"user"}),
+    );
+    let gid = created.result["group"]["group_id"]
+        .as_str()
+        .expect("startup fixture");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":gid,"path":temp.path(),"by":"user"}),
+    );
+    let script = temp.path().join("input.py");
+    let provider_home = temp.path().join("provider-home");
+    let config = provider_home.join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(config.parent().expect("config directory")).expect("provider home");
+    std::fs::write(
+        &config,
+        r#"{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"]}}}"#,
+    )
+    .expect("isolated, already configured MCP");
+    let received = temp.path().join("received");
+    let fixture = r#"#!/usr/bin/env python3
+import os,sys,tty,pathlib
+root=pathlib.Path(sys.argv[1]);tty.setraw(0)
+os.write(1,b'\x1b[?2004hA ready terminal with no known footer\r\n>')
+while True:
+ data=os.read(0,65536)
+ if not data:break
+ with (root/'received').open('ab') as f:f.write(data)
+"#;
+    // The executable is temporarily absent. Exercise real startup failures and
+    // the existing pending worker, without involving operator-confirmation APIs.
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":gid,"actor_id":"agy","runtime":"antigravity",
+        "command":[script,temp.path()],"env":{"HOME":provider_home,"USERPROFILE":provider_home},"by":"user"}),
+    );
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let sources = (0..70)
+            .map(|index| {
+                call(
+                    &home,
+                    "send",
+                    json!({"group_id":gid,"by":"user","to":["agy"],
+                "text":format!("QUEUED_TASK_{index}_END"),"message_mode":"send"}),
+                )
+            })
+            .collect::<Vec<_>>();
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(!received.exists(), "failed startup cannot accept input");
+        std::fs::write(&script, fixture).expect("install fixture");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("fixture executable");
+        let ids = sources
+            .iter()
+            .map(|source| &source.result["event"]["id"])
+            .collect::<Vec<_>>();
+        let ledger_path = GroupStore::new(home.clone())
+            .expect("startup fixture")
+            .ledger_path(gid)
+            .expect("startup fixture");
+        let deadline = std::time::Instant::now() + Duration::from_secs(12);
+        loop {
+            let events = ledger::read_all(&ledger_path).expect("startup fixture");
+            if ids.iter().all(|id| {
+                events.iter().any(|e| {
+                    e.kind == "runtime.delivery"
+                        && &e.data["source_event_id"] == *id
+                        && e.data["state"] == "accepted"
+                })
+            }) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "existing queue must resume"
+            );
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let input = std::fs::read_to_string(&received).expect("startup fixture");
+        assert!(!input.contains("MCP setup request"));
+        assert_eq!(input.matches("[CCCC] You are agy").count(), 1);
+        for index in 0..70 {
+            assert_eq!(
+                input.matches(&format!("QUEUED_TASK_{index}_END")).count(),
+                1
+            );
+        }
+        assert!(
+            input.matches('\r').count() >= 2,
+            "waiting work must retain bounded submissions"
+        );
+        for submission in input.split('\r') {
+            assert!(
+                submission.matches("QUEUED_TASK_").count() <= 64,
+                "failed startup must not grow the deferred batch beyond its limit"
+            );
+        }
+        let events = ledger::read_all(&ledger_path).expect("startup fixture");
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "chat.message").count(),
+            70
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.kind == "runtime.delivery" && e.data["state"] == "accepted")
+                .count(),
+            70
+        );
+    }));
+    call(&home, "group_stop", json!({"group_id":gid,"by":"user"}));
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
 }

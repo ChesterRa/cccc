@@ -7,7 +7,7 @@ use percent_encoding::percent_decode_str;
 use serde_json::json;
 
 use crate::AppState;
-use crate::routes::access_token_support::cookie;
+use crate::routes::access_token_support::{cookie, cookie_name};
 
 #[derive(Debug, Clone)]
 pub struct Principal {
@@ -39,20 +39,24 @@ impl Principal {
         self.is_admin || self.allowed_groups.iter().any(|item| item == group_id)
     }
 
-    /// Long-lived global Voice work must not outlive a revoked remote token.
-    pub(crate) fn current_voice_admin(
-        &self,
-        home: &cccc_core::HomeLayout,
-    ) -> std::io::Result<bool> {
+    /// Long-lived administrator work must not outlive a revoked remote token.
+    pub(crate) fn current_admin(&self, home: &cccc_core::HomeLayout) -> std::io::Result<bool> {
         if !self.is_admin {
             return Ok(false);
         }
+        Ok(self
+            .current(home)?
+            .is_some_and(|principal| principal.is_admin))
+    }
+
+    pub(crate) fn current(&self, home: &cccc_core::HomeLayout) -> std::io::Result<Option<Self>> {
         if self.raw_token.is_empty() {
-            return Ok(self.user_id == "local");
+            return Ok((self.user_id == "local").then(|| self.clone()));
         }
         Ok(AccessTokenStore::new(home.clone())?
             .lookup(&self.raw_token)?
-            .is_some_and(|token| token.is_admin && token.user_id == self.user_id))
+            .filter(|token| token.user_id == self.user_id)
+            .map(Self::from_token))
     }
 }
 
@@ -72,11 +76,15 @@ pub async fn authorize(
         Err(error) => return auth_store_failure(error),
     };
     let has_admin = tokens.iter().any(|token| token.is_admin);
-    if is_first_admin_bootstrap(request.method(), request.uri().path()) && !has_admin {
+    if is_first_admin_bootstrap(request.method(), request.uri().path())
+        && !has_admin
+        && !crate::local_browser_auth::allowed(&state, &request)
+    {
         return next.run(request).await;
     }
     let secure_cookie = crate::request_origin::is_https(&state, request.headers());
-    let (raw, mut token_source) = request_token(&request);
+    let session_cookie_name = cookie_name(&state, request.headers());
+    let (raw, mut token_source) = request_token(&request, &session_cookie_name);
     let mut principal = match store.lookup(&raw) {
         Ok(Some(token)) => Some(Principal::from_token(token)),
         Ok(None) => None,
@@ -118,7 +126,7 @@ pub async fn authorize(
     }
     let bootstrap_cookie = principal.as_ref().and_then(|principal| {
         (request.uri().path() == "/api/v1/web_access/session" && !principal.raw_token.is_empty())
-            .then(|| cookie(&principal.raw_token, secure_cookie))
+            .then(|| cookie(&principal.raw_token, secure_cookie, &session_cookie_name))
     });
     if is_public(request.method(), request.uri().path()) {
         if let Some(principal) = principal {
@@ -186,7 +194,7 @@ fn with_bootstrap_cookie(mut response: Response, cookie: Option<&str>) -> Respon
     response
 }
 
-fn request_token(request: &Request) -> (String, TokenSource) {
+fn request_token(request: &Request, cookie_name: &str) -> (String, TokenSource) {
     let bearer = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -209,7 +217,7 @@ fn request_token(request: &Request) -> (String, TokenSource) {
             cookies.split(';').find_map(|cookie| {
                 cookie
                     .trim()
-                    .strip_prefix("cccc_access_token=")
+                    .strip_prefix(&format!("{cookie_name}="))
                     .map(decode_token)
             })
         });
@@ -232,22 +240,18 @@ fn decode_token(value: &str) -> String {
 }
 
 fn is_public(method: &Method, path: &str) -> bool {
-    matches!(
-        path,
-        "/api/v1/ping"
-            | "/api/v1/health"
-            | "/api/v1/ready"
-            | "/api/v1/web_access/session"
-            | "/api/v1/web_access/exchange"
-    ) || matches!(
-        path,
-        "/api/group-bridge/pairing/requests/remote"
-            | "/api/group-bridge/pairing/requests/remote/status"
-            | "/api/group-bridge/pairing/requests/remote/claim"
-            | "/api/group-bridge/session/send"
-            | "/api/group-bridge/session/ws"
-            | "/api/group-bridge/session/ws/v2"
-    ) || (*method == Method::GET && path == "/api/v1/branding")
+    (*method == Method::GET && path == "/api/v1/connect/identity")
+        || (*method == Method::POST && path == "/api/v1/connect/frame")
+        || (*method == Method::POST && path == "/api/v1/connect/peer")
+        || matches!(
+            path,
+            "/api/v1/ping"
+                | "/api/v1/health"
+                | "/api/v1/ready"
+                | "/api/v1/web_access/session"
+                | "/api/v1/web_access/exchange"
+        )
+        || (*method == Method::GET && path == "/api/v1/branding")
         || (matches!(*method, Method::GET | Method::HEAD)
             && path.starts_with("/api/v1/branding/assets/"))
         || !path.starts_with("/api/")
@@ -273,6 +277,8 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/fs/")
         || path.starts_with("/api/v1/registry/")
         || path.starts_with("/api/v1/membership")
+        || path == "/api/v1/connect"
+        || path.starts_with("/api/v1/connect/")
         || path.starts_with("/api/v1/remote_access")
         || path == "/api/v1/debug/tail_logs"
         || path == "/api/v1/debug/clear_logs"

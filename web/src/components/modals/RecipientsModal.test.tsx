@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 
+import chatEn from "../../i18n/locales/en/chat.json";
 import commonEn from "../../i18n/locales/en/common.json";
 import modalsEn from "../../i18n/locales/en/modals.json";
 import { RecipientsModal, type RecipientEntry, type RecipientsModalProps } from "./RecipientsModal";
@@ -16,7 +17,7 @@ beforeAll(async () => {
       lng: "en",
       fallbackLng: "en",
       defaultNS: "modals",
-      resources: { en: { common: commonEn, modals: modalsEn } },
+      resources: { en: { common: commonEn, modals: modalsEn, chat: chatEn } },
       interpolation: { escapeValue: false },
     });
 });
@@ -83,4 +84,16 @@ describe("RecipientsModal", () => {
     expect(markup).toContain("Retry anyway");
     expect(markup).toContain("Cancel reply request");
   });
+});
+
+it("does not offer local runtime delivery for a qualified remote recipient", () => {
+  const markup = renderModal([entry({ id: "peer1", label: "Remote worker" })], {
+    statusKind: "delivery",
+    remoteDelivery: { state: "sent" },
+  });
+  expect(markup).toContain("Remote worker");
+  expect(markup).toContain("Delivered to remote Group");
+  expect(markup).not.toContain("Send now");
+  expect(markup).not.toContain("In Inbox");
+  expect(markup).not.toContain("Sent to runtime");
 });

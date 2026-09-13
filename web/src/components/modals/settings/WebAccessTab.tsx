@@ -16,6 +16,7 @@ import { useReachWebLogin } from "./useReachWebLogin";
 import { useWebAccessSessionSummaries } from "./useWebAccessSessionSummaries";
 import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
+import { endConnectFrame } from "../../../features/connect/protocol";
 import {
   inputClass,
   labelClass,
@@ -606,6 +607,7 @@ export function WebAccessTab({
         : prev,
     );
     pushHint(t("webAccess.signOutSuccess"));
+    if (endConnectFrame()) return;
     window.setTimeout(() => {
       window.location.replace(
         window.location.pathname + window.location.search + window.location.hash,
@@ -737,6 +739,7 @@ export function WebAccessTab({
         return;
       }
       pushHint(t("webAccess.applying"));
+      if (endConnectFrame()) return;
       const targetUrl = resolveApplyRedirectUrl(
         resp.result.remote_access,
         resp.result.target_local_url || desiredLocalUrl,
@@ -1039,7 +1042,8 @@ export function WebAccessTab({
                         placeholder={t("webAccess.customTokenPlaceholder")}
                       />
                     </div>
-                    {session?.bootstrap_required || knownAccessTokenCount === 0 ? (
+                    {session?.principal_kind !== "local" &&
+                    (session?.bootstrap_required || knownAccessTokenCount === 0) ? (
                       <div>
                         <label className={labelClass()}>{t("webAccess.bootstrapTokenLabel")}</label>
                         <input
@@ -1681,14 +1685,14 @@ export function WebAccessTab({
             membershipBusy={membershipBusy}
             membershipError={membershipError}
             membershipPollReady={membershipPollReady}
-            hasAdminToken={hasAdminToken}
+            hasAdminToken={hasAdminToken || session?.principal_kind === "local"}
             reachBusy={reachBusy}
             reachAction={reachAction}
             reachChecking={reachChecking}
             reachCheckExpired={reachCheckExpired}
             onCheckReach={checkReach}
             onConnectAccount={() => void connectMembership()}
-            onPollAccount={() => void pollMembership()}
+            onPollAccount={() => void pollMembership().then(() => load())}
             onOpenAccount={onOpenAccount}
             onCreateAdminToken={openCreateDialog}
             onCreateWebLogin={createReachWebLogin}

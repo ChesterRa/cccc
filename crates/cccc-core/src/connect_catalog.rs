@@ -1,0 +1,75 @@
+//! Bounded-lived peer navigation metadata. The daemon refreshes it; ports only read.
+use crate::{HomeLayout, connect_peer, fs};
+use cccc_contracts::connect::ConnectGroup;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::io;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PeerCatalog {
+    pub account_origin: String,
+    pub account_id: String,
+    pub local_device_id: String,
+    pub remote_instance_id: String,
+    pub remote_device_id: String,
+    pub remote_origin: String,
+    pub checked_at: String,
+    pub groups: Vec<ConnectGroup>,
+}
+
+pub fn save(home: &HomeLayout, catalog: &PeerCatalog) -> io::Result<()> {
+    // Revalidate at commit: asynchronous results cannot repopulate a retired binding.
+    validate(home, catalog).map_err(io::Error::other)?;
+    fs::write_secret_json(&path(home, &catalog.remote_instance_id)?, catalog)
+}
+
+pub fn load(home: &HomeLayout, remote_id: &str) -> io::Result<Option<PeerCatalog>> {
+    let catalog: PeerCatalog = match fs::read_json(&path(home, remote_id)?) {
+        Ok(value) => value,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if catalog.remote_instance_id != remote_id || validate(home, &catalog).is_err() {
+        return Ok(None);
+    }
+    Ok(Some(catalog))
+}
+
+/// Old navigation metadata can identify an offline recipient without claiming it
+/// is online. The current account/device binding is still required on every read.
+pub fn is_fresh(catalog: &PeerCatalog) -> bool {
+    DateTime::parse_from_rfc3339(&catalog.checked_at)
+        .is_ok_and(|checked| checked + chrono::Duration::seconds(120) > Utc::now())
+}
+
+fn path(home: &HomeLayout, instance_id: &str) -> io::Result<std::path::PathBuf> {
+    if !(16..=128).contains(&instance_id.len())
+        || !instance_id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid instance ID",
+        ));
+    }
+    Ok(home
+        .root()
+        .join("state/connect/catalog")
+        .join(format!("{instance_id}.json")))
+}
+
+fn validate(home: &HomeLayout, catalog: &PeerCatalog) -> Result<(), String> {
+    let binding = connect_peer::binding(home, &catalog.remote_instance_id)?;
+    let checked =
+        DateTime::parse_from_rfc3339(&catalog.checked_at).map_err(|_| "invalid catalog time")?;
+    let now = Utc::now();
+    if binding.account_origin != catalog.account_origin
+        || binding.account_id != catalog.account_id
+        || binding.local.device_id != catalog.local_device_id
+        || binding.remote.device_id != catalog.remote_device_id
+        || binding.remote.public_origin.as_deref() != Some(catalog.remote_origin.as_str())
+        || checked > now + chrono::Duration::seconds(30)
+    {
+        return Err("peer catalog belongs to a previous binding or has invalid timing".into());
+    }
+    Ok(())
+}

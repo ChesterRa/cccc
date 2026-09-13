@@ -189,10 +189,17 @@ data: {
 
   // Cross-group provenance (relay/forward)
   src_group_id?: string | null
+  src_instance_id?: string | null              // Connect-qualified remote source
+  src_instance_name?: string | null            // account-owned display-name snapshot; never routing authority
+  src_group_title?: string | null              // source name snapshot
   src_event_id?: string | null
 
   // Cross-group destination metadata (optional send record)
   dst_group_id?: string | null
+  dst_instance_id?: string | null              // Connect-qualified remote destination
+  dst_instance_name?: string | null            // account-owned display-name snapshot; never routing authority
+  dst_group_title?: string | null              // destination name snapshot
+  dst_actor_titles?: Record<string, string>     // destination Actor title snapshots
   dst_to?: string[] | null
   dst_message_mode?: "send" | "request_reply" | "mail" | null
 
@@ -225,6 +232,10 @@ data: {
   of whether that reply uses `message_mode="send"` or `message_mode="mail"`.
   Reply operations MUST NOT use `message_mode="request_reply"`; a reply cannot
   create a nested generic reply obligation.
+- Connect replies fulfill only the original remote instance/Actor/generation
+  obligation. Live consumers resolve this identity from the canonical Connect
+  envelope and original request, never from the display sender or an identically
+  named local Actor; see `CCCC_CONNECT_V1.md`.
 - `request_reply` MUST NOT use an empty recipient list or a broadcast selector
   (`@all`, `@peers`, or `@foreman`). The daemon MUST materialize and validate a
   concrete recipient set before appending the message.
@@ -280,6 +291,18 @@ data: {
   that recipient is `replied`; otherwise the cancellation state is
   `cancelled`. Later replies remain visible but do not change `cancelled` back
   into `replied`.
+
+For Connect, the daemon derives the exact qualified original request and persists
+cancellation through the same durable outbox as messages. Only the original Actor
+generation or a participating Group's human may originate it. A received control
+is not forwarded automatically. Local obligation cancellation and remote
+`connect_cancellation` propagation are distinct: queued, sent, failed or
+unconfirmed. It does not retract a message or stop an Actor task. A terminal
+`chat.cross_group_receipt` with `action="cancel"` addresses the control via
+`source_event_id` and the local original message via `original_event_id`.
+A cancellation for an original absent after its delivery deadline may record
+`source_event_id:null, not_delivered:true`; it changes no obligation.
+See [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md) for authority and recovery.
 
 ### 6.4 `runtime.delivery`
 
@@ -440,6 +463,13 @@ CCCS v1 does not mandate a transport, but implementations SHOULD provide a way t
 ## 9. Cross‑Group Relay / Forward (Provenance)
 
 CCCS v1 standardizes cross-group provenance via `src_group_id/src_event_id` on the **destination** message.
+
+Connect messages additionally qualify remote Group IDs with `src_instance_id` /
+`dst_instance_id`; consumers MUST NOT treat such a remote Group ID as a local
+Group navigation or authorization target. The in-progress device transport,
+immutable message metadata, durable acceptance and terminal delivery receipts are
+specified in [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md). Those extensions do not
+grant remote history, Context, TUI or arbitrary tool access.
 
 ### 9.1 Relay Semantics
 
@@ -607,3 +637,15 @@ Destination group message:
   }
 }
 ```
+
+### Historical manual Bridge receipts
+
+Manual Group Bridge is retired. Original message events and source scope are not
+rewritten. Startup finalization may append `chat.cross_group_receipt` with
+`group_bridge_retired=true`, the original source Event/operation/registration and
+idempotency key, and `status=sent|failed|unconfirmed`. Unconfirmed is not proof of
+failure or permission to resend. Receipts and a deduplicated internal user notice
+must be committed before their old queue records are removed. No remote grant is
+inferred from history. Read-only status projections may annotate affected messages
+with `_retired_bridge=true`; replay must preserve it and consumers must not offer
+an active reply through that retired route. See [Daemon IPC](CCCC_DAEMON_IPC_V1.md#8172-cccc-connect-and-manual-bridge-retirement).

@@ -61,7 +61,7 @@ async fn supervised_loopback_web_trusts_forwarded_https_for_auth_and_security() 
 
     let logout = client
         .post(format!("{base_url}/api/v1/web_access/logout"))
-        .header(COOKIE, format!("cccc_access_token={}", token.token))
+        .header(COOKIE, format!("__Host-cccc_access_443={}", token.token))
         .header(HOST, format!("127.0.0.1:{port}"))
         .header(ORIGIN, "https://reach.example")
         .header("x-forwarded-host", "reach.example")

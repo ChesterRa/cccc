@@ -1,13 +1,32 @@
-import type { LedgerEvent } from "../types";
+import type { ConnectDeliveryStatus, LedgerEvent } from "../types";
 
 const CROSS_GROUP_RECEIPT_KIND = "chat.cross_group_receipt";
 
-function mergeEventWithExistingStatus(incoming: LedgerEvent, existing?: LedgerEvent): LedgerEvent {
+export function mergeConnectDelivery(
+  incoming?: ConnectDeliveryStatus,
+  existing?: ConnectDeliveryStatus,
+): ConnectDeliveryStatus | undefined {
+  // A late snapshot taken before the final receipt cannot undo that receipt.
+  return existing && existing.state !== "queued" && incoming?.state === "queued"
+    ? existing
+    : (incoming ?? existing);
+}
+
+export function mergeEventWithExistingStatus(
+  incoming: LedgerEvent,
+  existing?: LedgerEvent,
+): LedgerEvent {
   if (!existing) return incoming;
   return {
     ...incoming,
+    _retired_bridge: incoming._retired_bridge || existing._retired_bridge,
     _read_status: incoming._read_status ?? existing._read_status,
     _obligation_status: incoming._obligation_status ?? existing._obligation_status,
+    _connect_delivery: mergeConnectDelivery(incoming._connect_delivery, existing._connect_delivery),
+    _connect_cancellation: mergeConnectDelivery(
+      incoming._connect_cancellation,
+      existing._connect_cancellation,
+    ),
   };
 }
 
@@ -19,23 +38,56 @@ function stringDataValue(event: LedgerEvent, key: string): string {
 }
 
 export function projectCrossGroupReceipts(events: LedgerEvent[]): LedgerEvent[] {
+  const cancellations = new Map<string, ConnectDeliveryStatus>();
+  for (const event of events) {
+    const data = event.data as Record<string, unknown> | undefined;
+    if (event.kind !== "chat.reply_request.cancelled" || !data?.connect_cancel) continue;
+    const source = stringDataValue(event, "source_event_id");
+    if (source)
+      cancellations.set(source, { state: data.connect_cancel_sha256 ? "sent" : "queued" });
+  }
   const receipts = events.filter((event) => String(event?.kind || "") === CROSS_GROUP_RECEIPT_KIND);
-  if (receipts.length === 0) return events;
+  if (receipts.length === 0 && cancellations.size === 0) return events;
 
-  const anchorsBySourceId = new Map<string, { dstEventId: string; remoteEventId: string }>();
+  const retired = new Set<string>();
+  const anchorsBySourceId = new Map<
+    string,
+    { dstEventId: string; remoteEventId: string; delivery?: ConnectDeliveryStatus }
+  >();
   for (const receipt of receipts) {
     const sourceEventId = stringDataValue(receipt, "source_event_id");
     if (!sourceEventId) continue;
     const dstEventId = stringDataValue(receipt, "dst_event_id");
     const remoteEventId = stringDataValue(receipt, "remote_event_id");
-    if (!dstEventId && !remoteEventId) continue;
+    const state = stringDataValue(receipt, "status");
+    if (
+      stringDataValue(receipt, "transport") !== "connect" &&
+      (remoteEventId || (receipt.data as Record<string, unknown>)?.group_bridge_retired === true)
+    )
+      retired.add(sourceEventId);
+    const delivery: ConnectDeliveryStatus | undefined =
+      stringDataValue(receipt, "transport") === "connect" &&
+      (state === "sent" || state === "failed" || state === "unconfirmed")
+        ? {
+            state,
+            error: stringDataValue(receipt, "error"),
+            remote_event_id: remoteEventId || null,
+          }
+        : undefined;
+    if (stringDataValue(receipt, "action") === "cancel") {
+      const originalId = stringDataValue(receipt, "original_event_id");
+      if (originalId && delivery) cancellations.set(originalId, delivery);
+      continue;
+    }
+    if (!dstEventId && !remoteEventId && !delivery) continue;
     const existing = anchorsBySourceId.get(sourceEventId);
     anchorsBySourceId.set(sourceEventId, {
       dstEventId: dstEventId || existing?.dstEventId || "",
       remoteEventId: remoteEventId || existing?.remoteEventId || "",
+      delivery: delivery ?? existing?.delivery,
     });
   }
-  if (anchorsBySourceId.size === 0) {
+  if (anchorsBySourceId.size === 0 && cancellations.size === 0 && retired.size === 0) {
     return events.filter((event) => String(event?.kind || "") !== CROSS_GROUP_RECEIPT_KIND);
   }
 
@@ -44,14 +96,19 @@ export function projectCrossGroupReceipts(events: LedgerEvent[]): LedgerEvent[] 
     .map((event) => {
       const eventId = String(event?.id || "").trim();
       const anchor = eventId ? anchorsBySourceId.get(eventId) : undefined;
-      if (!anchor || String(event?.kind || "") !== "chat.message") return event;
+      const cancellation = cancellations.get(eventId);
+      if ((!anchor && !cancellation && !retired.has(eventId)) || event.kind !== "chat.message")
+        return event;
       const data = event.data && typeof event.data === "object" ? event.data : {};
       return {
         ...event,
+        _retired_bridge: retired.has(eventId) || event._retired_bridge,
+        _connect_delivery: mergeConnectDelivery(anchor?.delivery, event._connect_delivery),
+        _connect_cancellation: mergeConnectDelivery(cancellation, event._connect_cancellation),
         data: {
           ...data,
-          ...(anchor.dstEventId ? { dst_event_id: anchor.dstEventId } : {}),
-          ...(anchor.remoteEventId ? { remote_event_id: anchor.remoteEventId } : {}),
+          ...(anchor?.dstEventId ? { dst_event_id: anchor.dstEventId } : {}),
+          ...(anchor?.remoteEventId ? { remote_event_id: anchor.remoteEventId } : {}),
         },
       };
     });

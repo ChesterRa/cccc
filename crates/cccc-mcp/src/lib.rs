@@ -3,11 +3,10 @@ mod argument_normalization;
 mod bootstrap;
 mod code_mode;
 mod context_projection;
+mod cross_group;
 mod local_sessions;
 mod local_tools;
 mod mapping;
-mod remote_messages;
-mod remote_tools;
 mod repo;
 mod router;
 mod tools;
@@ -33,6 +32,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "cccc_capability_use",
     "cccc_inbox_read",
     "cccc_message_history",
+    "cccc_connect",
     "cccc_message_send",
     "cccc_message_reply",
     "cccc_message_deliver",
@@ -93,11 +93,6 @@ impl ToolCallError {
 
     fn payload(&self) -> Value {
         json!({"error":self.error_value()})
-    }
-
-    #[cfg(test)]
-    fn contains(&self, pattern: &str) -> bool {
-        self.to_string().contains(pattern)
     }
 }
 
@@ -455,3 +450,6 @@ async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Res
     output.flush().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod connect_tests;

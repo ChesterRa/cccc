@@ -39,11 +39,7 @@ fn seed_admin(home: &HomeLayout) {
 }
 
 async fn inject_test_admin(mut request: Request<Body>, next: Next) -> Response {
-    if (request.uri().path().starts_with("/api/v1/")
-        || request
-            .uri()
-            .path()
-            .starts_with("/api/group-bridge/pairing/"))
+    if request.uri().path().starts_with("/api/v1/")
         && !request.headers().contains_key(header::AUTHORIZATION)
     {
         request.headers_mut().insert(
