@@ -27,6 +27,32 @@ use tokio_tungstenite::{
 pub(super) const PLATFORM: &str = "mattermost";
 type Socket = WebSocketStream<reqwest::Upgraded>;
 
+#[derive(Debug)]
+enum SocketError {
+    Retry(String),
+    Authentication(String),
+}
+
+impl std::fmt::Display for SocketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Retry(message) | Self::Authentication(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for SocketError {
+    fn from(message: String) -> Self {
+        Self::Retry(message)
+    }
+}
+
+impl From<&str> for SocketError {
+    fn from(message: &str) -> Self {
+        Self::Retry(message.to_owned())
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct MattermostApi {
     pub http: reqwest::Client,
@@ -175,7 +201,7 @@ impl MattermostApi {
         Ok(())
     }
 
-    async fn socket(&self) -> Result<Socket, String> {
+    async fn socket(&self) -> Result<Socket, SocketError> {
         // HTTP 升级复用 reqwest 的 TLS、HTTP_PROXY/HTTPS_PROXY/NO_PROXY，无额外代理服务。
         let key = generate_key();
         let response = self
@@ -194,10 +220,20 @@ impl MattermostApi {
                 .and_then(|v| v.to_str().ok())
                 != Some(derive_accept_key(key.as_bytes()).as_str())
         {
-            return Err(format!(
+            let message = format!(
                 "Mattermost WebSocket upgrade failed (HTTP {})",
                 response.status().as_u16()
-            ));
+            );
+            return Err(
+                if matches!(
+                    response.status(),
+                    StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+                ) {
+                    SocketError::Authentication(message)
+                } else {
+                    SocketError::Retry(message)
+                },
+            );
         }
         let upgraded = response.upgrade().await.map_err(http_error)?;
         let mut socket = WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await;
@@ -208,10 +244,12 @@ impl MattermostApi {
                         let event: Value = serde_json::from_str(&text)
                             .map_err(|_| "Invalid Mattermost WebSocket JSON")?;
                         if field(&event, "event") == "hello" {
-                            return Ok(());
+                            return Ok::<(), SocketError>(());
                         }
                         if event.get("error").is_some_and(|v| !v.is_null()) {
-                            return Err("Mattermost WebSocket authentication failed");
+                            return Err(SocketError::Authentication(
+                                "Mattermost WebSocket authentication failed".into(),
+                            ));
                         }
                     }
                     Some(Ok(Message::Ping(data))) => {
@@ -221,7 +259,7 @@ impl MattermostApi {
                             .map_err(|_| "Mattermost WebSocket ping failed")?;
                     }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
-                        return Err("Mattermost WebSocket closed before hello");
+                        return Err("Mattermost WebSocket closed before hello".into());
                     }
                     _ => {}
                 }
@@ -248,6 +286,87 @@ fn http_error(error: reqwest::Error) -> String {
     error.without_url().to_string()
 }
 
+pub(super) async fn start_registered(
+    registry: &super::ImWorkerRegistry,
+    home: HomeLayout,
+    daemon: DaemonClient,
+    group_id: &str,
+    config: &Map<String, Value>,
+    generation: u64,
+) -> Result<(), String> {
+    let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
+    // Clear the previous error before spawning workers, not after a worker may have failed.
+    update_start_state(registry, &store, group_id, config, generation, None)?;
+    let result = match start(
+        home,
+        daemon,
+        group_id,
+        config,
+        registry.ledger_events.clone(),
+    )
+    .await
+    {
+        Ok(tasks) => {
+            registry
+                .install(
+                    group_id,
+                    generation,
+                    super::worker(tasks, super::no_op_stopper()),
+                )
+                .await
+        }
+        Err(error) => Err(error),
+    };
+    update_start_state(
+        registry,
+        &store,
+        group_id,
+        config,
+        generation,
+        Some(&result),
+    )?;
+    result
+}
+
+fn update_start_state(
+    registry: &super::ImWorkerRegistry,
+    store: &GroupStore,
+    group_id: &str,
+    config: &Map<String, Value>,
+    generation: u64,
+    result: Option<&Result<(), String>>,
+) -> Result<(), String> {
+    cccc_core::im_state::update(store, group_id, |state| {
+        // Check inside the same file lock used by save; identical config saves also invalidate
+        // the native generation. A snapshot-only check would miss stop/save/start races.
+        if state.get("config").and_then(Value::as_object) != Some(config)
+            || !registry.is_generation_current(group_id, generation)
+        {
+            return Err(std::io::Error::other(
+                "IM worker start was superseded by a newer request",
+            ));
+        }
+        let running = result.is_some_and(Result::is_ok) && registry.is_running(group_id);
+        state["enabled"] = json!(true);
+        state["running"] = json!(running);
+        state["pid"] = if running {
+            json!(std::process::id())
+        } else {
+            Value::Null
+        };
+        state["adapter_available"] = json!(running);
+        if let Some(Err(error)) = result {
+            state["last_error"] = json!(error);
+        } else if result.is_none() {
+            state["last_error"] = Value::Null;
+        }
+        state["updated_at"] = json!(cccc_contracts::utc_now());
+        Ok(())
+    })
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 pub(super) async fn start(
     home: HomeLayout,
     daemon: DaemonClient,
@@ -261,9 +380,13 @@ pub(super) async fn start(
         .inspect_err(|error| {
             log_error(&home, group_id, "authenticate", error, &token);
         })?;
-    let socket = api.socket().await.inspect_err(|error| {
-        log_error(&home, group_id, "connect", error, &token);
-    })?;
+    let socket = api
+        .socket()
+        .await
+        .map_err(|error| error.to_string())
+        .inspect_err(|error| {
+            log_error(&home, group_id, "connect", error, &token);
+        })?;
     verify_identity(&home, group_id, &api, config).inspect_err(|error| {
         log_error(&home, group_id, "identity", error, &token);
     })?;
@@ -479,8 +602,12 @@ async fn socket_loop(
                     break;
                 }
                 Err(error) => {
-                    persist_error(&home, &group_id, Some(&error));
-                    log_error(&home, &group_id, "reconnect", &error, &api.token);
+                    let message = error.to_string();
+                    persist_error(&home, &group_id, Some(&message));
+                    log_error(&home, &group_id, "reconnect", &message, &api.token);
+                    if matches!(error, SocketError::Authentication(_)) {
+                        return;
+                    }
                 }
             }
         }
@@ -630,6 +757,10 @@ mod tests {
         fail_create: AtomicBool,
         ws_mode: AtomicUsize,
         ws_connections: AtomicUsize,
+        ws_attempts: AtomicUsize,
+        blocked_identity: AtomicBool,
+        identity_entered: tokio::sync::Notify,
+        release_identity: tokio::sync::Notify,
         ws_events: Mutex<Vec<Value>>,
         ws_pings: AtomicUsize,
         ws_pongs: AtomicUsize,
@@ -674,8 +805,15 @@ mod tests {
                 format!("Bearer {}", state.token).as_str()
             );
             let mode = state.ws_mode.load(Ordering::SeqCst);
-            if mode == 1 {
-                return StatusCode::UNAUTHORIZED.into_response();
+            state.ws_attempts.fetch_add(1, Ordering::SeqCst);
+            if let Some(status) = match mode {
+                1 => Some(StatusCode::UNAUTHORIZED),
+                6 => Some(StatusCode::FORBIDDEN),
+                7 => Some(StatusCode::SERVICE_UNAVAILABLE),
+                8 => Some(StatusCode::TOO_MANY_REQUESTS),
+                _ => None,
+            } {
+                return status.into_response();
             }
             let connection = state.ws_connections.fetch_add(1, Ordering::SeqCst);
             upgrade.on_upgrade(move |mut socket| async move {
@@ -742,6 +880,10 @@ mod tests {
                 return axum::Json(json!({"ok":true})).into_response();
             }
             if path == "/sub/api/v4/users/me" {
+                if state.blocked_identity.swap(false, Ordering::SeqCst) {
+                    state.identity_entered.notify_one();
+                    state.release_identity.notified().await;
+                }
                 return axum::Json(json!({"id":state.bot_id,"username":"cccc_bot","is_bot":true}))
                     .into_response();
             }
@@ -973,8 +1115,8 @@ mod tests {
             let socket = api.socket().await;
             if case == "ws_rejected" {
                 let error = socket.expect_err("代理后的 WS 拒绝应明确返回");
-                assert!(error.contains("401"));
-                assert!(!error.contains("test-token"));
+                assert!(error.to_string().contains("401"));
+                assert!(!error.to_string().contains("test-token"));
             } else {
                 socket.expect("REST 和 WS 均应使用同一代理策略");
             }
@@ -1440,9 +1582,247 @@ mod tests {
             (4, "Invalid Mattermost WebSocket JSON"),
         ] {
             fixture.state.ws_mode.store(mode, Ordering::SeqCst);
-            let error = fixture.api.socket().await.expect_err("应拒绝连接");
+            let error = fixture
+                .api
+                .socket()
+                .await
+                .expect_err("应拒绝连接")
+                .to_string();
             assert!(error.contains(expected), "{error}");
             assert!(!error.contains("test-token"));
+        }
+    }
+
+    fn route_app(home: &HomeLayout) -> Router {
+        cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create(
+                "test",
+                Vec::new(),
+                true,
+                Some("mattermost-route-test-admin"),
+            )
+            .expect("test token");
+        crate::app(home.clone())
+    }
+
+    async fn route_request(app: Router, path: &str, body: Option<Value>) -> (StatusCode, Value) {
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        let request = axum::http::Request::builder()
+            .method(if body.is_some() {
+                Method::POST
+            } else {
+                Method::GET
+            })
+            .uri(path)
+            .header("authorization", "Bearer mattermost-route-test-admin")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                body.map_or(String::new(), |body| body.to_string()),
+            ))
+            .expect("request");
+        let response = app.oneshot(request).await.expect("response");
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("JSON response"),
+        )
+    }
+
+    #[tokio::test]
+    async fn superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start() {
+        for action in ["save", "same-save", "stop", "unset", "start"] {
+            for fail_socket in [false, true] {
+                let fixture = fixture().await;
+                let (_temp, home, group) = scope();
+                let app = route_app(&home);
+                let config = json!({"group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"});
+                assert_eq!(
+                    route_request(app.clone(), "/api/im/set", Some(config.clone()))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+                fixture.state.blocked_identity.store(true, Ordering::SeqCst);
+                let old = tokio::spawn(route_request(
+                    app.clone(),
+                    "/api/im/start",
+                    Some(json!({"group_id":group})),
+                ));
+                tokio::time::timeout(
+                    Duration::from_secs(3),
+                    fixture.state.identity_entered.notified(),
+                )
+                .await
+                .expect("start reached identity barrier");
+                let mut replacement = config.clone();
+                let path = match action {
+                    "save" => {
+                        replacement["bot_token"] = json!("changed-test-token");
+                        "/api/im/set"
+                    }
+                    "same-save" => "/api/im/set",
+                    "stop" => "/api/im/stop",
+                    "unset" => "/api/im/unset",
+                    _ => "/api/im/start",
+                };
+                assert_eq!(
+                    route_request(app.clone(), path, Some(replacement)).await.0,
+                    StatusCode::OK
+                );
+                let store = GroupStore::new(home.clone()).expect("store");
+                let expected = cccc_core::im_state::load(&store, &group).expect("new state");
+                if fail_socket {
+                    fixture.state.ws_mode.store(1, Ordering::SeqCst);
+                }
+                fixture.state.release_identity.notify_one();
+                let result = tokio::time::timeout(Duration::from_secs(3), old)
+                    .await
+                    .expect("old request completed")
+                    .expect("start task");
+                assert!(
+                    !result.0.is_success(),
+                    "{action}, socket failure={fail_socket}"
+                );
+                assert_eq!(
+                    cccc_core::im_state::load(&store, &group).expect("state"),
+                    expected,
+                    "{action}, socket failure={fail_socket}"
+                );
+                assert_eq!(
+                    route_request(app, "/api/im/stop", Some(json!({"group_id":group})))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_success_and_error_commits_are_both_discarded() {
+        let (_temp, home, group) = scope();
+        let registry = super::super::ImWorkerRegistry::new(
+            crate::ledger_event_hub::LedgerEventHub::new(home.clone()),
+        );
+        let store = GroupStore::new(home).expect("store");
+        let config = json!({"platform":"mattermost"})
+            .as_object()
+            .expect("config")
+            .clone();
+        cccc_core::im_state::update(&store, &group, |state| {
+            state["config"] = json!(config);
+            Ok(())
+        })
+        .expect("state");
+        let (generation, _) = registry.begin_start(&group).await;
+        update_start_state(&registry, &store, &group, &config, generation, None).expect("prepare");
+        registry.stop(&group).await;
+        let expected = cccc_core::im_state::load(&store, &group).expect("state");
+        for result in [Ok(()), Err("old failure".to_owned())] {
+            assert!(
+                update_start_state(
+                    &registry,
+                    &store,
+                    &group,
+                    &config,
+                    generation,
+                    Some(&result)
+                )
+                .is_err()
+            );
+            assert_eq!(
+                cccc_core::im_state::load(&store, &group).expect("state"),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn permanent_reconnect_authentication_failure_stops_registered_worker() {
+        for (mode, expected) in [
+            (1, "HTTP 401"),
+            (6, "HTTP 403"),
+            (2, "authentication failed"),
+        ] {
+            let fixture = fixture().await;
+            fixture.state.ws_mode.store(3, Ordering::SeqCst);
+            let (_temp, home, group) = scope();
+            let app = route_app(&home);
+            let config = json!({"group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"});
+            assert_eq!(
+                route_request(app.clone(), "/api/im/set", Some(config))
+                    .await
+                    .0,
+                StatusCode::OK
+            );
+            assert_eq!(
+                route_request(
+                    app.clone(),
+                    "/api/im/start",
+                    Some(json!({"group_id":group}))
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+            fixture.state.ws_mode.store(mode, Ordering::SeqCst);
+            tokio::time::timeout(Duration::from_secs(9), async {
+                loop {
+                    let (_, state) = route_request(
+                        app.clone(),
+                        &format!("/api/im/status?group_id={group}"),
+                        None,
+                    )
+                    .await;
+                    let state = &state["result"];
+                    if state["running"] == false
+                        && state["last_error"]
+                            .as_str()
+                            .is_some_and(|error| error.contains(expected))
+                    {
+                        assert_eq!(state["adapter_available"], false);
+                        assert!(state["pid"].is_null());
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("authentication failure stops native worker");
+            let attempts = fixture.state.ws_attempts.load(Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5200)).await;
+            assert_eq!(
+                fixture.state.ws_attempts.load(Ordering::SeqCst),
+                attempts,
+                "must not retry immutable credentials"
+            );
+            assert_eq!(attempts, 2);
+            assert_eq!(
+                route_request(app, "/api/im/stop", Some(json!({"group_id":group})))
+                    .await
+                    .0,
+                StatusCode::OK
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn temporary_websocket_failures_remain_retryable() {
+        let fixture = fixture().await;
+        for mode in [7, 8, 4] {
+            fixture.state.ws_mode.store(mode, Ordering::SeqCst);
+            assert!(matches!(
+                fixture.api.socket().await,
+                Err(SocketError::Retry(_))
+            ));
         }
     }
 

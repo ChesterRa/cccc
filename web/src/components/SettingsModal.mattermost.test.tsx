@@ -93,6 +93,21 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     await act(async () => props().onPlatformChange(platform));
   };
 
+  it("clears unsaved Mattermost edits on group transition even without editing the other group", async () => {
+    await renderGroup("group-a");
+    await choose("mattermost");
+    await act(async () => {
+      props().setImMattermostUrl("https://a.example.test");
+      props().setImBotTokenEnv("GROUP_A_BOT_TOKEN");
+    });
+    await choose("telegram");
+    await renderGroup("group-b");
+    await renderGroup("group-a");
+    await choose("mattermost");
+    expect(props().imMattermostUrl).toBe("");
+    expect(props().imBotTokenEnv).toBe("");
+  });
+
   it("restores same-group edits but never saves another group's cached URL or token", async () => {
     await renderGroup("group-a");
     await choose("mattermost");

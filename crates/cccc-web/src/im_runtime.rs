@@ -107,7 +107,8 @@ impl ImWorkerRegistry {
                 let result = registry
                     .start(home.clone(), client, &group_id, &config)
                     .await;
-                if let Ok(store) = GroupStore::new(home)
+                if string(&config, "platform") != "mattermost"
+                    && let Ok(store) = GroupStore::new(home)
                     && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
                         if !value.is_object() {
                             *value = json!({});
@@ -258,11 +259,7 @@ impl ImWorkerRegistry {
                 .await;
         }
         if platform == "mattermost" {
-            let tasks =
-                mattermost::start(home, client, group_id, config, self.ledger_events.clone())
-                    .await?;
-            return self
-                .install(group_id, generation, worker(tasks, no_op_stopper()))
+            return mattermost::start_registered(self, home, client, group_id, config, generation)
                 .await;
         }
         if platform == "feishu" {
@@ -395,6 +392,14 @@ impl ImWorkerRegistry {
             .get(group_id)
             .copied()
             == Some(generation)
+    }
+
+    // Mattermost saves call this inside the existing configuration lock, before writing.
+    pub(crate) fn invalidate_mattermost_start(&self, group_id: &str) {
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .remove(group_id);
     }
 
     fn lifecycle_lock(&self, group_id: &str) -> Arc<tokio::sync::Mutex<()>> {

@@ -2,6 +2,23 @@
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
 
+## PR #103 第三轮审核修订复验（2026-09-13）
+
+基于 `436028de741031be7b6048bf0cb2f58f261ef64a` 修复本轮三项意见，继续更新原 PR，不涉及 CLI 管理、其他连接器行为或日常部署。
+
+| 修订 | 验证及结果 |
+|---|---|
+| 过期启动不得覆盖新状态 | `superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start` 卡住真实 HTTP 入口的旧启动，分别保存新配置、保存相同配置、停止、删除或再次启动，再释放旧请求；两种 WebSocket 结果共十个组合，新状态完整保留。`stale_success_and_error_commits_are_both_discarded` 分别验证过期成功及错误不能写回 |
+| 永久认证失败不无限重连 | `permanent_reconnect_authentication_failure_stops_registered_worker` 验证 401、403、认证拒绝三种情况：原生 worker 结束，HTTP 状态不运行、不可用、无 PID，保留具体错误；再等待超过原退避周期，没有新增请求。临时 503、429、非法 JSON 仍可重试；既有断线恢复测试继续通过 |
+| 明确工作组草稿生命周期 | 两个实际 SettingsModal 用例均通过，新增 A→B→A 且不编辑 B 的情形，返回 A 后草稿也已清空；同组平台切换和保存只作用于当前组。两平台真实网页在设置窗不卸载时换组，验证清空、重新填写、同组恢复和保存回读 |
+
+- Linux 针对性 Mattermost 测试 28 通过、2 个真实站点 live 用例默认忽略；Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,524 项单测、生产构建、25 项打包用例及 wheel/Twine、Rust fmt/Clippy 和安装器/发布资产通过。独立夹具类型检查、完整非 daemon workspace、daemon 串行全量（含 525 项库测试）、三项自启动及按 CI 条件启用的 Codex/Claude/Kilo 原生会话检查全部通过，`ALL_LINUX_CHECKS_PASS`。Kilo 筛选中的 OpenCode 条件用例未启用，不称为真实 OpenCode 联调。
+- Windows 原生测试：核心 IM 8、完整 IM runtime 195（2 live 默认忽略）、七组 Windows smoke 共 11 项及构建通过，`ALL_WINDOWS_CHECKS_PASS`。既有平台条件编译警告保留，不修改无关模块。
+- 两平台原生 Web 的完整配置、无效地址、保存/网络/启动失败及重试、刷新持久化、三语、窄屏、删除配置及保持挂载的跨组草稿隔离均通过，`CROSS_GROUP_GUI_PASS`、`GUI_PASS`。人工检查 Linux 深色及 Windows 浅色截图；Linux GUI 二进制与最终构建的校验和一致。只使用隔离 Home、合成 Group 和凭据引用，浏览器及服务已关闭，原资源恢复。
+- 首次 Rust 编译发现代理测试仍直接对新错误类型调用字符串方法，改用文本表示后通过；独立夹具检查第一次在错误工作目录查找 `vite/client`，改从 Web 项目目录运行后通过。没有放宽生产类型、修改依赖或把失败轮次算作通过。
+
+所有测试、构建、浏览器操作和发布扫描仅在指定测试机执行。本轮没有实际调用 Mattermost 或模型，不把协议模拟替代真实站点验收；既有现场记录保留。推送仍以前置全历史及增量 Gitleaks、两平台源码一致性和文档链接检查通过为门禁；不合并、不发布、不更换日常运行实例。
+
 ## PR #103 第二轮审核修订复验（2026-09-13）
 
 本次基于 `90fb70017525615fbde37d28066ffb341638d747` 修复第二轮审核的四项意见，仍只更新原 Mattermost PR，不涉及 CLI 管理、公共调度或其他连接器行为。
