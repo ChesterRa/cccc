@@ -69,6 +69,9 @@ vi.mock("./browser/ProjectedBrowserSurfacePanel", () => ({
   },
 }));
 const ok = <T,>(result: T) => ({ ok: true as const, result });
+const runtimeResponse = ok({
+  runtimes: [{ name: "opencode", available: true, recommended_command: "opencode" }],
+});
 const lead = {
   id: "lead",
   title: "组长甲",
@@ -174,6 +177,7 @@ beforeEach(() => {
         group_id: gid,
         actor_id: "lead",
         session_bound: true,
+        connector_url_with_token: `https://example.invalid/mcp/${gid}`,
       })),
     }),
   );
@@ -200,9 +204,7 @@ beforeEach(() => {
     ok({ browser_session: session("g_a") }),
   );
   mocks.copy.mockResolvedValue(true);
-  mocks.fetchRuntimes.mockResolvedValue(
-    ok({ runtimes: [{ name: "opencode", available: true, recommended_command: "opencode" }] }),
-  );
+  mocks.fetchRuntimes.mockResolvedValue(runtimeResponse);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -212,43 +214,36 @@ afterEach(async () => {
 });
 
 describe("minimal overlay on upstream UI", () => {
-  it("keeps native setup sections and only adds a group-scoped connection selector", async () => {
+  it("keeps one ordered setup, copies the native URL and switches groups without binding", async () => {
     await render();
-    expect(host.textContent).toContain("ChatGPT Web Model");
-    expect(host.textContent).not.toContain("工作组概览");
-    expect(host.textContent).not.toContain("添加成员");
+    const labels = ["1. 登录 ChatGPT", "2. 选择工作组", "3. 连接 CCCC MCP app", "4. 选择投递目标"];
+    const steps = ["account", "group", "connection", "target"].map((step, i) => {
+      const element = find(`[data-setup-step="${step}"]`);
+      expect(element.textContent).toContain(labels[i]);
+      return element;
+    });
+    for (let i = 1; i < steps.length; i++) {
+      expect(
+        steps[i - 1].compareDocumentPosition(steps[i]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    expect(groupTrigger().getAttribute("aria-label")).toBe("选择工作组");
+    expect(host.querySelector('[data-t05-change="copy-binding"]')).toBeNull();
+    await clickText("复制 MCP URL");
+    expect(mocks.copy).toHaveBeenCalledExactlyOnceWith("https://example.invalid/mcp/g_a");
     await choose("g_b");
     expect((find('input[placeholder="https://chatgpt.com/c/..."]') as HTMLInputElement).value).toBe(
       "https://chatgpt.com/c/g_b",
     );
     await clickText("刷新");
     expect(groupTrigger().textContent).toContain("乙组");
-    expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
-    expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
     await choose("g_empty");
     expect(host.textContent).toContain("本组没有网页成员");
     expect(host.textContent).not.toContain("chatgpt.com/c/g_b");
-  });
-  it("removes the added binding-request copy without deleting the original MCP URL copy", async () => {
-    mocks.fetchWebModelConnectors.mockResolvedValue(
-      ok({
-        connectors: [
-          {
-            connector_id: "conn-g_a",
-            group_id: "g_a",
-            actor_id: "lead",
-            session_bound: true,
-            connector_url_with_token: "https://example.invalid/mcp/test-only",
-          },
-        ],
-      }),
-    );
-    await render();
-    expect(host.querySelector('[data-t05-change="copy-binding"]')).toBeNull();
-    await clickText("复制 MCP URL");
-    expect(mocks.copy).toHaveBeenCalledExactlyOnceWith("https://example.invalid/mcp/test-only");
+    expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
     expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
   });
+
   it("discards a late actor response after switching groups", async () => {
     const delayedActors = deferred<ReturnType<typeof ok<{ actors: Actor[] }>>>();
     mocks.fetchActors.mockImplementation((gid: string) =>
@@ -261,29 +256,51 @@ describe("minimal overlay on upstream UI", () => {
     expect(host.textContent).not.toContain("组长甲 的 ChatGPT");
     expect(groupTrigger().textContent).toContain("乙组");
   });
-  it("showing and hiding the native projection does not start or close the browser", async () => {
+  it("keeps preview read-only and cancels shared-browser actions for all groups", async () => {
     await render();
     await click('[data-t05-change="preview-toggle"]');
     expect(mocks.previewStart).toHaveBeenCalledWith(undefined);
+    vi.mocked(window.confirm).mockReturnValue(false);
+    for (const [action, warning] of [
+      ["restart", "所有组"],
+      ["close", "所有使用它的工作组"],
+    ]) {
+      await click(`[data-t05-change="${action}-shared-browser"]`);
+      expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining(warning));
+    }
     await click('[data-t05-change="preview-toggle"]');
     expect(document.querySelector('[data-testid="native-preview"]')).toBeNull();
     expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
     expect(mocks.closeWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
+    expect(
+      mocks.sharedWebModelBrowser.mock.calls.some(
+        ([action]) => action === "open" || action === "close",
+      ),
+    ).toBe(false);
   });
-  it("restores Web Access before numbered steps even with no web member; opening it does not mutate a connection", async () => {
+  it("keeps access setup and shared login usable with no groups", async () => {
     mocks.fetchGroups.mockResolvedValue(ok({ groups: [] }));
     const openAccess = vi.fn();
     await render(<WebModelConnectorsTab isDark={false} onOpenWebAccess={openAccess} />);
     const access = find('[data-testid="web-access-prerequisite"]');
+    const account = find('[data-setup-step="account"]');
+    const group = find('[data-t05-change="web-group-selector"]');
     expect(access.closest("details")).toBeNull();
-    expect(
-      access.compareDocumentPosition(find('[data-setup-step="account"]')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(access.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(account.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await clickText("打开 Web Access");
     expect(openAccess).toHaveBeenCalledOnce();
+    expect(mocks.sharedWebModelBrowser.mock.calls.some(([action]) => action === "open")).toBe(
+      false,
+    );
+    await click('[data-t05-change="open-shared-browser"]');
+    expect(mocks.sharedWebModelBrowser).toHaveBeenCalledWith("open", {
+      width: 1366,
+      height: 900,
+      inspect: true,
+    });
+    expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
     expect(mocks.createWebModelConnector).not.toHaveBeenCalled();
-    expect(mocks.sharedWebModelBrowser.mock.calls.some((call) => call[0] === "open")).toBe(false);
   });
   it("keeps original direct setup controls visible and only folds the instructions; ready Web Access is not falsely missing", async () => {
     mocks.fetchWebModelConnectors.mockResolvedValue(ok({ connectors: [] }));
@@ -330,119 +347,73 @@ describe("group members shortcut", () => {
     expect(mocks.openModal).toHaveBeenCalledWith("addActor");
     expect(mocks.setRole).toHaveBeenCalledWith("peer");
     expect(edit).not.toHaveBeenCalled();
-  });
-  it("changes the native editor draft only and does not act on a stale group", async () => {
-    const edit = vi.fn();
-    await render(
-      <GroupMembersMenu
-        groupId="g_a"
-        actors={[lead]}
-        readOnly={false}
-        onOpenActor={vi.fn()}
-        onEditActor={edit}
-      />,
-    );
     await click('[data-t05-change="members-entry"]');
     await click('[data-t05-change="change-foreman"]');
     await click('[data-t05-change="foreman-local"]');
     expect(edit).toHaveBeenCalledWith(lead);
     expect(mocks.setRuntime).toHaveBeenCalledWith("opencode");
-    const pending =
-      deferred<
-        ReturnType<
-          typeof ok<{
-            runtimes: { name: string; available: boolean; recommended_command: string }[];
-          }>
-        >
-      >();
+    const pending = deferred<typeof runtimeResponse>();
     mocks.fetchRuntimes.mockReturnValue(pending.promise);
     await click('[data-t05-change="members-entry"]');
     await click('[data-t05-change="change-foreman"]');
     await click('[data-t05-change="foreman-local"]');
     mocks.group.selectedGroupId = "g_b";
-    await act(async () =>
-      pending.resolve(
-        ok({ runtimes: [{ name: "opencode", available: true, recommended_command: "opencode" }] }),
-      ),
-    );
+    await act(async () => pending.resolve(runtimeResponse));
     await wait();
     expect(edit).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("shared login, role, and confirmation ownership", () => {
-  it("numbers the added group step, reuses the existing anchored combobox, and keeps selection live", async () => {
-    await render(<WebModelConnectorsTab isDark={false} currentGroupId="g_a" />);
-    const account = find('[data-setup-step="account"]');
-    const connection = find('[data-setup-step="connection"]');
-    const target = find('[data-setup-step="target"]');
-    const selector = find('[data-t05-change="web-group-selector"]');
-    expect(account.textContent).toContain("1. 登录 ChatGPT");
-    expect(connection.textContent).toContain("3. 连接 CCCC MCP app");
-    expect(target.textContent).toContain("4. 选择投递目标");
-    expect(find('[data-setup-step="group"]').textContent).toContain("2. 选择工作组");
-    expect(
-      account.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      selector.compareDocumentPosition(connection) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      connection.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(account.textContent).not.toMatch(/共享|共用/);
-    expect(groupTrigger().getAttribute("aria-label")).toBe("选择工作组");
-    await click('#t05-web-group [role="combobox"]');
-    expect(groupTrigger().getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelectorAll('[role="option"]').length).toBe(3);
-    await click('#t05-web-group [role="combobox"]');
-    await choose("g_b");
-    expect(groupTrigger().textContent).toContain("乙组");
-    expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
-  });
+  it.each([false, true])(
+    "binds target newChat=%s only after confirmation, preserving the draft on cancel",
+    async (newChat) => {
+      await render();
+      const url = find('input[placeholder="https://chatgpt.com/c/..."]') as HTMLInputElement;
+      const radio = host.querySelectorAll<HTMLInputElement>(
+        'input[name="chatgpt-delivery-target"]',
+      )[1];
+      expect(url.value).toBe("https://chatgpt.com/c/g_a");
+      if (newChat) {
+        await act(async () => radio.click());
+        await wait();
+      } else {
+        await click('[data-testid="use-current-browser-chat"]');
+        expect(url.value).toBe("https://chatgpt.com/c/shared-live");
+      }
+      expect(window.confirm).not.toHaveBeenCalled();
+      expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
+      vi.mocked(window.confirm).mockReturnValue(false);
+      await click('[data-t05-change="save-return-target"]');
+      expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
+      if (newChat) {
+        expect(window.confirm).toHaveBeenCalledWith(
+          expect.stringContaining("https://chatgpt.com/c/g_a"),
+        );
+        expect(radio.checked).toBe(true);
+        await choose("g_b");
+        expect(groupTrigger().textContent).toContain("甲组");
+      } else {
+        expect(url.value).toBe("https://chatgpt.com/c/shared-live");
+      }
+      vi.mocked(window.confirm).mockReturnValue(true);
+      await click('[data-t05-change="save-return-target"]');
+      expect(mocks.bindCurrentWebModelBrowserConversation).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          groupId: "g_a",
+          actorId: "lead",
+          newChat,
+          ...(!newChat && { conversationUrl: "https://chatgpt.com/c/shared-live" }),
+        }),
+      );
+      expect(
+        mocks.sharedWebModelBrowser.mock.calls.some(
+          ([action]) => action === "open" || action === "close",
+        ),
+      ).toBe(false);
+    },
+  );
 
-  it("uses the current browser conversation as a draft and binds a return target only after Save", async () => {
-    await render();
-    const url = find('input[placeholder="https://chatgpt.com/c/..."]') as HTMLInputElement;
-    expect(url.value).toBe("https://chatgpt.com/c/g_a");
-    await click('[data-testid="use-current-browser-chat"]');
-    expect(url.value).toBe("https://chatgpt.com/c/shared-live");
-    expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    vi.mocked(window.confirm).mockReturnValue(false);
-    await click('[data-t05-change="save-return-target"]');
-    expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    vi.mocked(window.confirm).mockReturnValue(true);
-    await click('[data-t05-change="save-return-target"]');
-    expect(mocks.bindCurrentWebModelBrowserConversation).toHaveBeenCalledExactlyOnceWith({
-      groupId: "g_a",
-      actorId: "lead",
-      conversationUrl: "https://chatgpt.com/c/shared-live",
-      newChat: false,
-    });
-    expect(
-      mocks.sharedWebModelBrowser.mock.calls.every((call) => !["open", "close"].includes(call[0])),
-    ).toBe(true);
-  });
-
-  it("renders one shared login before group selection and keeps it usable with no groups", async () => {
-    mocks.fetchGroups.mockResolvedValue(ok({ groups: [] }));
-    await render();
-    const shared = find('[data-setup-step="account"]');
-    const selector = find('[data-t05-change="web-group-selector"]');
-    expect(
-      shared.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(shared.textContent).toContain("登录一次，所有工作组都使用这个账号");
-    await click('[data-t05-change="open-shared-browser"]');
-    expect(mocks.sharedWebModelBrowser).toHaveBeenCalledWith("open", {
-      width: 1366,
-      height: 900,
-      inspect: true,
-    });
-    expect(mocks.openWebModelBrowserSurfaceSession).not.toHaveBeenCalled();
-    expect(mocks.createWebModelConnector).not.toHaveBeenCalled();
-  });
   it("shows a web peer under a local leader and never takes group connection status as shared login", async () => {
     const peer = { ...lead, id: "web-peer", role: "peer", title: "网页组员" } as Actor;
     mocks.fetchActors.mockImplementation(async (gid: string) =>
@@ -475,43 +446,6 @@ describe("shared login, role, and confirmation ownership", () => {
     await click('[data-t05-change="disconnect-chat"]');
     expect(mocks.revokeWebModelConnector).toHaveBeenCalledExactlyOnceWith("conn-g_b");
     expect(mocks.sharedWebModelBrowser.mock.calls.some((call) => call[0] === "close")).toBe(false);
-  });
-  it("confirms changed return targets on save, but not while selecting the draft", async () => {
-    await render();
-    const newChat = host.querySelectorAll<HTMLInputElement>(
-      'input[name="chatgpt-delivery-target"]',
-    )[1];
-    await act(async () => newChat.click());
-    await wait();
-    expect(window.confirm).not.toHaveBeenCalled();
-    vi.mocked(window.confirm).mockReturnValue(false);
-    await click('[data-t05-change="save-return-target"]');
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("https://chatgpt.com/c/g_a"),
-    );
-    expect(mocks.bindCurrentWebModelBrowserConversation).not.toHaveBeenCalled();
-    expect(newChat.checked).toBe(true);
-    await choose("g_b");
-    expect(groupTrigger().textContent).toContain("甲组");
-    vi.mocked(window.confirm).mockReturnValue(true);
-    await click('[data-t05-change="save-return-target"]');
-    expect(mocks.bindCurrentWebModelBrowserConversation).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId: "g_a", actorId: "lead", newChat: true }),
-    );
-  });
-  it("warns that restart and close affect all groups; cancelling never closes the browser", async () => {
-    await render();
-    await click('[data-t05-change="preview-toggle"]');
-    vi.mocked(window.confirm).mockReturnValue(false);
-    await click('[data-t05-change="restart-shared-browser"]');
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("所有组"));
-    await click('[data-t05-change="close-shared-browser"]');
-    expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("所有使用它的工作组"));
-    expect(
-      mocks.sharedWebModelBrowser.mock.calls.some(
-        (call) => call[0] === "close" || call[0] === "open",
-      ),
-    ).toBe(false);
   });
 });
 

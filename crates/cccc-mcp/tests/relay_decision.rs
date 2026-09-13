@@ -1,26 +1,20 @@
-use cccc_client::DaemonClient;
-use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
+mod support;
+
+use cccc_contracts::{Actor, ActorRuntime, Event};
 use cccc_core::{GroupStore, HomeLayout, actors, ledger};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-fn request(name: &str, arguments: Value) -> Value {
-    json!({
-        "jsonrpc":"2.0","id":1,"method":"tools/call",
-        "params":{"name":name,"arguments":arguments}
-    })
-}
-
-fn payload(response: &Value) -> &Value {
-    &response["result"]["structuredContent"]
-}
+use support::{payload, start_daemon, stop_daemon};
 
 async fn tool(home: &HomeLayout, group: &str, name: &str, arguments: Value) -> Value {
-    cccc_mcp::handle_request_for_actor(home, &request(name, arguments), group, "web-lead").await
+    let request = json!({
+        "jsonrpc":"2.0","id":1,"method":"tools/call",
+        "params":{"name":name,"arguments":arguments}
+    });
+    cccc_mcp::handle_request_for_actor(home, &request, group, "web-lead").await
 }
 
-/// Running group with a Web Model lead that owns the relay decision flow.
 fn group_with_web_lead(
     temp: &tempfile::TempDir,
     title: &str,
@@ -90,52 +84,19 @@ fn assert_delivery_accepted(events: &[Event], report: &str) {
     assert_eq!(delivery.data["state"], "accepted");
 }
 
-async fn start_daemon(
-    home: &HomeLayout,
-) -> (tokio::task::JoinHandle<anyhow::Result<()>>, DaemonClient) {
-    let daemon_home = home.clone();
-    let task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
-    let client = DaemonClient::new(home.clone());
-    for _ in 0..100 {
-        if client
-            .call(&DaemonRequest {
-                v: 1,
-                op: "ping".into(),
-                args: Map::new(),
-            })
-            .await
-            .is_ok()
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    (task, client)
-}
-
-async fn stop_daemon(client: &DaemonClient, task: tokio::task::JoinHandle<anyhow::Result<()>>) {
-    let _ = client
-        .call(&DaemonRequest {
-            v: 1,
-            op: "shutdown".into(),
-            args: Map::new(),
-        })
-        .await;
-    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
-}
-
 #[tokio::test]
-async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
+async fn mcp_relay_handoff_lifecycle_read_reply_decide_and_dispatch_one_real_task() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let (home, group, path) = group_with_web_lead(&temp, "relay MCP", &["worker"]);
+    let (home, group, path) = group_with_web_lead(&temp, "relay MCP", &["worker-a", "worker-b"]);
     let report = seed_pending_handoff(
         &path,
         &group,
-        "worker",
+        "worker-a",
         "The implementation is ready. The user must choose the release window.",
     );
     let (daemon_task, client) = start_daemon(&home).await;
 
+    // The actor-scoped MCP catalog must still declare the decide action.
     let catalog = cccc_mcp::handle_request_for_actor(
         &home,
         &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
@@ -156,6 +117,7 @@ async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
             .contains(&json!("decide"))
     );
 
+    // Reading exposes the pending handoff without resolving it.
     let bootstrap = tool(&home, &group, "cccc_bootstrap", json!({})).await;
     assert_eq!(
         payload(&bootstrap)["relay_pending"]["count"],
@@ -166,12 +128,10 @@ async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
         payload(&bootstrap)["relay_pending"]["pending"][0]["source_event_ids"],
         json!([report])
     );
-
     let inbox = tool(&home, &group, "cccc_inbox_read", json!({})).await;
     assert_eq!(payload(&inbox)["messages"][0]["id"], report);
     assert_eq!(payload(&inbox)["relay_pending"]["requires_decision"], true);
     assert_eq!(payload(&inbox)["relay_pending"]["safe_to_idle"], false);
-
     let reply = tool(
         &home,
         &group,
@@ -186,6 +146,7 @@ async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
     assert_eq!(payload(&reply)["relay_pending"]["count"], 1, "{reply}");
     assert_eq!(payload(&reply)["relay_pending"]["requires_decision"], true);
 
+    // A wait_user decision resolves the handoff without duplicating human-facing output.
     let decision = tool(
         &home,
         &group,
@@ -200,21 +161,8 @@ async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
     );
     assert_eq!(payload(&decision)["safe_to_idle"], true);
     assert_eq!(payload(&decision)["caller_may_idle"], true);
-
-    let replay = tool(
-        &home,
-        &group,
-        "cccc_coordination",
-        json!({
-            "action":"decide","event_ids":[report],"decision":"wait_user",
-            "summary":"Legacy wording is accepted but is not emitted as another message."
-        }),
-    )
-    .await;
-    assert_eq!(payload(&replay)["replayed"], true);
-
-    let final_bootstrap = tool(&home, &group, "cccc_bootstrap", json!({})).await;
-    assert_eq!(payload(&final_bootstrap)["relay_pending"]["count"], 0);
+    let resolved = tool(&home, &group, "cccc_bootstrap", json!({})).await;
+    assert_eq!(payload(&resolved)["relay_pending"]["count"], 0);
     let events = ledger::read_all(&path).expect("events");
     assert_eq!(
         events
@@ -229,66 +177,45 @@ async fn mcp_read_exposes_pending_handoff_and_explicit_decision_resolves_it() {
         "machine-only decision duplicated the normal human-facing output"
     );
     assert_delivery_accepted(&events, &report);
-    stop_daemon(&client, daemon_task).await;
-}
 
-#[tokio::test]
-async fn mcp_continue_creates_one_real_next_task_and_transfers_responsibility() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let (home, group, path) =
-        group_with_web_lead(&temp, "relay MCP continue", &["worker-a", "worker-b"]);
-    let report = seed_pending_handoff(
+    // Interface contract: one real task/message and exact replay. Task-state details are tested directly in the daemon.
+    let follow_up = seed_pending_handoff(
         &path,
         &group,
         "worker-a",
         "Implementation is complete. Run the full affected regression next.",
     );
-    let (daemon_task, client) = start_daemon(&home).await;
-
     let args = json!({
-        "action":"decide","event_ids":[report],"decision":"continue",
+        "action":"decide","event_ids":[follow_up],"decision":"continue",
         "next_actor_id":"worker-b","next_title":"Run the affected regression",
         "next_text":"Run every affected Rust and browser-delivery test. Report the exact commands, failures, remaining risk, and requested next action.",
         "outcome":"All affected checks pass with evidence"
     });
-    let decision = tool(&home, &group, "cccc_coordination", args.clone()).await;
+    let dispatch = tool(&home, &group, "cccc_coordination", args.clone()).await;
     assert_eq!(
-        payload(&decision)["relay"]["decision"],
+        payload(&dispatch)["relay"]["decision"],
         "continue",
-        "{decision}"
+        "{dispatch}"
     );
-    assert_eq!(payload(&decision)["caller_may_idle"], true);
-    assert_eq!(payload(&decision)["safe_to_idle"], false);
-    assert_eq!(
-        payload(&decision)["current_responsibility"]["kind"],
-        "actor_work"
-    );
-    assert_eq!(
-        payload(&decision)["current_responsibility"]["tasks"][0]["actor_id"],
-        "worker-b"
-    );
-    let next_task_id = payload(&decision)["relay"]["next_task_id"]
+    assert_eq!(payload(&dispatch)["caller_may_idle"], true);
+    assert_eq!(payload(&dispatch)["safe_to_idle"], false);
+    let next_task_id = payload(&dispatch)["relay"]["next_task_id"]
         .as_str()
         .expect("next task id")
         .to_owned();
-
     let replay = tool(&home, &group, "cccc_coordination", args).await;
     assert_eq!(payload(&replay)["replayed"], true);
     assert_eq!(payload(&replay)["relay"]["next_task_id"], next_task_id);
-
     let context = cccc_core::context::ContextStore::new(home.clone())
         .expect("context")
         .load(&group)
         .expect("context document");
-    let next_task = context
-        .tasks
-        .iter()
-        .find(|task| task.get("id").and_then(Value::as_str) == Some(next_task_id.as_str()))
-        .expect("next task");
-    assert_eq!(next_task["status"], "active");
-    assert_eq!(next_task["assignee"], "worker-b");
-    assert_eq!(next_task["waiting_on"], "actor");
-
+    assert_eq!(
+        context.tasks.len(),
+        1,
+        "continue must create exactly one task"
+    );
+    assert_eq!(context.tasks[0]["id"], next_task_id);
     let events = ledger::read_all(&path).expect("events");
     let next_messages = events
         .iter()
@@ -307,6 +234,6 @@ async fn mcp_continue_creates_one_real_next_task_and_transfers_responsibility() 
         next_messages[0].data["text"],
         "Run every affected Rust and browser-delivery test. Report the exact commands, failures, remaining risk, and requested next action."
     );
-    assert_delivery_accepted(&events, &report);
+    assert_delivery_accepted(&events, &follow_up);
     stop_daemon(&client, daemon_task).await;
 }

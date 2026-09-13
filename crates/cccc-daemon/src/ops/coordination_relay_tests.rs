@@ -393,38 +393,87 @@ fn continue_creates_real_work_resolves_the_report_and_replays_without_duplicates
 }
 
 #[test]
-fn wait_user_records_machine_state_without_duplicating_the_original_output() {
-    let fixture = Fixture::new("relay wait user");
-    let source_task = fixture.task("Inspect interaction", "worker-a");
-    let report = fixture.report(
-        "worker-a",
-        "The implementation is ready, but the user must choose between the two interaction variants.",
-        Some(&source_task),
-    );
-    fixture.handoff(&report, "turn-wait-user");
-    let result = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user"
-        }))
-        .expect("wait-user decision");
-    assert_eq!(result["relay"]["decision"], "wait_user");
-    assert_eq!(result["relay"]["summary"], "Waiting for user");
-    assert_eq!(result["relay"]["responsibility"]["kind"], "user");
-    assert_eq!(result["safe_to_idle"], true);
+fn status_decisions_update_only_their_task_and_never_duplicate_the_report() {
+    let blocked_reason = "The provider returns HTTP 503 for the required endpoint.";
+    for (decision, reason, task_status, waiting_on, responsibility) in [
+        ("wait_user", None, "active", Some("user"), Some("user")),
+        (
+            "blocked",
+            Some(blocked_reason),
+            "active",
+            Some("external"),
+            Some("external"),
+        ),
+        ("complete", None, "done", None, None),
+    ] {
+        let fixture = Fixture::new("relay decision states");
+        let source_task = fixture.task("Source task", "worker-a");
+        let other_task = fixture.task("Other live work", "worker-b");
+        let report = fixture.report("worker-a", "Source task finished.", Some(&source_task));
+        fixture.handoff(&report, "turn-states");
 
-    let context = fixture.context();
-    assert_eq!(task(&context, &source_task)["status"], "active");
-    assert_eq!(task(&context, &source_task)["waiting_on"], "user");
-    let events = fixture.events();
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.kind == "chat.message")
-            .count(),
-        1,
-        "decide duplicated the original visible report"
-    );
-    assert!(lead_messages(&events, "user").is_empty());
+        if reason.is_some() {
+            let missing = fixture
+                .decide(json!({"event_ids":[report.id],"decision":"blocked",
+                    "summary":"The external provider is blocking progress."}))
+                .expect_err("blocked requires a reason");
+            assert_eq!(missing.code, "relay_reason_required");
+        }
+        let refused = fixture
+            .decide(json!({"event_ids":[report.id],"decision":"complete",
+                "summary":"The requested work is complete and verified."}))
+            .expect_err("other live work must block completion");
+        assert_eq!(refused.code, "relay_work_remains");
+        assert_eq!(task(&fixture.context(), &source_task)["status"], "active");
+        assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
+        assert_eq!(
+            fixture
+                .events()
+                .iter()
+                .filter(|event| event.kind == "chat.message")
+                .count(),
+            1,
+            "a rejected decision was shown to the user"
+        );
+        fixture.sync(
+            "worker-b",
+            json!({"op":"task.move","task_id":other_task,"status":"done"}),
+        );
+
+        let mut request = json!({"event_ids":[report.id],"decision":decision});
+        if let Some(reason) = reason {
+            request["reason"] = json!(reason);
+        }
+        let result = fixture.decide(request).expect("decision applies");
+        assert_eq!(result["relay"]["decision"], decision);
+        assert_eq!(result["relay"]["safe_to_idle"], true);
+        assert_eq!(result["safe_to_idle"], true);
+        if let Some(kind) = responsibility {
+            assert_eq!(result["relay"]["responsibility"]["kind"], kind);
+        }
+        let context = fixture.context();
+        let source = task(&context, &source_task);
+        assert_eq!(source["status"], task_status);
+        if let Some(waiting) = waiting_on {
+            assert_eq!(source["waiting_on"], waiting);
+        }
+        if reason.is_some() {
+            assert_eq!(source["notes"], blocked_reason);
+        }
+        if decision == "complete" {
+            assert_eq!(result["relay"]["task_ids"], json!([source_task]));
+        }
+        let events = fixture.events();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "chat.message")
+                .count(),
+            1,
+            "the decision duplicated the original visible report"
+        );
+        assert!(lead_messages(&events, "user").is_empty());
+    }
 }
 
 #[test]
@@ -504,145 +553,108 @@ fn unreferenced_reports_never_infer_task_ownership_from_a_single_active_task() {
 }
 
 #[test]
-fn replay_recomputes_group_safety_after_new_work_appears() {
-    let fixture = Fixture::new("replay current safety");
-    let report = fixture.report("worker-a", "Please ask the user.", None);
-    fixture.handoff(&report, "turn-replay-safety");
-    let request = json!({
-        "event_ids":[report.id],"decision":"wait_user",
-        "summary":"Please confirm the next direction."
-    });
-    let first = fixture.decide(request.clone()).expect("first decision");
-    assert_eq!(first["safe_to_idle"], true);
+fn replays_keep_machine_intent_and_recompute_current_safety() {
+    let fixture = Fixture::new("replay intent");
+    let first = fixture.report("worker-a", "A visible report already exists.", None);
+    let early = fixture
+        .decide(json!({"event_ids":[first.id],"decision":"wait_user"}))
+        .expect("summary is not required");
+    assert_eq!(early["relay"]["summary"], "Waiting for user");
+    let initial = fixture.events();
+    assert_eq!(relay_events(&initial, HANDOFF_KIND).len(), 1);
+    assert_eq!(relay_events(&initial, DECISION_KIND).len(), 1);
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|event| event.kind == "chat.message")
+            .count(),
+        1,
+        "the decision duplicated the original visible report"
+    );
+
+    let second = fixture.report("worker-a", "The provider is unavailable.", None);
+    fixture
+        .decide(json!({"event_ids":[second.id],"decision":"blocked",
+            "reason":"The provider returns HTTP 503."}))
+        .expect("first blocked decision");
+    let decisions_on = |source_id: &str| {
+        fixture
+            .events()
+            .iter()
+            .filter(|event| {
+                event.kind == DECISION_KIND
+                    && event.data["source_event_ids"]
+                        .as_array()
+                        .is_some_and(|ids| ids.contains(&json!(source_id)))
+            })
+            .count()
+    };
+    let changed = fixture
+        .decide(json!({"event_ids":[second.id],"decision":"blocked",
+            "reason":"The credential is invalid."}))
+        .expect_err("a different blocking cause is different machine intent");
+    assert_eq!(changed.code, "relay_decision_conflict");
+    assert_eq!(decisions_on(&second.id), 1);
+
     fixture.task("New actor-owned work", "worker-b");
-    let replay = fixture.decide(request).expect("replay");
+    let replay = fixture
+        .decide(json!({"event_ids":[first.id],"decision":"wait_user",
+            "summary":"Legacy wording must not change machine intent."}))
+        .expect("a worded replay is still a replay");
     assert_eq!(replay["replayed"], true);
+    assert_eq!(decisions_on(&first.id), 1);
     assert_eq!(
         replay["relay"]["safe_to_idle"], true,
-        "historical fact changed"
+        "the replay changed the recorded historical fact"
     );
     assert_eq!(
         replay["safe_to_idle"], false,
-        "current responsibility stayed stale"
+        "the replay did not recompute the current responsibility"
     );
     assert_eq!(replay["current_responsibility"]["kind"], "actor_work");
 }
 
 #[test]
-fn complete_refuses_to_hide_other_live_work_then_succeeds_after_it_is_done() {
-    let fixture = Fixture::new("relay complete");
-    let source_task = fixture.task("Primary task", "worker-a");
-    let other_task = fixture.task("Still unfinished", "worker-b");
-    let report = fixture.report(
-        "worker-a",
-        "Primary task is complete and tested.",
-        Some(&source_task),
-    );
-    fixture.handoff(&report, "turn-complete");
+fn status_reconciles_an_interrupted_acceptance_and_never_rewrites_it_twice() {
+    let fixture = Fixture::new("decision acceptance recovery");
+    let report = fixture.report("worker-a", "Reviewed output.", None);
+    let handoff = fixture.handoff(&report, "turn-recovery");
+    fixture.claim_for_web(&report);
+    let decision_id = "decision-recovery";
+    let mut decision = Event::new(DECISION_KIND, &fixture.group.group_id);
+    decision.id = stable_event_id(decision_id);
+    decision.by = "web-lead".into();
+    decision.data = json!({
+        "decision_id":decision_id,"by":"web-lead","decision":"wait_user",
+        "summary":"Wait for the user's approval.","source_event_ids":[report.id],
+        "handoff_ids":[handoff.data["handoff_id"]],"status":"applied",
+        "caller_may_idle":true,"safe_to_idle":true
+    })
+    .as_object()
+    .cloned()
+    .expect("decision data");
+    ledger::append(&fixture.path(), &decision).expect("durable decision");
+    assert_eq!(fixture.delivery_state(&report.id), "claimed");
+    assert_eq!(fixture.status()["count"], 0);
+    assert_eq!(fixture.delivery_state(&report.id), "accepted");
 
-    let request = json!({
-        "event_ids":[report.id],"decision":"complete",
-        "summary":"The requested work is complete and verified."
-    });
-    let blocked = fixture
-        .decide(request.clone())
-        .expect_err("other live work must block completion");
-    assert_eq!(blocked.code, "relay_work_remains");
-    let context = fixture.context();
-    assert_eq!(task(&context, &source_task)["status"], "active");
-    assert_eq!(task(&context, &other_task)["status"], "active");
-    assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
-    assert!(
-        !fixture.events().iter().any(|event| {
-            event.kind == "chat.message"
-                && event.by == "web-lead"
-                && event.data["text"] == "The requested work is complete and verified."
-        }),
-        "rejected complete was shown to the user"
-    );
-
-    fixture.sync(
-        "worker-b",
-        json!({"op":"task.move","task_id":other_task,"status":"done"}),
-    );
-    let completed = fixture.decide(request).expect("complete decision");
-    assert_eq!(completed["relay"]["decision"], "complete");
-    assert_eq!(completed["relay"]["safe_to_idle"], true);
-    assert_eq!(task(&fixture.context(), &source_task)["status"], "done");
-}
-
-#[test]
-fn relay_status_reports_current_group_responsibility_not_only_pending_handoffs() {
-    let mut fixture = Fixture::new("current responsibility");
-    let task_id = fixture.task("Actor still owns work", "worker-a");
-    let active = fixture.status();
-    assert_eq!(active["count"], 0);
-    assert_eq!(active["safe_to_idle"], false);
-    assert_eq!(active["responsibility"]["kind"], "actor_work");
-    assert_eq!(active["responsibility"]["tasks"][0]["task_id"], task_id);
-
-    fixture.pause();
-    let paused = fixture.status();
-    assert_eq!(paused["safe_to_idle"], true);
-    assert_eq!(paused["responsibility"]["kind"], "user_pause");
-}
-
-#[test]
-fn user_pause_blocks_continue_and_automatic_reminders_without_losing_the_handoff() {
-    let mut fixture = Fixture::new("paused relay");
-    let report = fixture.report("worker-a", "Ready for the next task.", None);
-    fixture.handoff(&report, "turn-paused");
-    fixture.pause();
-    let error = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"continue","summary":"Continue",
-            "next_actor_id":"worker-b","next_title":"Next","next_text":"Do the next step"
-        }))
-        .expect_err("paused group cannot continue");
-    assert_eq!(error.code, "relay_group_paused");
-    assert_eq!(fixture.context().tasks.len(), 0);
-    assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
-
-    fixture.append_delivery(&report.id, "accepted", 30);
-    let reminder = fixture.remind(false);
-    assert_eq!(reminder["reminded"], false);
-    assert_eq!(reminder["reason"], "actor_inactive");
-    assert_eq!(fixture.status()["count"], 1, "pause discarded the handoff");
-}
-
-#[test]
-fn blocked_requires_a_reason_and_waiting_state_remains_visible() {
-    let fixture = Fixture::new("relay blocked");
-    let source_task = fixture.task("External integration", "worker-a");
-    let report = fixture.report(
-        "worker-a",
-        "The provider endpoint rejects the required request.",
-        Some(&source_task),
-    );
-    fixture.handoff(&report, "turn-blocked");
-    let missing = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"blocked",
-            "summary":"The external provider is blocking progress."
-        }))
-        .expect_err("blocked reason required");
-    assert_eq!(missing.code, "relay_reason_required");
-
-    let result = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"blocked",
-            "summary":"The external provider is blocking progress.",
-            "reason":"The provider returns HTTP 503 for the required endpoint."
-        }))
-        .expect("blocked decision");
-    assert_eq!(result["relay"]["safe_to_idle"], true);
-    assert_eq!(result["relay"]["responsibility"]["kind"], "external");
-    let context = fixture.context();
-    assert_eq!(task(&context, &source_task)["waiting_on"], "external");
-    assert_eq!(
-        task(&context, &source_task)["notes"],
-        "The provider returns HTTP 503 for the required endpoint."
-    );
+    let accepted = || {
+        fixture
+            .events()
+            .iter()
+            .filter(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == report.id
+                    && event.data["state"] == "accepted"
+            })
+            .count()
+    };
+    assert_eq!(accepted(), 1);
+    for _ in 0..20 {
+        fixture.status();
+    }
+    assert_eq!(accepted(), 1);
 }
 
 #[test]
@@ -726,149 +738,127 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
 }
 
 #[test]
-fn status_reconciles_a_durable_decision_whose_transport_acceptance_was_interrupted() {
-    let fixture = Fixture::new("decision acceptance recovery");
-    let report = fixture.report("worker-a", "Reviewed output.", None);
-    let handoff = fixture.handoff(&report, "turn-recovery");
-    fixture.claim_for_web(&report);
-    let decision_id = "decision-recovery";
-    let mut decision = Event::new(DECISION_KIND, &fixture.group.group_id);
-    decision.id = stable_event_id(decision_id);
-    decision.by = "web-lead".into();
-    decision.data = json!({
-        "decision_id":decision_id,"by":"web-lead","decision":"wait_user",
-        "summary":"Wait for the user's approval.","source_event_ids":[report.id],
-        "handoff_ids":[handoff.data["handoff_id"]],"status":"applied",
-        "caller_may_idle":true,"safe_to_idle":true
-    })
-    .as_object()
-    .cloned()
-    .expect("decision data");
-    ledger::append(&fixture.path(), &decision).expect("durable decision");
-    assert_eq!(fixture.delivery_state(&report.id), "claimed");
-    let result = fixture.status();
-    assert_eq!(result["count"], 0);
-    assert_eq!(fixture.delivery_state(&report.id), "accepted");
-}
-
-#[test]
-fn delivered_unresolved_handoff_gets_one_reminder_and_decision_resolves_it_too() {
-    let fixture = Fixture::new("relay reminder");
-    let task_id = fixture.task("Review result", "worker-a");
-    let report = fixture.report(
-        "worker-a",
-        "The result reached the web conversation but no decision was recorded.",
-        Some(&task_id),
-    );
-    let handoff = fixture.handoff(&report, "turn-reminder");
-    fixture.append_delivery(&report.id, "accepted", 30);
-
-    let first = fixture.remind(false);
-    assert_eq!(first["reminded"], true);
-    let reminder_id = first["reminder_event"]["id"]
-        .as_str()
-        .expect("reminder id")
-        .to_owned();
-    assert!(
-        first["reminder_event"]["data"]["text"]
-            .as_str()
-            .expect("reminder text")
-            .contains("call cccc_coordination")
-    );
-    let second = fixture.remind(false);
-    assert_eq!(second["reminded"], false);
-    assert_eq!(relay_notes(&fixture.events(), "decision_reminder").len(), 1);
-
+fn handled_reports_stay_handled_across_late_duplicate_and_larger_handoffs() {
+    let fixture = Fixture::new("handled report stability");
+    let first = fixture.report("worker-a", "The result is ready for user review.", None);
     fixture
-        .decide(json!({
-            "event_ids":[reminder_id],"decision":"wait_user",
-            "summary":"Please approve the final rollout."
-        }))
-        .expect("resolve reminder");
-    assert_eq!(fixture.delivery_state(&reminder_id), "accepted");
-    let context = fixture.context();
-    let note = handoff_note(&context, handoff_id(&handoff));
-    assert_eq!(note["status"], "resolved");
-}
+        .decide(json!({"event_ids":[first.id],"decision":"wait_user",
+            "summary":"Please review the completed result."}))
+        .expect("decision before managed completion event");
 
-#[test]
-fn repeated_completion_after_a_decision_never_reopens_the_resolved_handoff() {
-    let fixture = Fixture::new("resolved handoff replay");
-    let report = fixture.report("worker-a", "Final human-readable result.", None);
-    fixture.handoff(&report, "turn-resolved-replay");
-    fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Please approve the verified result."
-        }))
-        .expect("decision");
+    let handoff = fixture.handoff(&first, "real-managed-turn");
+    let state = fixture.status();
+    assert_eq!(state["count"], 0, "late completion reopened handled output");
+    assert_eq!(state["requires_decision"], false);
+
     let store = ContextStore::new(fixture.home.clone()).expect("context store");
     let version_before = store.version(&fixture.context()).expect("version");
-    fixture.handoff(&report, "turn-resolved-replay");
+    fixture.handoff(&first, "real-managed-turn");
     let context = fixture.context();
     let version_after = store.version(&context).expect("version");
     assert_eq!(
         version_before, version_after,
         "duplicate completion rewrote context"
     );
-    let notes = context.coordination["recent_handoffs"]
-        .as_array()
-        .expect("handoffs");
-    assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0]["status"], "resolved");
+    let note = handoff_note(&context, handoff_id(&handoff));
+    assert_eq!(note["status"], "resolved");
     assert!(
-        notes[0]["decision_id"]
+        note["decision_id"]
             .as_str()
             .is_some_and(|id| !id.is_empty())
     );
-}
 
-#[test]
-fn one_visible_output_resolves_every_message_in_the_same_member_handoff() {
-    let fixture = Fixture::new("multi-output decision");
-    let first = fixture.report("worker-a", "First human-readable result.", None);
-    let second = fixture.report("worker-a", "Second human-readable result.", None);
+    let second = fixture.report(
+        "worker-a",
+        "A second result arrived before the turn ended.",
+        None,
+    );
     record_handoff(
         &fixture.home,
         &fixture.group,
         "worker-a",
         "web-lead",
-        "turn-multi-output",
+        "real-multi-output-turn",
         &[first.clone(), second.clone()],
         "completed",
     )
-    .expect("multi-output handoff");
-    fixture.claim_for_web(&first);
-    fixture.claim_for_web(&second);
-
-    let result = fixture
+    .expect("actual turn handoff");
+    let pending = fixture.status();
+    assert_eq!(pending["count"], 1);
+    assert_eq!(
+        pending["pending"][0]["source_event_ids"],
+        json!([second.id.clone()])
+    );
+    assert_eq!(
+        pending["pending"][0]["all_source_event_ids"],
+        json!([first.id.clone(), second.id.clone()])
+    );
+    fixture
         .decide(json!({
-            "event_id":first.id,"decision":"wait_user",
-            "summary":"Both visible outputs were reviewed. Please choose the next direction."
+            "event_ids":[second.id],"decision":"wait_user",
+            "summary":"Please also review the second result."
         }))
-        .expect("complete handoff decision");
-    let mut expected_ids = vec![first.id.clone(), second.id.clone()];
-    expected_ids.sort();
-    assert_eq!(result["relay"]["source_event_ids"], json!(expected_ids));
-    for event_id in [&first.id, &second.id] {
-        assert_eq!(fixture.delivery_state(event_id), "accepted");
-    }
+        .expect("second output decision");
+    assert_eq!(fixture.status()["count"], 0);
 }
 
 #[test]
-fn legacy_member_report_can_be_decided_without_a_preexisting_machine_handoff() {
-    let fixture = Fixture::new("implicit handoff");
-    let report = fixture.report("worker-a", "Legacy human-readable report.", None);
+fn one_decision_resolves_a_whole_verbose_member_turn() {
+    let fixture = Fixture::new("verbose member handoff");
+    let reports = (0..25)
+        .map(|index| {
+            fixture.report(
+                "worker-a",
+                &format!("Visible result part {index}: evidence and remaining risk."),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    let handoff = record_handoff(
+        &fixture.home,
+        &fixture.group,
+        "worker-a",
+        "web-lead",
+        "turn-verbose-output",
+        &reports,
+        "completed",
+    )
+    .expect("verbose handoff");
+    assert_eq!(
+        handoff.data["source_event_ids"]
+            .as_array()
+            .expect("source ids")
+            .len(),
+        25
+    );
+    fixture.claim_for_web(&reports[0]);
+    fixture.claim_for_web(&reports[1]);
+
     let result = fixture
         .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Please confirm the next requirement."
+            "event_id":reports[0].id,"decision":"wait_user",
+            "summary":"All visible output parts were reviewed. Please choose the rollout window."
         }))
-        .expect("implicit handoff decision");
-    assert_eq!(result["relay"]["decision"], "wait_user");
-    let events = fixture.events();
-    assert_eq!(relay_events(&events, HANDOFF_KIND).len(), 1);
-    assert_eq!(relay_events(&events, DECISION_KIND).len(), 1);
+        .expect("one decision resolves the full member turn");
+    let mut expected = reports
+        .iter()
+        .map(|report| report.id.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(result["relay"]["source_event_ids"], json!(expected));
+    assert_eq!(fixture.status()["count"], 0);
+    assert_eq!(
+        fixture
+            .events()
+            .iter()
+            .filter(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["actor_id"] == "web-lead"
+                    && event.data["state"] == "accepted"
+            })
+            .count(),
+        25
+    );
 }
 
 #[test]
@@ -905,108 +895,39 @@ fn only_the_foreman_may_decide_and_continue_requires_concrete_work() {
 }
 
 #[test]
-fn decide_reuses_the_original_output_and_ignores_legacy_summary_wording() {
-    let fixture = Fixture::new("relay original output");
-    let report = fixture.report("worker-a", "A visible report already exists.", None);
-    fixture.handoff(&report, "turn-original-output");
-    let first = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user"
-        }))
-        .expect("summary is not required");
-    assert_eq!(first["relay"]["summary"], "Waiting for user");
-    let replay = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Legacy callers may still send wording, but it is not a second output."
-        }))
-        .expect("legacy summary wording must not change machine intent");
-    assert_eq!(replay["replayed"], true);
-    assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| event.kind == "chat.message")
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn a_partially_dispatched_continue_cannot_be_changed_to_wait_user() {
-    let fixture = Fixture::new("continue decision intent");
-    let report = fixture.report(
-        "worker-a",
-        "The implementation needs one more verification pass.",
-        None,
-    );
-    let handoff = fixture.handoff(&report, "turn-continue-partial");
-    let sent = interrupted_continue(
-        &fixture,
-        &report,
-        &handoff,
-        "Run the full affected regression and report exact evidence.",
-    );
-    assert_eq!(sent["message_sent"], true);
-
-    let conflict = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Ask the user instead."
-        }))
-        .expect_err("real next work must not be contradicted by a later wait decision");
-    assert_eq!(conflict.code, "relay_decision_conflict");
-    assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
-    assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
-}
-
-#[test]
-fn an_applied_decision_replay_rejects_changed_machine_intent() {
-    let fixture = Fixture::new("exact replay intent");
-    let report = fixture.report("worker-a", "The provider is unavailable.", None);
-    fixture.handoff(&report, "turn-exact-replay");
-    fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"blocked",
-            "reason":"The provider returns HTTP 503."
-        }))
-        .expect("first decision");
-    let conflict = fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"blocked",
-            "reason":"The credential is invalid."
-        }))
-        .expect_err("a different blocking cause is different machine intent");
-    assert_eq!(conflict.code, "relay_decision_conflict");
-    assert_eq!(relay_events(&fixture.events(), DECISION_KIND).len(), 1);
-}
-
-#[test]
-fn the_same_partially_dispatched_continue_recovers_without_duplicate_work() {
-    let fixture = Fixture::new("continue decision recovery");
+fn interrupted_continue_partials_block_contradictions_and_recover_without_duplicates() {
+    let fixture = Fixture::new("interrupted continue dispatch");
     let report = fixture.report(
         "worker-a",
         "The implementation needs one final verification.",
         None,
     );
-    let handoff = fixture.handoff(&report, "turn-continue-recovery");
-    interrupted_continue(
-        &fixture,
-        &report,
-        &handoff,
-        "Run the affected regression and report exact evidence.",
-    );
-    let result = fixture
+    let handoff = fixture.handoff(&report, "turn-continue-partial");
+    let next_text = "Run the affected regression and report exact evidence.";
+    let sent = interrupted_continue(&fixture, &report, &handoff, next_text);
+    assert_eq!(sent["message_sent"], true);
+
+    let contradiction = fixture
+        .decide(json!({
+            "event_ids":[report.id],"decision":"wait_user",
+            "summary":"Ask the user instead."
+        }))
+        .expect_err("real next work must not be contradicted by a later wait decision");
+    assert_eq!(contradiction.code, "relay_decision_conflict");
+    assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
+    assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
+
+    let recovered = fixture
         .decide(json!({
             "event_ids":[report.id],"decision":"continue",
             "summary":"Run the final verification.",
             "next_actor_id":"worker-b","next_title":"Final verification",
-            "next_text":"Run the affected regression and report exact evidence."
+            "next_text":next_text
         }))
-        .expect("same continue recovers");
-    assert_eq!(result["relay"]["decision"], "continue");
-    let context = fixture.context();
-    let relay_tasks = context
+        .expect("the same continue recovers");
+    assert_eq!(recovered["relay"]["decision"], "continue");
+    let relay_tasks = fixture
+        .context()
         .tasks
         .iter()
         .filter(|task| {
@@ -1017,19 +938,15 @@ fn the_same_partially_dispatched_continue_recovers_without_duplicate_work() {
         .count();
     assert_eq!(relay_tasks, 1);
     assert_eq!(lead_messages(&fixture.events(), "worker-b").len(), 1);
-}
 
-#[test]
-fn a_task_only_partial_continue_blocks_a_different_decision() {
-    let fixture = Fixture::new("task-only decision intent");
-    let report = fixture.report("worker-a", "A follow-up task was prepared.", None);
-    fixture.handoff(&report, "turn-task-only");
-    let source_event_ids = vec![report.id.clone()];
-    let decision_id = decision_id(&fixture.group.group_id, "web-lead", &source_event_ids);
+    let follow_up = fixture.report("worker-a", "A follow-up task was prepared.", None);
+    fixture.handoff(&follow_up, "turn-task-only");
+    let follow_up_decision =
+        decision_id(&fixture.group.group_id, "web-lead", &[follow_up.id.clone()]);
     let client_id = super::super::message_idempotency::tracked_client_id(
         &fixture.group.group_id,
         "web-lead",
-        &decision_id,
+        &follow_up_decision,
     );
     fixture.sync(
         "web-lead",
@@ -1041,7 +958,7 @@ fn a_task_only_partial_continue_blocks_a_different_decision() {
     );
     let conflict = fixture
         .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
+            "event_ids":[follow_up.id],"decision":"wait_user",
             "summary":"Ask the user instead."
         }))
         .expect_err("prepared next work must prevent a contradictory wait decision");
@@ -1106,16 +1023,24 @@ fn resolving_one_handoff_does_not_tell_the_foreman_to_idle_with_another_pending(
 }
 
 #[test]
-fn unassigned_live_work_remains_the_foremans_triage_responsibility() {
-    let fixture = Fixture::new("unassigned responsibility");
-    fixture.sync(
+fn assigned_and_unassigned_work_stay_the_foremans_responsibility() {
+    let fixture = Fixture::new("current responsibility");
+    let task_id = fixture.task("Actor still owns work", "worker-a");
+    let active = fixture.status();
+    assert_eq!(active["count"], 0);
+    assert_eq!(active["safe_to_idle"], false);
+    assert_eq!(active["responsibility"]["kind"], "actor_work");
+    assert_eq!(active["responsibility"]["tasks"][0]["task_id"], task_id);
+
+    let unassigned = Fixture::new("unassigned responsibility");
+    unassigned.sync(
         "web-lead",
         json!({
             "op":"task.create","title":"Unassigned follow-up","outcome":"Find an owner",
             "status":"active","waiting_on":"actor"
         }),
     );
-    let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
+    let state = current_group_state(&unassigned.home, &unassigned.group, &unassigned.events())
         .expect("group responsibility");
     assert_eq!(state["safe_to_idle"], false);
     assert_eq!(state["responsibility"]["kind"], "actor_work");
@@ -1125,124 +1050,111 @@ fn unassigned_live_work_remains_the_foremans_triage_responsibility() {
 }
 
 #[test]
-fn repeated_status_reads_do_not_reappend_completed_delivery_facts() {
-    let fixture = Fixture::new("status reconciliation cost");
-    let report = fixture.report("worker-a", "The result needs user approval.", None);
-    fixture.handoff(&report, "turn-status-stable");
+fn a_paused_group_blocks_continue_and_reminders_but_keeps_decisions_safe() {
+    let mut fixture = Fixture::new("paused relay");
+    let report = fixture.report("worker-a", "Please review before resuming.", None);
+    fixture.handoff(&report, "paused-active-turn");
     fixture.claim_for_web(&report);
-    fixture
-        .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Please approve the verified result."
-        }))
-        .expect("decision");
-    let accepted_deliveries = || {
-        fixture
-            .events()
-            .iter()
-            .filter(|event| {
-                event.kind == "runtime.delivery"
-                    && event.data["source_event_id"] == report.id
-                    && event.data["state"] == "accepted"
-            })
-            .count()
+    let wait_request = DaemonRequest {
+        v: 1,
+        op: "runtime_wait_next_turn".into(),
+        args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead",
+            "by":"web-lead","transport":"web_model_browser"})
+        .as_object()
+        .cloned()
+        .expect("wait args"),
     };
-    assert_eq!(accepted_deliveries(), 1);
-    for _ in 0..20 {
-        fixture.status();
-    }
-    assert_eq!(accepted_deliveries(), 1);
-}
+    let wait = super::super::runtime_state::resolve_operation(&wait_request)
+        .expect("wait operation")
+        .execute(&fixture.home, &wait_request)
+        .expect("active turn before pause");
+    assert_eq!(wait["status"], "work_available");
 
-#[test]
-fn an_in_turn_decision_does_not_reopen_the_same_report_at_member_completion() {
-    let fixture = Fixture::new("early handled report");
-    let report = fixture.report("worker-a", "The result is ready for user review.", None);
-    fixture
+    fixture.pause();
+    let refused = fixture
         .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
-            "summary":"Please review the completed result."
+            "event_ids":[report.id],"decision":"continue","summary":"Continue",
+            "next_actor_id":"worker-b","next_title":"Next","next_text":"Do the next step"
         }))
-        .expect("decision before managed completion event");
-    record_handoff(
-        &fixture.home,
-        &fixture.group,
-        "worker-a",
-        "web-lead",
-        "real-managed-turn",
-        std::slice::from_ref(&report),
-        "completed",
-    )
-    .expect("late managed completion handoff");
+        .expect_err("paused group cannot continue");
+    assert_eq!(refused.code, "relay_group_paused");
+    assert_eq!(fixture.context().tasks.len(), 0);
+    assert!(relay_events(&fixture.events(), DECISION_KIND).is_empty());
+
+    fixture.append_delivery(&report.id, "accepted", 30);
+    let reminder = fixture.remind(false);
+    assert_eq!(reminder["reminded"], false);
+    assert_eq!(reminder["reason"], "actor_inactive");
     let state = fixture.status();
-    assert_eq!(state["count"], 0, "late completion reopened handled output");
-    assert_eq!(state["requires_decision"], false);
+    assert_eq!(state["count"], 1, "pause discarded the handoff");
+    assert_eq!(state["safe_to_idle"], true);
+    assert_eq!(state["responsibility"]["kind"], "user_pause");
+
+    let recorded = fixture
+        .decide(json!({"event_ids":[report.id],"decision":"wait_user"}))
+        .expect("recording responsibility must not require restarting a paused actor");
+    assert_eq!(recorded["current_responsibility"]["kind"], "user_pause");
+    assert_eq!(recorded["caller_may_idle"], true);
+    let replay = fixture
+        .decide(json!({"event_ids":[report.id],"decision":"wait_user"}))
+        .expect("retry remains successful while paused");
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(relay_events(&fixture.events(), DECISION_KIND).len(), 1);
+    assert_eq!(
+        GroupStore::new(fixture.home.clone())
+            .expect("store")
+            .load(&fixture.group.group_id)
+            .expect("group")
+            .state,
+        GroupState::Paused
+    );
 }
 
 #[test]
-fn a_new_output_after_an_early_decision_remains_a_separate_review_obligation() {
-    let fixture = Fixture::new("partial early handling");
-    let first = fixture.report("worker-a", "First result was reviewed early.", None);
-    fixture
-        .decide(json!({
-            "event_ids":[first.id],"decision":"wait_user",
-            "summary":"Please review the first result."
-        }))
-        .expect("early decision");
-    let second = fixture.report(
-        "worker-a",
-        "A second result arrived before the turn ended.",
-        None,
-    );
-    record_handoff(
-        &fixture.home,
-        &fixture.group,
-        "worker-a",
-        "web-lead",
-        "real-multi-output-turn",
-        &[first.clone(), second.clone()],
-        "completed",
-    )
-    .expect("actual turn handoff");
-    let pending = fixture.status();
-    assert_eq!(pending["count"], 1);
-    assert_eq!(
-        pending["pending"][0]["source_event_ids"],
-        json!([second.id])
-    );
-    assert_eq!(
-        pending["pending"][0]["all_source_event_ids"],
-        json!([first.id, second.id])
-    );
-    fixture
-        .decide(json!({
-            "event_ids":[second.id],"decision":"wait_user",
-            "summary":"Please also review the second result."
-        }))
-        .expect("second output decision");
-    let final_state = fixture.status();
-    assert_eq!(final_state["count"], 0);
-}
+fn an_ignored_reminder_escalates_once_and_any_decision_resolves_it() {
+    let fixture = Fixture::new("relay reminder lifecycle");
+    let report = fixture.report("worker-a", "The completed result needs a decision.", None);
+    let handoff = fixture.handoff(&report, "turn-reminder");
+    fixture.append_delivery(&report.id, "accepted", 30);
 
-#[test]
-fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
-    let fixture = Fixture::new("relay escalation");
-    let report = fixture.report(
-        "worker-a",
-        "The finished work needs a durable next-step decision.",
-        None,
-    );
-    let handoff = fixture.handoff(&report, "turn-escalation");
-    fixture.append_delivery(&report.id, "accepted", 90);
-    let reminded = fixture.remind(false);
-    assert_eq!(reminded["reminded"], true);
-    assert_eq!(reminded["escalated"], false);
-    let reminder_id = reminded["reminder_event"]["id"]
+    let reminder = fixture.remind(false);
+    assert_eq!(reminder["reminded"], true);
+    let reminder_id = reminder["reminder_event"]["id"]
         .as_str()
         .expect("reminder id")
         .to_owned();
-    fixture.append_delivery(&reminder_id, "accepted", 40);
+    assert!(
+        reminder["reminder_event"]["data"]["text"]
+            .as_str()
+            .expect("reminder text")
+            .contains("call cccc_coordination")
+    );
+    let again = fixture.remind(false);
+    assert_eq!(again["reminded"], false);
+    assert_eq!(relay_notes(&fixture.events(), "decision_reminder").len(), 1);
 
+    fixture
+        .decide(json!({
+            "event_ids":[reminder_id],"decision":"wait_user",
+            "summary":"Please approve the final rollout."
+        }))
+        .expect("deciding the reminder resolves the handoff too");
+    assert_eq!(fixture.delivery_state(&reminder_id), "accepted");
+    let context = fixture.context();
+    assert_eq!(
+        handoff_note(&context, handoff_id(&handoff))["status"],
+        "resolved"
+    );
+
+    let ignored = fixture.report("worker-a", "A different result needs intervention.", None);
+    let escalated_handoff = fixture.handoff(&ignored, "turn-escalation");
+    fixture.append_delivery(&ignored.id, "accepted", 90);
+    let second = fixture.remind(false);
+    let second_id = second["reminder_event"]["id"]
+        .as_str()
+        .expect("reminder id")
+        .to_owned();
+    fixture.append_delivery(&second_id, "accepted", 40);
     let busy = fixture.remind(false);
     assert_eq!(busy["escalated"], false, "a working web page was escalated");
     let escalated = fixture.remind(true);
@@ -1267,7 +1179,7 @@ fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
     assert_eq!(state["safe_to_idle"], true);
     assert_eq!(state["responsibility"]["kind"], "user_intervention");
     let context = fixture.context();
-    let note = handoff_note(&context, handoff_id(&handoff));
+    let note = handoff_note(&context, handoff_id(&escalated_handoff));
     assert_eq!(note["status"], "waiting_user");
     assert_eq!(note["escalation_event_id"], escalation_id);
     assert!(
@@ -1284,126 +1196,63 @@ fn an_idle_foreman_that_ignores_one_reminder_escalates_once_to_the_user() {
 
     fixture
         .decide(json!({
-            "event_ids":[report.id],"decision":"wait_user",
+            "event_ids":[ignored.id],"decision":"wait_user",
             "summary":"Please choose the next step for the preserved result."
         }))
         .expect("explicit decision after user resumes the foreman");
-    let resolved = fixture.status();
-    assert_eq!(resolved["count"], 0);
+    assert_eq!(fixture.status()["count"], 0);
 }
 
 #[test]
-fn user_escalation_does_not_hide_another_actors_live_work() {
-    let fixture = Fixture::new("escalation plus live task");
-    let live_task = fixture.task("Independent implementation", "worker-b");
-    let report = fixture.report("worker-a", "A different result needs intervention.", None);
-    let handoff = fixture.handoff(&report, "turn-escalation-with-live-work");
-    fixture.append_delivery(&report.id, "accepted", 90);
-    let reminder = fixture.remind(false);
-    let reminder_id = reminder["reminder_event"]["id"]
-        .as_str()
-        .expect("reminder id")
-        .to_owned();
-    fixture.append_delivery(&reminder_id, "accepted", 40);
-    assert_eq!(fixture.remind(true)["escalated"], true);
-    let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
-        .expect("combined responsibility");
-    assert_eq!(
-        state["safe_to_idle"], false,
-        "live work was hidden by user escalation"
-    );
-    assert_eq!(state["responsibility"]["kind"], "actor_work");
-    assert_eq!(state["responsibility"]["tasks"][0]["task_id"], live_task);
-    assert_eq!(
-        state["responsibilities"]
-            .as_array()
-            .expect("responsibilities")
-            .len(),
-        2
-    );
-    assert!(!actor_may_idle_from_state(&state, "worker-b"));
-    assert!(actor_may_idle_from_state(&state, "web-lead"));
-    assert_eq!(
-        state["user_intervention"]["handoff_ids"],
-        json!([handoff.data["handoff_id"]])
-    );
-}
-
-#[test]
-fn foreman_review_does_not_hide_a_peers_independent_live_task() {
-    let fixture = Fixture::new("review plus live peer task");
-    let task_id = fixture.task("Independent peer work", "worker-b");
-    let report = fixture.report("worker-a", "Review this completed result.", None);
-    let handoff = fixture.handoff(&report, "turn-review-with-live-work");
-    let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
-        .expect("combined responsibility");
-    assert_eq!(state["safe_to_idle"], false);
-    assert_eq!(state["responsibility"]["kind"], "foreman_review");
-    assert!(!actor_may_idle_from_state(&state, "web-lead"));
-    assert!(!actor_may_idle_from_state(&state, "worker-b"));
-    assert_eq!(state["actor_work"]["tasks"][0]["task_id"], task_id);
-    assert_eq!(
-        state["responsibilities"]
-            .as_array()
-            .expect("responsibilities")
-            .len(),
-        2
-    );
-    assert_eq!(
-        state["responsibility"]["handoff_ids"],
-        json!([handoff.data["handoff_id"]])
-    );
-}
-
-#[test]
-fn a_verbose_member_turn_keeps_all_human_outputs_inside_one_decidable_handoff() {
-    let fixture = Fixture::new("verbose member handoff");
-    let reports = (0..25)
-        .map(|index| {
-            fixture.report(
-                "worker-a",
-                &format!("Visible result part {index}: evidence and remaining risk."),
-                None,
-            )
-        })
-        .collect::<Vec<_>>();
-    let handoff = record_handoff(
-        &fixture.home,
-        &fixture.group,
-        "worker-a",
-        "web-lead",
-        "turn-verbose-output",
-        &reports,
-        "completed",
-    )
-    .expect("verbose handoff");
-    assert_eq!(
-        handoff.data["source_event_ids"]
-            .as_array()
-            .expect("source ids")
-            .len(),
-        25
-    );
-    fixture
-        .decide(json!({
-            "event_id":reports[0].id,"decision":"wait_user",
-            "summary":"All 25 visible output parts were reviewed. Please choose the rollout window."
-        }))
-        .expect("one decision resolves the full member turn");
-    let status = fixture.status();
-    assert_eq!(status["count"], 0);
-    assert_eq!(
-        fixture
-            .events()
-            .iter()
-            .filter(|event| {
-                event.kind == "runtime.delivery"
-                    && event.data["actor_id"] == "web-lead"
-                    && event.data["state"] == "accepted"
-            })
-            .count(),
-        25
-    );
+fn live_work_and_pending_reviews_are_never_hidden_by_each_other() {
+    for escalated in [true, false] {
+        let fixture = Fixture::new(if escalated {
+            "escalation plus live task"
+        } else {
+            "review plus live task"
+        });
+        let live_task = fixture.task("Independent live work", "worker-b");
+        let report = fixture.report("worker-a", "A completed result needs review.", None);
+        let handoff = fixture.handoff(&report, "turn-combined");
+        if escalated {
+            fixture.append_delivery(&report.id, "accepted", 90);
+            let reminder = fixture.remind(false);
+            let reminder_id = reminder["reminder_event"]["id"]
+                .as_str()
+                .expect("reminder id")
+                .to_owned();
+            fixture.append_delivery(&reminder_id, "accepted", 40);
+            assert_eq!(fixture.remind(true)["escalated"], true);
+        }
+        let state = current_group_state(&fixture.home, &fixture.group, &fixture.events())
+            .expect("combined responsibility");
+        assert_eq!(state["safe_to_idle"], false);
+        assert_eq!(
+            state["responsibilities"]
+                .as_array()
+                .expect("responsibilities")
+                .len(),
+            2
+        );
+        assert!(!actor_may_idle_from_state(&state, "worker-b"));
+        if escalated {
+            assert_eq!(state["responsibility"]["kind"], "actor_work");
+            assert_eq!(state["responsibility"]["tasks"][0]["task_id"], live_task);
+            assert!(actor_may_idle_from_state(&state, "web-lead"));
+            assert_eq!(
+                state["user_intervention"]["handoff_ids"],
+                json!([handoff.data["handoff_id"]])
+            );
+        } else {
+            assert_eq!(state["responsibility"]["kind"], "foreman_review");
+            assert_eq!(state["actor_work"]["tasks"][0]["task_id"], live_task);
+            assert!(!actor_may_idle_from_state(&state, "web-lead"));
+            assert_eq!(
+                state["responsibility"]["handoff_ids"],
+                json!([handoff.data["handoff_id"]])
+            );
+        }
+    }
 }
 
 #[test]
@@ -1434,9 +1283,8 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
     .cloned()
     .expect("escalation");
     ledger::append(&fixture.path(), &escalation).expect("simulate visible escalation write");
-    let before = fixture.context();
     assert_eq!(
-        before.coordination["recent_handoffs"][0]["status"],
+        fixture.context().coordination["recent_handoffs"][0]["status"],
         "pending_review"
     );
 
@@ -1449,120 +1297,115 @@ fn status_repairs_the_context_note_after_an_escalation_write_is_interrupted() {
 }
 
 #[test]
-fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
-    use std::sync::{Arc, Barrier};
-
-    let fixture = Fixture::new("concurrent relay reminders");
-    let report = fixture.report("worker-a", "The completed result needs a decision.", None);
-    fixture.handoff(&report, "turn-concurrent-reminder");
-    fixture.append_delivery(&report.id, "accepted", 90);
-
-    let barrier = Arc::new(Barrier::new(10));
-    let reminder_results = std::thread::scope(|scope| {
-        (0..10)
-            .map(|_| {
-                let barrier = barrier.clone();
-                let home = &fixture.home;
-                let group_id = fixture.group.group_id.clone();
-                scope.spawn(move || {
-                    barrier.wait();
-                    remind_due(home, &remind_request(&group_id, false))
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|handle| handle.join().expect("reminder thread"))
-            .collect::<Vec<_>>()
-    });
-    assert!(
-        reminder_results.iter().all(Result::is_ok),
-        "{reminder_results:?}"
-    );
-    let events = fixture.events();
-    let reminders = relay_notes(&events, "decision_reminder");
-    assert_eq!(reminders.len(), 1);
-    let reminder_id = reminders[0].id.clone();
-    fixture.append_delivery(&reminder_id, "accepted", 40);
-
-    let barrier = Arc::new(Barrier::new(10));
-    let escalation_results = std::thread::scope(|scope| {
-        (0..10)
-            .map(|_| {
-                let barrier = barrier.clone();
-                let home = &fixture.home;
-                let group_id = fixture.group.group_id.clone();
-                scope.spawn(move || {
-                    barrier.wait();
-                    remind_due(home, &remind_request(&group_id, true))
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|handle| handle.join().expect("escalation thread"))
-            .collect::<Vec<_>>()
-    });
-    assert!(
-        escalation_results.iter().all(Result::is_ok),
-        "{escalation_results:?}"
-    );
+fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
+    let fixture = Fixture::new("repair old false escalation");
+    let report = fixture.report("worker-a", "Original still not delivered", None);
+    let handoff = fixture.handoff(&report, "old-bad-delivery");
+    let reminder = send_decision_reminder(
+        &fixture.home,
+        &fixture.group.group_id,
+        "web-lead",
+        &fixture.events(),
+        std::slice::from_ref(&handoff),
+    )
+    .expect("old reminder");
+    let append = |state: &str| {
+        for id in [&report.id, &reminder.id] {
+            fixture.append_delivery(id, state, 0);
+        }
+    };
+    append("ambiguous");
+    let escalation = send_user_escalation(
+        &fixture.home,
+        &fixture.group.group_id,
+        "web-lead",
+        &fixture.events(),
+        std::slice::from_ref(&handoff),
+    )
+    .expect("old erroneous escalation");
+    ensure_handoff_note(
+        &fixture.home,
+        &fixture.group,
+        &handoff,
+        "waiting_user",
+        None,
+        Some(&escalation.id),
+    )
+    .expect("old note");
+    assert_eq!(fixture.status()["awaiting_user_intervention"], false);
     assert_eq!(
-        relay_notes(&fixture.events(), "decision_escalation").len(),
-        1
+        fixture.context().coordination["recent_handoffs"][0]["status"],
+        "pending_review"
+    );
+    append("accepted");
+    assert!(
+        !escalation_for_handoff(
+            &fixture.events(),
+            handoff.data["handoff_id"].as_str().expect("handoff")
+        ),
+        "a later receipt retroactively legitimized the old false escalation"
     );
 }
 
 #[test]
-fn concurrent_identical_decisions_commit_one_machine_decision_without_duplicate_output() {
-    use std::sync::{Arc, Barrier};
+fn concurrent_reminder_and_escalation_checks_create_one_visible_event_each() {
+    let fixture = Fixture::new("concurrent relay reminders");
+    let report = fixture.report("worker-a", "The result needs a decision.", None);
+    fixture.handoff(&report, "turn-concurrent-reminder");
+    fixture.append_delivery(&report.id, "accepted", 90);
+    for (idle, kind) in [(false, "decision_reminder"), (true, "decision_escalation")] {
+        let barrier = std::sync::Barrier::new(10);
+        let results = std::thread::scope(|scope| {
+            let threads = (0..10)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        remind_due(
+                            &fixture.home,
+                            &remind_request(&fixture.group.group_id, idle),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            threads
+                .into_iter()
+                .map(|t| t.join().expect("racing check"))
+                .collect::<Vec<_>>()
+        });
+        assert!(results.iter().all(Result::is_ok), "{kind}: {results:?}");
+        let events = fixture.events();
+        let emitted = relay_notes(&events, kind);
+        assert_eq!(emitted.len(), 1, "duplicate concurrent event: {kind}");
+        if !idle {
+            fixture.append_delivery(&emitted[0].id, "accepted", 40);
+        }
+    }
+}
 
+#[test]
+fn concurrent_identical_decisions_commit_one_machine_decision_without_duplicate_output() {
     let fixture = Fixture::new("concurrent identical decision");
-    let report = fixture.report("worker-a", "The result is ready for user approval.", None);
+    let report = fixture.report("worker-a", "Ready for approval.", None);
     fixture.handoff(&report, "turn-concurrent-decision");
-    let barrier = Arc::new(Barrier::new(10));
+    let barrier = std::sync::Barrier::new(10);
     let results = std::thread::scope(|scope| {
-        (0..10)
+        let threads = (0..10)
             .map(|_| {
-                let barrier = barrier.clone();
-                let home = &fixture.home;
-                let group_id = fixture.group.group_id.clone();
-                let event_id = report.id.clone();
-                scope.spawn(move || {
+                scope.spawn(|| {
                     barrier.wait();
-                    decide(
-                        home,
-                        &DaemonRequest {
-                            v: 1,
-                            op: "coordination_decide".into(),
-                            args: json!({
-                                "group_id":group_id,"by":"web-lead","event_ids":[event_id],
-                                "decision":"wait_user"
-                            })
-                            .as_object()
-                            .cloned()
-                            .expect("request"),
-                        },
-                    )
+                    fixture.decide(json!({"event_ids":[report.id],"decision":"wait_user"}))
                 })
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        threads
             .into_iter()
-            .map(|handle| handle.join().expect("decision thread"))
+            .map(|t| t.join().expect("racing decision"))
             .collect::<Vec<_>>()
     });
     assert!(results.iter().all(Result::is_ok), "{results:?}");
     let events = fixture.events();
     assert_eq!(relay_events(&events, DECISION_KIND).len(), 1);
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && event.by == "web-lead"
-                    && event.data["to"] == json!(["user"])
-            })
-            .count(),
-        0
-    );
+    assert!(lead_messages(&events, "user").is_empty());
 }
 
 #[test]
@@ -1594,180 +1437,46 @@ fn replay_cannot_claim_success_for_a_batch_containing_a_new_report() {
 }
 
 #[test]
-fn recording_wait_during_a_paused_active_turn_does_not_report_a_false_failure() {
-    let mut fixture = Fixture::new("paused active relay");
-    let report = fixture.report("worker-a", "Please review before resuming.", None);
-    fixture.handoff(&report, "paused-active-turn");
-    fixture.claim_for_web(&report);
-    let request = DaemonRequest {
-        v: 1,
-        op: "runtime_wait_next_turn".into(),
-        args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead",
-            "by":"web-lead","transport":"web_model_browser"})
-        .as_object()
-        .cloned()
-        .expect("wait args"),
-    };
-    let wait = super::super::runtime_state::resolve_operation(&request)
-        .expect("wait operation")
-        .execute(&fixture.home, &request)
-        .expect("active turn");
-    assert_eq!(wait["status"], "work_available");
-    fixture.group.state = GroupState::Paused;
-    GroupStore::new(fixture.home.clone())
-        .expect("store")
-        .save(&fixture.group)
-        .expect("pause group");
-    let result = fixture
-        .decide(json!({"event_ids":[report.id],"decision":"wait_user"}))
-        .expect("recording responsibility must not require restarting a paused actor");
-    assert_eq!(result["current_responsibility"]["kind"], "user_pause");
-    assert_eq!(result["caller_may_idle"], true);
-    let replay = fixture
-        .decide(json!({"event_ids":[report.id],"decision":"wait_user"}))
-        .expect("retry remains successful while paused");
-    assert_eq!(replay["replayed"], true);
-    assert_eq!(relay_events(&fixture.events(), DECISION_KIND).len(), 1);
-    assert_eq!(
-        GroupStore::new(fixture.home.clone())
-            .expect("store")
-            .load(&fixture.group.group_id)
-            .expect("group")
-            .state,
-        GroupState::Paused
-    );
-}
-
-#[test]
 fn unconfirmed_delivery_never_claims_the_foreman_received_a_report_or_reminder() {
     let fixture = Fixture::new("unconfirmed transport is not receipt");
     let report = fixture.report("worker-a", "Original report", None);
     fixture.handoff(&report, "unconfirmed-turn");
-    let append = |id: &str, state: &str| {
-        let mut e = Event::new("runtime.delivery", &fixture.group.group_id);
-        e.ts = (Utc::now() - Duration::seconds(180)).to_rfc3339();
-        e.by = "system".into();
-        e.data = json!({"actor_id":"web-lead","source_event_id":id,
-            "state":state,"transport":"web_model_browser"})
-        .as_object()
-        .cloned()
-        .expect("data");
-        ledger::append(&fixture.path(), &e).expect("delivery");
-    };
-    let request = DaemonRequest { v:1, op:"coordination_relay_remind".into(),
-        args:json!({"group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead","browser_idle":true})
-            .as_object().cloned().expect("args") };
     for state in ["claimed", "failed", "ambiguous"] {
-        append(&report.id, state);
-        let r = remind_due(&fixture.home, &request).expect("check undelivered report");
-        assert_eq!(r["reminded"], false, "{state} was misreported as delivered");
-        assert_eq!(r["escalated"], false);
-    }
-    append(&report.id, "accepted");
-    let r = remind_due(&fixture.home, &request).expect("confirmed report");
-    assert_eq!(r["reminded"], true);
-    let reminder = r["reminder_event"]["id"].as_str().expect("reminder");
-    for state in ["claimed", "failed", "ambiguous"] {
-        append(reminder, state);
+        fixture.append_delivery(&report.id, state, 180);
+        let check = fixture.remind(true);
         assert_eq!(
-            remind_due(&fixture.home, &request).expect("unconfirmed reminder")["escalated"],
+            check["reminded"], false,
+            "{state} was misreported as delivered"
+        );
+        assert_eq!(check["escalated"], false);
+    }
+    fixture.append_delivery(&report.id, "accepted", 180);
+    let reminded = fixture.remind(true);
+    assert_eq!(reminded["reminded"], true);
+    let reminder = reminded["reminder_event"]["id"]
+        .as_str()
+        .expect("reminder id")
+        .to_owned();
+    for state in ["claimed", "failed", "ambiguous"] {
+        fixture.append_delivery(&reminder, state, 180);
+        assert_eq!(
+            fixture.remind(true)["escalated"],
             false,
             "{state} reminder was blamed on the foreman"
         );
     }
-    append(reminder, "accepted");
-    assert_eq!(
-        remind_due(&fixture.home, &request).expect("confirmed reminder")["escalated"],
-        true
-    );
-}
-
-#[test]
-fn old_false_escalation_cannot_leave_an_undelivered_handoff_waiting_for_user() {
-    let fixture = Fixture::new("repair old false escalation");
-    let report = fixture.report("worker-a", "Original still not delivered", None);
-    let handoff = fixture.handoff(&report, "old-bad-delivery");
-    let reminder = send_decision_reminder(
-        &fixture.home,
-        &fixture.group.group_id,
-        "web-lead",
-        &fixture.events(),
-        std::slice::from_ref(&handoff),
-    )
-    .expect("old reminder");
-    let append = |state: &str| {
-        for id in [&report.id, &reminder.id] {
-            let mut e = Event::new("runtime.delivery", &fixture.group.group_id);
-            e.data = json!({"actor_id":"web-lead","source_event_id":id,
-                "state":state,"transport":"web_model_browser"})
-            .as_object()
-            .cloned()
-            .expect("data");
-            ledger::append(&fixture.path(), &e).expect("delivery");
-        }
-    };
-    append("ambiguous");
-    let escalation = send_user_escalation(
-        &fixture.home,
-        &fixture.group.group_id,
-        "web-lead",
-        &fixture.events(),
-        std::slice::from_ref(&handoff),
-    )
-    .expect("old erroneous escalation");
-    ensure_handoff_note(
-        &fixture.home,
-        &fixture.group,
-        &handoff,
-        "waiting_user",
-        None,
-        Some(&escalation.id),
-    )
-    .expect("old note");
-    let request = DaemonRequest {
-        v: 1,
-        op: "coordination_relay_status".into(),
-        args: json!({
-        "group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead"})
-        .as_object()
-        .cloned()
-        .expect("args"),
-    };
-    assert_eq!(
-        status(&fixture.home, &request).expect("current status")["awaiting_user_intervention"],
-        false
-    );
-    assert_eq!(
-        fixture.context().coordination["recent_handoffs"][0]["status"],
-        "pending_review"
-    );
-    append("accepted");
-    assert!(
-        !escalation_for_handoff(
-            &fixture.events(),
-            handoff.data["handoff_id"].as_str().expect("handoff")
-        ),
-        "a later receipt retroactively legitimized the old false escalation"
-    );
+    fixture.append_delivery(&reminder, "accepted", 180);
+    assert_eq!(fixture.remind(true)["escalated"], true);
 }
 
 #[test]
 fn delayed_report_completion_never_completes_a_newer_task_for_the_same_member() {
     let fixture = Fixture::new("late report does not own new work");
     let old = fixture.task("Original assignment", "worker-a");
-    ContextStore::new(fixture.home.clone())
-        .expect("contexts")
-        .sync(
-            &fixture.group.group_id,
-            &[json!({"op":"task.move","task_id":old,"status":"done"})
-                .as_object()
-                .cloned()
-                .expect("move")],
-            None,
-            "web-lead",
-            false,
-        )
-        .expect("original task finished before delayed delivery");
+    fixture.sync(
+        "web-lead",
+        json!({"op":"task.move","task_id":old,"status":"done"}),
+    );
     let mut dispatch = Event::new("chat.message", &fixture.group.group_id);
     dispatch.by = "web-lead".into();
     dispatch.data=json!({"to":["worker-a"],"message_mode":"send","text":"Do original task","refs":[{"kind":"task_ref","task_id":old}]}).as_object().cloned().expect("dispatch");

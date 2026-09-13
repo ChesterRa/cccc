@@ -830,3 +830,8 @@ fn failed(message: &str) -> Value {
 
 #[cfg(test)]
 mod browser_surface_tests;
+
+#[cfg(test)]
+pub(crate) async fn t05_chrome_test_guard() -> tokio::sync::OwnedMutexGuard<()> {
+    browser_surface_tests::t05_chrome_test_guard().await
+}

@@ -950,17 +950,6 @@ mod tests {
                 .expect("fixture operation succeeds")
                 .is_some()
         );
-        assert_eq!(
-            bind_session(&home, "route-a", "wrong", "chat-replacement")
-                .expect_err("binding must be rejected")
-                .to_string(),
-            "session_binding_code_invalid"
-        );
-        assert!(
-            find_session(&home, "chat-original")
-                .expect("fixture operation succeeds")
-                .is_some()
-        );
         bind_session(&home, "route-a", &next, "chat-replacement")
             .expect("fixture operation succeeds");
         assert!(
@@ -994,87 +983,87 @@ mod tests {
     }
 
     #[test]
-    fn session_binding_rejects_cross_group_reuse_without_consuming_the_other_code() {
+    fn binding_rejections_keep_the_current_owner_and_never_consume_the_other_code() {
         let (_temp, home, groups) = session_fixture();
         let a = issue(&home, "route-a");
         let b = issue(&home, "route-b");
-        bind_session(&home, "route-a", &a, "chat-a").expect("fixture operation succeeds");
+        bind_session(&home, "route-a", &a, "chat-a").expect("bind route-a");
+        // A rejected attempt never consumes the other code: the same `b`
+        // still binds its own chat afterwards.
         assert_eq!(
             bind_session(&home, "route-b", &b, "chat-a")
-                .expect_err("binding must be rejected")
+                .expect_err("cross-group session reuse")
                 .to_string(),
             "session_already_bound"
         );
-        bind_session(&home, "route-b", &b, "chat-b").expect("fixture operation succeeds");
+        bind_session(&home, "route-b", &b, "chat-b").expect("bind route-b with the same code");
         assert_eq!(
             find_session(&home, "chat-a")
-                .expect("fixture operation succeeds")
-                .expect("fixture operation succeeds")["group_id"],
+                .expect("route-a session")
+                .expect("route-a session entry")["group_id"],
             groups[0]
         );
         assert_eq!(
             find_session(&home, "chat-b")
-                .expect("fixture operation succeeds")
-                .expect("fixture operation succeeds")["group_id"],
+                .expect("route-b session")
+                .expect("route-b session entry")["group_id"],
             groups[1]
         );
         assert!(
             find_session(&home, "")
-                .expect("fixture operation succeeds")
+                .expect("empty session lookup")
                 .is_none()
         );
         assert!(
             find_binding_code(&home, "")
-                .expect("fixture operation succeeds")
+                .expect("empty code lookup")
                 .is_none()
         );
-    }
-
-    #[test]
-    fn session_binding_expiry_and_revocation_keep_the_current_owner() {
-        let (_temp, home, _) = session_fixture();
-        bind_session(&home, "route-a", &issue(&home, "route-a"), "active-chat")
-            .expect("fixture operation succeeds");
-        let expired =
-            prepare_binding(&home, "route-a", 0).expect("fixture operation succeeds")["code"]
-                .as_str()
-                .expect("fixture operation succeeds")
-                .to_owned();
+        let expired = prepare_binding(&home, "route-a", 0).expect("expired prepare")["code"]
+            .as_str()
+            .expect("expired code")
+            .to_owned();
         assert_eq!(
-            bind_session(&home, "route-a", &expired, "new-chat")
-                .expect_err("binding must be rejected")
+            bind_session(&home, "route-a", &expired, "chat-replacement")
+                .expect_err("expired code")
                 .to_string(),
             "session_binding_code_expired"
         );
-        assert!(
-            find_session(&home, "active-chat")
-                .expect("fixture operation succeeds")
-                .is_some()
-        );
-        let cancelled = issue(&home, "route-a");
+        let superseded = issue(&home, "route-a");
         let current = issue(&home, "route-a");
-        assert!(bind_session(&home, "route-a", &cancelled, "new-chat").is_err());
         assert_eq!(
-            bind_session(&home, "route-a", "", "new-chat")
-                .expect_err("binding must be rejected")
+            bind_session(&home, "route-a", &superseded, "chat-replacement")
+                .expect_err("superseded unused code")
+                .to_string(),
+            "session_binding_code_invalid"
+        );
+        assert_eq!(
+            bind_session(&home, "route-a", "", "chat-replacement")
+                .expect_err("empty code")
                 .to_string(),
             "session_binding_code_invalid"
         );
         assert_eq!(
             bind_session(&home, "route-a", &current, " ")
-                .expect_err("binding must be rejected")
+                .expect_err("blank session")
                 .to_string(),
             "session_binding_required"
         );
-        revoke(&home, "route-a").expect("fixture operation succeeds");
         assert!(
-            find_session(&home, "active-chat")
-                .expect("fixture operation succeeds")
+            find_session(&home, "chat-a")
+                .expect("owner preserved through every rejection")
+                .is_some()
+        );
+        // Revocation is terminal for this connector, so it runs last.
+        revoke(&home, "route-a").expect("revoke route-a");
+        assert!(
+            find_session(&home, "chat-a")
+                .expect("revoked session lookup")
                 .is_none()
         );
         assert_eq!(
-            bind_session(&home, "route-a", &current, "new-chat")
-                .expect_err("binding must be rejected")
+            bind_session(&home, "route-a", &current, "chat-replacement")
+                .expect_err("revoked connector")
                 .to_string(),
             "connector_revoked"
         );

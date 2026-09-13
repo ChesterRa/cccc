@@ -1768,6 +1768,7 @@ mod retry_integration_tests {
 
     /// Shared isolated home and daemon; tests keep their own HTTP routes and assertions.
     struct BrowserHarness {
+        _chrome_guard: tokio::sync::OwnedMutexGuard<()>,
         api: axum::Router,
         state: AppState,
         home: HomeLayout,
@@ -1778,6 +1779,7 @@ mod retry_integration_tests {
     }
 
     async fn browser_harness(label: &str, poll: Duration) -> BrowserHarness {
+        let chrome_guard = crate::browser_surface::t05_chrome_test_guard().await;
         let temp = tempfile::tempdir().expect("isolated test home");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
@@ -1805,6 +1807,7 @@ mod retry_integration_tests {
             tokio::time::sleep(poll).await;
         }
         BrowserHarness {
+            _chrome_guard: chrome_guard,
             api,
             state,
             home,
@@ -1861,6 +1864,64 @@ mod retry_integration_tests {
         }
     }
 
+    // Native router and middleware, without a second TCP server for health reads.
+    async fn health_action(api: &axum::Router, gid: &str) -> Value {
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        let request = axum::http::Request::builder()
+            .uri(format!(
+                "/api/v1/web-model/browser-session?group_id={gid}&actor_id=web"
+            ))
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer t05-health-fixture",
+            )
+            .body(axum::body::Body::empty())
+            .expect("health request");
+        let response = api.clone().oneshot(request).await.expect("health route");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("health body")
+            .to_bytes();
+        serde_json::from_slice::<Value>(&bytes).expect("health JSON")
+            ["result"]["health_snapshot"]["next_action"]["recommended"].clone()
+    }
+
+    async fn queue_mail(state: &AppState, gid: &str, text: &str) -> String {
+        let source = daemon_call(
+            state,
+            "send",
+            json!({
+                "group_id":gid,"by":"user","to":["web"],"text":text,"message_mode":"mail"
+            })
+            .as_object()
+            .cloned()
+            .expect("report args"),
+        )
+        .await
+        .expect("mail");
+        let id = source["event"]["id"]
+            .as_str()
+            .expect("original event ID")
+            .to_owned();
+        daemon_call(
+            state,
+            "message_deliver",
+            json!({
+                "group_id":gid,"by":"user","source_event_id":id,"actor_ids":["web"]
+            })
+            .as_object()
+            .cloned()
+            .expect("promotion args"),
+        )
+        .await
+        .expect("promote original");
+        id
+    }
+
     #[tokio::test]
     async fn real_browser_deferral_resumes_the_same_report_once() {
         assert!(
@@ -1868,21 +1929,12 @@ mod retry_integration_tests {
             "real Chrome required"
         );
         let harness = browser_harness("test-browser-retry", Duration::from_millis(10)).await;
-        let state = harness.state.clone();
-        let home = harness.home.clone();
-        let browser = Arc::clone(&harness.browser);
-        let api = harness.api.clone();
-        let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("API listener");
-        let api_url = format!("http://{}", api_listener.local_addr().expect("API address"));
-        let api_server = tokio::spawn(async move {
-            axum::serve(
-                api_listener,
-                api.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-        });
+        cccc_core::access_tokens::AccessTokenStore::new(harness.home.clone())
+            .expect("test token store")
+            .create("health test", Vec::new(), true, Some("t05-health-fixture"))
+            .expect("isolated test administrator");
+        let state = &harness.state;
+        let browser = &harness.browser;
         let count = Arc::new(AtomicUsize::new(0));
         let received = Arc::clone(&count);
         let page = r#"<!doctype html><html><body>
@@ -1910,204 +1962,83 @@ mod retry_integration_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("fixture listener");
-        let url = format!("http://{}/", listener.local_addr().expect("address"));
+        let url = format!(
+            "http://{}/",
+            listener.local_addr().expect("fixture address")
+        );
         let server = tokio::spawn(async move { axum::serve(listener, app).await });
-        let work_state = state.clone();
-        let work_home = home.clone();
-        let work_browser = Arc::clone(&browser);
-        let profile = harness.profile();
-        let operation = async move {
-            let state = work_state;
-            let home = work_home;
-            let browser = work_browser;
-            let call = |op: &'static str, values: Value| {
-                daemon_call(
-                    &state,
-                    op,
-                    values.as_object().cloned().expect("test arguments"),
+        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(timeout(
+            Duration::from_secs(40),
+            async {
+                let gid = web_group(state, "real browser retry").await;
+                web_model_connectors::save_browser_target(
+                    &harness.home,
+                    &gid,
+                    "web",
+                    Some(json!({"kind":"existing_chat","url":url})),
                 )
-            };
-            let group_id = web_group(&state, "real browser retry").await;
-            let gid = group_id.as_str();
-            web_model_connectors::save_browser_target(
-                &home,
-                gid,
-                "web",
-                Some(json!({"kind":"existing_chat","url":url})),
-            )
-            .expect("local fixture target");
-            let source=call("send",json!({"group_id":gid,"by":"user","to":["web"],"text":"BROWSER_RETRY_REPORT","message_mode":"mail"})).await.expect("Mail");
-            let source_id = source["event"]["id"].as_str().expect("source id");
-            call(
-                "message_deliver",
-                json!({"group_id":gid,"by":"user","source_event_id":source_id,"actor_ids":["web"]}),
-            )
-            .await
-            .expect("promote");
-            browser
-                .ensure_open(surface_key(), &profile, &url, 800, 600)
-                .await
-                .expect("real Chrome");
-            let busy = deliver_pending(&state, gid, "web")
-                .await
-                .expect("busy attempt");
-            assert!(matches!(busy, DeliveryOutcome::Idle));
-            assert_eq!(
-                count.load(Ordering::SeqCst),
-                0,
-                "sent during the current answer"
-            );
-            for _ in 0..5 {
-                assert!(matches!(
-                    deliver_pending(&state, gid, "web")
+                .expect("target");
+                let id = queue_mail(state, &gid, "BROWSER_RETRY_REPORT").await;
+                browser
+                    .ensure_open(surface_key(), &harness.profile(), &url, 800, 600)
+                    .await
+                    .expect("real Chrome");
+                for (action, x) in [("wait_for_reply", 75), ("resolve_draft", 390)] {
+                    assert!(matches!(
+                        deliver_pending(state, &gid, "web")
+                            .await
+                            .expect("blocked visit"),
+                        DeliveryOutcome::Idle
+                    ));
+                    assert_eq!(
+                        count.load(Ordering::SeqCst),
+                        0,
+                        "sent while blocked: {action}"
+                    );
+                    assert_eq!(health_action(&harness.api, &gid).await, action);
+                    browser
+                        .command(surface_key(), &json!({"t":"click","x":x,"y":28}))
                         .await
-                        .expect("same busy report remains deferred"),
+                        .expect("release fixture blocker");
+                }
+                deliver_pending(state, &gid, "web")
+                    .await
+                    .expect("resume original");
+                wait_for_original_receipt(state, &gid, &id).await;
+                timeout(Duration::from_secs(12), async {
+                    while count.load(Ordering::SeqCst) == 0 {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                })
+                .await
+                .expect("server received original");
+                assert!(matches!(
+                    deliver_pending(state, &gid, "web")
+                        .await
+                        .expect("duplicate visit"),
                     DeliveryOutcome::Idle
                 ));
-            }
-            let health: Value = reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .expect("HTTP client")
-                .get(format!(
-                    "{api_url}/api/v1/web-model/browser-session?group_id={gid}&actor_id=web"
-                ))
-                .send()
-                .await
-                .expect("native health endpoint")
-                .json()
-                .await
-                .expect("health JSON");
-            assert_eq!(
-                health["result"]["health_snapshot"]["next_action"]["recommended"], "wait_for_reply",
-                "busy browser was misleadingly reported as no action needed: {health}"
-            );
-            browser
-                .command(surface_key(), &json!({"t":"click","x":75,"y":28}))
-                .await
-                .expect("finish fixture answer");
-            let draft_wait = deliver_pending(&state, gid, "web")
-                .await
-                .expect("retained draft");
-            assert!(matches!(draft_wait, DeliveryOutcome::Idle));
-            assert_eq!(
-                count.load(Ordering::SeqCst),
-                0,
-                "draft did not block submission"
-            );
-            let draft_health: Value = reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .expect("HTTP client")
-                .get(format!(
-                    "{api_url}/api/v1/web-model/browser-session?group_id={gid}&actor_id=web"
-                ))
-                .send()
-                .await
-                .expect("draft health endpoint")
-                .json()
-                .await
-                .expect("draft health JSON");
-            assert_eq!(
-                draft_health["result"]["health_snapshot"]["next_action"]["recommended"],
-                "resolve_draft"
-            );
-            browser
-                .command(surface_key(), &json!({"t":"click","x":390,"y":28}))
-                .await
-                .expect("resolve isolated fixture draft");
-            deliver_pending(&state, gid, "web")
-                .await
-                .expect("manual delivery visit");
-            let resumed = timeout(Duration::from_secs(12), async {
-                while count.load(Ordering::SeqCst) != 1 {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            })
-            .await;
-            if resumed.is_err() {
-                panic!(
-                    "periodic supervision did not resume the deferred report: target={} surface={}",
-                    load_target(&state, gid, "web").expect("debug target"),
-                    browser.info(surface_key()).await
+                assert_eq!(count.load(Ordering::SeqCst), 1, "duplicate submission");
+                let store = GroupStore::new(harness.home.clone()).expect("store");
+                let events =
+                    ledger::read_all(&store.ledger_path(&gid).expect("path")).expect("events");
+                assert_eq!(
+                    events.iter().filter(|e| e.kind == "chat.message").count(),
+                    1
                 );
-            }
-            wait_for_original_receipt(&state, gid, source_id).await;
-            assert!(matches!(
-                deliver_pending(&state, gid, "web")
-                    .await
-                    .expect("third attempt"),
-                DeliveryOutcome::Idle
-            ));
-            assert_eq!(
-                count.load(Ordering::SeqCst),
-                1,
-                "duplicate browser submission"
-            );
-            let store = GroupStore::new(home.clone()).expect("store");
-            let events =
-                ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("events");
-            assert_eq!(
-                events.iter().filter(|e| e.kind == "chat.message").count(),
-                1
-            );
-            let transitions = events
-                .iter()
-                .filter(|e| e.kind == "runtime.delivery" && e.data["source_event_id"] == source_id)
-                .filter_map(|e| e.data["state"].as_str())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                transitions,
-                vec!["claimed", "failed", "claimed", "accepted"]
-            );
-            let mail = call(
-                "inbox_peek",
-                json!({"group_id":gid,"actor_id":"web","by":"web"}),
-            )
-            .await
-            .expect("mail unchanged");
-            assert_eq!(mail["messages"].as_array().expect("messages").len(), 1);
-            // One subsequent handoff checks release of the previous delivery guard.
-            // Batched contention and draft retries are covered by the two-group test.
-            let next = call(
-                "send",
-                json!({
-                    "group_id":gid,"by":"user","to":["web"],
-                    "text":"NEXT_REPORT","message_mode":"mail"
-                }),
-            )
-            .await
-            .expect("next report");
-            let next_id = next["event"]["id"].as_str().expect("next report id");
-            call(
-                "message_deliver",
-                json!({
-                    "group_id":gid,"by":"user","source_event_id":next_id,"actor_ids":["web"]
-                }),
-            )
-            .await
-            .expect("promote next report");
-            deliver_pending(&state, gid, "web")
-                .await
-                .expect("next handoff");
-            wait_for_original_receipt(&state, gid, next_id).await;
-            assert!(matches!(
-                deliver_pending(&state, gid, "web")
-                    .await
-                    .expect("duplicate visit"),
-                DeliveryOutcome::Idle
-            ));
-            assert_eq!(
-                count.load(Ordering::SeqCst),
-                2,
-                "duplicate or missing handoff"
-            );
-        };
-        // Cleanup runs even if a test assertion panics in the task.
-        let outcome = tokio::spawn(timeout(Duration::from_secs(40), operation)).await;
-        finish_browser_test(harness, vec![server, api_server]).await;
-        outcome
-            .expect("browser flow assertions")
+                let transitions = events
+                    .iter()
+                    .filter(|e| e.kind == "runtime.delivery" && e.data["source_event_id"] == id)
+                    .filter_map(|e| e.data["state"].as_str())
+                    .collect::<Vec<_>>();
+                assert_eq!(transitions, ["claimed", "failed", "claimed", "accepted"]);
+                // Later reports, batched contention and unread Mail are checked in the two-group flow.
+            },
+        )))
+        .await;
+        finish_browser_test(harness, vec![server]).await;
+        result
+            .expect("deferral assertions")
             .expect("bounded browser flow");
     }
 
@@ -2272,9 +2203,8 @@ mod retry_integration_tests {
             "real Chrome required"
         );
         let harness = browser_harness("two-group-browser", Duration::from_millis(10)).await;
-        let state = harness.state.clone();
-        let home = harness.home.clone();
-        let browser = Arc::clone(&harness.browser);
+        let state = &harness.state;
+        let browser = &harness.browser;
         let records = Arc::new(Mutex::new(Vec::<Value>::new()));
         let sink = Arc::clone(&records);
         let page = r#"<!doctype html><body>
@@ -2284,11 +2214,7 @@ mod retry_integration_tests {
 <script>function render(p){const d=document.createElement('div');d.dataset.messageAuthorRole='user';d.textContent=p;d.style='margin-top:300px';document.body.append(d)}JSON.parse(localStorage.getItem(location.pathname)||'[]').forEach(render);</script></body>"#;
         let app = axum::Router::new()
             .route(
-                "/a",
-                axum::routing::get(move || async move { axum::response::Html(page) }),
-            )
-            .route(
-                "/b",
+                "/{group}",
                 axum::routing::get(move || async move { axum::response::Html(page) }),
             )
             .route(
@@ -2296,7 +2222,7 @@ mod retry_integration_tests {
                 axum::routing::post(move |axum::Json(value): axum::Json<Value>| {
                     let sink = Arc::clone(&sink);
                     async move {
-                        sink.lock().expect("record lock").push(value);
+                        sink.lock().expect("records").push(value);
                         "ok"
                     }
                 }),
@@ -2306,222 +2232,99 @@ mod retry_integration_tests {
             .expect("listener");
         let base = format!("http://{}", listener.local_addr().expect("address"));
         let server = tokio::spawn(async move { axum::serve(listener, app).await });
-        let work_state = state.clone();
-        let work_home = home.clone();
-        let work_browser = Arc::clone(&browser);
-        let profile = harness.profile();
-        let operation = async move {
-            let state = work_state;
-            let home = work_home;
-            let browser = work_browser;
-            let call = |op: &'static str, value: Value| {
-                daemon_call(&state, op, value.as_object().cloned().expect("request"))
-            };
-            let mut groups = Vec::new();
-            for label in ["a", "b"] {
-                let gid = web_group(&state, &format!("fixture-{label}")).await;
-                web_model_connectors::save_browser_target(
-                    &home,
-                    &gid,
-                    "web",
-                    Some(json!({"kind":"existing_chat","url":format!("{base}/{label}")})),
-                )
-                .expect("target");
-                groups.push((label, gid));
-            }
-            browser
-                .ensure_open(surface_key(), &profile, &format!("{base}/a"), 800, 600)
-                .await
-                .expect("one browser");
-            let initial_browser = browser.info(surface_key()).await;
-            browser
-                .command(surface_key(), &json!({"t":"click","x":100,"y":110}))
-                .await
-                .expect("focus");
-            browser
-                .command(
-                    surface_key(),
-                    &json!({"t":"text","text":"PRESERVE_GROUP_A_DRAFT"}),
-                )
-                .await
-                .expect("draft");
-            let mut sources = Vec::new();
-            for round in 0..5 {
+        let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(timeout(
+            Duration::from_secs(35), async {
+                let mut groups = Vec::new();
+                for label in ["a", "b"] {
+                    let gid = web_group(state, label).await;
+                    web_model_connectors::save_browser_target(&harness.home, &gid, "web",
+                        Some(json!({"kind":"existing_chat","url":format!("{base}/{label}")}))).expect("target");
+                    groups.push((label, gid));
+                }
+                browser.ensure_open(surface_key(), &harness.profile(), &format!("{base}/a"), 800, 600)
+                    .await.expect("shared browser");
+                let initial_browser = browser.info(surface_key()).await;
+                browser.command(surface_key(), &json!({"t":"click","x":100,"y":110})).await.expect("focus");
+                browser.command(surface_key(), &json!({"t":"text","text":"PRESERVE_GROUP_A_DRAFT"})).await.expect("draft");
+                let mut sources = Vec::new();
+                for round in 0..5 {
+                    for (label, gid) in &groups {
+                        let marker = format!("ROUTED_{label}_{round}");
+                        let id = queue_mail(state, gid, &marker).await;
+                        sources.push((gid.clone(), id, marker));
+                    }
+                }
+                for _ in 0..10 {
+                    for (_, gid) in &groups { deliver_pending(state, gid, "web").await.expect("contended visit"); }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                let store = GroupStore::new(harness.home.clone()).expect("store");
+                let read_events = |gid: &str| ledger::read_all(&store.ledger_path(gid).expect("path")).expect("ledger");
+                for (_, gid) in &groups {
+                    let events = read_events(gid);
+                    assert!(!events.iter().any(|e| e.kind == "web_model.browser_delivery.submitting"), "crossed Send: {gid}");
+                    for (_, id, _) in sources.iter().filter(|(g, _, _)| g == gid) {
+                        assert_eq!(events.iter().filter(|e| e.kind == "runtime.delivery"
+                            && e.data["source_event_id"] == *id && e.data["state"] == "claimed").count(), 1,
+                            "reclaimed original: {id}");
+                    }
+                }
+                assert!(records.lock().expect("records").is_empty(), "sent through A's draft");
+                assert_eq!(browser.info(surface_key()).await["url"], format!("{base}/a"));
+                browser.command(surface_key(), &json!({"t":"click","x":390,"y":28})).await.expect("clear draft");
+                for (_, gid) in &groups { deliver_pending(state, gid, "web").await.expect("resume batch"); }
+                for (gid, id, _) in &sources { wait_for_original_receipt(state, gid, id).await; }
+                timeout(Duration::from_secs(12), async {
+                    while records.lock().expect("records").len() < 2 { tokio::time::sleep(Duration::from_millis(20)).await; }
+                }).await.expect("server received both batches");
+                let received = records.lock().expect("records").clone();
+                assert_eq!(received.len(), 2);
                 for (label, gid) in &groups {
-                    let marker = format!("ROUTED_{label}_{round}");
-                    let event=call("send",json!({"group_id":gid,"by":"user","to":["web"],"text":marker,"message_mode":"mail"})).await.expect("report");
-                    let id = event["event"]["id"].as_str().expect("event ID").to_owned();
-                    call("message_deliver",json!({"group_id":gid,"by":"user","source_event_id":id,"actor_ids":["web"]})).await.expect("promote original");
-                    sources.push((gid.clone(), id, marker));
-                }
-            }
-            for _ in 0..10 {
-                for (_, gid) in &groups {
-                    deliver_pending(&state, gid, "web")
-                        .await
-                        .expect("manual delivery visit");
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let store = GroupStore::new(home.clone()).expect("store");
-            for (_, gid) in &groups {
-                let events =
-                    ledger::read_all(&store.ledger_path(gid).expect("ledger")).expect("events");
-                let attempts = events
-                    .iter()
-                    .filter(|event| event.kind == "web_model.browser_delivery.submitting")
-                    .count();
-                assert_eq!(
-                    attempts, 0,
-                    "group {gid} crossed Send while a draft was present"
-                );
-                for (_, id, _) in sources.iter().filter(|(group, _, _)| group == gid) {
-                    assert_eq!(
-                        events
-                            .iter()
-                            .filter(|event| event.kind == "runtime.delivery"
-                                && event.data["source_event_id"] == *id
-                                && event.data["state"] == "claimed")
-                            .count(),
-                        1,
-                        "repeated admission reclaimed {id} in {gid}"
-                    );
-                }
-            }
-            assert!(
-                records.lock().expect("records").is_empty(),
-                "B navigated or sent while A had a draft"
-            );
-            assert_eq!(
-                browser.info(surface_key()).await["url"],
-                format!("{base}/a")
-            );
-            browser
-                .command(surface_key(), &json!({"t":"click","x":390,"y":28}))
-                .await
-                .expect("resolve own fixture draft");
-            for (_, group) in &groups {
-                deliver_pending(&state, group, "web")
-                    .await
-                    .expect("manual delivery visit");
-            }
-            timeout(Duration::from_secs(12), async {
-                loop {
-                    if records.lock().expect("records").len() == 2 {
-                        break;
+                    let own = received.iter().find(|r| r["path"] == format!("/{label}")).expect("correct target");
+                    let text = own["prompt"].as_str().expect("prompt");
+                    for (source_gid, id, marker) in &sources {
+                        assert_eq!(text.contains(marker), source_gid == gid, "cross-group marker: {marker}");
+                        if source_gid == gid { assert!(text.contains(id), "missing original ID: {id}"); }
                     }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let unread = daemon_call(state, "inbox_peek", json!({"group_id":gid,"actor_id":"web","by":"web"})
+                        .as_object().cloned().expect("inbox args")).await.expect("unread Mail");
+                    assert_eq!(unread["messages"].as_array().expect("messages").len(), 5);
                 }
-            })
-            .await
-            .expect("both original batches resume");
-            for (gid, id, _) in &sources {
-                wait_for_original_receipt(&state, gid, id).await;
-            }
-            let received = records.lock().expect("records").clone();
-            for (label, gid) in &groups {
-                let own = received
-                    .iter()
-                    .find(|item| item["path"] == format!("/{label}"))
-                    .expect("own target received");
-                let text = own["prompt"].as_str().expect("prompt");
-                for (source_gid, id, marker) in &sources {
-                    assert_eq!(
-                        text.contains(marker),
-                        source_gid == gid,
-                        "wrong group received {marker}"
-                    );
-                    if source_gid == gid {
-                        assert!(text.contains(id), "batch omitted original event ID");
+                for _ in 0..10 {
+                    for (_, gid) in &groups { deliver_pending(state, gid, "web").await.expect("duplicate visit"); }
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                assert_eq!(records.lock().expect("records").len(), 2, "batch repeated");
+                assert_eq!(browser.info(surface_key()).await["started_at"], initial_browser["started_at"]);
+                // A later report must recover from a foreign archived page without a new wake event.
+                let (_, gid) = &groups[1];
+                let page = browser.sessions.lock().await.get(surface_key()).expect("page").page.clone();
+                page.evaluate("document.body.insertAdjacentHTML('beforeend','<button id=busy aria-label=\"Stop streaming\">Stop</button>')").await.expect("busy page");
+                let id = queue_mail(state, gid, "AFTER_FOREIGN_ARCHIVE").await;
+                deliver_pending(state, gid, "web").await.expect("defer later report");
+                timeout(Duration::from_secs(8), async {
+                    loop {
+                        let target = load_target(state, gid, "web").expect("target");
+                        if target["last_delivery_status"] == "deferred"
+                            && target["last_delivery_event_ids"].as_array().is_some_and(|ids| ids.iter().any(|v| v == &id)) { break; }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
                     }
-                }
-                let unread = call(
-                    "inbox_peek",
-                    json!({"group_id":gid,"actor_id":"web","by":"web"}),
-                )
-                .await
-                .expect("inbox");
-                assert_eq!(unread["messages"].as_array().expect("messages").len(), 5);
+                }).await.expect("original report deferred");
+                page.evaluate("history.replaceState({},'', '/archived');document.body.innerHTML='<main><p>This conversation is archived</p><button>Unarchive</button></main>'").await.expect("foreign archive");
+                for (_, group) in &groups { deliver_pending(state, group, "web").await.expect("resume original"); }
+                wait_for_original_receipt(state, gid, &id).await;
+                timeout(Duration::from_secs(12), async {
+                    while records.lock().expect("records").len() < 3 { tokio::time::sleep(Duration::from_millis(20)).await; }
+                }).await.expect("archive recovery received");
+                let received = records.lock().expect("records");
+                assert_eq!(received.len(), 3, "duplicate later report");
+                assert_eq!(received[2]["path"], "/b");
+                assert!(received[2]["prompt"].as_str().expect("prompt").contains(&id));
             }
-            for _ in 0..10 {
-                for (_, gid) in &groups {
-                    deliver_pending(&state, gid, "web")
-                        .await
-                        .expect("manual delivery visit");
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(
-                records.lock().expect("records").len(),
-                2,
-                "accepted batches were sent again"
-            );
-            assert_eq!(
-                browser.info(surface_key()).await["started_at"],
-                initial_browser["started_at"]
-            );
-            // A report deferred on an unrelated busy page must still reach its
-            // own target after that page becomes archived. No new message wakes it.
-            let (_, gid) = &groups[1];
-            let page = browser
-                .sessions
-                .lock()
-                .await
-                .get(surface_key())
-                .expect("test page")
-                .page
-                .clone();
-            page.evaluate("document.body.insertAdjacentHTML('beforeend','<button id=busy aria-label=\"Stop streaming\">Stop</button>')").await.expect("busy page");
-            let source = call("send", json!({"group_id":gid,"by":"user","to":["web"],"text":"AFTER_FOREIGN_ARCHIVE","message_mode":"mail"})).await.expect("new retained report");
-            let id = source["event"]["id"].as_str().expect("id");
-            call(
-                "message_deliver",
-                json!({"group_id":gid,"by":"user","source_event_id":id,"actor_ids":["web"]}),
-            )
-            .await
-            .expect("promote original");
-            deliver_pending(&state, gid, "web")
-                .await
-                .expect("manual delivery visit");
-            timeout(Duration::from_secs(8), async {
-                loop {
-                    let target = load_target(&state, gid, "web").expect("target");
-                    if target["last_delivery_status"] == "deferred"
-                        && target["last_delivery_event_ids"]
-                            .as_array()
-                            .is_some_and(|ids| ids.iter().any(|v| v == id))
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-            })
-            .await
-            .expect("original report deferred");
-            page.evaluate("history.replaceState({},'', '/archived');document.body.innerHTML='<main><p>This conversation is archived</p><button>Unarchive</button></main>'").await.expect("foreign page archived");
-            for (_, group) in &groups {
-                deliver_pending(&state, group, "web")
-                    .await
-                    .expect("manual delivery visit");
-            }
-            wait_for_original_receipt(&state, gid, id).await;
-            let received = records.lock().expect("records").clone();
-            assert_eq!(
-                received.len(),
-                3,
-                "original batches or recovered report were duplicated"
-            );
-            assert_eq!(received[2]["path"], "/b");
-            assert!(received[2]["prompt"].as_str().expect("prompt").contains(id));
-            eprintln!(
-                "TWO_GROUP_REAL_CHROME: ten isolated reports plus foreign-archive recovery; every original accepted once; no new wake event"
-            );
-        };
-        let result = tokio::spawn(timeout(Duration::from_secs(35), operation)).await;
+        ))).await;
         finish_browser_test(harness, vec![server]).await;
         result
-            .expect("test assertions")
+            .expect("two-group assertions")
             .expect("bounded two-group flow");
     }
 

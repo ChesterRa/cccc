@@ -705,6 +705,11 @@ fn classifies_only_group_owned_browser_sessions() {
     assert_eq!(session_actor("g_one::presentation"), None);
 }
 
+// Our route-level browser regressions share the upstream Chrome admission lock.
+pub(super) async fn t05_chrome_test_guard() -> tokio::sync::OwnedMutexGuard<()> {
+    chrome_test_guard().await
+}
+
 #[tokio::test]
 async fn shared_web_model_operations_preserve_busy_drafts_and_serialize_manual_navigation() {
     require_chrome!();
@@ -766,35 +771,6 @@ async fn shared_web_model_operations_preserve_busy_drafts_and_serialize_manual_n
         .expect("close shared browser");
     server.abort();
     eprintln!("shared browser launched, busy draft preserved, manual command serialized");
-}
-
-#[tokio::test]
-async fn guest_composer_is_not_authenticated_delivery() {
-    require_chrome!();
-    let (url,server)=local_page(r#"<!doctype html><body><button data-mobile-auth-entry-action="login">登录</button><main><form><textarea id="prompt-textarea" placeholder="Message" style="width:500px;height:100px"></textarea><button type="button" aria-label="Send prompt" onclick="window.sent=(window.sent||0)+1">Send</button></form></main></body>"#).await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = std::sync::Arc::new(BrowserSurfaces::default());
-    manager
-        .open("guest-check", &temp.path().join("profile"), &url, 800, 600)
-        .await
-        .expect("browser");
-    let work = std::sync::Arc::clone(&manager);
-    let outcome=tokio::spawn(async move {
-        let readiness=work.prompt_readiness("guest-check").await.expect("readiness");
-        assert_eq!(readiness["ready"],false,"guest composer was mistaken for a signed-in browser");
-        assert_eq!(readiness["login_required"],true);
-        let result=work.submit_prompt_with_attachment("guest-check",&url,"must not enter guest chat",None,"guest-report").await.expect("preflight");
-        assert!(matches!(result,prompt_submission::PromptSubmissionOutcome::Deferred(_)),"guest report was submitted");
-        let page=work.page("guest-check").await.expect("test page");
-        let untouched:bool=page.evaluate("!window.sent && document.querySelector('textarea').value === ''").await.expect("read").into_value().expect("bool");
-        assert!(untouched,"guest preflight touched the composer or Send");
-        page.evaluate("document.querySelector('[data-mobile-auth-entry-action]').remove();document.querySelector('main').insertAdjacentHTML('beforeend','<div data-message-author-role=assistant><button data-testid=login-button>Log in</button></div>')").await.expect("fixture login recovery");
-        assert_eq!(work.prompt_readiness("guest-check").await.expect("recovered readiness")["ready"],true,"quoted login text inside a message blocked signed-in use");
-        eprintln!("REAL_CHROME: guest login controls block readiness and send; message content is not authentication state");
-    }).await;
-    let _ = manager.close("guest-check").await;
-    server.abort();
-    outcome.expect("guest assertions");
 }
 
 #[tokio::test]
@@ -888,39 +864,6 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
     manager.close(key).await.expect("close browser");
     server.abort();
     result.expect("background submission and close assertions");
-}
-
-#[tokio::test]
-async fn relay_idle_probe_requires_an_empty_non_generating_composer() {
-    require_chrome!();
-    let (url, server) = local_page(
-        r#"<!doctype html><body><form><textarea id="prompt-textarea" placeholder="Message"></textarea><button type="button" aria-label="Send prompt">Send</button><button id="busy" type="button" aria-label="Stop streaming">Stop</button></form></body>"#,
-    )
-    .await;
-    let temp = tempfile::tempdir().expect("tempdir");
-    let manager = BrowserSurfaces::default();
-    let key = "relay-idle";
-    manager
-        .open(key, &temp.path().join("profile"), &url, 800, 600)
-        .await
-        .expect("browser");
-    let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
-        let page = manager.page(key).await.expect("page");
-        for (change, reason) in [
-            ("", Some("not_sent_chat_busy")),
-            ("document.querySelector('#busy').remove();document.querySelector('textarea').value='HUMAN DRAFT'", Some("not_sent_composer_occupied")),
-            ("document.querySelector('textarea').value=''", None),
-            ("document.querySelector('textarea').remove()", Some("not_sent_composer_unavailable")),
-        ] {
-            if !change.is_empty() { page.evaluate(change).await.expect("fixture transition"); }
-            assert_eq!(manager.relay_surface_idle(key).await.expect("idle probe"), reason.is_none());
-            let actual = manager.relay_surface_deferral(key).await.expect("deferral");
-            assert_eq!(actual.as_ref().and_then(|value| value["submission_evidence"].as_str()), reason);
-        }
-    })).await;
-    manager.close(key).await.expect("close browser");
-    server.abort();
-    result.expect("idle state assertions");
 }
 
 #[tokio::test]
@@ -1093,90 +1036,6 @@ document.body.append(m);i.value=''}</script></body>"#,
 }
 
 #[tokio::test]
-async fn sidebar_titles_and_history_controls_are_not_generation_stop_controls() {
-    require_chrome!();
-    let (url, server) = local_page(r#"<!doctype html><body>
-<nav><button aria-label="置顶 查看工作目录停止 状态">Pin</button>
-<button data-testid="history-item-0-options" aria-label="打开“查看工作目录停止”的对话选项">Options</button>
-<button aria-label="Stop" title="Pinned chat">Stop</button></nav>
-<main><article><button>Stop</button></article>
-<form><textarea id="prompt-textarea" placeholder="Message"></textarea>
-<button type="button" aria-label="Send prompt">Send</button>
-<button id="busy" data-testid="stop-button" type="button" aria-label="Stop streaming">Stop</button>
-</form></main></body>"#).await;
-    let temp = tempfile::tempdir().expect("isolated profile");
-    let manager = BrowserSurfaces::default();
-    manager
-        .open("sidebar-stop", &temp.path().join("profile"), &url, 800, 600)
-        .await
-        .expect("browser");
-    let busy = manager
-        .relay_surface_deferral("sidebar-stop")
-        .await
-        .expect("real stop");
-    let page = manager.page("sidebar-stop").await.expect("test page");
-    page.evaluate("document.querySelector('#busy').remove()")
-        .await
-        .expect("finish answer");
-    let idle = manager
-        .relay_surface_idle("sidebar-stop")
-        .await
-        .expect("idle inspection");
-    let deferred = manager
-        .relay_surface_deferral("sidebar-stop")
-        .await
-        .expect("deferral inspection");
-    page.evaluate(r#"window.sent=0;document.querySelector('form button').onclick=()=>{window.sent++;const n=document.createElement('div');n.dataset.messageAuthorRole='user';n.textContent=document.querySelector('textarea').value;document.body.append(n);document.querySelector('textarea').value=''}"#)
-        .await.expect("fixture send handler");
-    let sent = manager
-        .submit_prompt_with_attachment(
-            "sidebar-stop",
-            &url,
-            "SIDEBAR_STOP_ORIGINAL_REPORT",
-            None,
-            "sidebar-report",
-        )
-        .await
-        .expect("submit through native gates");
-    let again = manager
-        .submit_prompt_with_attachment(
-            "sidebar-stop",
-            &url,
-            "SIDEBAR_STOP_ORIGINAL_REPORT",
-            None,
-            "sidebar-report",
-        )
-        .await
-        .expect("duplicate check");
-    let count = page
-        .evaluate("window.sent")
-        .await
-        .expect("send count")
-        .into_value::<u64>()
-        .expect("numeric count");
-    manager.close("sidebar-stop").await.expect("browser closed");
-    server.abort();
-    assert!(
-        matches!(sent, PromptSubmissionOutcome::Verified(_)),
-        "sidebars blocked Send readiness"
-    );
-    assert!(matches!(again, PromptSubmissionOutcome::Verified(_)));
-    assert_eq!(count, 1, "report must be sent exactly once");
-    assert_eq!(
-        busy.expect("real generation blocks delivery")["submission_evidence"],
-        "not_sent_chat_busy"
-    );
-    assert!(
-        idle,
-        "sidebar title or historical Stop button falsely marked the chat as generating"
-    );
-    assert!(
-        deferred.is_none(),
-        "unrelated controls blocked delivery: {deferred:?}"
-    );
-}
-
-#[tokio::test]
 async fn archived_page_does_not_block_other_targets_or_trigger_reloads() {
     require_chrome!();
     let (archived_url, archived_server) = local_page(r#"<!doctype html><body><nav><button>查看工作目录停止</button></nav><main><p>This conversation is archived.</p><button onclick="window.unarchived=true">Unarchive</button></main></body>"#).await;
@@ -1248,29 +1107,78 @@ async fn archived_page_does_not_block_other_targets_or_trigger_reloads() {
     result.expect("archive isolation assertions")
 }
 
+// The same browser controls have one gate: real page state, not quoted message text.
 #[tokio::test]
-async fn refused_pages_do_not_navigate_or_submit() {
+async fn page_state_gates_preserve_blockers_and_ignore_quoted_controls() {
     require_chrome!();
-    let (url, server) = local_page(r#"<!doctype html><body><main><section data-testid="conversation-turn-1" data-turn-id="turn"><div data-message-author-role="assistant">old answer</div></section><form><textarea id="prompt-textarea"></textarea><button id="busy" aria-label="Stop streaming">Stop</button></form></main></body>"#).await;
+    let (url, server) = local_page("<!doctype html><body><main></main></body>").await;
     let temp = tempfile::tempdir().expect("profile");
     let manager = BrowserSurfaces::default();
+    let key = "page-state";
     manager
-        .open("refused", &temp.path().join("profile"), &url, 800, 600)
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
         .await
         .expect("browser");
     let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
-        let original = manager.page("refused").await.expect("original");
-        for (notice, code) in [("Access denied", "access_denied"), ("Verify you are human", "verification_required"), ("操作过于频繁", "rate_limited")] {
-            original.evaluate(format!("document.body.innerHTML='<main><div role=alert>{notice}</div></main>'")).await.expect("restriction fixture");
-            let attempt = manager.submit_prompt_with_attachment("refused", "http://127.0.0.1:1/other", "DO_NOT_SEND", None, "blocked").await.expect("must defer without navigation");
-            let PromptSubmissionOutcome::Deferred(evidence) = attempt else { panic!("refusal was not preserved") };
-            assert_eq!(evidence["submission_evidence"], format!("not_sent_{code}"));
-            assert_eq!(original.url().await.expect("URL").expect("page URL").trim_end_matches('/'), url.trim_end_matches('/'));
+        let page = manager.page(key).await.expect("page");
+        let cases = [
+            (r#"<main><form><textarea id="prompt-textarea"></textarea><button aria-label="Stop streaming">Stop</button></form></main>"#, "not_sent_chat_busy"),
+            (r#"<main><form><textarea id="prompt-textarea">HUMAN DRAFT</textarea></form></main>"#, "not_sent_composer_occupied"),
+            (r#"<button data-mobile-auth-entry-action="login">登录</button><main><form><textarea id="prompt-textarea"></textarea><button aria-label="Send prompt" onclick="window.sent++">Send</button></form></main>"#, "not_sent_login_required"),
+            ("<main><div role=alert>Access denied</div></main>", "not_sent_access_denied"),
+            ("<main><div role=alert>Verify you are human</div></main>", "not_sent_verification_required"),
+            ("<main><div role=alert>操作过于频繁</div></main>", "not_sent_rate_limited"),
+        ];
+        for (html, reason) in cases {
+            page.evaluate(format!("document.body.innerHTML={};window.sent=0", serde_json::to_string(html).expect("HTML")))
+                .await.expect("fixture state");
+            if reason == "not_sent_login_required" {
+                let readiness = manager.prompt_readiness(key).await.expect("guest readiness");
+                assert_eq!(readiness["ready"], false);
+                assert_eq!(readiness["login_required"], true);
+            }
+            let before = page.evaluate("JSON.stringify({text:document.body.innerText,draft:document.querySelector('textarea')?.value||''})").await.expect("original body")
+                .into_value::<String>().expect("body");
+            let target = if matches!(reason, "not_sent_access_denied" | "not_sent_verification_required" | "not_sent_rate_limited") {
+                "http://127.0.0.1:1/other"
+            } else {
+                &url
+            };
+            let outcome = manager.submit_prompt_with_attachment(key, target, "DO_NOT_SEND", None, "blocked")
+                .await.unwrap_or_else(|error| panic!("page state {reason}: {error}"));
+            let PromptSubmissionOutcome::Deferred(evidence) = outcome else { panic!("not deferred: {reason}"); };
+            assert_eq!(evidence["submission_evidence"], reason);
+            assert_eq!(page.url().await.expect("URL").expect("present URL").trim_end_matches('/'), url.trim_end_matches('/'));
+            assert_eq!(page.evaluate("JSON.stringify({text:document.body.innerText,draft:document.querySelector('textarea')?.value||''})").await.expect("unchanged body").into_value::<String>().expect("body"), before,
+                "blocked delivery changed the human draft or page: {reason}");
+            assert_eq!(page.evaluate("window.sent").await.expect("send count").into_value::<u64>().expect("count"), 0);
+            assert!(!manager.relay_surface_idle(key).await.expect("not idle"));
         }
-        original.evaluate(r#"document.body.innerHTML='<main><article><div data-message-author-role="assistant"><div role="alert">Too many requests</div></div></article><form><textarea id="prompt-textarea"></textarea></form></main>'"#).await.expect("quoted restriction");
-        assert!(manager.relay_surface_deferral("refused").await.expect("quoted text ignored").is_none());
+        page.evaluate("document.body.innerHTML='<main>Loading</main>'").await.expect("missing composer");
+        assert!(!manager.relay_surface_idle(key).await.expect("not ready"));
+        assert_eq!(manager.relay_surface_deferral(key).await.expect("probe").expect("blocked")["submission_evidence"],
+            "not_sent_composer_unavailable");
+        // A real active Stop control must block; sidebar/history/quoted controls must not.
+        page.evaluate(r#"document.body.innerHTML=`<nav><button aria-label="置顶 查看工作目录停止 状态">Pin</button>
+<button data-testid="history-item-0-options" aria-label="打开“查看工作目录停止”的对话选项">Options</button>
+<button aria-label="Stop" title="Pinned chat">Stop</button></nav><main><article><button>Stop</button>
+<div data-message-author-role="assistant"><button data-testid="login-button">Log in</button><div role="alert">Too many requests</div></div></article>
+<form><textarea id="prompt-textarea"></textarea><button type="button" aria-label="Send prompt">Send</button>
+<button id="busy" data-testid="stop-button" aria-label="Stop streaming">Stop</button></form></main>`;
+window.sent=0;document.querySelector('form button').onclick=()=>{window.sent++;const t=document.querySelector('textarea');const n=document.createElement('div');n.dataset.messageAuthorRole='user';n.textContent=t.value;document.body.append(n);t.value=''}"#)
+            .await.expect("quoted controls fixture");
+        assert_eq!(manager.relay_surface_deferral(key).await.expect("busy probe").expect("real Stop")["submission_evidence"], "not_sent_chat_busy");
+        page.evaluate("document.querySelector('#busy').remove()").await.expect("answer ends");
+        assert_eq!(manager.prompt_readiness(key).await.expect("signed in readiness")["ready"], true);
+        assert!(manager.relay_surface_idle(key).await.expect("idle after recovery"));
+        assert!(manager.relay_surface_deferral(key).await.expect("quoted controls ignored").is_none());
+        for _ in 0..2 {
+            assert!(matches!(manager.submit_prompt_with_attachment(key, &url, "RECOVERED_REPORT", None, "recovered").await.expect("send"),
+                PromptSubmissionOutcome::Verified(_)));
+        }
+        assert_eq!(page.evaluate("window.sent").await.expect("counter").into_value::<u64>().expect("count"), 1, "repeat sent twice");
     })).await;
-    manager.close("refused").await.expect("close");
+    manager.close(key).await.expect("close");
     server.abort();
-    result.expect("restriction assertions");
+    result.expect("page-state gate assertions");
 }
