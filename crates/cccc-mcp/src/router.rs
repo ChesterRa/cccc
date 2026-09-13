@@ -152,7 +152,16 @@ pub(crate) async fn call_with_context(
                 postprocess_actor_notes(client, &mut result, &arguments).await;
             }
             if exposes_relay_context(name, &arguments) {
-                attach_relay_context(client, &mut result, &arguments).await;
+                let group_id = arguments
+                    .get("group_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let actor_id = arguments
+                    .get("by")
+                    .or_else(|| arguments.get("actor_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                attach_relay_context(client, &mut result, group_id, actor_id).await;
             }
             Value::Object(result)
         }
@@ -177,35 +186,17 @@ fn exposes_relay_context(name: &str, arguments: &Map<String, Value>) -> bool {
         ))
 }
 
-async fn attach_relay_context(
+pub(crate) async fn attach_relay_context(
     client: &DaemonClient,
     result: &mut Map<String, Value>,
-    arguments: &Map<String, Value>,
+    group_id: &str,
+    actor_id: &str,
 ) {
-    let group_id = arguments
-        .get("group_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let actor_id = arguments
-        .get("by")
-        .or_else(|| arguments.get("actor_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     if group_id.is_empty() || matches!(actor_id, "" | "user" | "system") {
         return;
     }
-    let mut args = Map::from_iter([
-        ("group_id".into(), Value::String(group_id.into())),
-        ("actor_id".into(), Value::String(actor_id.into())),
-        ("by".into(), Value::String(actor_id.into())),
-    ]);
-    if let Ok(relay) = daemon(
-        client,
-        "coordination_relay_status",
-        std::mem::take(&mut args),
-    )
-    .await
-    {
+    let args = crate::bootstrap::request_args(group_id, actor_id);
+    if let Ok(relay) = daemon(client, "coordination_relay_status", args).await {
         result.insert("relay_pending".into(), Value::Object(relay));
     }
 }
@@ -880,16 +871,7 @@ async fn with_post_message_and_relay_context(
     else {
         return result;
     };
-    if !group_id.is_empty() && !matches!(actor_id, "" | "user" | "system") {
-        let args = Map::from_iter([
-            ("group_id".into(), Value::String(group_id.into())),
-            ("actor_id".into(), Value::String(actor_id.into())),
-            ("by".into(), Value::String(actor_id.into())),
-        ]);
-        if let Ok(relay) = daemon(client, "coordination_relay_status", args).await {
-            payload.insert("relay_pending".into(), Value::Object(relay));
-        }
-    }
+    attach_relay_context(client, payload, group_id, actor_id).await;
     result["content"] = json!([{
         "type":"text",
         "text":serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into())

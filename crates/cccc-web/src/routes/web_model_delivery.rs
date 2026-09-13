@@ -2012,7 +2012,7 @@ mod retry_integration_tests {
             // A genuinely incomplete next page also closes, without falsely recording delivery.
             ready.store(2,Ordering::SeqCst);
             cccc_core::fs::write_json(&state.home.root().join("state/web_model_browser/_shared/delivery_check.json"),&json!({"not_before":chrono::Utc::now()-chrono::Duration::seconds(1)})).expect("first elapsed clock");
-            super::super::web_model_supervisor::ensure_running_actor(&state,None,false).await;
+            super::super::web_model_supervisor::ensure_running_actor(&state,None).await;
             wait_for_original_receipt(&state,&groups[1],&sources[1]).await;
             // Preserve the native 30-second composer deadline, plus normal close time.
             timeout(Duration::from_secs(40),async {
@@ -2032,7 +2032,7 @@ mod retry_integration_tests {
             // Advance the persisted clock boundary, never change the production interval.
             cccc_core::fs::write_json(&state.home.root().join("state/web_model_browser/_shared/delivery_check.json"),&json!({"not_before":chrono::Utc::now()-chrono::Duration::seconds(1)})).expect("elapsed clock");
             for (gid,id) in groups.iter().zip(&sources) {
-                super::super::web_model_supervisor::ensure_running_actor(&state,Some(gid),false).await;
+                super::super::web_model_supervisor::ensure_running_actor(&state,Some(gid)).await;
                 wait_for_original_receipt(&state,gid,id).await;
                 assert_eq!(state.browser_surfaces.info(surface_key()).await["active"],false,"verified report must release the delivery browser");
             }

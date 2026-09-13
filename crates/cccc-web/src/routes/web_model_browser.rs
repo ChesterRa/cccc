@@ -1218,8 +1218,7 @@ mod automation_hold_tests {
             ));
         }
         for _ in 0..10 {
-            super::super::web_model_supervisor::ensure_running_actor(&state, None, true).await;
-            super::super::web_model_supervisor::ensure_running_actor(&state, None, false).await;
+            super::super::web_model_supervisor::ensure_running_actor(&state, None).await;
             assert!(
                 !browser.info(surface_key()).await["active"]
                     .as_bool()

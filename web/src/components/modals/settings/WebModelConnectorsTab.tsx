@@ -547,10 +547,6 @@ export default function WebModelConnectorsTab({
     [],
   );
   const loadBrowserSurfaceSession = useCallback(() => sharedRequest(), [sharedRequest]);
-  const startBrowserSurfaceSession = useCallback(
-    (size: { width: number; height: number }) => sharedRequest("open", { ...size, inspect: true }),
-    [sharedRequest],
-  );
 
   useEffect(() => {
     if (!isActive || sharedBusy) return;
@@ -770,58 +766,36 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const openBrowserLogin = async () => {
-    if (sharedBusy) return;
+  const runBrowserAction = async (action: "open" | "status" | "restart" | "close") => {
+    if (sharedBusy && action !== "status") return;
+    if (
+      (action === "restart" || action === "close") &&
+      !window.confirm(
+        wm(action === "restart" ? "t05.confirmRestartBrowser" : "t05.confirmCloseBrowser"),
+      )
+    )
+      return;
     setSharedBusy(true);
     setSharedError("");
     try {
-      const response = await startBrowserSurfaceSession({ width: 1366, height: 900 });
-      if (response.ok) {
-        setShowBrowserSurface(true);
-        setBrowserSurfaceRefreshNonce((v) => v + 1);
+      if (action === "status") {
+        await sharedRequest("status", { inspect: true });
+        return;
       }
-    } catch (error) {
-      setSharedError(String(error));
-    } finally {
-      setSharedBusy(false);
-    }
-  };
-  const checkBrowserSessionStatus = async () => {
-    setSharedBusy(true);
-    setSharedError("");
-    try {
-      await sharedRequest("status", { inspect: true });
-    } catch (error) {
-      setSharedError(String(error));
-    } finally {
-      setSharedBusy(false);
-    }
-  };
-  const reloadEmbeddedBrowser = async () => {
-    if (sharedBusy || !window.confirm(wm("t05.confirmRestartBrowser"))) return;
-    setSharedBusy(true);
-    setSharedError("");
-    try {
-      const closed = await sharedRequest("close");
-      if (!closed.ok) return;
-      const opened = await startBrowserSurfaceSession({ width: 1366, height: 900 });
+      if (action === "close" || action === "restart") {
+        const closed = await sharedRequest("close");
+        if (!closed.ok) return;
+        if (action === "close") {
+          setShowBrowserSurface(false);
+          return;
+        }
+      }
+      const opened = await sharedRequest("open", { width: 1366, height: 900, inspect: true });
       if (opened.ok) {
         setShowBrowserSurface(true);
-        setBrowserSurfaceRestartNonce((v) => v + 1);
+        if (action === "restart") setBrowserSurfaceRestartNonce((v) => v + 1);
+        else setBrowserSurfaceRefreshNonce((v) => v + 1);
       }
-    } catch (error) {
-      setSharedError(String(error));
-    } finally {
-      setSharedBusy(false);
-    }
-  };
-  const closeBrowserSession = async () => {
-    if (sharedBusy || !window.confirm(wm("t05.confirmCloseBrowser"))) return;
-    setSharedBusy(true);
-    setSharedError("");
-    try {
-      const response = await sharedRequest("close");
-      if (response.ok) setShowBrowserSurface(false);
     } catch (error) {
       setSharedError(String(error));
     } finally {
@@ -1046,7 +1020,7 @@ export default function WebModelConnectorsTab({
                     type="button"
                     data-t05-change="open-shared-browser"
                     disabled={sharedBusy}
-                    onClick={() => void openBrowserLogin()}
+                    onClick={() => void runBrowserAction("open")}
                     className={primaryButtonClass(sharedBusy)}
                   >
                     {wm("buttons.openChatGpt")}
@@ -1062,7 +1036,7 @@ export default function WebModelConnectorsTab({
                   <button
                     type="button"
                     disabled={sharedBusy}
-                    onClick={() => void checkBrowserSessionStatus()}
+                    onClick={() => void runBrowserAction("status")}
                     className={secondaryButtonClass("sm")}
                   >
                     {wm("buttons.checkStatus")}
@@ -1083,7 +1057,7 @@ export default function WebModelConnectorsTab({
                         type="button"
                         data-t05-change="restart-shared-browser"
                         disabled={sharedBusy}
-                        onClick={() => void reloadEmbeddedBrowser()}
+                        onClick={() => void runBrowserAction("restart")}
                         className={secondaryButtonClass("sm")}
                       >
                         {wm("buttons.reloadChatGpt")}
@@ -1092,7 +1066,7 @@ export default function WebModelConnectorsTab({
                         type="button"
                         data-t05-change="close-shared-browser"
                         disabled={sharedBusy}
-                        onClick={() => void closeBrowserSession()}
+                        onClick={() => void runBrowserAction("close")}
                         className={secondaryButtonClass("sm")}
                       >
                         {wm("buttons.closeBrowser")}
@@ -1569,7 +1543,7 @@ export default function WebModelConnectorsTab({
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => void checkBrowserSessionStatus()}
+                      onClick={() => void runBrowserAction("status")}
                       disabled={browserBusy || !groupId || !actorId}
                       className={secondaryButtonClass("sm")}
                     >

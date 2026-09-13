@@ -19,11 +19,10 @@ pub(crate) fn spawn(state: AppState) {
         loop {
             tokio::select! {
                 _ = shutdown.recv() => break,
-                _ = interval.tick() => ensure_running_actor(&state, None, false).await,
+                _ = interval.tick() => ensure_running_actor(&state, None).await,
                 event = events.recv() => match event {
-                    Ok(_) => ensure_running_actor(&state, None, true).await,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        ensure_running_actor(&state, None, true).await;
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        ensure_running_actor(&state, None).await;
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -32,17 +31,13 @@ pub(crate) fn spawn(state: AppState) {
     });
 }
 
-pub(super) async fn ensure_running_actor(
-    state: &AppState,
-    preferred_group: Option<&str>,
-    event_trigger: bool,
-) {
+pub(super) async fn ensure_running_actor(state: &AppState, preferred_group: Option<&str>) {
     for (group_id, actor_id) in running_browser_actors(state, preferred_group) {
-        ensure_actor(state, group_id, actor_id, event_trigger).await;
+        ensure_actor(state, group_id, actor_id).await;
     }
 }
 
-async fn ensure_actor(state: &AppState, group_id: String, actor_id: String, _event_trigger: bool) {
+async fn ensure_actor(state: &AppState, group_id: String, actor_id: String) {
     if super::web_model_browser::automation_hold(&state.home).is_some() {
         return;
     }

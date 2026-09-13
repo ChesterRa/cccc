@@ -67,16 +67,13 @@ pub(crate) async fn build(
         context_hygiene,
         memory_recall_gate,
     );
-    if !matches!(actor_id.as_str(), "user" | "system")
-        && let Ok(relay) = daemon(
-            client,
-            "coordination_relay_status",
-            request_args(&group_id, &actor_id),
-        )
-        .await
-    {
-        payload["relay_pending"] = Value::Object(relay);
-    }
+    crate::router::attach_relay_context(
+        client,
+        payload.as_object_mut().expect("bootstrap payload"),
+        &group_id,
+        &actor_id,
+    )
+    .await;
     if let Ok(store) = cccc_core::GroupStore::new(home.clone())
         && let Ok(group) = store.load(&group_id)
         && let Ok(Some(pending)) = cccc_core::inbox::mail_pending_summary(home, &group, &actor_id)
@@ -109,7 +106,7 @@ fn assemble_payload(
     })
 }
 
-fn request_args(group_id: &str, actor_id: &str) -> Map<String, Value> {
+pub(crate) fn request_args(group_id: &str, actor_id: &str) -> Map<String, Value> {
     Map::from_iter([
         ("group_id".into(), Value::String(group_id.to_owned())),
         ("actor_id".into(), Value::String(actor_id.to_owned())),
