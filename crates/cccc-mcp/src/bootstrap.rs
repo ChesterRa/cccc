@@ -67,22 +67,6 @@ pub(crate) async fn build(
         context_hygiene,
         memory_recall_gate,
     );
-    if actors
-        .iter()
-        .any(|actor| actor["id"] == actor_id && actor["runtime"] == "web_model")
-    {
-        let target = cccc_core::web_model_connectors::browser_target(home, &group_id, &actor_id)
-            .map_err(|error| ToolCallError::from(error.to_string()))?;
-        let url = (target["kind"] == "existing_chat")
-            .then(|| {
-                target["url"]
-                    .as_str()
-                    .and_then(cccc_core::web_model_connectors::normalized_chatgpt_conversation_url)
-            })
-            .flatten();
-        payload["session"]["callback_target_ready"] = json!(url.is_some());
-        payload["session"]["callback_url"] = json!(url);
-    }
     crate::router::attach_relay_context(
         client,
         payload.as_object_mut().expect("bootstrap payload"),

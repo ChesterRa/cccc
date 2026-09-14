@@ -1,7 +1,5 @@
 //! An opt-in boundary for a trusted ChatGPT tunnel, not an HTTP authentication layer.
 //! The host supplies conversation metadata outside the model-controlled arguments.
-mod callback;
-
 use crate::{RequestContext, ToolCallError};
 use cccc_client::DaemonClient;
 use cccc_core::{HomeLayout, web_model_connectors};
@@ -20,21 +18,21 @@ fn catalog() -> Vec<Value> {
     tools.push(json!({
         "name":"cccc_session_bind",
         "description":"Bind this ChatGPT conversation to the group selected by a one-use connection code. The code is issued locally; conversation identity is supplied by ChatGPT, never by tool arguments.",
-        "inputSchema":{"type":"object","properties":{"code":{"type":"string","minLength":1},"capture_callback":{"type":"boolean","default":true,"description":"On macOS, ask the user once to select an open ChatGPT tab when no return address is saved. False skips local interaction, for remote/headless use."}},"required":["code"],"additionalProperties":false},
+        "inputSchema":{"type":"object","properties":{"code":{"type":"string","minLength":1}},"required":["code"],"additionalProperties":false},
         "annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":false}
     }));
     for (name, required, description, properties) in [
         (
             "cccc_group_create",
             "path",
-            "Create a group from this ChatGPT conversation and bind its web Foreman. Retries reuse the same group. Without chat_url, CCCC reads open browser tab addresses and asks the local user to select this chat once, then saves it. Reuse the saved address on future calls. Never invent a URL. Set capture_callback=false only to skip local interaction (remote/headless use).",
-            json!({"path":{"type":"string"},"title":{"type":"string"},"chat_url":{"type":"string"},"capture_callback":{"type":"boolean","default":true}}),
+            "Create a group from this ChatGPT conversation and bind its web Foreman. Retries reuse the same group. Supply this chat's URL for browser return messages; a missing URL does not prevent local dispatch.",
+            json!({"path":{"type":"string"},"title":{"type":"string"},"chat_url":{"type":"string"}}),
         ),
         (
             "cccc_group_bind",
             "group",
-            "Bind this Chat to an existing unowned group, or update the callback URL of its own group. A different Chat must use a freshly issued connection code to replace a binding; local Foremen are never silently replaced. Without a saved URL, CCCC offers a one-time local tab selection. Cancellation keeps local dispatch available; do not automatically retry or guess a URL. capture_callback=false skips local interaction.",
-            json!({"group":{"type":"string"},"chat_url":{"type":"string"},"capture_callback":{"type":"boolean","default":true}}),
+            "Bind this Chat to an existing unowned group, or update the callback URL of its own group. A different Chat must use a freshly issued connection code to replace a binding; local Foremen are never silently replaced.",
+            json!({"group":{"type":"string"},"chat_url":{"type":"string"}}),
         ),
     ] {
         tools.push(json!({"name":name,"description":description,
@@ -115,7 +113,6 @@ async fn call(
 ) -> Result<Value, ToolCallError> {
     if matches!(name, "cccc_group_create" | "cccc_group_bind") {
         let mut args = arguments;
-        let capture = capture_requested(&mut args)?;
         if args.contains_key("session") || args.contains_key("by") {
             return Err("invalid_request: identity is supplied by the ChatGPT transport".into());
         }
@@ -126,14 +123,11 @@ async fn call(
         } else {
             "web_model_chat_bind"
         };
-        let value = crate::router::daemon(client, op, args).await?;
-        return callback::finish(home, session, Value::Object(value), capture)
+        return crate::router::daemon(client, op, args)
             .await
-            .map(crate::router::tool_result);
+            .map(|value| crate::router::tool_result(Value::Object(value)));
     }
     if name == "cccc_session_bind" {
-        let mut arguments = arguments;
-        let capture = capture_requested(&mut arguments)?;
         if arguments.len() != 1 {
             return Err("invalid_args: cccc_session_bind accepts only code".into());
         }
@@ -149,24 +143,17 @@ async fn call(
         let connector_id = connector["connector_id"]
             .as_str()
             .ok_or("session_binding_failed: connector has no identity")?;
-        let binding_home = home.clone();
+        let home = home.clone();
         let connector_id = connector_id.to_owned();
         let code = code.to_owned();
-        let binding_session = session.to_owned();
-        let value = tokio::task::spawn_blocking(move || {
-            web_model_connectors::bind_session(
-                &binding_home,
-                &connector_id,
-                &code,
-                &binding_session,
-            )
+        let session = session.to_owned();
+        return tokio::task::spawn_blocking(move || {
+            web_model_connectors::bind_session(&home, &connector_id, &code, &session)
         })
         .await
         .map_err(|error| binding_error(std::io::Error::other(error)))?
-        .map_err(binding_error)?;
-        return callback::finish(home, session, value, capture)
-            .await
-            .map(crate::router::tool_result);
+        .map(crate::router::tool_result)
+        .map_err(binding_error);
     }
     let connector = web_model_connectors::find_session(home, session)
         .map_err(binding_error)?
@@ -190,14 +177,6 @@ async fn call(
         false,
     )
     .await
-}
-
-fn capture_requested(arguments: &mut Map<String, Value>) -> Result<bool, ToolCallError> {
-    match arguments.remove("capture_callback") {
-        None => Ok(true),
-        Some(Value::Bool(value)) => Ok(value),
-        Some(_) => Err("invalid_args: capture_callback must be a boolean".into()),
-    }
 }
 
 /// Applied at the shared dispatch boundary, including nested capability calls.

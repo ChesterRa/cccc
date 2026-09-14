@@ -171,17 +171,7 @@ impl Gateway {
             .expect("response present");
         serde_json::from_str(&line).expect("JSON response")
     }
-    async fn tool(&mut self, name: &str, mut args: Value, session: Option<&str>) -> Value {
-        // Synthetic protocol checks never display a real user's local tab picker.
-        if matches!(
-            name,
-            "cccc_group_create" | "cccc_group_bind" | "cccc_session_bind"
-        ) {
-            args.as_object_mut()
-                .expect("tool args")
-                .entry("capture_callback")
-                .or_insert(json!(false));
-        }
+    async fn tool(&mut self, name: &str, args: Value, session: Option<&str>) -> Value {
         self.call(request(name, args, session)).await
     }
 
@@ -397,8 +387,6 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
             assert_eq!(payload(&a)["role"], "foreman");
             assert_eq!(payload(&a)["can_dispatch"], true);
             assert_eq!(payload(&a)["callback_target_ready"], false);
-            let initial = gateway.tool("cccc_bootstrap", json!({}), Some("chat-first-a")).await;
-            assert_eq!(payload(&initial)["session"]["callback_target_ready"], false);
             assert_eq!(
                 cccc_core::active::get(&home).expect("active group"),
                 None,
@@ -442,9 +430,6 @@ async fn chat_first_creates_two_groups_and_manages_the_named_local_peer() {
                 .await;
             assert_eq!(payload(&target)["callback_target_ready"], true, "{target}");
             assert_eq!(payload(&target)["status"], "configured");
-            let ready = gateway.tool("cccc_bootstrap", json!({}), Some("chat-first-a")).await;
-            assert_eq!(payload(&ready)["session"]["callback_target_ready"], true);
-            assert_eq!(payload(&ready)["session"]["callback_url"], "https://chatgpt.com/c/stable-chat-first-a");
             let steal = gateway
                 .tool("cccc_group_bind",
                     json!({"group":ga}),

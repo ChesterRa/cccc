@@ -605,12 +605,6 @@ pub struct BrowserTargetOwner {
 }
 
 impl BrowserTargetOwner {
-    pub fn belongs_to_session(&self, session: &str) -> bool {
-        self.session_hash
-            .as_str()
-            .is_some_and(|hash| hash == hash_secret(session.trim()))
-    }
-
     pub fn for_delivery(&self, delivery_id: &str) -> Self {
         Self {
             delivery_id: json!(delivery_id),
@@ -760,47 +754,13 @@ pub fn save_browser_target(
     actor_id: &str,
     target: Option<Value>,
 ) -> io::Result<()> {
-    save_browser_target_checked(home, group_id, actor_id, target, None).map(|_| ())
-}
-
-/// A browser observation may finish after a user rebinds or selects another target.
-/// Commit only against the exact ownership captured before reading local tabs.
-pub fn save_browser_target_if_current(
-    home: &HomeLayout,
-    group_id: &str,
-    actor_id: &str,
-    target: Value,
-    expected: &BrowserTargetOwner,
-) -> io::Result<bool> {
-    save_browser_target_checked(home, group_id, actor_id, Some(target), Some(expected))
-}
-
-fn save_browser_target_checked(
-    home: &HomeLayout,
-    group_id: &str,
-    actor_id: &str,
-    target: Option<Value>,
-    expected: Option<&BrowserTargetOwner>,
-) -> io::Result<bool> {
     let _dispatch = lock_browser_dispatch(home)?;
     migrate_settings_store(home)?;
     fs::with_exclusive_lock(&lock_path(home), || {
         let connectors = read_unlocked(&store_path(home))?;
-        if let Some(expected) = expected {
-            let (_, current) = target_snapshot(home, group_id, actor_id, &connectors)?;
-            if &current != expected {
-                return Ok(false);
-            }
-        }
         let connector = connectors.values().find(|item| {
             item["group_id"] == group_id && item["actor_id"] == actor_id && item["revoked"] != true
         });
-        if expected.is_some() {
-            validate_session_actor(
-                home,
-                connector.ok_or_else(|| io::Error::other("session_binding_required"))?,
-            )?;
-        }
         let mut target = target;
         if let Some(target) = target.as_mut() {
             if !target.is_object() {
@@ -836,7 +796,7 @@ fn save_browser_target_checked(
                 } else {
                     targets.remove(actor_id);
                 }
-                Ok(true)
+                Ok(())
             },
         )
     })
