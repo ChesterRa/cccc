@@ -201,6 +201,18 @@ fn url_host(host: &str) -> String {
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), OpError> {
     let normalized = im_state::canonicalize_config(platform, config)
         .ok_or_else(|| OpError::new("invalid_args", "unsupported IM platform"))?;
+    if platform == "mattermost"
+        && normalized
+            .get("mattermost_url")
+            .and_then(Value::as_str)
+            .and_then(im_state::normalize_mattermost_url)
+            .is_none()
+    {
+        return Err(OpError::new(
+            "invalid_args",
+            "Mattermost site URL is invalid",
+        ));
+    }
     if !im_state::has_required_credentials(platform, &normalized) {
         return Err(OpError::new(
             "invalid_args",
@@ -489,7 +501,7 @@ mod tests {
     };
     use cccc_contracts::DaemonRequest;
     use cccc_core::{GroupStore, HomeLayout, im_state, settings};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::io::{Read, Write};
 
     #[test]
@@ -708,6 +720,30 @@ mod tests {
         assert_eq!(config["files"]["max_mb"], 7);
         assert!(config.get("skip_pending_on_start").is_none());
         assert!(!config.contains_key("app_key_env"));
+    }
+
+    #[test]
+    fn mattermost_config_reports_site_errors_without_echoing_input() {
+        for (raw, message) in [
+            (
+                json!({"bot_token":"test-token"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"bot_token":"test-token","mattermost_url":"https://user:secret@mm.example.test"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"mattermost_url":"https://mm.example.test"}),
+                "missing credentials for mattermost",
+            ),
+        ] {
+            let mut config = raw.as_object().expect("object").clone();
+            let error = normalize_config("mattermost", &mut config).expect_err("invalid");
+            assert_eq!(error.code, "invalid_args");
+            assert_eq!(error.message, message);
+            assert_eq!(Value::Object(config), raw);
+        }
     }
 
     #[test]

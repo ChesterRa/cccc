@@ -1,8 +1,30 @@
 # CCCC Mattermost 连接器验收
 
-当前补验入口（2026-09-14）：[review11 合同](mattermost-im.md#当前修复合同2026-09-14review11)对应 `0da0c9f3` 的三条评审意见；review10 及更早的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
+当前补验入口（2026-09-14）：[review12 合同](mattermost-im.md#当前修复合同2026-09-14review12)对应 `14ba786b` 的完整评审。review11 及更早的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## 旧管理请求与异步表单交接（2026-09-14，review12）
+
+本轮只处理评审 `5195000928` 的归并意见，未包含其他功能或依赖更新。验证输入是候选补丁与上游 `9642af11` 的隔离合并树，保留完整 Git 元数据；不会将合并验证树中的上游改动夹带进本功能分支。
+
+| 用例 | 可证伪断言 |
+|---|---|
+| `legacy_management_cannot_remove_a_new_mattermost_worker` | 真实 HTTP stop/unset/set 请求已进入旧平台路径、阻塞于生命周期锁时，切入并安装新 Mattermost worker；释放后不得摘除新 worker、代次或状态。以 Slack 替换时仍按原生路径关闭，共六种受控交接 |
+| `prepared_stop_rejects_identical_save_versions` | 相同配置再次保存后配置值确实相等，但旧 stop/unset 快照均被拒绝，当前 IM 内容不变；新快照仍能执行。组文档的原生持久化更新时间不包含在“不变”范围 |
+| `mattermost_url_error_is_distinct_from_missing_credentials`、`mattermost_config_reports_site_errors_without_echoing_input` | Web 与 daemon 分别区分缺/非法地址与缺凭据；固定错误不回显原 URL，原配置不被改写；旧平台规范化测试继续保留 |
+| `SettingsModal.mattermost.test.tsx` 的五个管理动作参数用例 | A→B、A→B→A 及卸载后新组重新挂载，旧保存、启动前保存、启动、停止、删除的成功、业务拒绝、传输异常均不改新 URL/凭据引用/错误，不发起后续旧请求，也不清除新操作的 busy；卸载对应真实 AppModals 关窗行为 |
+| `ignores an old configuration readback after a management action switches Group visits` | 保存成功已经进入异步配置回读后换组；旧回读完成不得覆盖新草稿。复用原有加载序号，不更改公共加载合同 |
+
+执行结果（仅使用指定测试机，当前提交的 GitHub 结果仍需单独确认）：
+
+- Linux 最终固定候选完整执行 quality（112 项）、Web（299 文件、1,558 项，含静态/类型检查及生产构建）、package（25 项及 wheel/Twine）、Rust fmt、workspace/all-targets 严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 串行全量（库 524 项）、独立进程自启动 3 项，均通过。固定 Codex/Claude 各 1 项和 Kilo 筛选 3 项通过；筛选中的 OpenCode 条件项未启用，不算 OpenCode 实测。原生 CLI 使用离线探针/本地模拟模型。完整脚本退出 0，同时取得 `ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`；本轮最终重跑没有失败项，此前失败仍按下文保留。
+- Windows Server 2025 最终候选的格式、IM runtime 227 项、路由 IM 8 项、核心 IM 9 项、daemon IM 10 项、当前 CI 七组原生 smoke 及二进制构建全部通过，脚本退出 0；3 项真实站点用例按原规则忽略，不算平台实测。
+- Linux 与 Windows 的真实设置页验收分别退出 0：无效地址禁用保存/启动、业务拒绝及传输失败可见、失败保留草稿与存储、修正重试、保存回读/刷新、缺凭据启动失败、删除配置、三语与窄屏均覆盖。除挂载中的 Group 切换外，还延迟真实保存请求的响应，正常关窗、侧栏换组、重开设置后释放旧响应；新组地址/凭据草稿不变、未被保存、按钮可用，且没有新发旧组配置读取。故障响应通过浏览器受控模拟；使用隔离后端和合成配置，没有真实 Mattermost、Actor 或付费模型流量，不更换日常部署。
+- 前端新回归在完全未修版本为 5 失败/5 通过，错误包含旧组字段污染；在仅缺卸载保护的中间版本仍为 5 失败/5 通过，错误是旧请求新增配置回读。最终 10 项定向通过。原有配置回读序号用例在旧版也通过，未为它改公共加载合同。
+- 保留首次失败：新增类型触发严格 Clippy 的 type_complexity，改为小型别名而非放宽检查；测试的无错误可选属性最初误期望 null，依既有合同改为 undefined。GUI 还暴露真实关窗卸载遗漏，补失效清理及重挂载回归后两端重跑通过。测试环境的工作目录、浏览器系统库、静态产物路径及 Windows 脚本参数问题单独记录，不混成产品缺陷或首次全绿。
+
+完整命令、初次失败、最终日志和源码指纹由发布证据留存。提交前另核对两端完整受跟踪源码树及本地引用，不把合并验证树内上游已有的设置页调整夹入产品分支。最终提交还须全历史扫描、人工检查、推送及新 SHA 的完整 CI/Copilot 复审；下列历史结果不代替这些门禁。
 
 ## 启动前窗口与长流式终态（2026-09-14，review11）
 

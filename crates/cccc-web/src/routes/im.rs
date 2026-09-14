@@ -11,7 +11,7 @@ use std::io;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
-use crate::im_runtime::adapter_commits_start_state;
+use crate::im_runtime::{ImRequestVersion, adapter_commits_start_state};
 
 const PLATFORMS: &[&str] = &[
     "telegram",
@@ -119,7 +119,7 @@ async fn set(
     if invalidated {
         state.im_workers.stop_invalidated(&group_id).await;
     } else {
-        state.im_workers.stop(&group_id).await;
+        state.im_workers.stop_legacy(&state.home, &group_id).await;
     }
     Ok(success(json!({"configured":true,"platform":platform})))
 }
@@ -131,17 +131,17 @@ async fn unset(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    if let Ok(current) = load(&state, &group_id)
+    if let Ok((current, version)) = load_request_snapshot(&state, &group_id)
         && adapter_commits_start_state(current["config"]["platform"].as_str())
     {
-        if prepare_stop(&state, &group_id, &current, true)? {
+        if prepare_stop(&state, &group_id, &current, version, true)? {
             state.im_workers.stop_invalidated(&group_id).await;
         }
         return Ok(success(json!({
             "configured":load(&state, &group_id)?["config"].is_object(),"group_id":group_id
         })));
     }
-    state.im_workers.stop(&group_id).await;
+    state.im_workers.stop_legacy(&state.home, &group_id).await;
     let cleared = update(&state, &group_id, |value| {
         if adapter_commits_start_state(value["config"]["platform"].as_str()) {
             return Ok(false);
@@ -176,7 +176,7 @@ async fn set_running(
 ) -> ApiResult {
     let group_id = required(body, "group_id")?;
     ensure_access(principal, &group_id)?;
-    let current = load(state, &group_id)?;
+    let (current, version) = load_request_snapshot(state, &group_id)?;
     if running && !current.get("config").is_some_and(Value::is_object) {
         return Err(ApiError::bad("IM bridge is not configured"));
     }
@@ -203,12 +203,12 @@ async fn set_running(
         return finish_start(state, &group_id, result);
     }
     if adapter_commits_start_state(current["config"]["platform"].as_str()) {
-        if prepare_stop(state, &group_id, &current, false)? {
+        if prepare_stop(state, &group_id, &current, version, false)? {
             state.im_workers.stop_invalidated(&group_id).await;
         }
         return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
     }
-    state.im_workers.stop(&group_id).await;
+    state.im_workers.stop_legacy(&state.home, &group_id).await;
     update(state, &group_id, |value| {
         if adapter_commits_start_state(value["config"]["platform"].as_str()) {
             return Ok(());
@@ -228,10 +228,13 @@ fn prepare_stop(
     state: &AppState,
     group_id: &str,
     current: &Value,
+    version: ImRequestVersion,
     unset: bool,
 ) -> Result<bool, ApiError> {
     update(state, group_id, |value| {
-        if value.get("config") != current.get("config") {
+        if value.get("config") != current.get("config")
+            || state.im_workers.request_version(group_id) != version
+        {
             return Ok(false);
         }
         state.im_workers.invalidate_start(group_id);
@@ -487,6 +490,15 @@ async fn verbose(
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), ApiError> {
     let normalized = im_state::canonicalize_config(platform, config)
         .ok_or_else(|| ApiError::bad("unsupported IM platform"))?;
+    if platform == "mattermost"
+        && normalized
+            .get("mattermost_url")
+            .and_then(Value::as_str)
+            .and_then(im_state::normalize_mattermost_url)
+            .is_none()
+    {
+        return Err(ApiError::bad("Mattermost site URL is invalid"));
+    }
     if !im_state::has_required_credentials(platform, &normalized) {
         return Err(ApiError::bad(format!("missing credentials for {platform}")));
     }
@@ -518,6 +530,17 @@ fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     im_state::load(&store, group_id)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
+}
+
+fn load_request_snapshot(
+    state: &AppState,
+    group_id: &str,
+) -> Result<(Value, ImRequestVersion), ApiError> {
+    let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
+    im_state::read_with(&store, group_id, |current| {
+        (current, state.im_workers.request_version(group_id))
+    })
+    .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
 }
 
 fn update<T>(
@@ -598,6 +621,86 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn prepared_stop_rejects_identical_save_versions() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store
+            .create("相同配置请求测试", "")
+            .expect("group")
+            .group_id;
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (_, workers, _, state) = crate::app_with_shutdown(
+            home,
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "request-test".into(),
+        );
+        let body = json!({"group_id":group,"platform":"mattermost",
+            "mattermost_url":"https://mm.example.test","bot_token":"test-token"});
+        let principal = Principal {
+            user_id: "local".into(),
+            allowed_groups: vec![],
+            is_admin: true,
+            raw_token: String::new(),
+        };
+        for unset in [false, true] {
+            let _ = set(
+                State(state.clone()),
+                Extension(principal.clone()),
+                Json(body.clone()),
+            )
+            .await
+            .expect("save");
+            let (current, version) = load_request_snapshot(&state, &group).expect("snapshot");
+            let _ = set(
+                State(state.clone()),
+                Extension(principal.clone()),
+                Json(body.clone()),
+            )
+            .await
+            .expect("identical save");
+            let before = load(&state, &group).expect("before");
+            assert_eq!(before["config"], current["config"]);
+            assert!(!prepare_stop(&state, &group, &current, version, unset).expect("stale stop"));
+            assert_eq!(load(&state, &group).expect("after"), before);
+            let (current, version) =
+                load_request_snapshot(&state, &group).expect("current snapshot");
+            assert!(prepare_stop(&state, &group, &current, version, unset).expect("current stop"));
+        }
+        workers.shutdown().await;
+    }
+
+    #[test]
+    fn mattermost_url_error_is_distinct_from_missing_credentials() {
+        for (raw, message) in [
+            (
+                json!({"bot_token":"test-token"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"bot_token":"test-token","mattermost_url":"https://user:secret@mm.example.test"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"mattermost_url":"https://mm.example.test"}),
+                "missing credentials for mattermost",
+            ),
+        ] {
+            let mut config = raw.as_object().expect("object").clone();
+            let error = normalize_config("mattermost", &mut config).expect_err("invalid");
+            assert_eq!(error.to_string(), format!("invalid_request: {message}"));
+            assert_eq!(Value::Object(config), raw);
+        }
+    }
+
+    #[tokio::test]
     async fn prepared_stop_rejects_replaced_config_without_mutating_state() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
@@ -627,7 +730,9 @@ mod tests {
             .expect("replacement");
             let before = load(&state, &group).expect("before");
             for unset in [false, true] {
-                assert!(!prepare_stop(&state, &group, &current, unset).expect("ignored"));
+                assert!(
+                    !prepare_stop(&state, &group, &current, (None, None), unset).expect("ignored")
+                );
                 assert_eq!(load(&state, &group).expect("after"), before);
             }
         }

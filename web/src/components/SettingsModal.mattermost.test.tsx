@@ -28,6 +28,8 @@ vi.mock("../services/api", async (importOriginal) => ({
   fetchActors: vi.fn(),
   setIMConfig: vi.fn(),
   startIMBridge: vi.fn(),
+  stopIMBridge: vi.fn(),
+  unsetIMConfig: vi.fn(),
 }));
 
 describe("SettingsModal Mattermost draft group isolation", () => {
@@ -58,6 +60,8 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     vi.mocked(api.fetchActors).mockResolvedValue({ ok: true, result: { actors: [] } });
     vi.mocked(api.setIMConfig).mockResolvedValue({ ok: true, result: {} });
     vi.mocked(api.startIMBridge).mockResolvedValue({ ok: true, result: {} });
+    vi.mocked(api.stopIMBridge).mockResolvedValue({ ok: true, result: {} });
+    vi.mocked(api.unsetIMConfig).mockResolvedValue({ ok: true, result: {} });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -108,6 +112,146 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     await choose("mattermost");
     expect(props().imMattermostUrl).toBe("");
     expect(props().imBotTokenEnv).toBe("");
+  });
+
+  it.each(["save", "start-save", "start", "stop", "remove"] as const)(
+    "ignores stale %s continuations across Group visits, including failures",
+    async (action) => {
+      for (const visit of ["other", "return", "remount"] as const) {
+        for (const outcome of ["success", "rejected", "transport"] as const) {
+          vi.mocked(api.fetchIMConfig).mockImplementation(async (gid) => ({
+            ok: true,
+            result: {
+              im: {
+                platform: "mattermost",
+                mattermost_url: `https://${gid}.example.test`,
+                bot_token_env: `${gid}_TOKEN`,
+              },
+            },
+          }));
+          await renderGroup("group-a");
+          let release!: (value: Awaited<ReturnType<typeof api.setIMConfig>>) => void;
+          let reject!: (reason: Error) => void;
+          const pending = new Promise<Awaited<ReturnType<typeof api.setIMConfig>>>(
+            (resolve, fail) => {
+              release = resolve;
+              reject = fail;
+            },
+          );
+          const method =
+            action === "start"
+              ? "startIMBridge"
+              : action === "stop"
+                ? "stopIMBridge"
+                : action === "remove"
+                  ? "unsetIMConfig"
+                  : "setIMConfig";
+          vi.mocked(api[method]).mockReturnValueOnce(pending);
+          let running!: Promise<void>;
+          await act(async () => {
+            const p = props();
+            running = Promise.resolve(
+              action === "save"
+                ? p.onSaveConfig()
+                : action === "stop"
+                  ? p.onStopBridge()
+                  : action === "remove"
+                    ? p.onRemoveConfig()
+                    : p.onStartBridge(),
+            );
+          });
+          expect(props().imBusy).toBe(true);
+          if (visit === "remount")
+            await act(async () => {
+              root.render(null);
+            });
+          await renderGroup("group-b");
+          if (visit === "return") await renderGroup("group-a");
+          const target = visit === "return" ? "group-a" : "group-b";
+          expect.soft(props().imBusy).toBe(false);
+          await act(async () => {
+            props().setImMattermostUrl("https://new-draft.example.test");
+            props().setImBotTokenEnv("NEW_DRAFT_TOKEN");
+          });
+          // 新组的另一个保存仍在等待，旧 finally 不能替它清掉 busy。
+          let finishNew!: (value: Awaited<ReturnType<typeof api.setIMConfig>>) => void;
+          vi.mocked(api.setIMConfig).mockReturnValueOnce(
+            new Promise((resolve) => {
+              finishNew = resolve;
+            }),
+          );
+          let newRunning!: Promise<void>;
+          await act(async () => {
+            newRunning = Promise.resolve(props().onSaveConfig());
+          });
+          const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
+          const starts = vi.mocked(api.startIMBridge).mock.calls.length;
+          await act(async () => {
+            if (outcome === "transport") reject(new Error("旧组传输失败"));
+            else
+              release(
+                outcome === "rejected"
+                  ? { ok: false, error: { code: "old_failure", message: "旧组错误" } }
+                  : { ok: true, result: {} },
+              );
+            await running;
+          });
+          expect(props().groupId).toBe(target);
+          expect(props().imMattermostUrl).toBe("https://new-draft.example.test");
+          expect(props().imBotTokenEnv).toBe("NEW_DRAFT_TOKEN");
+          expect(props().imConfigError).toBeUndefined();
+          expect(props().imBusy).toBe(true);
+          expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
+          expect(api.startIMBridge).toHaveBeenCalledTimes(starts);
+          await act(async () => {
+            finishNew({ ok: true, result: {} });
+            await newRunning;
+          });
+          expect(props().imBusy).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("ignores an old configuration readback after a management action switches Group visits", async () => {
+    for (const returnToA of [false, true]) {
+      await renderGroup("group-a");
+      await choose("mattermost");
+      let release!: (value: Awaited<ReturnType<typeof api.fetchIMConfig>>) => void;
+      vi.mocked(api.fetchIMConfig).mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      let running!: Promise<void>;
+      await act(async () => {
+        running = Promise.resolve(props().onSaveConfig());
+      });
+      await renderGroup("group-b");
+      if (returnToA) await renderGroup("group-a");
+      await choose("mattermost");
+      await act(async () => {
+        props().setImMattermostUrl("https://current.example.test");
+        props().setImBotTokenEnv("CURRENT_GROUP_TOKEN");
+      });
+      await act(async () => {
+        release({
+          ok: true,
+          result: {
+            im: {
+              platform: "mattermost",
+              mattermost_url: "https://old.example.test",
+              bot_token_env: "OLD_GROUP_TOKEN",
+            },
+          },
+        });
+        await running;
+      });
+      expect(props().groupId).toBe(returnToA ? "group-a" : "group-b");
+      expect(props().imMattermostUrl).toBe("https://current.example.test");
+      expect(props().imBotTokenEnv).toBe("CURRENT_GROUP_TOKEN");
+      expect(props().imBusy).toBe(false);
+    }
   });
 
   it.each(["telegram", "mattermost"] as const)(

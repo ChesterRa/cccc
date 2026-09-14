@@ -193,6 +193,20 @@ export function SettingsModal({
     null,
   );
   const imLoadSeq = useRef(0);
+  const imActionScope = useRef({ groupId, isOpen });
+  const imCurrentPlatform = useRef(imPlatform);
+  const imMattermostBusy = useRef(false);
+  if (imActionScope.current.groupId !== groupId || imActionScope.current.isOpen !== isOpen) {
+    imActionScope.current = { groupId, isOpen };
+  }
+  imCurrentPlatform.current = imPlatform;
+  useEffect(
+    () => () => {
+      // AppModals 关闭设置时直接卸载；旧管理续体不能继续加载或启动。
+      imActionScope.current = { ...imActionScope.current };
+    },
+    [],
+  );
   const weixinAutoStartRef = useRef(false);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -261,6 +275,10 @@ export function SettingsModal({
   }, [isOpen, settings]);
 
   useEffect(() => {
+    if (imMattermostBusy.current) {
+      imMattermostBusy.current = false;
+      setImBusy(false);
+    }
     if (!isOpen) return;
     setScope(groupId ? "group" : "global");
   }, [isOpen, groupId]);
@@ -732,12 +750,23 @@ export function SettingsModal({
     setImPlatform(newPlatform);
   };
 
+  // 沿用设置页的 ref 归属检查；访问同一 Group 两次也不能复活旧续体。
+  const currentIMAction = () => {
+    const scope = imActionScope.current;
+    if (imPlatform === "mattermost") imMattermostBusy.current = true;
+    return () =>
+      (imPlatform !== "mattermost" && imCurrentPlatform.current !== "mattermost") ||
+      imActionScope.current === scope;
+  };
+
   const handleSaveIMConfig = async () => {
     if (!groupId) return;
+    const isCurrent = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
       const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
+      if (!isCurrent()) return;
       if (resp.ok) await loadIMStatus();
       else if (imPlatform === "mattermost") {
         setImConfigError({
@@ -746,21 +775,27 @@ export function SettingsModal({
         });
       }
     } catch (e) {
+      if (!isCurrent()) return;
       if (imPlatform === "mattermost") {
         setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
       }
       console.error("Failed to save IM config:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) {
+        imMattermostBusy.current = false;
+        setImBusy(false);
+      }
     }
   };
 
   const handleRemoveIMConfig = async () => {
     if (!groupId) return;
+    const isCurrent = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
       const resp = await api.unsetIMConfig(groupId);
+      if (!isCurrent()) return;
       if (resp.ok) {
         setImBotTokenEnv("");
         setImAppTokenEnv("");
@@ -779,19 +814,24 @@ export function SettingsModal({
     } catch (e) {
       console.error("Failed to remove IM config:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) {
+        imMattermostBusy.current = false;
+        setImBusy(false);
+      }
     }
   };
 
   const handleStartBridge = async () => {
     if (!groupId) return;
     if (!canStartIMBridge(imPlatform, !!weixinLoginStatus?.logged_in)) return;
+    const isCurrent = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
       // Mattermost 保存失败时保留当前草稿；回读会把它替换成旧平台/配置。
       if (imPlatform === "mattermost") {
         const saved = await saveIMConfigDraft(getCurrentIMSaveRequest());
+        if (!isCurrent()) return;
         if (!saved.ok) {
           setImConfigError({
             groupId,
@@ -804,7 +844,9 @@ export function SettingsModal({
         imPlatform === "mattermost"
           ? await api.startIMBridge(groupId)
           : await saveAndStartIMBridge(getCurrentIMSaveRequest());
+      if (!isCurrent()) return;
       await loadIMStatus();
+      if (!isCurrent()) return;
       if (!resp.ok && imPlatform === "mattermost") {
         setImConfigError({
           groupId,
@@ -817,25 +859,34 @@ export function SettingsModal({
         );
       }
     } catch (e) {
+      if (!isCurrent()) return;
       if (imPlatform === "mattermost") {
         setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
       }
       console.error("Failed to start bridge:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) {
+        imMattermostBusy.current = false;
+        setImBusy(false);
+      }
     }
   };
 
   const handleStopBridge = async () => {
     if (!groupId) return;
+    const isCurrent = currentIMAction();
     setImBusy(true);
     try {
       await api.stopIMBridge(groupId);
+      if (!isCurrent()) return;
       await loadIMStatus();
     } catch (e) {
       console.error("Failed to stop bridge:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) {
+        imMattermostBusy.current = false;
+        setImBusy(false);
+      }
     }
   };
 

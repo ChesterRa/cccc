@@ -2945,6 +2945,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_management_cannot_remove_a_new_mattermost_worker() {
+        for action in ["stop", "unset", "set"] {
+            for replacement in ["mattermost", "slack"] {
+                let (_temp, home, group) = scope();
+                let (app, registry) = route_context(&home);
+                let store = GroupStore::new(home.clone()).expect("store");
+                let body = json!({"group_id":group,"platform":"slack",
+                    "bot_token":"test-token","app_token":"test-app-token"});
+                assert_eq!(
+                    route_request(app.clone(), "/api/im/set", Some(body.clone()))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+                let lock = registry.lifecycle_lock(&group);
+                let guard = lock.lock().await;
+                let path = format!("/api/im/{action}");
+                let mut old = Box::pin(route_request(app, &path, Some(body)));
+                assert!(futures_util::poll!(&mut old).is_pending());
+                // 旧请求已到生命周期锁；由持锁者提交新配置及安装完成的 worker。
+                cccc_core::im_state::update(&store, &group, |state| {
+                    state["config"]["platform"] = json!(replacement);
+                    if replacement == "mattermost" {
+                        registry.invalidate_start(&group);
+                    }
+                    state["running"] = json!(true);
+                    state["enabled"] = json!(true);
+                    state["adapter_available"] = json!(true);
+                    Ok(())
+                })
+                .expect("replacement");
+                let (generation, _) = registry.begin_start_locked(&group);
+                let stopped = Arc::new(AtomicBool::new(false));
+                let stopped_flag = stopped.clone();
+                registry.workers.lock().expect("workers").insert(
+                    group.clone(),
+                    super::super::worker(
+                        vec![tokio::spawn(std::future::pending())],
+                        Arc::new(move || {
+                            stopped_flag.store(true, Ordering::SeqCst);
+                        }),
+                    ),
+                );
+                let before = cccc_core::im_state::load(&store, &group).expect("before");
+                drop(guard);
+                assert_eq!(old.await.0, StatusCode::OK);
+                if replacement == "mattermost" {
+                    assert!(!stopped.load(Ordering::SeqCst), "{action}");
+                    assert!(registry.is_generation_current(&group, generation));
+                    assert!(registry.is_running(&group));
+                    assert_eq!(
+                        cccc_core::im_state::load(&store, &group).expect("after"),
+                        before
+                    );
+                } else {
+                    assert!(stopped.load(Ordering::SeqCst), "legacy {action}");
+                    assert!(!registry.is_running(&group));
+                }
+                registry.shutdown().await;
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn legacy_snapshot_cannot_allocate_after_mattermost_save_before_shutdown() {
         let fixture = fixture().await;
         let (_temp, home, group) = scope();

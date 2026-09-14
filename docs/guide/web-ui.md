@@ -509,7 +509,7 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### IM Bridge
 
-Configure Telegram, Slack, Discord, Feishu, DingTalk, or WeCom integration.
+Configure Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or [Mattermost](./im-bridge/mattermost) integration.
 
 ### Group Space
 

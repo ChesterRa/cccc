@@ -58,6 +58,8 @@ use worker::{Stopper, WorkerHandles, no_op_stopper};
 
 const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
 
+pub(crate) type ImRequestVersion = (Option<u64>, Option<u64>);
+
 // 共享结果回写者须在配置锁内查询当前平台，不能只看旧启动快照。
 pub(crate) fn adapter_commits_start_state(platform: Option<&str>) -> bool {
     platform.is_some_and(|platform| SELF_COMMIT_PLATFORMS.contains(&platform))
@@ -69,6 +71,7 @@ pub(crate) struct ImWorkerRegistry {
     restoring: Mutex<HashSet<String>>,
     restore_tasks: Mutex<Vec<JoinHandle<()>>>,
     generations: Arc<Mutex<HashMap<String, u64>>>,
+    config_revisions: Mutex<HashMap<String, u64>>,
     next_generation: std::sync::atomic::AtomicU64,
     discord_deduper: Arc<discord_dedup::DiscordMessageDeduper>,
     weixin_logins: weixin_login::LoginRegistry,
@@ -83,6 +86,7 @@ impl ImWorkerRegistry {
             restoring: Mutex::new(HashSet::new()),
             restore_tasks: Mutex::new(Vec::new()),
             generations: Arc::new(Mutex::new(HashMap::new())),
+            config_revisions: Mutex::new(HashMap::new()),
             next_generation: std::sync::atomic::AtomicU64::new(0),
             discord_deduper: Arc::new(discord_dedup::DiscordMessageDeduper::default()),
             weixin_logins: weixin_login::LoginRegistry::default(),
@@ -340,21 +344,51 @@ impl ImWorkerRegistry {
     }
 
     pub(crate) async fn stop(&self, group_id: &str) -> bool {
+        self.stop_with_mode(group_id, None).await
+    }
+
+    pub(crate) async fn stop_legacy(&self, home: &HomeLayout, group_id: &str) -> bool {
+        self.stop_with_mode(group_id, Some(home)).await
+    }
+
+    async fn stop_with_mode(&self, group_id: &str, home: Option<&HomeLayout>) -> bool {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let (was_starting, worker) = {
             let _lifecycle_guard = lifecycle_lock.lock().await;
-            let was_starting = self
-                .generations
-                .lock()
-                .expect("IM generation registry poisoned")
-                .remove(group_id)
-                .is_some();
-            let worker = self
-                .workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .remove(group_id);
-            (was_starting, worker)
+            let remove = || {
+                let was_starting = self
+                    .generations
+                    .lock()
+                    .expect("IM generation registry poisoned")
+                    .remove(group_id)
+                    .is_some();
+                let worker = self
+                    .workers
+                    .lock()
+                    .expect("IM worker registry poisoned")
+                    .remove(group_id);
+                (was_starting, worker)
+            };
+            if let Some(home) = home {
+                let checked = GroupStore::new(home.clone()).and_then(|store| {
+                    cccc_core::im_state::read_with(&store, group_id, |current| {
+                        // 判断和摘除都在配置锁内；切入新适配器不能插在两者之间。
+                        if adapter_commits_start_state(current["config"]["platform"].as_str()) {
+                            None
+                        } else {
+                            Some(remove())
+                        }
+                    })
+                });
+                match checked {
+                    Ok(Some(removed)) => removed,
+                    Ok(None) => return false,
+                    // 原生旧平台 stop 不依赖配置可读，保留其故障行为。
+                    Err(_) => remove(),
+                }
+            } else {
+                remove()
+            }
         };
         let was_running = worker.is_some();
         if let Some(worker) = worker {
@@ -456,10 +490,35 @@ impl ImWorkerRegistry {
 
     // Mattermost saves call this inside the existing configuration lock, before writing.
     pub(crate) fn invalidate_start(&self, group_id: &str) {
+        let revision = self
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .insert(group_id.to_owned(), revision);
         self.generations
             .lock()
             .expect("IM generation registry poisoned")
             .remove(group_id);
+    }
+
+    // 调用方在 IM 配置锁内读取/比较；配置相同也可能是不同请求。
+    pub(crate) fn request_version(&self, group_id: &str) -> ImRequestVersion {
+        let revision = self
+            .config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .get(group_id)
+            .copied();
+        let generation = self
+            .generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .get(group_id)
+            .copied();
+        (revision, generation)
     }
 
     fn lifecycle_lock(&self, group_id: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -502,6 +561,10 @@ impl ImWorkerRegistry {
             .expect("IM generation registry poisoned")
             .clear();
         self.weixin_logins.clear_all();
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .clear();
     }
 
     pub(crate) async fn stop_missing(&self, active_groups: &HashSet<String>) -> usize {
