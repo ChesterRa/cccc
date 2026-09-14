@@ -195,6 +195,7 @@ export function SettingsModal({
   const imLoadSeq = useRef(0);
   const imPlatformSelectionSeq = useRef(0);
   const imMattermostEditSeq = useRef(0);
+  const imMattermostVisitSeq = useRef(0);
   const imActionScope = useRef({ groupId, isOpen, platform: imPlatform });
   const imCurrentPlatform = useRef(imPlatform);
   const imMattermostBusy = useRef(false);
@@ -203,6 +204,9 @@ export function SettingsModal({
     imActionScope.current.isOpen !== isOpen ||
     imActionScope.current.platform !== imPlatform
   ) {
+    if (imActionScope.current.platform === "mattermost" || imPlatform === "mattermost") {
+      imMattermostVisitSeq.current += 1;
+    }
     imActionScope.current = { groupId, isOpen, platform: imPlatform };
   }
   imCurrentPlatform.current = imPlatform;
@@ -215,6 +219,24 @@ export function SettingsModal({
   );
   const weixinAutoStartRef = useRef(false);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // 沿用 ref 归属检查；旧平台间保留原合同，经过 Mattermost 后不能复活旧续体。
+  const currentIMAction = useCallback(() => {
+    const scope = imActionScope.current;
+    const edit = imMattermostEditSeq.current;
+    const visit = imMattermostVisitSeq.current;
+    if (imPlatform === "mattermost") imMattermostBusy.current = true;
+    const isCurrent = () =>
+      (imPlatform !== "mattermost" &&
+        imCurrentPlatform.current !== "mattermost" &&
+        imMattermostVisitSeq.current === visit) ||
+      imActionScope.current === scope;
+    return {
+      isCurrent,
+      canReload: () =>
+        isCurrent() && (imPlatform !== "mattermost" || imMattermostEditSeq.current === edit),
+    };
+  }, [imPlatform]);
 
   // IM config drafts cache (per-platform local edits, not yet saved to server)
   const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>(
@@ -489,20 +511,22 @@ export function SettingsModal({
     if (weixinAutoStartRef.current) return;
 
     weixinAutoStartRef.current = true;
+    const { isCurrent, canReload } = currentIMAction();
     void (async () => {
       setImBusy(true);
       try {
-        const resp = await api.startIMBridge(groupId);
-        if (resp.ok) {
-          await loadIMStatus();
-        }
+        await api.runIMManagement(groupId, false, async () => {
+          if (!isCurrent()) return;
+          const resp = await api.startIMBridge(groupId);
+          if (resp.ok && canReload()) await loadIMStatus({ isCurrent: canReload });
+        });
       } catch (e) {
         console.error("Failed to auto-start weixin bridge:", e);
       } finally {
-        setImBusy(false);
+        if (isCurrent()) setImBusy(false);
       }
     })();
-  }, [groupId, imPlatform, imStatus, loadIMStatus, weixinLoginStatus]);
+  }, [groupId, imPlatform, imStatus, loadIMStatus, weixinLoginStatus, currentIMAction]);
 
   useEffect(() => {
     if (isOpen && canAccessGlobalSettings === true) loadObservability();
@@ -767,22 +791,6 @@ export function SettingsModal({
     setImPlatform(newPlatform);
   };
 
-  // 沿用设置页的 ref 归属检查；访问同一 Group 两次也不能复活旧续体。
-  const currentIMAction = () => {
-    const scope = imActionScope.current;
-    const edit = imMattermostEditSeq.current;
-    if (imPlatform === "mattermost") imMattermostBusy.current = true;
-    // 两端均为旧平台时保留原生续体合同；本补丁只隔离涉及 Mattermost 的路径。
-    const isCurrent = () =>
-      (imPlatform !== "mattermost" && imCurrentPlatform.current !== "mattermost") ||
-      imActionScope.current === scope;
-    return {
-      isCurrent,
-      canReload: () =>
-        isCurrent() && (imPlatform !== "mattermost" || imMattermostEditSeq.current === edit),
-    };
-  };
-
   const handleSaveIMConfig = async () => {
     if (!groupId) return;
     const { isCurrent, canReload } = currentIMAction();
@@ -825,6 +833,13 @@ export function SettingsModal({
       await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
         if (!isCurrent()) return;
         const resp = await api.unsetIMConfig(groupId);
+        if (!isCurrent()) return;
+        if (!resp.ok && imPlatform === "mattermost") {
+          setImConfigError({
+            groupId,
+            message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
+          });
+        }
         if (!canReload()) return;
         if (resp.ok) {
           setImBotTokenEnv("");
@@ -843,6 +858,10 @@ export function SettingsModal({
         }
       });
     } catch (e) {
+      if (!isCurrent()) return;
+      if (imPlatform === "mattermost") {
+        setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
+      }
       console.error("Failed to remove IM config:", e);
     } finally {
       if (isCurrent()) {
@@ -910,13 +929,26 @@ export function SettingsModal({
     if (!groupId) return;
     const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
+    if (imPlatform === "mattermost") setImConfigError(null);
     try {
       await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
         if (!isCurrent()) return;
-        await api.stopIMBridge(groupId);
+        const resp = await api.stopIMBridge(groupId);
+        if (!isCurrent()) return;
+        if (!resp.ok && imPlatform === "mattermost") {
+          setImConfigError({
+            groupId,
+            message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
+          });
+          return;
+        }
         if (canReload()) await loadIMStatus({ isCurrent: canReload });
       });
     } catch (e) {
+      if (!isCurrent()) return;
+      if (imPlatform === "mattermost") {
+        setImConfigError({ groupId, message: t("imBridge.mattermostConfigFailed") });
+      }
       console.error("Failed to stop bridge:", e);
     } finally {
       if (isCurrent()) {
@@ -928,72 +960,92 @@ export function SettingsModal({
 
   const handleStartWeixinLogin = async () => {
     if (!groupId) return;
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     try {
-      const saveResp = await saveIMConfigDraft(getCurrentIMSaveRequest());
-      if (!saveResp.ok) {
-        setWeixinLoginStatus(
-          toWeixinErrorStatus(saveResp.error?.message || t("imBridge.weixinStartFailed")),
-        );
-        return;
-      }
-      await loadIMStatus();
-      weixinAutoStartRef.current = false;
-      const resp = await api.startWeixinLogin(groupId);
-      if (resp.ok) {
-        setWeixinLoginStatus(resp.result ?? null);
-      } else {
-        setWeixinLoginStatus(
-          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
-        );
-      }
+      await api.runIMManagement(groupId, false, async () => {
+        if (!isCurrent()) return;
+        const saveResp = await saveIMConfigDraft(getCurrentIMSaveRequest());
+        if (!isCurrent()) return;
+        if (!saveResp.ok) {
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(saveResp.error?.message || t("imBridge.weixinStartFailed")),
+          );
+          return;
+        }
+        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        if (!isCurrent()) return;
+        weixinAutoStartRef.current = false;
+        const resp = await api.startWeixinLogin(groupId);
+        if (!isCurrent()) return;
+        if (resp.ok) {
+          setWeixinLoginStatus(resp.result ?? null);
+        } else {
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
+          );
+        }
+      });
     } catch (e) {
+      if (!isCurrent()) return;
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinStartFailed")));
       console.error("Failed to start weixin login:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) setImBusy(false);
     }
   };
 
   const handleLogoutWeixin = async () => {
     if (!groupId) return;
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     try {
-      weixinAutoStartRef.current = false;
-      const resp = await api.logoutWeixin(groupId);
-      if (resp.ok) {
-        setWeixinLoginStatus(resp.result ?? null);
-        await loadIMStatus();
-      } else {
-        setWeixinLoginStatus(
-          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")),
-        );
-      }
+      await api.runIMManagement(groupId, false, async () => {
+        if (!isCurrent()) return;
+        weixinAutoStartRef.current = false;
+        const resp = await api.logoutWeixin(groupId);
+        if (!isCurrent()) return;
+        if (resp.ok) {
+          setWeixinLoginStatus(resp.result ?? null);
+          if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        } else {
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")),
+          );
+        }
+      });
     } catch (e) {
+      if (!isCurrent()) return;
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinLogoutFailed")));
       console.error("Failed to logout weixin:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) setImBusy(false);
     }
   };
 
   const handleVerifyWeixin = async (verifyCode: string) => {
     if (!groupId) return;
+    const { isCurrent } = currentIMAction();
     setImBusy(true);
     try {
-      const resp = await api.verifyWeixinLogin(groupId, verifyCode);
-      if (resp.ok) {
-        setWeixinLoginStatus(resp.result ?? null);
-      } else {
-        setWeixinLoginStatus(
-          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinVerifyFailed")),
-        );
-      }
+      await api.runIMManagement(groupId, false, async () => {
+        if (!isCurrent()) return;
+        const resp = await api.verifyWeixinLogin(groupId, verifyCode);
+        if (!isCurrent()) return;
+        if (resp.ok) {
+          setWeixinLoginStatus(resp.result ?? null);
+        } else {
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinVerifyFailed")),
+          );
+        }
+      });
     } catch (e) {
+      if (!isCurrent()) return;
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinVerifyFailed")));
       console.error("Failed to verify weixin login:", e);
     } finally {
-      setImBusy(false);
+      if (isCurrent()) setImBusy(false);
     }
   };
 

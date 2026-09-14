@@ -404,14 +404,44 @@ pub(super) async fn start_registered(
         }
         Err(error) => Err(error),
     };
-    update_start_state(
-        registry,
-        &store,
-        group_id,
-        config,
-        generation,
-        Some(&result),
-    )?;
+    complete_start(registry, &store, group_id, config, generation, result).await
+}
+
+async fn complete_start(
+    registry: &super::ImWorkerRegistry,
+    store: &GroupStore,
+    group_id: &str,
+    config: &Map<String, Value>,
+    generation: u64,
+    result: Result<(), String>,
+) -> Result<(), String> {
+    if let Err(error) =
+        update_start_state(registry, store, group_id, config, generation, Some(&result))
+    {
+        // 与原生 install/stop 使用同一生命周期锁；只摘除本次失败的代次。
+        let lifecycle_lock = registry.lifecycle_lock(group_id);
+        let worker = {
+            let _guard = lifecycle_lock.lock().await;
+            if registry.is_generation_current(group_id, generation) {
+                registry
+                    .generations
+                    .lock()
+                    .expect("IM generation registry poisoned")
+                    .remove(group_id);
+                registry
+                    .workers
+                    .lock()
+                    .expect("IM worker registry poisoned")
+                    .remove(group_id)
+            } else {
+                None
+            }
+        };
+        if let Some(worker) = worker {
+            worker.shutdown().await;
+        }
+        return Err(error);
+    }
     result
 }
 
@@ -3480,6 +3510,103 @@ mod tests {
                     StatusCode::OK
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_final_state_update_removes_only_its_installed_generation() {
+        for newer in [false, true] {
+            let (_temp, home, group) = scope();
+            let (_, registry) = route_context(&home);
+            let store = GroupStore::new(home).expect("store");
+            let config = json!({"platform":"mattermost"})
+                .as_object()
+                .expect("config")
+                .clone();
+            cccc_core::im_state::update(&store, &group, |state| {
+                state["config"] = json!(config);
+                Ok(())
+            })
+            .expect("configure");
+            let (failed_generation, _) = registry.begin_start(&group).await;
+            let generation = if newer {
+                registry.begin_start(&group).await.0
+            } else {
+                failed_generation
+            };
+            let stopped = Arc::new(AtomicBool::new(false));
+            let stop_flag = Arc::clone(&stopped);
+            let (closed, disconnected) = tokio::sync::oneshot::channel::<()>();
+            registry
+                .install(
+                    &group,
+                    generation,
+                    super::super::worker(
+                        vec![tokio::spawn(async move {
+                            let _closed = closed;
+                            std::future::pending::<()>().await;
+                        })],
+                        Arc::new(move || {
+                            stop_flag.store(true, Ordering::SeqCst);
+                        }),
+                    ),
+                )
+                .await
+                .expect("install worker");
+            let path = store
+                .group_dir(&group)
+                .expect("group dir")
+                .join("group.yaml");
+            let original = std::fs::read(&path).expect("saved config");
+            if !newer {
+                // 受控状态文件故障发生在 install 之后；不依赖 OS 权限或随机时序。
+                std::fs::write(&path, "[").expect("corrupt only test state");
+            }
+            let expected = std::fs::read(&path).expect("expected state");
+            assert!(
+                complete_start(
+                    &registry,
+                    &store,
+                    &group,
+                    &config,
+                    failed_generation,
+                    Ok(())
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(std::fs::read(&path).expect("unchanged state"), expected);
+            assert_eq!(registry.is_running(&group), newer);
+            assert_eq!(registry.is_generation_current(&group, generation), newer);
+            assert_eq!(stopped.load(Ordering::SeqCst), !newer);
+            if newer {
+                assert!(registry.stop(&group).await);
+            }
+            tokio::time::timeout(Duration::from_secs(3), disconnected)
+                .await
+                .expect("worker terminated")
+                .expect_err("task sender dropped");
+            std::fs::write(&path, original).expect("restore test state");
+            let (retry, _) = registry.begin_start(&group).await;
+            registry
+                .install(
+                    &group,
+                    retry,
+                    super::super::worker(
+                        vec![tokio::spawn(std::future::pending())],
+                        super::super::no_op_stopper(),
+                    ),
+                )
+                .await
+                .expect("retry install");
+            complete_start(&registry, &store, &group, &config, retry, Ok(()))
+                .await
+                .expect("retry commits");
+            assert_eq!(
+                cccc_core::im_state::load(&store, &group).expect("retry state")["running"],
+                true
+            );
+            registry.shutdown().await;
         }
     }
 

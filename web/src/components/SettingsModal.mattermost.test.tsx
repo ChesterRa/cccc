@@ -30,7 +30,23 @@ vi.mock("../services/api", async (importOriginal) => ({
   startIMBridge: vi.fn(),
   stopIMBridge: vi.fn(),
   unsetIMConfig: vi.fn(),
+  fetchWeixinLoginStatus: vi.fn(),
+  startWeixinLogin: vi.fn(),
+  verifyWeixinLogin: vi.fn(),
+  logoutWeixin: vi.fn(),
 }));
+
+const weixinStatus = {
+  status: "logged_out",
+  logged_in: false,
+  account_id: "",
+  qrcode_url: "",
+  qr_ascii: "",
+  error: "",
+  running: false,
+  pid: null,
+  updated_at: "2026-09-14T00:00:00Z",
+};
 
 describe("SettingsModal Mattermost draft group isolation", () => {
   let container: HTMLDivElement;
@@ -62,6 +78,14 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     vi.mocked(api.startIMBridge).mockResolvedValue({ ok: true, result: {} });
     vi.mocked(api.stopIMBridge).mockResolvedValue({ ok: true, result: {} });
     vi.mocked(api.unsetIMConfig).mockResolvedValue({ ok: true, result: {} });
+    for (const method of [
+      "fetchWeixinLoginStatus",
+      "startWeixinLogin",
+      "verifyWeixinLogin",
+      "logoutWeixin",
+    ] as const) {
+      vi.mocked(api[method]).mockResolvedValue({ ok: true, result: weixinStatus });
+    }
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -95,7 +119,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     });
     await vi.waitFor(() => expect(container.textContent).toContain(groupId));
   };
-  const choose = async (platform: "mattermost" | "telegram" | "slack") => {
+  const choose = async (platform: "mattermost" | "telegram" | "slack" | "weixin") => {
     await act(async () => props().onPlatformChange(platform));
   };
 
@@ -111,6 +135,229 @@ describe("SettingsModal Mattermost draft group isolation", () => {
             : p.onStartBridge(),
     );
   };
+
+  it.each(["remove", "stop"])(
+    "shows Mattermost %s failures without discarding newer edits",
+    async (action) => {
+      for (const failure of ["application", "transport"] as const) {
+        for (const platform of ["mattermost", "slack"] as const) {
+          await renderGroup(`failure-${action}-${failure}-${platform}`);
+          await choose(platform);
+          let release!: () => void;
+          const gate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const method = action === "remove" ? "unsetIMConfig" : "stopIMBridge";
+          vi.mocked(api[method]).mockImplementationOnce(async () => {
+            await gate;
+            if (failure === "transport") throw new Error("private transport details");
+            return { ok: false, error: { code: "rejected", message: "Removal rejected" } };
+          });
+          let request!: Promise<void>;
+          await act(async () => {
+            request = invoke(action);
+          });
+          await act(async () => {
+            props().setImMattermostUrl("https://new-draft.example.test");
+            props().setImBotTokenEnv("NEW_DRAFT_TOKEN");
+          });
+          const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
+          await act(async () => {
+            release();
+            await request;
+          });
+          expect(props().imBusy).toBe(false);
+          if (platform === "mattermost") {
+            expect(props().imConfigError).toBe(
+              failure === "application" ? "Removal rejected" : "imBridge.mattermostConfigFailed",
+            );
+            expect(props().imMattermostUrl).toBe("https://new-draft.example.test");
+            expect(props().imBotTokenEnv).toBe("NEW_DRAFT_TOKEN");
+            expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
+          } else {
+            expect(props().imConfigError).toBeUndefined();
+          }
+        }
+      }
+    },
+  );
+
+  it.each(["login", "logout", "verify"] as const)(
+    "orders Weixin %s and Mattermost mutations in both directions",
+    async (action) => {
+      for (const mattermostFirst of [true, false]) {
+        const group = `weixin-order-${action}-${mattermostFirst}`;
+        let savedPlatform: "mattermost" | "weixin" = mattermostFirst ? "mattermost" : "weixin";
+        vi.mocked(api.fetchIMStatus).mockImplementation(async () => ({
+          ok: true,
+          result: {
+            group_id: group,
+            configured: true,
+            platform: savedPlatform,
+            running: false,
+            enabled: false,
+            subscribers: 0,
+          },
+        }));
+        vi.mocked(api.fetchIMConfig).mockImplementation(async () => ({
+          ok: true,
+          result: {
+            im: {
+              platform: savedPlatform,
+              mattermost_url: "https://saved.example.test",
+              bot_token_env: "SAVED_TOKEN",
+            },
+          },
+        }));
+        const order: string[] = [];
+        const apiName =
+          action === "login"
+            ? "startWeixinLogin"
+            : action === "logout"
+              ? "logoutWeixin"
+              : "verifyWeixinLogin";
+        const weixin = () =>
+          Promise.resolve(
+            action === "login"
+              ? props().onStartWeixinLogin()
+              : action === "logout"
+                ? props().onLogoutWeixin()
+                : props().onVerifyWeixin("synthetic-code"),
+          );
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let first = true;
+        vi.mocked(api.setIMConfig).mockImplementation(async (_group, platform) => {
+          const blocked = first && (mattermostFirst || action === "login");
+          first = false;
+          if (blocked) {
+            order.push("old-sent");
+            await gate;
+            order.push("old-done");
+          } else order.push("new-sent");
+          savedPlatform = platform as typeof savedPlatform;
+          return { ok: true, result: {} };
+        });
+        vi.mocked(api[apiName]).mockImplementation(async () => {
+          if (!mattermostFirst && action !== "login" && first) {
+            first = false;
+            order.push("old-sent");
+            await gate;
+            order.push("old-done");
+          } else order.push("weixin-sent");
+          return { ok: true, result: weixinStatus };
+        });
+        await renderGroup(group);
+        await choose(mattermostFirst ? "mattermost" : "weixin");
+        let old!: Promise<void>;
+        await act(async () => {
+          old = mattermostFirst ? invoke("save") : weixin();
+        });
+        expect(order).toEqual(["old-sent"]);
+        await choose(mattermostFirst ? "weixin" : "mattermost");
+        let next!: Promise<void>;
+        await act(async () => {
+          next = mattermostFirst ? weixin() : invoke("save");
+        });
+        expect.soft(order).toEqual(["old-sent"]);
+        await act(async () => {
+          release();
+          await Promise.all([old, next]);
+        });
+        expect(order.slice(0, 2)).toEqual(["old-sent", "old-done"]);
+        expect(order.length).toBeGreaterThan(2);
+        if (!mattermostFirst || action === "login") {
+          expect(savedPlatform).toBe(mattermostFirst ? "weixin" : "mattermost");
+          expect(props().imPlatform).toBe(savedPlatform);
+        }
+        if (!mattermostFirst && action === "login") expect(order).not.toContain("weixin-sent");
+        expect(props().imBusy).toBe(false);
+      }
+    },
+  );
+
+  it("orders automatic Weixin startup before a later Mattermost save", async () => {
+    let savedPlatform: "weixin" | "mattermost" = "weixin";
+    vi.mocked(api.fetchIMStatus).mockImplementation(async () => ({
+      ok: true,
+      result: {
+        group_id: "auto-order",
+        configured: true,
+        platform: savedPlatform,
+        running: false,
+        enabled: savedPlatform === "weixin",
+        subscribers: 0,
+      },
+    }));
+    vi.mocked(api.fetchIMConfig).mockImplementation(async () => ({
+      ok: true,
+      result: { im: { platform: savedPlatform } },
+    }));
+    vi.mocked(api.fetchWeixinLoginStatus).mockResolvedValue({
+      ok: true,
+      result: { ...weixinStatus, logged_in: true },
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const order: string[] = [];
+    vi.mocked(api.startIMBridge).mockImplementationOnce(async () => {
+      order.push("auto-sent");
+      await gate;
+      order.push("auto-done");
+      return { ok: true, result: {} };
+    });
+    vi.mocked(api.setIMConfig).mockImplementationOnce(async () => {
+      order.push("mattermost-sent");
+      savedPlatform = "mattermost";
+      return { ok: true, result: {} };
+    });
+    await renderGroup("auto-order");
+    await vi.waitFor(() => expect(order).toEqual(["auto-sent"]));
+    await choose("mattermost");
+    let next!: Promise<void>;
+    await act(async () => {
+      next = invoke("save");
+    });
+    expect.soft(order).toEqual(["auto-sent"]);
+    await act(async () => {
+      release();
+      await next;
+    });
+    expect(order).toEqual(["auto-sent", "auto-done", "mattermost-sent"]);
+    expect(props().imPlatform).toBe("mattermost");
+    expect(props().imBusy).toBe(false);
+  });
+
+  it("keeps native legacy continuations but invalidates a Weixin login after visiting Mattermost", async () => {
+    for (const viaMattermost of [false, true]) {
+      await renderGroup(`weixin-return-${viaMattermost}`);
+      await choose("weixin");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(api.setIMConfig).mockImplementationOnce(async () => {
+        await gate;
+        return { ok: true, result: {} };
+      });
+      const before = vi.mocked(api.startWeixinLogin).mock.calls.length;
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = Promise.resolve(props().onStartWeixinLogin());
+      });
+      await choose(viaMattermost ? "mattermost" : "telegram");
+      await choose("weixin");
+      await act(async () => {
+        release();
+        await pending;
+      });
+      expect(api.startWeixinLogin).toHaveBeenCalledTimes(before + (viaMattermost ? 0 : 1));
+    }
+  });
 
   it.each(["save", "start-save", "start", "stop", "remove", "status", "config"])(
     "keeps new edits and releases busy when %s finishes in the same view",
