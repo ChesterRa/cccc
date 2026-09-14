@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::Response;
 use axum::routing::get;
 use serde::Deserialize;
@@ -14,6 +14,8 @@ use super::terminal_ws_protocol::{
     TerminalInputContext, frame, handle_stream_input, send_output_frame, terminal_writable,
 };
 use crate::AppState;
+use crate::auth::Principal;
+use crate::connect_frames::{LIVE_ACCESS_INTERVAL, live_group_access};
 
 const TERMINAL_OUTPUT_PAGE_BYTES: usize = 64 * 1024;
 
@@ -28,6 +30,7 @@ struct AttachQuery {
     bootstrap: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
+    connect_frame: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -41,6 +44,7 @@ async fn upgrade(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
     Query(query): Query<AttachQuery>,
+    Extension(principal): Extension<Principal>,
     ws: WebSocketUpgrade,
 ) -> Response {
     if terminal_disabled(state.web_mode, state.exhibit_allow_terminal) {
@@ -53,7 +57,7 @@ async fn upgrade(
             .await;
         });
     }
-    ws.on_upgrade(move |socket| serve(socket, state, group_id, actor_id, query))
+    ws.on_upgrade(move |socket| serve(socket, state, group_id, actor_id, query, principal))
 }
 
 async fn serve(
@@ -62,8 +66,23 @@ async fn serve(
     group_id: String,
     actor_id: String,
     query: AttachQuery,
+    principal: Principal,
 ) {
     let mode = requested_mode(state.web_mode, &query.mode);
+    if !live_group_access(
+        &state,
+        &principal,
+        &group_id,
+        query.connect_frame.as_deref(),
+    ) {
+        send_terminal_error(
+            &mut socket,
+            "auth_required",
+            "Web access expired; reopen this Group",
+        )
+        .await;
+        return;
+    }
     let mut args = json!({
         "group_id": group_id,
         "actor_id": actor_id,
@@ -176,6 +195,8 @@ async fn serve(
     let mut output = [0_u8; TERMINAL_OUTPUT_PAGE_BYTES];
     let mut shutdown = state.shutdown.subscribe();
     let mut writable_poll = tokio::time::interval(Duration::from_millis(100));
+    let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
+    access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     writable_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
@@ -183,6 +204,13 @@ async fn serve(
             _ = shutdown.recv() => {
                 let _ = socket.send(Message::Close(None)).await;
                 break;
+            }
+            _ = access_poll.tick() => {
+                if !live_group_access(&state, &principal, &group_id, query.connect_frame.as_deref()) {
+                    send_terminal_error(&mut socket, "auth_required", "Web access expired; reopen this Group").await;
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
             }
             _ = writable_poll.tick(), if mode == "control" => {
                 let Some(next_writable) = terminal_writable(

@@ -226,7 +226,15 @@ run_timed() {
   local label="$1"
   shift
   local started=$SECONDS
-  "$@"
+  # Git exports repository-local variables to hooks. Tests create their own
+  # repositories, so those variables must not redirect fixture Git commands
+  # back into the committing repository (especially in linked worktrees).
+  local clean_env=(env)
+  local variable
+  while IFS= read -r variable; do
+    clean_env+=(-u "$variable")
+  done < <(git rev-parse --local-env-vars)
+  "${clean_env[@]}" "$@"
   echo "✓ $label completed in $((SECONDS - started))s"
 }
 

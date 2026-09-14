@@ -1,0 +1,215 @@
+use cccc_core::workspace::{self, ListOptions, WriteOutcome};
+
+#[path = "support/workspace_fixture.rs"]
+mod workspace_fixture;
+use workspace_fixture::fixture;
+
+#[test]
+fn relative_paths_that_climb_out_of_the_scope_are_rejected() {
+    let fixture = fixture();
+    for escape in ["../", "..", "../secrets.txt", "src/../../secrets.txt"] {
+        assert!(
+            workspace::safe_relative(escape).is_err(),
+            "{escape} must be rejected"
+        );
+    }
+    assert!(workspace::read_file(&fixture.group, "../secrets.txt").is_err());
+    assert!(workspace::list(&fixture.group, "..", ListOptions::default()).is_err());
+}
+
+#[test]
+fn absolute_paths_cannot_reach_outside_the_scope() {
+    let fixture = fixture();
+    assert!(workspace::safe_relative("/etc/passwd").is_err());
+    assert!(workspace::read_file(&fixture.group, "/etc/passwd").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_pointing_outside_the_scope_are_refused() {
+    let fixture = fixture();
+    let outside = fixture.repo.parent().expect("parent").join("outside.txt");
+    std::fs::write(&outside, "secret\n").expect("outside");
+    std::os::unix::fs::symlink(&outside, fixture.repo.join("leak.txt")).expect("symlink");
+
+    // The relative path itself is clean, so only the canonicalized root check can catch this.
+    let error = workspace::read_file(&fixture.group, "leak.txt").expect_err("must refuse");
+    assert!(
+        error.to_string().contains("active scope"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn reading_a_text_file_reports_content_and_a_digest_that_authorizes_writes() {
+    let fixture = fixture();
+    let read = workspace::read_file(&fixture.group, "src/lib.rs").expect("read");
+    assert_eq!(read.content, "fn main() {}\n");
+    assert_eq!(read.path, "src/lib.rs");
+    assert!(!read.binary);
+    assert!(!read.truncated);
+
+    let written = workspace::write_file(
+        &fixture.group,
+        "src/lib.rs",
+        "fn main() { 1; }\n",
+        &read.sha256,
+    )
+    .expect("write");
+    let WriteOutcome::Written { created, .. } = written else {
+        panic!("expected the matching digest to be accepted");
+    };
+    assert!(!created);
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("src/lib.rs")).expect("reread"),
+        "fn main() { 1; }\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_an_executable_script_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture();
+    let script = fixture.repo.join("run.sh");
+    std::fs::write(&script, "#!/bin/sh\necho one\n").expect("script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let read = workspace::read_file(&fixture.group, "run.sh").expect("read");
+    let outcome = workspace::write_file(
+        &fixture.group,
+        "run.sh",
+        "#!/bin/sh\necho two\n",
+        &read.sha256,
+    )
+    .expect("write");
+    assert!(matches!(outcome, WriteOutcome::Written { .. }));
+
+    let mode = std::fs::metadata(&script)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o755,
+        "an atomic replace must not strip the executable bit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&script).expect("reread"),
+        "#!/bin/sh\necho two\n"
+    );
+}
+
+#[test]
+fn writing_with_a_stale_digest_conflicts_instead_of_clobbering_the_actor_edit() {
+    let fixture = fixture();
+    let read = workspace::read_file(&fixture.group, "src/lib.rs").expect("read");
+    // An Actor rewrites the same file while the browser tab still holds the old content.
+    std::fs::write(fixture.repo.join("src/lib.rs"), "fn actor() {}\n").expect("actor write");
+
+    let outcome = workspace::write_file(
+        &fixture.group,
+        "src/lib.rs",
+        "fn browser() {}\n",
+        &read.sha256,
+    )
+    .expect("write");
+    let WriteOutcome::Conflict { sha256 } = outcome else {
+        panic!("a stale digest must conflict");
+    };
+    assert_ne!(sha256, read.sha256);
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("src/lib.rs")).expect("reread"),
+        "fn actor() {}\n",
+        "the conflicting write must not touch the file"
+    );
+}
+
+#[test]
+fn creating_a_file_requires_an_empty_digest_and_an_absent_path() {
+    let fixture = fixture();
+    let created =
+        workspace::write_file(&fixture.group, "src/new.rs", "// new\n", "").expect("create");
+    let WriteOutcome::Written {
+        created: is_new, ..
+    } = created
+    else {
+        panic!("creating an absent path must succeed");
+    };
+    assert!(is_new);
+
+    let clash =
+        workspace::write_file(&fixture.group, "src/new.rs", "// again\n", "").expect("clash");
+    assert!(
+        matches!(clash, WriteOutcome::Conflict { .. }),
+        "an empty digest must not overwrite an existing file"
+    );
+    assert!(workspace::write_file(&fixture.group, "../escape.rs", "// no\n", "").is_err());
+}
+
+#[test]
+fn binary_and_oversized_files_are_flagged_rather_than_inlined() {
+    let fixture = fixture();
+    std::fs::write(fixture.repo.join("logo.bin"), [0x89, 0x50, 0x00, 0x1a]).expect("binary");
+    let binary = workspace::read_file(&fixture.group, "logo.bin").expect("read binary");
+    assert!(binary.binary);
+    assert!(binary.content.is_empty());
+
+    let oversized = vec![b'a'; (workspace::MAX_READ_BYTES + 1) as usize];
+    std::fs::write(fixture.repo.join("huge.txt"), &oversized).expect("huge");
+    let huge = workspace::read_file(&fixture.group, "huge.txt").expect("read huge");
+    assert!(huge.truncated);
+    assert!(huge.content.is_empty());
+    assert_eq!(huge.bytes, workspace::MAX_READ_BYTES + 1);
+}
+
+#[test]
+fn concurrent_saves_sharing_one_digest_keep_exactly_one_write() {
+    let fixture = fixture();
+    let digest = workspace::read_file(&fixture.group, "src/lib.rs")
+        .expect("read")
+        .sha256;
+    const WRITERS: usize = 16;
+    let barrier = std::sync::Barrier::new(WRITERS);
+    let outcomes = std::thread::scope(|scope| {
+        let handles = (0..WRITERS)
+            .map(|index| {
+                let group = &fixture.group;
+                let digest = digest.as_str();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    // Every writer read the same bytes, so every writer believes it may save.
+                    barrier.wait();
+                    workspace::write_file(
+                        group,
+                        "src/lib.rs",
+                        &format!("fn v{index}() {{}}\n"),
+                        digest,
+                    )
+                    .expect("write")
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join"))
+            .collect::<Vec<_>>()
+    });
+
+    let winners = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            WriteOutcome::Written { sha256, .. } => Some(sha256.clone()),
+            WriteOutcome::Conflict { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one save may pass the digest check, got {outcomes:?}"
+    );
+    // The surviving bytes must be the winner's, not a later loser's silent overwrite.
+    let after = workspace::read_file(&fixture.group, "src/lib.rs").expect("reread");
+    assert_eq!(after.sha256, winners[0]);
+}

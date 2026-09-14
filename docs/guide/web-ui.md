@@ -427,7 +427,7 @@ address it explicitly; `@foreman` also wakes the coordinator. An explicit target
 wakes when combined with a broadcast. Mail leaves disabled Actors stopped.
 
 Messages larger than 64 KiB after UTF-8 encoding are sent as UTF-8 text attachments for
-same-group and remote Group Bridge targets. Local cross-group text remains inline because its two
+same-group and CCCC Connect reply targets. Local cross-group text remains inline because its two
 local ledgers cannot share one attachment path; the bounded daemon IPC limit covers that JSON route.
 This applies to typed, pasted, dictated, suggested, and restored drafts. Slash commands still require
 inline text and therefore reject an automatically attached oversized body.
@@ -573,7 +573,14 @@ when the reconstructed browser-facing origin is loopback. Unsafe writes and WebS
 carry the exact same loopback Origin; non-local proxy client addresses are rejected. This local
 principal is never persisted and is not valid through LAN, Reach, a public URL, or a reverse proxy.
 
-Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, non-local clients receive only the UI shell and health/session guidance; protected APIs and business WebSockets remain locked, while direct loopback access keeps the passwordless local principal described above. Read the one-time bootstrap code from `~/.cccc/web_bootstrap_token` on the CCCC host and enter it only when creating the first administrator token; the file is mode `0600` on Unix and is deleted after successful use.
+Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**. With no administrator token, non-local clients receive only the UI shell and health/session guidance; protected APIs and business WebSockets remain locked, while direct loopback access keeps the passwordless local principal described above. Direct local setup no longer requires copying a bootstrap code. Linking your
+account initializes an administrator Token if needed; completing that flow from
+the verified localhost Web page also signs that browser in. Enabling hosted Remote
+Access from that local page covers installations linked before this automatic
+setup existed. Existing Tokens are preserved. When first configuring through a
+remote address instead, read `web_bootstrap_token` inside the host's effective
+`CCCC_HOME` (default `~/.cccc`) and enter that one-time code. The file is mode
+`0600` on Unix and is removed once administrator setup completes.
 
 The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. The native daemon and Web boundary enforce the same rule at remote start, apply, and listener boundaries, so direct API calls and stale saved settings cannot bypass the panel. Group-scoped tokens do not satisfy this administrator recovery requirement. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
 
@@ -694,3 +701,22 @@ A token scoped to selected Groups receives global stream
 metadata only for those Groups, and the global stream never carries message
 content. Full event content remains on the per-Group stream and is subject to
 the same scope check. Administrative capability changes require an Admin token.
+
+Same-origin browser requests carrying `Sec-Fetch-Site: same-origin` satisfy the
+Cookie CSRF check even when a reverse proxy rewrites Host or terminates HTTPS.
+This does not require `CCCC_WEB_CORS_ORIGINS` or global proxy-header trust.
+Proxies should preserve this browser-generated header, never manufacture it for
+cross-origin requests. `same-site`, `cross-site`, `none`, and missing metadata
+continue through the existing Origin/Referer and configured-origin checks.
+Authentication and group permissions remain required. See the
+[Fetch Metadata specification](https://www.w3.org/TR/fetch-metadata/).
+
+Browsers send no Fetch Metadata on a WebSocket handshake, so Terminal and
+stream sockets fall back to comparing the request `Origin` against the served
+host. That comparison ignores the scheme, because TLS terminating at a reverse
+proxy makes the origin server read every `https://` page back as `http://`.
+Host and port must still match exactly — a different host, port, or subdomain
+is rejected — and the scheme alone adds nothing, since an attacker able to
+serve a page from this host would already control the site. Proxies that
+rewrite `Host` still need `CCCC_WEB_TRUST_PROXY_HEADERS=1` or an explicit
+`CCCC_WEB_CORS_ORIGINS` entry.

@@ -29,17 +29,6 @@ const ACTOR_REFRESH_EVENT_KINDS = new Set([
 
 const CAPABILITY_REFRESH_EVENT_KINDS = new Set(["capability.changed"]);
 
-const GROUP_BRIDGE_PAIRING_EVENT_KINDS = new Set([
-  "group_bridge.pairing.invite_created",
-  "group_bridge.pairing.request_created",
-  "group_bridge.pairing.request_approved",
-  "group_bridge.pairing.request_rejected",
-  "group_bridge.pairing.trust_access_updated",
-  "group_bridge.pairing.trust_revoked",
-  "group_bridge.pairing.outbound_changed",
-  "group_bridge.pairing.outbound_approved",
-]);
-
 export function shouldRefreshGroupsAfterGlobalEvent(ev: unknown): boolean {
   return GLOBAL_REFRESH_EVENT_KINDS.has(eventKind(ev));
 }
@@ -49,12 +38,6 @@ export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: bool
 }
 
 export function shouldRefreshCapabilitiesAfterGlobalEventsOpen(
-  _hasConnectedOnce: boolean,
-): boolean {
-  return true;
-}
-
-export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(
   _hasConnectedOnce: boolean,
 ): boolean {
   return true;
@@ -82,13 +65,6 @@ export function shouldRefreshCapabilitiesAfterGlobalEvent(
   selectedGroupId: string,
 ): boolean {
   return matchesSelectedGroup(ev, selectedGroupId, CAPABILITY_REFRESH_EVENT_KINDS);
-}
-
-export function shouldRefreshGroupBridgePairingAfterGlobalEvent(
-  ev: unknown,
-  selectedGroupId: string,
-): boolean {
-  return matchesSelectedGroup(ev, selectedGroupId, GROUP_BRIDGE_PAIRING_EVENT_KINDS);
 }
 
 function eventKind(ev: unknown): string {

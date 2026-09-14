@@ -114,6 +114,27 @@ impl AccessTokenStore {
         Ok(self.load()?.tokens.get(raw.trim()).cloned())
     }
 
+    /// Initialize only from an already authorized local administration action.
+    /// The store lock makes concurrent setup attempts reuse the same credential.
+    pub fn ensure_administrator(&self) -> io::Result<AccessToken> {
+        self.mutate(|document| {
+            if let Some(token) = document.tokens.values().find(|token| token.is_admin) {
+                return Ok(token.clone());
+            }
+            let now = utc_now();
+            let token = AccessToken {
+                token: format!("acc_{}", Uuid::new_v4().simple()),
+                user_id: "Local administrator".into(),
+                allowed_groups: Vec::new(),
+                is_admin: true,
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            document.tokens.insert(token.token.clone(), token.clone());
+            Ok(token)
+        })
+    }
+
     pub fn create(
         &self,
         user_id: &str,
@@ -416,5 +437,44 @@ mod tests {
             .delete(&admin.token_id())
             .expect_err("last admin must remain");
         assert!(is_last_admin_required(&error));
+    }
+}
+
+#[cfg(test)]
+mod initialization_tests {
+    use super::*;
+
+    #[test]
+    fn parallel_initialization_uses_one_administrator_and_preserves_scoped_tokens() {
+        let temp = tempfile::tempdir().expect("fixture operation");
+        let home = HomeLayout::from_path(temp.path()).expect("fixture operation");
+        let store = AccessTokenStore::new(home).expect("fixture operation");
+        let limited = store
+            .create("guest", vec!["group-a".into()], false, None)
+            .expect("fixture operation");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store
+                        .ensure_administrator()
+                        .expect("fixture operation")
+                        .token_id()
+                })
+            })
+            .collect();
+        let ids: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().expect("fixture operation"))
+            .collect();
+        assert!(ids.iter().all(|id| id == &ids[0]));
+        assert_eq!(store.list().expect("fixture operation").len(), 2);
+        assert_eq!(
+            store.lookup(&limited.token).expect("fixture operation"),
+            Some(limited)
+        );
     }
 }

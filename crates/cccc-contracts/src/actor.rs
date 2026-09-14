@@ -140,6 +140,9 @@ pub struct Actor {
     pub profile_revision_applied: u64,
     #[serde(default)]
     pub created_at: String,
+    /// Stable for one Actor registration, replaced when that Actor is recreated.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub generation: String,
     #[serde(default)]
     pub updated_at: String,
 }
@@ -170,6 +173,7 @@ impl Actor {
             profile_owner: String::new(),
             profile_revision_applied: 0,
             created_at: now.clone(),
+            generation: String::new(),
             updated_at: now,
         }
     }

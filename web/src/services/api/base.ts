@@ -15,6 +15,7 @@ import type {
   TaskBoardEntry,
   TaskChecklistItem,
 } from "../../types";
+import { frameResourceUrl } from "../../features/connect/protocol";
 
 export type ApiResponse<T> =
   | { ok: true; result: T; error?: null }
@@ -46,8 +47,11 @@ export const RECENT_BOOTSTRAP_READ_TTL_MS = 1000;
 
 let globalReadEpoch = 0;
 
-export function onAuthRequired(handler: () => void): void {
+export function onAuthRequired(handler: () => void): () => void {
   authRequiredHandler = handler;
+  return () => {
+    if (authRequiredHandler === handler) authRequiredHandler = null;
+  };
 }
 
 export function isAuthRequiredErrorCode(code: unknown): boolean {
@@ -153,7 +157,7 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export function withAuthToken(url: string): string {
-  return url;
+  return frameResourceUrl(url);
 }
 
 export function refreshAuthTokenInUrl(url: string): string {
@@ -781,7 +785,15 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     authRequiredHandler?.();
   }
 
-  const text = await resp.text();
+  let text: string;
+  try {
+    text = await resp.text();
+  } catch (error) {
+    return makeErrorResponse(
+      "NETWORK_ERROR",
+      error instanceof Error ? error.message : "Network response was interrupted",
+    );
+  }
   if (!text) {
     if (resp.ok) {
       return { ok: true, result: {} as T };

@@ -76,7 +76,7 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
     if super::local_headless::uses_managed_provider_cli(&actor) {
-        super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
+        super::runtime_mcp::prepare(home, actor.runtime, &actor.command, &cwd, &mut env)?;
     }
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
@@ -93,7 +93,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     };
     let cwd = working_directory(group, &actor)?;
     let mut env = environment::launch_env(home, group, &actor);
-    super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
+    super::runtime_mcp::prepare(home, actor.runtime, &command, &cwd, &mut env)?;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     let command = cccc_runtime::resolve_command_executable(&command, &env);

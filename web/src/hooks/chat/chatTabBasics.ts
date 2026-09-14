@@ -20,18 +20,10 @@ export function shouldRestoreDetachedScrollSnapshot(
   return now - updatedAt <= CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS;
 }
 
-export function buildComposerTrustFetchGroupId(_selectedGroupId: string): string | undefined {
-  const gid = String(_selectedGroupId || "").trim();
-  return gid || undefined;
-}
-
 export function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: string): boolean {
   const gid = String(srcGroupId || "").trim();
   if (!gid) return false;
-  return (groups || []).some((group) => {
-    if (String(group?.group_id || "").trim() !== gid) return false;
-    return !group.group_bridge_remote;
-  });
+  return (groups || []).some((group) => String(group?.group_id || "").trim() === gid);
 }
 
 export function shouldShowInConversation(event: LedgerEvent): boolean {

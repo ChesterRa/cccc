@@ -151,7 +151,10 @@ fn blocking_adapter_preserves_cwd_environment_and_spawn_errors() {
         .expect("configured command");
     assert_eq!(
         String::from_utf8(output.stdout).expect("utf8"),
-        format!("value:{}\n", temp.path().display())
+        format!(
+            "value:{}\n",
+            temp.path().canonicalize().expect("canonical cwd").display()
+        )
     );
     let error = capture_command_blocking(
         &mut Command::new(temp.path().join("absent")),

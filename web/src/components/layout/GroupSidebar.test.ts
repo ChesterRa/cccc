@@ -24,9 +24,14 @@ describe("getSidebarReorderActivation", () => {
     });
   });
 
-  it("keeps touch scrolling and safe-area padding on the scroll region", () => {
-    expect(groupSidebarScrollClass(false)).toContain("touch-pan-y");
-    expect(groupSidebarScrollClass(false)).toContain("safe-area-inset-bottom");
-    expect(groupSidebarScrollClass(true)).toContain("pb-[calc(0.5rem+");
+  // The collapsed rail and the expanded list get different padding; the safe-area inset is what
+  // keeps the last row above the home indicator in both.
+  it("pads the scroll region per collapse state and keeps the device safe area", () => {
+    expect(groupSidebarScrollClass(true)).toContain(
+      "pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
+    );
+    expect(groupSidebarScrollClass(false)).toContain(
+      "pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
+    );
   });
 });

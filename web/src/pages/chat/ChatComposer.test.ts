@@ -36,7 +36,6 @@ describe("ChatComposer send availability", () => {
     expect(hasConcreteReplyRecipients(["peer1"])).toBe(true);
     expect(hasConcreteReplyRecipients([])).toBe(true);
     expect(hasConcreteReplyRecipients(["@foreman"])).toBe(true);
-    expect(hasConcreteReplyRecipients(["peer1"], true)).toBe(false);
     expect(
       getComposerCanSend({
         composerText: "please answer",

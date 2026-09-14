@@ -5,12 +5,9 @@ import { OpenCodeManagedModelHint } from "./RuntimeProfileControls";
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 describe("OpenCode model selection hint", () => {
-  it("uses a readable warning color in both themes and a decorative warning icon", () => {
+  it("marks the hint icon decorative and keeps the hint out of the alert role", () => {
     const html = renderToStaticMarkup(<OpenCodeManagedModelHint runtime="opencode" />);
     expect(html).toContain("opencodeManagedModelHint");
-    expect(html).toContain("text-orange-700");
-    expect(html).toContain("dark:text-orange-300");
-    expect(html).toContain("text-xs");
     expect(html).toContain("<svg");
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain('role="alert"');

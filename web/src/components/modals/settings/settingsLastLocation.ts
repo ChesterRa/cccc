@@ -9,7 +9,6 @@ const groupTabIds = new Set<GroupTabId>([
   "assistants",
   "space",
   "messaging",
-  "connections",
   "im",
   "transcript",
   "copyGroups",

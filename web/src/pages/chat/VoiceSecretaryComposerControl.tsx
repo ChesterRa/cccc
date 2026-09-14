@@ -770,6 +770,9 @@ export function VoiceSecretaryComposerControl({
   );
   const getAudioSupportIssueMessage = useCallback(
     (issue: BrowserAudioSupportIssue) => {
+      if (issue === "embedded_workspace") {
+        return t("voiceSecretaryOpenInstanceForMicrophone");
+      }
       if (issue === "secure_context") {
         return t("voiceSecretarySecureContextRequired", {
           defaultValue:

@@ -115,6 +115,7 @@ export function processLedgerEvent(
     return;
   }
   if (isReplyRequestCancelledEvent(event)) {
+    if (event.data?.connect_cancel) deps.appendEvent(event, groupId);
     const sourceEventId = extractCancelledSourceEventId(event);
     if (sourceEventId) {
       deps.updateObligationStatus(sourceEventId, { cancelled: true }, groupId);
@@ -144,7 +145,7 @@ export function processLedgerEvent(
     const replyTo = String(data?.reply_to || "").trim();
     const replyBy = String(nextEvent.by || "").trim();
     if (replyTo && replyBy) {
-      deps.updateObligationStatus(replyTo, { actorId: replyBy, replied: true }, groupId);
+      deps.updateObligationStatus(replyTo, { reply: nextEvent }, groupId);
     }
     if (hasRenderableChatMessageContent(nextEvent) && replyBy && replyBy !== "user") {
       deps.clearEmptyStreamingEventsForActor(replyBy, groupId);

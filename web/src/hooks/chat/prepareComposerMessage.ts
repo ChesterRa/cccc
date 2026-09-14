@@ -12,13 +12,13 @@ export function prepareComposerMessage(input: {
   files: File[];
   now?: number;
   maxInlineBytes?: number;
-  targets?: Array<{ isCrossGroup?: boolean; isRemote?: boolean }>;
+  targets?: Array<{ isCrossGroup?: boolean }>;
 }): PreparedComposerMessage {
   const text = String(input.text || "").trim();
   const files = input.files.slice();
   const maxInlineBytes = input.maxInlineBytes ?? MAX_INLINE_COMPOSER_TEXT_BYTES;
   if (
-    input.targets?.some((target) => target.isCrossGroup && !target.isRemote) ||
+    input.targets?.some((target) => target.isCrossGroup) ||
     new TextEncoder().encode(text).byteLength <= maxInlineBytes
   ) {
     return { text, files, converted: false };

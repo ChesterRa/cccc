@@ -25,7 +25,6 @@ const { localStorageMock } = vi.hoisted(() => {
 
 import {
   CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS,
-  buildComposerTrustFetchGroupId,
   buildUnfilteredLiveChatMessages,
   buildComposerSendRoutingSnapshot,
   buildComposerSendRecipientTokens,
@@ -263,13 +262,6 @@ describe("buildComposerSendRoutingSnapshot", () => {
       composerGroupSettled: true,
       isCrossGroup: true,
     });
-  });
-});
-
-describe("buildComposerTrustFetchGroupId", () => {
-  it("fetches only the selected group's trusts for # routing suggestions", () => {
-    expect(buildComposerTrustFetchGroupId("g_current")).toBe("g_current");
-    expect(buildComposerTrustFetchGroupId("")).toBeUndefined();
   });
 });
 

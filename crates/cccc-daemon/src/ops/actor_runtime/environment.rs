@@ -23,6 +23,9 @@ pub(super) fn launch_env(
     actor: &Actor,
 ) -> BTreeMap<String, String> {
     let mut env = actor.env.clone();
+    // Packaged/test installations need the same CLI as their owning daemon,
+    // even when that executable is not installed on the user's shell PATH.
+    crate::ops::codex_mcp::configure_actor_cli(&mut env);
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),

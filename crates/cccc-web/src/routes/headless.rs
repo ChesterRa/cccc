@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use futures_util::Stream;
@@ -11,12 +11,15 @@ use std::time::Duration;
 
 use crate::AppState;
 use crate::api::{ApiResult, call, object, success};
+use crate::auth::Principal;
+use crate::connect_frames::{LIVE_ACCESS_INTERVAL, live_group_access};
 use crate::routes::headless_store::{HeadlessEventTail, read_replay_events};
 
 #[derive(Debug, Deserialize)]
 struct StreamQuery {
     #[serde(default = "default_true", deserialize_with = "deserialize_replay")]
     replay: bool,
+    connect_frame: Option<String>,
 }
 
 fn deserialize_replay<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -64,6 +67,7 @@ async fn stream(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Query(query): Query<StreamQuery>,
+    Extension(principal): Extension<Principal>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut shutdown = state.shutdown.subscribe();
     let path = events_path(&state, &group_id);
@@ -79,6 +83,12 @@ async fn stream(
                 return;
             }
         };
+        if !live_group_access(&state, &principal, &group_id, query.connect_frame.as_deref()) {
+            yield Ok(stream_error("auth_required", "Web access expired; reopen this Group"));
+            return;
+        }
+        let mut access_poll = tokio::time::interval(LIVE_ACCESS_INTERVAL);
+        access_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         if query.replay {
             // A snapshot restores state atomically. Its events are not new activity.
             // The same tail owns the following increments, so there is no GET/stream gap.
@@ -87,6 +97,12 @@ async fn stream(
         loop {
             tokio::select! {
                 _ = shutdown.recv() => break,
+                _ = access_poll.tick() => {
+                    if !live_group_access(&state, &principal, &group_id, query.connect_frame.as_deref()) {
+                        yield Ok(stream_error("auth_required", "Web access expired; reopen this Group"));
+                        break;
+                    }
+                },
                 _ = tokio::time::sleep(Duration::from_millis(300)) => {
                     match tail.read_new() {
                         Ok(events) => for item in events {

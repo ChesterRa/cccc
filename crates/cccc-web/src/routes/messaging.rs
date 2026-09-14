@@ -91,8 +91,8 @@ async fn delegate_contact(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let destination = super::group_bridge::required(&body, "dst_group_id")?;
-    super::group_bridge::ensure_access(&principal, &destination)?;
+    let destination = super::messaging_cross_group::required(&body, "dst_group_id")?;
+    super::messaging_cross_group::ensure_access(&principal, &destination)?;
     daemon_body(&state, "relay_user_delegation", group_id, body).await
 }
 async fn slash_skill_dispatch(

@@ -12,9 +12,15 @@ type AuthTokenLoginFormProps = {
   error: string;
   submitting: boolean;
   onSubmit: (token: string) => void | Promise<void>;
+  requireAdmin?: boolean;
 };
 
-export function AuthTokenLoginForm({ error, submitting, onSubmit }: AuthTokenLoginFormProps) {
+export function AuthTokenLoginForm({
+  error,
+  submitting,
+  onSubmit,
+  requireAdmin = false,
+}: AuthTokenLoginFormProps) {
   const { t } = useTranslation("layout");
   const { isDark } = useTheme();
   const branding = useBrandingStore((state) => state.branding);
@@ -45,9 +51,16 @@ export function AuthTokenLoginForm({ error, submitting, onSubmit }: AuthTokenLog
             />
           </div>
           <h1 className="gradient-text text-lg font-semibold">{branding.product_name}</h1>
-          <p className="text-sm text-[var(--color-text-tertiary)]">{t("enterToken")}</p>
+          <p className="text-sm text-[var(--color-text-tertiary)]">
+            {t(requireAdmin ? "connect.enterAdminToken" : "enterToken")}
+          </p>
+          {requireAdmin ? (
+            <p className="max-w-full break-all text-center text-xs text-[var(--color-text-secondary)]">
+              {window.location.origin}
+            </p>
+          ) : null}
           <p className="text-center text-xs text-[var(--color-text-muted)]">
-            {t("tokenLoginHint")}
+            {t(requireAdmin ? "connect.targetLoginHint" : "tokenLoginHint")}
           </p>
         </div>
         <div className="relative">
@@ -78,6 +91,16 @@ export function AuthTokenLoginForm({ error, submitting, onSubmit }: AuthTokenLog
         >
           {submitting ? t("verifying") : t("signIn")}
         </Button>
+        {requireAdmin ? (
+          <a
+            className="mt-3 block text-center text-xs underline"
+            href="/ui/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t("connect.openSeparately")}
+          </a>
+        ) : null}
         <div className="mt-4 border-t border-[var(--glass-border-subtle)] pt-4">
           <button
             type="button"

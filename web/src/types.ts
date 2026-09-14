@@ -15,13 +15,6 @@ export type GroupMeta = {
   group_id: string;
   title?: string;
   topic?: string;
-  group_bridge_remote?: boolean;
-  group_bridge_local_group_id?: string;
-  group_bridge_remote_endpoint?: string;
-  group_bridge_remote_peer_id?: string;
-  group_bridge_trust_id?: string;
-  group_bridge_registration_id?: string;
-  group_bridge_access_level?: string;
   updated_at?: string;
   created_at?: string;
   running?: boolean;
@@ -29,7 +22,46 @@ export type GroupMeta = {
   runtime_status?: GroupRuntimeStatus;
 };
 
+export type WorkspaceGitStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflicted";
+
+export type WorkspaceEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  mime_type?: string;
+  size?: number;
+  git_status?: WorkspaceGitStatus;
+  /** A clean directory whose subtree contains changes. */
+  git_dirty_descendant?: boolean;
+  ignored?: boolean;
+};
+
+export type WorkspaceListing = {
+  root_path: string;
+  path: string;
+  parent: string | null;
+  items: WorkspaceEntry[];
+};
+
+export type WorkspaceFile = {
+  path: string;
+  content: string;
+  bytes: number;
+  mime_type: string;
+  binary: boolean;
+  truncated: boolean;
+  /** Digest of the bytes this content was read from; echoed back on save. */
+  sha256: string;
+};
+
 export type GroupDoc = {
+  generation?: string;
   group_id: string;
   title?: string;
   topic?: string;
@@ -110,19 +142,6 @@ export type TaskMessageRef = MessageRef & {
   handoff_to?: string | null;
 };
 
-export type GroupBridgeRouteMessageRef = MessageRef & {
-  kind: "group_bridge_route";
-  local_group_id?: string;
-  remote_group_id: string;
-  remote_group_title?: string;
-  remote_endpoint?: string;
-  remote_peer_id?: string;
-  trust_id?: string;
-  access_level?: string;
-  recipient_identifier?: string;
-  token?: string;
-};
-
 export type LocalGroupRouteMessageRef = MessageRef & {
   kind: "local_group_route";
   group_id: string;
@@ -171,7 +190,18 @@ export type HeadlessPreviewSession = {
 // Chat message payload
 export type MessageMode = "send" | "request_reply" | "mail";
 
+// The canonical Connect envelope fields needed by message status projections.
+export type ConnectMessageRouting = {
+  delivery_id: string;
+  source: { instance_id: string; device_id: string; group_id: string };
+  target: { instance_id: string; device_id: string; group_id: string };
+  sender: { id: string; generation: string };
+  recipients: Array<{ id: string; generation: string }>;
+  reply_to?: { event_id: string; delivery_id: string } | null;
+};
+
 export type ChatMessageData = {
+  connect_message?: ConnectMessageRouting;
   text?: string;
   insight?: string;
   to?: string[];
@@ -191,8 +221,15 @@ export type ChatMessageData = {
   suggested_user_message?: string;
   quote_text?: string;
   src_group_id?: string;
+  src_group_title?: string;
+  src_instance_id?: string;
+  src_instance_name?: string;
   src_event_id?: string;
   dst_group_id?: string;
+  dst_group_title?: string;
+  dst_instance_id?: string;
+  dst_instance_name?: string;
+  dst_actor_titles?: Record<string, string>;
   dst_to?: string[];
   dst_message_mode?: MessageMode;
   dst_event_id?: string;
@@ -215,6 +252,12 @@ export type MailReadData = { actor_id?: string; event_id?: string };
 // Ledger event data union
 export type LedgerEventData = ChatMessageData | MailReadData | Record<string, unknown>;
 
+export type ConnectDeliveryStatus = {
+  state: "queued" | "sent" | "failed" | "unconfirmed";
+  error?: string | null;
+  remote_event_id?: string | null;
+};
+
 export type LedgerEvent = {
   id?: string;
   ts?: string;
@@ -225,6 +268,9 @@ export type LedgerEvent = {
   _streaming?: boolean;
   _read_status?: Record<string, boolean>;
   _obligation_status?: Record<string, ObligationStatus>;
+  _retired_bridge?: boolean;
+  _connect_delivery?: ConnectDeliveryStatus;
+  _connect_cancellation?: ConnectDeliveryStatus;
   _web_model_delivery_status?: WebModelDeliveryStatusPayload;
 };
 
@@ -242,6 +288,9 @@ export type HeadlessStreamEvent = {
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
   obligation_status?: Record<string, ObligationStatus>;
+  retired_bridge?: boolean;
+  connect_delivery?: ConnectDeliveryStatus;
+  connect_cancellation?: ConnectDeliveryStatus;
   web_model_delivery_status?: WebModelDeliveryStatusPayload;
 };
 
@@ -543,6 +592,7 @@ export type ReplyTarget = {
   eventId: string;
   by: string;
   text: string;
+  connectInstanceId?: string;
   remoteDstGroupId?: string;
   remoteDstTo?: string[];
   remoteReplyToEventId?: string;
@@ -1486,7 +1536,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   kilo: { label: "Kilo Code CLI", desc: "Managed delivery in the same native Kilo TUI" },
   antigravity: {
     label: "Antigravity CLI",
-    desc: "Uses an idempotent MCP setup prompt in Antigravity's native terminal",
+    desc: "Configures CCCC MCP before opening Antigravity's native terminal",
   },
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Managed delivery in the same native Grok TUI" },

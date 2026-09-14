@@ -1,5 +1,8 @@
 pub mod actor;
 pub mod codex_voice;
+pub mod connect;
+pub mod connect_groups;
+pub mod connect_message;
 pub mod deepseek;
 pub mod event;
 pub mod ipc;
@@ -21,10 +24,7 @@ pub use event::Event;
 pub use ipc::{DaemonAddress, DaemonError, DaemonRequest, DaemonResponse, Transport};
 
 pub const RUST_DAEMON_COMPATIBILITY: &str = "cccc-rust-daemon-v2";
-pub use message::{
-    Attachment, ChatMessageData, ChatStreamData, GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION,
-    MessageMode, Reference,
-};
+pub use message::{Attachment, ChatMessageData, ChatStreamData, MessageMode, Reference};
 
 pub fn utc_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)

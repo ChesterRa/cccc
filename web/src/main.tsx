@@ -9,6 +9,8 @@ import "./index.css";
 import { useBrandingStore } from "./stores";
 import { applyBrandingToDocument, DEFAULT_WEB_BRANDING } from "./utils/branding";
 import { applyTextScale, getStoredTextScale } from "./utils/textScale";
+import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
+import { isConnectFramePath } from "./features/connect/protocol";
 import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
@@ -66,7 +68,11 @@ const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
 function renderApp() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>,
+    isConnectFramePath(window.location.pathname) ? (
+      <ConnectEmbeddedApp />
+    ) : (
+      <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>
+    ),
   );
 }
 

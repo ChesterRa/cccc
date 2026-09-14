@@ -5,13 +5,13 @@ use super::operation::{
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::{actor_delivery, messaging_inbox};
 
+mod cancellation;
 mod delegation;
+pub(super) mod files;
 pub(crate) mod install_command;
 mod message_validation;
 mod message_wake;
@@ -26,7 +26,6 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         }
         "send_files" => Operation::new(Write, send_files),
         "send_cross_group" => Operation::new(Write, send_cross_group),
-        "send_cross_group_remote_record" => Operation::new(Write, send_cross_group_remote_record),
         "tracked_send" => Operation::new(Write, tracked_send::handle),
         "slash_skill_dispatch" => Operation::new(Write, slash_skill_dispatch),
         "reply" => Operation::new(Write, reply),
@@ -76,53 +75,7 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return duplicate_send(event);
     }
 
-    let scope = group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key && !scope.url.trim().is_empty())
-        .ok_or_else(|| OpError::new("missing_scope", "group has no active scope"))?;
-    let root = fs::canonicalize(Path::new(&scope.url))
-        .map_err(|error| OpError::new("missing_scope", error.to_string()))?;
-
-    let mut sources: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(paths.len());
-    for raw_path in paths {
-        let raw = raw_path
-            .as_str()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| OpError::new("invalid_path", "file path must be a non-empty string"))?;
-        let candidate = Path::new(raw);
-        let candidate = if candidate.is_absolute() {
-            candidate.to_path_buf()
-        } else {
-            root.join(candidate)
-        };
-        let source = fs::canonicalize(&candidate).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                OpError::new(
-                    "not_found",
-                    format!("file not found: {}", candidate.display()),
-                )
-            } else {
-                OpError::new("read_failed", error.to_string())
-            }
-        })?;
-        if !source.starts_with(&root) {
-            return Err(OpError::new(
-                "invalid_path",
-                "file path must be under the group's active scope root",
-            ));
-        }
-        if !source.is_file() {
-            return Err(OpError::new(
-                "not_found",
-                format!("file not found: {}", source.display()),
-            ));
-        }
-        let data =
-            fs::read(&source).map_err(|error| OpError::new("read_failed", error.to_string()))?;
-        sources.push((source, data));
-    }
+    let files = files::read(&group, paths, u64::MAX)?;
 
     let mut preflight: Map<String, Value> = request
         .args
@@ -132,105 +85,9 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .collect();
     super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut preflight, false)?;
 
-    let mut attachments = Vec::with_capacity(sources.len());
-    let mut titles = Vec::with_capacity(sources.len());
-    for (source, data) in sources {
-        let title = source
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or("file")
-            .to_owned();
-        let mime_type = mime_guess::from_path(&source)
-            .first_or_octet_stream()
-            .essence_str()
-            .to_owned();
-        let kind = if mime_type.starts_with("image/") {
-            "image"
-        } else {
-            "file"
-        };
-        let blob = cccc_core::blobs::store(home, &group.group_id, &data).map_err(OpError::io)?;
-        attachments.push(json!({
-            "kind":kind,
-            "path":blob.path,
-            "title":title,
-            "mime_type":mime_type,
-            "bytes":blob.bytes,
-            "sha256":blob.sha256,
-        }));
-        titles.push(title);
-    }
-
     let mut forwarded = request.clone();
-    forwarded.args.remove("paths");
-    forwarded
-        .args
-        .insert("attachments".into(), Value::Array(attachments));
-    forwarded.args.insert(
-        "path".into(),
-        Value::String(root.to_string_lossy().into_owned()),
-    );
-    if string_arg(&forwarded, "text").is_none_or(|text| text.trim().is_empty()) {
-        forwarded.args.insert(
-            "text".into(),
-            Value::String(format!("[files] {}", titles.join(", "))),
-        );
-    }
+    files.apply(home, &group, &mut forwarded.args)?;
     send(home, &forwarded, "chat.message")
-}
-
-fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let source = load(home, request)?;
-    let destination_id = required_arg(request, "dst_group_id")?;
-    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
-    cccc_core::permissions::require_group_member(&source, &by)
-        .map_err(|error| OpError::new("permission_denied", error.to_string()))?;
-    if let Some(event) =
-        super::message_idempotency::find(home, &source.group_id, "chat.message", &by, &request.args)
-    {
-        return object(
-            json!({"source_event":event,"transport":"group_bridge_session","duplicate":true}),
-        );
-    }
-    let text = string_arg(request, "text").unwrap_or_default();
-    let attachments = request
-        .args
-        .get("attachments")
-        .cloned()
-        .unwrap_or_else(|| json!([]));
-    if text.trim().is_empty()
-        && attachments
-            .as_array()
-            .is_none_or(|attachments| attachments.is_empty())
-    {
-        return Err(OpError::new(
-            "invalid_args",
-            "text or attachments is required",
-        ));
-    }
-    let mut data: Map<String, Value> = request
-        .args
-        .iter()
-        .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by" | "dst_group_id"))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    super::messaging_recipients::normalize_remote_chat_data(&mut data)?;
-    let destination_recipients = data
-        .get("to")
-        .cloned()
-        .unwrap_or_else(|| json!([cccc_core::actors::CROSS_GROUP_FOREMAN_RECIPIENT]));
-    let destination_message_mode = data
-        .get("message_mode")
-        .cloned()
-        .unwrap_or_else(|| json!("send"));
-    data.insert("to".into(), json!(["user"]));
-    data.insert("message_mode".into(), json!("send"));
-    data.insert("dst_to".into(), destination_recipients);
-    data.insert("dst_message_mode".into(), destination_message_mode);
-    data.insert("dst_group_id".into(), json!(destination_id));
-    let event = append(home, &source.group_id, "chat.message", &by, data)?;
-    object(json!({"source_event":event,"transport":"group_bridge_session"}))
 }
 
 fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -448,7 +305,10 @@ fn message_upload_preflight(home: &HomeLayout, request: &DaemonRequest) -> OpRes
     match required_arg(request, "operation")?.as_str() {
         "send" => preflight_upload_send(home, request),
         "reply" => preflight_upload_reply(home, request),
-        "send_cross_group" => super::group_bridge::preflight_upload(home, request),
+        "send_cross_group" => Err(OpError::new(
+            "attachments_not_supported",
+            "local cross-group attachments are not supported",
+        )),
         _ => Err(OpError::new(
             "invalid_args",
             "operation must be send, reply, or send_cross_group",
@@ -500,8 +360,10 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
         return preflight_duplicate(event);
     }
     let target = find_event(home, &group.group_id, &reply_to)?;
-    let remote_reply =
-        super::group_bridge::prepare_reply(home, &group, &target, request, &message_mode)?;
+    if target.data.contains_key("connect_message") {
+        return super::connect_outbound::reply(home, request, &group, &target, &message_mode, true);
+    }
+    reject_retired_reply(home, &target)?;
     let mut forwarded = request.clone();
     forwarded
         .args
@@ -510,9 +372,7 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
         .args
         .insert("reply_to".into(), Value::String(reply_to));
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
-    if let Some(prepared) = remote_reply.as_ref() {
-        prepared.apply_local_metadata(&target, &mut forwarded.args);
-    } else if recipient_tokens(&forwarded.args).is_empty() {
+    if recipient_tokens(&forwarded.args).is_empty() {
         forwarded.args.insert(
             "to".into(),
             json!(default_reply_recipients(&group, &by, &target)),
@@ -520,12 +380,7 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
     }
     let mut data = upload_preflight_data(&forwarded);
     message_validation::normalize(home, &group, &mut data)?;
-    super::messaging_recipients::normalize_chat_preflight(
-        &group,
-        &by,
-        &mut data,
-        remote_reply.is_some(),
-    )?;
+    super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut data, false)?;
     validate_upload_content(request, &data)?;
     object(json!({"ready":true}))
 }
@@ -544,7 +399,7 @@ fn upload_preflight_data(request: &DaemonRequest) -> Map<String, Value> {
         .collect()
 }
 
-fn validate_upload_content(
+pub(super) fn validate_upload_content(
     request: &DaemonRequest,
     data: &Map<String, Value>,
 ) -> Result<(), OpError> {
@@ -602,8 +457,17 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let target = find_event(home, &group.group_id, &reply_to)?;
-    let remote_reply =
-        super::group_bridge::prepare_reply(home, &group, &target, request, &message_mode)?;
+    if target.data.contains_key("connect_message") {
+        return super::connect_outbound::reply(
+            home,
+            request,
+            &group,
+            &target,
+            &message_mode,
+            false,
+        );
+    }
+    reject_retired_reply(home, &target)?;
     let mut forwarded = request.clone();
     forwarded
         .args
@@ -612,38 +476,35 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .args
         .insert("reply_to".into(), Value::String(reply_to));
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
-    if let Some(prepared) = remote_reply.as_ref() {
-        prepared.apply_local_metadata(&target, &mut forwarded.args);
-    } else if recipient_tokens(&forwarded.args).is_empty() {
+    if recipient_tokens(&forwarded.args).is_empty() {
         forwarded.args.insert(
             "to".into(),
             json!(default_reply_recipients(&group, &by, &target)),
         );
     }
-    let mut response =
-        send_with_audience_policy(home, &forwarded, "chat.message", remote_reply.is_some())?;
-    if let Some(prepared) = remote_reply {
-        let source_event_id = response
-            .get("event")
-            .and_then(|event| event.get("id"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let remote_result = if source_event_id.is_empty() {
-            json!({"error":{
-                "code":"group_bridge_reply_failed",
-                "message":"local reply event has no id"
-            }})
-        } else {
-            match prepared.relay(home, request, source_event_id) {
-                Ok(result) => Value::Object(result),
-                Err(error) => json!({"error":{
-                    "code":error.code,"message":error.message,"details":error.details
-                }}),
-            }
-        };
-        response.insert("group_bridge_reply".into(), remote_result);
+    send(home, &forwarded, "chat.message")
+}
+
+fn reject_retired_reply(home: &HomeLayout, target: &Event) -> Result<(), OpError> {
+    use cccc_core::group_bridge_retirement::{is_retired_message, is_retired_receipt};
+    let path = store(home)?
+        .ledger_path(&target.group_id)
+        .map_err(OpError::io)?;
+    let retired = is_retired_message(target)
+        || cccc_core::ledger::inspect(&path, |events, _| {
+            events.iter().any(|event| {
+                is_retired_receipt(event)
+                    && event.data.get("source_event_id").and_then(Value::as_str) == Some(&target.id)
+            })
+        })
+        .map_err(OpError::io)?;
+    if retired {
+        return Err(OpError::new(
+            "group_bridge_retired",
+            "This historical message used manual Group Bridge. Start a new conversation through CCCC Connect.",
+        ));
     }
-    Ok(response)
+    Ok(())
 }
 
 fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -668,6 +529,9 @@ fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
             "only the source sender or user may cancel a reply request",
         ));
     }
+    if source.data.contains_key("connect_message") {
+        return super::connect_cancellation::accept(home, request, &group, &source, &by);
+    }
     let path = store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
@@ -680,10 +544,8 @@ fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
                     == Some(source_event_id.as_str())
         })
     {
-        let propagation =
-            super::group_bridge::cancellation::propagate(home, &group.group_id, &source, &existing);
         return object(json!({
-            "event":existing,"duplicate":true,"propagation":propagation
+            "event":existing,"duplicate":true,"propagation":cancellation::propagate(home, &source, &existing)
         }));
     }
     let event = append(
@@ -696,9 +558,7 @@ fn reply_request_cancel(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
             .cloned()
             .expect("reply cancellation data"),
     )?;
-    let propagation =
-        super::group_bridge::cancellation::propagate(home, &group.group_id, &source, &event);
-    object(json!({"event":event,"propagation":propagation}))
+    object(json!({"event":event,"propagation":cancellation::propagate(home, &source, &event)}))
 }
 
 fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

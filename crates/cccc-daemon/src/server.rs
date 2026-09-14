@@ -33,6 +33,9 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
     let lock = acquire_daemon_lock(&paths.lock)?;
+    if let Err(error) = cccc_core::group_bridge_retirement::retire(&paths.home) {
+        tracing::warn!(%error, "manual Group Bridge state retained for retirement on next startup");
+    }
     crate::runtime_start_gate::allow(&paths.home).map_err(anyhow::Error::msg)?;
     cleanup_stale(&paths);
     let mut lifecycle = DaemonLifecycle::new(paths, lock);
@@ -40,8 +43,6 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
     let dispatch_locks = DispatchLocks::default();
-    let group_bridge_sessions =
-        crate::group_bridge_sessions::SessionManager::start(lifecycle.paths.home.clone());
 
     let result = if use_tcp() {
         serve_tcp(
@@ -63,7 +64,6 @@ async fn run_with_restore(home: HomeLayout, restore: RuntimeRestoreSpawner) -> R
         .await
     };
     actor_activity.finish().await;
-    group_bridge_sessions.shutdown().await;
     lifecycle.finish(result)
 }
 
@@ -95,6 +95,8 @@ async fn serve_tcp(
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut automation = AutomationScheduler::new();
     let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
+    let connect_service =
+        crate::ops::ConnectService::start(paths.home.clone(), dispatch_locks.clone());
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -119,6 +121,7 @@ async fn serve_tcp(
     }
     begin_runtime_shutdown(&paths.home);
     drop(reach_restore);
+    drop(connect_service);
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -164,6 +167,8 @@ async fn serve_platform_default(
     automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut automation = AutomationScheduler::new();
     let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
+    let connect_service =
+        crate::ops::ConnectService::start(paths.home.clone(), dispatch_locks.clone());
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -188,6 +193,7 @@ async fn serve_platform_default(
     }
     begin_runtime_shutdown(&paths.home);
     drop(reach_restore);
+    drop(connect_service);
     automation.finish().await;
     connections.finish().await;
     Ok(())

@@ -1,4 +1,3 @@
-use base64::Engine;
 use cccc_client::DaemonClient;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
@@ -308,6 +307,28 @@ async fn file(
 ) -> Result<Value, ToolCallError> {
     let action = action(args);
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
+    if args.contains_key("dst_instance_id") {
+        if action != "send" {
+            return Err(
+                "Connect does not expose remote file tools; use the received local attachment path"
+                    .into(),
+            );
+        }
+        let mut request = args.clone();
+        for key in ["action", "path", "rel_path", "mode"] {
+            request.remove(key);
+        }
+        request.insert(
+            "message_mode".into(),
+            Value::String(file_message_mode(args)?),
+        );
+        request.insert("paths".into(), json!([raw]));
+        crate::argument_normalization::normalize_message_author(&mut request);
+        crate::argument_normalization::normalize_recipients(&mut request);
+        crate::mapping::connect_destination(&mut request)?;
+        let result = daemon(client, "connect_send_files", request).await?;
+        return Ok(json!({"accepted":true,"queued":result.get("queued"),"result":result}));
+    }
     let path = if raw.starts_with("state/blobs/") {
         let group_id = args
             .get("group_id")
@@ -319,10 +340,6 @@ async fn file(
     };
     if action == "send" {
         let message_mode = file_message_mode(args)?;
-        let group_id = args
-            .get("group_id")
-            .and_then(Value::as_str)
-            .ok_or("group_id is required")?;
         if raw.starts_with("state/blobs/") {
             return Err("send expects a file under the active project scope".into());
         }
@@ -338,31 +355,7 @@ async fn file(
             .and_then(Value::as_str)
             .is_some_and(|value| !value.trim().is_empty())
         {
-            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-            let blob = cccc_core::blobs::store(home, group_id, &bytes)
-                .map_err(|error| error.to_string())?;
-            let title = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("attachment");
-            request.insert(
-                "attachments".into(),
-                json!([{
-                    "kind":"file",
-                    "path":blob.path,
-                    "title":title,
-                    "mime_type":mime_guess::from_path(&path).first_or_octet_stream().to_string(),
-                    "bytes":blob.bytes,
-                    "sha256":blob.sha256,
-                    "content_base64":base64::engine::general_purpose::STANDARD.encode(&bytes)
-                }]),
-            );
-            let result = crate::remote_messages::try_send(home, client, request)
-                .await
-                .ok_or(
-                    "attachments are only supported for trusted remote Group Bridge messages",
-                )??;
-            return Ok(json!({"sent":true,"attachment":blob,"result":result}));
+            return Err("local cross-group file sends are not supported; use dst_instance_id with dst_group_id for CCCC Connect".into());
         }
         request.insert("paths".into(), json!([path.to_string_lossy().into_owned()]));
         let result = daemon(client, "send_files", request).await?;

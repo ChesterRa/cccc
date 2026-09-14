@@ -68,3 +68,95 @@ describe("mergeLedgerEvents", () => {
     });
   });
 });
+
+it.each(["failed", "unconfirmed", "sent"] as const)(
+  "preserves %s receipts through raw replay and late queued status",
+  (state) => {
+    const source: LedgerEvent = {
+      id: "source",
+      kind: "chat.message",
+      data: { text: "remote", dst_instance_id: "b", dst_group_id: "group" },
+    };
+    const receipt: LedgerEvent = {
+      id: "receipt",
+      kind: "chat.cross_group_receipt",
+      data: {
+        source_event_id: "source",
+        transport: "connect",
+        status: state,
+        error: state === "sent" ? "" : "unavailable",
+      },
+    };
+    const projected = mergeLedgerEvents([source], [receipt], 100);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]._connect_delivery).toMatchObject({
+      state,
+      error: state === "sent" ? "" : "unavailable",
+    });
+    const replayed = mergeLedgerEvents(projected, [source], 100);
+    expect(replayed[0]._connect_delivery).toEqual(projected[0]._connect_delivery);
+    expect(
+      mergeLedgerEvents(replayed, [{ ...source, _connect_delivery: { state: "queued" } }], 100)[0]
+        ._connect_delivery?.state,
+    ).toBe(state);
+  },
+);
+
+it.each(["sent", "failed", "unconfirmed"] as const)(
+  "keeps %s cancellation independent of message delivery across replay",
+  (state) => {
+    const source: LedgerEvent = {
+      id: "source",
+      kind: "chat.message",
+      data: { text: "question", dst_instance_id: "remote" },
+      _connect_delivery: { state: "sent", remote_event_id: "remote-message" },
+    };
+    const cancel: LedgerEvent = {
+      id: "cancel",
+      kind: "chat.reply_request.cancelled",
+      data: { source_event_id: "source", connect_cancel: { delivery_id: "cancel-job" } },
+    };
+    const pending = mergeLedgerEvents([source], [cancel], 100);
+    expect(pending.find((e) => e.id === "source")?._connect_cancellation?.state).toBe("queued");
+    const receipt: LedgerEvent = {
+      id: "receipt",
+      kind: "chat.cross_group_receipt",
+      data: {
+        source_event_id: "cancel",
+        original_event_id: "source",
+        transport: "connect",
+        action: "cancel",
+        status: state,
+        remote_event_id: "remote-control",
+      },
+    };
+    const final = mergeLedgerEvents(pending, [receipt], 100);
+    const replayed = mergeLedgerEvents(final, [source, cancel], 100).find((e) => e.id === "source");
+    expect(replayed?._connect_cancellation?.state).toBe(state);
+    expect(replayed?._connect_delivery).toEqual(source._connect_delivery);
+    expect(replayed?.data?.remote_event_id).not.toBe("remote-control");
+  },
+);
+
+it("keeps retired Bridge reply suppression across receipt projection and raw replay", async () => {
+  const { getReplyEventId } = await import("./chatReply");
+  const source: LedgerEvent = {
+    id: "old-source",
+    kind: "chat.message",
+    by: "user",
+    data: { text: "Old remote request", dst_group_id: "colliding-local-group" },
+  };
+  const receipt: LedgerEvent = {
+    id: "retired-receipt",
+    kind: "chat.cross_group_receipt",
+    by: "system",
+    data: { source_event_id: source.id, status: "unconfirmed", group_bridge_retired: true },
+  };
+  const projected = mergeLedgerEvents([source], [receipt], 100);
+  expect(projected).toHaveLength(1);
+  expect(projected[0]._retired_bridge).toBe(true);
+  expect(projected[0].data).toEqual(source.data);
+  expect(getReplyEventId(projected[0])).toBe("");
+  const replayed = mergeLedgerEvents(projected, [source], 100);
+  expect(getReplyEventId(replayed[0])).toBe("");
+});

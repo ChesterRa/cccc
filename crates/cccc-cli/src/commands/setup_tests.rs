@@ -33,6 +33,14 @@ fn builds_codex_command_with_compiled_binary() {
 }
 
 #[test]
+fn antigravity_uses_native_registration_with_inherited_launcher() {
+    assert_eq!(
+        add_command("antigravity", Path::new("/opt/cccc")).expect("command"),
+        ["agy", "mcp", "add", "cccc", "cccc", "mcp"]
+    );
+}
+
+#[test]
 fn manual_runtime_has_explicit_batch_status() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

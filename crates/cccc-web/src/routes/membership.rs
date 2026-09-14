@@ -1,5 +1,7 @@
 use axum::Router;
 use axum::extract::{Extension, Query, State};
+use axum::http::{HeaderMap, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::json;
 use std::collections::HashMap;
@@ -37,14 +39,21 @@ async fn login(
 
 async fn login_poll(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
-) -> ApiResult {
-    call(
+) -> Result<Response, ApiError> {
+    let result = call(
         &state,
         "membership_login_poll",
         object(json!({"by": query.get("by").map(String::as_str).unwrap_or("user")})),
     )
-    .await
+    .await?;
+    if result.0["result"]["membership"]["logged_in"] == true {
+        let cookie = initialize_local_administrator(&state, &principal, &headers)?;
+        return Ok(with_setup_cookie(result, cookie));
+    }
+    Ok(result.into_response())
 }
 
 async fn logout(
@@ -61,14 +70,55 @@ async fn logout(
 
 async fn reach_on(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
-) -> ApiResult {
-    call(
+) -> Result<Response, ApiError> {
+    let cookie = initialize_local_administrator(&state, &principal, &headers)?;
+    let result = call(
         &state,
         "membership_reach_on",
         object(json!({"by": query.get("by").map(String::as_str).unwrap_or("user")})),
     )
-    .await
+    .await?;
+    Ok(with_setup_cookie(result, cookie))
+}
+
+fn initialize_local_administrator(
+    state: &AppState,
+    principal: &Principal,
+    headers: &HeaderMap,
+) -> Result<Option<String>, ApiError> {
+    if !principal.is_admin || !principal.raw_token.is_empty() || principal.user_id != "local" {
+        return Ok(None);
+    }
+    let membership = cccc_core::membership::load(&state.home)
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    if !membership.logged_in
+        || membership.disabled
+        || membership.device_token.as_deref().unwrap_or("").is_empty()
+    {
+        return Ok(None);
+    }
+    let store = cccc_core::access_tokens::AccessTokenStore::new(state.home.clone())
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    let token = store
+        .ensure_administrator()
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    cccc_core::web_bootstrap::ensure_web_bootstrap_token(&state.home)
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    Ok(Some(super::access_token_support::cookie(
+        &token.token,
+        crate::request_origin::is_https(state, headers),
+        &super::access_token_support::cookie_name(state, headers),
+    )))
+}
+
+fn with_setup_cookie(result: axum::Json<serde_json::Value>, cookie: Option<String>) -> Response {
+    match cookie {
+        Some(cookie) => ([(header::SET_COOKIE, cookie)], result).into_response(),
+        None => result.into_response(),
+    }
 }
 
 async fn reach_off(

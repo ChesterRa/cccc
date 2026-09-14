@@ -12,7 +12,7 @@ use cccc_core::group_prompts::{
 };
 use cccc_core::ledger;
 use cccc_core::permissions;
-use cccc_core::{GroupDoc, HomeLayout, group_bridge_legacy};
+use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
@@ -34,7 +34,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "actor_notes_clear" => Operation::new(Write, |home, request| {
             actor_notes_write(home, request, true)
         }),
-        "group_resolve" => Operation::new(Write, resolve),
+        "group_resolve" => Operation::new(Read, resolve),
         "group_update" => Operation::new(GlobalWrite, update),
         "group_delete" => Operation::new(GlobalWrite, delete),
         "group_reset" => Operation::new(Write, super::group_reset::reset),
@@ -72,7 +72,10 @@ fn resolve(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .collect::<Vec<_>>();
     match matches.as_slice() {
         [item] => object(item.clone()),
-        [] => resolve_remote(home, request, &token, &raw),
+        [] => Err(OpError::new(
+            "not_found",
+            format!("no local group matches token: {raw}; use cccc_connect for other instances"),
+        )),
         _ => {
             let mut error =
                 OpError::new("ambiguous", format!("multiple groups match token: {raw}"));
@@ -80,44 +83,6 @@ fn resolve(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             Err(error)
         }
     }
-}
-
-fn resolve_remote(home: &HomeLayout, request: &DaemonRequest, token: &str, raw: &str) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let state = group_bridge_legacy::load(home).map_err(OpError::io)?;
-    let route = state
-        .get("trusts")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|item| {
-            item["status"] == "active"
-                && item["group_id"] == group_id
-                && super::group_bridge::route_ready(home, item)
-                && [item["remote_group_id"].as_str(), item["remote_group_title"].as_str()]
-                    .into_iter()
-                    .flatten()
-                    .map(|value| value.trim().trim_start_matches('#').to_ascii_lowercase())
-                    .any(|value| value == token)
-        })
-        .ok_or_else(|| {
-            OpError::new(
-                "not_found",
-                format!(
-                    "no group matches token: {raw}; inspect group list or trusted Group Bridge routes"
-                ),
-            )
-        })?;
-    let remote_group_id = route["remote_group_id"].as_str().unwrap_or("");
-    object(json!({
-        "group_id":remote_group_id,
-        "title":route["remote_group_title"].as_str().filter(|value|!value.is_empty())
-            .unwrap_or(remote_group_id),
-        "topic":"","running":true,"state":"active",
-        "matched_by":"group_bridge_remote_group_title","token":raw,
-        "group_bridge":true,"registration_id":route["registration_id"],
-        "trust_id":route["trust_id"]
-    }))
 }
 
 fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

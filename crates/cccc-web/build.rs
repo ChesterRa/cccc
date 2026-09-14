@@ -19,7 +19,11 @@ const WEB_INPUTS: &[&str] = &[
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CCCC_FORCE_WEB_BUILD");
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Cargo may reuse the compiled script across checkouts sharing a target
+    // directory. Resolve the invoking package, not the script's build-time path.
+    let manifest_dir = PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide the package directory"),
+    );
     let workspace = manifest_dir
         .parent()
         .and_then(Path::parent)

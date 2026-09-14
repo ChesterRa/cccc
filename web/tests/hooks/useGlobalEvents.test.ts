@@ -3,8 +3,6 @@ import {
   getGlobalEventGroupId,
   shouldRefreshCapabilitiesAfterGlobalEvent,
   shouldRefreshCapabilitiesAfterGlobalEventsOpen,
-  shouldRefreshGroupBridgePairingAfterGlobalEvent,
-  shouldRefreshGroupBridgePairingAfterGlobalEventsOpen,
   shouldKeepGlobalEventsConnected,
   shouldRefreshActorsAfterGlobalEvent,
   shouldRefreshGroupsAfterGlobalEventsOpen,
@@ -40,11 +38,6 @@ describe("useGlobalEvents open refresh policy", () => {
       expect(shouldRefreshGroupsAfterGlobalEvent({ kind, group_id: "g-demo" })).toBe(true);
     }
     expect(shouldRefreshGroupsAfterGlobalEvent({ kind: "chat.message" })).toBe(false);
-  });
-
-  it("requires Group Bridge pairing catch-up refresh on global event stream open", () => {
-    expect(shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(false)).toBe(true);
-    expect(shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(true)).toBe(true);
   });
 
   it("releases the global SSE connection while the tab is hidden", () => {
@@ -116,42 +109,6 @@ describe("useGlobalEvents open refresh policy", () => {
     expect(
       shouldRefreshCapabilitiesAfterGlobalEvent(
         { kind: "capability.changed", data: { group_id: "g-other", capability_id: "skill:demo" } },
-        "g-demo",
-      ),
-    ).toBe(false);
-  });
-
-  it("refreshes selected Group Bridge pairing state after pairing changes", () => {
-    expect(
-      shouldRefreshGroupBridgePairingAfterGlobalEvent(
-        {
-          kind: "group_bridge.pairing.request_created",
-          data: { group_id: "g-demo", request_id: "preq_1" },
-        },
-        "g-demo",
-      ),
-    ).toBe(true);
-  });
-
-  it("refreshes selected Group Bridge pairing state after outbound approval creates a local active route", () => {
-    expect(
-      shouldRefreshGroupBridgePairingAfterGlobalEvent(
-        {
-          kind: "group_bridge.pairing.outbound_approved",
-          data: { group_id: "g-demo", trust_id: "ptrust_1", registration_id: "reg_1" },
-        },
-        "g-demo",
-      ),
-    ).toBe(true);
-  });
-
-  it("ignores Group Bridge pairing changes for other groups", () => {
-    expect(
-      shouldRefreshGroupBridgePairingAfterGlobalEvent(
-        {
-          kind: "group_bridge.pairing.request_created",
-          data: { group_id: "g-other", request_id: "preq_1" },
-        },
         "g-demo",
       ),
     ).toBe(false);

@@ -37,8 +37,23 @@ fn wildcard_cors_does_not_authorize_cookie_writes_or_websockets() {
 }
 
 #[test]
+fn same_origin_browser_metadata_allows_cookie_requests_through_rewriting_proxies() {
+    isolated("metadata", false, "");
+}
+
+#[test]
 fn websocket_origins_follow_the_authentication_source() {
     isolated("websocket", false, "https://client.example");
+}
+
+#[test]
+fn https_pages_behind_tls_terminating_proxies_can_open_websockets() {
+    isolated("tls_proxy", false, "");
+}
+
+#[test]
+fn local_and_lan_browsers_are_not_gated_by_origin_configuration() {
+    isolated("unproxied", false, "");
 }
 
 #[test]
@@ -87,7 +102,7 @@ async fn configured_origin_worker() {
                 request = if bearer {
                     request.header(header::AUTHORIZATION, format!("Bearer {}", token.token))
                 } else {
-                    request.header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                    request.header(header::COOKIE, format!("cccc_access_8848={}", token.token))
                 };
                 let response = app
                     .clone()
@@ -104,6 +119,84 @@ async fn configured_origin_worker() {
                     "bearer={bearer}, origin={source:?}"
                 );
             }
+        }
+        return;
+    }
+    if case == "unproxied" {
+        // Reaching the console directly - loopback, localhost, or a LAN
+        // address - needs no CCCC_WEB_CORS_ORIGINS entry and no proxy-header
+        // trust: the browser addresses the listener by the same host it serves.
+        for (label, host, source, peer, expected) in [
+            (
+                "loopback",
+                "127.0.0.1:8848",
+                "http://127.0.0.1:8848",
+                "127.0.0.1:42000",
+                StatusCode::OK,
+            ),
+            (
+                "localhost",
+                "localhost:8848",
+                "http://localhost:8848",
+                "127.0.0.1:42000",
+                StatusCode::OK,
+            ),
+            (
+                "lan address",
+                "192.168.1.5:8848",
+                "http://192.168.1.5:8848",
+                "192.168.1.20:42000",
+                StatusCode::OK,
+            ),
+            (
+                "cross-site page targeting the LAN console",
+                "192.168.1.5:8848",
+                "https://evil.example",
+                "192.168.1.20:42000",
+                StatusCode::FORBIDDEN,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/api/v1/access-tokens")
+                        .header(header::HOST, host)
+                        .header(header::ORIGIN, source)
+                        .header(header::UPGRADE, "websocket")
+                        .header(header::COOKIE, format!("cccc_access_8848={}", token.token))
+                        .extension(ConnectInfo(peer.parse::<SocketAddr>().expect("peer")))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("unproxied websocket");
+            assert_eq!(response.status(), expected, "{label}");
+        }
+        return;
+    }
+    if case == "tls_proxy" {
+        // A real Chrome WebSocket handshake carries Origin but no Sec-Fetch-*
+        // header, and an untrusted proxy hides the browser-facing https scheme,
+        // leaving the host as the only usable same-origin evidence.
+        for (source, expected) in [
+            ("https://cccc.example", StatusCode::OK),
+            ("https://evil.example", StatusCode::FORBIDDEN),
+            ("https://cccc.example:9999", StatusCode::FORBIDDEN),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/api/v1/access-tokens")
+                        .header(header::HOST, "cccc.example")
+                        .header(header::ORIGIN, source)
+                        .header(header::UPGRADE, "websocket")
+                        .header(header::COOKIE, format!("cccc_access_80={}", token.token))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("tls proxy websocket");
+            assert_eq!(response.status(), expected, "origin={source}");
         }
         return;
     }
@@ -168,7 +261,7 @@ async fn configured_origin_worker() {
             "true"
         );
     }
-    if matches!(case.as_str(), "cookie" | "exact") {
+    if matches!(case.as_str(), "cookie" | "exact" | "metadata") {
         for websocket in [false, true] {
             let mut request = if websocket {
                 Request::get("/api/v1/access-tokens")
@@ -177,9 +270,12 @@ async fn configured_origin_worker() {
             }
             .header(header::HOST, "cccc.example")
             .header(header::ORIGIN, origin)
-            .header(header::COOKIE, format!("cccc_access_token={}", token.token));
+            .header(header::COOKIE, format!("cccc_access_80={}", token.token));
             if websocket {
                 request = request.header(header::UPGRADE, "websocket");
+            }
+            if case == "metadata" {
+                request = request.header("sec-fetch-site", "same-origin");
             }
             let response = app
                 .clone()
@@ -188,7 +284,7 @@ async fn configured_origin_worker() {
                 .expect("cookie request");
             assert_eq!(
                 response.status(),
-                if case == "exact" {
+                if case == "exact" || case == "metadata" {
                     StatusCode::OK
                 } else {
                     StatusCode::FORBIDDEN
@@ -197,7 +293,7 @@ async fn configured_origin_worker() {
             );
         }
     }
-    if case == "cookie" {
+    if matches!(case.as_str(), "cookie" | "metadata") {
         // Removing the Origin gate must not grant an unauthenticated request access.
         let response = app
             .clone()
@@ -206,6 +302,7 @@ async fn configured_origin_worker() {
                     .header(header::HOST, "cccc.example")
                     .header(header::ORIGIN, origin)
                     .header(header::UPGRADE, "websocket")
+                    .header("sec-fetch-site", "same-origin")
                     .body(Body::empty())
                     .expect("request"),
             )

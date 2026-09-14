@@ -35,31 +35,13 @@ describe("buildComposerLocalGroupRouteRefs", () => {
     ]);
   });
 
-  it("ignores copied text and remote Group Bridge selections", () => {
+  it("ignores copied text without a selected Group", () => {
     expect(
       buildComposerLocalGroupRouteRefs({
         text: "复制 #Self Agent 不算选择",
         selectedGroupId: "g_local",
         tokens: [],
         groups,
-      }),
-    ).toEqual([]);
-
-    const text = "请 #Remote Product 主动联系";
-    const token = createComposerGroupMentionToken({
-      groupId: "g_remote",
-      token: "#Remote Product",
-      start: text.indexOf("#Remote Product"),
-    })!;
-    expect(
-      buildComposerLocalGroupRouteRefs({
-        text,
-        selectedGroupId: "g_local",
-        tokens: [token],
-        groups: [
-          ...groups,
-          { group_id: "g_remote", title: "Remote Product", group_bridge_remote: true },
-        ],
       }),
     ).toEqual([]);
   });

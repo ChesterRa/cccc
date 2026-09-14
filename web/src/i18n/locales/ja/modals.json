@@ -118,7 +118,8 @@
     "retryAmbiguousConfirm": "受信者がすでにこのプロンプトを受け取っている可能性があります。それでも再試行しますか？",
     "cancelReplyRequest": "返信リクエストを取り消す",
     "cancelReplyConfirm": "このメッセージの未完了の返信義務をすべて取り消しますか？",
-    "cancelling": "取り消し中…"
+    "cancelling": "取り消し中…",
+    "cancelled": "キャンセル済み"
   },
   "relay": {
     "title": "リレーメッセージ",

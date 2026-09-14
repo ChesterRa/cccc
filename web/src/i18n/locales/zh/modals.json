@@ -118,7 +118,8 @@
     "retryAmbiguousConfirm": "收件人可能已经收到这次 Prompt。仍然重试吗？",
     "cancelReplyRequest": "取消回复请求",
     "cancelReplyConfirm": "取消这条消息所有尚未完成的回复义务吗？",
-    "cancelling": "正在取消…"
+    "cancelling": "正在取消…",
+    "cancelled": "已取消"
   },
   "relay": {
     "title": "转发消息",

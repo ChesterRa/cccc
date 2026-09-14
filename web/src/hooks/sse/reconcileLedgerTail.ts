@@ -5,7 +5,11 @@ import {
   completeCanonicalOutboxReconciliation,
   reconcileCanonicalOutboxEvent,
 } from "../../utils/chatOutboxReconciliation";
-import { mergeLedgerEvents, projectCrossGroupReceipts } from "../../utils/mergeLedgerEvents";
+import {
+  mergeEventWithExistingStatus,
+  mergeLedgerEvents,
+  projectCrossGroupReceipts,
+} from "../../utils/mergeLedgerEvents";
 
 const MAX_RECONCILED_EVENTS = 800;
 const RECONNECT_LEDGER_TAIL_LIMIT = 60;
@@ -34,13 +38,7 @@ function mergeForwardLedgerEvents(
   );
   const hydratedIncoming = incoming.map((event) => {
     const current = existingById.get(String(event.id || "").trim());
-    return current
-      ? {
-          ...event,
-          _read_status: event._read_status ?? current._read_status,
-          _obligation_status: event._obligation_status ?? current._obligation_status,
-        }
-      : event;
+    return mergeEventWithExistingStatus(event, current);
   });
   const incomingIds = new Set(
     hydratedIncoming.map((event) => String(event.id || "").trim()).filter(Boolean),

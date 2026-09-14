@@ -19,6 +19,7 @@ import {
   settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { useMembershipController } from "./useMembershipController";
+import { ConnectStatus } from "./ConnectStatus";
 
 interface AccountTabProps {
   isDark: boolean;
@@ -244,10 +245,25 @@ export function AccountTab({
         ) : null}
 
         <div className={settingsWorkspacePanelClass(isDark)}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">CCCC Connect</h4>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            {t("account.connect.description")}
+          </p>
+          {kind === "offline" || kind === "online" ? (
+            <ConnectStatus
+              key={`${accountOrigin}/${membership?.device_id}`}
+              active={isActive}
+              deviceId={membership?.device_id || ""}
+              refreshedAt={membership?.checked_at || ""}
+            />
+          ) : null}
+          <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+            {t("account.connect.webAccess")}
+          </p>
+          <div className="mt-4 flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {t("account.servicesTitle")}
+                {t("webAccess.reach.title")}
               </h4>
               <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                 {kind === "logged_out" || kind === "pending" || kind === "cut"

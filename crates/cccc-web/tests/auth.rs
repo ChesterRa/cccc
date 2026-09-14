@@ -64,7 +64,7 @@ async fn first_admin_token_bootstraps_login_cookie() {
             .headers()
             .get(header::SET_COOKIE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.starts_with("cccc_access_token=acc_"))
+            .is_some_and(|value| value.starts_with("cccc_access_0=acc_"))
     );
     let body = response
         .into_body()
@@ -165,8 +165,56 @@ async fn authorization_header_bootstraps_cookie_without_a_query_secret() {
             .headers()
             .get(header::SET_COOKIE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.starts_with("cccc_access_token=acc_"))
+            .is_some_and(|value| value.starts_with("cccc_access_0=acc_"))
     );
+}
+
+#[tokio::test]
+async fn browser_cookie_from_another_port_never_unlocks_the_target() {
+    let (_temp, home) = home();
+    let store = AccessTokenStore::new(home.clone()).expect("store");
+    let admin = store
+        .create("admin", Vec::new(), true, None)
+        .expect("admin");
+    let scoped = store
+        .create("restricted", vec!["g_one".into()], false, None)
+        .expect("scoped");
+    let app = cccc_web::app(home);
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/connect")
+                .header(header::HOST, "localhost:8849")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "cccc_access_8848={}; cccc_access_token={}",
+                        admin.token, admin.token
+                    ),
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let restricted = app
+        .oneshot(
+            Request::get("/api/v1/connect")
+                .header(header::HOST, "localhost:8849")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "cccc_access_8848={}; cccc_access_8849={}",
+                        admin.token, scoped.token
+                    ),
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(restricted.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -181,7 +229,7 @@ async fn cookie_authenticated_writes_require_an_allowed_origin() {
     for origin in [None, Some("https://evil.example")] {
         let mut request = Request::post("/api/v1/web_access/logout")
             .header(header::HOST, "cccc.example")
-            .header(header::COOKIE, format!("cccc_access_token={}", token.token));
+            .header(header::COOKIE, format!("cccc_access_80={}", token.token));
         if let Some(origin) = origin {
             request = request.header(header::ORIGIN, origin);
         }
@@ -199,7 +247,7 @@ async fn cookie_authenticated_writes_require_an_allowed_origin() {
             Request::post("/api/v1/web_access/logout")
                 .header(header::HOST, "cccc.example")
                 .header(header::ORIGIN, "http://cccc.example")
-                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .header(header::COOKIE, format!("cccc_access_80={}", token.token))
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -229,7 +277,7 @@ async fn incidental_web_cookie_does_not_block_a_public_connector_request() {
     let response = cccc_web::app(home)
         .oneshot(
             Request::post("/mcp/web-model/missing")
-                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .header(header::COOKIE, format!("cccc_access_0={}", token.token))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
@@ -342,7 +390,7 @@ async fn query_token_cannot_replace_a_valid_authentication_cookie() {
                 "/api/v1/web_access/session?token={}",
                 current.token
             ))
-            .header(header::COOKIE, format!("cccc_access_token={}", stale.token))
+            .header(header::COOKIE, format!("cccc_access_0={}", stale.token))
             .body(Body::empty())
             .expect("request"),
         )
@@ -374,7 +422,7 @@ async fn protected_routes_ignore_legacy_query_tokens_and_use_the_valid_cookie() 
     let response = cccc_web::app(home)
         .oneshot(
             Request::get("/api/v1/groups?token=invalid")
-                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .header(header::COOKIE, format!("cccc_access_0={}", token.token))
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -476,6 +524,7 @@ async fn scoped_token_cannot_access_global_management_routes() {
         ("GET", "/api/v1/remote_access"),
         ("POST", "/api/v1/remote_access/start"),
         ("GET", "/api/v1/membership"),
+        ("GET", "/api/v1/connect"),
         ("POST", "/api/v1/membership/login"),
         ("POST", "/api/v1/membership/login/poll"),
         ("POST", "/api/v1/membership/logout"),
@@ -515,7 +564,7 @@ async fn scoped_cookie_global_stream_only_exposes_allowed_groups() {
     let response = cccc_web::app(home.clone())
         .oneshot(
             Request::get("/api/v1/events/stream")
-                .header(header::COOKIE, format!("cccc_access_token={}", token.token))
+                .header(header::COOKIE, format!("cccc_access_0={}", token.token))
                 .body(Body::empty())
                 .expect("request"),
         )

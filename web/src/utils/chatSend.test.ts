@@ -7,16 +7,16 @@ describe("shouldBlockLocalCrossGroupAttachments", () => {
     expect(
       shouldBlockLocalCrossGroupAttachments({
         attachmentCount: 1,
-        targets: [{ isCrossGroup: true, isRemote: false }],
+        targets: [{ isCrossGroup: true }],
       }),
     ).toBe(true);
   });
 
-  it("allows attachment sends when all cross-group targets are remote", () => {
+  it("allows attachments within the selected instance Group", () => {
     expect(
       shouldBlockLocalCrossGroupAttachments({
         attachmentCount: 1,
-        targets: [{ isCrossGroup: true, isRemote: true }],
+        targets: [{ isCrossGroup: false }],
       }),
     ).toBe(false);
   });

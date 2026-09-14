@@ -103,22 +103,13 @@ describe("delegation natural body / protocol split", () => {
 });
 
 describe("MessageBubble delegation display wiring", () => {
-  it("keeps local relay sources navigable while remote bridge sources stay non-local", () => {
-    expect(
-      canOpenSourceMessageLocally(
-        [
-          { group_id: "g_local", title: "Local" },
-          { group_id: "g_remote", title: "Remote", group_bridge_remote: true },
-        ],
-        "g_local",
-      ),
-    ).toBe(true);
-    expect(
-      canOpenSourceMessageLocally(
-        [{ group_id: "g_remote", title: "Remote", group_bridge_remote: true }],
-        "g_remote",
-      ),
-    ).toBe(false);
+  it("only opens source Groups present in the local directory", () => {
+    expect(canOpenSourceMessageLocally([{ group_id: "g_local", title: "Local" }], "g_local")).toBe(
+      true,
+    );
+    expect(canOpenSourceMessageLocally([{ group_id: "g_local", title: "Local" }], "g_remote")).toBe(
+      false,
+    );
   });
 
   it("conversation list filters source outbound delegation audit events", () => {

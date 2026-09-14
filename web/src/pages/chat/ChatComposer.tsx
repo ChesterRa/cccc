@@ -139,9 +139,6 @@ export interface ChatComposerProps {
   // Recipients
   toTokens: string[];
   onToggleRecipient: (token: string) => void;
-  remoteGroups?: GroupMeta[];
-  selectedRemoteGroupIds?: string[];
-  onToggleRemoteGroup?: (groupId: string) => void;
   onClearRecipients: () => void;
 
   // Files
@@ -198,9 +195,6 @@ export function ChatComposer({
   onClearQuotedVoiceDocumentRef,
   toTokens,
   onToggleRecipient,
-  remoteGroups = [],
-  selectedRemoteGroupIds = [],
-  onToggleRemoteGroup,
   onClearRecipients,
   composerFiles,
   onRemoveComposerFile,
@@ -850,17 +844,13 @@ export function ChatComposer({
     ? normalizeReplyMessageMode(messageMode)
     : messageMode;
   const activeMode = modeOptions.find((opt) => opt.key === effectiveMessageMode) || modeOptions[0];
-  const requestReplyRecipientsReady = hasConcreteReplyRecipients(
-    toTokens,
-    selectedRemoteGroupIds.length > 0,
-  );
+  const requestReplyRecipientsReady = hasConcreteReplyRecipients(toTokens);
   const canSend = getComposerCanSend({
     composerText,
     composerFilesCount: composerFiles.length,
     recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
     messageMode: effectiveMessageMode,
     toTokens,
-    hasRemoteGroupSelection: selectedRemoteGroupIds.length > 0,
   });
 
   const recentChatExcerpt = useMemo(
@@ -1111,9 +1101,6 @@ export function ChatComposer({
             selectedGroupActorsHydrating={selectedGroupActorsHydrating}
             toTokens={toTokens}
             onToggleRecipient={onToggleRecipient}
-            remoteGroups={remoteGroups}
-            selectedRemoteGroupIds={selectedRemoteGroupIds}
-            onToggleRemoteGroup={onToggleRemoteGroup}
             onClearRecipients={onClearRecipients}
           />
 

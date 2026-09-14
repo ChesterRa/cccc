@@ -2,12 +2,11 @@ use cccc_contracts::utc_now;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::fs::{read_json, write_json};
-use crate::{GroupDoc, GroupStore, blobs};
+use crate::{GroupDoc, GroupStore, blobs, workspace};
 
 const SLOT_IDS: [&str; 4] = ["slot-1", "slot-2", "slot-3", "slot-4"];
 const CARD_TYPES: [&str; 6] = ["markdown", "table", "image", "pdf", "file", "web_preview"];
@@ -161,24 +160,11 @@ pub fn clear(
 }
 
 pub fn workspace_root(group: &GroupDoc) -> io::Result<PathBuf> {
-    let scope = group
-        .scopes
-        .iter()
-        .find(|scope| scope.scope_key == group.active_scope_key)
-        .ok_or_else(|| io::Error::other("group has no active scope"))?;
-    Path::new(&scope.url).canonicalize()
+    workspace::root(group)
 }
 
 pub fn resolve_workspace_path(group: &GroupDoc, relative: &str) -> io::Result<PathBuf> {
-    let root = workspace_root(group)?;
-    let rel = safe_relative(relative)?;
-    let candidate = root.join(rel).canonicalize()?;
-    if !candidate.starts_with(&root) || !candidate.is_file() {
-        return Err(io::Error::other(
-            "path must be a file under the active scope",
-        ));
-    }
-    Ok(candidate)
+    workspace::resolve_file(group, relative)
 }
 
 pub fn asset_path(
@@ -609,20 +595,7 @@ fn resolve_input_path(group: &GroupDoc, input: &str) -> io::Result<(PathBuf, Str
 }
 
 fn safe_relative(value: &str) -> io::Result<PathBuf> {
-    let path = Path::new(value.trim());
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path.components().any(|part| {
-            matches!(
-                part,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        Err(io::Error::other("path must stay under the active scope"))
-    } else {
-        Ok(path.into())
-    }
+    workspace::safe_relative(value)
 }
 
 fn extension_hint(value: &str) -> String {
@@ -678,50 +651,31 @@ fn path(store: &GroupStore, group_id: &str) -> io::Result<PathBuf> {
     Ok(store.state_dir(group_id)?.join("presentation.json"))
 }
 
+/// Flat directory listing for the Presentation pin picker.
+///
+/// Delegates to [`workspace::list`] so the scope boundary has one implementation, and keeps
+/// ignored entries visible because pinning a build artifact is a legitimate choice here.
 pub fn list_workspace(
     group: &GroupDoc,
     relative: &str,
 ) -> io::Result<(PathBuf, String, Option<String>, Vec<WorkspaceItem>)> {
-    let root = workspace_root(group)?;
-    let relative_path = if relative.trim().is_empty() {
-        PathBuf::new()
-    } else {
-        safe_relative(relative)?
-    };
-    let directory = root.join(&relative_path).canonicalize()?;
-    if !directory.starts_with(&root) || !directory.is_dir() {
-        return Err(io::Error::other(
-            "workspace path must be a directory under the active scope",
-        ));
-    }
-    let mut items = fs::read_dir(&directory)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let relative = path
-                .strip_prefix(&root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-            Some(WorkspaceItem {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: relative,
-                is_dir: path.is_dir(),
-                mime_type: (!path.is_dir()).then(|| {
-                    mime_guess::from_path(path)
-                        .first_or_octet_stream()
-                        .to_string()
-                }),
-            })
+    let listing = workspace::list(
+        group,
+        relative,
+        workspace::ListOptions { show_ignored: true },
+    )?;
+    let parent = listing.parent.filter(|path| !path.is_empty());
+    let items = listing
+        .items
+        .into_iter()
+        .map(|entry| WorkspaceItem {
+            name: entry.name,
+            path: entry.path,
+            is_dir: entry.is_dir,
+            mime_type: entry.mime_type,
         })
-        .collect::<Vec<_>>();
-    items.sort_by_key(|item| (!item.is_dir, item.name.to_ascii_lowercase()));
-    let normalized = relative_path.to_string_lossy().replace('\\', "/");
-    let parent = relative_path
-        .parent()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .filter(|path| !path.is_empty());
-    Ok((root, normalized, parent, items))
+        .collect();
+    Ok((listing.root, listing.path, parent, items))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

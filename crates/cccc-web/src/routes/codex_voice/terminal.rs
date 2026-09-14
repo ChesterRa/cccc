@@ -17,7 +17,7 @@ pub(super) async fn serve(
     query: TerminalQuery,
     principal: crate::auth::Principal,
 ) {
-    if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+    if !principal.current_admin(&state.home).unwrap_or(false) {
         let _ = socket.send(Message::Close(None)).await;
         return;
     }
@@ -49,7 +49,7 @@ pub(super) async fn serve(
             return;
         }
     };
-    if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+    if !principal.current_admin(&state.home).unwrap_or(false) {
         let _ = socket.send(Message::Close(None)).await;
         return;
     }
@@ -125,7 +125,7 @@ pub(super) async fn serve(
                 break;
             }
             _ = authorization_poll.tick() => {
-                if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                if !principal.current_admin(&state.home).unwrap_or(false) {
                     let _ = socket.send(Message::Close(None)).await;
                     break;
                 }
@@ -144,7 +144,7 @@ pub(super) async fn serve(
                 }
             }
             message = socket.recv() => {
-                if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                if !principal.current_admin(&state.home).unwrap_or(false) {
                     let _ = socket.send(Message::Close(None)).await;
                     break;
                 }
@@ -169,7 +169,7 @@ pub(super) async fn serve(
                 if output_flow.can_send(TERMINAL_OUTPUT_PAGE_BYTES) => {
                 match output {
                     Ok(Some(output)) => {
-                        if !principal.current_voice_admin(&state.home).unwrap_or(false) {
+                        if !principal.current_admin(&state.home).unwrap_or(false) {
                             let _ = socket.send(Message::Close(None)).await;
                             break;
                         }

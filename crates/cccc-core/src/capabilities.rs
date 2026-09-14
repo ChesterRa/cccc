@@ -100,6 +100,8 @@ impl CapabilityStore {
             .into_iter()
             .chain(crate::capability_legacy::catalog(&self.home)?)
             .chain(self.load()?.custom.into_values())
+            // Persisted catalogs must not re-advertise the retired built-in tool pack.
+            .filter(|capability| capability.id != "pack:group_bridge")
         {
             items.insert(capability.id.clone(), capability);
         }
@@ -1119,6 +1121,20 @@ mod tests {
             .expect("record");
         assert_eq!(record["install_spec"]["package"], "test-server");
         assert_eq!(record["source_id"], "github_import");
+    }
+
+    #[test]
+    fn persisted_catalog_cannot_restore_retired_bridge_pack() {
+        let (_temp, store) = store();
+        for id in ["pack:group_bridge", "skill:test"] {
+            store
+                .import_record(json!({"capability_id":id,"kind":"skill","name":id}))
+                .expect("import persisted record");
+        }
+        let catalog = store.catalog().expect("catalog");
+        assert!(catalog.iter().any(|entry| entry.id == "skill:test"));
+        assert!(!catalog.iter().any(|entry| entry.id == "pack:group_bridge"));
+        assert!(store.set_enabled("pack:group_bridge", true).is_err());
     }
 
     #[test]

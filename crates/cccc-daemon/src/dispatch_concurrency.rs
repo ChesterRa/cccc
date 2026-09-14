@@ -121,7 +121,6 @@ fn access(request: &DaemonRequest) -> Access {
         .map_or(Policy::Write, |operation| operation.policy);
     match policy {
         Policy::ResourceOwned => return Access::ResourceOwned,
-        Policy::GlobalRead => return Access::GlobalRead,
         Policy::GlobalWrite => return Access::GlobalWrite,
         Policy::Read | Policy::Write => {}
     }
@@ -212,26 +211,6 @@ mod tests {
             )),
             Access::GlobalWrite
         ));
-        for op in ["group_bridge_session_open", "group_bridge_session_deliver"] {
-            assert!(matches!(
-                access(&request(op, json!({"group_id":"g_one"}))),
-                Access::GlobalRead
-            ));
-        }
-        for op in [
-            "group_bridge_session_poll",
-            "group_bridge_session_complete",
-            "group_bridge_session_close",
-            "group_bridge_session_ready",
-        ] {
-            assert!(
-                matches!(
-                    access(&request(op, json!({"group_id":"g_one"}))),
-                    Access::ResourceOwned
-                ),
-                "{op} must use only the session runtime lock"
-            );
-        }
         for op in ["capability_enable", "capability_install_target"] {
             assert!(
                 matches!(
@@ -398,10 +377,6 @@ mod tests {
             "capability_state",
             "term_attachment_status",
             "terminal_write",
-            "group_bridge_session_poll",
-            "group_bridge_session_complete",
-            "group_bridge_session_close",
-            "group_bridge_session_ready",
         ] {
             tokio::time::timeout(
                 std::time::Duration::from_millis(250),

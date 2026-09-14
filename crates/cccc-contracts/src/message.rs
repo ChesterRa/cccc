@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// Current explicitly negotiated Group Bridge message contract.
-pub const GROUP_BRIDGE_MESSAGE_CONTRACT_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

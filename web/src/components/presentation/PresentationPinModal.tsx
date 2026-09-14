@@ -12,6 +12,8 @@ type PresentationPinModalProps = {
   isDark: boolean;
   groupId: string;
   slot: PresentationSlot | null;
+  /** Preselected workspace file when the pin was started from the file tree. */
+  initialWorkspaceRelPath?: string;
   busy: boolean;
   onClose: () => void;
   onSubmitUrl: (payload: {
@@ -203,6 +205,7 @@ export function PresentationPinModal({
   isDark,
   groupId,
   slot,
+  initialWorkspaceRelPath = "",
   busy,
   onClose,
   onSubmitUrl,
@@ -215,8 +218,9 @@ export function PresentationPinModal({
   const slotIndex = Number(slot?.index || 0) || 0;
   const card = slot?.card || null;
   const replaceMode = !!card;
-  const defaultSource = initialSource(slot);
-  const defaultWorkspaceSelection = initialWorkspacePath(slot);
+  // A pin started from the file tree already knows its file, so it opens on the workspace source.
+  const defaultSource = initialWorkspaceRelPath ? "workspace" : initialSource(slot);
+  const defaultWorkspaceSelection = initialWorkspaceRelPath || initialWorkspacePath(slot);
   const defaultWorkspaceDir = dirname(defaultWorkspaceSelection);
 
   const [source, setSource] = useState<PinSource>(() => defaultSource);

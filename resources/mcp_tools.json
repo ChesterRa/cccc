@@ -126,6 +126,45 @@
     }
   },
   {
+    "name": "cccc_connect",
+    "description": "Discover same-account CCCC instances and external Group connections approved for your local Group. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "description": "Your local working Group ID (optional if CCCC_GROUP_ID is set)"
+        },
+        "actor_id": {
+          "type": "string",
+          "description": "Your local Actor ID (optional if CCCC_ACTOR_ID is set)"
+        },
+        "instance_id": {
+          "type": "string",
+          "description": "Optional exact remote instance ID from this directory"
+        },
+        "target_group_id": {
+          "type": "string",
+          "description": "Exact remote Group filter within instance_id; required for an external Group connection"
+        },
+        "after": {
+          "type": "string",
+          "description": "Next-page cursor returned by this directory"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 20
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "cccc_message_send",
     "description": "Start a new visible chat message. Default to mode=mail for agents. Use mode=send only when delayed awareness costs more than interrupting the recipient, and mode=request_reply only when a concrete reply is also required. Mail is agent-only; messages to user must use send or request_reply. One message may address user alone or one/more agents, never both; send separate messages for separate audience domains. Do not send routine noise. Do not use this to answer an existing delivered message/event; use cccc_message_reply with that event_id instead. Choose `to` deliberately; request_reply requires concrete recipients and @all should be rare.",
     "inputSchema": {
@@ -141,7 +180,7 @@
         },
         "dst_group_id": {
           "type": "string",
-          "description": "Optional local or trusted remote group_id. For remote groups, use remote_group_id returned by cccc_remote_access(action=\"list\")."
+          "description": "Target Group ID. For Connect, always also pass its dst_instance_id; IDs are not interchangeable between instances."
         },
         "text": {
           "type": "string"
@@ -177,7 +216,7 @@
         },
         "idempotency_key": {
           "type": "string",
-          "description": "Stable caller retry key; used for Group Bridge remote delivery when dst_group_id targets a trusted remote group"
+          "description": "Stable retry key for a remote delivery. Reuse unchanged parameters after an uncertain tool response."
         },
         "refs": {
           "type": "array",
@@ -188,6 +227,10 @@
         "suggested_user_message": {
           "type": "string",
           "description": "Optional next message to suggest to the human in the CCCC Web composer when this message is addressed to user. It is not sent automatically and must not be used for approvals, permissions, or decisions."
+        },
+        "dst_instance_id": {
+          "type": "string",
+          "description": "Exact Connect instance ID from cccc_connect; requires dst_group_id. Omit for local messaging."
         }
       },
       "required": [
@@ -305,7 +348,7 @@
   },
   {
     "name": "cccc_message_reply",
-    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs.",
+    "description": "Reply to a visible chat message by its current event_id. Defaults to Send; choose Mail only when the recipient is an agent and the reply may wait in Inbox without an immediate prompt. Replies to user must use Send. One reply may address user alone or one/more agents, never both. Either mode fulfills the original reply request. Use only for the thread you are answering; set `to` explicitly if the audience differs. For Connect, use the received local event_id; omit to to address the original participants. Routing comes from that event, without looking up or passing a remote Group ID.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -365,6 +408,10 @@
         "suggested_user_message": {
           "type": "string",
           "description": "Optional next message to suggest to the human in the CCCC Web composer when this message is addressed to user. It is not sent automatically and must not be used for approvals, permissions, or decisions."
+        },
+        "idempotency_key": {
+          "type": "string",
+          "description": "Stable retry key for this logical reply. Reuse only with identical parameters."
         }
       },
       "required": [
@@ -623,7 +670,7 @@
   },
   {
     "name": "cccc_file",
-    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; use send to attach an active-scope local file to user alone or one/more agents, never both. Mail is agent-only. A trusted remote Group Bridge group may be selected with dst_group_id.",
+    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; send attaches an active-scope file to user alone or one/more agents, never both. Mail is agent-only. For another same-account instance or an approved external Group, discover its qualified target with cccc_connect and provide both dst_instance_id and dst_group_id.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -651,7 +698,7 @@
         },
         "dst_group_id": {
           "type": "string",
-          "description": "Optional trusted remote group_id for action=send. Use remote_group_id from cccc_remote_access(action=\"list\") to send this file through Group Bridge."
+          "description": "Target Group ID for a CCCC Connect file send; requires dst_instance_id. Local cross-group attachment forwarding is not supported."
         },
         "text": {
           "type": "string",
@@ -674,7 +721,7 @@
               }
             }
           ],
-          "description": "Optional recipient or recipients for action=send. Choose user alone or one/more agent IDs/selectors; never mix both domains. For remote Group Bridge file sends, use [\"@foreman\"] unless a more specific remote recipient is known."
+          "description": "Recipient or recipients for send. Choose user alone or one/more agent IDs/selectors; never mix both domains. For another instance, use its discovered Actor IDs or @foreman."
         },
         "mode": {
           "type": "string",
@@ -695,6 +742,14 @@
           "default": 200000,
           "minimum": 1,
           "maximum": 1000000
+        },
+        "dst_instance_id": {
+          "type": "string",
+          "description": "For action=send, exact Connect instance ID from cccc_connect, together with dst_group_id."
+        },
+        "idempotency_key": {
+          "type": "string",
+          "description": "Stable retry key for action=send across instances."
         }
       },
       "required": []
@@ -2983,519 +3038,6 @@
       },
       "required": [
         "key"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_access",
-    "description": "List Group Bridge targets and inspect what access the remote group grants to this group.",
-    "annotations": {
-      "readOnlyHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "list",
-            "status",
-            "explain_permissions"
-          ],
-          "default": "list"
-        }
-      },
-      "required": []
-    }
-  },
-  {
-    "name": "cccc_remote_context",
-    "description": "Read a target Group Bridge group's context snapshot. Requires the target group to grant Read access.",
-    "annotations": {
-      "readOnlyHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "get"
-          ],
-          "default": "get"
-        },
-        "include_archived": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_repo",
-    "description": "Read-only repo inspection for a target Group Bridge group: info|list|list_dir|read|search. Requires target Read access and stays under the target group's active scope for path-based operations.",
-    "annotations": {
-      "readOnlyHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "info",
-            "list",
-            "list_dir",
-            "read",
-            "search"
-          ],
-          "default": "info"
-        },
-        "path": {
-          "type": "string"
-        },
-        "file_path": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string",
-          "description": "Required for action=search."
-        },
-        "max_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        },
-        "limit": {
-          "type": "integer",
-          "default": 100,
-          "minimum": 1,
-          "maximum": 500
-        },
-        "offset": {
-          "type": "integer",
-          "default": 1,
-          "minimum": 1
-        },
-        "depth": {
-          "type": "integer",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 8
-        },
-        "start_line": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "end_line": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "include_hidden": {
-          "type": "boolean",
-          "default": false
-        },
-        "case_sensitive": {
-          "type": "boolean",
-          "default": false
-        },
-        "regex": {
-          "type": "boolean",
-          "default": false
-        },
-        "include_globs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "exclude_globs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "context_lines": {
-          "type": "integer",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 10
-        },
-        "max_file_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_git",
-    "description": "Git operations for a target Group Bridge group. Read access allows status|diff|log; Full access also allows add|commit.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "status",
-            "diff",
-            "log",
-            "add",
-            "commit"
-          ],
-          "default": "status"
-        },
-        "path": {
-          "type": "string"
-        },
-        "paths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "staged": {
-          "type": "boolean",
-          "default": false
-        },
-        "all_changes": {
-          "type": "boolean",
-          "default": false
-        },
-        "message": {
-          "type": "string"
-        },
-        "count": {
-          "type": "integer",
-          "default": 20,
-          "minimum": 1,
-          "maximum": 100
-        },
-        "max_output_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_repo_edit",
-    "description": "Full access repo mutation for a target Group Bridge group. Use only for trusted groups; path guardrails are not a security sandbox.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "replace",
-            "multi_replace",
-            "write",
-            "mkdir",
-            "delete",
-            "move"
-          ],
-          "default": "replace"
-        },
-        "path": {
-          "type": "string"
-        },
-        "file_path": {
-          "type": "string"
-        },
-        "dest_path": {
-          "type": "string"
-        },
-        "to_path": {
-          "type": "string"
-        },
-        "content": {
-          "type": "string"
-        },
-        "old_text": {
-          "type": "string"
-        },
-        "new_text": {
-          "type": "string"
-        },
-        "replacements": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          }
-        },
-        "expected_sha256": {
-          "type": "string"
-        },
-        "expected_replacements": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10000
-        },
-        "replace_all": {
-          "type": "boolean",
-          "default": false
-        },
-        "recursive": {
-          "type": "boolean",
-          "default": false
-        },
-        "exist_ok": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_apply_patch",
-    "description": "Full access Codex-style apply_patch for a trusted target Group Bridge group.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "patch": {
-          "type": "string"
-        },
-        "input": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_shell",
-    "description": "Full access one-shot shell command in the target group's active workspace. This can change files and run local commands; it is not a sandbox.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "command": {
-          "type": "string"
-        },
-        "cwd": {
-          "type": "string",
-          "default": "."
-        },
-        "timeout_s": {
-          "type": "integer",
-          "default": 60,
-          "minimum": 1,
-          "maximum": 600
-        },
-        "max_output_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        },
-        "env": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "remote_group_id",
-        "command"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_exec_command",
-    "description": "Full access long-running shell command. Returned session_id is bound to the bridge and rechecked on write/poll.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "command": {
-          "type": "string"
-        },
-        "cmd": {
-          "type": "string"
-        },
-        "cwd": {
-          "type": "string",
-          "default": "."
-        },
-        "workdir": {
-          "type": "string"
-        },
-        "yield_time_ms": {
-          "type": "integer",
-          "default": 1000,
-          "minimum": 0,
-          "maximum": 30000
-        },
-        "timeout_s": {
-          "type": "integer",
-          "default": 600,
-          "minimum": 1,
-          "maximum": 600
-        },
-        "max_output_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        },
-        "env": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "remote_group_id"
-      ]
-    }
-  },
-  {
-    "name": "cccc_remote_write_stdin",
-    "description": "Full access write/poll/terminate for a remote exec session. Full access is rechecked on every call.",
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true
-    },
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "remote_group_id": {
-          "type": "string",
-          "description": "Target remote group id for Group Bridge access."
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "chars": {
-          "type": "string"
-        },
-        "yield_time_ms": {
-          "type": "integer",
-          "default": 1000,
-          "minimum": 0,
-          "maximum": 30000
-        },
-        "max_output_bytes": {
-          "type": "integer",
-          "default": 200000,
-          "minimum": 1,
-          "maximum": 1000000
-        },
-        "terminate": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "required": [
-        "remote_group_id",
-        "session_id"
       ]
     }
   }

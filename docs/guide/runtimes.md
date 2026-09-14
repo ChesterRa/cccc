@@ -17,7 +17,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Devin CLI | `devin` | `devin` | Auto |
 | Kiro CLI | `kiro` | `kiro-cli` | Auto |
 | Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
-| Antigravity CLI | `antigravity` | `agy` | Prompt-assisted |
+| Antigravity CLI | `antigravity` | `agy` | Auto setup |
 | Droid CLI | `droid` | `droid` | Auto |
 | Amp | `amp` | `amp` | Auto |
 | Auggie (Augment) | `auggie` | `auggie` | Auto |
@@ -83,6 +83,7 @@ cccc setup --runtime hermes
 cccc setup --runtime kimi
 cccc setup --runtime opencode
 cccc setup --runtime kilo
+cccc setup --runtime antigravity
 ```
 
 DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
@@ -91,7 +92,6 @@ Prompt-assisted runtimes print an idempotent setup prompt or contract that you r
 
 ```bash
 cccc setup --runtime cursor
-cccc setup --runtime antigravity
 ```
 
 For a custom runtime, provide the command when creating or editing the actor:
@@ -392,11 +392,10 @@ never resumed.
 `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. It does not claim
 to have a local provider process or native terminal.
 
-For a running Antigravity actor, `actor_new_session` submits the runtime's
-native `/clear` command. This creates a new provider conversation while keeping
-the authenticated process, project, and terminal sandbox alive. A stopped
-Antigravity actor starts normally. Ordinary stop/start behavior remains
-process-based and does not claim provider-session resume semantics.
+Antigravity uses the ordinary process lifecycle: `actor_new_session` replaces
+the process and the next CCCC task receives a fresh bootstrap. CCCC does not
+claim automatic provider-session resume for this runtime; explicit native
+conversation arguments remain the user's responsibility.
 
 ## ChatGPT Web Model
 
@@ -441,7 +440,7 @@ Common checks:
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, Grok, OpenCode, and Kilo receive an Actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Prompt-assisted runtimes (`cursor` and `antigravity`) retain their startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, Grok, OpenCode, and Kilo therefore reports session ownership instead of mutating provider-global configuration.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, Grok, OpenCode, and Kilo receive an Actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor retains its prompt-assisted startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, Grok, OpenCode, and Kilo therefore reports session ownership instead of mutating provider-global configuration.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 
@@ -459,3 +458,53 @@ cccc setup --runtime cline
 CCCC uses Cline's own noninteractive `mcp add` command and verifies the resulting `cline_mcp_settings.json`; it does not hand-edit Cline's configuration.
 
 The Web UI also exposes runtime detection and actor configuration from the add/edit actor dialogs.
+
+### Antigravity MCP and first terminal delivery
+
+Startup preparation also sets `showFeedbackSurvey` to `false` in
+`~/.gemini/antigravity-cli/settings.json`. AGY's periodic rating prompt can consume
+an automated paste without submitting it to the agent. This is a native **user
+preference**, so it also disables the survey in standalone AGY sessions under
+that user. Other preferences are preserved; malformed JSON is reported without
+overwriting it. CCCC does not recognize or dismiss surveys by matching UI text.
+
+Antigravity uses native `agy mcp add cccc cccc mcp` before Actor startup and in
+`cccc setup --runtime antigravity`. It requires an AGY CLI version supporting
+`mcp add` (verified with 1.2.2). CCCC verifies the enabled entry after setup,
+serializes updates between instances, and preserves unrelated MCP servers.
+A conflicting project `.agents/mcp_config.json` entry or malformed configuration
+fails explicitly; CCCC does not overwrite it or ask the model to repair it.
+The global entry uses `cccc mcp` on the Actor's PATH and inherits instance and
+Actor identity, so different installations do not pin each other to one launcher.
+
+The complete CCCC bootstrap accompanies the first native task in one submission,
+including after a process restart. Antigravity allows a brief, cancellable
+settling interval before writing that first payload: its paste-mode signal can
+precede conversation input initialization. Subsequent Antigravity deliveries
+include only a conditional reminder to call `cccc_bootstrap` if this conversation
+has not initialized. The reminder does not replay an earlier task or prove its
+receipt. Merely starting an idle Actor does not submit a model prompt.
+
+Cursor still receives MCP setup instructions with its first task. Cursor CLI
+2026.09.10-fd3934a exposes `mcp list`, `list-tools`, `login`, `enable`, and `disable`,
+but no `mcp add`; it uses `.cursor/mcp.json` or `~/.cursor/mcp.json`.
+
+Antigravity uses the normal automatic PTY delivery path. Opening its Web
+terminal or confirming each new process is not required. Terminal footer text
+is not a delivery gate. Complete native login, workspace trust, or other
+first-use setup before sending tasks; paste mode can also be enabled during
+these dialogs and does not prove that the conversation is ready. CCCC does not
+add an application-level readiness handshake to the native TUI.
+
+Previously accepted or uncertain deliveries are not automatically replayed.
+For a failed or uncertain delivery, check the terminal before using the existing
+retry action; an uncertain handoff requires explicit retry confirmation.
+
+The Actor environment exposes the owning CCCC launcher as `CCCC_CLI` and places
+its directory on PATH, including extracted installations. Prompt-assisted MCP
+configuration must inherit `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` from
+the Actor process, rather than pinning one instance in a shared MCP registration.
+Managed runtime sessions continue to use their protocol/session injection path.
+Native PTY submission proves bytes were written, not that a provider completed
+bootstrap or accepted a task; this change does not add a provider acknowledgement
+protocol to PTY runtimes.

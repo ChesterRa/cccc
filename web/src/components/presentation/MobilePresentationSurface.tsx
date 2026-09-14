@@ -3,16 +3,19 @@ import { createPortal } from "react-dom";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { classNames } from "../../utils/classNames";
 
+/** Generic full-screen phone surface; `surface` names it for tests and debugging. */
 export function MobilePresentationSurface({
   isOpen,
   isDark,
   label,
+  surface = "presentation",
   onClose,
   children,
 }: {
   isOpen: boolean;
   isDark: boolean;
   label: string;
+  surface?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -32,7 +35,8 @@ export function MobilePresentationSurface({
       aria-modal="true"
       aria-label={label}
       tabIndex={-1}
-      data-mobile-presentation-surface="true"
+      data-mobile-surface={surface}
+      data-mobile-presentation-surface={surface === "presentation" ? "true" : undefined}
     >
       {children}
     </div>,

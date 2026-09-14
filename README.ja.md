@@ -42,7 +42,7 @@ CCCC はエージェント群を、永続的で協調された 1 つのシステ
 - **配信事実の可視化** — ルーティング、保存、runtime 配信、既読、返信を個別に記録し、「送信済み」を「確認済み」と扱いません。
 - **1 つのコントロールプレーン** — Web UI、CLI、MCP、IM ブリッジがすべて同じ daemon 状態を共有します。
 - **マルチランタイム前提** — Claude Code、Codex CLI、ChatGPT Web、Grok Build などの主要ランタイムを 1 つのグループで混在運用できます。
-- **Group Bridge によるリモート連携** — 信頼済み CCCC group 同士が明示的なメッセージを交換し、許可された場合は相手のローカルリソースを調査・操作できます。
+- **CCCC Connect によるインスタンス間連携** — 同一アカウントの Group が独立した状態を保って通信し、Web は各対象の管理者権限で開きます。
 - **ローカルファースト運用** — インストールコマンドひとつで始められ、ランタイム状態は `CCCC_HOME` に置いたまま、必要時だけリモート監視へ広げられます。
 
 ## CCCC の役割
@@ -55,7 +55,7 @@ CCCC はコマンド一つで導入でき、データベース、メッセージ
 | **信頼性のあるメッセージング** | Send / Send + Reply / Mail、配信・既読・返信の事実を分離し、Mail 専用 Inbox を ledger 順で消費 — runtime への引き渡しを既読と偽りません |
 | **統一コントロールプレーン** | Web UI、CLI、MCP ツール、IM ブリッジがすべて 1 つの daemon に接続 — 状態の分断なし |
 | **マルチランタイム編成** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web など 17 種の主要ランタイムを混在利用でき、さらに `custom` も扱える |
-| **Group Bridge** | マシンやチームをまたぐ信頼済みリモートグループを接続し、明示的メッセージから始めて read/full のローカルアクセスを必要時だけ付与 |
+| **CCCC Connect** | 同一アカウントのインスタンスを集約し、手動ペアリングなしで Group と Actor が連携 |
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
 
@@ -211,8 +211,8 @@ graph TB
     A5 <-->|MCP ツール| Daemon
     Daemon <--> Ports
     Web <--> IM
-    Daemon <-->|Group Bridge<br/>messages · read · full| RG1
-    Daemon <-->|Group Bridge<br/>messages · read · full| RG2
+    Daemon <-->|CCCC Connect<br/>same-account messages| RG1
+    Daemon <-->|CCCC Connect<br/>same-account messages| RG2
 
 ```
 
@@ -221,7 +221,7 @@ graph TB
 - **Daemon は単一ライター** — すべての状態変更が 1 つのプロセスを経由し、競合状態を排除
 - **Ledger は append-only** — イベントは不変、履歴は信頼性が高くデバッグ可能
 - **ポートは薄い** — Web、CLI、MCP、IM ブリッジはステートレスなフロントエンド；daemon が全真実を保持
-- **リモートグループは明示的な信頼関係** — Group Bridge は message-only の協調から始まり、read/full アクセスはリモートグループごとに明示的に付与
+- **インスタンスの権限は独立** — アカウントとデバイスがバックグラウンド通信を認可し、各対象が Web アクセスを検証します。
 - **ランタイムホーム `CCCC_HOME`**（デフォルト `~/.cccc/`）— ランタイム状態はリポジトリの外に保持
 
 ## サポートランタイム
@@ -238,7 +238,7 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 | Devin CLI | MCP 自動設定 | `devin` |
 | Kiro CLI | MCP 自動設定 | `kiro-cli` |
 | Kilo Code CLI | プロンプト支援 MCP 設定 | `kilo` |
-| Antigravity CLI | プロンプト支援 MCP 設定 | `agy` |
+| Antigravity CLI | MCP 自動設定 | `agy` |
 | ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` conversation |
 | Grok Build | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `grok` |
 | Hermes Agent | MCP 自動設定 | `hermes` |
@@ -256,10 +256,12 @@ cccc setup --runtime claude       # CCCC のセッション単位 MCP 注入を�
 cccc setup --runtime cline        # Cline 純正 TUI の MCP を自動設定
 cccc setup --runtime cursor       # プロンプト支援 MCP 設定コントラクトを表示
 cccc setup --runtime kilo         # プロンプト支援 MCP 設定コントラクトを表示
-cccc setup --runtime antigravity  # プロンプト支援 MCP 設定コントラクトを表示
+cccc setup --runtime antigravity  # Actor 起動前に Antigravity MCP を自動設定
 cccc runtime list --all           # 利用可能なランタイムを表示
 cccc doctor                       # 環境とランタイムの可用性を検証
 ```
+
+Antigravity の設定時には、自動配信された端末入力を評価アンケートが消費しないよう、ユーザー設定でアンケートを無効にします。他の設定は保持されます。同じユーザーが単独で起動する AGY にも適用されます。
 
 ユーザーは Runtime だけを選び、CCCC が利用可能な操作面を自動的に決定します。CLI Actor は常に純正の書き込み可能なターミナルを表示します。Claude Code、Codex CLI、Grok Build、OpenCode は同じ provider session に構造化バックグラウンドプロトコルも接続し、ユーザーの直接操作と正確なライフサイクル把握を両立します。Actor メッセージは純正ターミナルへすぐ渡され、steer と queue の判断は受信 Runtime が行います。
 
@@ -271,21 +273,13 @@ ChatGPT Web は外部チャットウィンドウではなく、実際の CCCC ac
 
 セットアップには MCP connector 用の public HTTPS URL（Cloudflare Tunnel、ngrok、Tailscale Funnel、またはリバースプロキシ）が必要です。CCCC は安定したテキストのみの配信を既定とし、実験的な **GPT Pro** モードも提供します。このモードは、画像添付によって第三者 MCP が利用可能になる一部アカウント向けに、ごく小さな空白 PNG を各配信へ添付します。CCCC はモデルを切り替えず、ChatGPT の変更後もこの互換手段が動作し続けることを保証しません。詳細な設定とトラブルシュート: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
-## Group Bridge: リモートグループを接続
+## CCCC Connect：複数インスタンスを一つの作業画面に
 
-Group Bridge は、CCCC を 1 つのローカル working group から、信頼済みグループのネットワークへ拡張します。Windows ワークステーション上の group を、WSL、Mac、サーバー、またはチームメイトの CCCC インスタンスと連携させても、ランタイム状態を混ぜる必要はなく、ローカルファーストなモデルも保てます。
+各インスタンスの **Settings → Account** で同じアカウントを関連付けると、Group と Actor が相互に探索・通信できます。状態と履歴は各インスタンスに残り、Network の作成や Group の手動ペアリングは不要です。
 
-アクセスは段階的に付与します：
+管理者は Web サイドバーから関連付け済みインスタンスを開けます。対象ごとに**そのインスタンス自身の管理者 Access Token** が必要です。制限付きアクセスは単一インスタンスのままです。ブラウザーの権限とバックグラウンドのデバイス通信権限は独立し、Remote Access が管理された HTTPS 接続経路を提供します。
 
-| レベル | できること |
-|--------|------------|
-| **Messages** | 必要に応じて添付も含め、リモート foreman へ明示的な cross-group メッセージを送信 |
-| **Read** | 信頼済みリモート group が remote MCP ツールでローカル context、リポジトリ、git 状態を調査 |
-| **Full** | 高度に信頼したリモート group が、ネイティブ actor と同じローカルアクセス面でファイル編集やコマンド実行 |
-
-これにより、複数マシンでの開発、複数環境をまたぐ lead/worker 協調、信頼済みチーム間でのステータス・証拠・実装支援の依頼が扱いやすくなります。これは公開ゲストアクセス機能ではありません。read/full は、対象ワークスペースを見せたり操作させたりしてよい相手にだけ付与してください。
-
-Web UI の **Settings > Group Bridge** から開始します。一方が一回限りの pairing invitation を生成し、もう一方がそれを送信して、発行側がリクエストを承認します。承認後、remote group は明示的な宛先として表示され、agent は `cccc_remote_access(action="list")` で利用可能なアクセス権を確認できます。設定手順、メッセージフロー、remote MCP ツール、トラブルシュートは [Group Bridge ガイド](https://chesterra.github.io/cccc/guide/group-bridge) を参照してください。
+Agent は `cccc_connect` で対象を探し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。旧手動 Group Bridge とリモート任意ツールの権限は廃止され、別会員の Group とは、Group ヘッダーの「外部接続」から接続できます。双方がアカウントサイトで各自の Group を承認し、メッセージとファイルを共有します。リモート管理権限は付与されません。[CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
 
 ## メッセージングと協調
 
@@ -298,7 +292,7 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **返信と引用** — 構造化された `reply_to` + 引用コンテキスト
 - **返信要求** — Send + Reply は受信者の返信または送信者の取消まで追跡
 - **ライフサイクル境界** — paused、stopped、disabled の actor を配信が暗黙に起動することはありません
-- **リモートグループ宛先** — Group Bridge の対象は、隠れたブロードキャストではなく明示的な remote recipient として扱われます
+- **明確な宛先識別** — Connect は instance と Group の両 ID を使用し、ローカル ID との混同を防ぎます。
 
 待てる有用な agent 向け情報には Mail、遅延の損失が中断コストを上回る場合は Send、さらに具体的な回答が必要な場合だけ Send + Reply を使います。Mail は人間の user には送れません。1 件のメッセージは `user` のみ、または 1 人以上の agent のどちらか一方を宛先とし、両者へ必要な場合は別々に送信します。明確な担当者、完了条件、証拠、引き継ぎ、受け入れ履歴が必要な委任作業には `tracked-send` を使ってください。`@all` は告知や緊急の共有制約には使えますが、具体タスクのデフォルト分配先にはしません。
 
@@ -334,7 +328,7 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **Context パネル** — 共有ビジョン、スケッチ、マイルストーン、タスク
 - **Group Space** — NotebookLM 統合による共有ナレッジ管理
 - **ChatGPT Web Model 設定** — 1 つの ChatGPT Web 会話を CCCC actor として接続
-- **Group Bridge 設定** — 信頼済みリモートグループをペアリングし、接続ごとに messages/read/full アクセスを選択
+- **CCCC Connect 設定** — アカウントの関連付け、ディレクトリ状態確認、Remote Access の設定。
 - **IM ブリッジ設定** — Telegram/Slack/Discord/Feishu/DingTalk/WeCom/Weixin に接続
 - **設定** — メッセージングポリシー、配信チューニング、ターミナルトランスクリプト制御
 - **テキストスケール** — 90% / 100% / 125% フォントサイズ、ブラウザごとに永続化
@@ -423,7 +417,7 @@ cccc im start|stop|status
 | **メッセージングとファイル** | `cccc_inbox_read`、`cccc_message_history`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
 | **グループと actor 制御** | `cccc_group`、`cccc_actor` |
 | **協調と状態** | `cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_context_sync` |
-| **リモートグループアクセス** | `cccc_remote_access`、`cccc_remote_context`、`cccc_remote_repo`、`cccc_remote_git`、`cccc_remote_apply_patch`、`cccc_remote_exec_command` |
+| **インスタンス探索** | `cccc_connect`、および `cccc_message_send` と `cccc_file` の明確な宛先指定 |
 | **オートメーションと記憶** | `cccc_automation`、`cccc_memory`、`cccc_memory_admin` |
 | **必要時のみの拡張** | `cccc_capability_*`、`cccc_space`、`cccc_terminal`、`cccc_debug`、`cccc_im_bind` |
 
@@ -459,7 +453,7 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 - **Daemon IPC は認証なし。** デフォルトで localhost にのみバインド。
 - **IM ボットトークン** は環境変数から読み取り、設定ファイルには保存しない。
 - **ランタイム状態** は `CCCC_HOME`（`~/.cccc/`）に保持、リポジトリ内には置かない。
-- **Group Bridge は信頼ベースの接続です。** message-only が最も安全なデフォルトであり、read/full は対象ワークスペースの調査や操作を任せられるリモート group にだけ付与してください。
+- **Connect アカウントの関連付けはバックグラウンド連携を許可します。** 同じアカウントの他 Group と通信してよいインスタンスだけを関連付けてください。Web には対象ごとの管理者 Token が必要です。
 - **Capability allowlist** がエージェントの有効化できるオプション MCP サーフェスを管理。ポリシーはパッケージ内のデフォルトと `CCCC_HOME/config/` のユーザーオーバーレイで構成。
 
 詳細なセキュリティガイダンスは [SECURITY.md](SECURITY.md) を参照。

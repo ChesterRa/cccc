@@ -366,21 +366,22 @@ export function PresentationRail({
     return (
       <aside
         className={classNames(
-          "flex h-full w-[52px] flex-shrink-0 flex-col items-center border-r px-1 py-2",
+          // The rail sits on the right edge of the split surface, so its divider faces left.
+          "flex h-full w-[40px] flex-shrink-0 flex-col items-center border-l px-1 py-2",
           isDark ? "border-white/8 bg-slate-950/24" : "border-black/8 bg-white/56",
         )}
         aria-label={t("presentationDockAriaLabel", { defaultValue: "Presentation slots" })}
       >
         <div
           className={classNames(
-            "inline-flex min-h-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-medium",
+            "inline-flex min-h-[16px] items-center justify-center rounded-full px-1 text-[9px] font-medium",
             isDark ? "bg-white/[0.06] text-slate-300" : "bg-black/[0.05] text-gray-600",
           )}
         >
           {filledSlots.length}/{normalizedPresentation.slots.length}
         </div>
 
-        <div className="mt-2 flex flex-1 flex-col items-center gap-1.5">
+        <div className="mt-1.5 flex flex-1 flex-col items-center gap-1">
           {normalizedPresentation.slots.map((slot) => {
             const card = slot.card;
             const isHighlighted = slot.slot_id === highlightSlotId;
@@ -403,7 +404,7 @@ export function PresentationRail({
                   }
                 }}
                 className={classNames(
-                  "group relative flex h-10 w-10 items-center justify-center rounded-[14px] border text-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35",
+                  "group relative flex h-8 w-8 items-center justify-center rounded-[11px] border text-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35",
                   card || !readOnly ? "cursor-pointer" : "cursor-default",
                   card
                     ? tone?.buttonClassName
@@ -446,7 +447,7 @@ export function PresentationRail({
                 ) : null}
                 <span
                   className={classNames(
-                    "text-[13px] font-semibold tracking-[0.01em]",
+                    "text-[11px] font-semibold tracking-[0.01em]",
                     card ? "text-current" : isDark ? "text-slate-200" : "text-gray-800",
                   )}
                 >

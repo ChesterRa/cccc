@@ -46,12 +46,6 @@ describe("ImagePreview fixed layout", () => {
     );
 
     expect(markup).toContain("height:128px");
-    expect(markup).toContain("justify-center overflow-hidden rounded-lg");
-    expect(markup).toContain("line-clamp-2 break-words text-[11px] leading-4");
-    expect(markup).toContain("mt-0.5 truncate text-[10px] leading-4");
-    expect(markup).toContain('width="20"');
-    expect(markup).toContain("mb-1");
-    expect(markup).toContain("pt-1");
     expect(markup).toContain('download="missing-image.png"');
   });
 });

@@ -17,12 +17,16 @@ pub mod capability_legacy;
 mod capability_legacy_tests;
 pub mod cloudflared;
 pub mod codex_voice_settings;
+pub mod connect;
+pub mod connect_catalog;
+pub mod connect_delivery;
+pub mod connect_groups;
+pub mod connect_peer;
 pub mod context;
 pub mod deepseek_restart_gate;
 pub mod fs;
 pub mod group;
-pub mod group_bridge_identity;
-pub mod group_bridge_legacy;
+pub mod group_bridge_retirement;
 pub mod group_copy;
 mod group_delete;
 pub mod group_prompts;
@@ -32,6 +36,7 @@ pub mod im_state;
 pub mod inbox;
 #[cfg(test)]
 mod inbox_tests;
+pub mod instance_identity;
 pub mod integration_state;
 pub mod ledger;
 pub mod ledger_archive;
@@ -56,6 +61,8 @@ pub mod web_bootstrap;
 pub mod web_login_grants;
 pub mod web_model_connectors;
 pub mod web_runtime_proof;
+pub mod workspace;
+pub mod workspace_git;
 
 pub use capability_builtin::{
     USER_CONTROL_TOOL_NAMES, WEB_MODEL_CORE_TOOL_NAMES, is_builtin_capability_pack_tool,

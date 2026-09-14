@@ -38,6 +38,10 @@ export type VoiceRecordingStopReason = {
   at: number;
 };
 
-export type BrowserMicrophoneSupportIssue = "" | "secure_context" | "get_user_media";
+export type BrowserMicrophoneSupportIssue =
+  | ""
+  | "secure_context"
+  | "get_user_media"
+  | "embedded_workspace";
 export type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
 export type BrowserSpeechSupportIssue = "" | "unsupported";

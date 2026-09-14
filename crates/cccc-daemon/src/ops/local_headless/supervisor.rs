@@ -260,17 +260,6 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<HeadlessStatus> {
     Some(state.clone())
 }
 
-#[cfg(test)]
-pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event) -> bool {
-    submit_batch(
-        home,
-        group,
-        actor,
-        std::slice::from_ref(event),
-        &AtomicBool::new(false),
-    )
-}
-
 pub fn submit_batch(
     home: &HomeLayout,
     group: &GroupDoc,

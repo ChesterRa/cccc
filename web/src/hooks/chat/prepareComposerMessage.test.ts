@@ -31,11 +31,7 @@ describe("prepareComposerMessage", () => {
   it("keeps oversized text inline when the destination cannot carry attachments", () => {
     const text = "x".repeat(MAX_INLINE_COMPOSER_TEXT_BYTES + 1);
 
-    const result = prepareComposerMessage({
-      text,
-      files: [],
-      targets: [{ isCrossGroup: true, isRemote: false }],
-    });
+    const result = prepareComposerMessage({ text, files: [], targets: [{ isCrossGroup: true }] });
 
     expect(result).toEqual({ text, files: [], converted: false });
   });

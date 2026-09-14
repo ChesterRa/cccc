@@ -9,7 +9,13 @@ function needsTokenLogin(resp: api.ApiResponse<unknown>): boolean {
   return !resp.ok && api.isAuthRequiredErrorCode(resp.error?.code);
 }
 
-export function AuthGate({ children }: { children: React.ReactNode }) {
+export function AuthGate({
+  children,
+  requireAdmin = false,
+}: {
+  children: React.ReactNode;
+  requireAdmin?: boolean;
+}) {
   const initialForceLogin = api.shouldForceTokenLogin();
   const forceLoginRef = useRef(initialForceLogin);
   const bootstrapRequiredRef = useRef(false);
@@ -31,6 +37,19 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         session.ok && session.result?.web_access_session?.bootstrap_required,
       );
       bootstrapRequiredRef.current = bootstrapRequired;
+      if (
+        requireAdmin &&
+        (!session.ok ||
+          !session.result?.web_access_session?.is_admin ||
+          !session.result?.web_access_session?.current_browser_signed_in)
+      ) {
+        if (!cancelled) {
+          api.clearAuthToken();
+          setStatus("login");
+          if (session.ok) setError(t("connect.adminRequired"));
+        }
+        return;
+      }
       if (bootstrapRequired) {
         if (!cancelled) setStatus("authenticated");
         return;
@@ -50,16 +69,39 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [requireAdmin, t]);
 
   // Subscribe to mid-session 401s so the gate re-appears.
   useEffect(() => {
-    api.onAuthRequired(() => {
+    return api.onAuthRequired(() => {
       if (bootstrapRequiredRef.current) return;
       api.clearAuthToken();
       setStatus("login");
     });
   }, []);
+
+  useEffect(() => {
+    if (!requireAdmin || status !== "authenticated") return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void api.fetchWebAccessSession().then((response) => {
+        if (cancelled) return;
+        if (
+          !response.ok ||
+          !response.result?.web_access_session?.is_admin ||
+          !response.result?.web_access_session?.current_browser_signed_in
+        ) {
+          api.clearAuthToken();
+          setError(t("connect.adminRequired"));
+          setStatus("login");
+        }
+      });
+    }, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [requireAdmin, status, t]);
 
   const handleSubmit = useCallback(
     async (token: string) => {
@@ -80,6 +122,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (
+        requireAdmin &&
+        (!session.result.web_access_session?.is_admin ||
+          !session.result.web_access_session?.current_browser_signed_in)
+      ) {
+        api.clearAuthToken();
+        setSubmitting(false);
+        setError(t("connect.adminRequired"));
+        return;
+      }
+
       // Validate that Set-Cookie really took effect before discarding the bearer.
       api.clearAuthToken();
       const resp = await api.fetchGroups();
@@ -96,7 +149,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         );
       }
     },
-    [t],
+    [requireAdmin, t],
   );
 
   if (status === "checking") {
@@ -111,5 +164,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  return <AuthTokenLoginForm error={error} submitting={submitting} onSubmit={handleSubmit} />;
+  return (
+    <AuthTokenLoginForm
+      error={error}
+      submitting={submitting}
+      onSubmit={handleSubmit}
+      requireAdmin={requireAdmin}
+    />
+  );
 }

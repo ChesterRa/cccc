@@ -1,7 +1,8 @@
+import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
 import { GroupMembersMenu } from "./GroupMembersMenu";
 import { useEffect, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
+import { Actor, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import {
   getGroupControlVisual,
@@ -15,13 +16,14 @@ import {
   PlayIcon,
   PauseIcon,
   StopIcon,
-  EditIcon,
   MoreIcon,
   MenuIcon,
 } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 import { AppSettingsMenu } from "./AppSettingsMenu";
+import { useSidePanelSelection } from "../../hooks/useSidePanelSelection";
+import { useModalStore } from "../../stores/useModalStore";
 
 export interface AppHeaderProps {
   theme: Theme;
@@ -47,6 +49,7 @@ export interface AppHeaderProps {
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
+  groups?: GroupMeta[];
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
@@ -75,15 +78,25 @@ export function AppHeader({
   onSetGroupState,
   onOpenSettings,
   canAccessAccount,
+  groups = [],
   onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
   workControlsRef,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
+  // The presentation surface is reached from this header's menu; the work rail keeps the files one.
+  const { activeSidePanel, selectSidePanel } = useSidePanelSelection(selectedGroupId);
+  const presentationAttention = useModalStore((state) =>
+    selectedGroupId
+      ? Object.keys(state.presentationAttention[selectedGroupId] || {}).length > 0
+      : false,
+  );
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const headerRailClass = "flex items-center gap-1 p-[3px]";
+  const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));
+  const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
   const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
@@ -207,9 +220,23 @@ export function AppHeader({
 
         <div className="min-w-0 flex items-center gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
-              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"))}
-            </h1>
+            {/* The title itself opens group settings; a separate pencil was redundant chrome. */}
+            {canEditGroup ? (
+              <button
+                type="button"
+                onClick={onOpenGroupEdit}
+                title={t("editGroup")}
+                aria-haspopup="dialog"
+                data-group-title-edit="true"
+                className="min-w-0 truncate rounded-md px-1 -mx-1 text-left text-base font-semibold leading-tight text-[var(--color-text-primary)] transition-colors hover:bg-[var(--glass-tab-bg)] md:text-[1.125rem]"
+              >
+                {groupTitle}
+              </button>
+            ) : (
+              <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
+                {groupTitle}
+              </h1>
+            )}
             {selectedGroupId && sseStatus !== "connected" && (
               <span
                 className={classNames(
@@ -226,7 +253,7 @@ export function AppHeader({
             )}
           </div>
 
-          {selectedGroupId && onOpenMember && onEditMember && (
+          {selectedGroupId && onOpenMember && onEditMember ? (
             <GroupMembersMenu
               key={selectedGroupId}
               groupId={selectedGroupId}
@@ -235,20 +262,7 @@ export function AppHeader({
               onOpenActor={onOpenMember}
               onEditActor={onEditMember}
             />
-          )}
-
-          {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
-            <IconButton
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="hidden text-[var(--color-text-tertiary)] @min-[760px]/group-header:inline-flex"
-              onClick={onOpenGroupEdit}
-              label={t("editGroup")}
-            >
-              <EditIcon size={14} />
-            </IconButton>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -260,6 +274,12 @@ export function AppHeader({
 
       {/* Right Actions */}
       <div className="flex shrink-0 items-center gap-1.5">
+        <GroupConnectionsControl
+          enabled={!webReadOnly && canAccessAccount}
+          groupId={selectedGroupId}
+          groups={groups}
+          onOpenAccount={onOpenAccount}
+        />
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}
@@ -327,6 +347,12 @@ export function AppHeader({
                 canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
                 onOpenAccount={onOpenAccount}
                 onOpenSettings={onOpenSettings}
+                presentation={{
+                  active: activeSidePanel === "presentation",
+                  attention: presentationAttention,
+                  disabled: !selectedGroupId,
+                  onToggle: () => selectSidePanel("presentation"),
+                }}
               />
             </div>
 

@@ -17,8 +17,6 @@ pub(crate) enum Policy {
     /// Exclusive access to the requested Group, or the global scope without one.
     Write,
     GlobalWrite,
-    /// A resource owns synchronization, but new work participates in shutdown.
-    GlobalRead,
     /// Completion/read/input paths that must remain available during lifecycle
     /// draining. Authorization and resource synchronization remain in the handler.
     ResourceOwned,

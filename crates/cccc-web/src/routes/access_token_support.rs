@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use cccc_core::access_tokens::{AccessToken, AccessTokenStore, token_id};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -43,15 +43,39 @@ pub fn valid_id(id: &str) -> bool {
     id.len() == 16 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-pub fn cookie(token: &str, secure: bool) -> String {
+pub fn cookie_name(state: &AppState, headers: &HeaderMap) -> String {
+    let origin = crate::request_origin::served_origin(state, headers);
+    cookie_name_for_origin(origin.as_deref())
+}
+
+fn cookie_name_for_origin(origin: Option<&str>) -> String {
+    // Cookies already isolate hostnames but, unlike browser storage, not ports.
+    // Use the served origin's scheme/port so forwarded instances cannot overwrite
+    // each other's credentials. No persistent second instance identity is needed.
+    let url = origin.and_then(|origin| url::Url::parse(origin).ok());
+    let secure = url.as_ref().is_some_and(|url| url.scheme() == "https");
+    let port = url.and_then(|url| url.port_or_known_default()).unwrap_or(0);
+    if secure {
+        format!("__Host-cccc_access_{port}")
+    } else {
+        format!("cccc_access_{port}")
+    }
+}
+
+pub fn cookie(token: &str, secure: bool, name: &str) -> String {
     let policy = if secure {
-        "SameSite=Lax; Secure"
+        "SameSite=None; Secure; Partitioned"
     } else {
         "SameSite=Lax"
     };
     let encoded = utf8_percent_encode(token, COOKIE_VALUE_ENCODE_SET);
-    format!(
-        "cccc_access_token={encoded}; Path=/; HttpOnly; Max-Age={WEB_SESSION_MAX_AGE_SECONDS}; {policy}"
+    format!("{name}={encoded}; Path=/; HttpOnly; Max-Age={WEB_SESSION_MAX_AGE_SECONDS}; {policy}")
+}
+
+pub fn expired_cookie(secure: bool, name: &str) -> String {
+    cookie("", secure, name).replace(
+        &format!("Max-Age={WEB_SESSION_MAX_AGE_SECONDS}"),
+        "Max-Age=0",
     )
 }
 
@@ -84,7 +108,7 @@ pub fn error(status: StatusCode, code: &str, message: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{cookie, mask};
+    use super::{cookie, cookie_name_for_origin, expired_cookie, mask};
     use cccc_core::access_tokens::AccessToken;
 
     #[test]
@@ -102,11 +126,28 @@ mod tests {
 
     #[test]
     fn cookie_percent_encodes_unsafe_token_characters() {
-        let value = cookie("token;含 空格", false);
+        let value = cookie("token;含 空格", false, "cccc_access_token");
         assert!(value.starts_with("cccc_access_token=token%3B"));
         assert!(!value.contains("含 空格"));
         assert!(value.contains("HttpOnly"));
         assert!(value.contains("Max-Age=2592000"));
         assert!(value.contains("SameSite=Lax"));
+    }
+
+    #[test]
+    fn cookies_follow_origin_ports_and_https_partition_boundaries() {
+        let a = cookie_name_for_origin(Some("https://localhost:8848"));
+        let b = cookie_name_for_origin(Some("https://localhost:8849"));
+        let plain = cookie_name_for_origin(Some("http://localhost:8848"));
+        assert_ne!(a, b);
+        assert_ne!(a, plain);
+        assert!(a.starts_with("__Host-"));
+        let value = cookie("fixture", true, &a);
+        assert!(value.contains("SameSite=None; Secure; Partitioned"));
+        assert!(!value.contains("Domain="));
+        let expired = expired_cookie(true, &a);
+        assert!(expired.starts_with(&format!("{a}=;")));
+        assert!(expired.contains("Max-Age=0"));
+        assert!(expired.contains("Partitioned"));
     }
 }

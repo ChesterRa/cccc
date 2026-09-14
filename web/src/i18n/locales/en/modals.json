@@ -118,7 +118,8 @@
     "retryAmbiguousConfirm": "The recipient may already have received this prompt. Retry anyway?",
     "cancelReplyRequest": "Cancel reply request",
     "cancelReplyConfirm": "Cancel every outstanding reply obligation for this message?",
-    "cancelling": "Cancelling…"
+    "cancelling": "Cancelling…",
+    "cancelled": "Cancelled"
   },
   "relay": {
     "title": "Relay Message",

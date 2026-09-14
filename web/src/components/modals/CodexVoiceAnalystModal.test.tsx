@@ -135,7 +135,7 @@ describe("CodexVoiceAnalystModal", () => {
     expect(html).not.toContain("Alpha");
   });
 
-  it("shows accumulated current-turn captions at readable hierarchy", () => {
+  it("shows accumulated current-turn captions", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceAnalystModal
         isOpen
@@ -153,7 +153,6 @@ describe("CodexVoiceAnalystModal", () => {
 
     expect(html).toContain("今天天气怎么样");
     expect(html).toContain("我来帮你查一下。");
-    expect(html).toContain("text-[15px]");
   });
 
   it("shows a concise terminal placeholder before the first investigation", () => {

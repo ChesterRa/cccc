@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.40] — Unreleased
+
+### Added
+- **Connect selected Groups across member accounts.** Invite another member from the Group header and confirm both Groups on the account website. Exact Group scopes, duplicate-safe acceptance and bounded revocation reuse the durable message/reply/file pipeline without sharing administrator Tokens or terminals.
+- **CCCC Connect joins instances linked to the same account.** Background Group/Actor discovery and messaging need no manual Network or Group pairing; each instance retains its own data and needs a reachable HTTPS route.
+- **Remote workspaces open from the sidebar.** Each target requires its own administrator Access Token and serves its native messages, terminals, files, and Presentation. Restricted browser access remains single-instance.
+- **Cross-instance messages survive restarts with bounded delivery.** Persistent identities, target receipts, explicit failure outcomes, small attachments, replies, and cancellation preserve delivery semantics without letting offline peers block healthy ones.
+
+### Changed
+- **Membership settings distinguish Connect from Remote Access.** Directory confirmation, a configured route, and a connected tunnel are separate states. Connect requires version 0.4.40; the shared account minimum remains an explicit deployment choice.
+- **Local account linking prepares administrator access automatically.** Existing credentials are preserved; remote first setup still requires host proof. Account settings edit the same instance name as the website device list.
+- **Remote navigation stays expanded when switching Groups.** Previously opened Group lists have independent collapse controls; inactive frames close and reopening rechecks access.
+
+### Removed
+- **Manual Group Bridge is retired.** Pairing, remote tool sessions, and dedicated MCP tools are removed. Historical messages remain; old pending work receives retirement outcomes before dedicated state is cleaned up. Downgrading the binary does not restore retired connections. Local cross-Group messaging remains available.
+
+### Fixed
+- **Antigravity feedback surveys no longer compete with automatic input.** Startup preparation disables the native user preference while preserving other settings; standalone AGY sessions under the same user also inherit this change.
+- **Connect names identify instances and message senders clearly.** New bindings initialize names from the host, the sidebar distinguishes instances from Groups, and remote Actors without custom titles display their actual IDs.
+- **Shared build caches respect the invoking checkout.** The Web build script resolves Cargo's package directory at runtime so generated assets stay in the source tree being built.
+- **Antigravity uses automatic native-terminal delivery.** Bootstrap context accompanies the first task in one submission, without footer-text matching or per-process Web confirmation. Antigravity configures and verifies MCP with its native CLI before launch. First-payload pacing addresses its observed initialization race; later deliveries retain a conditional bootstrap reminder. Packaged Actor launches supply the owning CLI on PATH and inherit instance and Actor context. Native first-use setup must still be completed before sending tasks.
+- **Same-origin browser writes work behind host-rewriting proxies.** Cookie CSRF validation accepts browser-generated `Sec-Fetch-Site: same-origin` without requiring an external-origin allowlist, while other requests retain Origin/Referer checks.
+- **Terminal and stream WebSockets connect through HTTPS reverse proxies again.** Browsers send no Fetch Metadata on a WebSocket handshake, and a TLS-terminating proxy makes the origin server read an `https://` page back as `http://`, so cookie-authenticated sockets were rejected with `csrf_origin_invalid`. Same-origin matching now compares host and port and ignores the scheme; different hosts, ports, and subdomains stay rejected.
+
 ## [0.4.39] — 2026-09-10
 
 ### Added

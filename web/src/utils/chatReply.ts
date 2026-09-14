@@ -1,5 +1,5 @@
 import type { Actor, ChatMessageData, GroupSettings, LedgerEvent, ReplyTarget } from "../types";
-import { isGroupBridgeInboundMessage } from "./groupBridgeMessages";
+import { isConnectMessage, isCrossInstanceInboundMessage } from "./crossInstanceMessages";
 import { projectCrossGroupRecipients } from "./crossGroupRecipients";
 
 type ReplyComposerState = { destGroupId: string; toText: string; replyTarget: ReplyTarget };
@@ -28,6 +28,13 @@ export function getReplyEventId(event: LedgerEvent): string {
       ? String(data.pending_event_id || "").trim()
       : "";
 
+  if (
+    event._retired_bridge ||
+    (!isConnectMessage(data) &&
+      (isCrossInstanceInboundMessage(event.by, data) ||
+        data?.source_platform === "group_bridge_session"))
+  )
+    return "";
   if (pendingEventId) return pendingEventId;
   if (isEphemeralMessageEventId(rawId)) return "";
   return rawId;
@@ -48,7 +55,20 @@ export function buildReplyComposerState(
   const messageText = data && typeof data.text === "string" ? String(data.text) : "";
   const text = quoteText || messageText;
   const by = String(event.by || "").trim();
-  const isGroupBridgeMessage = isGroupBridgeInboundMessage(by, data);
+  // The daemon resolves a Connect reply from the local canonical event. Remote
+  // IDs must never be interpreted in this instance's Group namespace.
+  if (isConnectMessage(data)) {
+    return {
+      destGroupId: selectedGroupId,
+      toText: "",
+      replyTarget: {
+        eventId: replyEventId,
+        connectInstanceId: data?.src_instance_id || data?.dst_instance_id,
+        by: data?.sender_title || by,
+        text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
+      },
+    };
+  }
   const authorIsActor =
     by && by !== "user" && actors.some((actor) => String(actor.id || "") === by);
   const originalTo = Array.isArray(data?.to)
@@ -63,15 +83,13 @@ export function buildReplyComposerState(
   const policy = groupSettings?.default_send_to || "foreman";
   const defaultTo = remoteDstGroupId
     ? remoteDstTo
-    : isGroupBridgeMessage
-      ? []
-      : authorIsActor
-        ? [by]
-        : originalTo.length > 0
-          ? originalTo
-          : policy === "foreman"
-            ? ["@foreman"]
-            : [];
+    : authorIsActor
+      ? [by]
+      : originalTo.length > 0
+        ? originalTo
+        : policy === "foreman"
+          ? ["@foreman"]
+          : [];
   const replyBy =
     by === "user" && defaultTo.length > 0 ? defaultTo.join(", ") : String(event.by || "unknown");
 

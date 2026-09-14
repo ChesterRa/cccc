@@ -7,28 +7,17 @@ mod assistants;
 mod blob_download;
 mod capabilities;
 mod codex_voice;
+mod connect;
 mod context;
 mod diagnostics;
 mod file_response;
 mod filesystem;
-mod group_bridge;
-mod group_bridge_close;
-mod group_bridge_command_sessions;
-mod group_bridge_outbound_claim;
-mod group_bridge_pairing;
-mod group_bridge_pairing_endpoint;
-mod group_bridge_pairing_http;
-mod group_bridge_pairing_policy;
-mod group_bridge_remote_pairing;
-mod group_bridge_seen;
-mod group_bridge_session;
-mod group_bridge_session_auth;
-mod group_bridge_store;
 mod group_copy;
 mod group_prompt_notify;
 mod group_prompts;
 mod group_space;
 mod group_space_provider;
+mod group_workspace;
 mod groups;
 mod headless;
 mod headless_store;
@@ -94,14 +83,11 @@ pub fn router() -> Router<AppState> {
         .merge(access_tokens::routes())
         .merge(groups::routes())
         .merge(group_copy::routes())
-        .merge(group_bridge::routes())
-        .merge(group_bridge_remote_pairing::routes())
-        .merge(group_bridge_pairing::routes())
-        .merge(group_bridge_session::routes())
         .merge(actors::routes())
         .merge(assistants::routes())
         .merge(group_space::routes())
         .merge(group_space_provider::routes())
+        .merge(group_workspace::routes())
         .merge(headless::routes())
         .merge(im::routes())
         .merge(messaging::routes())
@@ -115,6 +101,7 @@ pub fn router() -> Router<AppState> {
         .merge(codex_voice::routes())
         .merge(diagnostics::routes())
         .merge(membership::routes())
+        .merge(connect::routes())
         .merge(remote_access::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())

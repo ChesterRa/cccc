@@ -25,6 +25,17 @@ describe("apiJson", () => {
     expect(isAuthRequiredErrorCode("admin_required")).toBe(false);
   });
 
+  it("returns a network error when an admitted response body disconnects", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const response = new Response("partial");
+    vi.spyOn(response, "text").mockRejectedValue(new DOMException("timed out", "TimeoutError"));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    expect(await apiJson("/api/v1/connect")).toMatchObject({
+      ok: false,
+      error: { code: "NETWORK_ERROR" },
+    });
+  });
+
   it("does not treat a scoped-token permission denial as sign-out", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const onRequired = vi.fn();

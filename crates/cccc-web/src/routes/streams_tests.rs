@@ -6,6 +6,59 @@ use cccc_core::{GroupStore, HomeLayout, ledger};
 use futures_util::{StreamExt, stream};
 use std::sync::Arc;
 
+fn local_principal() -> Principal {
+    Principal {
+        user_id: "local".into(),
+        allowed_groups: Vec::new(),
+        is_admin: true,
+        raw_token: String::new(),
+    }
+}
+
+#[tokio::test]
+async fn an_already_open_group_stream_stops_after_its_token_is_removed() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("revocation", "")
+        .expect("group");
+    let tokens = cccc_core::access_tokens::AccessTokenStore::new(home.clone()).expect("tokens");
+    let token = tokens
+        .create("viewer", vec![group.group_id.clone()], false, None)
+        .expect("viewer");
+    tokens
+        .create("administrator", Vec::new(), true, None)
+        .expect("admin");
+    let principal = Principal {
+        user_id: token.user_id.clone(),
+        allowed_groups: token.allowed_groups.clone(),
+        is_admin: false,
+        raw_token: token.token.clone(),
+    };
+    let response = group_events(
+        State(test_state(home)),
+        Path(group.group_id),
+        HeaderMap::new(),
+        Extension(principal),
+        Query(ResourceFrameQuery::default()),
+    )
+    .await
+    .expect("stream")
+    .into_response();
+    let mut body = response.into_body().into_data_stream();
+    let connected = body.next().await.expect("connected chunk").expect("chunk");
+    assert!(String::from_utf8_lossy(&connected).contains("connected"));
+    tokens.delete(&token.token_id()).expect("remove viewer");
+    let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+        .await
+        .expect("current access check")
+        .expect("revocation event")
+        .expect("chunk");
+    assert!(String::from_utf8_lossy(&chunk).contains("auth_required"));
+    assert!(body.next().await.is_none());
+}
+
 async fn encoded_event_name(name: &'static str) -> String {
     let event = cccc_contracts::Event::new("chat.message", "g_test");
     let response =
@@ -40,6 +93,10 @@ fn test_state(home: HomeLayout) -> AppState {
     AppState {
         client: DaemonClient::new(home.clone()),
         browser_surfaces: Arc::new(browser_surface::BrowserSurfaces::default()),
+        connect_frames: Arc::new(crate::connect_frames::ConnectFrames::default()),
+        connect_http: crate::connect_frames::http_client()
+            .build()
+            .map_err(|error| error.to_string()),
         codex_voice: Arc::new(crate::codex_voice::CodexVoiceSessions::default()),
         notebooklm_auth: Arc::new(crate::notebooklm_auth::AuthFlowManager::default()),
         ledger_events: ledger_events.clone(),
@@ -78,10 +135,16 @@ async fn last_event_id_replay_crosses_multiple_pages_without_gaps() {
         HeaderName::from_static("last-event-id"),
         cursor.id.parse().expect("header value"),
     );
-    let response = group_events(State(test_state(home)), Path(group.group_id), headers)
-        .await
-        .expect("group stream")
-        .into_response();
+    let response = group_events(
+        State(test_state(home)),
+        Path(group.group_id),
+        headers,
+        Extension(local_principal()),
+        Query(ResourceFrameQuery::default()),
+    )
+    .await
+    .expect("group stream")
+    .into_response();
     let mut body = response.into_body().into_data_stream();
     let mut received = Vec::with_capacity(REPLAY_COUNT);
     while received.len() < REPLAY_COUNT {
@@ -118,6 +181,8 @@ async fn initial_replay_suppresses_events_already_queued_by_the_subscription() {
         State(test_state(home)),
         Path(group.group_id.clone()),
         headers,
+        Extension(local_principal()),
+        Query(ResourceFrameQuery::default()),
     )
     .await
     .expect("group stream")
@@ -177,6 +242,8 @@ async fn reconnect_skips_stale_actor_activity_but_keeps_durable_and_live_events(
         State(test_state(home)),
         Path(group.group_id.clone()),
         headers,
+        Extension(local_principal()),
+        Query(ResourceFrameQuery::default()),
     )
     .await
     .expect("group stream")

@@ -1,3 +1,4 @@
+import type { ConnectDeliveryStatus } from "../../types";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -5,6 +6,7 @@ import { ModalFrame } from "./ModalFrame";
 
 export interface RecipientEntry {
   id: string;
+  label?: string;
   cleared: boolean;
   deliveryState: string;
   read: boolean;
@@ -21,6 +23,8 @@ export interface RecipientsModalProps {
   entries: RecipientEntry[];
   messageMode: "send" | "request_reply" | "mail";
   busyAction: string;
+  remoteDelivery?: ConnectDeliveryStatus;
+  remoteCancellation?: ConnectDeliveryStatus;
   canCancelReply: boolean;
   onDeliver: (actorId: string, forceAmbiguous: boolean) => void;
   onCancelReply: () => void;
@@ -35,12 +39,14 @@ export function RecipientsModal({
   entries,
   messageMode,
   busyAction,
+  remoteDelivery,
+  remoteCancellation,
   canCancelReply,
   onDeliver,
   onCancelReply,
   onClose,
 }: RecipientsModalProps) {
-  const { t } = useTranslation("modals");
+  const { t } = useTranslation(["modals", "chat"]);
   const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
@@ -53,6 +59,7 @@ export function RecipientsModal({
       : t("recipients.deliveryStatus");
 
   const deliveryLabel = (entry: RecipientEntry): string => {
+    if (remoteDelivery) return t(`chat:connectDelivery.${remoteDelivery.state}`);
     if (entry.deliveryState === "accepted") return t("recipients.deliveryAccepted");
     if (entry.deliveryState === "claimed") return t("recipients.deliveryClaimed");
     if (entry.deliveryState === "failed") return t("recipients.deliveryFailed");
@@ -97,6 +104,7 @@ export function RecipientsModal({
           <div className="rounded-xl border divide-y border-[var(--glass-border-subtle)] divide-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]">
             {entries.map((entry) => {
               const canDeliver =
+                !remoteDelivery &&
                 entry.id !== "user" &&
                 (messageMode !== "mail" || !entry.read) &&
                 !entry.replied &&
@@ -107,7 +115,7 @@ export function RecipientsModal({
                 <div key={entry.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
-                      {entry.id}
+                      {entry.label || entry.id}
                     </div>
                     <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                       {deliveryLabel(entry)}
@@ -138,26 +146,30 @@ export function RecipientsModal({
                           : "text-[var(--color-text-muted)]",
                       )}
                       aria-label={
-                        entry.cleared
-                          ? isReply
-                            ? "replied"
-                            : isRead
-                              ? "read"
-                              : "delivered"
-                          : "pending"
+                        entry.cancelled
+                          ? t("recipients.cancelled")
+                          : entry.cleared
+                            ? isReply
+                              ? "replied"
+                              : isRead
+                                ? "read"
+                                : "delivered"
+                            : "pending"
                       }
                     >
-                      {isReply
-                        ? entry.cleared
-                          ? "↩"
-                          : "○"
-                        : isRead
+                      {entry.cancelled
+                        ? t("recipients.cancelled")
+                        : isReply
                           ? entry.cleared
-                            ? "✓✓"
-                            : "✓"
-                          : entry.cleared
-                            ? "✓"
-                            : "○"}
+                            ? "↩"
+                            : "○"
+                          : isRead
+                            ? entry.cleared
+                              ? "✓✓"
+                              : "✓"
+                            : entry.cleared
+                              ? "✓"
+                              : "○"}
                     </div>
                   </div>
                 </div>
@@ -171,12 +183,22 @@ export function RecipientsModal({
         )}
 
         <div className="text-[11px] mt-3 text-[var(--color-text-muted)]">
-          {isReply
-            ? t("recipients.legendReply")
-            : isRead
-              ? t("recipients.legendRead")
-              : t("recipients.legendDelivery")}
+          {remoteDelivery && !isReply
+            ? remoteDelivery.error || t(`chat:connectDelivery.${remoteDelivery.state}Hint`)
+            : isReply
+              ? t("recipients.legendReply")
+              : isRead
+                ? t("recipients.legendRead")
+                : t("recipients.legendDelivery")}
         </div>
+        {remoteCancellation ? (
+          <p className="mt-3 text-xs text-[var(--color-text-secondary)]" role="status">
+            {t(`chat:connectCancellation.${remoteCancellation.state}`)}
+            {" · "}
+            {remoteCancellation.error ||
+              t(`chat:connectCancellation.${remoteCancellation.state}Hint`)}
+          </p>
+        ) : null}
         {canCancelReply ? (
           <div className="mt-4 border-t border-[var(--glass-border-subtle)] pt-4">
             <button

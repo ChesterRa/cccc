@@ -587,5 +587,44 @@
     "switchTo": "{{view}}に切り替え"
   },
   "voiceSecretaryExternalAsrNotReady": "設定 > アシスタントで Bailian または Volcengine の認証情報を設定してください。",
-  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR に接続できません。サーバーのネットワークとプロバイダー設定を確認してください。"
+  "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR に接続できません。サーバーのネットワークとプロバイダー設定を確認してください。",
+  "voiceSecretaryOpenInstanceForMicrophone": "マイクを使用するには、このインスタンスを別画面で開いてください。",
+  "connectDelivery": {
+    "queued": "リモートへの配信待ち",
+    "sent": "リモートグループに配信済み",
+    "failed": "リモート配信に失敗",
+    "unconfirmed": "リモート配信結果が未確認",
+    "queuedHint": "ローカルに保存済みです。最大15分間、自動で配信を再試行します。",
+    "sentHint": "対象グループが受信しました。Actorの既読や返信を意味するものではありません。",
+    "failedHint": "メッセージは配信されませんでした。問題の解決後に再送してください。",
+    "unconfirmedHint": "配信期限内に受信確認を取得できませんでした。相手が受信済みの可能性があるため、再送前に確認してください。"
+  },
+  "connectCancellation": {
+    "queued": "キャンセルを同期中",
+    "queuedHint": "ローカルでキャンセル済み。相手のグループの確認を待っています。Actor のタスクは停止しません。",
+    "sent": "キャンセル確認済み",
+    "sentHint": "両方のグループにキャンセルを記録しました。実行中の Actor タスクは継続します。",
+    "failed": "キャンセル未達",
+    "failedHint": "ローカルでキャンセル済みですが、相手のグループはキャンセルを受け付けませんでした。",
+    "unconfirmed": "キャンセル結果未確認",
+    "unconfirmedHint": "ローカルでキャンセル済み。相手が受信したか確認できないため、返信待ちが終了したとは限りません。"
+  },
+  "workspaceFilesTitle": "ファイル",
+  "workspaceOpenFiles": "ワークスペースのファイルを表示",
+  "workspaceHideFiles": "ワークスペースのファイルを隠す",
+  "workspaceCloseFiles": "ワークスペースのファイルを隠す",
+  "workspaceClose": "ファイルパネルを閉じる",
+  "workspaceRefresh": "再読み込み",
+  "workspaceShowIgnored": "git で無視されたファイルを表示",
+  "workspaceAttachContext": "コンテキストとして添付",
+  "workspaceCopyRelativePath": "相対パスをコピー",
+  "workspaceCopyPath": "絶対パスをコピー",
+  "workspacePinToSlot": "プレゼンテーションのスロットに固定",
+  "workspaceSave": "保存",
+  "workspaceReload": "再読み込み",
+  "workspaceConflict": "このファイルは開いた後に変更されています。再読み込みして最新の内容を確認してください。",
+  "workspaceBinary": "バイナリファイルのためテキストプレビューはできません。",
+  "workspaceTooLarge": "このファイルは大きすぎてここでは開けません（{{size}}）。",
+  "workspaceLoading": "読み込み中…",
+  "workspaceCloseFile": "ファイルを閉じる"
 }

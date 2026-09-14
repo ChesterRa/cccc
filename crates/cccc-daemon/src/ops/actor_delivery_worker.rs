@@ -8,10 +8,11 @@ use crate::ops::actor_runtime;
 
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
+const ANTIGRAVITY_STARTUP_SETTLE: Duration = Duration::from_millis(1_500);
 
-#[cfg(test)]
-#[path = "actor_delivery_live_tests.rs"]
-mod live_tests;
+#[cfg(all(test, unix))]
+#[path = "actor_delivery_startup_tests.rs"]
+mod startup_tests;
 
 pub fn process_batch(
     jobs: &[DeliveryJob],
@@ -55,28 +56,42 @@ pub fn process_batch(
     let Some(status) = ensure_running(&job.home, &current_group, &current_actor) else {
         return false;
     };
-    if *preamble_session != status.started_at {
+    let first_delivery = *preamble_session != status.started_at;
+    if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom
             && !wait_for_input_mode(&current_group.group_id, &current_actor.id, cancelled)
         {
             return false;
         }
-        if !submit_text(
-            &current_group.group_id,
-            &current_actor,
-            &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
-            cancelled,
-        ) {
+        // agy can enable paste mode before its conversation input is mounted.
+        // The ordinary submit delay comes AFTER writing and cannot protect the
+        // first payload. Allow this observed startup transition to settle before
+        // writing anything. This is bounded PTY pacing, not a provider handshake.
+        if current_actor.runtime == ActorRuntime::Antigravity
+            && !interruptible_sleep(ANTIGRAVITY_STARTUP_SETTLE, cancelled)
+        {
             return false;
         }
-        preamble_session.clone_from(&status.started_at);
-        if !interruptible_sleep(PREAMBLE_DELAY, cancelled) {
-            return false;
+        // Custom terminal programs retain their line-oriented preamble contract.
+        // Native agents receive their startup context and task in one submission.
+        if current_actor.runtime == ActorRuntime::Custom {
+            if !submit_text(
+                &current_group.group_id,
+                &current_actor,
+                &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
+                cancelled,
+            ) {
+                return false;
+            }
+            preamble_session.clone_from(&status.started_at);
+            if !interruptible_sleep(PREAMBLE_DELAY, cancelled) {
+                return false;
+            }
         }
     }
 
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
-    let Some(payload) = super::actor_delivery_render::render_batch_with_mail_context(
+    let Some(mut payload) = super::actor_delivery_render::render_batch_with_mail_context(
         &job.home,
         &current_group,
         &current_actor.id,
@@ -84,7 +99,19 @@ pub fn process_batch(
     ) else {
         return false;
     };
+    if first_delivery && current_actor.runtime != ActorRuntime::Custom {
+        payload = format!(
+            "{}\n\n{payload}",
+            super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor)
+                .trim_end()
+        );
+    } else if current_actor.runtime == ActorRuntime::Antigravity {
+        payload = format!(
+            "[CCCC] If this conversation has not completed CCCC initialization, call cccc_bootstrap before handling this task. Otherwise continue without repeating bootstrap.\n\n{payload}"
+        );
+    }
     if submit_text(&current_group.group_id, &current_actor, &payload, cancelled) {
+        preamble_session.clone_from(&status.started_at);
         finish_jobs(jobs);
         return true;
     }

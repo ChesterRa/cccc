@@ -1,112 +1,12 @@
 use super::*;
-#[cfg(unix)]
-use cccc_core::{fs, web_runtime_proof};
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::sync::Mutex;
-use std::thread;
 
 const CREDENTIALS: &str =
     r#"{"hostname":"https://fixture.example.test","tunnel_token":"isolated-tunnel-fixture"}"#;
 
-struct HttpFixture {
-    port: u16,
-    stop: Arc<AtomicBool>,
-    requests: Arc<Mutex<Vec<String>>>,
-    worker: Option<thread::JoinHandle<()>>,
-}
-
-impl HttpFixture {
-    fn new(handler: impl Fn(&str) -> (u16, String) + Send + 'static) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
-        let port = listener.local_addr().expect("address").port();
-        listener.set_nonblocking(true).expect("nonblocking");
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = stop.clone();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let captured = requests.clone();
-        let worker = thread::spawn(move || {
-            while !stopping.load(Ordering::Acquire) {
-                let Ok((mut stream, _)) = listener.accept() else {
-                    thread::sleep(Duration::from_millis(2));
-                    continue;
-                };
-                // macOS inherits the listener's nonblocking flag on accept.
-                stream
-                    .set_nonblocking(false)
-                    .expect("blocking accepted stream");
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .expect("timeout");
-                let mut bytes = Vec::new();
-                loop {
-                    let mut buffer = [0; 4096];
-                    let count = stream.read(&mut buffer).expect("request");
-                    if count == 0 {
-                        break;
-                    }
-                    bytes.extend_from_slice(&buffer[..count]);
-                    if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
-                        let length = header
-                            .lines()
-                            .find_map(|line| line.strip_prefix("content-length:"))
-                            .map_or(0, |length| length.trim().parse::<usize>().expect("length"));
-                        if bytes.len() >= end + 4 + length {
-                            break;
-                        }
-                    }
-                }
-                let request = String::from_utf8(bytes).expect("utf8");
-                captured.lock().expect("capture").push(request.clone());
-                let (status, body) = handler(&request);
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-            }
-        });
-        Self {
-            port,
-            stop,
-            requests,
-            worker: Some(worker),
-        }
-    }
-
-    fn origin(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
-    }
-
-    #[cfg(unix)]
-    fn web(home: &HomeLayout) -> Self {
-        let fixture = Self::new(|request| {
-            let target = request.split_whitespace().nth(1).expect("target");
-            let challenge = target
-                .strip_prefix("/api/v1/ready?challenge=")
-                .expect("challenge");
-            let proof = web_runtime_proof::sign("isolated-proof", challenge).expect("proof");
-            (200, json!({"ok":true,"result":{"web":"ready","runtime_id":"fixture-web","proof":proof}}).to_string())
-        });
-        fs::write_json(&home.daemon_dir().join("web_runtime.json"), &json!({
-            "pid":std::process::id(), "runtime_id":"fixture-web", "runtime_proof_key":"isolated-proof",
-            "host":"127.0.0.1", "port":fixture.port
-        })).expect("web identity");
-        fixture
-    }
-}
-
-impl Drop for HttpFixture {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        self.worker
-            .take()
-            .expect("worker")
-            .join()
-            .expect("fixture finished");
-    }
-}
+#[path = "restore_http.rs"]
+mod http;
+use http::HttpFixture;
 
 struct Installation {
     home: HomeLayout,
@@ -313,23 +213,6 @@ fn transient_account_failure_preserves_intent_and_recovers() {
             .last_error
             .is_none()
     );
-}
-
-#[test]
-fn fixture_waits_for_request_bytes_after_accept() {
-    let fixture = HttpFixture::new(|_| (200, "{}".into()));
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", fixture.port)).expect("connect");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("timeout");
-    thread::sleep(Duration::from_millis(50));
-    stream.write_all(b"GET /delayed HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").expect("delayed request");
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .expect("complete response");
-    assert!(response.starts_with("HTTP/1.1 200 "));
-    assert_eq!(fixture.requests.lock().expect("requests").len(), 1);
 }
 
 #[test]

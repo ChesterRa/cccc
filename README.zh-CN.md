@@ -42,7 +42,7 @@ CCCC 让你的 agent 作为一套持久、可协调的系统运行：
 - **触达事实可见** — 路由、存储、runtime 投递、已读和回复各自记录，不再把“已发送”当作“已看到”。
 - **控制面统一** — Web UI、CLI、MCP、IM 桥接全部围绕同一 daemon 运作，不会出现多套状态。
 - **多运行时是默认能力** — Claude Code、Codex CLI、ChatGPT Web、Grok Build 以及其它一线 runtime 可以在同一协作组内协同工作。
-- **Group Bridge 连接远端协作组** — 可信 CCCC group 可以显式互发消息，并在授权后读取或操作彼此的本地资源。
+- **CCCC Connect 跨实例协作** — 同账户的 Group 可相互通信并保留各自状态，Web 按各目标的管理员权限分别访问。
 - **本地优先但可远程值守** — 单条安装命令即可启动，运行时状态放在 `CCCC_HOME`，需要时再通过 Web / IM 远程运维。
 
 ## CCCC 能做什么
@@ -55,7 +55,7 @@ CCCC 只需一条安装命令，不需要数据库、不需要消息队列、不
 | **可靠的消息语义** | Send / Send + Reply / Mail 三种模式，投递、已读、回复事实分离；只含 Mail 的 Inbox 按 ledger 顺序消费 — runtime 接收不冒充已读 |
 | **统一控制面** | Web UI、CLI、MCP 工具、IM 桥接全部对接同一 daemon — 不存在状态分裂 |
 | **多运行时编排** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web 等 17 种一线运行时可混用，此外还支持 `custom` 运行时兜底 |
-| **Group Bridge** | 连接跨机器或跨团队的可信远端协作组，从显式消息开始，并可按需授予 read/full 本地访问权限 |
+| **CCCC Connect** | 聚合同账户实例，让 Group 和 Actor 无需手工配对即可协作 |
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
@@ -209,8 +209,8 @@ graph TB
     A5 <-->|MCP 工具| Daemon
     Daemon <--> Ports
     Web <--> IM
-    Daemon <-->|Group Bridge<br/>messages · read · full| RG1
-    Daemon <-->|Group Bridge<br/>messages · read · full| RG2
+    Daemon <-->|CCCC Connect<br/>same-account messages| RG1
+    Daemon <-->|CCCC Connect<br/>same-account messages| RG2
 
 ```
 
@@ -219,7 +219,7 @@ graph TB
 - **Daemon 单写者** — 所有状态变更经由同一进程，杜绝竞态条件
 - **Ledger append-only** — 事件不可篡改，历史可靠且可调试
 - **入口薄层化** — Web、CLI、MCP、IM 桥接均为无状态前端；daemon 拥有全部真相
-- **远端协作组是显式信任关系** — Group Bridge 默认从 message-only 协调开始，read/full 访问必须按远端 group 单独授权
+- **实例权限独立** — 账户与设备身份授权后台通信，每个目标独立验证网页访问权限。
 - **运行时目录 `CCCC_HOME`**（默认 `~/.cccc/`）— 运行时状态与代码仓库严格分离
 
 ## 支持的运行时
@@ -236,7 +236,7 @@ CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 | Devin CLI | 自动 MCP 配置 | `devin` |
 | Kiro CLI | 自动 MCP 配置 | `kiro-cli` |
 | Kilo Code CLI | 提示词辅助 MCP 配置 | `kilo` |
-| Antigravity CLI | 提示词辅助 MCP 配置 | `agy` |
+| Antigravity CLI | 自动 MCP 配置 | `agy` |
 | ChatGPT Web | 远程 MCP + 浏览器投递 | `chatgpt.com` 对话 |
 | Grok Build | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `grok` |
 | Hermes Agent | 自动 MCP 配置 | `hermes` |
@@ -254,10 +254,12 @@ cccc setup --runtime claude       # 确认由 CCCC 按会话注入 MCP
 cccc setup --runtime cline        # 为 Cline 原生 TUI 自动配置 MCP
 cccc setup --runtime cursor       # 显示提示词辅助 MCP 配置协议
 cccc setup --runtime kilo         # 显示提示词辅助 MCP 配置协议
-cccc setup --runtime antigravity  # 显示提示词辅助 MCP 配置协议
+cccc setup --runtime antigravity  # 在 Actor 启动前自动配置 Antigravity MCP
 cccc runtime list --all           # 列出所有可用运行时
 cccc doctor                       # 检查环境和运行时可用性
 ```
+
+Antigravity 配置还会在其用户设置中关闭原生评分问卷，避免问卷消耗自动投递的终端输入。其它偏好保持不变；同一用户独立运行的 AGY 也会关闭问卷。
 
 Rust daemon 在创建 actor 会话前，会检查对应 runtime 的 `cccc` MCP 是否仍指向当前公共入口；缺失或可安全替换的旧配置会自动修复并再次验证。Codex 保留 actor 级启动配置，因此从 Python 切换到 Rust、旧入口被删除或符号链接失效时，新会话不会继续锁定无效工具列表。项目级等非用户作用域冲突不会被静默覆盖，而会返回可操作的错误。
 
@@ -271,21 +273,13 @@ ChatGPT Web 可以作为真正的 CCCC actor 加入协作组，而不只是外�
 
 配置需要通过公网 HTTPS URL 暴露 MCP connector（Cloudflare Tunnel、ngrok、Tailscale Funnel 或反向代理）。CCCC 默认使用稳定的纯文本投递，也提供实验性的 **GPT Pro** 模式：每次投递会附带一张极小的空白 PNG，以兼容部分账户中由此开放第三方 MCP 的 ChatGPT 行为。CCCC 不会替你切换模型，也不保证该兼容方式在 ChatGPT 改版后继续有效。完整配置与排障见 [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime)。
 
-## Group Bridge：连接远端协作组
+## CCCC Connect：统一访问你的实例
 
-Group Bridge 将 CCCC 从一个本地 working group 扩展为一组可信协作组网络。你可以让 Windows 工作站上的 group 与 WSL、Mac、服务器，或队友的 CCCC 实例协作，而不需要合并彼此的运行时状态，也不会破坏本地优先模型。
+在各实例的 **设置 → 账户** 中关联同一账户，Group 和 Actor 即默认可以相互发现和通信，各自的运行状态与历史仍保留在本实例。无需创建 Network 或手动配对 Group。
 
-访问能力按层级授予：
+管理员可在 Web 侧边栏聚合访问已关联的实例；打开远端时，需要输入**该目标实例自己的管理员 Access Token**。受限访问保持单实例。人的网页权限与后台设备通信权限分离，Remote Access 提供托管 HTTPS 访问路径。
 
-| 层级 | 能力 |
-|------|------|
-| **Messages** | 向远端 foreman 显式发送跨 group 消息，必要时可携带附件 |
-| **Read** | 允许可信远端 group 通过 remote MCP 工具查看本地 context、仓库和 git 状态 |
-| **Full** | 允许高度可信的远端 group 通过与本地 actor 相同的访问面修改文件、运行命令 |
-
-这让 CCCC 适用于多机器开发、跨环境 lead/worker 协作，以及可信团队之间请求状态、证据或实现帮助的场景。它不是公开访客访问功能：只有在你愿意让对方查看或操作目标工作区时，才授予 read/full 权限。
-
-从 Web UI 的 **Settings > Group Bridge** 开始配置：一端生成一次性配对邀请，另一端提交邀请，发起端审批请求。审批通过后，远端 group 会作为显式收件人出现，agent 也可以通过 `cccc_remote_access(action="list")` 发现可用访问能力。完整步骤、消息流、remote MCP 工具和排障方式见 [Group Bridge 指南](https://chesterra.github.io/cccc/guide/group-bridge)。
+Agent 使用 `cccc_connect` 发现目标，再通过 `cccc_message_send` 或 `cccc_file` 同时指定 `dst_instance_id` 和 `dst_group_id`。回复沿用收到的本地 Event ID。旧手工 Group Bridge 及远程任意工具授权已退役；现在可从 Group 顶栏的“外部连接”连接其他会员的 Group。双方在官网确认各自的 Group，开放消息和文件通信，不开放远程管理。详见 [CCCC Connect 指南](https://chesterra.github.io/cccc/guide/connect)。
 
 ## 消息与协调
 
@@ -298,7 +292,7 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **回复与引用** — 结构化的 `reply_to` + 引用上下文
 - **回复请求** — Send + Reply 持续追踪到收件人回复或发送方取消
 - **生命周期边界** — paused、stopped 或 disabled actor 不会被消息投递静默唤醒
-- **远端协作组收件人** — Group Bridge 目标以显式 remote recipient 出现，而不是隐藏广播
+- **明确远端身份** — Connect 同时使用 instance 和 Group ID，避免与本地同名 ID 混淆。
 
 有用但可以延后查看的 agent 信息使用 Mail；延迟知晓的代价高于打断时使用 Send；还必须得到具体回答时才使用 Send + Reply。Mail 不能发给人类用户。单条消息只能发给 `user`，或发给一个/多个 agent，不能混合两类受众；需要同时通知时应拆成两条消息。需要明确负责人、完成标准、证据、交接或验收轨迹的委派工作，应使用 `tracked-send`。`@all` 仍可用于公告或紧急共享约束，但不应作为具体任务分派的默认方式。
 
@@ -334,7 +328,7 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **Context 面板** — 共享 vision、sketch、里程碑和任务
 - **Group Space** — NotebookLM 集成，共享知识管理
 - **ChatGPT Web Model 设置** — 将一个 ChatGPT Web 对话接入为 CCCC actor
-- **Group Bridge 设置** — 配对可信远端协作组，并为每条连接选择 messages/read/full 访问层级
+- **CCCC Connect 设置** — 关联账户、检查目录状态和配置 Remote Access。
 - **IM 桥接配置** — 连接 Telegram/Slack/Discord/飞书/钉钉/企业微信/微信
 - **设置** — 消息策略、触达调优、终端日志控制
 - **文本缩放** — 90% / 100% / 125% 三级字体大小，按浏览器持久化
@@ -423,7 +417,7 @@ Agent 通过一套紧凑的 action-oriented MCP surface 与 CCCC 交互。核心
 | **消息与文件** | `cccc_inbox_read`、`cccc_message_history`、`cccc_message_send`、`cccc_message_reply`、`cccc_file` |
 | **协作组与 actor 控制** | `cccc_group`、`cccc_actor` |
 | **协调与状态** | `cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_context_sync` |
-| **远端协作组访问** | `cccc_remote_access`、`cccc_remote_context`、`cccc_remote_repo`、`cccc_remote_git`、`cccc_remote_apply_patch`、`cccc_remote_exec_command` |
+| **实例发现** | `cccc_connect`；`cccc_message_send` 与 `cccc_file` 的明确跨实例目标 |
 | **自动化与记忆** | `cccc_automation`、`cccc_memory`、`cccc_memory_admin` |
 | **按需扩展能力** | `cccc_capability_*`、`cccc_space`、`cccc_terminal`、`cccc_debug`、`cccc_im_bind` |
 
@@ -459,7 +453,7 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 - **Daemon IPC 无认证。** 默认仅绑定 localhost。
 - **IM bot token** 从环境变量读取，不存储在配置文件中。
 - **运行时状态** 存放在 `CCCC_HOME`（`~/.cccc/`），不在代码仓库内。
-- **Group Bridge 是基于信任的连接。** message-only 是最安全的默认层级；只有在远端 group 可以查看或操作目标工作区时，才授予 read/full 访问。
+- **关联 Connect 账户即授予后台协作权限。** 只关联允许与同账户其它实例的 Group 互通的实例。网页访问仍分别需要目标实例的管理员 Token。
 - **能力白名单** 管控 agent 可启用的可选 MCP 能力面。策略由内置默认值与 `CCCC_HOME/config/` 下的用户覆盖层组合而成。
 
 详细安全指南见 [SECURITY.md](SECURITY.md)。

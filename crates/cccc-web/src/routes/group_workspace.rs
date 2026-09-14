@@ -1,0 +1,138 @@
+//! Workspace file tree for the Files panel, confined to the group's active scope.
+//!
+//! Reads and writes go through `cccc_core::workspace`, which owns the scope boundary.
+//! The whole surface is disabled in exhibit mode: it is an operator tool, not a demo view.
+
+use axum::Router;
+use axum::extract::Json as JsonBody;
+use axum::extract::{Path, Query, State};
+use axum::routing::get;
+use cccc_core::GroupStore;
+use cccc_core::workspace::{self, ListOptions, WriteOutcome};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::AppState;
+use crate::api::{ApiError, ApiResult, success};
+
+#[derive(Deserialize)]
+struct ListQuery {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    show_ignored: bool,
+}
+
+#[derive(Deserialize)]
+struct FileQuery {
+    #[serde(default)]
+    path: String,
+}
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/groups/{group_id}/workspace/list", get(list))
+        .route(
+            "/api/v1/groups/{group_id}/workspace/file",
+            get(read).put(write),
+        )
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<ListQuery>,
+) -> ApiResult {
+    let group = load_group(&state, &group_id)?;
+    let listing = workspace::list(
+        &group,
+        &query.path,
+        ListOptions {
+            show_ignored: query.show_ignored,
+        },
+    )
+    .map_err(|error| path_error(&query.path, error))?;
+    Ok(success(json!({
+        "root_path": listing.root,
+        "path": listing.path,
+        "parent": listing.parent,
+        "items": listing.items,
+    })))
+}
+
+async fn read(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> ApiResult {
+    let group = load_group(&state, &group_id)?;
+    let file = workspace::read_file(&group, &query.path)
+        .map_err(|error| path_error(&query.path, error))?;
+    Ok(success(serde_json::to_value(file).unwrap_or_default()))
+}
+
+async fn write(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    JsonBody(body): JsonBody<Value>,
+) -> ApiResult {
+    let group = load_group(&state, &group_id)?;
+    let path = text(&body, "path");
+    let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
+        ApiError::bad_code("invalid_content", "content must be a string", json!({}))
+    })?;
+    let expected = text(&body, "sha256");
+    match workspace::write_file(&group, &path, content, &expected)
+        .map_err(|error| path_error(&path, error))?
+    {
+        WriteOutcome::Written { sha256, created } => Ok(success(json!({
+            "path": path,
+            "sha256": sha256,
+            "created": created,
+        }))),
+        WriteOutcome::Conflict { sha256 } => Err(ApiError::conflict(
+            "workspace_write_conflict",
+            "the file changed on disk since it was opened",
+            json!({"path": path, "sha256": sha256}),
+        )),
+    }
+}
+
+fn load_group(state: &AppState, group_id: &str) -> Result<cccc_core::GroupDoc, ApiError> {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden_code(
+            "read_only",
+            "workspace files are unavailable in exhibit mode",
+        ));
+    }
+    let store =
+        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
+    store
+        .load(group_id)
+        .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
+}
+
+fn text(body: &Value, key: &str) -> String {
+    body.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+/// Keeps "outside the scope" distinguishable from "missing", so the panel can say which.
+fn path_error(raw: &str, error: std::io::Error) -> ApiError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => {
+            ApiError::not_found_code("NOT_FOUND", format!("Path not found: {raw}"))
+        }
+        std::io::ErrorKind::PermissionDenied => {
+            ApiError::forbidden_code("PERMISSION", format!("Permission denied: {raw}"))
+        }
+        _ if error.to_string().contains("active scope") => ApiError::forbidden_code(
+            "outside_scope",
+            format!("Path is outside the group workspace: {raw}"),
+        ),
+        _ => ApiError::bad_code("workspace_error", error.to_string(), json!({})),
+    }
+}

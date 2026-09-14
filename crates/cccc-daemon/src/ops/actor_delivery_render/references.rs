@@ -174,19 +174,8 @@ fn render_group_bridge_route(item: &Value) -> Option<String> {
     let label = nonempty(item, "remote_group_title")
         .or_else(|| nonempty(item, "token"))
         .unwrap_or(remote_group_id);
-    let access = nonempty(item, "access_level");
-    let route = access.map_or_else(
-        || format!("remote_group_id={}", compact(remote_group_id, 48)),
-        |access| {
-            format!(
-                "{} remote/{}",
-                compact(remote_group_id, 48),
-                compact(access, 24)
-            )
-        },
-    );
     Some(format!(
-        "- Group Bridge route {} ({route}); send with cccc_message_send dst_group_id=\"{}\" and an explicit remote recipient such as to=\"@foreman\".",
+        "- Historical Group Bridge reference {} ({}). This route is retired; do not send using this Group ID. Discover the current instance and Group with cccc_connect before starting a new conversation.",
         compact(label, 72),
         compact(remote_group_id, 48)
     ))
@@ -219,7 +208,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn renders_group_bridge_route_as_an_actionable_remote_target() {
+    fn renders_retired_route_as_history_without_advertising_an_active_destination() {
         let mut event = Event::new("chat.message", "g_local");
         event.data = json!({
             "refs":[{
@@ -238,7 +227,7 @@ mod tests {
             lines(&event),
             vec![
                 "[cccc] References:",
-                "- Group Bridge route 外部数据采集平台 (g_remote remote/messages); send with cccc_message_send dst_group_id=\"g_remote\" and an explicit remote recipient such as to=\"@foreman\"."
+                "- Historical Group Bridge reference 外部数据采集平台 (g_remote). This route is retired; do not send using this Group ID. Discover the current instance and Group with cccc_connect before starting a new conversation."
             ]
         );
     }

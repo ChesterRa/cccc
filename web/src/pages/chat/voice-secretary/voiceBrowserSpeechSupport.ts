@@ -5,6 +5,7 @@ import type {
   BrowserSpeechRecognitionConstructor,
   BrowserSpeechSupportIssue,
 } from "./voiceBrowserSpeechTypes";
+import { isConnectFramePath } from "../../../features/connect/protocol";
 
 export function getBrowserSpeechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
@@ -20,6 +21,8 @@ export function getBrowserSpeechSupportIssue(): BrowserSpeechSupportIssue {
 }
 
 export function getBrowserMicrophoneSupportIssue(): BrowserMicrophoneSupportIssue {
+  if (typeof window !== "undefined" && isConnectFramePath(window.location.pathname))
+    return "embedded_workspace";
   if (typeof window !== "undefined" && window.isSecureContext === false) return "secure_context";
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia)
     return "get_user_media";

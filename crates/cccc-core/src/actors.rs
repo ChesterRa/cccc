@@ -93,6 +93,7 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
         ));
     }
     actor.role = None;
+    actor.generation = uuid::Uuid::new_v4().to_string();
     actor.capability_autoload = dedupe(actor.capability_autoload);
     actor.capability_hidden = dedupe(actor.capability_hidden);
     actor.updated_at = utc_now();
@@ -119,7 +120,7 @@ pub fn update(
         .as_object_mut()
         .ok_or_else(|| io::Error::other("invalid actor"))?;
     for (key, value) in patch {
-        if key != "id" && key != "created_at" && key != "role" {
+        if !matches!(key.as_str(), "id" | "created_at" | "role" | "generation") {
             object.insert(key.clone(), value.clone());
         }
     }

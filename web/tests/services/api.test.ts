@@ -1059,42 +1059,19 @@ describe("api.message refs", () => {
     );
   });
 
-  it("preserves remote reply metadata on cross-group upload sends", async () => {
-    fetchMock.mockResolvedValue({
-      status: 200,
-      ok: true,
-      text: async () => JSON.stringify({ ok: true, result: { src_event: { id: "src-1" } } }),
-    });
-
+  it("rejects unsupported local cross-group files before any HTTP request", async () => {
     const api = await import("../../src/services/api");
     const file = new File(["image"], "shot.png", { type: "image/png" });
-    await api.sendCrossGroupMessage(
+    const result = await api.sendCrossGroupMessage(
       "g-src",
       "g-dst",
-      "你好",
+      "hello",
       ["@foreman"],
-      "request_reply",
+      "send",
       [file],
-      {
-        replyTo: "evt-local-source",
-        quoteText: "原消息",
-        clientId: "local-1",
-        remoteReplyToEventId: "evt-remote-original",
-      },
     );
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/groups/g-src/send_cross_group_upload",
-      expect.objectContaining({ method: "POST" }),
-    );
-    const body = fetchMock.mock.calls[0]?.[1]?.body;
-    expect(body).toBeInstanceOf(FormData);
-    const form = body as FormData;
-    expect(form.get("reply_to")).toBe("evt-local-source");
-    expect(form.get("quote_text")).toBe("原消息");
-    expect(form.get("client_id")).toBe("local-1");
-    expect(form.get("remote_reply_to_event_id")).toBe("evt-remote-original");
-    expect(form.get("message_mode")).toBe("request_reply");
+    expect(result).toMatchObject({ ok: false, error: { code: "attachments_not_supported" } });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("sends tracked delegation payloads through the daemon endpoint", async () => {

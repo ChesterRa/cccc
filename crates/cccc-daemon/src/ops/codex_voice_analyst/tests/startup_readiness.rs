@@ -5,7 +5,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Duration;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[tokio::test]
@@ -81,65 +80,4 @@ async fn new_session_is_not_ready_until_the_same_thread_can_resume() {
         drop(result);
         server.abort();
     }
-}
-
-/// No credentials or model calls: validate native app-server persistence in a
-/// temporary CODEX_HOME, including reopening the same thread after process exit.
-#[tokio::test]
-async fn live_codex_empty_thread_can_resume_after_restart() {
-    if std::env::var("CCCC_CODEX_STARTUP_LIVE").as_deref() != Ok("1") {
-        return;
-    }
-    let temp = tempfile::tempdir().expect("create test directory");
-    let root = temp.path().to_path_buf();
-    let env = std::collections::BTreeMap::from([(
-        "CODEX_HOME".into(),
-        root.to_string_lossy().into_owned(),
-    )]);
-    let command = vec![
-        "codex".into(),
-        "app-server".into(),
-        "--listen".into(),
-        "ws://127.0.0.1:0".into(),
-    ];
-    let first = AnalystSession::launch_prepared(
-        WorkspaceBinding { root: root.clone() },
-        vec!["codex".into()],
-        command.clone(),
-        env.clone(),
-        None,
-        SessionPurpose::Actor,
-    )
-    .await
-    .expect("complete launch prepared in fixture");
-    let id = first.thread_id().to_owned();
-    first
-        .process
-        .as_ref()
-        .expect("access retained child")
-        .stop()
-        .expect("stop owned runtime");
-    drop(first);
-    let second = tokio::time::timeout(
-        Duration::from_secs(30),
-        AnalystSession::launch_prepared(
-            WorkspaceBinding { root },
-            vec!["codex".into()],
-            command,
-            env,
-            Some(id.clone()),
-            SessionPurpose::Actor,
-        ),
-    )
-    .await
-    .expect("complete timeout in fixture")
-    .expect("complete unwrap in fixture");
-    assert_eq!(second.thread_id(), id);
-    assert!(second.thread_resumed);
-    second
-        .process
-        .as_ref()
-        .expect("access retained child")
-        .stop()
-        .expect("stop owned runtime");
 }

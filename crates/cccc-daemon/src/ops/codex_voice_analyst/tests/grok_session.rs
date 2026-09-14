@@ -16,11 +16,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "grok_socket_fixture.rs"]
+mod socket_fixture;
+
 const FAKE_SESSION_ID: &str = "01a0623c-19b3-7ec3-b777-95e24279ec67";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grok_adapter_keeps_one_session_across_acp_tui_and_resume() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
     home.initialize().expect("initialize");
     let workspace = temp.path().join("workspace");
@@ -88,7 +91,7 @@ async fn grok_adapter_keeps_one_session_across_acp_tui_and_resume() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
     home.initialize().expect("initialize");
     let workspace = temp.path().join("workspace");
@@ -156,7 +159,7 @@ async fn external_tui_activity_blocks_delivery_until_it_is_idle() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn busy_runtime_accepts_voice_input_for_its_native_steer_or_queue_policy() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
     home.initialize().expect("initialize");
     let workspace = temp.path().join("workspace");
@@ -241,7 +244,7 @@ async fn busy_runtime_accepts_voice_input_for_its_native_steer_or_queue_policy()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provider_busy_before_prompt_admission_remains_retryable() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
     home.initialize().expect("initialize");
     let workspace = temp.path().join("workspace");
@@ -290,7 +293,7 @@ async fn provider_busy_before_prompt_admission_remains_retryable() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn voice_admission_falls_back_to_the_native_runtime_after_a_busy_race() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = socket_fixture::tempdir();
     let home = HomeLayout::from_path(temp.path().join("cccc-home")).expect("home");
     home.initialize().expect("initialize");
     let workspace = temp.path().join("workspace");

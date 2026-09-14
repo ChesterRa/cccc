@@ -560,6 +560,34 @@ export function AppModals({
       messageMetaEvent._obligation_status && typeof messageMetaEvent._obligation_status === "object"
         ? messageMetaEvent._obligation_status
         : null;
+    if (metaData?.dst_instance_id) {
+      const delivery = messageMetaEvent._connect_delivery || { state: "queued" as const };
+      const titles = metaData.dst_actor_titles || {};
+      return {
+        sourceEventId: String(messageMetaEvent.id || ""),
+        toLabel: toTokensList.map((id) => titles[id] || id).join(", "),
+        entries: toTokensList.map((id) => ({
+          id,
+          label: titles[id] || id,
+          cleared:
+            messageMode === "request_reply"
+              ? !!os?.[id]?.replied || !!os?.[id]?.cancelled
+              : delivery.state === "sent",
+          deliveryState: "",
+          read: false,
+          replied: !!os?.[id]?.replied,
+          replyRequested: messageMode === "request_reply",
+          cancelled: !!os?.[id]?.cancelled,
+        })),
+        statusKind: messageMode === "request_reply" ? ("reply" as const) : ("delivery" as const),
+        messageMode,
+        remoteDelivery: delivery,
+        canCancelReply:
+          messageMode === "request_reply" &&
+          !messageMetaEvent._connect_cancellation &&
+          toTokensList.some((id) => !os?.[id]?.replied && !os?.[id]?.cancelled),
+      };
+    }
     if (os) {
       const recipientIds = Object.keys(os);
       const recipientIdSet = new Set(recipientIds);
@@ -1817,6 +1845,11 @@ export function AppModals({
         actors={actors}
         busy={busy}
         onClose={() => closeModal("mobileMenu")}
+        onOpenFiles={
+          isSmallScreen && selectedGroupId
+            ? () => setChatMobileSurface(selectedGroupId, "files")
+            : undefined
+        }
         onThemeChange={onThemeChange}
         onTextScaleChange={onTextScaleChange}
         onOpenSearch={() => openModal("search")}
@@ -1888,7 +1921,7 @@ export function AppModals({
             ? `${presentationPin.groupId}:${presentationPin.slotId}:${
                 findPresentationSlot(groupPresentation, presentationPin?.slotId || "")?.card
                   ?.published_at || "empty"
-              }`
+              }:${presentationPin.workspacePath || ""}`
             : "presentation-pin-closed"
         }
         isOpen={!!presentationPin && presentationPin.groupId === selectedGroupId}
@@ -1899,6 +1932,7 @@ export function AppModals({
             ? findPresentationSlot(groupPresentation, presentationPin?.slotId || "")
             : null
         }
+        initialWorkspaceRelPath={presentationPin?.workspacePath || ""}
         busy={busy === "presentation-pin"}
         onClose={() => setPresentationPin(null)}
         onSubmitUrl={handlePresentationPublishUrl}
@@ -2010,6 +2044,10 @@ export function AppModals({
         entries={messageMeta?.entries || []}
         messageMode={messageMeta?.messageMode || "send"}
         busyAction={messageActionBusy}
+        remoteDelivery={
+          messageMeta && "remoteDelivery" in messageMeta ? messageMeta.remoteDelivery : undefined
+        }
+        remoteCancellation={messageMetaEvent?._connect_cancellation}
         canCancelReply={Boolean(messageMeta?.canCancelReply)}
         onDeliver={(actorId, forceAmbiguous) => {
           void handleDeliverMessage(actorId, forceAmbiguous);
