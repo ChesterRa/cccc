@@ -14,6 +14,7 @@ import { AppearancePreferences } from "./AppearancePreferences";
 import {
   SearchIcon,
   ClipboardIcon,
+  FolderIcon,
   SettingsIcon,
   AccountIcon,
   EditIcon,
@@ -38,6 +39,8 @@ export interface MobileMenuSheetProps {
   onTextScaleChange: (scale: TextScale) => void;
   onOpenSearch: () => void;
   onOpenContext: () => void;
+  /** Opens the workspace file tree as a full-screen surface; absent when unavailable. */
+  onOpenFiles?: () => void;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
   onOpenAccount: () => void;
@@ -61,6 +64,7 @@ export function MobileMenuSheet({
   onTextScaleChange,
   onOpenSearch,
   onOpenContext,
+  onOpenFiles,
   onOpenSettings,
   canAccessAccount,
   onOpenAccount,
@@ -295,6 +299,21 @@ export function MobileMenuSheet({
                 <span>{t("contextButton")}</span>
               </div>
             </button>
+            {onOpenFiles ? (
+              <button
+                className={rowButtonClass}
+                onClick={() => {
+                  onClose();
+                  onOpenFiles();
+                }}
+                disabled={!selectedGroupId}
+              >
+                <div className="flex items-center gap-3">
+                  <FolderIcon size={18} />
+                  <span>{t("workspaceFilesButton")}</span>
+                </div>
+              </button>
+            ) : null}
             <button
               className={rowButtonClass}
               onClick={() => {

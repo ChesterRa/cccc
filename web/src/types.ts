@@ -22,6 +22,44 @@ export type GroupMeta = {
   runtime_status?: GroupRuntimeStatus;
 };
 
+export type WorkspaceGitStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflicted";
+
+export type WorkspaceEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  mime_type?: string;
+  size?: number;
+  git_status?: WorkspaceGitStatus;
+  /** A clean directory whose subtree contains changes. */
+  git_dirty_descendant?: boolean;
+  ignored?: boolean;
+};
+
+export type WorkspaceListing = {
+  root_path: string;
+  path: string;
+  parent: string | null;
+  items: WorkspaceEntry[];
+};
+
+export type WorkspaceFile = {
+  path: string;
+  content: string;
+  bytes: number;
+  mime_type: string;
+  binary: boolean;
+  truncated: boolean;
+  /** Digest of the bytes this content was read from; echoed back on save. */
+  sha256: string;
+};
+
 export type GroupDoc = {
   generation?: string;
   group_id: string;

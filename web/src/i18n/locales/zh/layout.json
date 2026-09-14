@@ -21,6 +21,7 @@
   "settings": "设置",
   "settingsAndMore": "设置与更多",
   "account": "账户",
+  "presentation": "展示区",
   "menu": "菜单",
   "reconnecting": "重连中…",
   "disconnected": "已断开",
@@ -148,5 +149,6 @@
     "syncFailed": "暂时无法确认 Group 连接。官网上已有的连接可能仍然存在，系统会自动重试同步。",
     "unsupported": "当前账户服务尚不支持 Group 连接，同账户 Connect 仍可使用。",
     "checkedAt": "上次检查：{{time}}"
-  }
+  },
+  "workspaceFilesButton": "工作区文件"
 }

@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AppHeader, type AppHeaderProps } from "./AppHeader";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { getChatSession, useUIStore } from "../../stores/useUIStore";
+import { useModalStore } from "../../stores/useModalStore";
 import type { TextScale, Theme } from "../../types";
 
 const { changeLanguage } = vi.hoisted(() => ({ changeLanguage: vi.fn() }));
@@ -60,10 +62,19 @@ function buttonByText(panel: Element, text: string): HTMLButtonElement {
     (button) => button.textContent?.trim() === text,
   )!;
 }
+/** A real mouse click: a pointerdown that names the pointer, then a click with a detail count. */
+async function mouseClick(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  });
+}
 afterEach(async () => {
   await act(async () => root?.unmount());
   host?.remove();
   vi.clearAllMocks();
+  useUIStore.setState({ chatSessions: {} });
+  useModalStore.setState({ presentationAttention: {} });
 });
 
 describe("header settings menu", () => {
@@ -71,10 +82,19 @@ describe("header settings menu", () => {
     const onOpenAccount = vi.fn();
     const onOpenContext = vi.fn();
     const onOpenGroupEdit = vi.fn();
-    await mount({ onOpenAccount, onOpenContext, onOpenGroupEdit });
+    await mount({
+      onOpenAccount,
+      onOpenContext,
+      onOpenGroupEdit,
+      groupDoc: { group_id: "g1", title: "Robots" },
+    });
+    // The group title is the edit affordance now; the standalone pencil button is gone.
+    const title = host.querySelector<HTMLButtonElement>('[data-group-title-edit="true"]')!;
+    expect(title.textContent).toBe("Robots");
+    expect(host.querySelector('[aria-label="editGroup"]')).toBeNull();
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="context"]')!.click();
-      host.querySelector<HTMLButtonElement>('[aria-label="editGroup"]')!.click();
+      title.click();
     });
     expect(onOpenContext).toHaveBeenCalledOnce();
     expect(onOpenGroupEdit).toHaveBeenCalledOnce();
@@ -200,5 +220,60 @@ describe("header settings menu", () => {
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
     await act(async () => dialog.querySelector<HTMLButtonElement>("button")!.click());
     expect(document.activeElement).toBe(host.querySelector("[data-app-settings-trigger]"));
+  });
+
+  it("opens settings on a mouse click and keeps the menu for every other input", async () => {
+    const onOpenSettings = vi.fn();
+    await mount({ onOpenSettings });
+    const trigger = host.querySelector<HTMLButtonElement>("[data-app-settings-trigger]")!;
+    await mouseClick(trigger);
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
+
+    // A tap has no hover to fall back on, so it must still reach the menu.
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }),
+      );
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    });
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    const panel = document.querySelector<HTMLElement>("[data-app-settings-menu]")!;
+    expect(panel).not.toBeNull();
+    // Settings stays in the menu because that is the only route a tap or keyboard has.
+    await act(async () => buttonByText(panel, "settingsButton").click());
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes the presentation surface through the menu", async () => {
+    useModalStore.setState({ presentationAttention: { "group-1": { "slot-1": true } } });
+    await mount();
+    // The rail no longer carries a presentation button, so the trigger must relay its attention.
+    expect(host.querySelector("[data-app-settings-attention]")).not.toBeNull();
+    const panel = await openMenu();
+    const entry = panel.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!;
+    expect(entry.textContent).toContain("presentation");
+    expect(entry.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => entry.click());
+    expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
+    expect(getChatSession("group-1", useUIStore.getState().chatSessions).presentationDockOpen).toBe(
+      true,
+    );
+
+    const reopened = await openMenu();
+    const active = reopened.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!;
+    expect(active.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => active.click());
+    expect(getChatSession("group-1", useUIStore.getState().chatSessions).presentationDockOpen).toBe(
+      false,
+    );
+  });
+
+  it("disables the presentation entry when no group is selected", async () => {
+    await mount({ selectedGroupId: "" });
+    const panel = await openMenu();
+    expect(
+      panel.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!.disabled,
+    ).toBe(true);
   });
 });

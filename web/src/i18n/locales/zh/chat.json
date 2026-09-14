@@ -608,5 +608,23 @@
     "failedHint": "本地已取消，但对方工作组未接受取消请求。",
     "unconfirmed": "取消结果未确认",
     "unconfirmedHint": "本地已取消，无法确认对方是否收到，请勿假定对方已停止等待回复。"
-  }
+  },
+  "workspaceFilesTitle": "文件",
+  "workspaceOpenFiles": "显示工作区文件",
+  "workspaceHideFiles": "隐藏工作区文件",
+  "workspaceCloseFiles": "隐藏工作区文件",
+  "workspaceClose": "关闭文件面板",
+  "workspaceRefresh": "刷新",
+  "workspaceShowIgnored": "显示被 git 忽略的文件",
+  "workspaceAttachContext": "附加为上下文",
+  "workspaceCopyRelativePath": "复制相对路径",
+  "workspaceCopyPath": "复制绝对路径",
+  "workspacePinToSlot": "固定到展示槽位",
+  "workspaceSave": "保存",
+  "workspaceReload": "重新加载",
+  "workspaceConflict": "这个文件在你打开之后已被改动。请重新加载查看最新内容。",
+  "workspaceBinary": "二进制文件，无法预览文本。",
+  "workspaceTooLarge": "文件太大，无法在这里打开（{{size}}）。",
+  "workspaceLoading": "加载中…",
+  "workspaceCloseFile": "关闭文件"
 }

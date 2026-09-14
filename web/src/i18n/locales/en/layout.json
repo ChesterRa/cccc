@@ -21,6 +21,7 @@
   "settings": "Settings",
   "settingsAndMore": "Settings and more",
   "account": "Account",
+  "presentation": "Presentation",
   "menu": "Menu",
   "reconnecting": "Reconnecting…",
   "disconnected": "Disconnected",
@@ -148,5 +149,6 @@
     "syncFailed": "Group connections could not be confirmed. Existing connections may still be present on the website. Synchronization will retry automatically.",
     "unsupported": "This account service does not support Group connections yet. Same-account Connect remains available.",
     "checkedAt": "Last checked: {{time}}"
-  }
+  },
+  "workspaceFilesButton": "Workspace files"
 }

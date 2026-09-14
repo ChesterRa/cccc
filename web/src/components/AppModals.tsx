@@ -1825,6 +1825,11 @@ export function AppModals({
         actors={actors}
         busy={busy}
         onClose={() => closeModal("mobileMenu")}
+        onOpenFiles={
+          isSmallScreen && selectedGroupId
+            ? () => setChatMobileSurface(selectedGroupId, "files")
+            : undefined
+        }
         onThemeChange={onThemeChange}
         onTextScaleChange={onTextScaleChange}
         onOpenSearch={() => openModal("search")}
@@ -1896,7 +1901,7 @@ export function AppModals({
             ? `${presentationPin.groupId}:${presentationPin.slotId}:${
                 findPresentationSlot(groupPresentation, presentationPin?.slotId || "")?.card
                   ?.published_at || "empty"
-              }`
+              }:${presentationPin.workspacePath || ""}`
             : "presentation-pin-closed"
         }
         isOpen={!!presentationPin && presentationPin.groupId === selectedGroupId}
@@ -1907,6 +1912,7 @@ export function AppModals({
             ? findPresentationSlot(groupPresentation, presentationPin?.slotId || "")
             : null
         }
+        initialWorkspaceRelPath={presentationPin?.workspacePath || ""}
         busy={busy === "presentation-pin"}
         onClose={() => setPresentationPin(null)}
         onSubmitUrl={handlePresentationPublishUrl}

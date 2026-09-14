@@ -7,6 +7,19 @@ use std::io::{self, Write};
 use std::path::Path;
 
 pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
+    atomic_write_with(path, data, false)
+}
+
+/// Atomic replace that carries the destination's existing permissions onto the replacement.
+///
+/// Internal state files are fine with the temp file's private mode, but a user's workspace file
+/// is not: replacing a `0755` script through a fresh temp file would silently drop its
+/// executable bit and its group/other read access.
+pub fn atomic_write_preserving_mode(path: &Path, data: &[u8]) -> io::Result<()> {
+    atomic_write_with(path, data, true)
+}
+
+fn atomic_write_with(path: &Path, data: &[u8], preserve_mode: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("path has no parent"))?;
@@ -14,6 +27,10 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
     temp.write_all(data)?;
     temp.as_file().sync_all()?;
+    // Applied before persist so the destination is never briefly owner-only.
+    if preserve_mode && let Ok(existing) = fs::metadata(path) {
+        temp.as_file().set_permissions(existing.permissions())?;
+    }
     temp.persist(path).map_err(|error| error.error)?;
     sync_dir(parent)
 }

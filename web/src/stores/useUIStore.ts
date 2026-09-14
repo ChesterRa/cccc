@@ -36,6 +36,9 @@ export interface ChatScrollSnapshot {
 }
 
 export type GroupWorkView = "messages" | "terminals";
+/** Which full-screen surface a phone shows for the selected group. */
+export type MobileSurface = "messages" | "presentation" | "files";
+const MOBILE_SURFACES: MobileSurface[] = ["messages", "presentation", "files"];
 
 export interface ChatSessionState {
   workView: GroupWorkView;
@@ -44,9 +47,10 @@ export interface ChatSessionState {
   chatUnreadCount: number;
   chatFilter: ChatFilter;
   scrollSnapshot: ChatScrollSnapshot | null;
-  mobileSurface: "messages" | "presentation";
+  mobileSurface: MobileSurface;
   presentationDockOpen: boolean;
   presentationDisplayMode: "modal" | "split";
+  filesPanelOpen: boolean;
 }
 
 const DEFAULT_CHAT_SESSION: ChatSessionState = {
@@ -59,6 +63,7 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   mobileSurface: "messages",
   presentationDockOpen: false,
   presentationDisplayMode: "modal",
+  filesPanelOpen: false,
 };
 
 export function getChatSession(
@@ -112,9 +117,10 @@ interface UIState {
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setGroupWorkView: (groupId: string, view: GroupWorkView) => void;
   setGroupTerminalPage: (groupId: string, page: number) => void;
-  setChatMobileSurface: (groupId: string, v: "messages" | "presentation") => void;
+  setChatMobileSurface: (groupId: string, v: MobileSurface) => void;
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
   setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
+  setChatFilesPanelOpen: (groupId: string, v: boolean) => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
@@ -202,7 +208,7 @@ export function groupMessagesVisible(
   return (
     state.activeTab === "chat" &&
     session.workView !== "terminals" &&
-    (!state.isSmallScreen || session.mobileSurface !== "presentation")
+    (!state.isSmallScreen || session.mobileSurface === "messages")
   );
 }
 
@@ -220,6 +226,7 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       mobileSurface?: unknown;
       presentationDockOpen?: unknown;
       presentationDisplayMode?: unknown;
+      filesPanelOpen?: unknown;
     };
     next[gid] = {
       ...DEFAULT_CHAT_SESSION,
@@ -232,9 +239,12 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
           ? session.chatFilter
           : "all",
       scrollSnapshot: null,
-      mobileSurface: session.mobileSurface === "presentation" ? "presentation" : "messages",
+      mobileSurface: MOBILE_SURFACES.includes(session.mobileSurface as MobileSurface)
+        ? (session.mobileSurface as MobileSurface)
+        : "messages",
       presentationDockOpen: Boolean(session.presentationDockOpen),
       presentationDisplayMode: session.presentationDisplayMode === "split" ? "split" : "modal",
+      filesPanelOpen: Boolean(session.filesPanelOpen),
     };
   }
   return next;
@@ -263,6 +273,7 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
           mobileSurface: session.mobileSurface,
           presentationDockOpen: session.presentationDockOpen,
           presentationDisplayMode: session.presentationDisplayMode,
+          filesPanelOpen: session.filesPanelOpen,
         },
       ]),
     );
@@ -458,6 +469,12 @@ export const useUIStore = create<UIState>((set) => ({
       const chatSessions = updateChatSession(state.chatSessions, groupId, {
         presentationDisplayMode: v,
       });
+      saveChatSessions(chatSessions);
+      return { chatSessions };
+    }),
+  setChatFilesPanelOpen: (groupId, v) =>
+    set((state) => {
+      const chatSessions = updateChatSession(state.chatSessions, groupId, { filesPanelOpen: v });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),

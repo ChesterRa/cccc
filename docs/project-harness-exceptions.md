@@ -147,3 +147,50 @@ This register covers existing source files that still exceed the 300-line hard l
 - The current refactor retires obsolete implementation exceptions while
   preserving the native boundaries that still require focused decomposition.
 - The exception files must trend downward; this register is not precedent for new oversized files.
+
+## Workspace P1 fixes (2026-09-14)
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `web/src/pages/chat/ChatTab.tsx` | CCCC frontend maintainers | Existing chat container exceeds the budget. | Replace viewer revision keys with controlled draft props only; this fix adds no lines or responsibility. | 1316 | Before adding another chat workflow. | Extract workspace surface composition into a focused component. |
+
+Drafts now survive hiding Files and switching to Presentation while the chat controller remains mounted. Explicit file reload adopts disk content; closing a file retains its unsaved draft; switching groups clears group-local drafts. A save updates the disk baseline without overwriting typing made while the request was in flight. Git ignore queries feed stdin concurrently with stdout collection to avoid pipe backpressure deadlocks.
+
+## Workspace P2 fixes (2026-09-14)
+
+- `useWorkspaceEditor` now owns file requests and per-file unsaved drafts; the tree controller is below 220 lines. Repeat selection does not reload, navigation and close retain drafts, and failed loads leave the current editor intact. Explicit reload replaces the draft only after a successful read.
+- Existing write targets must resolve to ordinary files inside the active scope before their bytes are read. Internal symlinks update the validated target while preserving the link; external, dangling, and special-file targets are rejected. Write operations moved into `workspace_write.rs`.
+- All directory cache lookups use own-property checks, including pending, loading, flattening, and refresh paths.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `crates/cccc-core/src/workspace.rs` | CCCC Rust maintainers | Path validation, listing and reading remain in one facade after write extraction. | Existing scope and file-access correctness. | 290 | Before adding another workspace operation. | Extract listing from scope path validation and file reads. |
+
+## Aggregate commit validation (2026-09-14)
+
+The repository has no project-harness overlay/gate command mapping; its runtime-hook check selects the documented manual fallback. CI commands in `.github/workflows/ci.yml` provide formatting, lint, type, test, build, installer and packaging checks. Windows/Linux-specific runner checks remain remote-only on this macOS host.
+
+Workspace UI integration tests are split into interaction, request-race, refresh, and draft suites with shared fixtures; new source/test files are below 300 lines. Existing large application containers retain their original architectural debt; this aggregate validation does not expand their behavior beyond the already implemented workspace/menu changes. Import boundaries, data ownership, user-file boundaries and responsive workspace flows were reviewed; no dependency or CI workflow was added. No credentials or local runtime data are included.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `web/src/components/layout/AppHeader.settings.test.tsx` | CCCC frontend maintainers | Shared header interaction fixtures. | Existing menu, appearance and side-panel regressions. | 279 | Before another menu feature. | Separate hover/pointer behavior from side-panel and appearance tests. |
+| `web/src/features/connect/GroupConnectionsControl.tsx` | CCCC frontend maintainers | Connection dialog request and presentation logic remain together. | Shared select-menu integration. | 288 | Before another connection operation. | Extract connection form state and invitation actions. |
+| `crates/cccc-web/tests/group_workspace.rs` | CCCC Rust maintainers | HTTP workspace integration journeys share routing setup. | Existing read/write/list and permission tests. | 236 | Before another workspace endpoint. | Separate mutation and permission journeys; setup already extracted. |
+| `crates/cccc-runtime/src/command_output/tests.rs` | CCCC Rust maintainers | Command output tests cover sync/async adapter and lifecycle contracts. | Canonical-path assertion portability fix. | 247 | Before another lifecycle scenario. | Split blocking adapter tests from capture lifecycle tests. |
+
+Validation result: Web check/build, 1558 Web tests (two workers), Ruff, 112 Python tests, native wheel verification/Twine, installer/release-asset scripts, docs build, Rust formatting/strict Clippy, non-daemon workspace tests, and three combined daemon/Web lifecycle tests passed locally. Full-suite daemon failures were traced to macOS accepted-socket mode inheritance and an exited-process signal race; fixes and regressions are documented below. Linux/Windows runners and offline native CLI integration remain remote-only checks.
+
+## Restore HTTP fixture portability (2026-09-14)
+
+The membership restore fixture used a nonblocking listener but read accepted sockets as though they were blocking. BSD/macOS inherits the nonblocking flag on accepted connections, so delayed HTTP bytes caused immediate `WouldBlock` rather than waiting for the configured read timeout. The extracted `restore_http.rs` explicitly restores blocking mode. A delayed, fragmented request regression fails with the previous behavior and succeeds after the fix. Automatic retry and stale-response assertions are retained unchanged.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `crates/cccc-daemon/src/ops/membership/tests/restore.rs` | CCCC Rust maintainers | Existing restore integration scenarios share membership setup. | Extract HTTP fixture and retain all existing assertions; file shrinks from 608 to 512 lines. | 512 | Before adding another restore scenario. | Separate credential retirement/races from background restore lifecycle scenarios. |
+
+Darwin process cleanup can see `killpg(EPERM)` just before `waitid(WNOWAIT)` makes the exit observable. Cleanup now observes that transition for at most 20 ms without reaping the leader, accepting the result only with proven exit; a live leader still returns the original permission error. The EOF/stop race regression reproduced the previous failure and passes 1000 iterations with the fix. Runtime unit tests (116) and all 519 daemon unit tests pass; the existing failure-retains-ownership regression remains intact.
+
+## Pre-commit Git environment isolation (2026-09-14)
+
+The native pre-commit hook now clears Git repository-local environment variables before running Cargo checks. Git fixtures may initialize bare repositories; inheriting an absolute `GIT_DIR` from a linked-worktree hook otherwise redirects those operations into the committing repository. The regression executes real Git initialization behind a stub Cargo boundary and verifies the hook repository remains non-bare. It fails with the previous hook and passes with isolation. No checks are bypassed.

@@ -18,6 +18,8 @@ interface PresentationViewerState {
 interface PresentationPinState {
   groupId: string;
   slotId: string;
+  /** Preselects a workspace file, so pinning from the file tree skips the picker. */
+  workspacePath?: string;
 }
 
 type PresentationAttentionState = Record<string, Record<string, boolean>>;

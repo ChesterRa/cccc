@@ -26,6 +26,16 @@ let root: ReturnType<typeof createRoot>, host: HTMLDivElement;
 const buttons = () => [...document.querySelectorAll("button")];
 const button = (key: string) =>
   buttons().find((b) => b.textContent === key || b.getAttribute("aria-label") === key)!;
+const groupSelect = () => document.querySelector<HTMLButtonElement>("[data-connect-group-select]")!;
+/** The Group list is the shared dropdown now: open the menu, then pick the option. */
+async function chooseGroup(groupId: string) {
+  await act(async () => groupSelect().click());
+  await act(async () =>
+    document
+      .querySelector<HTMLButtonElement>(`[role="menuitemradio"][data-value="${groupId}"]`)!
+      .click(),
+  );
+}
 async function render(enabled = true, groupId = "a") {
   await act(async () =>
     root.render(
@@ -72,11 +82,7 @@ it("uses the explicitly selected Group for an incoming invitation and leaves app
   window.history.replaceState(null, "", `/?connect_invite=${invitation}`);
   await render();
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-  await act(async () => {
-    const select = document.querySelector("select")!;
-    select.value = "b";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await chooseGroup("b");
   const url = "https://account.test/connect/select?ticket=fixture";
   mocks.request.mockResolvedValueOnce({ ok: true, result: { url } });
   await act(async () => button("groupConnections.accept").click());
@@ -90,7 +96,8 @@ it("uses the explicitly selected Group for an incoming invitation and leaves app
   expect(window.location.search).not.toContain("connect_invite");
   mocks.request.mockResolvedValue({ ok: true, result: status });
   await act(async () => button("groupConnections.title").click());
-  expect(document.querySelector("select")?.value).toBe("a");
+  expect(groupSelect().dataset.value).toBe("a");
+  expect(groupSelect().textContent).toContain("Local A");
   expect(button("groupConnections.invite")).toBeDefined();
 });
 
@@ -104,11 +111,7 @@ it("discards a late Group response and stops accepting selection results after p
   );
   await render();
   await act(async () => button("groupConnections.title").click());
-  await act(async () => {
-    const select = document.querySelector("select")!;
-    select.value = "b";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await chooseGroup("b");
   await act(async () =>
     resolve({ ok: true, result: { ...status, account_origin: "https://wrong.test" } }),
   );

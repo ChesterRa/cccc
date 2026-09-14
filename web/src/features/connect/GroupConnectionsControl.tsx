@@ -4,6 +4,7 @@ import { Link2 } from "lucide-react";
 import { apiJson } from "../../services/api/base";
 import { Button } from "../../components/ui/button";
 import { IconButton } from "../../components/ui/icon-button";
+import { SelectMenu } from "../../components/ui/select-menu";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
 import type { GroupMeta } from "../../types";
 import type { ConnectInstance } from "./protocol";
@@ -149,24 +150,27 @@ export function GroupConnectionsControl({
             {t("groupConnections.description")}
           </DialogDescription>
           <div className="min-h-0 space-y-4 overflow-y-auto">
-            <label className="block space-y-1 text-sm">
-              {t("groupConnections.localGroup")}
-              <select
-                className="glass-input w-full rounded-lg p-2"
+            <div className="space-y-1 text-sm">
+              <span className="block">{t("groupConnections.localGroup")}</span>
+              <SelectMenu
                 value={current}
-                disabled={busy}
-                onChange={(event) => {
-                  setChosen(event.target.value);
+                options={groups.map((group) => ({
+                  value: group.group_id,
+                  label: group.title || group.group_id,
+                }))}
+                onChange={(groupId) => {
+                  setChosen(groupId);
                   setPrepared("");
                 }}
-              >
-                {groups.map((group) => (
-                  <option key={group.group_id} value={group.group_id}>
-                    {group.title || group.group_id}
-                  </option>
-                ))}
-              </select>
-            </label>
+                ariaLabel={t("groupConnections.localGroup")}
+                disabled={busy}
+                align="start"
+                className="w-full"
+                // The dialog sits at z-1001, so its own menus have to rise above it.
+                contentClassName="z-[1002] w-[var(--radix-popover-trigger-width)]"
+                triggerProps={{ "data-connect-group-select": "true" }}
+              />
+            </div>
             {invitation && <p className="text-sm">{t("groupConnections.invitation")}</p>}
             {error && (
               <p role="alert" className="text-sm text-[var(--color-danger)]">

@@ -101,8 +101,30 @@ impl Resource {
             Ok(()) | Err(Errno::ESRCH) => Ok(()),
             // Darwin reports EPERM for an unreaped, exited group with no
             // signalable members. A live leader must still surface EPERM.
-            Err(Errno::EPERM) if cfg!(target_vendor = "apple") && self.exited()? => Ok(()),
+            Err(Errno::EPERM)
+                if cfg!(target_vendor = "apple") && self.exited_after_signal_race()? =>
+            {
+                Ok(())
+            }
             Err(error) => Err(error.into()),
+        }
+    }
+
+    #[cfg(unix)]
+    fn exited_after_signal_race(&self) -> io::Result<bool> {
+        // Darwin can stop accepting signals just before waitid publishes the exit.
+        // Keep the leader unreaped while observing that short transition. A live
+        // leader still returns EPERM; this never turns a permission denial into
+        // successful cleanup merely because time elapsed.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(20);
+        loop {
+            if self.exited()? {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 }

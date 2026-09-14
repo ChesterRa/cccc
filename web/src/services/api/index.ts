@@ -13,3 +13,4 @@ export * from "./webModel";
 export * from "./groupSpace";
 export * from "./diagnostics";
 export * from "./codexVoice";
+export * from "./workspace";

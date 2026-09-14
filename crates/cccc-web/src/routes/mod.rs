@@ -17,6 +17,7 @@ mod group_prompt_notify;
 mod group_prompts;
 mod group_space;
 mod group_space_provider;
+mod group_workspace;
 mod groups;
 mod headless;
 mod headless_store;
@@ -86,6 +87,7 @@ pub fn router() -> Router<AppState> {
         .merge(assistants::routes())
         .merge(group_space::routes())
         .merge(group_space_provider::routes())
+        .merge(group_workspace::routes())
         .merge(headless::routes())
         .merge(im::routes())
         .merge(messaging::routes())
