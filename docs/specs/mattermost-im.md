@@ -5,7 +5,16 @@
 
 入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
 
-## 当前修复合同（2026-09-14，review13）
+## 当前修复合同（2026-09-14，review14）
+
+来源：[针对 `de4cd77c` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5197146735)，零新行内评论但有两条折叠建议，不能按评论数量判定通过。
+
+- **首次读取覆盖草稿，采纳**：review13 保护了管理回调，却未覆盖初次状态/配置读取期间的用户选择和编辑。复用原生 `imLoadSeq`：用户切入/切出 Mattermost、编辑其 URL/凭据引用时，使已在途读取失效。另记录用户平台选择序号，迟到响应若是 Mattermost，也不得覆盖从默认旧平台做出的新选择。程序回填不算用户操作，未编辑时仍须完整加载保存值；两个旧平台之间的原有回填不变。状态和配置两阶段、同平台编辑、切出/切回及正常初始回填均需反证和结果断言，实际 GUI 覆盖延迟初次读取。
+- **上传请求头直接决定平台 MIME，不采纳该前提**：固定 Mattermost v10.11.0 的 `uploadFileSimple` 没有将 Content-Type 传入上传任务；`UploadFileTask.init` 使用文件名调用 `model.NewInfo`，后者按扩展名获取 MIME。将头改为附件元数据不能实现该建议声称的效果。保留原单文件 body 协议，澄清 F29：入站保留平台返回的 MIME；出站保持文件名/字节，由平台按其规则分类，不承诺原始 `attachments[].mime_type` 原样成为目标站点 FileInfo。此为固定服务端源码依据，不冒充本轮真实平台测试。
+
+固定证据：[简单上传入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/file.go#L133-L180)、[上传任务初始化](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/app/file.go#L735-L754)、[文件类型推断](https://github.com/mattermost/mattermost/blob/v10.11.0/server/public/model/file_info.go#L131-L144)。本轮不改 MIME 上传代码、其他平台行为、权限或依赖；实施与证据见验收记录。
+
+## 历史修复合同（2026-09-14，review13）
 
 来源：[针对 `95f0bfaa` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5196333967)。两条行内采纳，一条折叠意见不纳入本 PR，理由分别如下。
 

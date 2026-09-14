@@ -95,7 +95,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     });
     await vi.waitFor(() => expect(container.textContent).toContain(groupId));
   };
-  const choose = async (platform: "mattermost" | "telegram") => {
+  const choose = async (platform: "mattermost" | "telegram" | "slack") => {
     await act(async () => props().onPlatformChange(platform));
   };
 
@@ -112,6 +112,108 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     await choose("mattermost");
     expect(props().imMattermostUrl).toBe("");
     expect(props().imBotTokenEnv).toBe("");
+  });
+
+  it.each(["status", "config"] as const)(
+    "keeps user choices and Mattermost edits while initial %s is pending",
+    async (phase) => {
+      for (const edit of ["none", "other", "mattermost", "return", "url", "token"] as const) {
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const status = {
+          ok: true as const,
+          result: {
+            group_id: "group-a",
+            configured: true,
+            running: false,
+            enabled: false,
+            platform: "mattermost",
+            subscribers: 0,
+          },
+        };
+        const config = {
+          ok: true as const,
+          result: {
+            im: {
+              platform: "mattermost" as const,
+              bot_token_env: "STORED_TOKEN",
+              mattermost_url: "https://stored.example.test",
+            },
+          },
+        };
+        vi.mocked(api.fetchIMStatus).mockImplementationOnce(async () => {
+          if (phase === "status") await pending;
+          return status;
+        });
+        vi.mocked(api.fetchIMConfig).mockImplementationOnce(async () => {
+          if (phase === "config") await pending;
+          return config;
+        });
+        await renderGroup(`initial-${phase}-${edit}`);
+        if (edit === "other")
+          await choose(props().imPlatform === "mattermost" ? "telegram" : "slack");
+        if (edit === "mattermost" || edit === "return") {
+          if (edit === "return") await choose("mattermost");
+          await choose("telegram");
+          await choose("mattermost");
+        }
+        if (edit === "url" || edit === "token") {
+          await choose("mattermost");
+          await act(async () => {
+            if (edit === "url") props().setImMattermostUrl("https://edited.example.test");
+            else props().setImBotTokenEnv("EDITED_TOKEN");
+          });
+        }
+        const before = {
+          platform: props().imPlatform,
+          url: props().imMattermostUrl,
+          token: props().imBotTokenEnv,
+          status: props().imStatus,
+        };
+        await act(async () => {
+          release();
+          await pending;
+        });
+        if (edit === "none") {
+          expect(props().imPlatform).toBe("mattermost");
+          expect(props().imMattermostUrl).toBe("https://stored.example.test");
+          expect(props().imBotTokenEnv).toBe("STORED_TOKEN");
+        } else {
+          expect.soft(props().imPlatform).toBe(before.platform);
+          expect.soft(props().imMattermostUrl).toBe(before.url);
+          expect.soft(props().imBotTokenEnv).toBe(before.token);
+          expect.soft(props().imStatus).toEqual(before.status);
+        }
+        expect(props().imBusy).toBe(false);
+        expect(api.setIMConfig).not.toHaveBeenCalled();
+        expect(api.startIMBridge).not.toHaveBeenCalled();
+        // 状态阶段被取消时，配置请求不会消费该次 mock，避免串入下一场景。
+        vi.mocked(api.fetchIMConfig)
+          .mockReset()
+          .mockResolvedValue({ ok: true, result: { im: null } });
+      }
+    },
+  );
+
+  it("preserves native initial hydration between legacy platforms", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(api.fetchIMConfig).mockImplementationOnce(async () => {
+      await pending;
+      return { ok: true, result: { im: { platform: "telegram", bot_token_env: "LEGACY_STORED" } } };
+    });
+    await renderGroup("legacy-initial");
+    await choose("slack");
+    await act(async () => {
+      release();
+      await pending;
+    });
+    expect(props().imPlatform).toBe("telegram");
+    expect(props().imBotTokenEnv).toBe("LEGACY_STORED");
   });
 
   it.each(["save", "start-save", "start", "stop", "remove"] as const)(

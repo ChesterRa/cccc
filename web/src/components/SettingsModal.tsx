@@ -193,6 +193,7 @@ export function SettingsModal({
     null,
   );
   const imLoadSeq = useRef(0);
+  const imPlatformSelectionSeq = useRef(0);
   const imActionScope = useRef({ groupId, isOpen, platform: imPlatform });
   const imCurrentPlatform = useRef(imPlatform);
   const imMattermostBusy = useRef(false);
@@ -346,11 +347,16 @@ export function SettingsModal({
     async (opts?: { resetFirst?: boolean; isCurrent?: () => boolean }) => {
       const gid = String(groupId || "").trim();
       const seq = ++imLoadSeq.current;
+      const selection = imPlatformSelectionSeq.current;
+      const isCurrent = (platform?: unknown) =>
+        seq === imLoadSeq.current &&
+        opts?.isCurrent?.() !== false &&
+        (platform !== "mattermost" || selection === imPlatformSelectionSeq.current);
       if (opts?.resetFirst) resetIMState();
       if (!gid) return;
       try {
         const statusResp = await api.fetchIMStatus(gid);
-        if (seq !== imLoadSeq.current || opts?.isCurrent?.() === false) return;
+        if (!isCurrent(statusResp.ok ? statusResp.result.platform : undefined)) return;
         if (statusResp.ok) {
           setImStatus(statusResp.result);
           if (statusResp.result.platform) {
@@ -358,7 +364,7 @@ export function SettingsModal({
           }
         }
         const configResp = await api.fetchIMConfig(gid);
-        if (seq !== imLoadSeq.current || opts?.isCurrent?.() === false) return;
+        if (!isCurrent(configResp.ok ? configResp.result.im?.platform : undefined)) return;
         if (configResp.ok && configResp.result.im) {
           const im = configResp.result.im;
           if (im.platform) setImPlatform(im.platform);
@@ -728,6 +734,9 @@ export function SettingsModal({
   // Handle platform change with config caching
   const handlePlatformChange = (newPlatform: IMPlatform) => {
     if (newPlatform === imPlatform) return;
+    // 用户选择使旧 Mattermost 读取失效；程序回填不计作用户编辑。
+    imPlatformSelectionSeq.current += 1;
+    if (imPlatform === "mattermost" || newPlatform === "mattermost") imLoadSeq.current += 1;
     setImConfigError(null);
 
     // 1. Save current platform config to drafts
@@ -1426,11 +1435,17 @@ export function SettingsModal({
                     imPlatform={imPlatform}
                     onPlatformChange={handlePlatformChange}
                     imBotTokenEnv={imBotTokenEnv}
-                    setImBotTokenEnv={setImBotTokenEnv}
+                    setImBotTokenEnv={(value) => {
+                      if (imPlatform === "mattermost") imLoadSeq.current += 1;
+                      setImBotTokenEnv(value);
+                    }}
                     imAppTokenEnv={imAppTokenEnv}
                     setImAppTokenEnv={setImAppTokenEnv}
                     imMattermostUrl={imMattermostUrl}
-                    setImMattermostUrl={setImMattermostUrl}
+                    setImMattermostUrl={(value) => {
+                      imLoadSeq.current += 1;
+                      setImMattermostUrl(value);
+                    }}
                     imFeishuAppId={imFeishuAppId}
                     setImFeishuAppId={setImFeishuAppId}
                     imFeishuAppSecret={imFeishuAppSecret}
