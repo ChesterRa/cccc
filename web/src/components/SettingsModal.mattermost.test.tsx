@@ -117,7 +117,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
   it.each(["save", "start-save", "start", "stop", "remove"] as const)(
     "ignores stale %s continuations across Group visits, including failures",
     async (action) => {
-      for (const visit of ["other", "return", "remount"] as const) {
+      for (const visit of ["other", "return", "remount", "platform", "platform-return"] as const) {
         for (const outcome of ["success", "rejected", "transport"] as const) {
           vi.mocked(api.fetchIMConfig).mockImplementation(async (gid) => ({
             ok: true,
@@ -161,13 +161,20 @@ describe("SettingsModal Mattermost draft group isolation", () => {
             );
           });
           expect(props().imBusy).toBe(true);
-          if (visit === "remount")
-            await act(async () => {
-              root.render(null);
-            });
-          await renderGroup("group-b");
-          if (visit === "return") await renderGroup("group-a");
-          const target = visit === "return" ? "group-a" : "group-b";
+          const platformVisit = visit === "platform" || visit === "platform-return";
+          if (platformVisit) {
+            await choose("telegram");
+            if (visit === "platform-return") await choose("mattermost");
+          } else {
+            if (visit === "remount")
+              await act(async () => {
+                root.render(null);
+              });
+            await renderGroup("group-b");
+            if (visit === "return") await renderGroup("group-a");
+          }
+          const target = visit === "return" || platformVisit ? "group-a" : "group-b";
+          const platform = visit === "platform" ? "telegram" : "mattermost";
           expect.soft(props().imBusy).toBe(false);
           await act(async () => {
             props().setImMattermostUrl("https://new-draft.example.test");
@@ -197,6 +204,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
             await running;
           });
           expect(props().groupId).toBe(target);
+          expect(props().imPlatform).toBe(platform);
           expect(props().imMattermostUrl).toBe("https://new-draft.example.test");
           expect(props().imBotTokenEnv).toBe("NEW_DRAFT_TOKEN");
           expect(props().imConfigError).toBeUndefined();
@@ -213,46 +221,83 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     },
   );
 
-  it("ignores an old configuration readback after a management action switches Group visits", async () => {
-    for (const returnToA of [false, true]) {
-      await renderGroup("group-a");
-      await choose("mattermost");
-      let release!: (value: Awaited<ReturnType<typeof api.fetchIMConfig>>) => void;
-      vi.mocked(api.fetchIMConfig).mockReturnValueOnce(
-        new Promise((resolve) => {
+  it.each(["status", "config"] as const)(
+    "ignores old %s readback after a management action leaves its scope",
+    async (phase) => {
+      for (const visit of ["other", "return", "remount", "platform", "platform-return"] as const) {
+        await renderGroup("group-a");
+        await choose("mattermost");
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
           release = resolve;
-        }),
-      );
-      let running!: Promise<void>;
-      await act(async () => {
-        running = Promise.resolve(props().onSaveConfig());
-      });
-      await renderGroup("group-b");
-      if (returnToA) await renderGroup("group-a");
-      await choose("mattermost");
-      await act(async () => {
-        props().setImMattermostUrl("https://current.example.test");
-        props().setImBotTokenEnv("CURRENT_GROUP_TOKEN");
-      });
-      await act(async () => {
-        release({
-          ok: true,
-          result: {
-            im: {
-              platform: "mattermost",
-              mattermost_url: "https://old.example.test",
-              bot_token_env: "OLD_GROUP_TOKEN",
-            },
-          },
         });
-        await running;
-      });
-      expect(props().groupId).toBe(returnToA ? "group-a" : "group-b");
-      expect(props().imMattermostUrl).toBe("https://current.example.test");
-      expect(props().imBotTokenEnv).toBe("CURRENT_GROUP_TOKEN");
-      expect(props().imBusy).toBe(false);
-    }
-  });
+        if (phase === "config") {
+          vi.mocked(api.fetchIMConfig).mockImplementationOnce(async () => {
+            await pending;
+            return {
+              ok: true,
+              result: {
+                im: {
+                  platform: "mattermost",
+                  mattermost_url: "https://old.example.test",
+                  bot_token_env: "OLD_GROUP_TOKEN",
+                },
+              },
+            };
+          });
+        } else {
+          vi.mocked(api.fetchIMStatus).mockImplementationOnce(async () => {
+            await pending;
+            return {
+              ok: true,
+              result: {
+                group_id: "group-a",
+                configured: true,
+                running: true,
+                enabled: true,
+                platform: "mattermost",
+                subscribers: 0,
+              },
+            };
+          });
+        }
+        let running!: Promise<void>;
+        await act(async () => {
+          running = Promise.resolve(props().onSaveConfig());
+        });
+        const platformVisit = visit === "platform" || visit === "platform-return";
+        if (platformVisit) {
+          await choose("telegram");
+          if (visit === "platform-return") await choose("mattermost");
+        } else {
+          if (visit === "remount")
+            await act(async () => {
+              root.render(null);
+            });
+          await renderGroup("group-b");
+          if (visit === "return") await renderGroup("group-a");
+          await choose("mattermost");
+        }
+        await act(async () => {
+          props().setImMattermostUrl("https://current.example.test");
+          props().setImBotTokenEnv("CURRENT_GROUP_TOKEN");
+        });
+        const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
+        const status = props().imStatus;
+        await act(async () => {
+          release();
+          await running;
+        });
+        expect(props().groupId).toBe(visit === "return" || platformVisit ? "group-a" : "group-b");
+        expect(props().imPlatform).toBe(visit === "platform" ? "telegram" : "mattermost");
+        expect(props().imStatus).toEqual(status);
+        expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
+        expect(props().imMattermostUrl).toBe("https://current.example.test");
+        expect(props().imBotTokenEnv).toBe("CURRENT_GROUP_TOKEN");
+        expect(props().imBusy).toBe(false);
+      }
+    },
+  );
 
   it.each(["telegram", "mattermost"] as const)(
     "preserves the Mattermost draft when Start cannot save over %s",

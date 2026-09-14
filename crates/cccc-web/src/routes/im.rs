@@ -191,14 +191,26 @@ async fn set_running(
         if adapter_commits_start_state(config.get("platform").and_then(Value::as_str)) {
             state
                 .im_workers
-                .start(state.home.clone(), state.client.clone(), &group_id, &config)
+                .start(
+                    state.home.clone(),
+                    state.client.clone(),
+                    &group_id,
+                    &config,
+                    version,
+                )
                 .await
                 .map_err(ApiError::bad)?;
             return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
         }
         let result = state
             .im_workers
-            .start(state.home.clone(), state.client.clone(), &group_id, &config)
+            .start(
+                state.home.clone(),
+                state.client.clone(),
+                &group_id,
+                &config,
+                version,
+            )
             .await;
         return finish_start(state, &group_id, result);
     }

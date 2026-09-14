@@ -922,6 +922,7 @@ mod tests {
         ws_attempts: AtomicUsize,
         ws_queries: Mutex<Vec<std::collections::HashMap<String, String>>>,
         blocked_identity: AtomicBool,
+        identity_requests: AtomicUsize,
         identity_entered: tokio::sync::Notify,
         release_identity: tokio::sync::Notify,
         ws_events: Mutex<Vec<Value>>,
@@ -1093,6 +1094,7 @@ mod tests {
                 return axum::Json(json!({"ok":true})).into_response();
             }
             if path == "/sub/api/v4/users/me" {
+                state.identity_requests.fetch_add(1, Ordering::SeqCst);
                 if state.blocked_identity.swap(false, Ordering::SeqCst) {
                     state.identity_entered.notify_one();
                     state.release_identity.notified().await;
@@ -2881,6 +2883,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identical_save_invalidates_manual_and_restore_before_allocation() {
+        for restoring in [false, true] {
+            for action in ["set", "stop"] {
+                let fixture = fixture().await;
+                let (_temp, home, group) = scope();
+                let (app, registry) = route_context(&home);
+                let body = json!({"group_id":group,"platform":"mattermost",
+                    "mattermost_url":fixture.api.site,"bot_token":"test-token"});
+                assert_eq!(
+                    route_request(app.clone(), "/api/im/set", Some(body.clone()))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+                let store = GroupStore::new(home.clone()).expect("store");
+                cccc_core::im_state::update(&store, &group, |state| {
+                    state["enabled"] = json!(true);
+                    Ok(())
+                })
+                .expect("enable restore");
+                let (snapshot, version) = super::super::restore_config(&home, &group, &registry)
+                    .expect("locked restore snapshot");
+                let lock = registry.lifecycle_lock(&group);
+                let guard = lock.lock().await;
+                let mut starting = Box::pin(async {
+                    if restoring {
+                        registry
+                            .start_with_mode(
+                                home.clone(),
+                                DaemonClient::new(home.clone()),
+                                &group,
+                                &snapshot,
+                                true,
+                                version,
+                            )
+                            .await
+                    } else {
+                        let (status, response) = route_request(
+                            app.clone(),
+                            "/api/im/start",
+                            Some(json!({"group_id":group})),
+                        )
+                        .await;
+                        if status.is_success() {
+                            Ok(())
+                        } else {
+                            Err(response.to_string())
+                        }
+                    }
+                });
+                assert!(futures_util::poll!(&mut starting).is_pending());
+                let path = format!("/api/im/{action}");
+                let mut superseding = Box::pin(route_request(app.clone(), &path, Some(body)));
+                assert!(futures_util::poll!(&mut superseding).is_pending());
+                let before = cccc_core::im_state::load(&store, &group).expect("saved state");
+                assert_eq!(before["config"], json!(snapshot));
+                assert_ne!(registry.request_version(&group), version);
+                drop(guard);
+                let (started, superseded) = tokio::time::timeout(Duration::from_secs(10), async {
+                    tokio::join!(starting, superseding)
+                })
+                .await
+                .expect("both management requests complete");
+                assert!(started.expect_err("stale start").contains("superseded"));
+                assert_eq!(superseded.0, StatusCode::OK);
+                assert_eq!(
+                    cccc_core::im_state::load(&store, &group).expect("unchanged"),
+                    before
+                );
+                assert!(!registry.is_running(&group));
+                assert!(
+                    !registry
+                        .generations
+                        .lock()
+                        .expect("generations")
+                        .contains_key(&group)
+                );
+                assert_eq!(fixture.state.identity_requests.load(Ordering::SeqCst), 0);
+                assert_eq!(fixture.state.ws_attempts.load(Ordering::SeqCst), 0);
+                // 新读取的请求仍可启动；拒绝旧快照不是禁用当前配置。
+                assert_eq!(
+                    route_request(app, "/api/im/start", Some(json!({"group_id":group})))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+                assert!(registry.is_running(&group));
+                assert_eq!(fixture.state.identity_requests.load(Ordering::SeqCst), 1);
+                registry.shutdown().await;
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn stopped_restore_snapshot_cannot_allocate_a_new_generation() {
         let fixture = fixture().await;
         let (_temp, home, group) = scope();
@@ -2894,7 +2990,8 @@ mod tests {
             Ok(())
         })
         .expect("enabled");
-        let snapshot = super::super::restore_config(&home, &group).expect("restore snapshot");
+        let (snapshot, version) =
+            super::super::restore_config(&home, &group, &registry).expect("restore snapshot");
         let lock = registry.lifecycle_lock(&group);
         let guard = lock.lock().await;
         // 使用恢复入口的同一启动函数，在读快照后、代次分配前确实阻塞。
@@ -2904,6 +3001,7 @@ mod tests {
             &group,
             &snapshot,
             true,
+            version,
         ));
         assert!(futures_util::poll!(&mut restoring).is_pending());
         let stopping = tokio::spawn(route_request(
@@ -3040,8 +3138,13 @@ mod tests {
         let lock = registry.lifecycle_lock(&group);
         let guard = lock.lock().await;
         // 真正的启动分配入口；拒绝前不调用任何外部 Slack 接口。
-        let mut starting =
-            Box::pin(registry.begin_configured_start(&home, &group, &snapshot, false));
+        let mut starting = Box::pin(registry.begin_configured_start(
+            &home,
+            &group,
+            &snapshot,
+            false,
+            (None, None),
+        ));
         assert!(futures_util::poll!(&mut starting).is_pending());
         let saving = tokio::spawn(route_request(
             app,
@@ -3091,7 +3194,13 @@ mod tests {
         let document = store.load(&group).expect("group");
         let snapshot = json!({"platform":"slack","bot_token":"old-token"});
         let (generation, previous) = registry
-            .begin_configured_start(&home, &group, snapshot.as_object().expect("config"), true)
+            .begin_configured_start(
+                &home,
+                &group,
+                snapshot.as_object().expect("config"),
+                true,
+                (None, None),
+            )
             .await
             .expect("legacy snapshot is unchanged");
         assert!(previous.is_none());
@@ -3107,7 +3216,8 @@ mod tests {
                     &home,
                     "g_missing",
                     snapshot.as_object().expect("config"),
-                    false
+                    false,
+                    (None, None)
                 )
                 .await
                 .is_ok()
@@ -3119,7 +3229,8 @@ mod tests {
                     &home,
                     "g_missing",
                     managed.as_object().expect("config"),
-                    false
+                    false,
+                    (None, None)
                 )
                 .await
                 .is_err()

@@ -193,11 +193,15 @@ export function SettingsModal({
     null,
   );
   const imLoadSeq = useRef(0);
-  const imActionScope = useRef({ groupId, isOpen });
+  const imActionScope = useRef({ groupId, isOpen, platform: imPlatform });
   const imCurrentPlatform = useRef(imPlatform);
   const imMattermostBusy = useRef(false);
-  if (imActionScope.current.groupId !== groupId || imActionScope.current.isOpen !== isOpen) {
-    imActionScope.current = { groupId, isOpen };
+  if (
+    imActionScope.current.groupId !== groupId ||
+    imActionScope.current.isOpen !== isOpen ||
+    imActionScope.current.platform !== imPlatform
+  ) {
+    imActionScope.current = { groupId, isOpen, platform: imPlatform };
   }
   imCurrentPlatform.current = imPlatform;
   useEffect(
@@ -275,10 +279,13 @@ export function SettingsModal({
   }, [isOpen, settings]);
 
   useEffect(() => {
-    if (imMattermostBusy.current) {
+    if (imMattermostBusy.current || imPlatform === "mattermost") {
       imMattermostBusy.current = false;
       setImBusy(false);
     }
+  }, [isOpen, groupId, imPlatform]);
+
+  useEffect(() => {
     if (!isOpen) return;
     setScope(groupId ? "group" : "global");
   }, [isOpen, groupId]);
@@ -336,14 +343,14 @@ export function SettingsModal({
   };
 
   const loadIMStatus = useCallback(
-    async (opts?: { resetFirst?: boolean }) => {
+    async (opts?: { resetFirst?: boolean; isCurrent?: () => boolean }) => {
       const gid = String(groupId || "").trim();
       const seq = ++imLoadSeq.current;
       if (opts?.resetFirst) resetIMState();
       if (!gid) return;
       try {
         const statusResp = await api.fetchIMStatus(gid);
-        if (seq !== imLoadSeq.current) return;
+        if (seq !== imLoadSeq.current || opts?.isCurrent?.() === false) return;
         if (statusResp.ok) {
           setImStatus(statusResp.result);
           if (statusResp.result.platform) {
@@ -351,7 +358,7 @@ export function SettingsModal({
           }
         }
         const configResp = await api.fetchIMConfig(gid);
-        if (seq !== imLoadSeq.current) return;
+        if (seq !== imLoadSeq.current || opts?.isCurrent?.() === false) return;
         if (configResp.ok && configResp.result.im) {
           const im = configResp.result.im;
           if (im.platform) setImPlatform(im.platform);
@@ -754,6 +761,7 @@ export function SettingsModal({
   const currentIMAction = () => {
     const scope = imActionScope.current;
     if (imPlatform === "mattermost") imMattermostBusy.current = true;
+    // 两端均为旧平台时保留原生续体合同；本补丁只隔离涉及 Mattermost 的路径。
     return () =>
       (imPlatform !== "mattermost" && imCurrentPlatform.current !== "mattermost") ||
       imActionScope.current === scope;
@@ -767,7 +775,7 @@ export function SettingsModal({
     try {
       const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
       if (!isCurrent()) return;
-      if (resp.ok) await loadIMStatus();
+      if (resp.ok) await loadIMStatus({ isCurrent });
       else if (imPlatform === "mattermost") {
         setImConfigError({
           groupId,
@@ -809,7 +817,7 @@ export function SettingsModal({
         setImWecomBotId("");
         setImWecomSecret("");
         setImWeixinAccountId("");
-        await loadIMStatus();
+        await loadIMStatus({ isCurrent });
       }
     } catch (e) {
       console.error("Failed to remove IM config:", e);
@@ -845,7 +853,7 @@ export function SettingsModal({
           ? await api.startIMBridge(groupId)
           : await saveAndStartIMBridge(getCurrentIMSaveRequest());
       if (!isCurrent()) return;
-      await loadIMStatus();
+      await loadIMStatus({ isCurrent });
       if (!isCurrent()) return;
       if (!resp.ok && imPlatform === "mattermost") {
         setImConfigError({
@@ -879,7 +887,7 @@ export function SettingsModal({
     try {
       await api.stopIMBridge(groupId);
       if (!isCurrent()) return;
-      await loadIMStatus();
+      await loadIMStatus({ isCurrent });
     } catch (e) {
       console.error("Failed to stop bridge:", e);
     } finally {

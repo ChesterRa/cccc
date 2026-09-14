@@ -107,7 +107,7 @@ impl ImWorkerRegistry {
             let home = home.clone();
             let client = client.clone();
             let task = runtime.spawn(async move {
-                let Some(config) = restore_config(&home, &group_id) else {
+                let Some((config, version)) = restore_config(&home, &group_id, &registry) else {
                     registry
                         .restoring
                         .lock()
@@ -116,7 +116,7 @@ impl ImWorkerRegistry {
                     return;
                 };
                 let result = registry
-                    .start_with_mode(home.clone(), client, &group_id, &config, true)
+                    .start_with_mode(home.clone(), client, &group_id, &config, true, version)
                     .await;
                 // These adapters commit start state under their configuration/generation guard.
                 let platform = string(&config, "platform");
@@ -209,8 +209,9 @@ impl ImWorkerRegistry {
         client: DaemonClient,
         group_id: &str,
         config: &Map<String, Value>,
+        version: ImRequestVersion,
     ) -> Result<(), String> {
-        self.start_with_mode(home, client, group_id, config, false)
+        self.start_with_mode(home, client, group_id, config, false, version)
             .await
     }
 
@@ -221,9 +222,10 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
         restoring: bool,
+        version: ImRequestVersion,
     ) -> Result<(), String> {
         let (generation, previous) = self
-            .begin_configured_start(&home, group_id, config, restoring)
+            .begin_configured_start(&home, group_id, config, restoring, version)
             .await?;
         if let Some(previous) = previous {
             previous.shutdown().await;
@@ -428,6 +430,7 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
         restoring: bool,
+        version: ImRequestVersion,
     ) -> Result<(u64, Option<WorkerHandles>), String> {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let _guard = lifecycle_lock.lock().await;
@@ -439,6 +442,7 @@ impl ImWorkerRegistry {
                     || adapter_commits_start_state(current["config"]["platform"].as_str());
                 if guarded
                     && (current.get("config").and_then(Value::as_object) != Some(config)
+                        || self.request_version(group_id) != version
                         || (restoring && current["enabled"] != true))
                 {
                     return Err("IM worker start was superseded by a newer request".into());
@@ -671,13 +675,22 @@ fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
         .collect()
 }
 
-fn restore_config(home: &HomeLayout, group_id: &str) -> Option<Map<String, Value>> {
+fn restore_config(
+    home: &HomeLayout,
+    group_id: &str,
+    registry: &ImWorkerRegistry,
+) -> Option<(Map<String, Value>, ImRequestVersion)> {
     let store = GroupStore::new(home.clone()).ok()?;
-    let state = cccc_core::im_state::load(&store, group_id).ok()?;
-    if !state["enabled"].as_bool().unwrap_or(false) {
-        return None;
-    }
-    state.get("config")?.as_object().cloned()
+    cccc_core::im_state::read_with(&store, group_id, |state| {
+        if !state["enabled"].as_bool().unwrap_or(false) {
+            return None;
+        }
+        Some((
+            state.get("config")?.as_object()?.clone(),
+            registry.request_version(group_id),
+        ))
+    })
+    .ok()?
 }
 
 fn worker(tasks: Vec<JoinHandle<()>>, stopper: Stopper) -> WorkerHandles {

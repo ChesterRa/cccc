@@ -5,7 +5,25 @@
 
 入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
 
-## 当前修复合同（2026-09-14，review12）
+## 当前修复合同（2026-09-14，review13）
+
+来源：[针对 `95f0bfaa` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5196333967)。两条行内采纳，一条折叠意见不纳入本 PR，理由分别如下。
+
+| 来源及根因 | 处置边界与实际入口 | 回归要求 |
+|---|---|---|
+| [启动前同值保存](https://github.com/ChesterRa/cccc/pull/103#discussion_r4004066118)：review12 的请求版本只传入停止提交，启动分配仍只比配置值 | 手动 `set_running → start → start_with_mode → begin_configured_start` 及同形自动恢复均携带在配置锁内读取的版本；在同一锁内比较版本和配置后才分配代次/摘除旧资源。两个旧平台之间仍不做新增拒绝 | 阻塞实际分配入口，保持配置值相等但执行新保存或停止，再释放旧手动/恢复请求；零新代次、worker、身份查询和 WS 请求，状态不变，新读取的请求仍能成功启动 |
+| [同组换平台](https://github.com/ChesterRa/cccc/pull/103#discussion_r4004066167)：review12 的访问对象只有 Group/isOpen，Mattermost→其他平台→Mattermost 会复活旧续体 | 访问对象纳入当前平台；保存、启动前保存、启动、停止、删除全部复用同一归属检查。切换后及时释放旧 busy，旧 finally 不能替新操作清 busy。不改原生平台草稿机制 | 五动作分别覆盖切出及切回、成功/业务拒绝/传输异常；所选平台/草稿/错误不被旧续体改变，无旧回读/新启动；实际 GUI 延迟启动前保存并换平台 |
+| 折叠意见要求所有旧平台之间也检查 Group 归属 | **范围外既有缺口，不作为本 PR 的新增回归修复**：上游 `9642af11` 的保存/启动/停止/删除续体已经无条件调用旧 `loadIMStatus`，本方保留原路径。不是声称该行为正确；改变两个旧平台之间的合同须独立授权，不能借此扩展 Mattermost 补丁。行内意见也明确要求保留 legacy 行为 | 对照固定上游源码及本方 legacy 分支，继续原有 Web 回归；不以修复 Mattermost 宣称解决全平台异步问题 |
+
+同类漏项原因已明确：上一轮将停止入口的版本覆盖误当成所有使用同一快照的入口均覆盖；前端仅按 Group/关窗分段，没有将用户选择的平台纳入同一次访问。现在按实际资源取得和每个异步续体的归属补齐，不改消息协议、权限、依赖或其他业务。当前验证与发布进度见验收及 PR 处置，未完成项不预填通过。
+
+同根因的状态/配置回读也须在写表单之前检查：四个管理回调将原归属函数作为可选参数传入 `loadIMStatus`，分别在状态读取和配置读取完成后核对；无该参数的原生调用维持原行为。不能仅在调用回读前或回读返回后检查，因为中间已经可能覆写平台和草稿。新增延迟两阶段回读的换组、回组、卸载、换平台及切回回归，验证无额外旧配置请求、当前状态与草稿不变。
+
+固定旧路径依据：[上游 SettingsModal](https://github.com/ChesterRa/cccc/blob/9642af11bae2879d3361be5cb3bb295810128822/web/src/components/SettingsModal.tsx)。
+
+另获用户明确授权的测试修复：Windows 的原生 `daemon_im_stop_delegates_to_the_web_owned_worker` 两次在模拟端读取时返回 WouldBlock，同函数在固定上游也存在。仅在 `#[cfg(test)]` 模块修正 start/stop 两个 HTTP 夹具：接受连接后显式恢复阻塞读取并设置 1 秒读取超时，沿原生测试的 Content-Length 方式接收完整请求，保留 4096 字节缓冲上限和原路径/正文断言。停止夹具原有的 1 秒接受连接截止不变，不修改产品网络实现；新增延迟头部/正文回归。该测试修复单独提交，与本轮产品修复分别说明。
+
+## 历史修复合同（2026-09-14，review12）
 
 来源：[针对 `14ba786b` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5195000928)及[行内意见](https://github.com/ChesterRa/cccc/pull/103#discussion_r4003016280)。一条行内与五条折叠意见归并如下；同根因来源保留，不把重复位置算作不同缺陷。
 
