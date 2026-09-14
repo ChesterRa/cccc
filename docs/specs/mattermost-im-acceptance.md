@@ -1,8 +1,29 @@
 # CCCC Mattermost 连接器验收
 
-当前补验入口（2026-09-14）：[review10 合同](mattermost-im.md#当前修复合同2026-09-14review10)对应 `55cd4418` 的七条评审意见；review9 停止/替换及 review8 启动交接的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
+当前补验入口（2026-09-14）：[review11 合同](mattermost-im.md#当前修复合同2026-09-14review11)对应 `0da0c9f3` 的三条评审意见；review10 及更早的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## 启动前窗口与长流式终态（2026-09-14，review11）
+
+基线 `0da0c9f3`。新增回归均沿用原模块与夹具，已在指定 Linux/Windows 测试机通过：
+
+| 用例 | 具体断言 |
+|---|---|
+| `stopped_restore_snapshot_cannot_allocate_a_new_generation` | 恢复快照已读、代次分配阻塞时停止先落盘；恢复被拒、无新代次/worker/平台连接，停止状态不复活 |
+| `legacy_snapshot_cannot_allocate_after_mattermost_save_before_shutdown` | 旧 Slack 快照等待代次时保存 Mattermost；过期启动不分配新代次，不阻止旧 worker 的真正关闭 |
+| `legacy_start_allocation_keeps_native_snapshot_and_read_failure_behavior` | 两个非 Mattermost 平台保留原生快照处理；组文档及状态不因核对而重写；旧平台无新增读取失败，Mattermost 仍拒绝不可读状态 |
+| `read_callback_preserves_load_results_errors_and_group_document` | 原 `load` 与锁内读取返回一致，原错误种类一致，普通读取后 group 文档字节不变；既有影子状态迁移用例继续回归 |
+| `long_stream_completes_all_posts_once_and_keeps_failed_tail_fallback` | 主帖/线程的正常长流将全部最终帖子重组为一次完整正文，附件发送一次；尾段失败保留完整最终兜底，明确已交付首段可能重复的部分失败边界 |
+
+上传/编辑模拟端现在真实更新对应帖子正文，既有“初稿与不同最终正文”断言继续保留；没有以删除旧断言换取通过。无 Web 界面变更，模拟结果不得宣称新一轮真实 Mattermost/GUI 或用户验收。
+
+执行结果与失败记录：
+
+- Linux 定向 Mattermost 54 项、核心 IM 9 项通过，3 项真实站点按原规则忽略；quality 111、Web 1,526（含类型/静态检查及生产构建）、package 25（含 wheel/Twine）通过。初次完整 Rust 检查在 Web 库 485 项通过后，三个 `assistant_voice_ws_revision` 用例报测试子进程 `web port did not open`，流程退出 101，失败日志保留。
+- 未修改语音源码、测试断言、超时或并发方式；同源码定向复跑三项通过，随后原样重跑完整 Rust 检查也全部通过，退出 0 并取得 `ALL_RUST_CHECKS_PASS`。包括格式、严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 库 525 项及集成组、自启动 3 项、固定 Codex/Claude 各 1 项和 Kilo 筛选 3 项；未启用的条件项不计实测。首次端口未打开的根因尚未确定，不把复验通过说成已证明资源问题或整轮从未失败。
+- Windows 的 IM runtime 226 项、路由 6 项、核心 IM 9 项、原生七组 smoke、格式和二进制构建全部通过，退出 0；3 项真实站点仍按原规则忽略。使用同一未改 Web 源码已有 dist，不据此宣称新 GUI 验收。
+- 两端四份已改 Rust 与两份未改生命周期/入站源码 Blob 一致；三份规格 40 处本地引用/锚点通过。完整命令、最终指纹、初次失败及复验日志由发布证据留存。最终提交扫描、推送后的当前 SHA CI 和完整 Copilot 评审仍需单独确认。
 
 ## 失败反馈重放与上传合同（2026-09-14，review10）
 

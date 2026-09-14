@@ -1,7 +1,7 @@
 use super::inbound_attachments::MAX_ATTACHMENT_BYTES;
 use super::mattermost::{MattermostApi, field, valid_id};
 use super::outbound_attachment::safe_filename;
-use super::outbound_chunks::{fits_message, split_message};
+use super::outbound_chunks::split_message;
 use super::outbound_stream_state::trim_active;
 use super::{AuthorizedChat, outbound_text};
 use cccc_contracts::Event;
@@ -242,7 +242,12 @@ impl MattermostOutbound {
         };
         self.api.edit(&stream.post_id, &preview).await?;
         if op == "end" {
-            if !raw.is_empty() && fits_message(&body, MAX_MESSAGE_CHARS, None) {
+            if !raw.is_empty() {
+                for chunk in split_message(&body, MAX_MESSAGE_CHARS, None).iter().skip(1) {
+                    self.api
+                        .post(&target.chat_id, &target.thread_id, chunk, &[])
+                        .await?;
+                }
                 let mut completed = self.completed.lock().expect("Mattermost streams poisoned");
                 completed.insert(key, body);
                 trim_active(&mut completed);

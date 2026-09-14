@@ -1227,6 +1227,10 @@ mod tests {
                 if state.fail_edit.load(Ordering::Relaxed) {
                     return StatusCode::FORBIDDEN.into_response();
                 }
+                let id = path.split('/').nth(5).expect("编辑帖子 ID");
+                let index = id.parse::<usize>().expect("模拟帖子序号") - 1;
+                let patch: Value = serde_json::from_slice(&raw).expect("编辑正文");
+                state.posts.lock().expect("帖子")[index]["message"] = patch["message"].clone();
                 return axum::Json(json!({"id":path.split('/').nth(5).unwrap_or_default()}))
                     .into_response();
             }
@@ -2877,6 +2881,189 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopped_restore_snapshot_cannot_allocate_a_new_generation() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let (app, registry) = route_context(&home);
+        assert_eq!(route_request(app.clone(), "/api/im/set", Some(json!({
+            "group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"
+        }))).await.0, StatusCode::OK);
+        let store = GroupStore::new(home.clone()).expect("store");
+        cccc_core::im_state::update(&store, &group, |state| {
+            state["enabled"] = json!(true);
+            Ok(())
+        })
+        .expect("enabled");
+        let snapshot = super::super::restore_config(&home, &group).expect("restore snapshot");
+        let lock = registry.lifecycle_lock(&group);
+        let guard = lock.lock().await;
+        // 使用恢复入口的同一启动函数，在读快照后、代次分配前确实阻塞。
+        let mut restoring = Box::pin(registry.start_with_mode(
+            home.clone(),
+            DaemonClient::new(home.clone()),
+            &group,
+            &snapshot,
+            true,
+        ));
+        assert!(futures_util::poll!(&mut restoring).is_pending());
+        let stopping = tokio::spawn(route_request(
+            app,
+            "/api/im/stop",
+            Some(json!({"group_id":group})),
+        ));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while cccc_core::im_state::load(&store, &group).expect("state")["enabled"] == true {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stop saved before generation allocation");
+        assert!(!stopping.is_finished());
+        let expected = cccc_core::im_state::load(&store, &group).expect("stopped state");
+        drop(guard);
+        assert!(
+            restoring
+                .await
+                .expect_err("stale restore")
+                .contains("superseded")
+        );
+        assert_eq!(stopping.await.expect("stop").0, StatusCode::OK);
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("final state"),
+            expected
+        );
+        assert!(
+            !registry
+                .generations
+                .lock()
+                .expect("generations")
+                .contains_key(&group)
+        );
+        assert!(!registry.is_running(&group));
+        assert_eq!(fixture.state.ws_attempts.load(Ordering::SeqCst), 0);
+        registry.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_snapshot_cannot_allocate_after_mattermost_save_before_shutdown() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let (app, registry) = route_context(&home);
+        assert_eq!(route_request(app.clone(), "/api/im/set", Some(json!({
+            "group_id":group,"platform":"slack","bot_token":"test-token","app_token":"test-app-token"
+        }))).await.0, StatusCode::OK);
+        let store = GroupStore::new(home.clone()).expect("store");
+        let snapshot = cccc_core::im_state::load(&store, &group).expect("snapshot")["config"]
+            .as_object()
+            .expect("config")
+            .clone();
+        let (generation, _) = registry.begin_start(&group).await;
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_flag = Arc::clone(&stopped);
+        registry
+            .install(
+                &group,
+                generation,
+                super::super::worker(
+                    vec![tokio::spawn(std::future::pending())],
+                    Arc::new(move || {
+                        stopped_flag.store(true, Ordering::SeqCst);
+                    }),
+                ),
+            )
+            .await
+            .expect("old worker");
+        let lock = registry.lifecycle_lock(&group);
+        let guard = lock.lock().await;
+        // 真正的启动分配入口；拒绝前不调用任何外部 Slack 接口。
+        let mut starting =
+            Box::pin(registry.begin_configured_start(&home, &group, &snapshot, false));
+        assert!(futures_util::poll!(&mut starting).is_pending());
+        let saving = tokio::spawn(route_request(
+            app,
+            "/api/im/set",
+            Some(json!({
+                "group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"
+            })),
+        ));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while cccc_core::im_state::load(&store, &group).expect("state")["config"]["platform"]
+                != "mattermost"
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("new config saved before shutdown");
+        assert!(!saving.is_finished());
+        drop(guard);
+        assert!(matches!(starting.await, Err(error) if error.contains("superseded")));
+        assert_eq!(saving.await.expect("save").0, StatusCode::OK);
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(!registry.is_running(&group));
+        assert!(
+            !registry
+                .generations
+                .lock()
+                .expect("generation")
+                .contains_key(&group)
+        );
+        assert_eq!(fixture.state.ws_attempts.load(Ordering::SeqCst), 0);
+        registry.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_start_allocation_keeps_native_snapshot_and_read_failure_behavior() {
+        let (_temp, home, group) = scope();
+        let (_, registry) = route_context(&home);
+        let store = GroupStore::new(home.clone()).expect("store");
+        cccc_core::im_state::update(&store, &group, |state| {
+            *state =
+                json!({"config":{"platform":"discord","bot_token":"test-token"},"enabled":false});
+            Ok(())
+        })
+        .expect("legacy config");
+        let before = cccc_core::im_state::load(&store, &group).expect("before");
+        let document = store.load(&group).expect("group");
+        let snapshot = json!({"platform":"slack","bot_token":"old-token"});
+        let (generation, previous) = registry
+            .begin_configured_start(&home, &group, snapshot.as_object().expect("config"), true)
+            .await
+            .expect("legacy snapshot is unchanged");
+        assert!(previous.is_none());
+        assert!(registry.is_generation_current(&group, generation));
+        assert_eq!(
+            cccc_core::im_state::load(&store, &group).expect("after"),
+            before
+        );
+        assert_eq!(store.load(&group).expect("unchanged group"), document);
+        assert!(
+            registry
+                .begin_configured_start(
+                    &home,
+                    "g_missing",
+                    snapshot.as_object().expect("config"),
+                    false
+                )
+                .await
+                .is_ok()
+        );
+        let managed = json!({"platform":"mattermost"});
+        assert!(
+            registry
+                .begin_configured_start(
+                    &home,
+                    "g_missing",
+                    managed.as_object().expect("config"),
+                    false
+                )
+                .await
+                .is_err()
+        );
+        registry.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn invalidated_stop_does_not_remove_a_new_generation_or_its_worker() {
         let (_temp, home, group) = scope();
         let (_, registry) = route_context(&home);
@@ -3480,6 +3667,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_stream_completes_all_posts_once_and_keeps_failed_tail_fallback() {
+        for threaded in [false, true] {
+            for fail_tail in [false, true] {
+                let fixture = fixture().await;
+                let (_temp, home, group) = scope();
+                let blob =
+                    cccc_core::blobs::store(&home, &group, b"final attachment").expect("blob");
+                let sender =
+                    MattermostOutbound::new(home, &group, fixture.api.clone(), &Map::new());
+                let target = target(threaded);
+                let raw = "中文🙂".repeat(6000);
+                let expected = format!("**reviewer**\n\n{raw}");
+                sender
+                    .send_target(&target, &stream(&group, "start", ""))
+                    .await
+                    .expect("start");
+                fixture.state.fail_create.store(fail_tail, Ordering::SeqCst);
+                assert_eq!(
+                    sender
+                        .send_target(&target, &stream(&group, "end", &raw))
+                        .await
+                        .is_err(),
+                    fail_tail
+                );
+                fixture.state.fail_create.store(false, Ordering::SeqCst);
+                let mut final_event = stream(&group, "end", &raw);
+                final_event.kind = "chat.message".into();
+                final_event.data.insert(
+                    "attachments".into(),
+                    json!([{"path":blob.path,"title":"final.txt"}]),
+                );
+                sender
+                    .send_target(&target, &final_event)
+                    .await
+                    .expect("final and attachment");
+                let posts = fixture.state.posts.lock().expect("all posts");
+                let all_text = posts
+                    .iter()
+                    .map(|post| field(post, "message"))
+                    .collect::<String>();
+                if fail_tail {
+                    // 尾段明确失败后保留完整兜底；已编辑首段是已交付部分，不假称原子回滚。
+                    assert_eq!(
+                        all_text,
+                        format!("{}{}", field(&posts[0], "message"), expected)
+                    );
+                } else {
+                    assert_eq!(all_text, expected, "包括编辑后的首帖，不能重复首段");
+                }
+                assert!(posts.iter().all(|post| post["root_id"] == target.thread_id
+                    && field(post, "message").chars().count() <= 16_383));
+                assert_eq!(
+                    posts
+                        .iter()
+                        .filter(|post| post["file_ids"] == json!(["f".repeat(26)]))
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    fixture.state.uploads.lock().expect("uploads").as_slice(),
+                    &[b"final attachment".to_vec()]
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn final_text_change_and_long_unicode_output_are_not_suppressed() {
         let fixture = fixture().await;
         let (_temp, home, group) = scope();
@@ -3509,6 +3763,10 @@ mod tests {
             .map(|v| field(v, "message"))
             .collect::<String>();
         assert_eq!(text, format!("**reviewer**\n\n{}", "中文🙂".repeat(6000)));
+        assert_eq!(
+            posts[0]["message"], "**reviewer**\n\n初稿",
+            "旧稿与变化后的最终正文分别保留"
+        );
         assert!(
             posts
                 .iter()

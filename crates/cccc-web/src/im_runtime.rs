@@ -112,7 +112,7 @@ impl ImWorkerRegistry {
                     return;
                 };
                 let result = registry
-                    .start(home.clone(), client, &group_id, &config)
+                    .start_with_mode(home.clone(), client, &group_id, &config, true)
                     .await;
                 // These adapters commit start state under their configuration/generation guard.
                 let platform = string(&config, "platform");
@@ -206,7 +206,21 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
     ) -> Result<(), String> {
-        let (generation, previous) = self.begin_start(group_id).await;
+        self.start_with_mode(home, client, group_id, config, false)
+            .await
+    }
+
+    async fn start_with_mode(
+        &self,
+        home: HomeLayout,
+        client: DaemonClient,
+        group_id: &str,
+        config: &Map<String, Value>,
+        restoring: bool,
+    ) -> Result<(), String> {
+        let (generation, previous) = self
+            .begin_configured_start(&home, group_id, config, restoring)
+            .await?;
         if let Some(previous) = previous {
             previous.shutdown().await;
         }
@@ -374,9 +388,47 @@ impl ImWorkerRegistry {
         }
     }
 
+    async fn begin_configured_start(
+        &self,
+        home: &HomeLayout,
+        group_id: &str,
+        config: &Map<String, Value>,
+        restoring: bool,
+    ) -> Result<(u64, Option<WorkerHandles>), String> {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let _guard = lifecycle_lock.lock().await;
+        let guarded_source =
+            adapter_commits_start_state(config.get("platform").and_then(Value::as_str));
+        let checked = GroupStore::new(home.clone()).and_then(|store| {
+            cccc_core::im_state::read_with(&store, group_id, |current| {
+                let guarded = guarded_source
+                    || adapter_commits_start_state(current["config"]["platform"].as_str());
+                if guarded
+                    && (current.get("config").and_then(Value::as_object) != Some(config)
+                        || (restoring && current["enabled"] != true))
+                {
+                    return Err("IM worker start was superseded by a newer request".into());
+                }
+                // 与保存/停止使用同一配置锁；检查与代次分配之间不能插入失效操作。
+                Ok(self.begin_start_locked(group_id))
+            })
+        });
+        match checked {
+            Ok(result) => result,
+            Err(error) if guarded_source => Err(error.to_string()),
+            // 旧平台原本不依赖此读取；不因新保护引入新的存储失败模式。
+            Err(_) => Ok(self.begin_start_locked(group_id)),
+        }
+    }
+
+    #[cfg(test)]
     async fn begin_start(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let _lifecycle_guard = lifecycle_lock.lock().await;
+        self.begin_start_locked(group_id)
+    }
+
+    fn begin_start_locked(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
         let generation = self
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)

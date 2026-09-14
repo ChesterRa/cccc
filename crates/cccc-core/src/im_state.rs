@@ -250,12 +250,22 @@ pub fn has_required_credentials(platform: &str, config: &Map<String, Value>) -> 
 /// `im_bridge` object contributes only runtime diagnostics after a bounded
 /// missing-state import.
 pub fn load(store: &GroupStore, group_id: &str) -> io::Result<Value> {
+    read_with(store, group_id, std::convert::identity)
+}
+
+/// Read under the existing IM lock without persisting an unchanged envelope.
+/// The callback must not reenter IM state operations for the same group.
+pub fn read_with<T>(
+    store: &GroupStore,
+    group_id: &str,
+    read: impl FnOnce(Value) -> T,
+) -> io::Result<T> {
     store.load(group_id)?;
     let state_dir = store.state_dir(group_id)?;
     with_exclusive_lock(&state_dir.join("im_state.lock"), || {
         import_missing_shadow_state(store, group_id)?;
         let group = store.load(group_id)?;
-        load_from_group(store, group_id, &group)
+        load_from_group(store, group_id, &group).map(read)
     })
 }
 
@@ -841,6 +851,34 @@ mod tests {
         assert_eq!(token["bot_token"], "raw-token");
         assert!(!token.contains_key("bot_token_env"));
         assert!(has_required_credentials("telegram", &token));
+    }
+
+    #[test]
+    fn read_callback_preserves_load_results_errors_and_group_document() {
+        let (_temp, store, group_id) = fixture();
+        update(&store, &group_id, |state| {
+            *state = json!({"config":{"platform":"slack","bot_token":"test-token"},"enabled":true});
+            Ok(())
+        })
+        .expect("state");
+        let path = store
+            .group_dir(&group_id)
+            .expect("group")
+            .join("group.yaml");
+        let before = std::fs::read(&path).expect("document");
+        let expected = load(&store, &group_id).expect("load");
+        assert_eq!(
+            read_with(&store, &group_id, std::convert::identity).expect("read"),
+            expected
+        );
+        assert_eq!(std::fs::read(&path).expect("unchanged document"), before);
+        let missing = "g_missing";
+        assert_eq!(
+            load(&store, missing).expect_err("missing").kind(),
+            read_with(&store, missing, |_| ())
+                .expect_err("missing callback")
+                .kind()
+        );
     }
 
     #[test]
