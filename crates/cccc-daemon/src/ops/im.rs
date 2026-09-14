@@ -504,6 +504,60 @@ mod tests {
     use serde_json::{Value, json};
     use std::io::{Read, Write};
 
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        // Windows 上 accepted socket 可继承 nonblocking；沿用原生夹具的超时和完整正文读取。
+        stream.set_nonblocking(false).expect("blocking request");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("request timeout");
+        let mut bytes = [0_u8; 4096];
+        let mut used = 0;
+        loop {
+            let count = stream.read(&mut bytes[used..]).expect("read request");
+            assert!(count > 0, "incomplete or oversized fixture request");
+            used += count;
+            if let Some(end) = bytes[..used]
+                .windows(4)
+                .position(|part| part == b"\r\n\r\n")
+            {
+                let header = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                let length = header
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .expect("fixture content length")
+                    .trim()
+                    .parse::<usize>()
+                    .expect("valid content length");
+                if used >= end + 4 + length {
+                    return String::from_utf8(bytes[..used].to_vec()).expect("request utf8");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn http_fixture_waits_for_delayed_headers_and_body() {
+        for nonblocking in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+            let address = listener.local_addr().expect("address");
+            let mut client = std::net::TcpStream::connect(address).expect("connect");
+            listener.set_nonblocking(nonblocking).expect("mode");
+            let (mut stream, _) = listener.accept().expect("accept queued connection");
+            let reader = std::thread::spawn(move || read_http_request(&mut stream));
+            // 连接先建立、请求稍后分段到达，不能把单次 read 当作完整 HTTP 请求。
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            client
+                .write_all(b"POST /api/im/stop HTTP/1.1\r\nContent-Length: 2\r\n\r\n")
+                .expect("headers");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            client.write_all(b"{}").expect("body");
+            assert_eq!(
+                reader.join().expect("reader"),
+                "POST /api/im/stop HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}"
+            );
+        }
+    }
+
     #[test]
     fn web_url_brackets_ipv6_hosts() {
         assert_eq!(url_host("::1"), "[::1]");
@@ -762,9 +816,7 @@ mod tests {
 
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = [0_u8; 4096];
-            let read = stream.read(&mut request).expect("read request");
-            let request = String::from_utf8_lossy(&request[..read]);
+            let request = read_http_request(&mut stream);
             assert!(request.starts_with("POST /api/im/start HTTP/1.1"));
             assert!(request.contains("\"group_id\":\"g_test\""));
             let body = r#"{"ok":true,"result":{"group_id":"g_test","running":true,"adapter_available":true}}"#;
@@ -816,9 +868,7 @@ mod tests {
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut request = [0_u8; 4096];
-                        let read = stream.read(&mut request).expect("read request");
-                        let request = String::from_utf8_lossy(&request[..read]).into_owned();
+                        let request = read_http_request(&mut stream);
                         let body = r#"{"ok":true,"result":{"group_id":"g_test","running":false,"adapter_available":false}}"#;
                         write!(
                             stream,
