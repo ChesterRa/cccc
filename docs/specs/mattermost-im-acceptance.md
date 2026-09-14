@@ -1,6 +1,38 @@
 # CCCC Mattermost 连接器验收
 
+当前补验入口（2026-09-14）：[规格中的 MM-CROSS-START、MM-LOOKUP-REPLAY](mattermost-im.md#当前修复合同2026-09-14review8)已补实现与专用回归，执行状态见下方 review8。历史结果不覆盖这两项，不以旧 CI 绿灯代替本轮验证。
+
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## 启动交接与失败反馈去重（2026-09-14，review8）
+
+修复前提交 `a30e274be37aaf0f545b7fb5d543d926dcebc036`，本轮为 `feat/mattermost-im` 的未提交改动。只修改 Mattermost 入站、生命周期相关入口及对应三份规格/记录；不修改 CLI 管理、其他平台之间的既有合同、Web 表单或依赖。初次新增七个测试，后续统一判断补一个精确匹配测试，共八个；另在既有 HTTP 过期启动用例增加切出平台的场景，不删改其原断言。
+
+| 对应功能与测试入口 | 具体结果断言与证据边界 |
+|---|---|
+| F02：`start_state_commit_capability_is_exact_and_opt_in` | 自行提交启动状态的唯一清单只包含 Mattermost；未设置、七个旧平台、未知值、大小写/空白变体均不匹配。函数不归一化输入，各调用点保留原有预处理；不改变未登记平台的处理路径 |
+| F02：`legacy_start_completion_respects_mattermost_state_ownership` | 使用原生保存入口，受控延迟 HTTP 所用 `finish_start` 的成功/失败回写。新配置为 Mattermost 时 IM 持久状态逐值不变，不表示工作组文件未保存或其文档更新时间不变；新配置为 Slack 时原成功/失败字段与 API 结果不变。这是实际结果提交函数回归，不是实际登录 Slack 的全程联调 |
+| F02：`legacy_restore_completion_respects_mattermost_state_ownership` | 受控延迟自动恢复所用提交函数；切入 Mattermost 后旧成功/失败均不能回写，旧代次安装被拒并执行 stopper，无存活 worker；旧平台对照保留原 `enabled` 和其余结果字段。测试提交阶段，不声称启动过真实旧平台连接 |
+| F02：`switching_to_mattermost_invalidates_old_start_before_stop_can_run` | 阻塞原生停止锁，经过真实 Router 保存 Mattermost；HTTP 请求尚未完成时配置已保存且旧代次已失效。释放锁后保存成功，无遗留 worker |
+| F02：`superseded_restore_cannot_overwrite_new_platform` | 实际调用 `restore_enabled`，阻塞模拟 Mattermost 身份查询；经真实 HTTP 保存 Slack，再释放旧连接成功/失败路径，最终新配置及运行字段不变，无旧 worker |
+| F02：既有 `superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start` | 增加 Mattermost→Slack 的成功/失败交接；保留保存不同/相同配置、stop、unset、新 start 的所有原场景和断言 |
+| F20：`lookup_failure_replays_are_deduplicated_but_new_posts_can_retry` | 频道查询失败、发送者查询失败、身份不匹配，各覆盖提示成功/失败。同一源帖子两次投递只有一次查询/提示尝试；新 ID 再次尝试；零附件下载、零 Ledger 消息，不把反馈记录当成功入账 |
+| F20：`filtered_lookup_failure_does_not_consume_feedback_deduplication` | 未授权或暂停时无反馈；授权/恢复后同 ID 能反馈，第三次去重，查询两次、提示一次、零下载。其他寻址/线程/Bot 过滤由原有回归继续验证 |
+| F20：`remembered_posts_are_bounded_and_scoped_to_one_worker` | 直接操作生产缓存：8193 个 ID 只保留 8192 个，最早淘汰；重复 ID 不增加容量或淘汰其他项；新 worker 缓存为空。不对真实平台发送海量请求 |
+
+初次执行结果（对应统一判断前的 review8，仅限受影响范围，不是全部 CI）：
+
+- Linux 指定测试机的隔离容器：`cargo test -p cccc-pair-web --lib --locked im_runtime -- --test-threads=1` 通过 216 项、默认忽略 3 项真实站点用例；`routes::im::` 通过 5 项；核心 `im_state` 通过 8 项；`cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 和 `cargo build -p cccc --bin cccc --locked` 全部通过。
+- Windows 指定测试机的隔离目录：相同筛选的 IM runtime 通过 215 项、默认忽略 3 项真实站点用例；路由 5 项、核心 IM 8 项、格式和原生二进制构建全部通过。IM 数量差异来自条件编译。首轮通过后，为补全原生命令输出的独立日志，原样再跑上述检查，仍全部通过；源码没有因此改动。
+- 两平台均在测试机上核对四份产品文件的 Git Blob 指纹，与当前工作区相同；三份文档的 34 处本地引用及所含锚点有效。源码指纹与原始日志留在内部证据，不以文档检查代替产品行为测试。
+
+失败过程保留：Linux 首次隔离容器的 npm 默认缓存目录不可写，改为本轮工作目录缓存；随后新增测试因复用构造函数的私有可见性而编译失败，仅放宽到原模块内部可见。第一次定向测试四项通过但有新增测试未使用 `Json` 返回值的警告，已补保存成功断言并重跑。一次完整检查启动命令因登录 shell 重置 PATH 未找到 Cargo，改用同容器非登录 shell。均未改工具链或放宽既有测试断言。
+
+后续整理（同日）：已把保存、手动启动、自动恢复和结果回写统一到模块级常量及判断函数；自动恢复原有 `string` 去空白与保存原有小写处理不变。P05 仅改注释：不否认客户端前缀的存在，但无该前缀不能排除 daemon 侧结果不明；未改变分类、固定提示或反应。
+
+后续最终复验：Linux 相同筛选的 IM runtime **217 项**、路由 **5 项**、核心 IM **8 项**通过，格式、workspace/all-targets 严格 Clippy 和原生构建通过；Windows 的 IM runtime **216 项**、路由 **5 项**、核心 IM **8 项**、格式和原生构建通过。两平台各默认忽略三项真实站点用例；新增的一项是上述精确匹配测试，不以此增加真实平台验收数量。最终源码指纹两平台一致，三份文档的 34 处本地引用/锚点有效。本次复验没有失败项；前述初次失败历史仍保留，不写成整个 review8 从未失败。执行日志与初次日志分开保存，未重复运行 GUI、真实 Mattermost/Actor 或全部 CI；尚未提交、推送或部署。
+
+本轮证据为受控 HTTP/WebSocket、真实文件状态/注册表及 daemon/Ledger 回归；未重新运行真实 Mattermost、人类→Actor、GUI 或所有 CI 分组。没有 Git 提交、推送、PR 操作或更换日常部署。术语沿用现有 Group、Bot、Actor、授权、订阅、Ledger，B09/B21/B38 与 F02/F20 的修复证据如上，不增加领域概念。
 
 ## 多附件暂存回归（2026-09-14，review7，完整检查分组完成，含原样复验）
 
@@ -42,7 +74,7 @@ Linux 完整 CI 等价检查中，quality/Web/package、fmt/Clippy、安装器�
 | 用户输入进入错误 | `daemon_failure_is_private_and_lost_acceptance_is_not_retried` 使用真实 daemon 收件人解析产生含合成私人目标的拒绝，断言本地错误、组日志、`last_error`、聊天提示均不含该输入或合成 Bot Token，并保留安全帖子 ID |
 | 已受理但响应丢失 | 同一用例让真实 daemon 入账后断开 TCP，检查仅一次提交、仅一条 Ledger 消息、重投同一源帖子不再次提交；聊天显示无法确认，而非建议直接重试；不添加失败反应。**不是实际 Actor 回答验收** |
 | 早期查询失败 | `lookup_failure_feedback_respects_addressing_authorization_and_thread` 覆盖频道/发送者查询失败、授权/未授权、暂停、线程不匹配、未点名、未知频道类型；零附件下载、零模型提交、不修改授权 |
-| 反馈失败与 Bot 过滤 | `lookup_error_reply_failure_is_bounded_and_cached_bots_are_ignored` 检查自身/缓存中其他 Bot 不反馈，反馈被服务器拒绝时仅尝试一次并记录错误 |
+| 反馈失败与 Bot 过滤 | `lookup_error_reply_failure_is_bounded_and_cached_bots_are_ignored` 检查自身/缓存中其他 Bot 不反馈，单次事件处理遇反馈拒绝时仅尝试一次并记录错误；该历史用例未重复投递失败帖，不证明 MM-LOOKUP-REPLAY 已覆盖 |
 | 受控阻塞写入 | `socket_write_deadline_covers_ping_and_pong_and_can_be_cancelled` 使用阻塞 Sink 调用生产发送函数，验证 Ping/Pong 均在 5 秒超时且可取消；原有重连、序号、背压及停止回归保留。**不等于真实网络写入卡死复现** |
 | 真实业务补收 | 随后使用专用 Bot、私有频道、独立 Group 和真实 Codex Actor 完成 V01；正向链路及恢复前撤销授权两项均通过，方法和边界见下文，不以 Bot 自发帖协议验收替代 |
 

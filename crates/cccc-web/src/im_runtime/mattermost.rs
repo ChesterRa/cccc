@@ -780,7 +780,7 @@ struct MattermostReaction {
 }
 
 impl MattermostReactions {
-    fn new(home: HomeLayout, group_id: &str, api: MattermostApi) -> Self {
+    pub(super) fn new(home: HomeLayout, group_id: &str, api: MattermostApi) -> Self {
         Self {
             home,
             group_id: group_id.to_owned(),
@@ -938,6 +938,7 @@ mod tests {
         forbidden: AtomicBool,
         other_user_is_bot: AtomicBool,
         fail_lookup: AtomicUsize,
+        lookup_calls: AtomicUsize,
         failed_posts: AtomicUsize,
         token: String,
         bot_id: String,
@@ -1099,13 +1100,22 @@ mod tests {
                     .into_response();
             }
             if path.starts_with("/sub/api/v4/users/") && method == Method::GET {
+                state.lookup_calls.fetch_add(1, Ordering::SeqCst);
                 if state.fail_lookup.load(Ordering::SeqCst) == 2 {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
-                return axum::Json(json!({"id":path.rsplit('/').next(),"is_bot":state.other_user_is_bot.load(Ordering::SeqCst)}))
-                    .into_response();
+                let id = if state.fail_lookup.load(Ordering::SeqCst) == 3 {
+                    Some("identity-mismatch")
+                } else {
+                    path.rsplit('/').next()
+                };
+                return axum::Json(
+                    json!({"id":id,"is_bot":state.other_user_is_bot.load(Ordering::SeqCst)}),
+                )
+                .into_response();
             }
             if path.starts_with("/sub/api/v4/channels/") && method == Method::GET {
+                state.lookup_calls.fetch_add(1, Ordering::SeqCst);
                 if state.fail_lookup.load(Ordering::SeqCst) == 1 {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
@@ -1598,6 +1608,111 @@ mod tests {
                     .iter()
                     .all(|event| event.kind != "chat.message")
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_failure_replays_are_deduplicated_but_new_posts_can_retry() {
+        for failure in [1, 2, 3] {
+            for reject_reply in [false, true] {
+                let fixture = fixture().await;
+                fixture.state.fail_lookup.store(failure, Ordering::SeqCst);
+                fixture
+                    .state
+                    .fail_create
+                    .store(reject_reply, Ordering::SeqCst);
+                let (_temp, home, group) = scope();
+                authorize_target(&home, &group, "", false);
+                let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+                let mut inbound = MattermostInbound::new(
+                    home.clone(),
+                    &group,
+                    DaemonClient::new(home.clone()),
+                    fixture.api.clone(),
+                    reactions,
+                    &Map::new(),
+                );
+                let mut post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot hello","file_ids":["f".repeat(26)],"type":""});
+                let event = |post: &Value| json!({"event":"posted","data":{"channel_type":if failure == 1 { "" } else { "O" },"post":post.to_string()}});
+                inbound
+                    .handle(&event(&post))
+                    .await
+                    .expect_err("first lookup failure");
+                inbound
+                    .handle(&event(&post))
+                    .await
+                    .expect("duplicate ignored");
+                assert_eq!(fixture.state.lookup_calls.load(Ordering::SeqCst), 1);
+                assert_eq!(
+                    fixture.state.posts.lock().expect("posts").len(),
+                    usize::from(!reject_reply)
+                );
+                assert_eq!(
+                    fixture.state.failed_posts.load(Ordering::SeqCst),
+                    usize::from(reject_reply)
+                );
+                // 新源帖子可再次尝试，失败身份不会被永久记成 Bot。
+                post["id"] = json!("q".repeat(26));
+                inbound
+                    .handle(&event(&post))
+                    .await
+                    .expect_err("new post retries");
+                assert_eq!(fixture.state.lookup_calls.load(Ordering::SeqCst), 2);
+                assert_eq!(
+                    fixture.state.posts.lock().expect("posts").len(),
+                    2 * usize::from(!reject_reply)
+                );
+                assert_eq!(
+                    fixture.state.failed_posts.load(Ordering::SeqCst),
+                    2 * usize::from(reject_reply)
+                );
+                assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+                let store = GroupStore::new(home).expect("store");
+                assert!(
+                    cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
+                        .expect("ledger")
+                        .iter()
+                        .all(|event| event.kind != "chat.message")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn filtered_lookup_failure_does_not_consume_feedback_deduplication() {
+        for paused in [false, true] {
+            let fixture = fixture().await;
+            fixture.state.fail_lookup.store(2, Ordering::SeqCst);
+            let (_temp, home, group) = scope();
+            if paused {
+                authorize_target(&home, &group, "", true);
+            }
+            let reactions = MattermostReactions::new(home.clone(), &group, fixture.api.clone());
+            let mut inbound = MattermostInbound::new(
+                home.clone(),
+                &group,
+                DaemonClient::new(home.clone()),
+                fixture.api.clone(),
+                reactions,
+                &Map::new(),
+            );
+            let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot hello","type":""});
+            let event =
+                json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}});
+            inbound.handle(&event).await.expect_err("filtered failure");
+            assert!(fixture.state.posts.lock().expect("posts").is_empty());
+            authorize_target(&home, &group, "", false);
+            inbound
+                .handle(&event)
+                .await
+                .expect_err("now eligible for feedback");
+            inbound
+                .handle(&event)
+                .await
+                .expect("handled feedback is deduplicated");
+            assert_eq!(fixture.state.posts.lock().expect("posts").len(), 1);
+            assert_eq!(fixture.state.lookup_calls.load(Ordering::SeqCst), 2);
+            assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
         }
     }
 
@@ -2411,6 +2526,10 @@ mod tests {
     }
 
     fn route_app(home: &HomeLayout) -> Router {
+        route_context(home).0
+    }
+
+    fn route_context(home: &HomeLayout) -> (Router, Arc<super::super::ImWorkerRegistry>) {
         cccc_core::access_tokens::AccessTokenStore::new(home.clone())
             .expect("tokens")
             .create(
@@ -2420,7 +2539,16 @@ mod tests {
                 Some("mattermost-route-test-admin"),
             )
             .expect("test token");
-        crate::app(home.clone())
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (app, registry, _, _) = crate::app_with_shutdown(
+            home.clone(),
+            shutdown,
+            crate::WebMode::from_env(),
+            None,
+            crate::LiveBinding::from_env(),
+            crate::new_web_runtime_id(),
+        );
+        (app, registry)
     }
 
     async fn route_request(app: Router, path: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -2454,8 +2582,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switching_to_mattermost_invalidates_old_start_before_stop_can_run() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let (app, registry) = route_context(&home);
+        assert_eq!(route_request(app.clone(), "/api/im/set", Some(json!({
+            "group_id":group,"platform":"slack","bot_token":"test-token","app_token":"test-app-token"
+        }))).await.0, StatusCode::OK);
+        let (generation, _) = registry.begin_start(&group).await;
+        let lock = registry.lifecycle_lock(&group);
+        let guard = lock.lock().await;
+        let request = tokio::spawn(route_request(
+            app.clone(),
+            "/api/im/set",
+            Some(json!({
+                "group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"
+            })),
+        ));
+        let store = GroupStore::new(home).expect("store");
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while cccc_core::im_state::load(&store, &group).expect("state")["config"]["platform"]
+                != "mattermost"
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("configuration saved while stop is blocked");
+        assert!(!request.is_finished(), "stop still owns no lifecycle lock");
+        assert!(!registry.is_generation_current(&group, generation));
+        drop(guard);
+        assert_eq!(request.await.expect("save result").0, StatusCode::OK);
+        assert!(!registry.is_running(&group));
+        registry.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn superseded_restore_cannot_overwrite_new_platform() {
+        for fail_socket in [false, true] {
+            let fixture = fixture().await;
+            let (_temp, home, group) = scope();
+            let (app, registry) = route_context(&home);
+            assert_eq!(route_request(app.clone(), "/api/im/set", Some(json!({
+                "group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"
+            }))).await.0, StatusCode::OK);
+            let store = GroupStore::new(home.clone()).expect("store");
+            cccc_core::im_state::update(&store, &group, |state| {
+                state["enabled"] = json!(true);
+                Ok(())
+            })
+            .expect("enable restore");
+            fixture.state.blocked_identity.store(true, Ordering::SeqCst);
+            registry.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                fixture.state.identity_entered.notified(),
+            )
+            .await
+            .expect("restore reached identity barrier");
+            assert_eq!(route_request(app, "/api/im/set", Some(json!({
+                "group_id":group,"platform":"slack","bot_token":"test-token","app_token":"test-app-token"
+            }))).await.0, StatusCode::OK);
+            let expected = cccc_core::im_state::load(&store, &group).expect("new state");
+            if fail_socket {
+                fixture.state.ws_mode.store(1, Ordering::SeqCst);
+            }
+            fixture.state.release_identity.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while registry
+                    .restoring
+                    .lock()
+                    .expect("restoring")
+                    .contains(&group)
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("restore completed");
+            assert_eq!(
+                cccc_core::im_state::load(&store, &group).expect("state"),
+                expected
+            );
+            assert!(!registry.is_running(&group));
+            registry.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
     async fn superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start() {
-        for action in ["save", "same-save", "stop", "unset", "start"] {
+        for action in [
+            "save",
+            "same-save",
+            "other-platform",
+            "stop",
+            "unset",
+            "start",
+        ] {
             for fail_socket in [false, true] {
                 let fixture = fixture().await;
                 let (_temp, home, group) = scope();
@@ -2486,6 +2709,10 @@ mod tests {
                         "/api/im/set"
                     }
                     "same-save" => "/api/im/set",
+                    "other-platform" => {
+                        replacement = json!({"group_id":group,"platform":"slack","bot_token":"test-token","app_token":"test-app-token"});
+                        "/api/im/set"
+                    }
                     "stop" => "/api/im/stop",
                     "unset" => "/api/im/unset",
                     _ => "/api/im/start",

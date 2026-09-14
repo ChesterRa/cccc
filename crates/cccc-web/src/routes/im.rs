@@ -11,6 +11,7 @@ use std::io;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
+use crate::im_runtime::adapter_commits_start_state;
 
 const PLATFORMS: &[&str] = &[
     "telegram",
@@ -98,7 +99,9 @@ async fn set(
         current.get("config").and_then(Value::as_object),
     );
     update(&state, &group_id, |value| {
-        if value["config"]["platform"] == "mattermost" {
+        if adapter_commits_start_state(Some(&platform))
+            || adapter_commits_start_state(value["config"]["platform"].as_str())
+        {
             state.im_workers.invalidate_start(&group_id);
         }
         let state = object(value);
@@ -163,7 +166,7 @@ async fn set_running(
             .ok_or_else(|| ApiError::bad("IM bridge is not configured"))?;
         // Mattermost commits its result under the configuration lock and native generation guard.
         // A superseded request must not write either its success or its error over a newer action.
-        if config.get("platform").and_then(Value::as_str) == Some("mattermost") {
+        if adapter_commits_start_state(config.get("platform").and_then(Value::as_str)) {
             state
                 .im_workers
                 .start(state.home.clone(), state.client.clone(), &group_id, &config)
@@ -171,34 +174,11 @@ async fn set_running(
                 .map_err(ApiError::bad)?;
             return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
         }
-        if let Err(error) = state
+        let result = state
             .im_workers
             .start(state.home.clone(), state.client.clone(), &group_id, &config)
-            .await
-        {
-            update(state, &group_id, |value| {
-                let state = object(value);
-                state.insert("enabled".into(), Value::Bool(true));
-                state.insert("running".into(), Value::Bool(false));
-                state.insert("pid".into(), Value::Null);
-                state.insert("adapter_available".into(), Value::Bool(false));
-                state.insert("last_error".into(), json!(error));
-                state.insert("updated_at".into(), Value::String(utc_now()));
-                Ok(())
-            })?;
-            return Err(ApiError::bad(error));
-        }
-        update(state, &group_id, |value| {
-            let state = object(value);
-            state.insert("enabled".into(), Value::Bool(true));
-            state.insert("running".into(), Value::Bool(true));
-            state.insert("pid".into(), json!(std::process::id()));
-            state.insert("adapter_available".into(), Value::Bool(true));
-            state.insert("last_error".into(), Value::Null);
-            state.insert("updated_at".into(), Value::String(utc_now()));
-            Ok(())
-        })?;
-        return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
+            .await;
+        return finish_start(state, &group_id, result);
     }
     state.im_workers.stop(&group_id).await;
     update(state, &group_id, |value| {
@@ -211,6 +191,40 @@ async fn set_running(
         Ok(())
     })?;
     Ok(success(status_payload(&group_id, &load(state, &group_id)?)))
+}
+
+fn finish_start(state: &AppState, group_id: &str, result: Result<(), String>) -> ApiResult {
+    if let Err(error) = result {
+        update(state, group_id, |value| {
+            // 配置锁内判断；旧平台迟到的失败不得覆盖自行提交状态的新适配器。
+            if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+                return Ok(());
+            }
+            let state = object(value);
+            state.insert("enabled".into(), Value::Bool(true));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("last_error".into(), json!(error));
+            state.insert("updated_at".into(), Value::String(utc_now()));
+            Ok(())
+        })?;
+        return Err(ApiError::bad(error));
+    }
+    update(state, group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
+        let state = object(value);
+        state.insert("enabled".into(), Value::Bool(true));
+        state.insert("running".into(), Value::Bool(true));
+        state.insert("pid".into(), json!(std::process::id()));
+        state.insert("adapter_available".into(), Value::Bool(true));
+        state.insert("last_error".into(), Value::Null);
+        state.insert("updated_at".into(), Value::String(utc_now()));
+        Ok(())
+    })?;
+    Ok(success(status_payload(group_id, &load(state, group_id)?)))
 }
 
 fn reconcile_runtime_state(
@@ -525,6 +539,96 @@ fn io_error(error: io::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn legacy_start_completion_respects_mattermost_state_ownership() {
+        for platform in ["mattermost", "slack"] {
+            for result in [Ok(()), Err("old startup failure".to_owned())] {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+                home.initialize().expect("initialize");
+                let store = GroupStore::new(home.clone()).expect("store");
+                let group = store.create("交接测试", "").expect("group").group_id;
+                let (shutdown, _) = tokio::sync::broadcast::channel(1);
+                let (_, workers, _, state) = crate::app_with_shutdown(
+                    home,
+                    shutdown.clone(),
+                    crate::WebMode::Normal,
+                    None,
+                    crate::LiveBinding {
+                        host: "127.0.0.1".into(),
+                        port: 0,
+                    },
+                    "handoff-test".into(),
+                );
+                let (release, released) = tokio::sync::oneshot::channel();
+                let old_state = state.clone();
+                let old_group = group.clone();
+                let succeeded = result.is_ok();
+                // 暂停已完成启动的回写阶段：真实调用 HTTP 入口所用的结果提交函数。
+                let old = tokio::spawn(async move {
+                    released.await.expect("release");
+                    finish_start(&old_state, &old_group, result).is_ok()
+                });
+                let principal = Principal {
+                    user_id: "test-admin".into(),
+                    allowed_groups: vec![],
+                    is_admin: true,
+                    raw_token: String::new(),
+                };
+                let saved = set(
+                    State(state.clone()),
+                    Extension(principal),
+                    Json(json!({
+                        "group_id":group,"platform":platform,
+                        "bot_token":"test-token","app_token":"test-app-token",
+                        "mattermost_url":"http://127.0.0.1:9"
+                    })),
+                )
+                .await
+                .expect("save replacement");
+                assert_eq!(saved.0["ok"], true);
+                update(&state, &group, |value| {
+                    value["last_error"] = json!("new diagnostic");
+                    value["adapter_available"] = json!(false);
+                    value["pid"] = Value::Null;
+                    Ok(())
+                })
+                .expect("new state");
+                let before = load(&state, &group).expect("before");
+                release.send(()).expect("release result");
+                assert_eq!(old.await.expect("old completion"), succeeded);
+                let after = load(&state, &group).expect("after");
+                if platform == "mattermost" {
+                    assert_eq!(after, before, "old result must not alter new state");
+                } else {
+                    assert_eq!(after["config"], before["config"]);
+                    assert_eq!(after["enabled"], true);
+                    assert_eq!(after["running"], succeeded);
+                    assert_eq!(after["adapter_available"], succeeded);
+                    assert_eq!(
+                        after["pid"],
+                        if succeeded {
+                            json!(std::process::id())
+                        } else {
+                            Value::Null
+                        }
+                    );
+                    assert_eq!(
+                        after["last_error"],
+                        if succeeded {
+                            Value::Null
+                        } else {
+                            json!("old startup failure")
+                        }
+                    );
+                }
+                assert!(!workers.is_running(&group));
+                workers.shutdown().await;
+                let _ = shutdown.send(());
+            }
+        }
+    }
 
     #[test]
     fn normalizes_cli_credential_aliases() {

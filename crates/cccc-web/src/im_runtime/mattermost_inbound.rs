@@ -23,7 +23,8 @@ fn submission_error(error: String) -> String {
     } else if error == "IM command has no message payload" {
         "Mattermost message has no payload".to_owned()
     } else {
-        // String 合同已丢失错误类型；包括 OutcomeUnknown 在内的其他错误保守处理。
+        // 客户端错误有可辨识前缀，但此 String 也承载 daemon 的任意错误消息。
+        // 没有 OutcomeUnknown 前缀不证明未提交；其余错误仍保守处理。
         SUBMISSION_UNKNOWN.to_owned()
     }
 }
@@ -270,7 +271,7 @@ impl MattermostInbound {
         Ok(())
     }
 
-    async fn lookup_failed(&self, post: &Value, channel_type: &str) {
+    async fn lookup_failed(&mut self, post: &Value, channel_type: &str) {
         let raw = field(post, "message");
         let chat_id = field(post, "channel_id");
         let thread_id = field(post, "root_id");
@@ -291,6 +292,8 @@ impl MattermostInbound {
         {
             self.api.log_error(&self.home, &self.group_id, "lookup_error_reply", &error);
         }
+        // 记录的是失败反馈已尝试，不是成功入账；发送失败也不重复提示。
+        self.remember(field(post, "id"));
     }
 
     fn remember(&mut self, post_id: &str) {
@@ -416,6 +419,66 @@ async fn stage_file(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn remembered_posts_are_bounded_and_scoped_to_one_worker() {
+        use axum::{Router, routing::get};
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let group = cccc_core::GroupStore::new(home.clone())
+            .expect("store")
+            .create("去重容量", "")
+            .expect("group")
+            .group_id;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let config =
+            json!({"mattermost_url":format!("http://{}", listener.local_addr().expect("address"))})
+                .as_object()
+                .expect("config")
+                .clone();
+        let app = Router::new().route(
+            "/api/v4/users/me",
+            get(|| async {
+                axum::Json(json!({"id":"b".repeat(26),"username":"cccc_bot","is_bot":true}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let api = MattermostApi::authenticate(&config, "test-token".into())
+            .await
+            .expect("api");
+        let make = || {
+            MattermostInbound::new(
+                home.clone(),
+                &group,
+                DaemonClient::new(home.clone()),
+                api.clone(),
+                MattermostReactions::new(home.clone(), &group, api.clone()),
+                &Map::new(),
+            )
+        };
+        let mut inbound = make();
+        for id in 0..=8192 {
+            inbound.remember(&format!("{id:026}"));
+        }
+        assert_eq!(inbound.seen.len(), 8192);
+        assert_eq!(inbound.order.len(), 8192);
+        assert!(!inbound.seen.contains(&format!("{:026}", 0)));
+        inbound.remember(&format!("{:026}", 8192));
+        assert_eq!(
+            inbound.order.len(),
+            8192,
+            "duplicate does not consume capacity"
+        );
+        assert!(
+            inbound.seen.contains(&format!("{:026}", 1)),
+            "duplicate does not evict"
+        );
+        let fresh = make();
+        assert!(fresh.seen.is_empty() && fresh.order.is_empty());
+        server.abort();
+    }
 
     #[test]
     fn mentions_are_exact_and_only_a_leading_mention_is_stripped() {

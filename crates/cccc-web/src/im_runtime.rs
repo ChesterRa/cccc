@@ -56,6 +56,13 @@ use outbound_message::outbound_text;
 use state::*;
 use worker::{Stopper, WorkerHandles, no_op_stopper};
 
+const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
+
+// 共享结果回写者须在配置锁内查询当前平台，不能只看旧启动快照。
+pub(crate) fn adapter_commits_start_state(platform: Option<&str>) -> bool {
+    platform.is_some_and(|platform| SELF_COMMIT_PLATFORMS.contains(&platform))
+}
+
 pub(crate) struct ImWorkerRegistry {
     workers: Mutex<HashMap<String, WorkerHandles>>,
     lifecycle_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -108,34 +115,9 @@ impl ImWorkerRegistry {
                     .start(home.clone(), client, &group_id, &config)
                     .await;
                 // These adapters commit start state under their configuration/generation guard.
-                const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
-                if !SELF_COMMIT_PLATFORMS.contains(&string(&config, "platform").as_str())
-                    && let Ok(store) = GroupStore::new(home)
-                    && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
-                        if !value.is_object() {
-                            *value = json!({});
-                        }
-                        let state = value.as_object_mut().expect("IM state initialized");
-                        state.insert("running".into(), Value::Bool(result.is_ok()));
-                        state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
-                        state.insert(
-                            "pid".into(),
-                            if result.is_ok() {
-                                json!(std::process::id())
-                            } else {
-                                Value::Null
-                            },
-                        );
-                        state.insert(
-                            "last_error".into(),
-                            result
-                                .as_ref()
-                                .err()
-                                .map_or(Value::Null, |error| json!(error)),
-                        );
-                        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
-                        Ok(())
-                    })
+                let platform = string(&config, "platform");
+                if !adapter_commits_start_state(Some(&platform))
+                    && let Err(error) = persist_restore_result(home, &group_id, &result)
                 {
                     tracing::warn!(%error, %group_id, "failed to persist restored IM worker state");
                 }
@@ -493,6 +475,45 @@ impl ImWorkerRegistry {
     }
 }
 
+fn persist_restore_result(
+    home: HomeLayout,
+    group_id: &str,
+    result: &Result<(), String>,
+) -> std::io::Result<()> {
+    // 保留旧恢复入口对 Store 初始化失败的处理；仅保护新适配器状态的归属。
+    let Ok(store) = GroupStore::new(home) else {
+        return Ok(());
+    };
+    cccc_core::im_state::update(&store, group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
+        if !value.is_object() {
+            *value = json!({});
+        }
+        let state = value.as_object_mut().expect("IM state initialized");
+        state.insert("running".into(), Value::Bool(result.is_ok()));
+        state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
+        state.insert(
+            "pid".into(),
+            if result.is_ok() {
+                json!(std::process::id())
+            } else {
+                Value::Null
+            },
+        );
+        state.insert(
+            "last_error".into(),
+            result
+                .as_ref()
+                .err()
+                .map_or(Value::Null, |error| json!(error)),
+        );
+        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+        Ok(())
+    })
+}
+
 fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return Vec::new();
@@ -749,6 +770,27 @@ mod tests {
     use cccc_core::ledger;
 
     #[test]
+    fn start_state_commit_capability_is_exact_and_opt_in() {
+        assert!(adapter_commits_start_state(Some("mattermost")));
+        assert!(!adapter_commits_start_state(None));
+        for platform in [
+            "telegram",
+            "discord",
+            "slack",
+            "feishu",
+            "dingtalk",
+            "wecom",
+            "weixin",
+            "",
+            "unknown",
+            "Mattermost",
+            " mattermost ",
+        ] {
+            assert!(!adapter_commits_start_state(Some(platform)), "{platform:?}");
+        }
+    }
+
+    #[test]
     fn only_final_chat_messages_complete_processing_feedback() {
         for kind in ["chat.stream", "system.notify"] {
             let event = Event::new(kind, "group");
@@ -883,6 +925,87 @@ mod tests {
         let candidates = restore_candidates(&home);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].0, enabled.group_id);
+    }
+
+    #[tokio::test]
+    async fn legacy_restore_completion_respects_mattermost_state_ownership() {
+        for platform in ["mattermost", "slack"] {
+            for result in [Ok(()), Err("old restore failure".to_owned())] {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let home = HomeLayout::from_path(temp.path()).expect("home");
+                let store = GroupStore::new(home.clone()).expect("store");
+                let group = store.create("恢复交接", "").expect("group").group_id;
+                let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(
+                    home.clone(),
+                ));
+                let (generation, _) = registry.begin_start(&group).await;
+                let (release, released) = tokio::sync::oneshot::channel();
+                let old_home = home.clone();
+                let old_group = group.clone();
+                let succeeded = result.is_ok();
+                let old = tokio::spawn(async move {
+                    released.await.expect("release");
+                    persist_restore_result(old_home, &old_group, &result)
+                });
+                cccc_core::im_state::update(&store, &group, |state| {
+                    if platform == "mattermost" {
+                        registry.invalidate_start(&group);
+                    }
+                    *state = json!({
+                        "config":{"platform":platform,"bot_token":"test-token"},
+                        "enabled":false,"running":false,"pid":null,
+                        "adapter_available":false,"last_error":"new diagnostic"
+                    });
+                    Ok(())
+                })
+                .expect("save");
+                if platform == "mattermost" {
+                    assert!(!registry.is_generation_current(&group, generation));
+                    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let flag = stopped.clone();
+                    let stopper: Stopper = Arc::new(move || {
+                        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    });
+                    assert!(
+                        registry
+                            .install(&group, generation, worker(Vec::new(), stopper))
+                            .await
+                            .is_err()
+                    );
+                    assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+                }
+                let before = cccc_core::im_state::load(&store, &group).expect("before");
+                release.send(()).expect("release result");
+                old.await.expect("old task").expect("persist");
+                let after = cccc_core::im_state::load(&store, &group).expect("after");
+                if platform == "mattermost" {
+                    assert_eq!(after, before);
+                } else {
+                    assert_eq!(after["config"], before["config"]);
+                    assert_eq!(after["enabled"], false, "restore must not change enabled");
+                    assert_eq!(after["running"], succeeded);
+                    assert_eq!(after["adapter_available"], succeeded);
+                    assert_eq!(
+                        after["pid"],
+                        if succeeded {
+                            json!(std::process::id())
+                        } else {
+                            Value::Null
+                        }
+                    );
+                    assert_eq!(
+                        after["last_error"],
+                        if succeeded {
+                            Value::Null
+                        } else {
+                            json!("old restore failure")
+                        }
+                    );
+                }
+                assert!(!registry.is_running(&group));
+                registry.shutdown().await;
+            }
+        }
     }
 
     #[tokio::test]
