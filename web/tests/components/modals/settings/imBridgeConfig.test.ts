@@ -14,6 +14,7 @@ const makeConfig = (overrides: Partial<IMConfigSaveRequest> = {}): IMConfigSaveR
   platform: "wecom",
   botTokenEnv: "",
   appTokenEnv: "",
+  mattermostUrl: "",
   feishuDomain: "https://open.feishu.cn",
   feishuAppId: "",
   feishuAppSecret: "",
@@ -22,6 +23,7 @@ const makeConfig = (overrides: Partial<IMConfigSaveRequest> = {}): IMConfigSaveR
   dingtalkRobotCode: "",
   wecomBotId: "corp123",
   wecomSecret: "sec456",
+  weixinAccountId: "",
   ...overrides,
 });
 

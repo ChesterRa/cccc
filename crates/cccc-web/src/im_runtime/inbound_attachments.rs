@@ -66,9 +66,22 @@ pub(super) async fn download_response(
 pub(super) async fn store_stream<S, B, E>(
     home: &HomeLayout,
     group_id: &str,
-    mut stream: S,
+    stream: S,
     spec: AttachmentSpec,
 ) -> Result<Value, String>
+where
+    S: Stream<Item = Result<B, E>> + Unpin,
+    B: AsRef<[u8]>,
+    E: Display,
+{
+    finish_upload(stage_stream(home, group_id, stream).await?, spec)
+}
+
+pub(super) async fn stage_stream<S, B, E>(
+    home: &HomeLayout,
+    group_id: &str,
+    mut stream: S,
+) -> Result<BlobUpload, String>
 where
     S: Stream<Item = Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
@@ -86,7 +99,7 @@ where
             .write_chunk(chunk)
             .map_err(|error| error.to_string())?;
     }
-    finish_upload(upload, spec)
+    Ok(upload)
 }
 
 #[cfg(test)]
@@ -145,7 +158,7 @@ fn validate_size(size: Option<u64>, stage: &str) -> Result<(), String> {
     }
 }
 
-fn finish_upload(upload: BlobUpload, spec: AttachmentSpec) -> Result<Value, String> {
+pub(super) fn finish_upload(upload: BlobUpload, spec: AttachmentSpec) -> Result<Value, String> {
     let blob = upload.finish().map_err(|error| error.to_string())?;
     let mut attachment = json!({
         "kind": spec.kind,
@@ -164,6 +177,77 @@ fn finish_upload(upload: BlobUpload, spec: AttachmentSpec) -> Result<Value, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn store_stream_preserves_existing_attachment_contract() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("Home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("GroupStore");
+        let group = store.create("attachments", "").expect("Group").group_id;
+        for source in ["remote-1", " "] {
+            let spec = AttachmentSpec::new("file", "材料.txt", "").with_source_id(source);
+            let expected =
+                store_bytes(&home, &group, b"firstsecond", spec.clone()).expect("原生字节保存");
+            let stream = futures_util::stream::iter([
+                Ok::<_, &str>(b"first".as_slice()),
+                Ok(b"second".as_slice()),
+            ]);
+            let actual = store_stream(&home, &group, stream, spec)
+                .await
+                .expect("既有流保存入口");
+            assert_eq!(actual, expected, "元数据、摘要、来源 ID 与原生保存一致");
+            let path =
+                cccc_core::blobs::resolve(&home, &group, actual["path"].as_str().expect("路径"))
+                    .expect("Blob 路径");
+            assert_eq!(std::fs::read(path).expect("内容"), b"firstsecond");
+        }
+        assert_eq!(
+            std::fs::read_dir(store.state_dir(&group).expect("状态目录").join("blobs"))
+                .expect("Blob 目录")
+                .count(),
+            1,
+            "同内容去重且无临时文件"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_stream_cleans_partial_upload_on_read_and_size_errors() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("Home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("GroupStore");
+        let group = store.create("attachments", "").expect("Group").group_id;
+        for oversize in [false, true] {
+            let last = if oversize {
+                Ok(vec![0; MAX_ATTACHMENT_BYTES as usize])
+            } else {
+                Err("读取故障")
+            };
+            let stream = futures_util::stream::iter([Ok(vec![1]), last]);
+            let error = store_stream(
+                &home,
+                &group,
+                stream,
+                AttachmentSpec::new("file", "a.bin", ""),
+            )
+            .await
+            .expect_err("原有错误合同");
+            assert_eq!(
+                error,
+                if oversize {
+                    "attachment exceeds 10 MiB while downloading"
+                } else {
+                    "读取故障"
+                }
+            );
+            assert_eq!(
+                std::fs::read_dir(store.state_dir(&group).expect("状态目录").join("blobs"))
+                    .expect("Blob 目录")
+                    .count(),
+                0,
+                "部分临时内容已清理"
+            );
+        }
+    }
 
     #[test]
     fn stores_standard_attachment_and_infers_mime_type() {
