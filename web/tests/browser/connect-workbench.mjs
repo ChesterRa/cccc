@@ -23,6 +23,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
+import { connectGroupJourney } from "./connect-group-journey.mjs";
 import { connectMeasurements } from "./connect-metrics.mjs";
 
 const root = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
@@ -31,6 +32,7 @@ const processes = [],
   servers = [],
   logFiles = [],
   sockets = new Set();
+const groupProbe = process.env.CCCC_CONNECT_GROUPS_PROBE === "1";
 const scaleProbe = process.env.CCCC_CONNECT_SCALE_PROBE === "1";
 const traffic = Array.from({ length: 3 }, () => ({
   requestBytes: 0,
@@ -43,10 +45,12 @@ const requests = [],
   failures = [];
 let cdp;
 let diagnose;
+let spawnError;
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function eventually(check, label, timeout = 15000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
+    if (spawnError) throw spawnError;
     if (await check()) return;
     await delay(100);
   }
@@ -59,6 +63,9 @@ function start(command, args, env = {}) {
     cwd: dir,
     env: { ...globalThis.process.env, ...env },
     stdio: ["ignore", fd, fd],
+  });
+  process.on("error", (error) => {
+    spawnError ||= error;
   });
   processes.push(process);
   return process;
@@ -248,11 +255,16 @@ try {
     origins.push(`${secure ? "https" : "http"}://${host}:${port}`);
   }
   const accountPath = join(dir, "account.json");
-  start("node", [
-    "--experimental-transform-types",
-    join(root, "../cccc-homepage/account/scripts/connect-fixture.mjs"),
-    accountPath,
-  ]);
+  start(
+    "node",
+    [
+      "--experimental-transform-types",
+      join(root, "../cccc-homepage/account/scripts/connect-fixture.mjs"),
+      accountPath,
+      ...(groupProbe ? ["--groups"] : []),
+    ],
+    groupProbe ? { NODE_EXTRA_CA_CERTS: join(dir, "ca.pem") } : {},
+  );
   await eventually(() => existsSync(accountPath), "account fixture");
   const account = JSON.parse(readFileSync(accountPath, "utf8"));
   const homes = [],
@@ -394,11 +406,12 @@ try {
   upstreams.push(...JSON.parse(readFileSync(readyFile, "utf8")));
   await eventually(
     () =>
-      homes.every((home) => {
+      homes.every((home, index) => {
         const path = join(home, "secrets/connect.json");
         return (
           existsSync(path) &&
-          JSON.parse(readFileSync(path, "utf8")).directory?.instances.length === 3
+          JSON.parse(readFileSync(path, "utf8")).directory?.instances.length ===
+            (groupProbe ? (index === 1 ? 1 : 2) : 3)
         );
       }),
     "three-instance directory",
@@ -487,724 +500,748 @@ try {
   await call("Network.enable");
   await call("Network.setCookieControls", cookieControls);
   await call("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dir });
-  process.stdout.write("Three daemons and native Web routers ready; opening the entry.\n");
-  await call("Page.navigate", { url: `${origins[0]}/ui/` });
-  await eventually(
-    () =>
-      evaluate(
-        "!!document.querySelector('input[name=cccc-access-token]') || (document.body?.innerText || '').includes('Workspace A')",
-      ),
-    "entry login or workbench",
-  );
-  if (await evaluate("!!document.querySelector('input[name=cccc-access-token]')")) {
-    await evaluate(
-      `(()=>{const input=document.querySelector('input[name=cccc-access-token]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(tokens[0])}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
-    );
-    await delay(50);
-    await evaluate("document.querySelector('form').requestSubmit()");
-  }
-  await eventually(
-    () => evaluate("(document.body?.innerText || '').includes('Workspace A')"),
-    "entry workbench",
-  );
-  await evaluate(
-    `fetch('/api/v1/web_access/session',{headers:{Authorization:'Bearer '+${JSON.stringify(tokens[0])}}}).then(r=>r.json()).then(r=>r.ok)`,
-  );
-  await eventually(
-    () => evaluate("(document.body?.innerText || '').includes('fixture-b')"),
-    "Connect sidebar",
-  );
-  if (metrics) await metrics.sample("local_entry_idle", delay);
-  await evaluate(
-    "[...document.querySelectorAll('aside button')].find(b=>b.getAttribute('aria-label')?.startsWith('fixture-b ·')).click()",
-  );
-  process.stdout.write("Entry administrator and Connect sidebar ready; opening B.\n");
-  let frameInfo;
-  await eventually(async () => {
-    frameInfo = (await call("Target.getTargets")).targetInfos.find(
-      (target) => target.type === "iframe" && target.url.startsWith(origins[1] + "/ui/connect/"),
-    );
-    return Boolean(frameInfo);
-  }, "target frame");
-  let { sessionId: world } = await call("Target.attachToTarget", {
-    targetId: frameInfo.targetId,
-    flatten: true,
-  });
-  await call("Runtime.enable", {}, world);
-  await call("Network.enable", {}, world);
-  await call("Page.enable", {}, world);
-  await call("Network.setCookieControls", cookieControls, world);
-  await eventually(
-    () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "target administrator login",
-  );
-  const login = async (token) => {
-    await evaluate(
-      `(()=>{const input=document.querySelector('input[name=cccc-access-token]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(token)}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
-      world,
-    );
-    await delay(50);
-    await evaluate("document.querySelector('form').requestSubmit()", world);
-  };
-  await login(tokens[0]);
-  await delay(500);
-  assert(
-    await evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "A token must not unlock B",
-  );
-  await login(tokens[1]);
-  if (scaleProbe) {
+  if (groupProbe) {
+    await connectGroupJourney({
+      call,
+      evaluate,
+      eventually,
+      ipc,
+      homes,
+      groups,
+      origins,
+      tokens,
+      account,
+      dir,
+      failures,
+    });
+  } else {
+    process.stdout.write("Three daemons and native Web routers ready; opening the entry.\n");
+    await call("Page.navigate", { url: `${origins[0]}/ui/` });
     await eventually(
       () =>
         evaluate(
-          "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B')",
+          "!!document.querySelector('input[name=cccc-access-token]') || (document.body?.innerText || '').includes('Workspace A')",
         ),
-      "B main Group listed",
+      "entry login or workbench",
     );
-    await evaluate(
-      "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
-    );
-  }
-  await eventually(
-    () =>
-      evaluate(
-        "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
-        world,
-      ),
-    "target workbench",
-  );
-  await eventually(
-    () => evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
-    "target Group metadata",
-  );
-  await eventually(
-    () => requests.some((r) => r.index === 1 && r.path.endsWith("/ledger/stream")),
-    "native target SSE",
-  );
-  if (scaleProbe)
-    await evaluate(
-      "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
-    );
-  const terminalStart = performance.now();
-  await evaluate(
-    "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Terminals').click()",
-    world,
-  );
-  await eventually(
-    () => requests.some((r) => r.index === 1 && r.method === "WS" && r.path.endsWith("/term")),
-    "native target terminal",
-  );
-  await eventually(
-    () => evaluate("!!document.querySelector('.xterm-helper-textarea')", world),
-    "interactive terminal",
-  );
-  if (metrics) {
-    await eventually(
-      () => evaluate("document.querySelectorAll('.xterm-helper-textarea').length===4", world),
-      "four visible terminal panes",
-    );
-    metrics.action("open_four_terminals", performance.now() - terminalStart);
-    await metrics.sample("remote_four_terminals", delay);
-    const hiddenTab = await call("Target.createTarget", { url: "about:blank" });
-    await call("Target.activateTarget", { targetId: hiddenTab.targetId });
-    await eventually(
-      () => evaluate("document.visibilityState==='hidden'"),
-      "entry hidden by another tab",
-    );
-    await metrics.sample("hidden_remote_entry", delay);
-    await call("Target.closeTarget", { targetId: hiddenTab.targetId });
-    await call("Page.bringToFront");
-    await eventually(() => evaluate("document.visibilityState==='visible'"), "entry visible again");
-    const second = await call("Target.createTarget", { url: `${origins[0]}/ui/` });
-    await delay(1500);
-    const multiple = await metrics.sample("two_entries", delay);
-    assert.equal(
-      multiple.account.providerCalls,
-      0,
-      "browser entry count does not query the tunnel provider",
-    );
-    await call("Target.closeTarget", { targetId: second.targetId });
-    await call("Page.bringToFront");
-  }
-  await evaluate("document.querySelector('.xterm-helper-textarea').focus()", world);
-  await call("Input.insertText", { text: "CONNECT_TYPED" }, world);
-  await call(
-    "Input.dispatchKeyEvent",
-    { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "[...document.querySelectorAll('.xterm-rows')].some(e=>e.textContent.includes('ECHO:CONNECT_TYPED'))",
-        world,
-      ),
-    "terminal typed input",
-  );
-  await call("Emulation.setDeviceMetricsOverride", {
-    width: 1050,
-    height: 750,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await delay(400);
-  assert(
-    await evaluate("document.documentElement.scrollWidth<=window.innerWidth", world),
-    "target does not overflow after resize",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Messages').click()",
-    world,
-  );
-  await eventually(
-    () => evaluate("!!document.querySelector('a[download=\"fixture.txt\"]')", world),
-    "attachment download",
-  );
-  await evaluate("document.querySelector('a[download=\"fixture.txt\"]').click()", world);
-  await eventually(() => existsSync(join(dir, "fixture.txt")), "authenticated browser download");
-  assert.equal(readFileSync(join(dir, "fixture.txt"), "utf8"), "attachment-1");
-  // Use the real file picker and composer; verify storage and dispatch stay in B.
-  const uploadPath = join(dir, "uploaded-from-browser.txt");
-  writeFileSync(uploadPath, "B-only upload");
-  const dom = await call("DOM.getDocument", {}, world);
-  const input = await call(
-    "DOM.querySelector",
-    { nodeId: dom.root.nodeId, selector: 'input[type="file"]' },
-    world,
-  );
-  await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [uploadPath] }, world);
-  await eventually(
-    () =>
-      evaluate(
-        "!!document.querySelector('button[aria-label=\"Send message\"]:not(:disabled)')",
-        world,
-      ),
-    "file composer readiness",
-  );
-  await evaluate("document.querySelector('button[aria-label=\"Send message\"]').click()", world);
-  await eventually(
-    () =>
-      requests.some((r) => r.index === 1 && r.method === "POST" && r.path.endsWith("/send_upload")),
-    "target file upload",
-  );
-  await eventually(
-    () =>
-      readFileSync(join(homes[1], "groups", groups[1], "ledger.jsonl"), "utf8").includes(
-        "uploaded-from-browser.txt",
-      ),
-    "target upload ledger",
-  );
-  assert(
-    !readFileSync(join(homes[0], "groups", groups[0], "ledger.jsonl"), "utf8").includes(
-      "uploaded-from-browser.txt",
-    ),
-    "entry ledger is untouched by target upload",
-  );
-  process.stdout.write(
-    "Target login, native SSE, terminal input/resize and file upload/download passed.\n",
-  );
-  const cookies = (await call("Storage.getCookies")).cookies.filter((cookie) =>
-    cookie.name.startsWith("__Host-cccc_access_"),
-  );
-  assert(
-    cookies.some(
-      (cookie) =>
-        cookie.value === tokens[1] && cookie.partitionKey && cookie.httpOnly && cookie.secure,
-    ),
-    "target uses its own partitioned HttpOnly cookie",
-  );
-  assert.equal(
-    await evaluate(
-      "(()=>{try{return document.querySelector('iframe').contentWindow.document.body.innerText}catch{return 'isolated'}})()",
-    ),
-    "isolated",
-  );
-  // Exercise the nested, sandboxed Presentation in the authenticated target.
-  await evaluate("document.querySelector('[data-group-presentation-trigger]').click()", world);
-  await eventually(
-    () =>
-      evaluate(
-        "!!document.querySelector('button[aria-label=\"Open presentation slot 1: Nested fixture\"]')",
-        world,
-      ),
-    "presentation slot",
-  );
-  await evaluate(
-    "document.querySelector('button[aria-label=\"Open presentation slot 1: Nested fixture\"]').click()",
-    world,
-  );
-  await eventually(
-    () => evaluate("!!document.querySelector('iframe[title=\"Nested fixture\"]')", world),
-    "nested presentation",
-  );
-  let preview;
-  await eventually(async () => {
-    preview = (await call("Target.getTargets")).targetInfos.find(
-      (target) => target.type === "iframe" && target.url.startsWith(origins[1] + "/api/v1/groups/"),
-    );
-    return Boolean(preview);
-  }, "sandboxed presentation target");
-  const { sessionId: previewWorld } = await call("Target.attachToTarget", {
-    targetId: preview.targetId,
-    flatten: true,
-  });
-  await eventually(
-    () =>
-      evaluate(
-        "(document.body?.innerText || '').includes('CONNECT_PRESENTATION_READY')",
-        previewWorld,
-      ),
-    "authenticated nested document rendered",
-  );
-  await evaluate("document.querySelector('[data-group-presentation-trigger]').click()", world);
-  const openInstance = async (index, name) => {
-    await evaluate(
-      `[...document.querySelectorAll('aside button')].find(b=>b.getAttribute('aria-label')?.startsWith(${JSON.stringify(name + " ·")})).click()`,
-    );
-    let target;
-    await eventually(async () => {
-      target = (await call("Target.getTargets")).targetInfos.find(
-        (item) => item.type === "iframe" && item.url.startsWith(origins[index] + "/ui/connect/"),
+    if (await evaluate("!!document.querySelector('input[name=cccc-access-token]')")) {
+      await evaluate(
+        `(()=>{const input=document.querySelector('input[name=cccc-access-token]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(tokens[0])}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
       );
-      return Boolean(target);
-    }, `${name} frame`);
-    ({ sessionId: world } = await call("Target.attachToTarget", {
-      targetId: target.targetId,
+      await delay(50);
+      await evaluate("document.querySelector('form').requestSubmit()");
+    }
+    await eventually(
+      () => evaluate("(document.body?.innerText || '').includes('Workspace A')"),
+      "entry workbench",
+    );
+    await evaluate(
+      `fetch('/api/v1/web_access/session',{headers:{Authorization:'Bearer '+${JSON.stringify(tokens[0])}}}).then(r=>r.json()).then(r=>r.ok)`,
+    );
+    await eventually(
+      () => evaluate("(document.body?.innerText || '').includes('fixture-b')"),
+      "Connect sidebar",
+    );
+    if (metrics) await metrics.sample("local_entry_idle", delay);
+    await evaluate(
+      "[...document.querySelectorAll('aside button')].find(b=>b.getAttribute('aria-label')?.startsWith('fixture-b ·')).click()",
+    );
+    process.stdout.write("Entry administrator and Connect sidebar ready; opening B.\n");
+    let frameInfo;
+    await eventually(async () => {
+      frameInfo = (await call("Target.getTargets")).targetInfos.find(
+        (target) => target.type === "iframe" && target.url.startsWith(origins[1] + "/ui/connect/"),
+      );
+      return Boolean(frameInfo);
+    }, "target frame");
+    let { sessionId: world } = await call("Target.attachToTarget", {
+      targetId: frameInfo.targetId,
       flatten: true,
-    }));
+    });
     await call("Runtime.enable", {}, world);
     await call("Network.enable", {}, world);
     await call("Page.enable", {}, world);
     await call("Network.setCookieControls", cookieControls, world);
-  };
-  await evaluate(
-    "[...document.querySelectorAll('aside [role=button]')].find(b=>b.textContent.trim()==='Workspace A').click()",
-  );
-  await eventually(
-    () => evaluate("document.querySelectorAll('iframe').length===0"),
-    "local navigation releases the remote iframe",
-  );
-  assert(
-    await evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
-    "local selection preserves B navigation",
-  );
-  await evaluate(
-    "document.querySelector('button[aria-label=\"Collapse groups in fixture-b\"]').click()",
-  );
-  assert(
-    !(await evaluate("document.querySelector('aside').innerText.includes('Workspace B')")),
-    "explicit collapse hides B groups",
-  );
-  await evaluate(
-    "document.querySelector('button[aria-label=\"Expand groups in fixture-b\"]').click()",
-  );
-  assert(
-    await evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
-    "explicit expansion restores B groups",
-  );
-  if (process.env.CCCC_CONNECT_SCREENSHOT_DIR) {
-    mkdirSync(process.env.CCCC_CONNECT_SCREENSHOT_DIR, { recursive: true });
-    const screenshot = await call("Page.captureScreenshot", { format: "png" });
-    writeFileSync(
-      join(process.env.CCCC_CONNECT_SCREENSHOT_DIR, "local-with-remote-navigation.png"),
-      Buffer.from(screenshot.data, "base64"),
+    await eventually(
+      () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "target administrator login",
     );
-  }
-  process.stdout.write(
-    "Local selection preserves remote navigation, explicit collapse/expand works, and the inactive iframe closes.\n",
-  );
-  await openInstance(2, "fixture-c");
-  await eventually(
-    () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "C remains locked",
-  );
-  await login(tokens[1]);
-  await delay(500);
-  assert(
-    await evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "B token must not unlock C",
-  );
-  await login(tokens[2]);
-  if (scaleProbe) {
+    const login = async (token) => {
+      await evaluate(
+        `(()=>{const input=document.querySelector('input[name=cccc-access-token]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(token)}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+        world,
+      );
+      await delay(50);
+      await evaluate("document.querySelector('form').requestSubmit()", world);
+    };
+    await login(tokens[0]);
+    await delay(500);
+    assert(
+      await evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "A token must not unlock B",
+    );
+    await login(tokens[1]);
+    if (scaleProbe) {
+      await eventually(
+        () =>
+          evaluate(
+            "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B')",
+          ),
+        "B main Group listed",
+      );
+      await evaluate(
+        "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
+      );
+    }
     await eventually(
       () =>
         evaluate(
-          "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace C')",
-        ),
-      "C main Group listed",
-    );
-    await evaluate(
-      "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace C').click()",
-    );
-  }
-  await eventually(
-    () =>
-      evaluate(
-        "(document.body?.innerText || '').includes('Workspace C') && !document.querySelector('input[name=cccc-access-token]')",
-        world,
-      ),
-    "C administrator workbench",
-  );
-  await openInstance(1, "fixture-b");
-  await eventually(
-    () =>
-      evaluate(
-        "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
-        world,
-      ),
-    "B login reused after C",
-  );
-  assert.equal(
-    await evaluate("document.querySelectorAll('iframe').length"),
-    1,
-    "only the active target is mounted",
-  );
-  process.stdout.write("Nested Presentation, separate C login and B session reuse passed.\n");
-  // A real settings logout ends the single-use frame instead of reloading its proof.
-  await call("Page.bringToFront");
-  await evaluate("document.querySelector('iframe').focus()");
-  await evaluate("document.querySelector('[data-app-settings-trigger]').focus()", world);
-  const focusEvidence = await evaluate(
-    "({focused:document.hasFocus(),active:document.activeElement?.tagName,activeTrigger:document.activeElement?.hasAttribute('data-app-settings-trigger'),triggers:[...document.querySelectorAll('[data-app-settings-trigger]')].map(b=>({visible:!!b.getClientRects().length,disabled:b.disabled,rect:b.getBoundingClientRect().toJSON()}))})",
-    world,
-  );
-  assert(
-    focusEvidence.focused && focusEvidence.activeTrigger,
-    `target settings owns keyboard focus: ${JSON.stringify(focusEvidence)}`,
-  );
-  await call("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "Enter",
-    code: "Enter",
-    windowsVirtualKeyCode: 13,
-    text: "\r",
-  });
-  await call("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "Enter",
-    code: "Enter",
-    windowsVirtualKeyCode: 13,
-  });
-  await eventually(
-    () => evaluate("!!document.querySelector('[data-app-settings-menu]')", world),
-    "keyboard opens target settings menu",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[data-app-settings-menu] button')].find(b=>b.textContent.trim()==='Settings').click()",
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global'))",
-        world,
-      ),
-    "target settings scope",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global')).click()",
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Account')",
-        world,
-      ),
-    "target Account tab",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Account').click()",
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "document.querySelector('[data-testid=connect-status]')?.textContent.includes('Background collaboration is enabled')",
-        world,
-      ),
-    "target account confirmation uses target daemon state",
-  );
-  assert(
-    await evaluate(
-      "document.querySelector('[data-testid=connect-status]')?.parentElement.textContent.includes('each instance')",
-      world,
-    ),
-    "account panel explains separate Workbench authorization",
-  );
-  await evaluate(
-    "document.querySelector('[data-testid=connect-status]').scrollIntoView({block:'center'})",
-    world,
-  );
-  for (const name of ["Browser workstation B", "fixture-b"]) {
-    await eventually(
-      () => evaluate("!!document.querySelector('input[name=connect-instance-name]')", world),
-      "instance name input",
-    );
-    await evaluate(
-      `(()=>{const input=document.querySelector('input[name=connect-instance-name]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(name)}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
-      world,
-    );
-    await delay(50);
-    await evaluate(
-      "document.querySelector('input[name=connect-instance-name]').closest('form').requestSubmit()",
-      world,
-    );
-    await eventually(
-      () =>
-        evaluate(
-          `document.querySelector('input[name=connect-instance-name]')?.value===${JSON.stringify(name)} && !document.querySelector('input[name=connect-instance-name]').disabled && document.querySelector('input[name=connect-instance-name]').closest('form').querySelector('button').disabled && !document.querySelector('[data-testid=connect-status] [role=alert]')`,
+          "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
           world,
         ),
-      "account name saved",
+      "target workbench",
     );
-    assert.equal(
-      JSON.parse(
-        readFileSync(join(homes[1], "secrets/connect.json"), "utf8"),
-      ).directory.instances.find((entry) => entry.device_id === account.devices[1].device_id)
-        .display_name,
-      name,
-      "native daemon refreshed the account-owned name",
+    await eventually(
+      () => evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
+      "target Group metadata",
     );
-  }
-  process.stdout.write(
-    "Native account naming port and settings editor preserve the active workbench.\n",
-  );
-  const accountPanel = await call("Page.captureScreenshot", { format: "png" });
-  writeFileSync("/tmp/cccc-connect-account-panel.png", Buffer.from(accountPanel.data, "base64"));
-  await call("Emulation.setDeviceMetricsOverride", {
-    width: 390,
-    height: 844,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await eventually(() => evaluate("innerWidth <= 390", world), "narrow target account panel");
-  await evaluate("document.querySelector('button[aria-label=\"Close sidebar\"]').click()");
-  await eventually(
-    () => evaluate("document.querySelector('aside').getBoundingClientRect().right <= 1"),
-    "parent navigation closes so account controls are visible",
-  );
-  await evaluate(
-    "document.querySelector('[data-testid=connect-status]').scrollIntoView({block:'center'})",
-    world,
-  );
-  assert(
-    await evaluate("document.documentElement.scrollWidth <= innerWidth + 1", world),
-    "account settings does not overflow on a narrow entry",
-  );
-  const narrowAccountPanel = await call("Page.captureScreenshot", { format: "png" });
-  writeFileSync(
-    "/tmp/cccc-connect-account-panel-mobile.png",
-    Buffer.from(narrowAccountPanel.data, "base64"),
-  );
-  await call("Emulation.setDeviceMetricsOverride", {
-    width: 1050,
-    height: 750,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await eventually(
-    () =>
-      evaluate(
-        "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Web Access')",
-        world,
-      ),
-    "target Web Access tab",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Web Access').click()",
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Sign out')",
-        world,
-      ),
-    "target sign out action",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Sign out').click()",
-    world,
-  );
-  await eventually(
-    () =>
-      evaluate(
-        "!document.querySelector('iframe') && !!document.querySelector('[data-testid=connect-remote-panel] [role=alert]')",
-      ),
-    "target logout returns to entry",
-  );
-  await evaluate(
-    "[...document.querySelectorAll('[data-testid=connect-remote-panel] button')].find(b=>b.textContent.trim()==='Retry').click()",
-  );
-  await openInstance(1, "fixture-b");
-  await eventually(
-    () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "reopened target requires login after logout",
-  );
-  await login(tokens[1]);
-  if (scaleProbe) {
+    await eventually(
+      () => requests.some((r) => r.index === 1 && r.path.endsWith("/ledger/stream")),
+      "native target SSE",
+    );
+    if (scaleProbe)
+      await evaluate(
+        "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
+      );
+    const terminalStart = performance.now();
+    await evaluate(
+      "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Terminals').click()",
+      world,
+    );
+    await eventually(
+      () => requests.some((r) => r.index === 1 && r.method === "WS" && r.path.endsWith("/term")),
+      "native target terminal",
+    );
+    await eventually(
+      () => evaluate("!!document.querySelector('.xterm-helper-textarea')", world),
+      "interactive terminal",
+    );
+    if (metrics) {
+      await eventually(
+        () => evaluate("document.querySelectorAll('.xterm-helper-textarea').length===4", world),
+        "four visible terminal panes",
+      );
+      metrics.action("open_four_terminals", performance.now() - terminalStart);
+      await metrics.sample("remote_four_terminals", delay);
+      const hiddenTab = await call("Target.createTarget", { url: "about:blank" });
+      await call("Target.activateTarget", { targetId: hiddenTab.targetId });
+      await eventually(
+        () => evaluate("document.visibilityState==='hidden'"),
+        "entry hidden by another tab",
+      );
+      await metrics.sample("hidden_remote_entry", delay);
+      await call("Target.closeTarget", { targetId: hiddenTab.targetId });
+      await call("Page.bringToFront");
+      await eventually(
+        () => evaluate("document.visibilityState==='visible'"),
+        "entry visible again",
+      );
+      const second = await call("Target.createTarget", { url: `${origins[0]}/ui/` });
+      await delay(1500);
+      const multiple = await metrics.sample("two_entries", delay);
+      assert.equal(
+        multiple.account.providerCalls,
+        0,
+        "browser entry count does not query the tunnel provider",
+      );
+      await call("Target.closeTarget", { targetId: second.targetId });
+      await call("Page.bringToFront");
+    }
+    await evaluate("document.querySelector('.xterm-helper-textarea').focus()", world);
+    await call("Input.insertText", { text: "CONNECT_TYPED" }, world);
+    await call(
+      "Input.dispatchKeyEvent",
+      { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
+      world,
+    );
     await eventually(
       () =>
         evaluate(
-          "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B')",
+          "[...document.querySelectorAll('.xterm-rows')].some(e=>e.textContent.includes('ECHO:CONNECT_TYPED'))",
+          world,
         ),
-      "B main Group listed",
+      "terminal typed input",
+    );
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 1050,
+      height: 750,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await delay(400);
+    assert(
+      await evaluate("document.documentElement.scrollWidth<=window.innerWidth", world),
+      "target does not overflow after resize",
     );
     await evaluate(
-      "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
+      "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Messages').click()",
+      world,
     );
-  }
-  await eventually(
-    () =>
-      evaluate(
-        "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
+    await eventually(
+      () => evaluate("!!document.querySelector('a[download=\"fixture.txt\"]')", world),
+      "attachment download",
+    );
+    await evaluate("document.querySelector('a[download=\"fixture.txt\"]').click()", world);
+    await eventually(() => existsSync(join(dir, "fixture.txt")), "authenticated browser download");
+    assert.equal(readFileSync(join(dir, "fixture.txt"), "utf8"), "attachment-1");
+    // Use the real file picker and composer; verify storage and dispatch stay in B.
+    const uploadPath = join(dir, "uploaded-from-browser.txt");
+    writeFileSync(uploadPath, "B-only upload");
+    const dom = await call("DOM.getDocument", {}, world);
+    const input = await call(
+      "DOM.querySelector",
+      { nodeId: dom.root.nodeId, selector: 'input[type="file"]' },
+      world,
+    );
+    await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [uploadPath] }, world);
+    await eventually(
+      () =>
+        evaluate(
+          "!!document.querySelector('button[aria-label=\"Send message\"]:not(:disabled)')",
+          world,
+        ),
+      "file composer readiness",
+    );
+    await evaluate("document.querySelector('button[aria-label=\"Send message\"]').click()", world);
+    await eventually(
+      () =>
+        requests.some(
+          (r) => r.index === 1 && r.method === "POST" && r.path.endsWith("/send_upload"),
+        ),
+      "target file upload",
+    );
+    await eventually(
+      () =>
+        readFileSync(join(homes[1], "groups", groups[1], "ledger.jsonl"), "utf8").includes(
+          "uploaded-from-browser.txt",
+        ),
+      "target upload ledger",
+    );
+    assert(
+      !readFileSync(join(homes[0], "groups", groups[0], "ledger.jsonl"), "utf8").includes(
+        "uploaded-from-browser.txt",
+      ),
+      "entry ledger is untouched by target upload",
+    );
+    process.stdout.write(
+      "Target login, native SSE, terminal input/resize and file upload/download passed.\n",
+    );
+    const cookies = (await call("Storage.getCookies")).cookies.filter((cookie) =>
+      cookie.name.startsWith("__Host-cccc_access_"),
+    );
+    assert(
+      cookies.some(
+        (cookie) =>
+          cookie.value === tokens[1] && cookie.partitionKey && cookie.httpOnly && cookie.secure,
+      ),
+      "target uses its own partitioned HttpOnly cookie",
+    );
+    assert.equal(
+      await evaluate(
+        "(()=>{try{return document.querySelector('iframe').contentWindow.document.body.innerText}catch{return 'isolated'}})()",
+      ),
+      "isolated",
+    );
+    // Exercise the nested, sandboxed Presentation in the authenticated target.
+    await evaluate("document.querySelector('[data-group-presentation-trigger]').click()", world);
+    await eventually(
+      () =>
+        evaluate(
+          "!!document.querySelector('button[aria-label=\"Open presentation slot 1: Nested fixture\"]')",
+          world,
+        ),
+      "presentation slot",
+    );
+    await evaluate(
+      "document.querySelector('button[aria-label=\"Open presentation slot 1: Nested fixture\"]').click()",
+      world,
+    );
+    await eventually(
+      () => evaluate("!!document.querySelector('iframe[title=\"Nested fixture\"]')", world),
+      "nested presentation",
+    );
+    let preview;
+    await eventually(async () => {
+      preview = (await call("Target.getTargets")).targetInfos.find(
+        (target) =>
+          target.type === "iframe" && target.url.startsWith(origins[1] + "/api/v1/groups/"),
+      );
+      return Boolean(preview);
+    }, "sandboxed presentation target");
+    const { sessionId: previewWorld } = await call("Target.attachToTarget", {
+      targetId: preview.targetId,
+      flatten: true,
+    });
+    await eventually(
+      () =>
+        evaluate(
+          "(document.body?.innerText || '').includes('CONNECT_PRESENTATION_READY')",
+          previewWorld,
+        ),
+      "authenticated nested document rendered",
+    );
+    await evaluate("document.querySelector('[data-group-presentation-trigger]').click()", world);
+    const openInstance = async (index, name) => {
+      await evaluate(
+        `[...document.querySelectorAll('aside button')].find(b=>b.getAttribute('aria-label')?.startsWith(${JSON.stringify(name + " ·")})).click()`,
+      );
+      let target;
+      await eventually(async () => {
+        target = (await call("Target.getTargets")).targetInfos.find(
+          (item) => item.type === "iframe" && item.url.startsWith(origins[index] + "/ui/connect/"),
+        );
+        return Boolean(target);
+      }, `${name} frame`);
+      ({ sessionId: world } = await call("Target.attachToTarget", {
+        targetId: target.targetId,
+        flatten: true,
+      }));
+      await call("Runtime.enable", {}, world);
+      await call("Network.enable", {}, world);
+      await call("Page.enable", {}, world);
+      await call("Network.setCookieControls", cookieControls, world);
+    };
+    await evaluate(
+      "[...document.querySelectorAll('aside [role=button]')].find(b=>b.textContent.trim()==='Workspace A').click()",
+    );
+    await eventually(
+      () => evaluate("document.querySelectorAll('iframe').length===0"),
+      "local navigation releases the remote iframe",
+    );
+    assert(
+      await evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
+      "local selection preserves B navigation",
+    );
+    await evaluate(
+      "document.querySelector('button[aria-label=\"Collapse groups in fixture-b\"]').click()",
+    );
+    assert(
+      !(await evaluate("document.querySelector('aside').innerText.includes('Workspace B')")),
+      "explicit collapse hides B groups",
+    );
+    await evaluate(
+      "document.querySelector('button[aria-label=\"Expand groups in fixture-b\"]').click()",
+    );
+    assert(
+      await evaluate("document.querySelector('aside').innerText.includes('Workspace B')"),
+      "explicit expansion restores B groups",
+    );
+    if (process.env.CCCC_CONNECT_SCREENSHOT_DIR) {
+      mkdirSync(process.env.CCCC_CONNECT_SCREENSHOT_DIR, { recursive: true });
+      const screenshot = await call("Page.captureScreenshot", { format: "png" });
+      writeFileSync(
+        join(process.env.CCCC_CONNECT_SCREENSHOT_DIR, "local-with-remote-navigation.png"),
+        Buffer.from(screenshot.data, "base64"),
+      );
+    }
+    process.stdout.write(
+      "Local selection preserves remote navigation, explicit collapse/expand works, and the inactive iframe closes.\n",
+    );
+    await openInstance(2, "fixture-c");
+    await eventually(
+      () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "C remains locked",
+    );
+    await login(tokens[1]);
+    await delay(500);
+    assert(
+      await evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "B token must not unlock C",
+    );
+    await login(tokens[2]);
+    if (scaleProbe) {
+      await eventually(
+        () =>
+          evaluate(
+            "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace C')",
+          ),
+        "C main Group listed",
+      );
+      await evaluate(
+        "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace C').click()",
+      );
+    }
+    await eventually(
+      () =>
+        evaluate(
+          "(document.body?.innerText || '').includes('Workspace C') && !document.querySelector('input[name=cccc-access-token]')",
+          world,
+        ),
+      "C administrator workbench",
+    );
+    await openInstance(1, "fixture-b");
+    await eventually(
+      () =>
+        evaluate(
+          "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
+          world,
+        ),
+      "B login reused after C",
+    );
+    assert.equal(
+      await evaluate("document.querySelectorAll('iframe').length"),
+      1,
+      "only the active target is mounted",
+    );
+    process.stdout.write("Nested Presentation, separate C login and B session reuse passed.\n");
+    // A real settings logout ends the single-use frame instead of reloading its proof.
+    await call("Page.bringToFront");
+    await evaluate("document.querySelector('iframe').focus()");
+    await evaluate("document.querySelector('[data-app-settings-trigger]').focus()", world);
+    const focusEvidence = await evaluate(
+      "({focused:document.hasFocus(),active:document.activeElement?.tagName,activeTrigger:document.activeElement?.hasAttribute('data-app-settings-trigger'),triggers:[...document.querySelectorAll('[data-app-settings-trigger]')].map(b=>({visible:!!b.getClientRects().length,disabled:b.disabled,rect:b.getBoundingClientRect().toJSON()}))})",
+      world,
+    );
+    assert(
+      focusEvidence.focused && focusEvidence.activeTrigger,
+      `target settings owns keyboard focus: ${JSON.stringify(focusEvidence)}`,
+    );
+    await call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      text: "\r",
+    });
+    await call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+    });
+    await eventually(
+      () => evaluate("!!document.querySelector('[data-app-settings-menu]')", world),
+      "keyboard opens target settings menu",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[data-app-settings-menu] button')].find(b=>b.textContent.trim()==='Settings').click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global'))",
+          world,
+        ),
+      "target settings scope",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim().startsWith('Global')).click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Account')",
+          world,
+        ),
+      "target Account tab",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Account').click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "document.querySelector('[data-testid=connect-status]')?.textContent.includes('Background collaboration is enabled')",
+          world,
+        ),
+      "target account confirmation uses target daemon state",
+    );
+    assert(
+      await evaluate(
+        "document.querySelector('[data-testid=connect-status]')?.parentElement.textContent.includes('each instance')",
         world,
       ),
-    "target login after fresh frame",
-  );
-  await call("Emulation.setDeviceMetricsOverride", {
-    width: 390,
-    height: 844,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await eventually(() => evaluate("innerWidth===390"), "narrow entry viewport");
-  assert(
-    await evaluate("document.documentElement.scrollWidth <= innerWidth + 1"),
-    "entry has no horizontal overflow",
-  );
-  assert(
-    await evaluate("document.documentElement.scrollWidth <= innerWidth + 1", world),
-    "target has no horizontal overflow",
-  );
-  const groupsButton =
-    "[...document.querySelectorAll('[data-testid=connect-remote-panel] button')].find(b=>b.textContent.trim()==='Working Groups')";
-  assert(
-    await evaluate(`!!${groupsButton}?.getClientRects().length`),
-    "mobile Group navigation remains reachable",
-  );
-  await evaluate(`${groupsButton}.click()`);
-  await eventually(
-    () =>
-      evaluate(
-        "!![...document.querySelectorAll('aside button')].find(b=>b.getClientRects().length && b.getAttribute('aria-label')?.startsWith('fixture-c ·'))",
-      ),
-    "mobile sidebar exposes other instances",
-  );
-  writeFileSync(
-    "/tmp/cccc-connect-workbench-mobile.png",
-    Buffer.from((await call("Page.captureScreenshot", { format: "png" })).data, "base64"),
-  );
-  await call("Emulation.clearDeviceMetricsOverride");
-  process.stdout.write(
-    "Target settings keyboard, logout/reopen and narrow viewport navigation passed.\n",
-  );
-  // Keep an auxiliary read-only socket outside React to prove server revocation.
-  const terminalPath = `/api/v1/groups/${groups[1]}/actors/fixture-terminal/term`;
-  const activeFrame = await evaluate(
-    "JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(new URLSearchParams(location.search).get('proof').replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)))).frame_id",
-    world,
-  );
-  await evaluate(
-    "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Terminals').click()",
-    world,
-  );
-  await eventually(
-    () =>
-      requests.some(
-        (request) =>
-          request.index === 1 &&
-          request.path === terminalPath &&
-          new URL(request.url, origins[1]).searchParams.get("connect_frame") === activeFrame,
-      ),
-    "current frame terminal URL",
-  );
-  for (const path of [terminalPath, "/api/v1/events/stream", new URL(preview.url).pathname]) {
-    const actual = requests.filter((request) => request.index === 1 && request.path === path);
-    assert(actual.length > 0, `native workbench opened ${path}`);
+      "account panel explains separate Workbench authorization",
+    );
+    await evaluate(
+      "document.querySelector('[data-testid=connect-status]').scrollIntoView({block:'center'})",
+      world,
+    );
+    for (const name of ["Browser workstation B", "fixture-b"]) {
+      await eventually(
+        () => evaluate("!!document.querySelector('input[name=connect-instance-name]')", world),
+        "instance name input",
+      );
+      await evaluate(
+        `(()=>{const input=document.querySelector('input[name=connect-instance-name]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(name)}); input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+        world,
+      );
+      await delay(50);
+      await evaluate(
+        "document.querySelector('input[name=connect-instance-name]').closest('form').requestSubmit()",
+        world,
+      );
+      await eventually(
+        () =>
+          evaluate(
+            `document.querySelector('input[name=connect-instance-name]')?.value===${JSON.stringify(name)} && !document.querySelector('input[name=connect-instance-name]').disabled && document.querySelector('input[name=connect-instance-name]').closest('form').querySelector('button').disabled && !document.querySelector('[data-testid=connect-status] [role=alert]')`,
+            world,
+          ),
+        "account name saved",
+      );
+      assert.equal(
+        JSON.parse(
+          readFileSync(join(homes[1], "secrets/connect.json"), "utf8"),
+        ).directory.instances.find((entry) => entry.device_id === account.devices[1].device_id)
+          .display_name,
+        name,
+        "native daemon refreshed the account-owned name",
+      );
+    }
+    process.stdout.write(
+      "Native account naming port and settings editor preserve the active workbench.\n",
+    );
+    const accountPanel = await call("Page.captureScreenshot", { format: "png" });
+    writeFileSync("/tmp/cccc-connect-account-panel.png", Buffer.from(accountPanel.data, "base64"));
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await eventually(() => evaluate("innerWidth <= 390", world), "narrow target account panel");
+    await evaluate("document.querySelector('button[aria-label=\"Close sidebar\"]').click()");
+    await eventually(
+      () => evaluate("document.querySelector('aside').getBoundingClientRect().right <= 1"),
+      "parent navigation closes so account controls are visible",
+    );
+    await evaluate(
+      "document.querySelector('[data-testid=connect-status]').scrollIntoView({block:'center'})",
+      world,
+    );
     assert(
-      actual.every((request) => new URL(request.url, origins[1]).searchParams.has("connect_frame")),
-      `native workbench binds ${path} to its frame`,
+      await evaluate("document.documentElement.scrollWidth <= innerWidth + 1", world),
+      "account settings does not overflow on a narrow entry",
+    );
+    const narrowAccountPanel = await call("Page.captureScreenshot", { format: "png" });
+    writeFileSync(
+      "/tmp/cccc-connect-account-panel-mobile.png",
+      Buffer.from(narrowAccountPanel.data, "base64"),
+    );
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 1050,
+      height: 750,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await eventually(
+      () =>
+        evaluate(
+          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Web Access')",
+          world,
+        ),
+      "target Web Access tab",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.getClientRects().length && b.textContent.trim()==='Web Access').click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "!![...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Sign out')",
+          world,
+        ),
+      "target sign out action",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Sign out').click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "!document.querySelector('iframe') && !!document.querySelector('[data-testid=connect-remote-panel] [role=alert]')",
+        ),
+      "target logout returns to entry",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[data-testid=connect-remote-panel] button')].find(b=>b.textContent.trim()==='Retry').click()",
+    );
+    await openInstance(1, "fixture-b");
+    await eventually(
+      () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "reopened target requires login after logout",
+    );
+    await login(tokens[1]);
+    if (scaleProbe) {
+      await eventually(
+        () =>
+          evaluate(
+            "!![...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B')",
+          ),
+        "B main Group listed",
+      );
+      await evaluate(
+        "[...document.querySelectorAll('aside button')].find(b=>b.textContent.trim()==='Workspace B').click()",
+      );
+    }
+    await eventually(
+      () =>
+        evaluate(
+          "(document.body?.innerText || '').includes('Workspace B') && !document.querySelector('input[name=cccc-access-token]')",
+          world,
+        ),
+      "target login after fresh frame",
+    );
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await eventually(() => evaluate("innerWidth===390"), "narrow entry viewport");
+    assert(
+      await evaluate("document.documentElement.scrollWidth <= innerWidth + 1"),
+      "entry has no horizontal overflow",
+    );
+    assert(
+      await evaluate("document.documentElement.scrollWidth <= innerWidth + 1", world),
+      "target has no horizontal overflow",
+    );
+    const groupsButton =
+      "[...document.querySelectorAll('[data-testid=connect-remote-panel] button')].find(b=>b.textContent.trim()==='Working Groups')";
+    assert(
+      await evaluate(`!!${groupsButton}?.getClientRects().length`),
+      "mobile Group navigation remains reachable",
+    );
+    await evaluate(`${groupsButton}.click()`);
+    await eventually(
+      () =>
+        evaluate(
+          "!![...document.querySelectorAll('aside button')].find(b=>b.getClientRects().length && b.getAttribute('aria-label')?.startsWith('fixture-c ·'))",
+        ),
+      "mobile sidebar exposes other instances",
+    );
+    writeFileSync(
+      "/tmp/cccc-connect-workbench-mobile.png",
+      Buffer.from((await call("Page.captureScreenshot", { format: "png" })).data, "base64"),
+    );
+    await call("Emulation.clearDeviceMetricsOverride");
+    process.stdout.write(
+      "Target settings keyboard, logout/reopen and narrow viewport navigation passed.\n",
+    );
+    // Keep an auxiliary read-only socket outside React to prove server revocation.
+    const terminalPath = `/api/v1/groups/${groups[1]}/actors/fixture-terminal/term`;
+    const activeFrame = await evaluate(
+      "JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(new URLSearchParams(location.search).get('proof').replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)))).frame_id",
+      world,
+    );
+    await evaluate(
+      "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Terminals').click()",
+      world,
+    );
+    await eventually(
+      () =>
+        requests.some(
+          (request) =>
+            request.index === 1 &&
+            request.path === terminalPath &&
+            new URL(request.url, origins[1]).searchParams.get("connect_frame") === activeFrame,
+        ),
+      "current frame terminal URL",
+    );
+    for (const path of [terminalPath, "/api/v1/events/stream", new URL(preview.url).pathname]) {
+      const actual = requests.filter((request) => request.index === 1 && request.path === path);
+      assert(actual.length > 0, `native workbench opened ${path}`);
+      assert(
+        actual.every((request) =>
+          new URL(request.url, origins[1]).searchParams.has("connect_frame"),
+        ),
+        `native workbench binds ${path} to its frame`,
+      );
+    }
+    const socketRequest = requests.findLast(
+      (request) =>
+        request.index === 1 &&
+        request.path === terminalPath &&
+        new URL(request.url, origins[1]).searchParams.get("connect_frame") === activeFrame,
+    );
+    assert(socketRequest, "current frame opened its native terminal connection");
+    await evaluate(
+      `(()=>{ const url=new URL(${JSON.stringify(socketRequest.url)},location.origin);url.protocol='wss:';url.searchParams.set('mode','viewer');url.searchParams.delete('takeover'); window.fixtureSocket=new WebSocket(url);window.fixtureSocket.onclose=()=>window.fixtureSocketClosed=true;})()`,
+      world,
+    );
+    await eventually(
+      () => evaluate("window.fixtureSocket?.readyState===WebSocket.OPEN", world),
+      "independent target socket",
+    );
+    const editCurrentToken = async (index, method, body, session) => {
+      const result = await evaluate(
+        `(async()=>{const list=await fetch('/api/v1/access-tokens').then(r=>r.json());const current=list.result.access_tokens.find(t=>t.user_id===${JSON.stringify(`admin-${index}`)});return fetch('/api/v1/access-tokens/'+current.token_id,{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},body:${body ? `JSON.stringify(${JSON.stringify(body)})` : "undefined"}}).then(r=>r.json())})()`,
+        session,
+      );
+      assert(result.ok, `${method} current fixture token`);
+    };
+    await editCurrentToken(1, "DELETE", null, world);
+    await eventually(
+      () => evaluate("window.fixtureSocketClosed===true", world),
+      "server closes already-open revoked socket",
+      20000,
+    );
+    await eventually(
+      () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
+      "B re-locks after revocation",
+      20000,
+    );
+    assert(
+      (await ipc(homes[1], "group_show", { group_id: groups[1] })).group.actors.some(
+        (actor) => actor.id === "fixture-terminal" && actor.running,
+      ),
+      "revoking Web access must not stop the Actor",
+    );
+    await editCurrentToken(0, "PATCH", { is_admin: false, allowed_groups: [groups[0]] });
+    await eventually(
+      () =>
+        evaluate(
+          "!document.querySelector('iframe') && !(document.querySelector('aside')?.innerText || '').includes('fixture-b')",
+        ),
+      "restricted entry becomes single-instance",
+      20000,
+    );
+    assert(
+      await evaluate("(document.body?.innerText || '').includes('Workspace A')"),
+      "entry retains its permitted local Group",
+    );
+    process.stdout.write(
+      "Target revocation and entry downgrade converged without stopping Actors.\n",
+    );
+    assert.equal(failures.length, 0, `browser exceptions: ${failures.join(", ")}`);
+    process.stdout.write(
+      JSON.stringify({
+        nativeWorkbenches: true,
+        targetAdminLogin: true,
+        entryTokenIsolation: true,
+        thirdPartyCookiesBlocked: true,
+        nativeSse: true,
+        terminalInputAndResize: true,
+        authenticatedDownload: true,
+        targetUpload: true,
+        nestedPresentation: true,
+        targetSessionReuse: true,
+        targetLogoutReopen: true,
+        keyboardSettings: true,
+        accountConnectionStatus: true,
+        narrowViewportNavigation: true,
+        liveRevocation: true,
+        restrictedEntry: true,
+        exceptions: failures.length,
+      }) + "\n",
     );
   }
-  const socketRequest = requests.findLast(
-    (request) =>
-      request.index === 1 &&
-      request.path === terminalPath &&
-      new URL(request.url, origins[1]).searchParams.get("connect_frame") === activeFrame,
-  );
-  assert(socketRequest, "current frame opened its native terminal connection");
-  await evaluate(
-    `(()=>{ const url=new URL(${JSON.stringify(socketRequest.url)},location.origin);url.protocol='wss:';url.searchParams.set('mode','viewer');url.searchParams.delete('takeover'); window.fixtureSocket=new WebSocket(url);window.fixtureSocket.onclose=()=>window.fixtureSocketClosed=true;})()`,
-    world,
-  );
-  await eventually(
-    () => evaluate("window.fixtureSocket?.readyState===WebSocket.OPEN", world),
-    "independent target socket",
-  );
-  const editCurrentToken = async (index, method, body, session) => {
-    const result = await evaluate(
-      `(async()=>{const list=await fetch('/api/v1/access-tokens').then(r=>r.json());const current=list.result.access_tokens.find(t=>t.user_id===${JSON.stringify(`admin-${index}`)});return fetch('/api/v1/access-tokens/'+current.token_id,{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},body:${body ? `JSON.stringify(${JSON.stringify(body)})` : "undefined"}}).then(r=>r.json())})()`,
-      session,
-    );
-    assert(result.ok, `${method} current fixture token`);
-  };
-  await editCurrentToken(1, "DELETE", null, world);
-  await eventually(
-    () => evaluate("window.fixtureSocketClosed===true", world),
-    "server closes already-open revoked socket",
-    20000,
-  );
-  await eventually(
-    () => evaluate("!!document.querySelector('input[name=cccc-access-token]')", world),
-    "B re-locks after revocation",
-    20000,
-  );
-  assert(
-    (await ipc(homes[1], "group_show", { group_id: groups[1] })).group.actors.some(
-      (actor) => actor.id === "fixture-terminal" && actor.running,
-    ),
-    "revoking Web access must not stop the Actor",
-  );
-  await editCurrentToken(0, "PATCH", { is_admin: false, allowed_groups: [groups[0]] });
-  await eventually(
-    () =>
-      evaluate(
-        "!document.querySelector('iframe') && !(document.querySelector('aside')?.innerText || '').includes('fixture-b')",
-      ),
-    "restricted entry becomes single-instance",
-    20000,
-  );
-  assert(
-    await evaluate("(document.body?.innerText || '').includes('Workspace A')"),
-    "entry retains its permitted local Group",
-  );
-  process.stdout.write(
-    "Target revocation and entry downgrade converged without stopping Actors.\n",
-  );
-  assert.equal(failures.length, 0, `browser exceptions: ${failures.join(", ")}`);
-  process.stdout.write(
-    JSON.stringify({
-      nativeWorkbenches: true,
-      targetAdminLogin: true,
-      entryTokenIsolation: true,
-      thirdPartyCookiesBlocked: true,
-      nativeSse: true,
-      terminalInputAndResize: true,
-      authenticatedDownload: true,
-      targetUpload: true,
-      nestedPresentation: true,
-      targetSessionReuse: true,
-      targetLogoutReopen: true,
-      keyboardSettings: true,
-      accountConnectionStatus: true,
-      narrowViewportNavigation: true,
-      liveRevocation: true,
-      restrictedEntry: true,
-      exceptions: failures.length,
-    }) + "\n",
-  );
 } catch (error) {
   if (diagnose) await Promise.race([diagnose().catch(() => {}), delay(3000)]);
   process.stderr.write(`${error.stack || error}\nFixture evidence retained at ${dir}\n`);

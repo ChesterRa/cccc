@@ -279,7 +279,7 @@ ChatGPT Web 可以作为真正的 CCCC actor 加入协作组，而不只是外�
 
 管理员可在 Web 侧边栏聚合访问已关联的实例；打开远端时，需要输入**该目标实例自己的管理员 Access Token**。受限访问保持单实例。人的网页权限与后台设备通信权限分离，Remote Access 提供托管 HTTPS 访问路径。
 
-Agent 使用 `cccc_connect` 发现目标，再通过 `cccc_message_send` 或 `cccc_file` 同时指定 `dst_instance_id` 和 `dst_group_id`。回复沿用收到的本地 Event ID。旧手工 Group Bridge 及远程任意工具授权已退役；向其它会员共享单个 Group 留待后续迭代。详见 [CCCC Connect 指南](https://chesterra.github.io/cccc/guide/connect)。
+Agent 使用 `cccc_connect` 发现目标，再通过 `cccc_message_send` 或 `cccc_file` 同时指定 `dst_instance_id` 和 `dst_group_id`。回复沿用收到的本地 Event ID。旧手工 Group Bridge 及远程任意工具授权已退役；现在可从 Group 顶栏的“外部连接”连接其他会员的 Group。双方在官网确认各自的 Group，开放消息和文件通信，不开放远程管理。详见 [CCCC Connect 指南](https://chesterra.github.io/cccc/guide/connect)。
 
 ## 消息与协调
 

@@ -9,6 +9,7 @@ fn entry(homes: &[HomeLayout]) -> ConnectOutboxEntry {
     let now = Utc::now();
     ConnectOutboxEntry {
         work: ConnectWork::Message(Box::new(ConnectMessage {
+            connection_id: None,
             delivery_id: uuid::Uuid::new_v4().to_string(),
             account_origin: binding.account_origin,
             account_id: binding.account_id,
@@ -165,6 +166,7 @@ fn message_mut(entry: &mut ConnectOutboxEntry) -> &mut ConnectMessage {
 fn cancellation(original: &ConnectMessage) -> ConnectCancellation {
     let now = Utc::now();
     ConnectCancellation {
+        connection_id: None,
         delivery_id: uuid::Uuid::new_v4().to_string(),
         account_origin: original.account_origin.clone(),
         account_id: original.account_id.clone(),

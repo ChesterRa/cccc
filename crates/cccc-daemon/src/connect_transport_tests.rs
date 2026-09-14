@@ -19,7 +19,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-fn client() -> reqwest::Client {
+pub(super) fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -28,7 +28,7 @@ fn client() -> reqwest::Client {
         .expect("client")
 }
 
-fn send_request(
+pub(super) fn send_request(
     source: &str,
     target: &str,
     peer: &str,
@@ -1322,6 +1322,7 @@ async fn connect_cancellation_deadline_reports_truthful_failure_and_retires_acti
         event.by = "user".into();
         let now = Utc::now();
         let cancel = ConnectCancellation {
+            connection_id: None,
             delivery_id: uuid::Uuid::new_v4().to_string(),
             account_origin: original.account_origin.clone(),
             account_id: original.account_id.clone(),

@@ -83,6 +83,7 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
     connect_catalog::save(
         &home,
         &connect_catalog::PeerCatalog {
+            connection_id: None,
             account_origin: "https://account.example.invalid".into(),
             account_id: "account".into(),
             local_device_id: "device-0".into(),

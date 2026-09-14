@@ -17,7 +17,7 @@ const REQUEST_LIFETIME_SECONDS: i64 = 60;
 pub(crate) mod tests;
 
 /// The transport authenticates a peer; resource authorization is still explicit.
-/// GroupPair is exercised by negative fixtures, not an enabled external-sharing API.
+/// External connections admit only their exact Group pair; account peers retain instance-wide scope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PeerScope {
     SameAccount,
@@ -45,10 +45,81 @@ impl PeerScope {
 
 #[derive(Clone, Debug)]
 pub struct PeerBinding {
+    pub group: Option<GroupBinding>,
     pub account_origin: String,
     pub account_id: String,
     pub local: ConnectInstance,
     pub remote: ConnectInstance,
+}
+
+#[derive(Clone, Debug)]
+pub struct GroupBinding {
+    pub id: String,
+    pub local_group_id: String,
+    pub remote_group_id: String,
+}
+
+/// This is deliberately separate from instance-wide Workbench authority.
+pub fn scoped_binding(
+    home: &HomeLayout,
+    remote_id: &str,
+    connection_id: Option<&str>,
+) -> Result<PeerBinding, String> {
+    let Some(id) = connection_id else {
+        return binding(home, remote_id);
+    };
+    let links = crate::connect_groups::load(home)
+        .map_err(|e| e.to_string())?
+        .ok_or("external Group confirmation expired")?;
+    let link = links
+        .links
+        .iter()
+        .find(|l| l.id == id)
+        .ok_or("external Group connection was disconnected")?;
+    let (local, remote) =
+        crate::connect_groups::local_endpoint(&links, link).ok_or("invalid Group connection")?;
+    if remote.instance.instance_id != remote_id
+        || !crate::connect_groups::resource_current(home, local).map_err(|e| e.to_string())?
+    {
+        return Err("external Group connection belongs to another resource".into());
+    }
+    Ok(PeerBinding {
+        account_origin: links.account_origin.clone(),
+        account_id: link.source.account_id.clone(),
+        local: local.instance.clone(),
+        remote: remote.instance.clone(),
+        group: Some(GroupBinding {
+            id: id.into(),
+            local_group_id: local.group_id.clone(),
+            remote_group_id: remote.group_id.clone(),
+        }),
+    })
+}
+
+pub fn group_binding(
+    home: &HomeLayout,
+    remote_id: &str,
+    source_group: &str,
+    target_group: &str,
+) -> Result<PeerBinding, String> {
+    if let Ok(binding) = binding(home, remote_id) {
+        return Ok(binding);
+    }
+    let links = crate::connect_groups::load(home)
+        .map_err(|e| e.to_string())?
+        .ok_or("no active external Group connections")?;
+    let link = links
+        .links
+        .iter()
+        .find(|link| {
+            crate::connect_groups::local_endpoint(&links, link).is_some_and(|(a, b)| {
+                a.group_id == source_group
+                    && b.group_id == target_group
+                    && b.instance.instance_id == remote_id
+            })
+        })
+        .ok_or("this Group has no connection to the selected external Group")?;
+    scoped_binding(home, remote_id, Some(&link.id))
 }
 
 pub fn binding(home: &HomeLayout, remote_id: &str) -> Result<PeerBinding, String> {
@@ -73,6 +144,7 @@ pub fn binding(home: &HomeLayout, remote_id: &str) -> Result<PeerBinding, String
         .find(|entry| entry.instance_id == remote_id)
         .ok_or("peer is no longer registered in this account")?;
     Ok(PeerBinding {
+        group: None,
         account_origin: snapshot.account_origin,
         account_id: directory.account_id,
         local,
@@ -85,13 +157,20 @@ pub fn sign_request(
     remote_id: &str,
     operation: ConnectPeerOperation,
 ) -> Result<ConnectPeerRequest, String> {
-    let binding = binding(home, remote_id)?;
+    let binding = scoped_binding(home, remote_id, operation.connection_id())?;
+    if binding.group.as_ref().is_some_and(|g| {
+        g.local_group_id != operation.source_group_id()
+            || Some(g.remote_group_id.as_str()) != operation.target_group_id()
+    }) {
+        return Err("operation is outside the selected Group connection".into());
+    }
     let identity = InstanceIdentity::load(home).map_err(|error| error.to_string())?;
     if identity.peer_id != binding.local.instance_id {
         return Err("local identity changed".into());
     }
     let now = Utc::now();
     let mut proof = ConnectPeerAuthorization {
+        connection_id: operation.connection_id().map(str::to_owned),
         account_origin: binding.account_origin,
         account_id: binding.account_id,
         source_instance_id: binding.local.instance_id,
@@ -112,10 +191,19 @@ pub fn sign_request(
 }
 
 pub fn authenticate(home: &HomeLayout, request: &ConnectPeerRequest) -> Result<PeerScope, String> {
-    if operation_digest(&request.operation) != request.proof.operation_sha256 {
+    if operation_digest(&request.operation) != request.proof.operation_sha256
+        || request.operation.connection_id() != request.proof.connection_id.as_deref()
+    {
         return Err("peer body does not match its signed digest".into());
     }
-    authenticate_authorization(home, &request.proof)
+    let scope = authenticate_authorization(home, &request.proof)?;
+    if !scope.allows(
+        request.operation.source_group_id(),
+        request.operation.target_group_id(),
+    ) {
+        return Err("peer operation is outside the selected Group connection".into());
+    }
+    Ok(scope)
 }
 
 pub fn operation_digest(operation: &ConnectPeerOperation) -> String {
@@ -129,7 +217,11 @@ pub fn authenticate_authorization(
     home: &HomeLayout,
     request: &ConnectPeerAuthorization,
 ) -> Result<PeerScope, String> {
-    let binding = binding(home, &request.source_instance_id)?;
+    let binding = scoped_binding(
+        home,
+        &request.source_instance_id,
+        request.connection_id.as_deref(),
+    )?;
     let issued =
         DateTime::parse_from_rfc3339(&request.issued_at).map_err(|_| "invalid peer proof time")?;
     let expires =
@@ -159,7 +251,13 @@ pub fn authenticate_authorization(
     {
         return Err("peer proof does not match the current account binding".into());
     }
-    Ok(PeerScope::SameAccount)
+    Ok(match binding.group {
+        Some(group) => PeerScope::GroupPair {
+            source_group_id: group.remote_group_id,
+            target_group_id: group.local_group_id,
+        },
+        None => PeerScope::SameAccount,
+    })
 }
 
 pub fn sign_response(
@@ -193,7 +291,11 @@ pub fn verify_response(
     if operation_digest(&request.operation) != request.proof.operation_sha256 {
         return Err("peer body does not match its signed digest".into());
     }
-    let binding = binding(home, &request.proof.target_instance_id)?;
+    let binding = scoped_binding(
+        home,
+        &request.proof.target_instance_id,
+        request.proof.connection_id.as_deref(),
+    )?;
     if binding.account_origin != request.proof.account_origin
         || binding.account_id != request.proof.account_id
         || binding.local.instance_id != request.proof.source_instance_id

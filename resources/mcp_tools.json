@@ -127,7 +127,7 @@
   },
   {
     "name": "cccc_connect",
-    "description": "Discover same-account CCCC instances and their Group/Actor directory. Omit instance_id to list instances; provide it to page through that instance’s Groups and visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
+    "description": "Discover same-account CCCC instances and external Group connections approved for your local Group. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -145,7 +145,7 @@
         },
         "target_group_id": {
           "type": "string",
-          "description": "Optional exact remote Group filter within instance_id"
+          "description": "Exact remote Group filter within instance_id; required for an external Group connection"
         },
         "after": {
           "type": "string",
@@ -670,7 +670,7 @@
   },
   {
     "name": "cccc_file",
-    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; send attaches an active-scope file to user alone or one/more agents, never both. Mail is agent-only. For another same-account instance, discover its qualified target with cccc_connect and provide both dst_instance_id and dst_group_id.",
+    "description": "CCCC chat attachment operations. Use read/blob_path/info for delivered state/blobs attachments; send attaches an active-scope file to user alone or one/more agents, never both. Mail is agent-only. For another same-account instance or an approved external Group, discover its qualified target with cccc_connect and provide both dst_instance_id and dst_group_id.",
     "inputSchema": {
       "type": "object",
       "properties": {

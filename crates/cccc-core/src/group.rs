@@ -32,6 +32,9 @@ pub struct Scope {
 pub struct GroupDoc {
     pub v: u8,
     pub group_id: String,
+    /// Resource authorization generation. Import creates a fresh generation even when preserving the ID.
+    #[serde(default)]
+    pub generation: String,
     pub title: String,
     #[serde(default)]
     pub topic: String,
@@ -95,6 +98,7 @@ impl GroupStore {
         let group = GroupDoc {
             v: 1,
             group_id: format!("g_{}", &Uuid::new_v4().simple().to_string()[..12]),
+            generation: Uuid::new_v4().to_string(),
             title: normalized_title(title),
             topic: topic.trim().to_owned(),
             created_at: now.clone(),
@@ -287,6 +291,7 @@ impl GroupStore {
         for child in ["context", "scopes", "state", "state/blobs"] {
             fs::create_dir_all(dir.join(child))?;
         }
+        group.generation = Uuid::new_v4().to_string();
         group.updated_at = utc_now();
         write_yaml(&dir.join("group.yaml"), &group)?;
         fs::OpenOptions::new()

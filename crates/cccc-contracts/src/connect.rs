@@ -131,12 +131,16 @@ pub enum ConnectPeerOperation {
         blobs: Vec<crate::connect_message::ConnectBlobPayload>,
     },
     Receipt {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connection_id: Option<String>,
         source_group_id: String,
         target_group_id: String,
         delivery_id: String,
         message_sha256: String,
     },
     Catalog {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connection_id: Option<String>,
         source_group_id: String,
         #[serde(default)]
         target_group_id: Option<String>,
@@ -146,6 +150,27 @@ pub enum ConnectPeerOperation {
 }
 
 impl ConnectPeerOperation {
+    pub fn connection_id(&self) -> Option<&str> {
+        match self {
+            Self::Deliver { message, .. } => message.connection_id.as_deref(),
+            Self::Cancel { cancellation } => cancellation.connection_id.as_deref(),
+            Self::Catalog { connection_id, .. } | Self::Receipt { connection_id, .. } => {
+                connection_id.as_deref()
+            }
+        }
+    }
+    pub fn source_group_id(&self) -> &str {
+        match self {
+            Self::Deliver { message, .. } => &message.source.group_id,
+            Self::Cancel { cancellation } => &cancellation.source.group_id,
+            Self::Catalog {
+                source_group_id, ..
+            }
+            | Self::Receipt {
+                source_group_id, ..
+            } => source_group_id,
+        }
+    }
     /// Used by thin HTTP ports to select the same Group lock as the typed handler.
     pub fn target_group_id(&self) -> Option<&str> {
         match self {
@@ -186,6 +211,8 @@ pub struct ConnectCatalogPage {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectPeerAuthorization {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
     pub account_origin: String,
     pub account_id: String,
     pub source_instance_id: String,
@@ -201,7 +228,7 @@ pub struct ConnectPeerAuthorization {
 
 impl ConnectPeerAuthorization {
     pub fn signing_material(&self) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!([
+        let mut material = serde_json::json!([
             "cccc.connect.peer.request.v1",
             self.account_origin,
             self.account_id,
@@ -213,8 +240,13 @@ impl ConnectPeerAuthorization {
             self.issued_at,
             self.expires_at,
             self.operation_sha256,
-        ]))
-        .expect("serializable Connect peer request")
+        ]);
+        if let Some(id) = &self.connection_id {
+            let fields = material.as_array_mut().expect("array material");
+            fields[0] = serde_json::json!("cccc.connect.peer.group.request.v1");
+            fields.push(serde_json::json!(id));
+        }
+        serde_json::to_vec(&material).expect("serializable Connect peer request")
     }
 }
 

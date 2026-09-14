@@ -175,8 +175,11 @@ pub fn validate_cancellation(cancel: &ConnectCancellation) -> io::Result<()> {
 }
 
 pub fn work_binding(home: &HomeLayout, work: &ConnectWork) -> Result<(), String> {
-    let binding = connect_peer::binding(home, &work.target().instance_id)?;
-    if binding.account_origin != work.account_origin()
+    let binding =
+        connect_peer::scoped_binding(home, &work.target().instance_id, work.connection_id())?;
+    if binding.group.as_ref().is_some_and(|g| {
+        g.local_group_id != work.source().group_id || g.remote_group_id != work.target().group_id
+    }) || binding.account_origin != work.account_origin()
         || binding.account_id != work.account_id()
         || binding.local.instance_id != work.source().instance_id
         || binding.local.device_id != work.source().device_id
@@ -228,6 +231,7 @@ pub fn validate_reply(original: &ConnectMessage, reply: &ConnectMessage) -> Resu
         || !recipients_allowed
         || original.account_origin != reply.account_origin
         || original.account_id != reply.account_id
+        || original.connection_id != reply.connection_id
         || reply
             .reply_to
             .as_ref()
@@ -445,6 +449,7 @@ pub fn validate_cancellation_for(
         || original.deliver_before != cancel.original_deliver_before
         || original.account_origin != cancel.account_origin
         || original.account_id != cancel.account_id
+        || original.connection_id != cancel.connection_id
         || (!forward && !reverse)
         || (cancel.sender.id != "user" && (!forward || !actor_matches))
     {

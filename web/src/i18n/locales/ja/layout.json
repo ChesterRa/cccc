@@ -127,5 +127,26 @@
     "savedGroups": "保存済みグループ一覧 · 開く際に権限を再確認",
     "collapseGroups": "{{name}} のグループを折りたたむ",
     "expandGroups": "{{name}} のグループを展開"
+  },
+  "groupConnections": {
+    "title": "外部接続",
+    "description": "別のメンバーの Group と接続します。メッセージとファイルを交換できますが、端末や全履歴は共有されません。",
+    "localGroup": "ローカル Group",
+    "invitation": "接続する Group を選択してください。アカウントサイトで双方の Group を確認して承認します。",
+    "unavailable": "Group を選択できません。更新して再試行してください。",
+    "linkAccount": "このインスタンスを連携",
+    "accept": "サイトで招待を確認",
+    "invite": "メンバーを招待",
+    "manage": "サイトで管理",
+    "refresh": "更新",
+    "continue": "サイトで続ける",
+    "sync": "変更は二分以内に反映されます。接続後、この Group の Actor は相手の Group を確認して連絡できます。",
+    "empty": "この Group の有効な外部接続はありません。",
+    "connected": "接続済み · 双方向のメッセージとファイル",
+    "disconnect": "接続を解除",
+    "syncing": "Group の接続を確認しています…",
+    "syncFailed": "Group の接続を確認できませんでした。既存の接続はウェブサイトに残っている場合があります。同期は自動的に再試行されます。",
+    "unsupported": "このアカウントサービスは Group 接続にまだ対応していません。同じアカウントの Connect は引き続き利用できます。",
+    "checkedAt": "最終確認：{{time}}"
   }
 }

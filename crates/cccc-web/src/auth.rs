@@ -243,6 +243,7 @@ fn is_public(method: &Method, path: &str) -> bool {
     (*method == Method::GET && path == "/api/v1/connect/identity")
         || (*method == Method::POST && path == "/api/v1/connect/frame")
         || (*method == Method::POST && path == "/api/v1/connect/peer")
+        || (*method == Method::POST && path == "/api/v1/connect/group-check")
         || matches!(
             path,
             "/api/v1/ping"

@@ -21,6 +21,7 @@ async fn group_pair_delivery_and_receipt_cannot_expand_scope_or_change_an_accept
         role: None,
     };
     let message = ConnectMessage {
+        connection_id: None,
         delivery_id: uuid::Uuid::new_v4().to_string(),
         source_event_id: uuid::Uuid::new_v4().to_string(),
         account_origin: binding.account_origin,
@@ -144,6 +145,7 @@ async fn group_pair_delivery_and_receipt_cannot_expand_scope_or_change_an_accept
         &state.source,
         &peer,
         ConnectPeerOperation::Receipt {
+            connection_id: None,
             source_group_id: source.group_id.clone(),
             target_group_id: target.group_id.clone(),
             delivery_id: message.delivery_id.clone(),

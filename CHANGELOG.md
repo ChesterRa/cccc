@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.4.40] — Unreleased
 
 ### Added
+- **Connect selected Groups across member accounts.** Invite another member from the Group header and confirm both Groups on the account website. Exact Group scopes, duplicate-safe acceptance and bounded revocation reuse the durable message/reply/file pipeline without sharing administrator Tokens or terminals.
 - **CCCC Connect joins instances linked to the same account.** Background Group/Actor discovery and messaging need no manual Network or Group pairing; each instance retains its own data and needs a reachable HTTPS route.
 - **Remote workspaces open from the sidebar.** Each target requires its own administrator Access Token and serves its native messages, terminals, files, and Presentation. Restricted browser access remains single-instance.
 - **Cross-instance messages survive restarts with bounded delivery.** Persistent identities, target receipts, explicit failure outcomes, small attachments, replies, and cancellation preserve delivery semantics without letting offline peers block healthy ones.

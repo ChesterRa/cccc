@@ -285,7 +285,7 @@ Link instances to the same account in **Settings → Account**. Their Groups and
 
 The Web sidebar aggregates linked instances for administrators. Open a target with **that target instance's own admin Access Token**; restricted access stays within one instance. Browser Tokens control the human view independently of account/device authority for background communication. Remote Access provides the managed HTTPS route.
 
-Agents discover qualified targets with `cccc_connect` and send through `cccc_message_send` or `cccc_file` using both `dst_instance_id` and `dst_group_id`. Replies use the original local Event ID. Manual Group Bridge and its remote arbitrary-tool grants are retired; sharing one Group with another account is a later iteration. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
+Agents discover qualified targets with `cccc_connect` and send through `cccc_message_send` or `cccc_file` using both `dst_instance_id` and `dst_group_id`. Replies use the original local Event ID. Manual Group Bridge and its remote arbitrary-tool grants are retired; connect a selected Group with another member through **External connections** in the Group header. Both members confirm their own Group on the account website; this grants messages and files, not remote administration. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
 
 ## Messaging & Coordination
 

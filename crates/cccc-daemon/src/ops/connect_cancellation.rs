@@ -43,8 +43,12 @@ pub(super) fn accept(
     if let Some(event) = existing {
         return object(json!({"event":event,"duplicate":true}));
     }
-    let binding = cccc_core::connect_peer::binding(home, &target.instance_id)
-        .map_err(|e| OpError::new("connect_peer_unavailable", e))?;
+    let binding = cccc_core::connect_peer::scoped_binding(
+        home,
+        &target.instance_id,
+        original.connection_id.as_deref(),
+    )
+    .map_err(|e| OpError::new("connect_peer_unavailable", e))?;
     if binding.local.device_id != local.device_id || binding.remote.device_id != target.device_id {
         return Err(OpError::new(
             "connect_cancel_denied",
@@ -96,6 +100,7 @@ pub(super) fn accept(
     event.scope_key = group.active_scope_key.clone();
     let now = chrono::Utc::now();
     let cancel = ConnectCancellation {
+        connection_id: original.connection_id.clone(),
         delivery_id: id.clone(),
         account_origin: binding.account_origin,
         account_id: binding.account_id,

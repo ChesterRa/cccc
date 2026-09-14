@@ -231,3 +231,222 @@ fn remote_access_intent_is_preserved_and_reach_origin_is_not_double_prefixed() {
         configured.remote_access
     );
 }
+
+#[test]
+fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
+    use axum::{
+        Json, Router,
+        extract::State,
+        routing::{get, post},
+    };
+    use std::sync::atomic::{AtomicU16, AtomicUsize};
+    #[derive(Clone)]
+    struct Issuer {
+        origin: String,
+        code: Arc<AtomicU16>,
+        reads: Arc<AtomicUsize>,
+        links: Arc<std::sync::Mutex<Vec<cccc_contracts::connect_groups::ConnectGroupLink>>>,
+        invalidated: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+    let (_temp, home) = fixture();
+    home.initialize().expect("initialize isolated Home");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let origin = format!("http://{}", listener.local_addr().expect("address"));
+    let issuer = Issuer {
+        origin: origin.clone(),
+        code: Arc::new(AtomicU16::new(503)),
+        reads: Arc::new(AtomicUsize::new(0)),
+        links: Arc::default(),
+        invalidated: Arc::default(),
+    };
+    async fn group_response(
+        s: Issuer,
+        invalidated: Vec<String>,
+    ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+        s.reads.fetch_add(1, Ordering::Relaxed);
+        let mut links = s.links.lock().expect("fixture links");
+        links.retain(|link| !invalidated.contains(&link.id));
+        *s.invalidated.lock().expect("fixture invalidations") = invalidated;
+        let code = s.code.load(Ordering::Relaxed);
+        let body = if code == 200 {
+            json!({"protocol_version":1,"account_origin":s.origin,"account_id":"owner","device_id":"device-a",
+            "issued_at":Utc::now().to_rfc3339(),"expires_at":(Utc::now()+chrono::Duration::seconds(119)).to_rfc3339(),"links":*links})
+        } else {
+            json!({"error":{"code":"unavailable","message":"Group service unavailable"}})
+        };
+        (
+            axum::http::StatusCode::from_u16(code).expect("status"),
+            Json(body),
+        )
+    }
+    let app = Router::new().route("/v1/connect/instances", post(|Json(r): Json<ConnectRegistration>| async move {
+        Json(json!({"protocol_version":1,"account_id":"owner","device_id":"device-a",
+            "issued_at":Utc::now().to_rfc3339(),"expires_at":(Utc::now()+chrono::Duration::seconds(119)).to_rfc3339(),
+            "instances":[{"instance_id":r.instance_id,"public_key":r.public_key,"client_version":r.client_version,
+                "public_origin":r.public_origin,"device_id":"device-a","display_name":"A","registered_at":Utc::now().to_rfc3339()}]}))
+    })).route("/v1/connect/groups", get(|State(s): State<Issuer>| async move {group_response(s,vec![]).await})
+        .post(|State(s): State<Issuer>,Json(body): Json<serde_json::Value>| async move {
+            group_response(s,serde_json::from_value(body["invalidated"].clone()).expect("invalidated IDs")).await
+        })).with_state(issuer.clone());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async move {
+                axum::serve(
+                    tokio::net::TcpListener::from_std(listener).expect("listener"),
+                    app,
+                )
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
+                .await
+                .expect("server");
+            });
+    });
+    bind(&home, &origin);
+    let group = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .create("Local", "")
+        .expect("group");
+    let request = DaemonRequest {
+        v: 1,
+        op: "connect_group_status".into(),
+        args: json!({"group_id":group.group_id})
+            .as_object()
+            .expect("args")
+            .clone(),
+    };
+    let inspect = || group_status(&home, &request).expect("status");
+    assert_eq!(inspect()["status"], "syncing");
+    let requested = intent(&home).expect("intent").expect("linked");
+    for code in [503, 200, 503, 200, 404] {
+        issuer.code.store(code, Ordering::Relaxed);
+        refresh(&home, &requested, &AtomicBool::new(false))
+            .expect("same-account directory remains usable");
+        let snapshot = connect::load(&home).expect("load").expect("linked");
+        assert!(snapshot.directory.is_some());
+        assert!(snapshot.error_code.is_none());
+        let before = issuer.reads.load(Ordering::Relaxed);
+        let status = inspect();
+        assert_eq!(
+            status["status"],
+            if code == 200 { "ready" } else { "unavailable" }
+        );
+        assert_eq!(status["error_code"].is_null(), code == 200);
+        if code == 404 {
+            assert_eq!(status["error_code"], "connect_groups_unsupported");
+        }
+        assert_eq!(
+            issuer.reads.load(Ordering::Relaxed),
+            before,
+            "GET is read-only"
+        );
+    }
+    issuer.code.store(200, Ordering::Relaxed);
+    refresh(&home, &requested, &AtomicBool::new(false)).expect("recover");
+    // Actual refresh HTTP requests must retire only deleted/replaced resources.
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let deleted = store
+        .create("Delete during refresh", "")
+        .expect("deleted Group");
+    let healthy = store.create("Unaffected Group", "").expect("healthy Group");
+    let snapshot = connect::load(&home).expect("snapshot").expect("linked");
+    let own = snapshot.directory.as_ref().expect("directory").instances[0].clone();
+    let remote_home = HomeLayout::from_path(_temp.path().join("remote")).expect("remote Home");
+    remote_home.initialize().expect("remote fixture");
+    let remote = InstanceIdentity::load_or_create(&remote_home).expect("remote identity");
+    let links = [&group, &deleted, &healthy]
+        .iter()
+        .map(|g| cccc_contracts::connect_groups::ConnectGroupLink {
+            id: uuid::Uuid::new_v4().to_string(),
+            source: cccc_contracts::connect_groups::ConnectGroupEndpoint {
+                account_id: "owner".into(),
+                instance: own.clone(),
+                group_id: g.group_id.clone(),
+                group_generation: cccc_core::connect_groups::generation(g),
+                title: g.title.clone(),
+            },
+            target: cccc_contracts::connect_groups::ConnectGroupEndpoint {
+                account_id: "external-owner".into(),
+                instance: ConnectInstance {
+                    instance_id: remote.peer_id.clone(),
+                    public_key: remote.public_key_b64.clone(),
+                    device_id: "external-device".into(),
+                    ..own.clone()
+                },
+                group_id: "g_external".into(),
+                group_generation: "external-generation".into(),
+                title: "External".into(),
+            },
+        })
+        .collect::<Vec<_>>();
+    *issuer.links.lock().expect("fixture links") = links.clone();
+    refresh(&home, &requested, &AtomicBool::new(false)).expect("seed grants");
+    let group_path = store
+        .group_dir(&group.group_id)
+        .expect("directory")
+        .join("group.yaml");
+    let original = std::fs::read(&group_path).expect("fixture YAML");
+    std::fs::write(&group_path, "v: [invalid YAML").expect("temporary read error");
+    store.delete(&deleted.group_id).expect("delete Group");
+    refresh(&home, &requested, &AtomicBool::new(false)).expect("healthy directory renews");
+    assert_eq!(
+        *issuer.invalidated.lock().expect("reported"),
+        vec![links[1].id.clone()]
+    );
+    let grant = cccc_core::connect_groups::load(&home)
+        .expect("grant")
+        .expect("fresh");
+    assert_eq!(
+        grant.links.iter().map(|l| &l.id).collect::<Vec<_>>(),
+        vec![&links[0].id, &links[2].id]
+    );
+    assert!(
+        cccc_core::connect_peer::scoped_binding(&home, &remote.peer_id, Some(&links[0].id))
+            .is_err()
+    );
+    cccc_core::connect_peer::scoped_binding(&home, &remote.peer_id, Some(&links[2].id))
+        .expect("healthy Group remains authorized");
+    assert_eq!(
+        connect::load(&home)
+            .expect("status")
+            .expect("linked")
+            .group_sync
+            .expect("diagnostic")
+            .error_code
+            .as_deref(),
+        Some("connect_group_resource_unavailable")
+    );
+    std::fs::write(&group_path, original).expect("restore same resource");
+    refresh(&home, &requested, &AtomicBool::new(false)).expect("recover without new invitation");
+    assert!(issuer.invalidated.lock().expect("reported").is_empty());
+    assert_eq!(inspect()["status"], "ready");
+    cccc_core::connect_peer::scoped_binding(&home, &remote.peer_id, Some(&links[0].id))
+        .expect("original link recovers");
+    let path = home.root().join("secrets/connect_groups.json");
+    let mut grant: serde_json::Value = cccc_core::fs::read_json(&path).expect("grant");
+    grant["expires_at"] = json!("2000-01-01T00:00:00Z");
+    cccc_core::fs::write_secret_json(&path, &grant).expect("expire fixture grant");
+    assert_eq!(inspect()["status"], "unavailable");
+    let mut snapshot = connect::load(&home).expect("snapshot").expect("linked");
+    snapshot.directory.as_mut().expect("directory").expires_at = "2000-01-01T00:00:00Z".into();
+    connect::save(&home, &snapshot).expect("expire directory");
+    let status = inspect();
+    assert_eq!(status["status"], "unavailable");
+    assert!(
+        status["account_id"].is_null(),
+        "expired directory is not an unlinked account"
+    );
+    membership::update(&home, |state| {
+        state.logged_in = false;
+        Ok(())
+    })
+    .expect("unlink fixture");
+    assert_eq!(inspect()["status"], "not_linked");
+    let _ = stop.send(());
+    server.join().expect("server stopped");
+}

@@ -145,6 +145,7 @@ fn catalog_handler_requires_current_peer_proof_and_returns_a_bound_response() {
         &homes[0],
         &instances[1].instance_id,
         ConnectPeerOperation::Catalog {
+            connection_id: None,
             source_group_id: String::new(),
             target_group_id: None,
             after: None,

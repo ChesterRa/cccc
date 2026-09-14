@@ -279,7 +279,7 @@ ChatGPT Web は外部チャットウィンドウではなく、実際の CCCC ac
 
 管理者は Web サイドバーから関連付け済みインスタンスを開けます。対象ごとに**そのインスタンス自身の管理者 Access Token** が必要です。制限付きアクセスは単一インスタンスのままです。ブラウザーの権限とバックグラウンドのデバイス通信権限は独立し、Remote Access が管理された HTTPS 接続経路を提供します。
 
-Agent は `cccc_connect` で対象を探し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。旧手動 Group Bridge とリモート任意ツールの権限は廃止され、別会員への単一 Group 共有は後続の予定です。[CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
+Agent は `cccc_connect` で対象を探し、`cccc_message_send` または `cccc_file` に `dst_instance_id` と `dst_group_id` を指定します。返信には受信したローカル Event ID を使います。旧手動 Group Bridge とリモート任意ツールの権限は廃止され、別会員の Group とは、Group ヘッダーの「外部接続」から接続できます。双方がアカウントサイトで各自の Group を承認し、メッセージとファイルを共有します。リモート管理権限は付与されません。[CCCC Connect ガイド](https://chesterra.github.io/cccc/guide/connect)を参照してください。
 
 ## メッセージングと協調
 

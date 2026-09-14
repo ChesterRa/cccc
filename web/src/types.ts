@@ -23,6 +23,7 @@ export type GroupMeta = {
 };
 
 export type GroupDoc = {
+  generation?: string;
   group_id: string;
   title?: string;
   topic?: string;

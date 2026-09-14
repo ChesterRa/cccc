@@ -14,6 +14,7 @@ async fn connect_cancellation_scope_deadline_and_missing_original_are_bounded() 
     let binding = cccc_core::connect_peer::binding(&state.source, &peer).expect("binding");
     let now = chrono::Utc::now();
     let cancel = ConnectCancellation {
+        connection_id: None,
         delivery_id: uuid::Uuid::new_v4().to_string(),
         account_origin: binding.account_origin,
         account_id: binding.account_id,

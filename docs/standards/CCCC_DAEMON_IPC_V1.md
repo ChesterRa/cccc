@@ -5306,12 +5306,15 @@ Result:
 ### 8.17.1 Membership reach
 
 The device-authenticated Connect directory, read-only `connect_status` and
-`connect_catalog` operations, durable `connect_send` / `connect_send_files`
+`connect_catalog`, user-only `connect_group_status` / `connect_group_select` operations, durable `connect_send` / `connect_send_files`
 acceptance, ordinary `reply` / `reply_request_cancel` and upload-preflight integration,
 `connect_delivery` / `connect_cancellation` status projections, failure notification
 recovery, and signed internal `connect_peer_receive` catalog/message/receipt/cancel port
 are specified in [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md). Connect is an in-progress
 extension; it does not give device credentials Web administrator authority.
+`connect_group_status` distinguishes `not_linked`, `syncing`, `ready` and
+`unavailable`, with sharing-check time and errors. Only an unexpired confirmed
+empty grant means no connections; GET does not perform synchronization.
 
 Optional extension for third-party deployments. The bundled native
 implementation implements the complete operation set below. Deployments without

@@ -63,6 +63,55 @@ explicit result, and a slow peer does not block healthy peers. Cancelling a
 request to reply closes the obligation; it does not retract the message or stop
 the receiving Actor.
 
+## Connect a Group with another member
+
+This is a connection between two selected Groups, not a shared administrator
+workspace. Both Groups can discover each other's Actors and exchange messages,
+replies and files. It does not expose terminals, Presentation, full history,
+Context or arbitrary remote tools. Other Groups do not inherit the connection.
+
+1. Both members link their instances to their own accounts and enable a reachable
+   HTTPS route in **Settings → Account → Remote Access**.
+2. The recipient opens **Group connections** on the account website and copies
+   their **Member ID**.
+3. The sender opens the intended Group in native CCCC Web as an administrator,
+   clicks the chain icon (**External connections**) in the Group header, and
+   chooses **Invite a member**. On the account website, check the selected Group,
+   paste the recipient's Member ID and submit the invitation.
+4. The recipient opens **Group connections** on the account website, expands
+   **Accept in one of your instances**, and opens their chosen instance. Sign in
+   there as an administrator if needed, choose the local Group, then click
+   **Review invitation on website**. Check both Groups and confirm.
+5. Allow up to two minutes for both online instances to synchronize. Their Actors
+   can now use `cccc_connect` to discover the connected Group and its Actors,
+   then use the normal message, reply and file tools described above.
+
+An invitation expires after 24 hours. If either instance is offline, reconnect it
+and submit the retained confirmation form again before expiry. The selected Groups
+and recipient remain visible; retry still checks current ownership and invitation
+state. Retrying the same submitted form does not
+create another invitation. If a selected Group was deleted or replaced, select it
+again in CCCC; if the inviting Group changed, ask its owner for a new invitation.
+A temporary local configuration read failure does not revoke an existing
+connection: correct the configuration and the same connection can recover.
+For a new invitation after cancellation or expiry,
+select the Group again in CCCC. A Group can have multiple connections; there is
+only one active connection for any exact pair.
+
+Either member can cancel a pending invitation, decline an incoming one, or
+**Disconnect** an active connection on the account website. The native dialog
+also links directly to the selected connection's disconnect confirmation.
+Disconnect takes effect within the authorization lease (at most two minutes);
+already delivered messages remain, and running Actors are not stopped. Deleting
+or importing a Group, resetting it to a replacement Group, or unlinking its
+device requires a fresh connection. Reconnecting never resumes old queued work.
+
+The native **External connections** dialog distinguishes a confirmed empty list
+from pending or failed synchronization. A temporary confirmation failure does not
+mean the account was unlinked. The last check and error are shown, and the existing
+background service retries automatically. **Refresh** reads its latest result;
+it does not create a new connection or restart an Actor.
+
 ## Disconnect and historical data
 
 Unlinking a device or withdrawing its account grant ends its Connect authority.
@@ -71,5 +120,5 @@ stop Actors. Offline directory entries are not proof that an instance is online.
 
 [Manual Group Bridge](/guide/group-bridge) is retired. Old grants and unfinished
 operations are not silently migrated to Connect. Historical messages remain
-readable, with retired remote replies disabled. Cross-member sharing of a single
-Group, remote arbitrary tools, and automatic Web updates are outside this iteration.
+readable, with retired remote replies disabled. Remote arbitrary tools and
+automatic Web updates are outside this iteration.

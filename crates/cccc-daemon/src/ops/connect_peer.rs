@@ -45,7 +45,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 }
 
 fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    authorize_local_source(home, request)?;
+    let source_group = authorize_local_source(home, request)?;
     let instance_id = request
         .args
         .get("instance_id")
@@ -67,18 +67,33 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .into_iter()
             .filter(|instance| instance.instance_id != snapshot.instance_id)
             .collect::<Vec<_>>();
+        let external=cccc_core::connect_groups::load(home).map_err(OpError::io)?.map(|links|links.links.iter().filter_map(|link| {
+            let (local,remote)=cccc_core::connect_groups::local_endpoint(&links,link)?;
+            if local.group_id!=source_group || !cccc_core::connect_groups::resource_current(home,local).unwrap_or(false) { return None; }
+            Some(json!({"connection_id":link.id,"instance":remote.instance,"group_id":remote.group_id,"title":remote.title}))
+        }).collect::<Vec<_>>()).unwrap_or_default();
         return object(
-            json!({"self_instance_id":snapshot.instance_id,"instances":instances,"status":"ready","checked_at":snapshot.checked_at,"expires_at":directory.expires_at}),
+            json!({"self_instance_id":snapshot.instance_id,"instances":instances,"external_groups":external,
+            "status":"ready","checked_at":snapshot.checked_at,"expires_at":directory.expires_at}),
         );
     };
-    let binding = connect_peer::binding(home, instance_id)
-        .map_err(|message| OpError::new("connect_peer_unavailable", message))?;
-    let mut catalog = cccc_core::connect_catalog::load(home, instance_id).map_err(OpError::io)?;
+    let target = request.args.get("target_group_id").and_then(Value::as_str);
+    let binding = if let Some(target) = target {
+        connect_peer::group_binding(home, instance_id, &source_group, target)
+    } else {
+        connect_peer::binding(home, instance_id)
+    }
+    .map_err(|message| OpError::new("connect_peer_unavailable", message))?;
+    let mut catalog = cccc_core::connect_catalog::load_scoped(
+        home,
+        instance_id,
+        binding.group.as_ref().map(|g| g.id.as_str()),
+    )
+    .map_err(OpError::io)?;
     let fresh = catalog
         .as_ref()
         .is_some_and(cccc_core::connect_catalog::is_fresh);
     let after = request.args.get("after").and_then(Value::as_str);
-    let target = request.args.get("target_group_id").and_then(Value::as_str);
     let limit = request
         .args
         .get("limit")
@@ -126,6 +141,7 @@ fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             source_group_id,
             target_group_id,
             after,
+            ..
         } => catalog(
             home,
             &scope,

@@ -21,6 +21,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/connect", get(status))
         .route("/api/v1/connect/name", post(rename))
         .route("/api/v1/connect/identity", get(identity))
+        .route("/api/v1/connect/group-check", post(group_check))
+        .route(
+            "/api/v1/connect/groups",
+            get(group_status).post(group_select),
+        )
         .route("/api/v1/connect/open", post(open))
         .route("/api/v1/connect/frame", get(frame).post(renew))
         .layer(DefaultBodyLimit::max(4096))
@@ -28,6 +33,58 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/connect/peer",
             post(peer).layer(DefaultBodyLimit::max(14 * 1024 * 1024)),
         )
+}
+
+#[derive(serde::Deserialize)]
+struct GroupQuery {
+    group_id: String,
+}
+
+async fn group_status(State(state): State<AppState>, Query(query): Query<GroupQuery>) -> ApiResult {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "Group connection management requires administrator access",
+        ));
+    }
+    call(
+        &state,
+        "connect_group_status",
+        object(json!({"group_id":query.group_id,"by":"user"})),
+    )
+    .await
+}
+
+async fn group_select(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "Group connection management requires administrator access",
+        ));
+    }
+    call(&state,"connect_group_select",object(json!({"group_id":body.get("group_id"),"invitation":body.get("invitation"),"by":"user"}))).await
+}
+
+async fn group_check(
+    State(state): State<AppState>,
+    Json(body): Json<cccc_contracts::connect_groups::ConnectGroupCheck>,
+) -> Result<Json<cccc_contracts::connect_groups::ConnectGroupCheckResult>, ApiError> {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "an exhibit cannot approve Group connections",
+        ));
+    }
+    cccc_core::connect_groups::check(&state.home, &body)
+        .map(Json)
+        .map_err(|e| match e {
+            cccc_core::connect_groups::SelectionError::Invalid => {
+                ApiError::forbidden_code("connect_group_denied", e.to_string())
+            }
+            cccc_core::connect_groups::SelectionError::Unavailable(_) => {
+                ApiError::unavailable("connect_group_unavailable", e.to_string())
+            }
+        })
 }
 
 async fn rename(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> ApiResult {

@@ -12,6 +12,13 @@ pub const DIRECTORY_TTL_SECONDS: i64 = 120;
 mod tests;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ConnectGroupSync {
+    pub checked_at: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ConnectSnapshot {
     pub account_origin: String,
     pub device_id: String,
@@ -20,6 +27,9 @@ pub struct ConnectSnapshot {
     pub checked_at: String,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    /// Diagnostics only; Group authority remains in the expiring issuer grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_sync: Option<ConnectGroupSync>,
 }
 
 pub fn save(home: &HomeLayout, snapshot: &ConnectSnapshot) -> io::Result<()> {

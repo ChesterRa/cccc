@@ -20,6 +20,7 @@ pub mod codex_voice_settings;
 pub mod connect;
 pub mod connect_catalog;
 pub mod connect_delivery;
+pub mod connect_groups;
 pub mod connect_peer;
 pub mod context;
 pub mod deepseek_restart_gate;

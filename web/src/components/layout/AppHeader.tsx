@@ -1,6 +1,7 @@
+import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
 import { useEffect, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
+import { Actor, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import {
   getGroupControlVisual,
@@ -44,6 +45,7 @@ export interface AppHeaderProps {
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
+  groups?: GroupMeta[];
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
@@ -70,6 +72,7 @@ export function AppHeader({
   onSetGroupState,
   onOpenSettings,
   canAccessAccount,
+  groups = [],
   onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
@@ -244,6 +247,12 @@ export function AppHeader({
 
       {/* Right Actions */}
       <div className="flex shrink-0 items-center gap-1.5">
+        <GroupConnectionsControl
+          enabled={!webReadOnly && canAccessAccount}
+          groupId={selectedGroupId}
+          groups={groups}
+          onOpenAccount={onOpenAccount}
+        />
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}

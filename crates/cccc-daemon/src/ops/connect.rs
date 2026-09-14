@@ -9,7 +9,7 @@ use crate::dispatch::{OpError, OpResult, object};
 use cccc_contracts::{DaemonRequest, connect::ConnectRegistration};
 use cccc_core::{
     HomeLayout,
-    connect::{self, ConnectSnapshot},
+    connect::{self, ConnectGroupSync, ConnectSnapshot},
     instance_identity::InstanceIdentity,
     membership, settings,
 };
@@ -32,8 +32,86 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "connect_status" => Operation::new(Read, status),
         "connect_rename" => Operation::new(GlobalWrite, rename),
+        "connect_group_status" => Operation::new(Read, group_status),
+        "connect_group_select" => Operation::new(Read, group_select),
         _ => return None,
     })
+}
+
+fn group_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    status(home, request)?;
+    let group = super::connect_peer::authorize_local_source(home, request)?;
+    let snapshot = connect::load(home).map_err(OpError::io)?;
+    let links = cccc_core::connect_groups::load(home).map_err(OpError::io)?;
+    let current = intent(home).map_err(OpError::io)?;
+    let sync = snapshot.as_ref().and_then(|s| s.group_sync.as_ref());
+    let error_code = snapshot
+        .as_ref()
+        .and_then(|s| s.error_code.as_ref())
+        .or_else(|| sync.and_then(|s| s.error_code.as_ref()));
+    let error_message = snapshot
+        .as_ref()
+        .filter(|s| s.error_code.is_some())
+        .and_then(|s| s.error_message.as_ref())
+        .or_else(|| sync.and_then(|s| s.error_message.as_ref()));
+    let state = if current.is_none() {
+        "not_linked"
+    } else if error_code.is_some() || (sync.is_some() && links.is_none()) {
+        "unavailable"
+    } else if links.is_some() {
+        "ready"
+    } else {
+        "syncing"
+    };
+    let external = links
+        .as_ref()
+        .map(|set| {
+            set.links
+                .iter()
+                .filter(|link| {
+                    cccc_core::connect_groups::local_endpoint(set, link).is_some_and(
+                        |(local, _)| {
+                            local.group_id == group
+                                && cccc_core::connect_groups::resource_current(home, local)
+                                    .unwrap_or(false)
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    object(
+        json!({"status":state,"error_code":error_code,"error_message":error_message,
+        "checked_at":sync.map(|s|&s.checked_at),
+        "links":external,"expires_at":links.as_ref().map(|l|&l.expires_at),
+        "account_origin":current.as_ref().map(|s|&s.origin),
+        "account_id":snapshot.as_ref().and_then(|s|s.directory.as_ref()).map(|d|&d.account_id)}),
+    )
+}
+
+fn group_select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    status(home, request)?;
+    let group = super::connect_peer::authorize_local_source(home, request)?;
+    let ticket = cccc_core::connect_groups::ticket(home, &group)
+        .map_err(|e| OpError::new("connect_group_unavailable", e.to_string()))?;
+    let mut url = url::Url::parse(&format!("{}/connect/select", ticket.account_origin))
+        .map_err(OpError::invalid)?;
+    use base64::Engine;
+    url.query_pairs_mut().append_pair(
+        "ticket",
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&ticket).map_err(OpError::invalid)?),
+    );
+    if let Some(id) = request
+        .args
+        .get("invitation")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    {
+        uuid::Uuid::parse_str(id).map_err(OpError::invalid)?;
+        url.query_pairs_mut().append_pair("invitation", id);
+    }
+    object(json!({"url":url.as_str()}))
 }
 
 fn rename(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -250,6 +328,7 @@ fn refresh(home: &HomeLayout, requested: &Intent, cancelled: &AtomicBool) -> std
         device_id: requested.device_id.clone(),
         instance_id: identity.peer_id.clone(),
         checked_at: cccc_contracts::utc_now(),
+        group_sync: connect::load(home)?.and_then(|old| old.group_sync),
         ..Default::default()
     };
     let error = match result {
@@ -281,6 +360,77 @@ fn refresh(home: &HomeLayout, requested: &Intent, cancelled: &AtomicBool) -> std
         snapshot.error_message = Some(message.clone());
     }
     connect::save(home, &snapshot)?;
+    if error.is_none() && !cancelled.load(Ordering::Acquire) {
+        // Optional extension: a server without Group sharing must not break the account directory.
+        // Save validates the current membership again after network work, including rebinding races.
+        let group_result = (|| -> Result<(), (String, String)> {
+            let mut resource_error = None;
+            let invalidated = cccc_core::connect_groups::load(home)
+                .map_err(|e| ("connect_groups_cache_error".into(), e.to_string()))?
+                .map(|links| {
+                    links
+                        .links
+                        .iter()
+                        .filter_map(|link| {
+                            cccc_core::connect_groups::local_endpoint(&links, link).and_then(
+                                |(local, _)| {
+                                    match cccc_core::connect_groups::resource_current(home, local) {
+                                        Ok(false) => Some(link.id.clone()),
+                                        Ok(true) => None,
+                                        Err(_) => {
+                                            resource_error.get_or_insert_with(|| format!(
+                                                "Could not read local Group {}; restore its configuration to resume sharing", local.group_id
+                                            ));
+                                            None
+                                        }
+                                    }
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let links = AccountClient::new(&requested.origin)
+                .and_then(|client| client.connect_groups(&requested.token, &invalidated))
+                .map_err(|e| (e.code.to_owned(), e.message))?;
+            if cancelled.load(Ordering::Acquire)
+                || intent(home)
+                    .map_err(|e| ("connect_groups_cache_error".into(), e.to_string()))?
+                    .as_ref()
+                    != Some(requested)
+            {
+                return Ok(());
+            }
+            cccc_core::connect_groups::save(home, &links)
+                .map_err(|e| ("connect_groups_cache_error".into(), e.to_string()))?;
+            // A bad local resource cannot revoke its grant or stop healthy Groups renewing.
+            match resource_error {
+                Some(message) => Err(("connect_group_resource_unavailable".into(), message)),
+                None => Ok(()),
+            }
+        })();
+        if cancelled.load(Ordering::Acquire) || intent(home)?.as_ref() != Some(requested) {
+            return Ok(());
+        }
+        let (error_code, error_message) = match group_result {
+            Ok(()) => (None, None),
+            Err((code, message)) => (Some(code), Some(message)),
+        };
+        // A concurrent rename/refresh may already have installed a newer directory.
+        // Sharing diagnostics must not overwrite that account snapshot with this one.
+        let Some(mut latest) = connect::load(home)? else {
+            return Ok(());
+        };
+        if latest.checked_at != snapshot.checked_at {
+            return Ok(());
+        }
+        latest.group_sync = Some(ConnectGroupSync {
+            checked_at: cccc_contracts::utc_now(),
+            error_code,
+            error_message,
+        });
+        connect::save(home, &latest)?;
+    }
     if error.is_some() {
         Err(std::io::Error::other("Connect account refresh failed"))
     } else {

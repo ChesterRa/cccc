@@ -9,6 +9,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Vec<HomeLayout>, Vec<ConnectInsta
     let mut instances = Vec::new();
     for index in 0..3 {
         let home = HomeLayout::from_path(temp.path().join(format!("home-{index}"))).expect("home");
+        home.initialize().expect("initialize fixture Home");
         let key = InstanceIdentity::load_or_create(&home).expect("key");
         membership::save(
             &home,
@@ -58,6 +59,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Vec<HomeLayout>, Vec<ConnectInsta
 
 fn catalog() -> ConnectPeerOperation {
     ConnectPeerOperation::Catalog {
+        connection_id: None,
         source_group_id: "source-group".into(),
         target_group_id: None,
         after: None,
@@ -86,6 +88,7 @@ fn peer_requests_bind_account_devices_target_operation_and_response() {
     }
     let mut modified = request.clone();
     modified.operation = ConnectPeerOperation::Catalog {
+        connection_id: None,
         source_group_id: "other-source".into(),
         target_group_id: None,
         after: None,

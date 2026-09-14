@@ -466,10 +466,15 @@ CCCS v1 standardizes cross-group provenance via `src_group_id/src_event_id` on t
 
 Connect messages additionally qualify remote Group IDs with `src_instance_id` /
 `dst_instance_id`; consumers MUST NOT treat such a remote Group ID as a local
-Group navigation or authorization target. The in-progress device transport,
+Group navigation or authorization target. The device transport,
 immutable message metadata, durable acceptance and terminal delivery receipts are
 specified in [CCCC_CONNECT_V1.md](CCCC_CONNECT_V1.md). Those extensions do not
-grant remote history, Context, TUI or arbitrary tool access.
+grant remote history, Context, TUI or arbitrary tool access. Cross-member
+connections also pin an immutable `connection_id` to the logical delivery and
+its replies/cancellations. Group resource generations change on import or
+replacement, so restored IDs/history cannot restore an old sharing grant.
+Neither a fresh connection nor a same-ID local Actor may fulfill an old remote
+obligation.
 
 ### 9.1 Relay Semantics
 

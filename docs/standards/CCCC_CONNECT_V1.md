@@ -1,10 +1,11 @@
 # CCCC Connect v1
 
-Status: first-iteration implementation. This standard defines the same-account
+Status: source implementation. This standard defines the same-account
 directory, native aggregate Workbench and durable Group/Actor communication,
 including MCP discovery/send/file ports, ordinary replies and cancellation.
-Manual Group Bridge is retired in this source revision. Cross-member invitation
-management, automatic Web updates and cross-instance Voice are not implemented.
+It also defines account-confirmed connections between two Groups owned by
+different members. Manual Group Bridge is retired. Automatic Web updates and
+cross-instance Voice are not implemented.
 
 Linux isolated integration evidence does not claim hosted deployment, public
 availability, or native Windows/macOS and other-browser acceptance. Account and
@@ -307,11 +308,11 @@ the response signature, request binding and current membership before use.
 Business errors are signed too. HTTP success alone is not delivery confirmation.
 
 `catalog { source_group_id, target_group_id?, after? }` permits an empty source
-Group for daemon-level same-account discovery. A future Group-pair authority must
+Group for daemon-level same-account discovery. A Group-pair authority must
 supply its exact nonempty source and target; it cannot discover other Groups or
 inherit the target's same-account authority. Catalog, deliver, receipt and cancellation consumers
-have isolated Group-pair negative tests. There is no enabled external invitation
-or external account authentication endpoint yet.
+have isolated Group-pair negative tests. External invitation and member approval
+use the account-managed Group connections described below.
 
 Catalog pages contain at most 64 Groups, ordered by Group ID, with a `next` cursor.
 They expose Group ID/title and visible Actor ID/title/enabled/role/generation only,
@@ -540,5 +541,129 @@ The Ed25519 instance key retains its persisted `group_bridge_identity_key.yaml`
 filename and bytes. Only the code API is renamed to `InstanceIdentity`; generating
 a replacement key merely because the feature name changed is forbidden.
 Same-account collaboration uses current account/device identity independently
-of human Web Tokens. Sharing a Group with another member remains a separate,
-explicit future Group-pair grant, not reactivation of manual Bridge.
+of human Web Tokens. Sharing a Group with another member uses a separate,
+explicit Group-pair grant, never reactivation of manual Bridge.
+
+## External Group connections
+
+This extension is separate from the same-account directory and browser Workbench.
+An active connection binds two different account IDs, instance keys, current device
+IDs, Group IDs and their resource generations. New/imported Groups receive a fresh
+`generation`; pre-existing Groups without it use `legacy:<created_at>` until an
+import replaces their generation. Rename preserves identity;
+delete/reset/recreation invalidates it. Only the two selected Groups can discover
+each other and exchange explicit messages, replies, cancellations and transferred
+attachments. This grant is not transitive and never grants browser administration,
+full ledger/context reads, filesystem access, terminals or Presentation.
+
+The local administrator selects a Group and obtains a signed selection ticket.
+The account browser requires the matching member session plus CSRF protection to
+invite a specific member ID. The recipient selects their own Group and explicitly
+accepts. Tickets expire after 24 hours. A ticket signature plus recipient determines one
+invitation ID; replaying the same form is idempotent and cannot reopen a closed
+invitation. A fresh selection is required to invite again. Creation and acceptance validate the
+selected resources through their registered HTTPS endpoints; offline Groups fail
+clearly and may be retried. No device credential can approve membership sharing.
+The account stores only this relation and minimum endpoint metadata. Instance
+and Group names in invitations are selection-time labels; IDs and generations
+define authority, and renaming does not revoke a connection.
+
+The signed ticket material is the fixed JSON array:
+`["cccc.connect.group.ticket.v1", account_origin, account_id, instance_id, instance_name, device_id,
+group_id, group_generation, title, issued_at, expires_at]`.
+`POST /api/v1/connect/group-check {ticket,nonce}` proves that this exact Group still
+exists at its registered instance. Its signed response covers
+`["cccc.connect.group.check.v1", ticket_sha256, nonce, title, expires_at]`, with a
+30-second lifetime; the digest covers ticket signing material. This endpoint only
+checks the selected identity, not a catalogue or any work data. Signature and
+validity checks precede resource reads. HTTP 403 `connect_group_denied` means an
+invalid selection (including a missing or replaced Group); the member must select
+again, or request a fresh invitation if the source Group changed. HTTP 503
+`connect_group_unavailable` means a temporary read/confirmation failure; the same
+selection may recover. The account consumer uses the native error code, not a
+bare HTTP 403 from an intermediary, to choose the terminal recovery path.
+
+`GET /v1/connect/groups` uses the existing version and device authentication and
+returns only active connections involving that device. Authorizations last at most
+120 seconds and are refreshed by the existing daemon service. POST on the same
+endpoint may invalidate only connections involving the authenticated device when
+its selected Group is confirmed missing or has another resource generation.
+Read/parse errors deny access but do not prove permanent retirement: they remain
+visible synchronization errors while healthy Group grants keep renewing. Recovery
+of the same resource preserves the original connection. Readers never initiate refresh work. Device invalidation accepts at most 128 UUIDs
+in an 8 KiB request; registration and resource proofs retain their 4 KiB limits.
+Failure to deploy this optional endpoint does not disable same-account Connect.
+The existing local Connect snapshot records `group_sync` diagnostics separately
+from account-directory errors; it grants no authority. Failure retains only still
+valid grants and successful synchronization clears the sharing error.
+
+Each accepted connection has a unique immutable ID. Logical deliveries and their
+transport proofs pin that ID; a newly accepted connection cannot revive old queued
+messages, receipts or reply capabilities. Either member may disconnect; no new
+operation is admitted after local revocation/lease expiry. Already delivered copies
+remain, and running tasks are not stopped. Revocation propagation is bounded by
+the existing 120-second issuer lease. Concurrent accepts/reverse invitations must
+converge to at most one active connection for the same exact endpoint pair.
+
+### External connection wire scope
+
+`ConnectPeerAuthorization`, `ConnectMessage`, `ConnectCancellation`, and the
+`Catalog`/`Receipt` operations have an optional `connection_id`. When absent it is
+omitted from serialized JSON, retaining the same-account signing material. With
+an external ID, the request signing domain is `cccc.connect.peer.group.request.v1`,
+with the connection ID appended to the existing request array. The signed request
+and logical operation must carry the same ID. `account_id` in these external peer
+requests/messages identifies the connection's initiating account (source endpoint
+in the cloud record), consistently in either direction; the current local account
+is independently verified against the issuer lease. It does not grant access to
+other resources owned by the initiating account.
+
+Both endpoint device IDs, local Group resource generation and the exact pair are
+checked before signing and receiving. Responses continue to bind the full request
+hash. Receipts and replies must match the original connection ID as well as its
+participant generations. Connection-scoped catalogues are stored independently
+from instance-wide navigation; they contain only the selected target Group.
+Successful issuer refresh removes catalogues for retired connection IDs; it never
+deletes delivered messages or attachments.
+A fresh issuer snapshot missing a queued connection is authoritative revocation:
+unsent work becomes failed; work awaiting a receipt becomes unconfirmed. Loss of
+the issuer is unavailability, never proof that an uncertain delivery did not occur.
+
+### Management ports and user journey
+
+- `connect_group_status {by:"user",group_id}` is read-only and returns current
+  active links for this Group, expiry, account origin and current account ID.
+  `status` is `not_linked`, `syncing`, `ready` or `unavailable`; it includes
+  `checked_at`, `error_code` and `error_message` for sharing synchronization.
+  Only `ready` with an unexpired empty grant confirms no active links. Missing or
+  expired confirmation must not be displayed as no connections or an unlinked
+  account. Linking is determined from current device membership, not directory freshness.
+- `connect_group_select {by:"user",group_id,invitation?}` performs no sharing
+  mutation; it signs this existing Group selection and returns the account
+  confirmation URL. Web uses explicit POST to initiate this selection.
+- `/api/v1/connect/groups` exposes these operations only to Web administrators
+  (GET status, POST selection); restricted views/exhibits cannot manage links.
+- The account `/connect` page shows the member ID, invitations and connections.
+  `/connect/select` requires an authenticated member matching the selection ticket.
+  GET presents confirmation; CSRF-protected POST creates or accepts an invitation.
+  Transient resource-unavailable errors retain the selected Groups and recipient
+  on the confirmation form. Retrying requires another explicit submit and rechecks
+  session, CSRF, ticket validity, invitation state and both live resources.
+  A definitive native selection rejection instead explains reselection/new invitation
+  and does not offer repeated submission of the unusable ticket.
+  Recipient links open `/?connect_invite=<id>` on a selected owned instance; the
+  native Group chooser does not automatically accept an invitation.
+- Cancel/reject/revoke use CSRF-protected browser POSTs. Disconnect also has a
+  confirmation page. Device retirement closes its invitations and connections
+  atomically; account deletion removes its relation metadata. Closed records and
+  expired invitations are retained for up to 30 days before routine cleanup.
+- Account management limits each member to 20 mutations/minute and 128 outstanding
+  originating invitations/connections. Acceptance limits each member to 128 active
+  connections. Device synchronization is bounded to 30 requests/minute.
+
+For `cccc_connect`, omitting `instance_id` returns same-account `instances` plus
+`external_groups` for the calling Group only. Each external entry includes
+`connection_id`, public instance metadata, `group_id`, and `title`. To discover
+that Group's Actors, supply both its `instance_id` and `target_group_id`. Sends
+continue to use `dst_instance_id` and `dst_group_id`; the daemon resolves the exact
+authorized connection. Ordinary replies and file delivery reuse existing ports.

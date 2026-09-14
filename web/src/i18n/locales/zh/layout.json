@@ -127,5 +127,26 @@
     "savedGroups": "已保存的组列表 · 打开时重新检查权限",
     "collapseGroups": "收起 {{name}} 的工作组",
     "expandGroups": "展开 {{name}} 的工作组"
+  },
+  "groupConnections": {
+    "title": "外部连接",
+    "description": "将这个 Group 与另一位会员的 Group 连接。双方可交换消息和文件，不开放终端或完整历史。",
+    "localGroup": "本地 Group",
+    "invitation": "请选择要连接的 Group。你将在官网核对双方 Group 并确认。",
+    "unavailable": "暂时无法选择 Group，请刷新后重试。",
+    "linkAccount": "关联此实例",
+    "accept": "前往官网核对邀请",
+    "invite": "邀请会员",
+    "manage": "在官网管理",
+    "refresh": "刷新",
+    "continue": "继续前往官网",
+    "sync": "变更将在两分钟内同步。连接后，本 Group 的 Actor 可以发现并联系对方 Group。",
+    "empty": "这个 Group 尚无生效的外部连接。",
+    "connected": "已连接 · 双向消息和文件",
+    "disconnect": "断开连接",
+    "syncing": "正在确认 Group 连接…",
+    "syncFailed": "暂时无法确认 Group 连接。官网上已有的连接可能仍然存在，系统会自动重试同步。",
+    "unsupported": "当前账户服务尚不支持 Group 连接，同账户 Connect 仍可使用。",
+    "checkedAt": "上次检查：{{time}}"
   }
 }

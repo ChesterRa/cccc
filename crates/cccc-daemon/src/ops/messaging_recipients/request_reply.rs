@@ -63,6 +63,7 @@ mod tests {
 
     fn group() -> GroupDoc {
         GroupDoc {
+            generation: String::new(),
             v: 1,
             group_id: "g_test".into(),
             title: "test".into(),

@@ -301,6 +301,7 @@ export function AppShell({
               onSetGroupState={onSetGroupState}
               onOpenSettings={onOpenSettings}
               canAccessAccount={canAccessAccount}
+              groups={orderedGroups}
               onOpenAccount={onOpenAccount}
               onOpenMobileMenu={onOpenMobileMenu}
             />

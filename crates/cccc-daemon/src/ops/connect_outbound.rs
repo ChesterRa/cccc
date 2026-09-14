@@ -70,8 +70,16 @@ fn send_with_reply(
             "client_id must not exceed 128 bytes",
         ));
     }
-    let binding = cccc_core::connect_peer::binding(home, &peer)
-        .map_err(|message| OpError::new("connect_peer_unavailable", message))?;
+    let binding = if let Some(reply) = &reply {
+        cccc_core::connect_peer::scoped_binding(
+            home,
+            &peer,
+            reply.original.connection_id.as_deref(),
+        )
+    } else {
+        cccc_core::connect_peer::group_binding(home, &peer, &group_id, &target_group)
+    }
+    .map_err(|message| OpError::new("connect_peer_unavailable", message))?;
     let key = Sha256::digest(
         serde_json::to_vec(&json!([
             binding.local.instance_id,
@@ -144,7 +152,7 @@ fn send_with_reply(
                 .collect(),
         }
     } else {
-        connect_catalog::load(home, &peer)
+        connect_catalog::load_scoped(home, &peer, binding.group.as_ref().map(|g| g.id.as_str()))
             .map_err(OpError::io)?
             .and_then(|catalog| {
                 catalog
@@ -210,6 +218,7 @@ fn send_with_reply(
     event.by = by.into();
     event.scope_key = source.active_scope_key.clone();
     let message = ConnectMessage {
+        connection_id: binding.group.as_ref().map(|g| g.id.clone()),
         delivery_id: id.clone(),
         account_origin: binding.account_origin,
         account_id: binding.account_id,
@@ -379,6 +388,7 @@ fn recipient_snapshot(
     data: &mut serde_json::Map<String, Value>,
 ) -> Result<Vec<ConnectActor>, OpError> {
     let group = GroupDoc {
+        generation: String::new(),
         v: 1,
         group_id: target.group_id.clone(),
         title: target.title.clone(),

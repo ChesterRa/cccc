@@ -557,3 +557,135 @@ async fn opening_confirms_the_actual_target_key_and_restricted_entries_cannot_st
     stop_tx.send(()).expect("stop");
     server.await.expect("server task");
 }
+
+#[tokio::test]
+async fn external_group_management_requires_admin_but_resource_checks_require_only_signed_selection()
+ {
+    let (_temp, home, _, _, _) = setup("https://b.test");
+    let group = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .create("Selected Group", "")
+        .expect("Group");
+    let limited = AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("limited", vec![group.group_id.clone()], false, None)
+        .expect("token");
+    let app = cccc_web::app(home.clone());
+    for method in ["GET", "POST"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!(
+                        "/api/v1/connect/groups?group_id={}",
+                        group.group_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", limited.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"group_id":group.group_id}).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    let mut check = cccc_contracts::connect_groups::ConnectGroupCheck {
+        ticket: cccc_core::connect_groups::ticket(&home, &group.group_id).expect("selection"),
+        nonce: uuid::Uuid::new_v4().to_string(),
+    };
+    let request = |check: &cccc_contracts::connect_groups::ConnectGroupCheck| {
+        Request::post("/api/v1/connect/group-check")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(check).expect("body")))
+            .expect("request")
+    };
+    let response = app.clone().oneshot(request(&check)).await.expect("proof");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("JSON");
+    assert_eq!(body["title"], "Selected Group");
+    assert_eq!(body["nonce"], check.nonce);
+    let response = cccc_web::app_with_mode(home.clone(), cccc_web::WebMode::Exhibit)
+        .oneshot(request(&check))
+        .await
+        .expect("exhibit");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let path = home
+        .root()
+        .join("groups")
+        .join(&group.group_id)
+        .join("group.yaml");
+    let original = std::fs::read(&path).expect("fixture YAML");
+    std::fs::write(&path, "v: [invalid YAML").expect("transient read failure");
+    let response = app
+        .clone()
+        .oneshot(request(&check))
+        .await
+        .expect("read failure");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let error: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("error");
+    assert_eq!(error["error"]["code"], "connect_group_unavailable");
+    std::fs::write(&path, original).expect("restore");
+    assert_eq!(
+        app.clone()
+            .oneshot(request(&check))
+            .await
+            .expect("recovery")
+            .status(),
+        StatusCode::OK
+    );
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    store.delete(&group.group_id).expect("delete");
+    store.import(group).expect("replacement with same ID");
+    let response = app
+        .clone()
+        .oneshot(request(&check))
+        .await
+        .expect("stale selection");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let error: Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("error");
+    assert_eq!(error["error"]["code"], "connect_group_denied");
+    check.ticket.title = "forged selection".into();
+    assert_eq!(
+        app.clone()
+            .oneshot(request(&check))
+            .await
+            .expect("forgery")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/connect/group-check")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(" ".repeat(4097)))
+                .expect("oversize"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

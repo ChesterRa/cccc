@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod codex_voice;
 pub mod connect;
+pub mod connect_groups;
 pub mod connect_message;
 pub mod deepseek;
 pub mod event;

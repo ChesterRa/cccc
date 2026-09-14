@@ -390,6 +390,20 @@ impl AccountClient {
             })
     }
 
+    pub fn connect_groups(
+        &self,
+        token: &str,
+        invalidated: &[String],
+    ) -> Result<cccc_contracts::connect_groups::ConnectGroupLinks, AccountError> {
+        let (method, payload) = if invalidated.is_empty() {
+            (Method::GET, None)
+        } else {
+            (Method::POST, Some(json!({"invalidated":invalidated})))
+        };
+        let response = self.request(method, "/v1/connect/groups", payload, Some(token))?;
+        serde_json::from_value(Value::Object(response)).map_err(network_error)
+    }
+
     fn connect_directory(
         &self,
         device_token: &str,
@@ -435,6 +449,12 @@ impl AccountClient {
         }
         let mut response = request.send().map_err(network_error)?;
         let status = response.status().as_u16();
+        if status == 404 && path == "/v1/connect/groups" {
+            return Err(AccountError::new(
+                "connect_groups_unsupported",
+                "The account service does not support Group connections yet.",
+            ));
+        }
         let mut raw = Vec::new();
         response
             .by_ref()

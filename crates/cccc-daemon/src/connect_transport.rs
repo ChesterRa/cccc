@@ -19,6 +19,9 @@ const MAX_ACTIVE_PEERS: usize = 8;
 const MAX_CATALOG_PAGES: usize = 16;
 
 #[cfg(test)]
+#[path = "connect_transport_group_tests.rs"]
+mod group_tests;
+#[cfg(test)]
 #[path = "connect_transport_tests.rs"]
 pub(crate) mod tests;
 
@@ -77,18 +80,28 @@ async fn run_catalogs(home: HomeLayout, client: reqwest::Client) {
                 let Some(snapshot) = connect::load(&home).ok().flatten() else { schedule.clear(); continue; };
                 let Some(directory) = snapshot.directory else { schedule.clear(); continue; };
                 let mut present = HashSet::new();
-                for peer in directory.instances {
+                let mut peers=directory.instances.into_iter().map(|peer|(peer,None)).collect::<Vec<_>>();
+                if let Some(links)=cccc_core::connect_groups::load(&home).ok().flatten() {
+                    for link in &links.links {
+                        if let Some((local,remote))=cccc_core::connect_groups::local_endpoint(&links,link)
+                            && cccc_core::connect_groups::resource_current(&home,local).unwrap_or(false) {
+                            peers.push((remote.instance.clone(),Some(link.id.clone())));
+                        }
+                    }
+                }
+                for (peer,connection_id) in peers {
                     if peer.instance_id == snapshot.instance_id || peer.public_origin.is_none() { continue; }
                     let route = format!("{}\0{}\0{}\0{}\0{}", snapshot.account_origin,directory.account_id,snapshot.device_id,peer.device_id,peer.public_origin.as_deref().unwrap_or(""));
-                    present.insert(peer.instance_id.clone());
-                    let entry = schedule.entry(peer.instance_id.clone()).or_default();
+                    let key=connection_id.clone().unwrap_or_else(||peer.instance_id.clone());
+                    present.insert(key.clone());
+                    let entry = schedule.entry(key.clone()).or_default();
                     if entry.route != route { *entry=PeerSchedule {route:route.clone(),..Default::default()}; }
-                    if active.values().any(|id|id==&peer.instance_id) || active.len() >= MAX_ACTIVE_PEERS || entry.next.is_some_and(|next|next>Instant::now()) { continue; }
-                    let instance_id=peer.instance_id.clone();
+                    if active.values().any(|id|id==&key) || active.len() >= MAX_ACTIVE_PEERS || entry.next.is_some_and(|next|next>Instant::now()) { continue; }
+                    let instance_id=key.clone();
                     let home=home.clone(); let client=client.clone();
                     let task=work.spawn(async move {
-                        let result=tokio::time::timeout(Duration::from_secs(30), refresh_catalog(&home,&client,&peer.instance_id)).await.unwrap_or_else(|_|Err("peer catalog refresh timed out".into()));
-                        (peer.instance_id, route, result)
+                        let result=tokio::time::timeout(Duration::from_secs(30), refresh_catalog_scoped(&home,&client,&peer.instance_id,connection_id.as_deref())).await.unwrap_or_else(|_|Err("peer catalog refresh timed out".into()));
+                        (key, route, result)
                     });
                     active.insert(task.id(),instance_id);
                 }
@@ -119,12 +132,22 @@ async fn read_json<T: DeserializeOwned>(
     serde_json::from_slice(&raw).map_err(|_| "invalid peer response".into())
 }
 
+#[cfg(test)]
 async fn refresh_catalog(
     home: &HomeLayout,
     client: &reqwest::Client,
     remote_id: &str,
 ) -> Result<(), String> {
-    let binding = confirm_peer(home, client, remote_id).await?;
+    refresh_catalog_scoped(home, client, remote_id, None).await
+}
+
+async fn refresh_catalog_scoped(
+    home: &HomeLayout,
+    client: &reqwest::Client,
+    remote_id: &str,
+    connection_id: Option<&str>,
+) -> Result<(), String> {
+    let binding = confirm_peer_scoped(home, client, remote_id, connection_id).await?;
     let origin = binding
         .remote
         .public_origin
@@ -139,8 +162,13 @@ async fn refresh_catalog(
             client,
             &binding,
             ConnectPeerOperation::Catalog {
-                source_group_id: String::new(),
-                target_group_id: None,
+                connection_id: connection_id.map(str::to_owned),
+                source_group_id: binding
+                    .group
+                    .as_ref()
+                    .map(|g| g.local_group_id.clone())
+                    .unwrap_or_default(),
+                target_group_id: binding.group.as_ref().map(|g| g.remote_group_id.clone()),
                 after: after.clone(),
             },
             1024 * 1024 + 4096,
@@ -176,6 +204,7 @@ async fn refresh_catalog(
             return connect_catalog::save(
                 home,
                 &PeerCatalog {
+                    connection_id: connection_id.map(str::to_owned),
                     account_origin: binding.account_origin,
                     account_id: binding.account_id,
                     local_device_id: binding.local.device_id,
@@ -192,12 +221,13 @@ async fn refresh_catalog(
     Err("peer catalog exceeded 1024 Groups".into())
 }
 
-async fn confirm_peer(
+async fn confirm_peer_scoped(
     home: &HomeLayout,
     client: &reqwest::Client,
     remote_id: &str,
+    connection_id: Option<&str>,
 ) -> Result<connect_peer::PeerBinding, String> {
-    let binding = connect_peer::binding(home, remote_id)?;
+    let binding = connect_peer::scoped_binding(home, remote_id, connection_id)?;
     let origin = binding
         .remote
         .public_origin
@@ -231,7 +261,11 @@ async fn exchange(
         .public_origin
         .as_deref()
         .ok_or("peer has no remote route")?;
-    let current = connect_peer::binding(home, &binding.remote.instance_id)?;
+    let current = connect_peer::scoped_binding(
+        home,
+        &binding.remote.instance_id,
+        binding.group.as_ref().map(|g| g.id.as_str()),
+    )?;
     if current.account_origin != binding.account_origin
         || current.account_id != binding.account_id
         || current.local.device_id != binding.local.device_id

@@ -18,6 +18,7 @@ pub(super) fn receipt(
         target_group_id,
         delivery_id,
         message_sha256,
+        connection_id,
     } = &envelope.operation
     else {
         return Err(OpError::new("invalid_connect_request", "receipt required"));
@@ -42,7 +43,8 @@ pub(super) fn receipt(
     let receipt = event
         .map(|event| {
             let original = stored_message(&event)?;
-            if original.source.group_id != *source_group_id
+            if original.connection_id != *connection_id
+                || original.source.group_id != *source_group_id
                 || original.source.device_id != envelope.proof.source_device_id
                 || original.target.device_id != envelope.proof.target_device_id
             {
@@ -141,8 +143,11 @@ pub(super) fn deliver(
     }).as_object().expect("object").clone();
     // Presentation metadata comes from our account directory, not an asserted
     // peer name. Missing metadata never changes routing or delivery acceptance.
-    if let Ok(binding) = cccc_core::connect_peer::binding(home, &message.source.instance_id)
-        && binding.remote.device_id == message.source.device_id
+    if let Ok(binding) = cccc_core::connect_peer::scoped_binding(
+        home,
+        &message.source.instance_id,
+        message.connection_id.as_deref(),
+    ) && binding.remote.device_id == message.source.device_id
     {
         args.insert(
             "src_instance_name".into(),

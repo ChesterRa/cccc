@@ -30,6 +30,8 @@ pub struct ConnectReplyReference {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
     pub delivery_id: String,
     pub account_origin: String,
     pub account_id: String,
@@ -53,6 +55,8 @@ pub struct ConnectMessage {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectCancellation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
     pub delivery_id: String,
     pub account_origin: String,
     pub account_id: String,
@@ -81,6 +85,12 @@ pub enum ConnectWork {
 }
 
 impl ConnectWork {
+    pub fn connection_id(&self) -> Option<&str> {
+        match self {
+            Self::Message(m) => m.connection_id.as_deref(),
+            Self::Cancel(c) => c.connection_id.as_deref(),
+        }
+    }
     pub fn delivery_id(&self) -> &str {
         match self {
             Self::Message(message) => &message.delivery_id,

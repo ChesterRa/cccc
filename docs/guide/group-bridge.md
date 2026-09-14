@@ -10,5 +10,7 @@ confirmed, failed or unconfirmed outcome rather than retried through Connect.
 An unreadable old receipt is retained for inspection and reported in the daemon
 log; it does not keep a manual connection running.
 
-Local cross-group messaging continues to work. Sharing a single Group with
-another account is planned separately and is not available in this iteration.
+Local cross-group messaging continues to work. To connect a specific Group with
+another member, use **External connections** in the Group header and confirm the
+invitation on the account website. Both members select their own Group; old
+manual grants are never imported. See the [Connect guide](/guide/connect).

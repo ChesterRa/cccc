@@ -1,5 +1,5 @@
 //! Bounded active work; one unavailable peer never blocks another peer's queue.
-use super::{confirm_peer, exchange};
+use super::{confirm_peer_scoped, exchange};
 use crate::{dispatch_concurrency::DispatchLocks, ops::connect_outbound};
 use base64::Engine;
 use cccc_contracts::{Event, connect::ConnectPeerOperation, connect_message::*};
@@ -100,7 +100,16 @@ pub(super) async fn process(
     }
     let deadline = chrono::DateTime::parse_from_rfc3339(entry.work.deliver_before())
         .map_err(|error| error.to_string())?;
-    if deadline <= chrono::Utc::now() {
+    let expired = deadline <= chrono::Utc::now();
+    let retired = !expired
+        && entry
+            .work
+            .connection_id()
+            .map(|id| cccc_core::connect_groups::retired(home, id))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .unwrap_or(false);
+    if expired || retired {
         let status = if entry.progress.needs_receipt {
             "unconfirmed"
         } else {
@@ -112,7 +121,11 @@ pub(super) async fn process(
             &entry,
             status,
             None,
-            Some("delivery window ended"),
+            Some(if retired {
+                "external Group connection was disconnected"
+            } else {
+                "delivery window ended"
+            }),
         )
         .await?;
         return Ok(Duration::ZERO);
@@ -166,15 +179,21 @@ async fn attempt(
     let ConnectWork::Message(message) = &entry.work else {
         return attempt_cancellation(home, client, entry).await;
     };
-    let binding = confirm_peer(home, client, &message.target.instance_id)
-        .await
-        .map_err(DeliveryError::Peer)?;
+    let binding = confirm_peer_scoped(
+        home,
+        client,
+        &message.target.instance_id,
+        message.connection_id.as_deref(),
+    )
+    .await
+    .map_err(DeliveryError::Peer)?;
     if entry.progress.needs_receipt {
         let result = exchange(
             home,
             client,
             &binding,
             ConnectPeerOperation::Receipt {
+                connection_id: message.connection_id.clone(),
                 source_group_id: message.source.group_id.clone(),
                 target_group_id: message.target.group_id.clone(),
                 delivery_id: message.delivery_id.clone(),
@@ -266,9 +285,14 @@ async fn attempt_cancellation(
     let ConnectWork::Cancel(cancel) = &entry.work else {
         unreachable!("cancellation branch")
     };
-    let binding = confirm_peer(home, client, &cancel.target.instance_id)
-        .await
-        .map_err(DeliveryError::Peer)?;
+    let binding = confirm_peer_scoped(
+        home,
+        client,
+        &cancel.target.instance_id,
+        cancel.connection_id.as_deref(),
+    )
+    .await
+    .map_err(DeliveryError::Peer)?;
     entry.progress.needs_receipt = true;
     connect_delivery::update_progress(
         home,
