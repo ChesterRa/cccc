@@ -1,6 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
+import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
+import { useModalStore } from "../../stores/useModalStore";
 import { GroupSidebar } from "../layout/GroupSidebar";
 import {
   CodexVoiceMobileDock,
@@ -220,6 +222,7 @@ export function AppShell({
       ? `${SIDEBAR_COLLAPSED_WIDTH}px`
       : getSidebarWidthCssValue(sidebarWidth),
   } as CSSProperties;
+  const setGroupConnections = useModalStore((state) => state.setGroupConnections);
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
@@ -272,6 +275,9 @@ export function AppShell({
           onReorderSection={onReorderGroupsInSection}
           onArchiveGroup={onArchiveGroup}
           onRestoreGroup={onRestoreGroup}
+          onOpenGroupConnections={
+            !webReadOnly && canAccessAccount ? setGroupConnections : undefined
+          }
         />
       ) : null}
 
@@ -301,7 +307,6 @@ export function AppShell({
               onSetGroupState={onSetGroupState}
               onOpenSettings={onOpenSettings}
               canAccessAccount={canAccessAccount}
-              groups={orderedGroups}
               onOpenAccount={onOpenAccount}
               onOpenMobileMenu={onOpenMobileMenu}
             />
@@ -400,6 +405,12 @@ export function AppShell({
         )}
       </main>
 
+      <GroupConnectionsControl
+        enabled={!webReadOnly && canAccessAccount}
+        groupId={selectedGroupId}
+        groups={orderedGroups}
+        onOpenAccount={onOpenAccount}
+      />
       <CodexVoiceOverlays
         voice={codexVoice}
         isDark={isDark}

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AppHeader, type AppHeaderProps } from "./AppHeader";
 import { useModalA11y } from "../../hooks/useModalA11y";
-import { getChatSession, useUIStore } from "../../stores/useUIStore";
+import { useUIStore } from "../../stores/useUIStore";
 import { useModalStore } from "../../stores/useModalStore";
 import type { TextScale, Theme } from "../../types";
 
@@ -245,35 +245,50 @@ describe("header settings menu", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
   });
 
-  it("routes the presentation surface through the menu", async () => {
+  it("keeps Group surfaces and their attention out of the global settings menu", async () => {
     useModalStore.setState({ presentationAttention: { "group-1": { "slot-1": true } } });
     await mount();
-    // The rail no longer carries a presentation button, so the trigger must relay its attention.
-    expect(host.querySelector("[data-app-settings-attention]")).not.toBeNull();
+    expect(host.querySelector("[data-app-settings-attention]")).toBeNull();
     const panel = await openMenu();
-    const entry = panel.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!;
-    expect(entry.textContent).toContain("presentation");
-    expect(entry.getAttribute("aria-pressed")).toBe("false");
-    await act(async () => entry.click());
+    expect(panel.querySelector("[data-app-settings-presentation]")).toBeNull();
+    expect(panel.textContent).not.toContain("groupConnections.title");
+  });
+});
+
+it("preserves text-input focus when a hover-only menu closes", async () => {
+  vi.useFakeTimers();
+  const input = document.createElement("input");
+  document.body.append(input);
+  try {
+    await mount();
+    input.focus();
+    const trigger = host.querySelector<HTMLButtonElement>("[data-app-settings-trigger]")!;
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }),
+      );
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(document.querySelector("[data-app-settings-menu]")).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerout", {
+          bubbles: true,
+          pointerType: "mouse",
+          relatedTarget: input,
+        }),
+      );
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
     expect(document.querySelector("[data-app-settings-menu]")).toBeNull();
-    expect(getChatSession("group-1", useUIStore.getState().chatSessions).presentationDockOpen).toBe(
-      true,
-    );
-
-    const reopened = await openMenu();
-    const active = reopened.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!;
-    expect(active.getAttribute("aria-pressed")).toBe("true");
-    await act(async () => active.click());
-    expect(getChatSession("group-1", useUIStore.getState().chatSessions).presentationDockOpen).toBe(
-      false,
-    );
-  });
-
-  it("disables the presentation entry when no group is selected", async () => {
-    await mount({ selectedGroupId: "" });
-    const panel = await openMenu();
-    expect(
-      panel.querySelector<HTMLButtonElement>("[data-app-settings-presentation]")!.disabled,
-    ).toBe(true);
-  });
+    expect(document.activeElement).toBe(input);
+  } finally {
+    input.remove();
+    vi.useRealTimers();
+  }
 });

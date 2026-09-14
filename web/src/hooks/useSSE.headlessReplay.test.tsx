@@ -307,3 +307,85 @@ it.each(["group switch", "unmount"])(
     }
   },
 );
+
+it("reconciles scope changes with fresh Group documents and rejects late refreshes", async () => {
+  const api = await import("../services/api");
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const original = useGroupStore.getState();
+  const originalUI = useUIStore.getState();
+  const sources = stubEventSources();
+  const group = { group_id: "g", active_scope_key: "a", scopes: [{ scope_key: "a", url: "/a" }] };
+  useGroupStore.setState({ selectedGroupId: "g", groupDoc: group, actors: [], chatByGroup: {} });
+  const finish: Array<(value: unknown) => void> = [];
+  const fetch = vi.spyOn(api, "fetchGroup").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish.push(resolve as (value: unknown) => void);
+      }),
+  );
+  const host = document.createElement("div"),
+    root = createRoot(host);
+  let connection: ReturnType<typeof useSSE>;
+  function Probe() {
+    connection = useSSE({
+      activeTabRef: { current: "chat" },
+      chatAtBottomRef: { current: true },
+      actorsRef: { current: [] },
+    });
+    useEffect(() => {
+      connection.connectStream("g");
+      return () => connection.cleanup();
+    }, []);
+    return null;
+  }
+  try {
+    await act(async () => root.render(<Probe />));
+    const ledger = sources.find((source) => source.url.includes("/ledger/stream"))!;
+    await act(async () =>
+      ledger.emit("ledger", {
+        id: "change-1",
+        group_id: "g",
+        kind: "group.set_active_scope",
+        scope_key: "historical",
+        data: {},
+      }),
+    );
+    await act(async () =>
+      ledger.emit("ledger", {
+        id: "change-2",
+        group_id: "g",
+        kind: "group.attach",
+        scope_key: "historical",
+        data: {},
+      }),
+    );
+    expect(fetch).toHaveBeenCalledWith("g", { noCache: true });
+    expect(finish).toHaveLength(2);
+    await act(async () =>
+      finish[1]({ ok: true, result: { group: { ...group, active_scope_key: "b" } } }),
+    );
+    expect(useGroupStore.getState().groupDoc?.active_scope_key).toBe("b");
+    await act(async () => finish[0]({ ok: true, result: { group } }));
+    expect(useGroupStore.getState().groupDoc?.active_scope_key).toBe("b");
+    await act(async () =>
+      ledger.emit("ledger", {
+        id: "change-3",
+        group_id: "g",
+        kind: "group.detach_scope",
+        data: {},
+      }),
+    );
+    await act(async () =>
+      useGroupStore.setState({ selectedGroupId: "other", groupDoc: { group_id: "other" } }),
+    );
+    await act(async () => finish[2]({ ok: true, result: { group } }));
+    expect(useGroupStore.getState().groupDoc?.group_id).toBe("other");
+  } finally {
+    await act(async () => root.unmount());
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    useGroupStore.setState(original);
+    useUIStore.setState(originalUI);
+    host.remove();
+  }
+});

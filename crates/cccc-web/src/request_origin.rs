@@ -147,43 +147,41 @@ pub(crate) fn origin_allowed_with_proxy(
     if served_origin_with_proxy(headers, trust_proxy).as_deref() == Some(origin.as_str()) {
         return true;
     }
-    if origin_authority_matches_served_host(headers, &origin, trust_proxy) {
+    if forwarded_scheme(headers, trust_proxy).is_none()
+        && origin_authority_matches_served_host(headers, &origin, trust_proxy)
+    {
         return true;
     }
     configured_origins().any(|allowed| allowed == origin)
 }
 
-/// TLS terminates at the reverse proxy, so the origin server sees `http` even
-/// for an `https://` page, and WebSocket handshakes carry no Fetch Metadata to
-/// recover the scheme from. Host and port must still match exactly: a
-/// cross-site attacker cannot serve a page from this host under either scheme,
-/// so the scheme alone contributes nothing to CSRF protection.
+/// A proxy may hide the external scheme from legacy requests without Fetch Metadata.
+/// Keep an explicit Host port exact; an omitted port permits only the origin scheme's
+/// default. A trusted forwarded scheme is checked before this fallback is considered.
 fn origin_authority_matches_served_host(
     headers: &HeaderMap,
     origin: &str,
     trust_proxy: bool,
 ) -> bool {
-    let Some(origin) = origin_authority(origin) else {
+    let Ok(origin) = url::Url::parse(origin) else {
         return false;
     };
-    served_host(headers, trust_proxy)
-        .and_then(|host| host_authority(&host))
-        .is_some_and(|served| served == origin)
-}
-
-fn origin_authority(origin: &str) -> Option<(String, Option<u16>)> {
-    authority_parts(&url::Url::parse(origin).ok()?)
-}
-
-fn host_authority(host: &str) -> Option<(String, Option<u16>)> {
-    authority_parts(&url::Url::parse(&format!("http://{host}")).ok()?)
-}
-
-/// Ports the two schemes imply by default normalize away, so `https://host`
-/// and a proxied `host:443` describe the same authority.
-fn authority_parts(url: &url::Url) -> Option<(String, Option<u16>)> {
-    let host = url.host_str()?.to_ascii_lowercase();
-    Some((host, url.port().filter(|port| !matches!(port, 80 | 443))))
+    let Some(host) = served_host(headers, trust_proxy) else {
+        return false;
+    };
+    let Ok(served) = host.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    if !origin
+        .host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case(served.host()))
+    {
+        return false;
+    }
+    match served.port_u16() {
+        Some(port) => origin.port_or_known_default() == Some(port),
+        None => origin.port().is_none(),
+    }
 }
 
 pub fn cookie_csrf_allowed(state: &AppState, headers: &HeaderMap) -> bool {

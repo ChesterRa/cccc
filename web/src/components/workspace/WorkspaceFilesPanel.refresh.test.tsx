@@ -25,6 +25,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockImplementation(async (_group: string, path: string) => ({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path,
         content: `content of ${path}\n`,
         bytes: 10,
@@ -66,6 +68,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "# old\n",
         bytes: 6,
@@ -84,7 +88,11 @@ describe("workspace files surfaces", () => {
 
     // The filter decides which rows the tree lists; it has no claim on the editor.
     expect(mainArea().querySelector("textarea")?.value).toBe("# unsaved work\n");
-    expect(fetchWorkspaceListing.mock.calls.at(-1)?.[2]).toEqual({ showIgnored: true });
+    expect(fetchWorkspaceListing.mock.calls.at(-1)?.[2]).toEqual({
+      showIgnored: true,
+      scopeKey: "scope-a",
+      scopeUrl: "/repo",
+    });
   });
 
   it("drops a listing that arrives after a refresh replaced it", async () => {

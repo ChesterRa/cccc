@@ -47,7 +47,7 @@ describe("GroupSidebarItem mobile actions", () => {
 
     await act(async () => trigger?.click());
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-    const action = host.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    const action = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
     expect(action?.textContent).toBe("Archive");
 
     await act(async () => action?.click());

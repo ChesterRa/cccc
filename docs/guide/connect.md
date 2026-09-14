@@ -75,7 +75,7 @@ Context or arbitrary remote tools. Other Groups do not inherit the connection.
 2. The recipient opens **Group connections** on the account website and copies
    their **Member ID**.
 3. The sender opens the intended Group in native CCCC Web as an administrator,
-   clicks the chain icon (**External connections**) in the Group header, and
+   opens the Group’s **⋮ → External connections** menu in the sidebar, and
    chooses **Invite a member**. On the account website, check the selected Group,
    paste the recipient's Member ID and submit the invitation.
 4. The recipient opens **Group connections** on the account website, expands

@@ -19,7 +19,7 @@ let width = 1200;
 let resize: () => void;
 const actors = Array.from({ length: 8 }, (_, index) => ({ id: `actor-${index + 1}` }));
 
-function Fixture({ groupId = "g1", count = 8, loading = false }) {
+function Fixture({ groupId = "g1", count = 8, loading = false, covered = false }) {
   const [active, setActive] = useState("chat");
   return (
     <GroupWorkArea
@@ -30,6 +30,7 @@ function Fixture({ groupId = "g1", count = 8, loading = false }) {
       activeActorId={active === "chat" ? undefined : active}
       isDark={false}
       isVisible
+      covered={covered}
       loading={loading}
       workControlsHost={controlsHost}
       isSmallScreen={false}
@@ -52,7 +53,9 @@ function Fixture({ groupId = "g1", count = 8, loading = false }) {
   );
 }
 
-async function render(props: { groupId?: string; count?: number; loading?: boolean } = {}) {
+async function render(
+  props: { groupId?: string; count?: number; loading?: boolean; covered?: boolean } = {},
+) {
   await act(async () => {
     root.render(<Fixture {...props} />);
   });
@@ -157,4 +160,14 @@ describe("Group work area", () => {
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(4);
   });
+});
+
+it("makes the covered work area inert while keeping portalled header controls usable", async () => {
+  await render({ covered: true });
+  const area = host.querySelector("[data-group-work-area]")!;
+  expect(area.hasAttribute("inert")).toBe(true);
+  expect(area.getAttribute("aria-hidden")).toBe("true");
+  expect(controlsHost.querySelector("button")!.closest("[inert]")).toBeNull();
+  await render({ covered: false });
+  expect(area.hasAttribute("inert")).toBe(false);
 });

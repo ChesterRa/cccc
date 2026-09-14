@@ -5,6 +5,8 @@ import { useWorkspaceFiles } from "./useWorkspaceFiles";
 export type HarnessProps = {
   readOnly?: boolean;
   groupId?: string;
+  scopeKey?: string;
+  scopeUrl?: string;
   onPinPath?: (path: string) => void;
   onAttachPath?: (path: string) => void;
 };
@@ -16,10 +18,12 @@ export type HarnessProps = {
 export function Harness({
   readOnly = false,
   groupId = "group-1",
+  scopeKey = "scope-a",
+  scopeUrl = "/repo",
   onPinPath,
   onAttachPath = () => undefined,
 }: HarnessProps) {
-  const files = useWorkspaceFiles(groupId, true);
+  const files = useWorkspaceFiles(groupId, true, scopeKey, scopeUrl);
   return (
     <div>
       <div data-testid="main-area">

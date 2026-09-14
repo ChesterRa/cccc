@@ -18,6 +18,7 @@ function processorDeps() {
     activeTab: "chat",
     chatAtBottom: true,
     onContextSync: noop,
+    onGroupScopeChanged: noop,
     appendEvent,
     updateReadStatus,
     updateObligationStatus,
@@ -278,4 +279,16 @@ it("keeps Connect cancellation evidence for propagation while updating obligatio
   processLedgerEvent("group", event, deps);
   expect(appendEvent).toHaveBeenCalledWith(event, "group");
   expect(updateObligationStatus).toHaveBeenCalledWith("source", { cancelled: true }, "group");
+});
+
+it("refreshes scope authority for scope mutations instead of applying historical scope fields", () => {
+  const { deps } = processorDeps();
+  for (const kind of ["group.set_active_scope", "group.attach", "group.detach_scope"]) {
+    processLedgerEvent(
+      "g",
+      { id: kind, group_id: "g", kind, scope_key: "historical", data: {} } as LedgerEvent,
+      deps,
+    );
+  }
+  expect(deps.onGroupScopeChanged).toHaveBeenCalledTimes(3);
 });

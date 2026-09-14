@@ -13,6 +13,7 @@ export type RemoteSelection = {
   groupId: string;
   epoch: number;
   revision: number;
+  action?: "connections";
 };
 
 export function useConnectWorkbench(enabled: boolean, refreshEntryAccess: () => Promise<boolean>) {
@@ -77,11 +78,12 @@ export function useConnectWorkbench(enabled: boolean, refreshEntryAccess: () => 
   const activeInstance = selected
     ? instances.find((entry) => entry.instance_id === selected.instanceId) || null
     : null;
-  const select = useCallback((instanceId: string, groupId = "") => {
+  const select = useCallback((instanceId: string, groupId = "", action?: "connections") => {
     setCollapsedInstances((previous) => previous.filter((id) => id !== instanceId));
     setSelected((previous) => ({
       instanceId,
       groupId,
+      action,
       epoch: previous?.instanceId === instanceId ? previous.epoch : (previous?.epoch || 0) + 1,
       revision: (previous?.revision || 0) + 1,
     }));

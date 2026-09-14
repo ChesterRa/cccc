@@ -31,7 +31,14 @@ const ROOT_ITEMS = [
 function listing(path: string, items: unknown[]) {
   return {
     ok: true as const,
-    result: { root_path: "/repo", path, parent: path ? "" : null, items },
+    result: {
+      scope_key: "scope-a",
+      scope_url: "/repo",
+      root_path: "/repo",
+      path,
+      parent: path ? "" : null,
+      items,
+    },
   };
 }
 

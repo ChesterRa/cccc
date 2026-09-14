@@ -1627,6 +1627,17 @@ Result:
 { group_id: string; active_scope_key: string; event: CCCSEventV1 }
 ```
 
+Workspace Web clients must treat `group.set_active_scope`, `group.attach`, and
+`group.detach_scope` as invalidating their active workspace view and reconcile the
+current Group document, rather than applying historical event scope fields.
+The Web workspace list/read/write requests bind `scope_key` and `scope_url` to
+that document; file reads return both values and saves echo the opened identity.
+Missing identity is rejected with HTTP 400, and a changed key or attached URL with
+HTTP 409 (`workspace_scope_changed`), before resolving the relative path. The
+checked Group snapshot owns the entire filesystem operation; a subsequent scope
+switch cannot retarget an in-flight write. The digest detects content changes
+within that workspace and does not establish workspace identity.
+
 #### `group_detach_scope`
 
 Args:

@@ -63,6 +63,41 @@ describe("GroupSidebarSortableList mobile controls", () => {
     expect(onSelectGroup).not.toHaveBeenCalled();
   });
 
+  it("opens connections for an unselected Group and preserves its selection", async () => {
+    const onOpenConnections = vi.fn();
+    const onSelectGroup = vi.fn();
+    await act(async () =>
+      root.render(
+        <GroupSidebarSortableList
+          groups={groups}
+          section="working"
+          selectedGroupId="g_beta"
+          isDark
+          isCollapsed={false}
+          menuActionLabel="Archive"
+          menuAriaLabel="Actions"
+          onMenuAction={vi.fn()}
+          connectionsLabel="External connections"
+          onOpenConnections={onOpenConnections}
+          onReorderSection={vi.fn()}
+          onSelectGroup={onSelectGroup}
+          onClose={vi.fn()}
+        />,
+      ),
+    );
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]')!;
+    await act(async () => trigger.click());
+    const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    expect(Array.from(items, (item) => item.textContent)).toEqual([
+      "External connections",
+      "Archive",
+    ]);
+    await act(async () => items[0].click());
+    expect(onOpenConnections).toHaveBeenCalledWith("g_alpha");
+    expect(onSelectGroup).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("reorders within the section from the keyboard and clamps at the edges", async () => {
     const onReorderSection = vi.fn();
     await act(async () =>

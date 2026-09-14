@@ -91,6 +91,7 @@ interface UIState {
   chatSessions: Record<string, ChatSessionState>;
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
+  workspaceFileViewerGroupId: string;
   sseStatus: "connected" | "connecting" | "disconnected";
 
   // Actions
@@ -121,6 +122,7 @@ interface UIState {
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
   setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
   setChatFilesPanelOpen: (groupId: string, v: boolean) => void;
+  setWorkspaceFileViewerGroupId: (groupId: string) => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
@@ -202,11 +204,15 @@ function sanitizeTerminalPage(value: unknown): number {
 
 export function groupMessagesVisible(
   groupId: string,
-  state: Pick<UIState, "activeTab" | "chatSessions" | "isSmallScreen">,
+  state: Pick<
+    UIState,
+    "activeTab" | "chatSessions" | "isSmallScreen" | "workspaceFileViewerGroupId"
+  >,
 ): boolean {
   const session = getChatSession(groupId, state.chatSessions);
   return (
     state.activeTab === "chat" &&
+    state.workspaceFileViewerGroupId !== groupId &&
     session.workView !== "terminals" &&
     (!state.isSmallScreen || session.mobileSurface === "messages")
   );
@@ -323,6 +329,7 @@ export const useUIStore = create<UIState>((set) => ({
   composerHeight: loadComposerHeight(),
   chatSessions: loadChatSessions(),
   webReadOnly: false,
+  workspaceFileViewerGroupId: "",
   sseStatus: "disconnected" as const,
 
   // Actions
@@ -478,6 +485,7 @@ export const useUIStore = create<UIState>((set) => ({
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
+  setWorkspaceFileViewerGroupId: (groupId) => set({ workspaceFileViewerGroupId: groupId }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

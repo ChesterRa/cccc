@@ -43,6 +43,8 @@ export type WorkspaceEntry = {
 };
 
 export type WorkspaceListing = {
+  scope_key: string;
+  scope_url: string;
   root_path: string;
   path: string;
   parent: string | null;
@@ -50,6 +52,8 @@ export type WorkspaceListing = {
 };
 
 export type WorkspaceFile = {
+  scope_key: string;
+  scope_url: string;
   path: string;
   content: string;
   bytes: number;

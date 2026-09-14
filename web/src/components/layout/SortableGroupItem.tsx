@@ -1,21 +1,10 @@
-import { useCallback, useState } from "react";
-import {
-  FloatingPortal,
-  autoUpdate,
-  flip,
-  offset,
-  shift,
-  useDismiss,
-  useFloating,
-  useInteractions,
-  useRole,
-} from "@floating-ui/react";
+import { useCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { GroupMenuAction } from "./GroupMenuAction";
+import { useGroupMenu } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
 
@@ -29,6 +18,8 @@ interface SortableGroupItemProps {
   menuActionLabel?: string;
   menuAriaLabel?: string;
   onMenuAction?: () => void;
+  connectionsLabel?: string;
+  onOpenConnections?: () => void;
   /** Move this group one place up (-1) or down (1) in its section. */
   onMoveBy?: (delta: -1 | 1) => void;
   onSelect: () => void;
@@ -45,12 +36,19 @@ export function SortableGroupItem({
   menuActionLabel,
   menuAriaLabel,
   onMenuAction,
+  connectionsLabel,
+  onOpenConnections,
   onMoveBy,
   onSelect,
   onWarm,
 }: SortableGroupItemProps) {
   const gid = String(group.group_id || "");
-  const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
+    ...(onOpenConnections && connectionsLabel
+      ? [{ label: connectionsLabel, onClick: onOpenConnections }]
+      : []),
+    ...(onMenuAction && menuActionLabel ? [{ label: menuActionLabel, onClick: onMenuAction }] : []),
+  ]);
 
   const {
     attributes,
@@ -63,34 +61,12 @@ export function SortableGroupItem({
   } = useSortable({ id: gid, disabled: dragDisabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const status = getGroupStatusFromSource(group);
-  const { refs, floatingStyles, context } = useFloating({
-    open: menuOpen,
-    onOpenChange: setMenuOpen,
-    placement: "bottom-end",
-    middleware: [offset(8), flip({ padding: 12 }), shift({ padding: 12 })],
-    whileElementsMounted: autoUpdate,
-    strategy: "fixed",
-  });
-  const dismiss = useDismiss(context);
-  const role = useRole(context, { role: "menu" });
-  const { getFloatingProps } = useInteractions([dismiss, role]);
   const setItemActivatorRef = useCallback(
     (node: HTMLElement | null) => {
       setActivatorNodeRef(node);
     },
     [setActivatorNodeRef],
   );
-  const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
-
-  const handleContextMenu = (event: React.MouseEvent<HTMLElement>) => {
-    if (!onMenuAction || !menuActionLabel) return;
-    event.preventDefault();
-    refs.setPositionReference({
-      getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0),
-    });
-    setMenuOpen(true);
-  };
-
   // The row overrides dnd-kit's keyboard listener so Enter and Space keep
   // selecting the group. Reordering from the keyboard therefore needs its own
   // entry: Alt with an arrow moves the row one place without a pick-up phase.
@@ -102,42 +78,12 @@ export function SortableGroupItem({
       onMoveBy(event.key === "ArrowUp" ? -1 : 1);
       return;
     }
-    if (
-      onMenuAction &&
-      menuActionLabel &&
-      (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
-    ) {
-      event.preventDefault();
-      refs.setPositionReference(event.currentTarget);
-      setMenuOpen(true);
-      return;
-    }
+    if (menu.onKeyDown(event)) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onSelect();
     }
   };
-
-  const actionMenu = onMenuAction && menuActionLabel && (
-    <FloatingPortal>
-      {menuOpen && (
-        <div
-          ref={setFloating}
-          style={floatingStyles}
-          {...getFloatingProps({ "aria-label": menuAriaLabel || menuActionLabel })}
-          className="z-max min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel"
-        >
-          <GroupMenuAction
-            label={menuActionLabel}
-            onClick={() => {
-              setMenuOpen(false);
-              onMenuAction();
-            }}
-          />
-        </div>
-      )}
-    </FloatingPortal>
-  );
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();
@@ -154,7 +100,7 @@ export function SortableGroupItem({
             isActive ? "glass-group-item-active" : "glass-group-item hover:scale-105",
           )}
           onClick={onSelect}
-          onContextMenu={handleContextMenu}
+          onContextMenu={menu.onContextMenu}
           onKeyDown={handleItemKeyDown}
           aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
           onMouseEnter={onWarm}
@@ -176,7 +122,7 @@ export function SortableGroupItem({
             className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-bg-primary)]"
           />
         </button>
-        {actionMenu}
+        {menu.menu}
       </div>
     );
   }
@@ -215,7 +161,7 @@ export function SortableGroupItem({
         role="button"
         tabIndex={0}
         onClick={onSelect}
-        onContextMenu={handleContextMenu}
+        onContextMenu={menu.onContextMenu}
         onKeyDown={handleItemKeyDown}
         aria-keyshortcuts={keyboardReorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
       >
@@ -238,19 +184,16 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
-        {onMenuAction && menuActionLabel && (
+        {menu.available && (
           <GroupItemMenuTrigger
             isActive={isActive}
-            label={menuAriaLabel || menuActionLabel}
-            open={menuOpen}
-            onToggle={(button) => {
-              refs.setPositionReference(button);
-              setMenuOpen((current) => !current);
-            }}
+            label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
+            open={menu.open}
+            onToggle={menu.toggle}
           />
         )}
       </div>
-      {actionMenu}
+      {menu.menu}
     </div>
   );
 }

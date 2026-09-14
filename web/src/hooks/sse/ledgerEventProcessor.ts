@@ -39,6 +39,7 @@ export type LedgerEventProcessorDeps = {
   activeTab: string;
   chatAtBottom: boolean;
   onContextSync: () => void;
+  onGroupScopeChanged: () => void;
   appendEvent: GroupState["appendEvent"];
   updateReadStatus: GroupState["updateReadStatus"];
   updateObligationStatus: GroupState["updateObligationStatus"];
@@ -121,6 +122,9 @@ export function processLedgerEvent(
       deps.updateObligationStatus(sourceEventId, { cancelled: true }, groupId);
     }
     return;
+  }
+  if (["group.set_active_scope", "group.attach", "group.detach_scope"].includes(event.kind || "")) {
+    deps.onGroupScopeChanged();
   }
   const reconciliation = reconcileCanonicalOutboxEvent(event, groupId);
   const nextEvent = reconciliation.event;

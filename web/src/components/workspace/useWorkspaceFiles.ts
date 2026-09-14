@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import * as api from "../../services/api";
 import { useWorkspaceEditor } from "./useWorkspaceEditor";
@@ -23,7 +23,12 @@ export type WorkspaceFilesController = ReturnType<typeof useWorkspaceFiles>;
  * Directories are fetched one level at a time as the user expands them, so opening the panel
  * on a large repository costs a single listing.
  */
-export function useWorkspaceFiles(groupId: string, active: boolean) {
+export function useWorkspaceFiles(
+  groupId: string,
+  active: boolean,
+  scopeKey: string,
+  scopeUrl: string,
+) {
   const [tree, setTree] = useState<TreeState>(emptyTreeState);
   const [showIgnored, setShowIgnored] = useState(false);
   const [rootPath, setRootPath] = useState("");
@@ -34,12 +39,13 @@ export function useWorkspaceFiles(groupId: string, active: boolean) {
   // the load effect re-runs on every `pending` change, so cleanup-based cancellation would
   // abort the request it just started.
   const listingGeneration = useRef(0);
-  // A group switch invalidates everything - the tree, the open file, and any save in flight.
-  useEffect(() => {
+  // A Group or scope change retires the tree, editor, and pending responses.
+  useLayoutEffect(() => {
     listingGeneration.current += 1;
     inFlight.current.clear();
     setTree(emptyTreeState());
-  }, [groupId]);
+    setRootPath("");
+  }, [groupId, scopeKey, scopeUrl]);
 
   // The ignored-file filter only decides which entries the tree lists. Unsaved edits belong
   // to the editor, so they survive a toggle.
@@ -50,8 +56,8 @@ export function useWorkspaceFiles(groupId: string, active: boolean) {
   }, [showIgnored]);
 
   const pending = useMemo(
-    () => (active && groupId ? pendingDirectories(tree) : []),
-    [active, groupId, tree],
+    () => (active && groupId && scopeKey && scopeUrl ? pendingDirectories(tree) : []),
+    [active, groupId, scopeKey, scopeUrl, tree],
   );
 
   useEffect(() => {
@@ -61,27 +67,41 @@ export function useWorkspaceFiles(groupId: string, active: boolean) {
       if (inFlight.current.has(path)) continue;
       inFlight.current.add(path);
       setTree((current) => setDirectory(current, path, { loading: true, error: "" }));
-      void api.fetchWorkspaceListing(groupId, path, { showIgnored }).then((response) => {
-        inFlight.current.delete(path);
-        if (token !== listingGeneration.current) return;
-        if (!response.ok) {
+      void api
+        .fetchWorkspaceListing(groupId, path, { showIgnored, scopeKey, scopeUrl })
+        .then((response) => {
+          if (token !== listingGeneration.current) return;
+          inFlight.current.delete(path);
+          if (!response.ok) {
+            setTree((current) =>
+              setDirectory(current, path, { loading: false, error: response.error.message }),
+            );
+            return;
+          }
+          if (path === ROOT_PATH) setRootPath(response.result.root_path);
           setTree((current) =>
-            setDirectory(current, path, { loading: false, error: response.error.message }),
+            setDirectory(current, path, {
+              items: response.result.items,
+              loading: false,
+              error: "",
+            }),
           );
-          return;
-        }
-        if (path === ROOT_PATH) setRootPath(response.result.root_path);
-        setTree((current) =>
-          setDirectory(current, path, { items: response.result.items, loading: false, error: "" }),
-        );
-      });
+        });
     }
-  }, [groupId, pending, showIgnored]);
+  }, [groupId, scopeKey, scopeUrl, pending, showIgnored]);
 
   const rows = useMemo(() => flattenTree(tree), [tree]);
 
   const toggleDirectory = useCallback((path: string) => {
     setTree((current) => toggleExpanded(current, path));
+  }, []);
+
+  const retryDirectory = useCallback((path: string) => {
+    setTree((current) => {
+      const directories = { ...current.directories };
+      delete directories[path];
+      return { ...current, directories };
+    });
   }, []);
 
   const refresh = useCallback(() => {
@@ -95,6 +115,17 @@ export function useWorkspaceFiles(groupId: string, active: boolean) {
   const onOpenPath = useCallback((path: string) => {
     setTree((current) => expandPaths(current, ancestorsOf(path)));
   }, []);
-  const editor = useWorkspaceEditor(groupId, refresh, onOpenPath);
-  return { rows, rootPath, tree, showIgnored, setShowIgnored, toggleDirectory, refresh, ...editor };
+  const editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, refresh, onOpenPath);
+  return {
+    rows,
+    rootPath,
+    scopeAvailable: !!scopeKey && !!scopeUrl,
+    tree,
+    showIgnored,
+    setShowIgnored,
+    toggleDirectory,
+    retryDirectory,
+    refresh,
+    ...editor,
+  };
 }

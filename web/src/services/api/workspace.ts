@@ -22,9 +22,9 @@ function isEntry(value: unknown): value is WorkspaceEntry {
 export async function fetchWorkspaceListing(
   groupId: string,
   path: string,
-  options?: { showIgnored?: boolean },
+  options: { scopeKey: string; scopeUrl: string; showIgnored?: boolean },
 ): Promise<ApiResponse<WorkspaceListing>> {
-  const query = new URLSearchParams();
+  const query = new URLSearchParams({ scope_key: options.scopeKey, scope_url: options.scopeUrl });
   if (path) query.set("path", path);
   // Axum deserializes this into a Rust bool, which only accepts "true"/"false".
   if (options?.showIgnored) query.set("show_ignored", "true");
@@ -34,6 +34,8 @@ export async function fetchWorkspaceListing(
   const result = asRecord(response.result);
   if (
     !result ||
+    result.scope_key !== options.scopeKey ||
+    result.scope_url !== options.scopeUrl ||
     typeof result.path !== "string" ||
     !(result.parent === null || typeof result.parent === "string") ||
     !Array.isArray(result.items) ||
@@ -44,6 +46,8 @@ export async function fetchWorkspaceListing(
   return {
     ok: true,
     result: {
+      scope_key: options.scopeKey,
+      scope_url: options.scopeUrl,
       root_path: typeof result.root_path === "string" ? result.root_path : "",
       path: result.path,
       parent: result.parent,
@@ -55,18 +59,28 @@ export async function fetchWorkspaceListing(
 export async function fetchWorkspaceFile(
   groupId: string,
   path: string,
+  scopeKey: string,
+  scopeUrl: string,
 ): Promise<ApiResponse<WorkspaceFile>> {
   const response = await apiJson<unknown>(
-    `${groupPath(groupId, "file")}?path=${encodeURIComponent(path)}`,
+    `${groupPath(groupId, "file")}?${new URLSearchParams({ path, scope_key: scopeKey, scope_url: scopeUrl })}`,
   );
   if (!response.ok) return response;
   const result = asRecord(response.result);
-  if (!result || typeof result.path !== "string" || typeof result.sha256 !== "string") {
+  if (
+    !result ||
+    result.scope_key !== scopeKey ||
+    result.scope_url !== scopeUrl ||
+    typeof result.path !== "string" ||
+    typeof result.sha256 !== "string"
+  ) {
     return invalidResponse<WorkspaceFile>("Invalid workspace file response");
   }
   return {
     ok: true,
     result: {
+      scope_key: scopeKey,
+      scope_url: scopeUrl,
       path: result.path,
       content: typeof result.content === "string" ? result.content : "",
       bytes: typeof result.bytes === "number" ? result.bytes : 0,
@@ -79,18 +93,20 @@ export async function fetchWorkspaceFile(
 }
 
 /**
- * Saves `content`, echoing the `sha256` the file was read with so the daemon can refuse the
- * write when an Actor changed the same file in the meantime.
+ * Saves into the opened workspace, echoing its identity and digest so the Web endpoint
+ * can reject a scope change or a file changed on disk since it was read.
  */
 export async function saveWorkspaceFile(
   groupId: string,
   path: string,
   content: string,
   sha256: string,
+  scopeKey: string,
+  scopeUrl: string,
 ): Promise<ApiResponse<{ path: string; sha256: string; created: boolean }>> {
   const response = await apiJson<unknown>(groupPath(groupId, "file"), {
     method: "PUT",
-    body: JSON.stringify({ path, content, sha256 }),
+    body: JSON.stringify({ path, content, sha256, scope_key: scopeKey, scope_url: scopeUrl }),
   });
   if (!response.ok) return response;
   const result = asRecord(response.result);

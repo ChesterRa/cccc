@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -411,8 +412,27 @@ export function ChatTab({
   const showMobileFiles = isSmallScreen && mobileSurface === "files" && !!selectedGroupId;
   // The tree lives in the right column while the opened file takes the main area, so the
   // controller is owned here rather than inside the panel.
-  const workspaceFiles = useWorkspaceFiles(selectedGroupId, showSplitFiles || showMobileFiles);
+  const workspaceScope = useGroupStore((state) =>
+    state.groupDoc?.group_id === selectedGroupId
+      ? state.groupDoc.scopes?.find((scope) => scope.scope_key === state.groupDoc?.active_scope_key)
+      : undefined,
+  );
+  const workspaceFiles = useWorkspaceFiles(
+    selectedGroupId,
+    showSplitFiles || showMobileFiles,
+    workspaceScope?.scope_key || "",
+    workspaceScope?.url || "",
+  );
   const showWorkspaceFileViewer = showSplitFiles && !!workspaceFiles.file;
+  const setWorkspaceFileViewerGroupId = useUIStore((state) => state.setWorkspaceFileViewerGroupId);
+  useLayoutEffect(() => {
+    if (!showWorkspaceFileViewer) return;
+    // The editor covers the message area. Do not mark hidden messages as viewed
+    // or suppress their Voice notifications while that overlay is present.
+    setWorkspaceFileViewerGroupId(selectedGroupId);
+    return () => setWorkspaceFileViewerGroupId("");
+  }, [selectedGroupId, showWorkspaceFileViewer, setWorkspaceFileViewerGroupId]);
+
   const showMobilePresentationViewer =
     isSmallScreen &&
     presentationViewer?.groupId === selectedGroupId &&
@@ -800,6 +820,7 @@ export function ChatTab({
               }}
             >
               <GroupWorkArea
+                covered={showWorkspaceFileViewer}
                 key={selectedGroupId}
                 groupId={selectedGroupId}
                 actors={runtimeActors}
@@ -814,12 +835,19 @@ export function ChatTab({
                 isSmallScreen={isSmallScreen}
                 headerEnd={
                   !selectedGroupId ? undefined : !isSmallScreen ? (
-                    // Desktop rails the workspace tree here; presentation moved into the
-                    // header settings menu, which a phone does not show.
-                    <WorkspaceFilesTrigger
-                      active={activeSidePanel === "files"}
-                      onToggle={() => selectSidePanel("files")}
-                    />
+                    <>
+                      <WorkspaceFilesTrigger
+                        active={activeSidePanel === "files"}
+                        onToggle={() => selectSidePanel("files")}
+                      />
+                      <PresentationTrigger
+                        presentation={groupPresentation}
+                        attentionSlots={presentationAttention}
+                        isDark={isDark}
+                        isOpen={activeSidePanel === "presentation"}
+                        onOpen={() => selectSidePanel("presentation")}
+                      />
+                    </>
                   ) : !chatWindowProps ? (
                     <PresentationTrigger
                       mobile
@@ -1102,6 +1130,7 @@ export function ChatTab({
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <div className="flex min-h-0 flex-1 flex-col">
                       <WorkspaceFilesPanel
+                        key={`${selectedGroupId}:${workspaceScope?.scope_key}:${workspaceScope?.url}`}
                         files={workspaceFiles}
                         isDark={isDark}
                         readOnly={!!readOnly}
@@ -1190,6 +1219,7 @@ export function ChatTab({
                   />
                 ) : (
                   <WorkspaceFilesPanel
+                    key={`${selectedGroupId}:${workspaceScope?.scope_key}:${workspaceScope?.url}`}
                     files={workspaceFiles}
                     isDark={isDark}
                     readOnly

@@ -80,7 +80,9 @@ export function WorkspaceFilesPanel({
     return items;
   };
 
-  const rootError = files.tree.directories[""]?.error || "";
+  const rootError = files.scopeAvailable
+    ? files.tree.directories[""]?.error || ""
+    : t("workspaceNoScope", { defaultValue: "Attach a workspace to this Group to browse files." });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -156,6 +158,7 @@ export function WorkspaceFilesPanel({
           isDark={isDark}
           onToggleDirectory={files.toggleDirectory}
           onOpenFile={openFile}
+          onRetryDirectory={files.retryDirectory}
           onContextMenu={openContextMenu}
         />
       )}

@@ -219,7 +219,11 @@ All parent/child messages check exact origin, window and frame ID. Each entry
 navigation carries a monotonically increasing revision; target selection reports
 echo it. The entry ignores reports from earlier revisions, including a late
 initial/default Group selection, without remounting the frame. Target-local
-navigation may update the entry within the current revision. Restricted
+navigation may update the entry within the current revision. A `select` message MAY carry
+`action: "connections"` to open that Group’s External connections dialog after target
+administrator admission and Group existence checks. This is applied at most once per
+navigation revision, performs no sharing mutation, and does not grant additional access.
+Ordinary navigation clears the previous Group dialog. Restricted
 tokens and unconfigured target bootstrapping never mount the embedded workbench
 or disclose its Groups. The entry and active target check current human access
 every 15 seconds; frame proofs renew every 45 seconds and expire without fresh

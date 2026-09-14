@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { GroupConnectionsControl } from "./GroupConnectionsControl";
+import { useModalStore } from "../../stores/useModalStore";
 import type { GroupMeta } from "../../types";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), t: (key: string) => key }));
@@ -26,6 +27,8 @@ let root: ReturnType<typeof createRoot>, host: HTMLDivElement;
 const buttons = () => [...document.querySelectorAll("button")];
 const button = (key: string) =>
   buttons().find((b) => b.textContent === key || b.getAttribute("aria-label") === key)!;
+const openConnections = (groupId = "a") =>
+  act(async () => useModalStore.getState().setGroupConnections(groupId));
 const groupSelect = () => document.querySelector<HTMLButtonElement>("[data-connect-group-select]")!;
 /** The Group list is the shared dropdown now: open the menu, then pick the option. */
 async function chooseGroup(groupId: string) {
@@ -51,6 +54,7 @@ async function render(enabled = true, groupId = "a") {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   window.history.replaceState(null, "", "/");
+  useModalStore.setState({ groupConnectionsId: null });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -69,7 +73,7 @@ it("has no polling or management entry for restricted access and only polls whil
   expect(mocks.request).not.toHaveBeenCalled();
   await render();
   expect(mocks.request).not.toHaveBeenCalled();
-  await act(async () => button("groupConnections.title").click());
+  await openConnections();
   expect(mocks.request).toHaveBeenCalledWith(
     "/api/v1/connect/groups?group_id=a",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -95,9 +99,9 @@ it("uses the explicitly selected Group for an incoming invitation and leaves app
   await act(async () => button("Close").click());
   expect(window.location.search).not.toContain("connect_invite");
   mocks.request.mockResolvedValue({ ok: true, result: status });
-  await act(async () => button("groupConnections.title").click());
-  expect(groupSelect().dataset.value).toBe("a");
-  expect(groupSelect().textContent).toContain("Local A");
+  await openConnections();
+  expect(groupSelect()).toBeNull();
+  expect(document.querySelector("h2")?.textContent).toContain("Local A");
   expect(button("groupConnections.invite")).toBeDefined();
 });
 
@@ -110,8 +114,8 @@ it("discards a late Group response and stops accepting selection results after p
       }),
   );
   await render();
-  await act(async () => button("groupConnections.title").click());
-  await chooseGroup("b");
+  await openConnections();
+  await openConnections("b");
   await act(async () =>
     resolve({ ok: true, result: { ...status, account_origin: "https://wrong.test" } }),
   );
@@ -130,7 +134,7 @@ it.each(["syncing", "unavailable", "not_linked"])(
       result: { ...status, status: state, expires_at: null, account_id: null },
     });
     await render();
-    await act(async () => button("groupConnections.title").click());
+    await openConnections();
     expect(document.body.textContent).not.toContain("groupConnections.empty");
     expect(Boolean(button("groupConnections.linkAccount"))).toBe(state === "not_linked");
     if (state !== "not_linked") expect(button("groupConnections.invite").disabled).toBe(true);
@@ -147,7 +151,7 @@ it("clears sharing errors only after a successful fresh confirmation", async () 
     },
   });
   await render();
-  await act(async () => button("groupConnections.title").click());
+  await openConnections();
   expect(document.body.textContent).toContain("groupConnections.unsupported");
   expect(document.body.textContent).not.toContain("groupConnections.empty");
   mocks.request.mockResolvedValue({ ok: true, result: status });
@@ -166,7 +170,7 @@ it("expires a displayed confirmation even while the next GET is waiting", async 
       })
       .mockImplementation(() => new Promise(() => {}));
     await render();
-    await act(async () => button("groupConnections.title").click());
+    await openConnections();
     expect(document.body.textContent).toContain("groupConnections.empty");
     await act(async () => vi.advanceTimersByTimeAsync(101));
     expect(document.body.textContent).not.toContain("groupConnections.empty");
@@ -175,4 +179,30 @@ it("expires a displayed confirmation even while the next GET is waiting", async 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("binds management to the menu's Group without following the selected chat", async () => {
+  await render();
+  await openConnections("b");
+  expect(document.querySelector("h2")?.textContent).toContain("Local B");
+  expect(groupSelect()).toBeNull();
+  await render(true, "a");
+  mocks.request.mockResolvedValueOnce({
+    ok: true,
+    result: { url: "https://account.test/connect/select?ticket=b" },
+  });
+  await act(async () => button("groupConnections.invite").click());
+  const call = mocks.request.mock.calls.find(([, options]) => options.method === "POST")!;
+  expect(JSON.parse(call[1].body)).toEqual({ group_id: "b", invitation: "" });
+});
+
+it("retains an invitation until administrator access and the Group list are available", async () => {
+  const invitation = "11111111-1111-4111-8111-111111111111";
+  window.history.replaceState(null, "", `/?connect_invite=${invitation}`);
+  await render(false, "");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(mocks.request).not.toHaveBeenCalled();
+  await render(true, "");
+  expect(groupSelect().dataset.value).toBe("a");
+  expect(button("groupConnections.accept")).toBeDefined();
 });

@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
@@ -19,24 +19,21 @@ const WEB_INPUTS: &[&str] = &[
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CCCC_FORCE_WEB_BUILD");
-    // Cargo may reuse the compiled script across checkouts sharing a target
-    // directory. Resolve the invoking package, not the script's build-time path.
-    let manifest_dir = PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide the package directory"),
-    );
-    let workspace = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("cccc-web must be inside the workspace crates directory");
+    // Cargo runs build scripts from the package directory. Keep both watched
+    // inputs and the exported asset path relative: a shared target may reuse
+    // this script's output in another checkout without executing it again.
+    // RustEmbed resolves relative folders against the invoking package too.
+    let workspace = Path::new("../..");
     let web = workspace.join("web");
     if !web.join("package.json").is_file() {
-        let assets = manifest_dir.join("assets/web-dist");
+        let assets = Path::new("assets/web-dist");
         assert!(
             assets.join("index.html").is_file(),
             "packaged Web assets are missing from {}",
             assets.display()
         );
-        export_assets_dir(&assets);
+        println!("cargo:rerun-if-changed={}", assets.display());
+        export_assets_dir(assets);
         return;
     }
     for input in WEB_INPUTS {
@@ -44,7 +41,7 @@ fn main() {
     }
 
     let index = web.join("dist/index.html");
-    println!("cargo:rerun-if-changed={}", index.display());
+    println!("cargo:rerun-if-changed={}", web.join("dist").display());
     let force = std::env::var_os("CCCC_FORCE_WEB_BUILD").is_some();
     if !force && web_bundle_is_current(&web, &index).unwrap_or(false) {
         export_assets_dir(&web.join("dist"));

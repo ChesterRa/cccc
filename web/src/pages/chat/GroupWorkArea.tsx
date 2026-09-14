@@ -23,6 +23,7 @@ type Props = {
   activeActorId?: string;
   isDark: boolean;
   isVisible: boolean;
+  covered?: boolean;
   loading: boolean;
   workControlsHost: HTMLElement | null;
   isSmallScreen: boolean;
@@ -39,6 +40,7 @@ export function GroupWorkArea({
   activeActorId,
   isDark,
   isVisible,
+  covered = false,
   loading,
   workControlsHost,
   isSmallScreen,
@@ -184,7 +186,13 @@ export function GroupWorkArea({
       </span>
     ) : null;
   return (
-    <div ref={root} className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-group-work-area>
+    <div
+      ref={root}
+      inert={covered || undefined}
+      aria-hidden={covered || undefined}
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+      data-group-work-area
+    >
       {workControlsHost
         ? createPortal(
             <>

@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../../services/api";
 import type { WorkspaceFile } from "../../types";
 
 /** Owns file requests and unsaved drafts independently of tree/panel visibility. */
 export function useWorkspaceEditor(
   groupId: string,
+  scopeKey: string,
+  scopeUrl: string,
   refresh: () => void,
   onOpenPath: (path: string) => void,
 ) {
   const [file, setFile] = useState<WorkspaceFile | null>(null);
-  // Owned here so hiding or remounting the viewer cannot discard unsaved edits.
   const [draft, updateDraft] = useState("");
-  // Survives closing the viewer so the tree still shows which file was last open.
   const [selectedPath, setSelectedPath] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState("");
@@ -20,10 +20,17 @@ export function useWorkspaceEditor(
   const fileRequest = useRef(0);
   const groupGeneration = useRef(0);
   const drafts = useRef(new Map<string, { file: WorkspaceFile; draft: string }>());
-  useEffect(() => {
+  // A save belongs to its file even when the user opens a different viewer.
+  const pendingSaves = useRef(new Set<string>());
+  const visibleFile = useRef(file);
+  useLayoutEffect(() => {
+    visibleFile.current = file;
+  }, [file]);
+  useLayoutEffect(() => {
     fileRequest.current += 1;
     groupGeneration.current += 1;
     drafts.current.clear();
+    pendingSaves.current.clear();
     setFile(null);
     updateDraft("");
     setSelectedPath("");
@@ -31,12 +38,14 @@ export function useWorkspaceEditor(
     setFileLoading(false);
     setConflict(false);
     setSaving(false);
-  }, [groupId]);
+  }, [groupId, scopeKey, scopeUrl]);
   const setDraft = useCallback(
     (value: string) => {
       updateDraft(value);
       if (file) {
-        if (value === file.content) drafts.current.delete(file.path);
+        // The old disk content is still an edit if a pending save is replacing it.
+        if (value === file.content && !pendingSaves.current.has(file.path))
+          drafts.current.delete(file.path);
         else drafts.current.set(file.path, { file, draft: value });
       }
     },
@@ -65,28 +74,29 @@ export function useWorkspaceEditor(
       if (cached && !options?.reload) {
         setFile(cached.file);
         updateDraft(cached.draft);
+        setSaving(pendingSaves.current.has(cached.file.path));
         setFileLoading(false);
         return;
       }
-      const response = await api.fetchWorkspaceFile(groupId, path);
-      // A group switch, a newer open, or a close makes this answer obsolete: applying it would
-      // show one group's file while saves would target another. Each of those bumps
-      // `fileRequest`, so that counter alone decides.
+      const response = await api.fetchWorkspaceFile(groupId, path, scopeKey, scopeUrl);
       if (request !== fileRequest.current) return;
       setFileLoading(false);
       if (!response.ok) {
         setFileError(response.error.message);
         return;
       }
-      drafts.current.delete(path);
-      setFile(response.result);
-      updateDraft(response.result.content);
+      // The server resolves internal symlinks to their canonical workspace path.
+      // Look up that identity before replacing an unsaved target with disk bytes.
+      const targetDraft = !options?.reload && drafts.current.get(response.result.path);
+      if (!targetDraft) drafts.current.delete(response.result.path);
+      setFile(targetDraft ? targetDraft.file : response.result);
+      updateDraft(targetDraft ? targetDraft.draft : response.result.content);
+      setSaving(pendingSaves.current.has(response.result.path));
     },
-    [groupId, file, selectedPath, onOpenPath],
+    [groupId, scopeKey, scopeUrl, file, selectedPath, onOpenPath],
   );
 
   const closeFile = useCallback(() => {
-    // Retires any in-flight open so a late response cannot reopen the viewer.
     fileRequest.current += 1;
     setFile(null);
     updateDraft("");
@@ -98,14 +108,30 @@ export function useWorkspaceEditor(
 
   const saveFile = useCallback(
     async (content: string) => {
-      if (!file) return false;
+      if (
+        !file ||
+        file.scope_key !== scopeKey ||
+        file.scope_url !== scopeUrl ||
+        pendingSaves.current.has(file.path)
+      )
+        return false;
       const request = fileRequest.current;
       const generation = groupGeneration.current;
+      pendingSaves.current.add(file.path);
       setSaving(true);
       setFileError("");
-      const response = await api.saveWorkspaceFile(groupId, file.path, content, file.sha256);
+      const response = await api.saveWorkspaceFile(
+        groupId,
+        file.path,
+        content,
+        file.sha256,
+        file.scope_key,
+        file.scope_url,
+      );
+      if (generation !== groupGeneration.current) return false;
+      pendingSaves.current.delete(file.path);
       const cached = drafts.current.get(file.path);
-      if (response.ok && generation === groupGeneration.current && cached) {
+      if (response.ok && cached && cached.file.sha256 === file.sha256) {
         if (cached.draft === content) drafts.current.delete(file.path);
         else
           drafts.current.set(file.path, {
@@ -113,28 +139,30 @@ export function useWorkspaceEditor(
             draft: cached.draft,
           });
       }
-      // The viewer may have moved on to another group or file while the write was in flight.
-      // Whatever moved it bumped `fileRequest` and cleared `saving` for the new file, so this
-      // stale answer must not touch either.
+      if (visibleFile.current?.path === file.path) {
+        setSaving(false);
+        if (response.ok) {
+          // Returning to the same file during a save must adopt its new digest, but
+          // must not replace a newer baseline obtained by an explicit reload.
+          setFile((current) =>
+            current?.path === file.path && current.sha256 === file.sha256
+              ? { ...current, content, sha256: response.result.sha256 }
+              : current,
+          );
+        }
+      }
+      if (response.ok) refresh();
+      // Errors belong to the request's viewer, not to a later navigation.
       if (request !== fileRequest.current) return false;
-      setSaving(false);
       if (!response.ok) {
-        // A conflict means an Actor touched the same file; the panel offers a reload.
         setConflict(response.error.code === "workspace_write_conflict");
         setFileError(response.error.message);
         return false;
       }
       setConflict(false);
-      setFile((current) =>
-        current && current.path === file.path
-          ? { ...current, content, sha256: response.result.sha256 }
-          : current,
-      );
-      // A new or newly dirty file changes its row's git badge.
-      refresh();
       return true;
     },
-    [file, groupId, refresh],
+    [file, groupId, scopeKey, scopeUrl, refresh],
   );
 
   return {

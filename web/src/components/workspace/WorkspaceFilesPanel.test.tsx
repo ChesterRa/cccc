@@ -44,6 +44,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "# hello\n",
         bytes: 8,
@@ -80,6 +82,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "# old\n",
         bytes: 6,
@@ -113,7 +117,14 @@ describe("workspace files surfaces", () => {
     expect(save?.disabled).toBe(false);
     await click(save as HTMLElement);
 
-    expect(saveWorkspaceFile).toHaveBeenCalledWith("group-1", "README.md", "# edited\n", "stale");
+    expect(saveWorkspaceFile).toHaveBeenCalledWith(
+      "group-1",
+      "README.md",
+      "# edited\n",
+      "stale",
+      "scope-a",
+      "/repo",
+    );
     expect(mainArea().textContent).toContain("changed on disk since you opened it");
     const reload = [...mainArea().querySelectorAll("button")].find((node) =>
       node.textContent?.includes("Reload"),
@@ -135,6 +146,8 @@ describe("workspace files surfaces", () => {
             resolve({
               ok: true,
               result: {
+                scope_key: "scope-a",
+                scope_url: "/repo",
                 path: "README.md",
                 content: "group A secret\n",
                 bytes: 15,
