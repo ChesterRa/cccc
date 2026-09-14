@@ -240,6 +240,8 @@ jobs:
           CCCC_KILO_MODEL_SYNC_LIVE: "1"
         run: |
           cargo build --package cccc --bin cccc --locked
+          cargo test --package cccc-pair-daemon --lib --locked -- --list > offline-native-tests.txt
+          python3 scripts/check_offline_native_tests.py offline-native-tests.txt
           cargo test --package cccc-pair-daemon --lib --locked \
             live_codex_empty_actor_and_analyst_resume_with_native_terminal -- --test-threads=1
           cargo test --package cccc-pair-daemon --lib --locked \

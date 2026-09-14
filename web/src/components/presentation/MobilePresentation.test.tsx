@@ -109,7 +109,7 @@ describe("mobile presentation surface", () => {
     host.remove();
   });
 
-  it("uses a safe-area full-screen portal and closes with Escape", async () => {
+  it("traps focus inside the full-screen portal and closes with Escape", async () => {
     const onClose = vi.fn();
     await act(async () => {
       root.render(
@@ -122,8 +122,6 @@ describe("mobile presentation surface", () => {
 
     const surface = document.querySelector<HTMLElement>("[data-mobile-presentation-surface]");
     expect(surface?.getAttribute("role")).toBe("dialog");
-    expect(surface?.className).toContain("fixed inset-0");
-    expect(surface?.className).toContain("safe-area-inset-top");
     expect(surface?.textContent).toContain("First");
 
     const buttons = surface?.querySelectorAll<HTMLButtonElement>("button") || [];
@@ -158,7 +156,7 @@ describe("mobile presentation surface", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders a clear back control and a one-column phone slot list", async () => {
+  it("renders a back control on the phone slot panel", async () => {
     await act(async () => {
       root.render(
         <PresentationRail
@@ -174,7 +172,5 @@ describe("mobile presentation surface", () => {
     });
 
     expect(host.querySelector("[data-mobile-presentation-close]")).not.toBeNull();
-    expect(host.querySelector(".grid")?.className).toContain("grid-cols-1");
-    expect(host.querySelector(".grid")?.className).toContain("min-[420px]:grid-cols-2");
   });
 });

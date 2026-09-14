@@ -215,18 +215,8 @@ impl AnalystSession {
         Ok(session)
     }
 
-    #[cfg(test)]
-    pub(crate) fn binding(&self) -> &WorkspaceBinding {
-        &self.binding
-    }
-
     pub(crate) fn generation(&self) -> &str {
         &self.generation
-    }
-
-    #[cfg(test)]
-    pub(super) fn endpoint(&self) -> &str {
-        &self.endpoint
     }
 
     pub(crate) fn thread_id(&self) -> &str {

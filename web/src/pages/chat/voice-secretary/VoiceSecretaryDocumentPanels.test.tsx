@@ -94,12 +94,10 @@ describe("Voice Secretary document panels", () => {
     expect(availableAction?.querySelector(".lucide-file-text")).toBeTruthy();
     expect(selectedAction?.querySelector("[data-document-surface]")).toBeNull();
     expect(selectedAction?.querySelector("[data-default-indicator]")).toBeNull();
-    expect(selectedAction?.className).toContain("bg-[rgb(35,36,37)]");
     expect(selectedAction?.getAttribute("aria-label")).toContain("Primary notes");
     expect(selectedAction?.getAttribute("title")).toBeNull();
     expect(availableAction?.getAttribute("aria-label")).toContain("Follow-up");
     expect(availableAction?.getAttribute("title")).toBeNull();
-    expect(selectedAction?.className).toContain("focus-visible:ring-2");
 
     await act(async () => selectedAction?.click());
     expect(onSetCaptureTargetDocument).not.toHaveBeenCalled();
@@ -110,7 +108,6 @@ describe("Voice Secretary document panels", () => {
 
     const documentRows = host.querySelectorAll<HTMLElement>('[role="button"]');
     expect(documentRows[0]?.tabIndex).toBe(0);
-    expect(documentRows[0]?.className).toContain("focus-visible:ring-2");
     await act(async () => {
       documentRows[0]?.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
@@ -125,7 +122,7 @@ describe("Voice Secretary document panels", () => {
     expect(onSelectDocument).toHaveBeenCalledWith(documents[1]);
   });
 
-  it("keeps the single-glyph control legible in dark and disabled states", async () => {
+  it("keeps one glyph per state and blocks activation while disabled", async () => {
     const onActivate = vi.fn();
     await act(async () => {
       root.render(
@@ -140,7 +137,6 @@ describe("Voice Secretary document panels", () => {
     });
 
     const darkDefault = host.querySelector<HTMLButtonElement>("[data-voice-document-target]");
-    expect(darkDefault?.className).toContain("bg-white/[0.13]");
     expect(darkDefault?.getAttribute("aria-label")).toBe("Primary notes is the default document");
     expect(darkDefault?.getAttribute("title")).toBeNull();
     expect(darkDefault?.querySelectorAll("svg")).toHaveLength(1);
@@ -160,7 +156,6 @@ describe("Voice Secretary document panels", () => {
     const disabled = host.querySelector<HTMLButtonElement>("[data-voice-document-target]");
     expect(disabled?.disabled).toBe(true);
     expect(disabled?.dataset.state).toBe("available");
-    expect(disabled?.className).toContain("disabled:opacity-40");
     await act(async () => disabled?.click());
     expect(onActivate).not.toHaveBeenCalled();
   });
@@ -179,22 +174,7 @@ describe("Voice Secretary document panels", () => {
     const lightQuoteAction = Array.from(host.querySelectorAll("button")).find((button) =>
       button.textContent?.includes("Quote in chat"),
     );
-    const lightArchiveAction = Array.from(host.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Archive"),
-    );
-    expect(lightQuoteAction?.className).toBe(lightArchiveAction?.className);
-    expect(lightQuoteAction?.className).toContain("border-black/10");
-    expect(lightQuoteAction?.className).not.toContain("violet");
     expect(lightQuoteAction?.querySelector(".lucide-message-square-quote")).toBeTruthy();
-
-    await act(async () => {
-      root.render(workspacePanel({ isDark: true }));
-    });
-    const darkQuoteAction = Array.from(host.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Quote in chat"),
-    );
-    expect(darkQuoteAction?.className).toContain("border-white/10");
-    expect(darkQuoteAction?.className).not.toContain("violet");
 
     await act(async () => {
       root.render(

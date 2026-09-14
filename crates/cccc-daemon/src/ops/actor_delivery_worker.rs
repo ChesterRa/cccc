@@ -10,10 +10,6 @@ const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 const ANTIGRAVITY_STARTUP_SETTLE: Duration = Duration::from_millis(1_500);
 
-#[cfg(test)]
-#[path = "actor_delivery_live_tests.rs"]
-mod live_tests;
-
 #[cfg(all(test, unix))]
 #[path = "actor_delivery_startup_tests.rs"]
 mod startup_tests;

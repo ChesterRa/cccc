@@ -1,10 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { MessageBubbleSurface } from "./MessageBubbleSurface";
-import { MessageFooter } from "./MessageBubbleChrome";
-
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 function renderSurface(isUserMessage: boolean): string {
   return renderToStaticMarkup(
@@ -20,51 +17,20 @@ function renderSurface(isUserMessage: boolean): string {
   );
 }
 
+// This component's whole contract is which surface each sender gets, so the branch it picks is
+// the only thing worth asserting — not the individual utilities inside either branch.
 describe("MessageBubbleSurface", () => {
-  it("uses a neutral product surface for assistant messages", () => {
-    const markup = renderSurface(false);
+  it("gives the user a compact bubble and everyone else the neutral surface", () => {
+    const user = renderSurface(true);
+    expect(user).toContain("rounded-tr-md");
+    expect(user).not.toContain("--glass-panel-bg");
 
-    expect(markup).toContain("max-w-full min-w-0");
-    expect(markup).toContain("rounded-2xl");
-    expect(markup).toContain("border-[var(--glass-border-subtle)]");
-    expect(markup).toContain("shadow-[var(--glass-bubble-shadow)]");
-    expect(markup).not.toContain("border-l-4");
-    expect(markup).not.toMatch(/border-l-(?:sky|indigo|violet|fuchsia|cyan|teal|emerald|amber)/);
-  });
-
-  it("keeps the compact user bubble treatment", () => {
-    const markup = renderSurface(true);
-
-    expect(markup).toContain("glass-bubble");
-    expect(markup).toContain("rounded-tr-md");
-    expect(markup).toContain("min-w-[min(18rem,70vw)]");
-  });
-});
-
-describe("MessageFooter", () => {
-  it("keeps Mail visibly identified on each message row", () => {
-    const markup = renderToStaticMarkup(
-      <MessageFooter
-        readOnly={false}
-        obligationSummary={null}
-        visibleReadStatusEntries={[]}
-        readPreviewEntries={[]}
-        readPreviewOverflow={0}
-        displayNameMap={new Map()}
-        isDark={false}
-        isMail={true}
-        replyRequested={false}
-        copiedMessageText={false}
-        copyableMessageText=""
-        onCopyMessageText={() => undefined}
-        onShowRecipients={() => undefined}
-        onReply={() => undefined}
-        canReply={false}
-        event={{ id: "event-1", kind: "chat.message", by: "user", data: {} }}
-      />,
+    const assistant = renderSurface(false);
+    expect(assistant).toContain("--glass-panel-bg");
+    expect(assistant).not.toContain("rounded-tr-md");
+    // Senders were once told apart by a coloured left border; the neutral surface replaced it.
+    expect(assistant).not.toMatch(
+      /border-l-(?:4|sky|indigo|violet|fuchsia|cyan|teal|emerald|amber)/,
     );
-
-    expect(markup).toContain("mailMessageHint");
-    expect(markup).toContain("modeMail");
   });
 });

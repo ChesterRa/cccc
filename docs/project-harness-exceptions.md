@@ -194,3 +194,15 @@ Darwin process cleanup can see `killpg(EPERM)` just before `waitid(WNOWAIT)` mak
 ## Pre-commit Git environment isolation (2026-09-14)
 
 The native pre-commit hook now clears Git repository-local environment variables before running Cargo checks. Git fixtures may initialize bare repositories; inheriting an absolute `GIT_DIR` from a linked-worktree hook otherwise redirects those operations into the committing repository. The regression executes real Git initialization behind a stub Cargo boundary and verifies the hook repository remains non-bare. It fails with the previous hook and passes with isolation. No checks are bypassed.
+
+## Offline native-runtime CI coverage (2026-09-14)
+
+The Codex/Claude empty-session probes and Kilo local-model/session/model-sync probes remain registered and keep their existing assertions. They use isolated state and loopback model endpoints rather than paid inference. CI enables their existing environment flags and checks the compiled Cargo listing with `scripts/check_offline_native_tests.py` before applying its filters. Missing any of the four required probes now fails the job instead of accepting Cargo's zero-test success. Local validation covers compilation, strict Clippy, listing discovery and checker regressions; real native CLI execution remains the CI step's responsibility.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `crates/cccc-daemon/src/ops/codex_voice_analyst/tests/live_kilo.rs` | CCCC Rust maintainers | Offline Actor/Analyst sessions share a local model fixture. | Restore existing offline coverage without adding scenarios. | 299 | Before another local-model scenario. | Extract the loopback model server from shared session lifecycle assertions. |
+
+## Grok test socket roots (2026-09-14)
+
+The five fake-Grok session fixtures now allocate private, automatically cleaned temporary directories under `/tmp`, keeping the leader socket below the Unix path limit independently of macOS's long default `TMPDIR`. This choice is local to the fixture and does not modify process-wide environment variables. A subprocess regression forces a long system temporary directory, runs the real Grok preparation path and binds the resulting Unix socket; the child must execute one test, not merely exit successfully with an empty filter. Existing session/admission assertions remain unchanged.

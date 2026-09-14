@@ -24,8 +24,6 @@ use std::future::Future;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(test)]
-pub use supervisor::submit;
 pub use supervisor::{running, start, status, stop, stop_all, stop_group, submit_batch, supports};
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {

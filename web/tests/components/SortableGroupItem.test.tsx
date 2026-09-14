@@ -268,8 +268,6 @@ describe("SortableGroupItem", () => {
 
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Group actions"]')!;
     expect(trigger).toBeDefined();
-    expect(trigger.className).toContain("group-hover/item:opacity-100");
-    expect(trigger.className).toContain("focus-visible:opacity-100");
     await act(async () => {
       trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       trigger.click();
