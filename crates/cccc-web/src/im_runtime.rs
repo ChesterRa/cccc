@@ -572,6 +572,11 @@ impl ImWorkerRegistry {
     }
 
     pub(crate) async fn stop_missing(&self, active_groups: &HashSet<String>) -> usize {
+        // Revisions also exist for saved configurations without a running worker.
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .retain(|group_id, _| active_groups.contains(group_id));
         let mut stale = self
             .workers
             .lock()
@@ -1003,6 +1008,59 @@ mod tests {
         );
         assert_eq!(registry.stop_missing(&HashSet::new()).await, 1);
         assert!(!registry.is_running("g_deleted"));
+    }
+
+    #[tokio::test]
+    async fn reaper_retires_deleted_group_revisions_without_a_worker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let registry =
+            ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home.clone()));
+        let kept = store.create("kept", "").expect("kept group").group_id;
+        registry.invalidate_start(&kept);
+        let kept_version = registry.request_version(&kept);
+        let active_groups = HashSet::from([kept.clone()]);
+        let config = json!({"platform":"mattermost","bot_token_env":"TEST_TOKEN"})
+            .as_object()
+            .expect("config")
+            .clone();
+
+        for _ in 0..3 {
+            let deleted = store.create("deleted", "").expect("group").group_id;
+            let initial_version = registry.request_version(&deleted);
+            cccc_core::im_state::update(&store, &deleted, |state| {
+                registry.invalidate_start(&deleted);
+                *state = json!({"config":config});
+                Ok(())
+            })
+            .expect("save");
+            let saved_version = registry.request_version(&deleted);
+            assert!(saved_version.0.is_some());
+            assert!(!registry.is_running(&deleted));
+            assert!(store.delete(&deleted).expect("delete"));
+
+            assert_eq!(registry.stop_missing(&active_groups).await, 0);
+            assert_eq!(registry.request_version(&deleted), (None, None));
+            assert_eq!(registry.request_version(&kept), kept_version);
+            assert_eq!(
+                registry.config_revisions.lock().expect("revisions").len(),
+                1
+            );
+            // Clearing a revision must not let either kind of old request start a deleted group.
+            for version in [initial_version, saved_version] {
+                assert!(
+                    registry
+                        .begin_configured_start(&home, &deleted, &config, false, version)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(registry.request_version(&deleted), (None, None));
+                assert!(!registry.is_running(&deleted));
+            }
+        }
+        assert_eq!(registry.stop_missing(&active_groups).await, 0);
+        assert_eq!(registry.request_version(&kept), kept_version);
     }
 
     #[tokio::test]

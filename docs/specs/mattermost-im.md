@@ -5,6 +5,23 @@
 
 入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
 
+## review17 范围裁定：旧平台管理续体不修复
+
+日期：2026-09-14。来源：[对 `3d4a6458` 的评审意见](https://github.com/ChesterRa/cccc/pull/103#discussion_r4006724800)。**用户明确决定：这可能是一个 Bug，但本次 Mattermost PR 不修复。**
+
+- **可能的影响**：未经过 Mattermost 的旧连接器管理操作，在工作组（Group）A 发出保存/启动等请求后切换到 B，旧请求完成时仍可能回读 A 的状态和凭据并覆盖 B 的表单；关窗后的旧异步续体也属于该归属缺口。不能据此宣称已将 A 的配置保存到 B，这需要另外证明实际保存链路。
+- **已有依据与验证边界**：固定上游 [`1eaf1086` 的设置页](https://github.com/ChesterRa/cccc/blob/1eaf108673febbceebf1968b13bc483df60e08c3/web/src/components/SettingsModal.tsx)中，`handleSaveIMConfig`、`handleStartBridge`、`handleRemoveIMConfig`、`handleStopBridge` 已在完成后调用旧 `loadIMStatus`，缺少管理访问归属检查。本轮为静态调用链核对，未独立运行该纯旧平台场景的反证，不冒称平台实测。
+- **本次处置**：保留无 Mattermost 路径的既有行为，不把所有旧平台的跨组/关窗保护加进本 PR，不修改测试断言来假称该问题已修复。该裁定延续 review13 的范围说明，不表示旧行为正确，也不把该意见定为误报。以后若处理，须另行授权、独立补丁及评审。
+- **不扩大排除范围**：涉及 Mattermost 的既有访问归属、草稿及管理顺序保护仍须保留。本次排除不适用于同轮折叠意见中的 `config_revisions` 遗留记录问题；后者按下节修复，执行证据见验收。
+
+## 配置修订记录回收（review17）
+
+来源：[对 `3d4a6458` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5199583525)中的折叠意见。`invalidate_start` 会为没有活动 worker 的配置保存创建修订记录；旧巡检只枚举 worker 和微信登录任务，因此漏清理这类已删除工作组。
+
+复用原生 `stop_missing(active_groups)` 巡检及 `config_revisions` 的互斥锁，通过 `retain` 保留本次活动组快照中的记录；无需创建 worker 才能清理。清理在首次异步等待之前完成，不跨关闭等待持锁；不新增后台任务、持久字段、配置或依赖，不改变原 worker/微信登录关闭及返回计数。组清单读取失败时，原调用方跳过本次巡检，不把失败当成空清单；本机制沿用该快照边界，不新增工作组创建/删除的跨操作事务保证。
+
+新回归覆盖：保存但从未启动的组删除后记录消失；少量重复创建/删除不会累积记录；活动组的修订值保持；重复巡检不增加副作用；持旧版本或初始空版本的请求仍不能为已删除组分配新代次/启动 worker。保留既有 worker、微信登录和待启动失效测试。术语沿用工作组、IM Bridge；修订记录是已有进程内实现细节，无新领域定义。指定两平台适用完整检查和实际网页回归已完成，反证及范围见验收；不由此宣称已通过新 SHA 的 GitHub 评审。
+
 ## 当前修复合同（2026-09-14，review16）
 
 来源：[针对 `d161ecc6` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5198699806)，一条行内及两条折叠建议均采纳。三项均已实施，指定两平台适用检查及实际 GUI 已完成，具体结果与失败记录见验收；不套用历史通过数字，也不把本地验证通过等同新 SHA 已通过 GitHub 评审。
