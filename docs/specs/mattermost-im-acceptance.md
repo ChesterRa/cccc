@@ -1,8 +1,30 @@
 # CCCC Mattermost 连接器验收
 
-当前补验入口（2026-09-14）：[规格中的 MM-CROSS-START、MM-LOOKUP-REPLAY](mattermost-im.md#当前修复合同2026-09-14review8)已补实现与专用回归，执行状态见下方 review8。历史结果不覆盖这两项，不以旧 CI 绿灯代替本轮验证。
+当前补验入口（2026-09-14）：[review9 停止与配置替换合同](mattermost-im.md#当前修复合同2026-09-14review9)对应 `9a57c906` 的两条折叠意见；先前 MM-CROSS-START、MM-LOOKUP-REPLAY 的结果作为 review8 历史保留，不以旧 CI 绿灯代替本轮验证。
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## 停止与配置替换（2026-09-14，review9）
+
+来源与范围见当前规格；以下四项专用回归已在指定 Linux/Windows 测试机通过，分层执行结果见表后。CCCC 自身的命令行 IM 配置继续保留，不包含 Agent CLI 软件安装、更新或卸载管理。
+
+| 对应功能与新增测试 | 具体结果断言与证据边界 |
+|---|---|
+| F02：`delayed_stop_save_and_unset_cannot_overwrite_a_new_start` | 对 stop、相同/不同配置保存、双向平台替换、unset 六个动作，各暂停旧 worker 关闭并让新 Mattermost 启动成功/失败后再释放；停止状态先清 availability/pid/error，新持久状态及实际 worker 不被旧请求覆盖，stop/unset 返回值反映最新状态。使用真实 Router/注册表/文件状态与模拟平台，不是外部平台联调 |
+| F02：`invalidated_stop_does_not_remove_a_new_generation_or_its_worker` | 在失效旧代次后先创建新代次与 worker，再执行条件关闭；新代次和任务不变、stopper 不执行，最后原生停止仍能回收。覆盖状态已提交、等待生命周期锁期间的新启动 |
+| F02/F20：`manual_stop_clears_mattermost_availability_without_changing_legacy_fields` | 普通 Mattermost 停止清除 availability/pid/error；Slack 对照保留原 adapter_available 语义，其余原停止字段不变；不以对照宣称全部旧平台已真实登录 |
+| F02：`prepared_stop_rejects_replaced_config_without_mutating_state` | stop/unset 的旧配置快照面对新 Mattermost/Slack 配置时均不修改当前 IM 状态；共享持久化的组文档更新时间不在“不变”声明内 |
+
+review8 的保存前置失效、迟到 HTTP/自动恢复成功失败、stop/save/unset/new-start 既有用例和断言全部保留。术语复核沿用 Group、Actor、IM Bridge、Agent CLI，不修改 Web 表单、消息合同或依赖。
+
+最终候选执行结果：
+
+- Linux 隔离容器按当前 CI 完整执行 quality（111 项）、Web（1,526 项及静态/类型/生产构建）、package（25 项及 wheel/Twine），以及 fmt、workspace/all-targets 严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 串行全量（库 525 项）、独立进程自启动 3 项；均通过。固定 Codex/Claude 各 1 项、Kilo 筛选 3 项原生会话测试通过；沿用离线探针/本地模拟模型，OpenCode 的未启用条件项不算实测。完整脚本退出 0，同时取得 `ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`。
+- Windows 原生检查：IM runtime 219 通过、3 项真实站点用例按原规则忽略；路由 6 项、核心 IM 8 项、当前 CI 七组 smoke 共 11 项、fmt 和二进制构建全部通过，脚本退出 0。Web 源码未改，使用同源码已构建的 Web dist；没有因此声称重新执行 GUI 验收。
+- 三份已改 Rust 文件及未改的入站文件在两台测试机与最终候选 Blob 一致；三份文档 36 处本地引用/锚点有效，完整指纹与原始日志保存在内部证据。初次定向 47 项通过、3 项忽略的版本尚不含补齐的返回值断言和配置快照测试；最终完整检查重新涵盖它们，不把初次结果重复计为新增验收。
+- 本轮定向与最终完整检查均没有失败测试；早先 review6/7/8 的失败记录仍单独保留，不改写历史。测试机 SSH 过期会话通过正常账号重新建立，不修改认证配置，也不是产品测试失败。
+
+以上是受控协议、实际 Router/注册表/文件状态及原生平台回归，不是新一轮真实 Mattermost、人类到 Actor、GUI 或付费模型验收。没有更换日常部署。最终提交的全历史扫描与推送后新 CI/评审另行核对，不复用 `9a57c906` 的 GitHub 绿灯。
 
 ## 启动交接与失败反馈去重（2026-09-14，review8）
 

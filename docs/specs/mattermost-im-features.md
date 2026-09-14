@@ -7,6 +7,8 @@
 
 ## 1. 检查范围与证据规则
 
+2026-09-14 review9：F02 补停止/配置替换的迟到关闭保护，F01 澄清 CCCC 命令行 IM 配置与 Agent CLI 软件管理的区别，不删既有 CLI 入口。范围见[当前合同](mattermost-im.md#当前修复合同2026-09-14review9)，四项专用回归及执行状态见[review9 验收](mattermost-im-acceptance.md#停止与配置替换2026-09-14review9)。本轮不扩展消息能力或管理其他 Agent CLI。
+
 2026-09-14 本轮修复：F02 的跨平台旧启动结果回写、F20 的早期查询失败反馈去重，已在[当前修复合同](mattermost-im.md#当前修复合同2026-09-14review8)登记为 MM-CROSS-START、MM-LOOKUP-REPLAY。实现与专用回归已补；本轮执行结果见 [review8 验收记录](mattermost-im-acceptance.md#启动交接与失败反馈去重2026-09-14review8)，不由本页历史验收或旧 CI 通过推出已完成。
 
 2026-09-14 多附件修订：F17 在全部附件下载及验证通过后才保存 Blob；后续下载/验证失败或暂存时取消，清理本次临时文件且不删除既有 Blob。保存与 Ledger 提交不是跨文件事务，边界见[规格](mattermost-im.md)。新增测试及当轮状态见[验收记录](mattermost-im-acceptance.md)，不沿用 T13/T14 历史结果。
@@ -31,7 +33,7 @@
 | 编号 | CCCC 现有功能及源码依据 | Mattermost 可行性与映射 | 本次结论 | 验收 |
 |---|---|---|---|---|
 | F01 | Web/CLI 配置、凭据校验、启动和运行状态；[C1][C2][C3][C4] | Bot Token、站点 REST 身份查询、WS 认证；在原 UI 增平台 | 可直接实现；代码已接入；验收通过，证据见右列 | T02、T03 |
-| F02 | 组级 start/stop、任务回收、恢复 enabled；[C1][C5] | 同一组级生命周期管理 WS/外发任务，不控制 Actor | 既有范围保留；跨平台旧启动回写已修复，当前回归结果见 review8 | 历史 T04；MM-CROSS-START |
+| F02 | 组级 start/stop、任务回收、恢复 enabled；[C1][C5] | 同一组级生命周期管理 WS/外发任务，不控制 Actor | 既有范围保留；跨平台旧启动回写见 review8，停止/替换保护见 review9 | 历史 T04；MM-CROSS-START；review9 |
 | F03 | DM、群/频道、线程目标；Slack/飞书按 thread、Discord 用 thread channel；[C6][C7][C8] | MM channel_id 表示频道/DM，root_id 表示线程；群组 DM 受 Bot 加入能力约束；[M1][M2] | 可直接实现；代码已接入；真实目标权限验证通过 | T06 |
 | F04 | DM 正文隐式发给 foreman；群中 mention 或已识别命令显式触发；[C6][C8][C9] | MM 解析当前 Bot 的真实 mention；裸斜线命令受平台拦截，使用 @Bot 前缀投递；[M3] | 可等价实现；代码已接入；验收通过，证据见右列 | T07、T08 |
 | F05 | `/send` 默认收件人、`/send @ActorID` 指定收件人；[C10] | 复用公共消息转换，只剥离平台 Bot 寻址，不扫描正文追加 Actor | 可直接实现；代码已接入；验收通过，证据见右列 | T07 |

@@ -350,6 +350,30 @@ impl ImWorkerRegistry {
         was_starting || was_running || had_weixin_login
     }
 
+    // 配置锁内已失效旧代次并提交停止状态；不能关闭此后取得新代次的 worker。
+    pub(crate) async fn stop_invalidated(&self, group_id: &str) {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let worker = {
+            let _guard = lifecycle_lock.lock().await;
+            if self
+                .generations
+                .lock()
+                .expect("IM generation registry poisoned")
+                .contains_key(group_id)
+            {
+                return;
+            }
+            self.weixin_logins.clear(group_id);
+            self.workers
+                .lock()
+                .expect("IM worker registry poisoned")
+                .remove(group_id)
+        };
+        if let Some(worker) = worker {
+            worker.shutdown().await;
+        }
+    }
+
     async fn begin_start(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let _lifecycle_guard = lifecycle_lock.lock().await;

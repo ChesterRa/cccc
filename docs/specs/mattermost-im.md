@@ -5,7 +5,21 @@
 
 入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
 
+## 当前修复合同（2026-09-14，review9）
+
+来源：[针对 `9a57c906` 的 Copilot 评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5193783516)中的两条折叠意见。用户授权仅针对评审建议最小修复、测试及更新同一 PR；不合并、不部署，不修改两个非 Mattermost 平台之间的合同。
+
+- **范围澄清**：本 PR 包含 CCCC 自身命令行的 IM 配置入口（如 `cccc im set mattermost --mattermost-url ...`），不包含为 Actor 提供能力的 Agent CLI 软件安装、更新、卸载管理。保留原有 Web/CLI 配置功能，只纠正 PR 范围的歧义，不删除命令行入口。
+- **停止与配置替换**：涉及 Mattermost 的 stop、set（含相同配置和跨平台替换）、unset 在原配置锁内提交状态并使旧启动代次失效。停止/替换时清除 `adapter_available`、`pid` 与旧 `last_error`；停止不改变聊天授权、订阅或 Actor。stop/unset 还核对所读配置快照，已被替换的请求不作用于新配置。
+- **关闭等待边界**：提交状态后，只在原生生命周期锁内摘除仍无有效启动代次的旧 worker，再沿用 `WorkerHandles::shutdown` 在锁外有界等待。若已有新 start 分配了代次，旧 stop/set/unset 不关闭新 worker；关闭结束后不再回写状态，因而不能覆盖新 start 的成功或失败。配置保存仍在等待生命周期锁之前失效旧代次，保留 review8 已有回归。
+- **旧平台兼容**：原生 `stop` 不改；只有涉及自行提交状态的适配器才走条件关闭。旧平台 stop/unset 的迟到回写遇到当前 Mattermost 时不覆盖新状态，与现有启动回写的归属守卫一致。共享持久化仍可能保存工作组文档并刷新文档时间，不承诺零磁盘改写。
+- **验证要求**：受控暂停旧 worker 关闭，执行新启动成功/失败后释放旧关闭，核对持久状态、实际 worker 与 HTTP 返回；覆盖停止、保存相同/不同配置、跨平台替换和删除配置。另验证保存完成但尚未摘除 worker 时的新代次不被关闭、普通 stop 清除可用状态及旧平台对照。执行结果单独登记，不以 review8 数字证明本轮通过。
+
+术语检查：沿用 Group、Actor、IM Bridge、Agent CLI；CCCC 命令行入口不等于 Agent CLI 管理。未新增领域概念、依赖或持久化字段。本节实现已在指定 Linux/Windows 测试机完成适用检查，结果见 review9 验收记录；提交、扫描、推送及新评审仍是独立门禁，不把测试通过称为上游已接受。
+
 ## 当前修复合同（2026-09-14，review8）
+
+历史时点说明：以下“未提交”是 review8 验证时状态；该批随后以 `9a57c906` 推送。新增修复以本文上方 review9 为准，原章节锚点保留供历史引用。
 
 修复前基线为 `a30e274be37aaf0f545b7fb5d543d926dcebc036`。本节先经静态核对与文档确认，用户随后授权修复及测试；当前改动尚未提交、推送或替换日常部署。旧阶段的“通过”不覆盖这两项，也不把源码发现说成真实平台已发生的事故。当前执行证据见[review8 验收记录](mattermost-im-acceptance.md#启动交接与失败反馈去重2026-09-14review8)。
 

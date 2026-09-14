@@ -2582,6 +2582,210 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delayed_stop_save_and_unset_cannot_overwrite_a_new_start() {
+        for action in [
+            "stop",
+            "same-save",
+            "save",
+            "other-platform",
+            "from-other-platform",
+            "unset",
+        ] {
+            for fail_start in [false, true] {
+                let fixture = fixture().await;
+                let (_temp, home, group) = scope();
+                let (app, registry) = route_context(&home);
+                let config = json!({"group_id":group,"platform":"mattermost","mattermost_url":fixture.api.site,"bot_token":"test-token"});
+                let slack = json!({"group_id":group,"platform":"slack","bot_token":"test-token","app_token":"test-app-token"});
+                let initial = if action == "from-other-platform" {
+                    slack.clone()
+                } else {
+                    config.clone()
+                };
+                assert_eq!(
+                    route_request(app.clone(), "/api/im/set", Some(initial))
+                        .await
+                        .0,
+                    StatusCode::OK
+                );
+                let store = GroupStore::new(home.clone()).expect("store");
+                cccc_core::im_state::update(&store, &group, |value| {
+                    value["enabled"] = json!(true);
+                    value["running"] = json!(true);
+                    value["adapter_available"] = json!(true);
+                    value["pid"] = json!(123);
+                    value["last_error"] = json!("old worker error");
+                    Ok(())
+                })
+                .expect("running state");
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let release = Arc::new(tokio::sync::Notify::new());
+                let child_release = Arc::clone(&release);
+                let stopping = Arc::clone(&entered);
+                let worker = super::super::worker(
+                    vec![tokio::spawn(async move {
+                        child_release.notified().await;
+                    })],
+                    Arc::new(move || stopping.notify_one()),
+                );
+                let (generation, previous) = registry.begin_start(&group).await;
+                assert!(previous.is_none());
+                registry
+                    .install(&group, generation, worker)
+                    .await
+                    .expect("old worker");
+                let mut replacement = config.clone();
+                let path = match action {
+                    "stop" => "/api/im/stop",
+                    "unset" => "/api/im/unset",
+                    "other-platform" => {
+                        replacement = slack;
+                        "/api/im/set"
+                    }
+                    "save" => {
+                        replacement["files"] = json!({"max_mb":9});
+                        "/api/im/set"
+                    }
+                    _ => "/api/im/set",
+                };
+                let old = tokio::spawn(route_request(app.clone(), path, Some(replacement)));
+                tokio::time::timeout(Duration::from_secs(3), entered.notified())
+                    .await
+                    .expect("old shutdown entered");
+                let stopped = cccc_core::im_state::load(&store, &group).expect("stopped state");
+                assert!(!stopped["running"].as_bool().unwrap_or(false));
+                assert!(!stopped["adapter_available"].as_bool().unwrap_or(false));
+                assert!(stopped["pid"].is_null());
+                assert!(stopped["last_error"].is_null());
+                assert!(!registry.is_running(&group));
+                if matches!(action, "other-platform" | "unset") {
+                    assert_eq!(
+                        route_request(app.clone(), "/api/im/set", Some(config))
+                            .await
+                            .0,
+                        StatusCode::OK
+                    );
+                }
+                if fail_start {
+                    fixture.state.ws_mode.store(1, Ordering::SeqCst);
+                }
+                let result = route_request(
+                    app.clone(),
+                    "/api/im/start",
+                    Some(json!({"group_id":group})),
+                )
+                .await;
+                assert_eq!(result.0.is_success(), !fail_start, "{action}");
+                let expected = cccc_core::im_state::load(&store, &group).expect("new state");
+                assert_eq!(registry.is_running(&group), !fail_start);
+                if fail_start {
+                    assert!(expected["last_error"].is_string());
+                }
+                assert!(!old.is_finished(), "old shutdown must still be blocked");
+                release.notify_one();
+                let completed = old.await.expect("old request");
+                assert_eq!(completed.0, StatusCode::OK);
+                if action == "stop" {
+                    for key in [
+                        "enabled",
+                        "running",
+                        "adapter_available",
+                        "pid",
+                        "last_error",
+                    ] {
+                        assert_eq!(completed.1["result"][key], expected[key]);
+                    }
+                } else if action == "unset" {
+                    assert_eq!(completed.1["result"]["configured"], true);
+                }
+                assert_eq!(
+                    cccc_core::im_state::load(&store, &group).expect("final state"),
+                    expected,
+                    "{action}: fail={fail_start}"
+                );
+                assert_eq!(registry.is_running(&group), !fail_start);
+                registry.shutdown().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalidated_stop_does_not_remove_a_new_generation_or_its_worker() {
+        let (_temp, home, group) = scope();
+        let (_, registry) = route_context(&home);
+        let (old_generation, _) = registry.begin_start(&group).await;
+        registry.invalidate_start(&group);
+        let (generation, previous) = registry.begin_start(&group).await;
+        assert_ne!(generation, old_generation);
+        assert!(previous.is_none());
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stopped);
+        registry
+            .install(
+                &group,
+                generation,
+                super::super::worker(
+                    vec![tokio::spawn(std::future::pending())],
+                    Arc::new(move || {
+                        stop_flag.store(true, Ordering::SeqCst);
+                    }),
+                ),
+            )
+            .await
+            .expect("new worker");
+        registry.stop_invalidated(&group).await;
+        assert!(registry.is_generation_current(&group, generation));
+        assert!(registry.is_running(&group));
+        assert!(!stopped.load(Ordering::SeqCst));
+        registry.stop(&group).await;
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(!registry.is_running(&group));
+    }
+
+    #[tokio::test]
+    async fn manual_stop_clears_mattermost_availability_without_changing_legacy_fields() {
+        for platform in ["mattermost", "slack"] {
+            let fixture = fixture().await;
+            let (_temp, home, group) = scope();
+            let (app, registry) = route_context(&home);
+            assert_eq!(
+                route_request(
+                    app.clone(),
+                    "/api/im/set",
+                    Some(json!({
+                        "group_id":group,"platform":platform,"mattermost_url":fixture.api.site,
+                        "bot_token":"test-token","app_token":"test-app-token"
+                    }))
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+            let store = GroupStore::new(home).expect("store");
+            cccc_core::im_state::update(&store, &group, |value| {
+                value["adapter_available"] = json!(true);
+                value["pid"] = json!(123);
+                value["last_error"] = json!("old error");
+                Ok(())
+            })
+            .expect("old state");
+            assert_eq!(
+                route_request(app, "/api/im/stop", Some(json!({"group_id":group})))
+                    .await
+                    .0,
+                StatusCode::OK
+            );
+            let value = cccc_core::im_state::load(&store, &group).expect("state");
+            assert_eq!(value["adapter_available"], json!(platform == "slack"));
+            assert_eq!(value["running"], json!(false));
+            assert_eq!(value["enabled"], json!(false));
+            assert!(value["pid"].is_null());
+            assert!(value["last_error"].is_null());
+            assert!(!registry.is_running(&group));
+        }
+    }
+
+    #[tokio::test]
     async fn switching_to_mattermost_invalidates_old_start_before_stop_can_run() {
         let fixture = fixture().await;
         let (_temp, home, group) = scope();

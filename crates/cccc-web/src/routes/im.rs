@@ -98,20 +98,29 @@ async fn set(
         &mut config,
         current.get("config").and_then(Value::as_object),
     );
-    update(&state, &group_id, |value| {
-        if adapter_commits_start_state(Some(&platform))
-            || adapter_commits_start_state(value["config"]["platform"].as_str())
-        {
+    let invalidated = update(&state, &group_id, |value| {
+        let invalidated = adapter_commits_start_state(Some(&platform))
+            || adapter_commits_start_state(value["config"]["platform"].as_str());
+        if invalidated {
             state.im_workers.invalidate_start(&group_id);
         }
         let state = object(value);
+        if invalidated {
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("last_error".into(), Value::Null);
+        }
         state.insert("config".into(), Value::Object(config.clone()));
         state.insert("enabled".into(), Value::Bool(false));
         state.insert("running".into(), Value::Bool(false));
         state.insert("updated_at".into(), Value::String(utc_now()));
-        Ok(())
+        Ok(invalidated)
     })?;
-    state.im_workers.stop(&group_id).await;
+    if invalidated {
+        state.im_workers.stop_invalidated(&group_id).await;
+    } else {
+        state.im_workers.stop(&group_id).await;
+    }
     Ok(success(json!({"configured":true,"platform":platform})))
 }
 
@@ -122,12 +131,25 @@ async fn unset(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
+    if let Ok(current) = load(&state, &group_id)
+        && adapter_commits_start_state(current["config"]["platform"].as_str())
+    {
+        if prepare_stop(&state, &group_id, &current, true)? {
+            state.im_workers.stop_invalidated(&group_id).await;
+        }
+        return Ok(success(json!({
+            "configured":load(&state, &group_id)?["config"].is_object(),"group_id":group_id
+        })));
+    }
     state.im_workers.stop(&group_id).await;
-    update(&state, &group_id, |value| {
+    let cleared = update(&state, &group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(false);
+        }
         *value = json!({});
-        Ok(())
+        Ok(true)
     })?;
-    Ok(success(json!({"configured":false,"group_id":group_id})))
+    Ok(success(json!({"configured":!cleared,"group_id":group_id})))
 }
 
 async fn start(
@@ -180,8 +202,17 @@ async fn set_running(
             .await;
         return finish_start(state, &group_id, result);
     }
+    if adapter_commits_start_state(current["config"]["platform"].as_str()) {
+        if prepare_stop(state, &group_id, &current, false)? {
+            state.im_workers.stop_invalidated(&group_id).await;
+        }
+        return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
+    }
     state.im_workers.stop(&group_id).await;
     update(state, &group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
         let state = object(value);
         state.insert("enabled".into(), Value::Bool(false));
         state.insert("running".into(), Value::Bool(false));
@@ -191,6 +222,32 @@ async fn set_running(
         Ok(())
     })?;
     Ok(success(status_payload(&group_id, &load(state, &group_id)?)))
+}
+
+fn prepare_stop(
+    state: &AppState,
+    group_id: &str,
+    current: &Value,
+    unset: bool,
+) -> Result<bool, ApiError> {
+    update(state, group_id, |value| {
+        if value.get("config") != current.get("config") {
+            return Ok(false);
+        }
+        state.im_workers.invalidate_start(group_id);
+        if unset {
+            *value = json!({});
+        } else {
+            let state = object(value);
+            state.insert("enabled".into(), Value::Bool(false));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("last_error".into(), Value::Null);
+            state.insert("updated_at".into(), Value::String(utc_now()));
+        }
+        Ok(true)
+    })
 }
 
 fn finish_start(state: &AppState, group_id: &str, result: Result<(), String>) -> ApiResult {
@@ -539,6 +596,43 @@ fn io_error(error: io::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn prepared_stop_rejects_replaced_config_without_mutating_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("停止交接测试", "").expect("group").group_id;
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (_, workers, _, state) = crate::app_with_shutdown(
+            home,
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "stop-handoff-test".into(),
+        );
+        let current = json!({"config":{"platform":"mattermost","bot_token":"old-test-token"}});
+        for platform in ["mattermost", "slack"] {
+            update(&state, &group, |value| {
+                *value = json!({"config":{"platform":platform,"bot_token":"new-test-token"},
+                    "enabled":true,"running":true,"adapter_available":true,
+                    "pid":123,"last_error":"new diagnostic"});
+                Ok(())
+            })
+            .expect("replacement");
+            let before = load(&state, &group).expect("before");
+            for unset in [false, true] {
+                assert!(!prepare_stop(&state, &group, &current, unset).expect("ignored"));
+                assert_eq!(load(&state, &group).expect("after"), before);
+            }
+        }
+        workers.shutdown().await;
+    }
 
     #[tokio::test]
     async fn legacy_start_completion_respects_mattermost_state_ownership() {
