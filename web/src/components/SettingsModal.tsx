@@ -194,6 +194,7 @@ export function SettingsModal({
   );
   const imLoadSeq = useRef(0);
   const imPlatformSelectionSeq = useRef(0);
+  const imMattermostEditSeq = useRef(0);
   const imActionScope = useRef({ groupId, isOpen, platform: imPlatform });
   const imCurrentPlatform = useRef(imPlatform);
   const imMattermostBusy = useRef(false);
@@ -769,28 +770,38 @@ export function SettingsModal({
   // 沿用设置页的 ref 归属检查；访问同一 Group 两次也不能复活旧续体。
   const currentIMAction = () => {
     const scope = imActionScope.current;
+    const edit = imMattermostEditSeq.current;
     if (imPlatform === "mattermost") imMattermostBusy.current = true;
     // 两端均为旧平台时保留原生续体合同；本补丁只隔离涉及 Mattermost 的路径。
-    return () =>
+    const isCurrent = () =>
       (imPlatform !== "mattermost" && imCurrentPlatform.current !== "mattermost") ||
       imActionScope.current === scope;
+    return {
+      isCurrent,
+      canReload: () =>
+        isCurrent() && (imPlatform !== "mattermost" || imMattermostEditSeq.current === edit),
+    };
   };
 
   const handleSaveIMConfig = async () => {
     if (!groupId) return;
-    const isCurrent = currentIMAction();
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
-      const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
-      if (!isCurrent()) return;
-      if (resp.ok) await loadIMStatus({ isCurrent });
-      else if (imPlatform === "mattermost") {
-        setImConfigError({
-          groupId,
-          message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
-        });
-      }
+      await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
+        if (!isCurrent()) return;
+        const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
+        if (!isCurrent()) return;
+        if (resp.ok) {
+          if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        } else if (imPlatform === "mattermost") {
+          setImConfigError({
+            groupId,
+            message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
+          });
+        }
+      });
     } catch (e) {
       if (!isCurrent()) return;
       if (imPlatform === "mattermost") {
@@ -807,27 +818,30 @@ export function SettingsModal({
 
   const handleRemoveIMConfig = async () => {
     if (!groupId) return;
-    const isCurrent = currentIMAction();
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
-      const resp = await api.unsetIMConfig(groupId);
-      if (!isCurrent()) return;
-      if (resp.ok) {
-        setImBotTokenEnv("");
-        setImAppTokenEnv("");
-        setImMattermostUrl("");
-        setImFeishuDomain("https://open.feishu.cn");
-        setImFeishuAppId("");
-        setImFeishuAppSecret("");
-        setImDingtalkAppKey("");
-        setImDingtalkAppSecret("");
-        setImDingtalkRobotCode("");
-        setImWecomBotId("");
-        setImWecomSecret("");
-        setImWeixinAccountId("");
-        await loadIMStatus({ isCurrent });
-      }
+      await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
+        if (!isCurrent()) return;
+        const resp = await api.unsetIMConfig(groupId);
+        if (!canReload()) return;
+        if (resp.ok) {
+          setImBotTokenEnv("");
+          setImAppTokenEnv("");
+          setImMattermostUrl("");
+          setImFeishuDomain("https://open.feishu.cn");
+          setImFeishuAppId("");
+          setImFeishuAppSecret("");
+          setImDingtalkAppKey("");
+          setImDingtalkAppSecret("");
+          setImDingtalkRobotCode("");
+          setImWecomBotId("");
+          setImWecomSecret("");
+          setImWeixinAccountId("");
+          await loadIMStatus({ isCurrent: canReload });
+        }
+      });
     } catch (e) {
       console.error("Failed to remove IM config:", e);
     } finally {
@@ -841,40 +855,43 @@ export function SettingsModal({
   const handleStartBridge = async () => {
     if (!groupId) return;
     if (!canStartIMBridge(imPlatform, !!weixinLoginStatus?.logged_in)) return;
-    const isCurrent = currentIMAction();
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     setImConfigError(null);
     try {
-      // Mattermost 保存失败时保留当前草稿；回读会把它替换成旧平台/配置。
-      if (imPlatform === "mattermost") {
-        const saved = await saveIMConfigDraft(getCurrentIMSaveRequest());
+      await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
         if (!isCurrent()) return;
-        if (!saved.ok) {
+        // Mattermost 保存失败时保留当前草稿；回读会把它替换成旧平台/配置。
+        if (imPlatform === "mattermost") {
+          const saved = await saveIMConfigDraft(getCurrentIMSaveRequest());
+          if (!isCurrent()) return;
+          if (!saved.ok) {
+            setImConfigError({
+              groupId,
+              message: saved.error?.message || t("imBridge.mattermostConfigFailed"),
+            });
+            return;
+          }
+        }
+        const resp =
+          imPlatform === "mattermost"
+            ? await api.startIMBridge(groupId)
+            : await saveAndStartIMBridge(getCurrentIMSaveRequest());
+        if (!isCurrent()) return;
+        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        if (!isCurrent()) return;
+        if (!resp.ok && imPlatform === "mattermost") {
           setImConfigError({
             groupId,
-            message: saved.error?.message || t("imBridge.mattermostConfigFailed"),
+            message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
           });
-          return;
         }
-      }
-      const resp =
-        imPlatform === "mattermost"
-          ? await api.startIMBridge(groupId)
-          : await saveAndStartIMBridge(getCurrentIMSaveRequest());
-      if (!isCurrent()) return;
-      await loadIMStatus({ isCurrent });
-      if (!isCurrent()) return;
-      if (!resp.ok && imPlatform === "mattermost") {
-        setImConfigError({
-          groupId,
-          message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
-        });
-      }
-      if (!resp.ok && imPlatform === "weixin") {
-        setWeixinLoginStatus(
-          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
-        );
-      }
+        if (!resp.ok && imPlatform === "weixin") {
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
+          );
+        }
+      });
     } catch (e) {
       if (!isCurrent()) return;
       if (imPlatform === "mattermost") {
@@ -891,12 +908,14 @@ export function SettingsModal({
 
   const handleStopBridge = async () => {
     if (!groupId) return;
-    const isCurrent = currentIMAction();
+    const { isCurrent, canReload } = currentIMAction();
     setImBusy(true);
     try {
-      await api.stopIMBridge(groupId);
-      if (!isCurrent()) return;
-      await loadIMStatus({ isCurrent });
+      await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
+        if (!isCurrent()) return;
+        await api.stopIMBridge(groupId);
+        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+      });
     } catch (e) {
       console.error("Failed to stop bridge:", e);
     } finally {
@@ -1436,7 +1455,10 @@ export function SettingsModal({
                     onPlatformChange={handlePlatformChange}
                     imBotTokenEnv={imBotTokenEnv}
                     setImBotTokenEnv={(value) => {
-                      if (imPlatform === "mattermost") imLoadSeq.current += 1;
+                      if (imPlatform === "mattermost") {
+                        imLoadSeq.current += 1;
+                        imMattermostEditSeq.current += 1;
+                      }
                       setImBotTokenEnv(value);
                     }}
                     imAppTokenEnv={imAppTokenEnv}
@@ -1444,6 +1466,7 @@ export function SettingsModal({
                     imMattermostUrl={imMattermostUrl}
                     setImMattermostUrl={(value) => {
                       imLoadSeq.current += 1;
+                      imMattermostEditSeq.current += 1;
                       setImMattermostUrl(value);
                     }}
                     imFeishuAppId={imFeishuAppId}

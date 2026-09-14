@@ -99,6 +99,174 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     await act(async () => props().onPlatformChange(platform));
   };
 
+  const invoke = (action: string) => {
+    const p = props();
+    return Promise.resolve(
+      action === "save"
+        ? p.onSaveConfig()
+        : action === "remove"
+          ? p.onRemoveConfig()
+          : action === "stop"
+            ? p.onStopBridge()
+            : p.onStartBridge(),
+    );
+  };
+
+  it.each(["save", "start-save", "start", "stop", "remove", "status", "config"])(
+    "keeps new edits and releases busy when %s finishes in the same view",
+    async (phase) => {
+      for (const field of ["url", "token"] as const) {
+        await renderGroup(`draft-${phase}-${field}`);
+        await choose("mattermost");
+        await act(async () => {
+          props().setImMattermostUrl("https://before.example.test");
+          props().setImBotTokenEnv("BEFORE_TOKEN");
+        });
+        const method =
+          phase === "status"
+            ? "fetchIMStatus"
+            : phase === "config"
+              ? "fetchIMConfig"
+              : phase === "start"
+                ? "startIMBridge"
+                : phase === "stop"
+                  ? "stopIMBridge"
+                  : phase === "remove"
+                    ? "unsetIMConfig"
+                    : "setIMConfig";
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        // 精确延迟选定的边界；请求结束后会回读旧保存值，不能以空响应掩盖覆盖。
+        const status = {
+          ok: true as const,
+          result: {
+            group_id: "test",
+            configured: true,
+            running: false,
+            enabled: false,
+            platform: "mattermost",
+            subscribers: 0,
+          },
+        };
+        const config = {
+          ok: true as const,
+          result: {
+            im: {
+              platform: "mattermost" as const,
+              mattermost_url: "https://before.example.test",
+              bot_token_env: "BEFORE_TOKEN",
+            },
+          },
+        };
+        vi.mocked(api.fetchIMStatus).mockResolvedValue(status);
+        vi.mocked(api.fetchIMConfig).mockResolvedValue(config);
+        if (method === "fetchIMStatus") {
+          vi.mocked(api.fetchIMStatus).mockImplementationOnce(async () => {
+            await pending;
+            return status;
+          });
+        } else if (method === "fetchIMConfig") {
+          vi.mocked(api.fetchIMConfig).mockImplementationOnce(async () => {
+            await pending;
+            return config;
+          });
+        } else {
+          vi.mocked(api[method]).mockImplementationOnce(async () => {
+            await pending;
+            return { ok: true, result: {} };
+          });
+        }
+        let running!: Promise<void>;
+        await act(async () => {
+          running = invoke(phase === "status" || phase === "config" ? "save" : phase);
+        });
+        expect(props().imBusy).toBe(true);
+        await act(async () => {
+          if (field === "url") props().setImMattermostUrl("https://edited.example.test");
+          else props().setImBotTokenEnv("EDITED_TOKEN");
+        });
+        const before = { url: props().imMattermostUrl, token: props().imBotTokenEnv };
+        const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
+        await act(async () => {
+          release();
+          await running;
+        });
+        expect(props().imMattermostUrl).toBe(before.url);
+        expect(props().imBotTokenEnv).toBe(before.token);
+        expect(props().imPlatform).toBe("mattermost");
+        expect(props().imBusy).toBe(false);
+        expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
+      }
+    },
+  );
+
+  it.each(["save", "start-save", "start", "stop", "remove"])(
+    "does not send new same-group mutations before the old %s has finished",
+    async (oldAction) => {
+      for (const visit of ["platform", "return", "remount"] as const) {
+        for (const newAction of ["save", "stop", "remove"] as const) {
+          await renderGroup(`ordering-${oldAction}-${visit}-${newAction}`);
+          await choose("mattermost");
+          const order: string[] = [];
+          let release!: () => void;
+          const gate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const method =
+            oldAction === "start"
+              ? "startIMBridge"
+              : oldAction === "stop"
+                ? "stopIMBridge"
+                : oldAction === "remove"
+                  ? "unsetIMConfig"
+                  : "setIMConfig";
+          vi.mocked(api[method]).mockImplementationOnce(async () => {
+            order.push("old-sent");
+            await gate;
+            order.push("old-completed");
+            return { ok: true, result: {} };
+          });
+          let first!: Promise<void>;
+          await act(async () => {
+            first = invoke(oldAction);
+          });
+          expect(order).toEqual(["old-sent"]);
+          if (visit === "remount") {
+            await act(async () => root.render(null));
+            await renderGroup(`ordering-${oldAction}-${visit}-${newAction}`);
+            await choose("mattermost");
+          } else {
+            await choose("telegram");
+            if (visit === "return") await choose("mattermost");
+          }
+          const nextMethod =
+            newAction === "save"
+              ? "setIMConfig"
+              : newAction === "stop"
+                ? "stopIMBridge"
+                : "unsetIMConfig";
+          vi.mocked(api[nextMethod]).mockImplementationOnce(async () => {
+            order.push("new-sent");
+            return { ok: true, result: {} };
+          });
+          let second!: Promise<void>;
+          await act(async () => {
+            second = invoke(newAction);
+          });
+          expect.soft(order).toEqual(["old-sent"]);
+          await act(async () => {
+            release();
+            await Promise.all([first, second]);
+          });
+          expect(order).toEqual(["old-sent", "old-completed", "new-sent"]);
+          expect(props().imBusy).toBe(false);
+        }
+      }
+    },
+  );
+
   it("clears unsaved Mattermost edits on group transition even without editing the other group", async () => {
     await renderGroup("group-a");
     await choose("mattermost");
