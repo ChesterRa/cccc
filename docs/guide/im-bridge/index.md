@@ -117,6 +117,7 @@ WeCom currently uses the same start/stop/status CLI controls, but credentials ar
 - [Telegram Setup](./telegram) - Quick personal setup
 - [Slack Setup](./slack) - Team collaboration
 - [Discord Setup](./discord) - Community access
+- [Mattermost Setup](./mattermost) - Self-hosted team collaboration
 - [Feishu/Lark Setup](./feishu) - Enterprise (China/Global)
 - [DingTalk Setup](./dingtalk) - Enterprise (China)
 - [WeCom Setup](./wecom) - Enterprise (China)

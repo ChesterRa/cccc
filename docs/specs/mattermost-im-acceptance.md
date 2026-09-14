@@ -1,8 +1,23 @@
 # CCCC Mattermost 连接器验收
 
-当前补验入口（2026-09-14）：[review9 停止与配置替换合同](mattermost-im.md#当前修复合同2026-09-14review9)对应 `9a57c906` 的两条折叠意见；先前 MM-CROSS-START、MM-LOOKUP-REPLAY 的结果作为 review8 历史保留，不以旧 CI 绿灯代替本轮验证。
+当前补验入口（2026-09-14）：[review10 合同](mattermost-im.md#当前修复合同2026-09-14review10)对应 `55cd4418` 的七条评审意见；review9 停止/替换及 review8 启动交接的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
 
 日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+
+## 失败反馈重放与上传合同（2026-09-14，review10）
+
+基线 `55cd4418`；四条采纳、三条有源码依据不采纳，逐项理由及平台固定引用只在当前规格维护。生产逻辑仅调整 Mattermost 的已处理标记时点，不修改恢复、上传、公共 daemon 或其他平台。
+
+| 功能与用例 | 断言与边界 |
+|---|---|
+| F20/F21：`command_reply_replays_do_not_repeat_decisions_when_feedback_fails` | 帮助、取消订阅、未授权消息，分别测试反馈成功/失败；同 ID 不再回复，取消后新授权不被旧帖重放撤销；新 ID 能再次操作，零下载、反应及 Ledger 消息 |
+| F17/F20/F21：`attachment_failure_replays_do_not_repeat_downloads_or_feedback` | 第二附件失败，反馈成功/失败均只下载和反馈一次；原 ID 重放无新增反应，新 ID 可重试，临时文件清理、零 Ledger 消息 |
+| F20/F21：既有 `daemon_failure_is_private_and_lost_acceptance_is_not_retried` | 追加确定拒绝原帖重放；真实 daemon 拒绝/已入账但丢失响应两种分支均不再次提交，保留原脱敏与实际 Ledger 断言 |
+| F17：`upload_preserves_query_metadata_and_special_filename`、既有 `attaches_blob_files_to_the_original_thread` | 既有 HTTP 夹具核对上传路径、有效频道、非空文件名及原始体类型；精确校验中文和 `# + &` 文件名、body 字节、file_ids 和原线程，不改变生产上传方式 |
+| F24：既有恢复顺序、当前授权及缓存失效用例 | 按已核实服务端合同回归；不声称任意服务端关闭均证明缓存失效，也不新增舍弃游标的回退 |
+| F27：原生 TypeScript 检查 | 在指定 Linux 测试机对未改的 `55cd4418` 源码执行 `tsc --noEmit -p tsconfig.json --listFiles`，退出 0，输出明确含 `SettingsModal.mattermost.test.tsx`；本轮完整检查另行记录 |
+
+执行过程：初次两平台测试编译均发现新增测试缺少 `authorized_chats` 导入；只补测试 import，保留失败日志、不删断言。Linux 定向复验 50 项通过、3 项真实站点用例按原规则忽略。随后指定 Linux 测试机完成完整 quality、Web、package、Rust 格式/Clippy、工作区及 daemon 串行测试、安装器/发布资产和原生 CLI 合同检查，进程退出 0；未启用的条件式真实模型用例不计为实测。指定 Windows 测试机的 IM 222 项、路由 6 项、核心 IM 8 项、原生七组 smoke、格式及构建全部通过，进程退出 0，3 项真实站点用例仍按原规则忽略。两台源码 Blob 一致，三份规格 38 处本地链接/锚点有效。只补下一步指南链接，无 Web 产品界面改动，不用类型检查或模拟上传冒充新一轮 GUI、真实 Mattermost 或 Actor 验收。完整日志及源码指纹由发布证据保留，GitHub 对新提交的 CI 和评审须另行确认。
 
 ## 停止与配置替换（2026-09-14，review9）
 

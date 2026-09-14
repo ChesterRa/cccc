@@ -177,6 +177,8 @@ impl MattermostInbound {
                 ] {
                     reply = reply.replace(command, &format!("@{} {command}", self.api.username));
                 }
+                // 决策可能已改变授权；记录已处理，避免回复失败后重放控制命令。
+                self.remember(post_id);
                 self.api.post(chat_id, thread_id, &reply, &[]).await?;
             }
             InboundDecision::Forward => {
@@ -239,9 +241,10 @@ impl MattermostInbound {
                 match result {
                     Ok(()) => {}
                     Err(error) => {
+                        // 记录失败已处理而非成功入账；反馈失败不重复下载或提交原帖。
+                        self.remember(post_id);
                         let reply = if error == SUBMISSION_UNKNOWN {
                             self.reactions.unknown_post(&key, post_id).await;
-                            self.remember(post_id);
                             "无法确认消息是否已交给 CCCC。请先查看 CCCC 中是否已受理或已有回答，不要直接重复发送。"
                         } else {
                             self.reactions.fail_post(&key, post_id).await;

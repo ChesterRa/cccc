@@ -896,7 +896,7 @@ impl MattermostReactions {
 
 #[cfg(test)]
 mod tests {
-    use super::super::AuthorizedChat;
+    use super::super::{AuthorizedChat, authorized_chats};
     use super::*;
     use axum::{
         Router,
@@ -930,6 +930,7 @@ mod tests {
         blocked_download: AtomicBool,
         release_download: tokio::sync::Notify,
         uploads: Mutex<Vec<Vec<u8>>>,
+        upload_metadata: Mutex<Vec<Value>>,
         downloads: Mutex<usize>,
         inbound_files: Mutex<std::collections::HashMap<String, Value>>,
         file_stream_entered: tokio::sync::Notify,
@@ -1159,6 +1160,25 @@ mod tests {
                 };
                 return axum::body::Body::from_stream(body).into_response();
             }
+            let upload_metadata = if path == "/sub/api/v4/files" && method == Method::POST {
+                let url = reqwest::Url::parse(&format!("http://localhost{}", request.uri()))
+                    .expect("上传请求 URL");
+                let query: std::collections::HashMap<String, String> =
+                    url.query_pairs().into_owned().collect();
+                let channel = query.get("channel_id").expect("上传频道");
+                let filename = query.get("filename").expect("上传文件名");
+                assert!(valid_id(channel));
+                assert!(!filename.is_empty());
+                assert_eq!(
+                    request.headers().get("content-type").expect("上传类型"),
+                    "application/octet-stream"
+                );
+                Some(
+                    json!({"channel_id":channel,"filename":filename,"content_type":"application/octet-stream"}),
+                )
+            } else {
+                None
+            };
             let raw = axum::body::to_bytes(request.into_body(), 20 * 1024 * 1024)
                 .await
                 .expect("Mattermost test operation");
@@ -1177,6 +1197,11 @@ mod tests {
                 return axum::Json(json!({"status":"OK"})).into_response();
             }
             if path == "/sub/api/v4/files" && method == Method::POST {
+                state
+                    .upload_metadata
+                    .lock()
+                    .expect("上传元数据")
+                    .push(upload_metadata.expect("已校验上传元数据"));
                 state
                     .uploads
                     .lock()
@@ -1679,6 +1704,150 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn command_reply_replays_do_not_repeat_decisions_when_feedback_fails() {
+        for text in [
+            "@cccc_bot /help",
+            "@cccc_bot /unsubscribe",
+            "@cccc_bot 未授权消息",
+        ] {
+            for reject_reply in [false, true] {
+                let fixture = fixture().await;
+                fixture
+                    .state
+                    .fail_create
+                    .store(reject_reply, Ordering::SeqCst);
+                let (_temp, home, group) = scope();
+                let unsubscribe = text.ends_with("/unsubscribe");
+                if unsubscribe {
+                    authorize_target(&home, &group, "", false);
+                }
+                let mut inbound = MattermostInbound::new(
+                    home.clone(),
+                    &group,
+                    DaemonClient::new(home.clone()),
+                    fixture.api.clone(),
+                    MattermostReactions::new(home.clone(), &group, fixture.api.clone()),
+                    &Map::new(),
+                );
+                let mut post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":text,"type":""});
+                let event = |post: &Value| json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}});
+                assert_eq!(inbound.handle(&event(&post)).await.is_err(), reject_reply);
+                if unsubscribe {
+                    assert!(authorized_chats(&home, &group, PLATFORM).is_empty());
+                    // 模拟首次取消后用户重新授权；旧帖重放不能再次取消。
+                    authorize_target(&home, &group, "", false);
+                }
+                inbound.handle(&event(&post)).await.expect("原帖去重");
+                if unsubscribe {
+                    assert_eq!(authorized_chats(&home, &group, PLATFORM).len(), 1);
+                }
+                assert_eq!(
+                    fixture.state.posts.lock().expect("帖子").len(),
+                    usize::from(!reject_reply)
+                );
+                assert_eq!(
+                    fixture.state.failed_posts.load(Ordering::SeqCst),
+                    usize::from(reject_reply)
+                );
+                post["id"] = json!("q".repeat(26));
+                assert_eq!(inbound.handle(&event(&post)).await.is_err(), reject_reply);
+                if unsubscribe {
+                    assert!(authorized_chats(&home, &group, PLATFORM).is_empty());
+                }
+                assert_eq!(
+                    fixture.state.posts.lock().expect("帖子").len(),
+                    2 * usize::from(!reject_reply)
+                );
+                assert_eq!(
+                    fixture.state.failed_posts.load(Ordering::SeqCst),
+                    2 * usize::from(reject_reply)
+                );
+                assert_eq!(*fixture.state.downloads.lock().expect("下载"), 0);
+                assert!(fixture.state.reactions.lock().expect("反应").is_empty());
+                let store = GroupStore::new(home).expect("store");
+                assert!(
+                    cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
+                        .expect("ledger")
+                        .iter()
+                        .all(|event| event.kind != "chat.message")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn attachment_failure_replays_do_not_repeat_downloads_or_feedback() {
+        for reject_reply in [false, true] {
+            let fixture = fixture().await;
+            fixture
+                .state
+                .fail_create
+                .store(reject_reply, Ordering::SeqCst);
+            let (_temp, home, group) = scope();
+            let (mut inbound, mut event) = attachment_request(&fixture, &home, &group);
+            fixture
+                .state
+                .inbound_files
+                .lock()
+                .expect("文件")
+                .get_mut(&"g".repeat(26))
+                .expect("第二附件")["body_mode"] = json!("http_error");
+            inbound.handle(&event).await.expect_err("附件失败");
+            let downloads = *fixture.state.downloads.lock().expect("下载");
+            let reactions = fixture.state.reactions.lock().expect("反应").len();
+            assert_eq!(downloads, 4);
+            inbound.handle(&event).await.expect("原帖去重");
+            assert_eq!(*fixture.state.downloads.lock().expect("下载"), downloads);
+            assert_eq!(
+                fixture.state.reactions.lock().expect("反应").len(),
+                reactions
+            );
+            assert_eq!(
+                fixture.state.posts.lock().expect("帖子").len(),
+                usize::from(!reject_reply)
+            );
+            assert_eq!(
+                fixture.state.failed_posts.load(Ordering::SeqCst),
+                usize::from(reject_reply)
+            );
+            let mut post: Value =
+                serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+            post["id"] = json!("q".repeat(26));
+            event["data"]["post"] = json!(post.to_string());
+            for file in fixture
+                .state
+                .inbound_files
+                .lock()
+                .expect("文件")
+                .values_mut()
+            {
+                file["post_id"] = json!("q".repeat(26));
+            }
+            inbound.handle(&event).await.expect_err("新帖重试");
+            assert_eq!(
+                *fixture.state.downloads.lock().expect("下载"),
+                2 * downloads
+            );
+            assert_eq!(
+                fixture.state.posts.lock().expect("帖子").len(),
+                2 * usize::from(!reject_reply)
+            );
+            assert_eq!(
+                fixture.state.failed_posts.load(Ordering::SeqCst),
+                2 * usize::from(reject_reply)
+            );
+            assert!(blob_names(&home, &group).is_empty());
+            let store = GroupStore::new(home).expect("store");
+            assert!(
+                cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
+                    .expect("ledger")
+                    .iter()
+                    .all(|event| event.kind != "chat.message")
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn filtered_lookup_failure_does_not_consume_feedback_deduplication() {
         for paused in [false, true] {
             let fixture = fixture().await;
@@ -1852,12 +2021,10 @@ mod tests {
             let error = inbound.handle(&event).await.expect_err("safe failure");
             fixture.api.log_error(&home, &group, "inbound", &error);
             fixture.api.persist_error(&home, &group, Some(&error));
-            if lose_reply {
-                inbound
-                    .handle(&event)
-                    .await
-                    .expect("duplicate uncertain post is ignored");
-            }
+            inbound
+                .handle(&event)
+                .await
+                .expect("duplicate rejected or uncertain post is ignored");
             server.await.expect("daemon fixture");
             let store = GroupStore::new(home).expect("store");
             let log = std::fs::read_to_string(
@@ -3382,6 +3549,46 @@ mod tests {
         assert_eq!(posts.len(), 1);
         assert_eq!(posts[0]["file_ids"], json!(["f".repeat(26)]));
         assert_eq!(posts[0]["root_id"], "t".repeat(26));
+        assert_eq!(
+            *fixture.state.upload_metadata.lock().expect("上传元数据"),
+            vec![
+                json!({"channel_id":"c".repeat(26),"filename":"报告.txt","content_type":"application/octet-stream"})
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_preserves_query_metadata_and_special_filename() {
+        let fixture = fixture().await;
+        let (_temp, home, group) = scope();
+        let blob = cccc_core::blobs::store(&home, &group, b"raw document").expect("Blob");
+        let sender = MattermostOutbound::new(home, &group, fixture.api.clone(), &Map::new());
+        let mut event = Event::new("chat.message", &group);
+        event.by = "reviewer".into();
+        let title = "报告 #1 + &.txt";
+        event.data.insert(
+            "attachments".into(),
+            json!([{"path":blob.path,"title":title}]),
+        );
+        sender
+            .send_target(&target(true), &event)
+            .await
+            .expect("上传及发帖");
+        assert_eq!(
+            *fixture.state.upload_metadata.lock().expect("上传元数据"),
+            vec![
+                json!({"channel_id":"c".repeat(26),"filename":title,"content_type":"application/octet-stream"})
+            ]
+        );
+        assert_eq!(
+            *fixture.state.uploads.lock().expect("上传内容"),
+            vec![b"raw document".to_vec()]
+        );
+        let posts = fixture.state.posts.lock().expect("帖子");
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0]["channel_id"], "c".repeat(26));
+        assert_eq!(posts[0]["root_id"], "t".repeat(26));
+        assert_eq!(posts[0]["file_ids"], json!(["f".repeat(26)]));
     }
 
     #[tokio::test]

@@ -7,6 +7,8 @@
 
 ## 1. 检查范围与证据规则
 
+2026-09-14 review10：F20/F21 补命令及已知失败反馈的原帖去重，F17 补上传请求元数据断言，指南补下一步链接。F24 的恢复方式、现有原始文件体上传及 Web type-only import 经源码核对保留；七条意见的处置理由见[当前合同](mattermost-im.md#当前修复合同2026-09-14review10)，本轮结果见[review10 验收](mattermost-im-acceptance.md#失败反馈重放与上传合同2026-09-14review10)。
+
 2026-09-14 review9：F02 补停止/配置替换的迟到关闭保护，F01 澄清 CCCC 命令行 IM 配置与 Agent CLI 软件管理的区别，不删既有 CLI 入口。范围见[当前合同](mattermost-im.md#当前修复合同2026-09-14review9)，四项专用回归及执行状态见[review9 验收](mattermost-im-acceptance.md#停止与配置替换2026-09-14review9)。本轮不扩展消息能力或管理其他 Agent CLI。
 
 2026-09-14 本轮修复：F02 的跨平台旧启动结果回写、F20 的早期查询失败反馈去重，已在[当前修复合同](mattermost-im.md#当前修复合同2026-09-14review8)登记为 MM-CROSS-START、MM-LOOKUP-REPLAY。实现与专用回归已补；本轮执行结果见 [review8 验收记录](mattermost-im-acceptance.md#启动交接与失败反馈去重2026-09-14review8)，不由本页历史验收或旧 CI 通过推出已完成。

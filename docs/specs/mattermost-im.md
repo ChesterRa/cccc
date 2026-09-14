@@ -5,6 +5,24 @@
 
 入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
 
+## 当前修复合同（2026-09-14，review10）
+
+来源：[针对 `55cd4418` 的完整 Copilot 评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5194174665)，包含三条行内意见与四条折叠意见。只处理下表，不修改其他平台、公共提交合同、Web 类型写法或恢复协议。
+
+| 意见 | 核实与处置 | 验证要求 |
+|---|---|---|
+| 已知提交/附件失败重放 | 采纳：失败分支在反馈及反应调用之前记入原有 `seen/order`，不因错误回复失败而重新下载、提交或反馈 | 同 ID 重放零新增副作用；回复成功/失败、新 ID 重试、零错误入账 |
+| 命令回复失败后重新执行 | 采纳：公共决策完成后、发送 Reply 前记录已处理 ID；不把这个标记说成成功入账 | 控制命令已产生的授权变更不因重放再次执行；帮助及未授权反馈也受同一边界保护 |
+| 上传夹具未校验请求元数据 | 采纳：在既有 Mattermost HTTP 夹具中校验路径、频道、文件名查询和 Content-Type；补精确中文/特殊字符文件名断言 | 真实请求编码后的字段及字节、返回文件 ID、原线程均核对；不变更上传实现 |
+| 总览缺下一步导航 | 采纳：沿用原指南列表补 Mattermost 链接 | 链接指向已存在指南 |
+| 缓存失效会关闭且无 hello | 不采纳其根因判断：Mattermost v10.11.0 的 `PopulateWebConnConfig` 在连接缺失时分配新 ID；`writePump` 在序号丢失时也重置 ID 并发送 hello。当前游标已识别新 ID、记录且保留 `RECOVERY_GAP`。不能把参数校验失败的关闭路径当成正常缓存失效 | 重跑既有恢复顺序及缓存失效用例；不新增遇关闭就丢弃游标的行为 |
+| 上传仅支持 multipart | 不采纳：同版本 `uploadFileStream` 对非 multipart 调用 `uploadFileSimple`，接收原始 body 与频道/文件名参数。保留当前受支持接口 | 服务端源码依据与加强后的上传夹具分别记证据，不把模拟测试当新一轮真实站点验收 |
+| type-only import 不可用于 typeof | 不采纳：这里是类型查询而非运行时取值；现有 `tsconfig.json` 包含该 `.test.tsx`。仍在测试机用原生 tsc 列出实际纳入文件并核对退出状态 | 必须实际覆盖该文件；不以转译单测替代类型检查 |
+
+平台依据固定为 Mattermost [恢复配置及写入循环](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/app/platform/web_conn.go)、[WebSocket 入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/websocket.go)及[文件上传入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/file.go)。恢复中的普通网络/服务器错误不等于缓存失效证明，不据此主动放弃可恢复序号。
+
+去重仍限本次 worker 的 8192 个 ID，先进先出淘汰、重启失效；无反馈的原有过滤条件不变。已确定处理失败的原帖不会自动重试，用户新发帖子仍按当前权限处理；不增加持久队列、不改变 P05 的保守结果分类。术语沿用聊天授权、订阅、Attachment、Ledger；无新增领域实体。本轮实现及测试状态见独立 review10 验收段，尚不以旧 CI 通过宣称完成。
+
 ## 当前修复合同（2026-09-14，review9）
 
 来源：[针对 `9a57c906` 的 Copilot 评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5193783516)中的两条折叠意见。用户授权仅针对评审建议最小修复、测试及更新同一 PR；不合并、不部署，不修改两个非 Mattermost 平台之间的合同。
