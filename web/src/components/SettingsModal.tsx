@@ -207,7 +207,7 @@ export function SettingsModal({
   imCurrentPlatform.current = imPlatform;
   useEffect(
     () => () => {
-      // AppModals 关闭设置时直接卸载；旧管理续体不能继续加载或启动。
+      // AppModals unmounts settings on close; stale management continuations must not reload or start.
       imActionScope.current = { ...imActionScope.current };
     },
     [],
@@ -215,7 +215,7 @@ export function SettingsModal({
   const weixinAutoStartRef = useRef(false);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // 沿用 ref 归属检查；旧平台间保留原合同，经过 Mattermost 后不能复活旧续体。
+  // Preserve ref ownership checks and legacy platform behavior; revisiting Mattermost must not revive stale continuations.
   const currentIMAction = useCallback(() => {
     const scope = imActionScope.current;
     const edit = imMattermostEditSeq.current;
@@ -362,14 +362,22 @@ export function SettingsModal({
   };
 
   const loadIMStatus = useCallback(
-    async (opts?: { resetFirst?: boolean; isCurrent?: () => boolean }) => {
+    async (opts?: {
+      resetFirst?: boolean;
+      isCurrent?: () => boolean;
+      canReloadConfig?: () => boolean;
+    }) => {
       const gid = String(groupId || "").trim();
       const seq = ++imLoadSeq.current;
       const selection = imPlatformSelectionSeq.current;
+      const edit = imMattermostEditSeq.current;
       const isCurrent = (platform?: unknown) =>
         seq === imLoadSeq.current &&
         opts?.isCurrent?.() !== false &&
         (platform !== "mattermost" || selection === imPlatformSelectionSeq.current);
+      // Editing a draft blocks configuration hydration, not authoritative runtime status.
+      const canReloadConfig = () =>
+        opts?.canReloadConfig?.() !== false && imMattermostEditSeq.current === edit;
       if (opts?.resetFirst) resetIMState();
       if (!gid) return;
       try {
@@ -377,12 +385,17 @@ export function SettingsModal({
         if (!isCurrent(statusResp.ok ? statusResp.result.platform : undefined)) return;
         if (statusResp.ok) {
           setImStatus(statusResp.result);
-          if (statusResp.result.platform) {
+          if (canReloadConfig() && statusResp.result.platform) {
             setImPlatform(statusResp.result.platform as IMPlatform);
           }
         }
+        if (!canReloadConfig()) return;
         const configResp = await api.fetchIMConfig(gid);
-        if (!isCurrent(configResp.ok ? configResp.result.im?.platform : undefined)) return;
+        if (
+          !isCurrent(configResp.ok ? configResp.result.im?.platform : undefined) ||
+          !canReloadConfig()
+        )
+          return;
         if (configResp.ok && configResp.result.im) {
           const im = configResp.result.im;
           if (im.platform) setImPlatform(im.platform);
@@ -513,7 +526,7 @@ export function SettingsModal({
         await api.runIMManagement(groupId, false, async () => {
           if (!isCurrent()) return;
           const resp = await api.startIMBridge(groupId);
-          if (resp.ok && canReload()) await loadIMStatus({ isCurrent: canReload });
+          if (resp.ok && isCurrent()) await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         });
       } catch (e) {
         console.error("Failed to auto-start weixin bridge:", e);
@@ -754,7 +767,7 @@ export function SettingsModal({
   // Handle platform change with config caching
   const handlePlatformChange = (newPlatform: IMPlatform) => {
     if (newPlatform === imPlatform) return;
-    // 用户选择使旧 Mattermost 读取失效；程序回填不计作用户编辑。
+    // User selection invalidates stale Mattermost reads; programmatic hydration is not a user edit.
     imPlatformSelectionSeq.current += 1;
     if (imPlatform === "mattermost" || newPlatform === "mattermost") imLoadSeq.current += 1;
     setImConfigError(null);
@@ -797,7 +810,7 @@ export function SettingsModal({
         const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
         if (!isCurrent()) return;
         if (resp.ok) {
-          if (canReload()) await loadIMStatus({ isCurrent: canReload });
+          await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         } else if (imPlatform === "mattermost") {
           setImConfigError({
             groupId,
@@ -835,21 +848,22 @@ export function SettingsModal({
             message: resp.error?.message || t("imBridge.mattermostConfigFailed"),
           });
         }
-        if (!canReload()) return;
         if (resp.ok) {
-          setImBotTokenEnv("");
-          setImAppTokenEnv("");
-          setImMattermostUrl("");
-          setImFeishuDomain("https://open.feishu.cn");
-          setImFeishuAppId("");
-          setImFeishuAppSecret("");
-          setImDingtalkAppKey("");
-          setImDingtalkAppSecret("");
-          setImDingtalkRobotCode("");
-          setImWecomBotId("");
-          setImWecomSecret("");
-          setImWeixinAccountId("");
-          await loadIMStatus({ isCurrent: canReload });
+          if (canReload()) {
+            setImBotTokenEnv("");
+            setImAppTokenEnv("");
+            setImMattermostUrl("");
+            setImFeishuDomain("https://open.feishu.cn");
+            setImFeishuAppId("");
+            setImFeishuAppSecret("");
+            setImDingtalkAppKey("");
+            setImDingtalkAppSecret("");
+            setImDingtalkRobotCode("");
+            setImWecomBotId("");
+            setImWecomSecret("");
+            setImWeixinAccountId("");
+          }
+          await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         }
       });
     } catch (e) {
@@ -875,7 +889,7 @@ export function SettingsModal({
     try {
       await api.runIMManagement(groupId, imPlatform === "mattermost", async () => {
         if (!isCurrent()) return;
-        // Mattermost 保存失败时保留当前草稿；回读会把它替换成旧平台/配置。
+        // Preserve the draft after a failed Mattermost save; reloading would replace it with the old platform/config.
         if (imPlatform === "mattermost") {
           const saved = await saveIMConfigDraft(getCurrentIMSaveRequest());
           if (!isCurrent()) return;
@@ -892,7 +906,7 @@ export function SettingsModal({
             ? await api.startIMBridge(groupId)
             : await saveAndStartIMBridge(getCurrentIMSaveRequest());
         if (!isCurrent()) return;
-        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         if (!isCurrent()) return;
         if (!resp.ok && imPlatform === "mattermost") {
           setImConfigError({
@@ -937,7 +951,7 @@ export function SettingsModal({
           });
           return;
         }
-        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        await loadIMStatus({ isCurrent, canReloadConfig: canReload });
       });
     } catch (e) {
       if (!isCurrent()) return;
@@ -968,7 +982,7 @@ export function SettingsModal({
           );
           return;
         }
-        if (canReload()) await loadIMStatus({ isCurrent: canReload });
+        await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         if (!isCurrent()) return;
         weixinAutoStartRef.current = false;
         const resp = await api.startWeixinLogin(groupId);
@@ -1002,7 +1016,7 @@ export function SettingsModal({
         if (!isCurrent()) return;
         if (resp.ok) {
           setWeixinLoginStatus(resp.result ?? null);
-          if (canReload()) await loadIMStatus({ isCurrent: canReload });
+          await loadIMStatus({ isCurrent, canReloadConfig: canReload });
         } else {
           setWeixinLoginStatus(
             toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")),
@@ -1502,7 +1516,6 @@ export function SettingsModal({
                     imBotTokenEnv={imBotTokenEnv}
                     setImBotTokenEnv={(value) => {
                       if (imPlatform === "mattermost") {
-                        imLoadSeq.current += 1;
                         imMattermostEditSeq.current += 1;
                       }
                       setImBotTokenEnv(value);
@@ -1511,7 +1524,6 @@ export function SettingsModal({
                     setImAppTokenEnv={setImAppTokenEnv}
                     imMattermostUrl={imMattermostUrl}
                     setImMattermostUrl={(value) => {
-                      imLoadSeq.current += 1;
                       imMattermostEditSeq.current += 1;
                       setImMattermostUrl(value);
                     }}

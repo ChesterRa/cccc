@@ -17,14 +17,14 @@ const SUBMISSION_UNKNOWN: &str = "Mattermost daemon submission outcome is unknow
 const RECIPIENT_REJECTED: &str = "Mattermost daemon rejected the recipient";
 
 fn submission_error(error: String) -> String {
-    // 共享错误可能包含 /send 的用户输入；只在 Mattermost 边界收敛，禁止原样落日志。
+    // Shared errors may contain user input from /send; sanitize them at the Mattermost boundary before logging.
     if error.starts_with("unknown or ambiguous recipient: ") {
         RECIPIENT_REJECTED.to_owned()
     } else if error == "IM command has no message payload" {
         "Mattermost message has no payload".to_owned()
     } else {
-        // 客户端错误有可辨识前缀，但此 String 也承载 daemon 的任意错误消息。
-        // 没有 OutcomeUnknown 前缀不证明未提交；其余错误仍保守处理。
+        // Client errors have recognizable prefixes, but this String also carries arbitrary daemon errors.
+        // Absence of OutcomeUnknown does not prove non-submission; other errors remain ambiguous.
         SUBMISSION_UNKNOWN.to_owned()
     }
 }
@@ -163,7 +163,7 @@ impl MattermostInbound {
         .await
         {
             InboundDecision::Reply(reply) => {
-                // MM 客户端拦截裸 /命令，因此在公共帮助中显示安全的 @Bot 前缀。
+                // Mattermost intercepts bare slash commands; show the @Bot prefix in help.
                 let mut reply = reply;
                 for command in [
                     "/subscribe",
@@ -177,7 +177,7 @@ impl MattermostInbound {
                 ] {
                     reply = reply.replace(command, &format!("@{} {command}", self.api.username));
                 }
-                // 决策可能已改变授权；记录已处理，避免回复失败后重放控制命令。
+                // The decision may have changed authorization; remember it before feedback to prevent control-command replay.
                 self.remember(post_id);
                 self.api.post(chat_id, thread_id, &reply, &[]).await?;
             }
@@ -211,13 +211,13 @@ impl MattermostInbound {
                             );
                         }
                     }
-                    // 全部下载、验证成功后再保存；失败或取消时由原生临时文件析构清理。
-                    // 最终 Blob 可被既有消息共用，不在后续提交失败时回滚删除。
+                    // Save only after every download passes validation; temporary files clean up on failure or cancellation.
+                    // Existing messages may share the final Blobs; do not delete them if submission later fails.
                     let attachments = staged
                         .into_iter()
                         .map(|(upload, spec)| finish_upload(upload, spec))
                         .collect::<Result<Vec<_>, _>>()?;
-                    // daemon 可能先发布回答再返回提交结果，完成反应必须等待 ID 绑定。
+                    // The daemon may publish a reply before acknowledging submission; completion reactions must wait for ID binding.
                     let _binding = self.reactions.binding.lock().await;
                     let event_id = dispatch_inbound_with(
                         &self.daemon,
@@ -241,20 +241,20 @@ impl MattermostInbound {
                 match result {
                     Ok(()) => {}
                     Err(error) => {
-                        // 记录失败已处理而非成功入账；反馈失败不重复下载或提交原帖。
+                        // Remember the handled failure, not successful delivery; failed feedback must not trigger another download or submission.
                         self.remember(post_id);
                         let reply = if error == SUBMISSION_UNKNOWN {
                             self.reactions.unknown_post(&key, post_id).await;
-                            "无法确认消息是否已交给 CCCC。请先查看 CCCC 中是否已受理或已有回答，不要直接重复发送。"
+                            "Cannot confirm whether CCCC received this message. Check CCCC for the request or a reply before sending it again."
                         } else {
                             self.reactions.fail_post(&key, post_id).await;
                             if error == RECIPIENT_REJECTED {
-                                "CCCC 未接受这次请求：请检查 /send 指定的智能体是否存在且名称唯一，修正后再发送。"
+                                "CCCC rejected this request. Check that the /send recipient exists and its name is unique, then correct it and try again."
                             } else {
-                                "消息或附件未能交给 CCCC，请检查连接器错误后重试。"
+                                "Could not deliver the message or attachments to CCCC. Check the connector error before trying again."
                             }
                         };
-                        // 错误已在提交边界转换为安全类别，聊天和日志均不接收原始 daemon 文本。
+                        // Submission errors are already safe categories; neither chat nor logs receive raw daemon text.
                         if let Err(reply_error) =
                             self.api.post(chat_id, thread_id, reply, &[]).await
                         {
@@ -278,7 +278,7 @@ impl MattermostInbound {
         let raw = field(post, "message");
         let chat_id = field(post, "channel_id");
         let thread_id = field(post, "root_id");
-        // 使用只读授权查询，不调用会创建配对申请或修改订阅的命令决策器。
+        // Use a read-only authorization query; the command decision path may create pairing requests or change subscriptions.
         if !accepts_message(
             channel_type,
             raw,
@@ -291,11 +291,11 @@ impl MattermostInbound {
             return;
         }
         if let Err(error) = self.api.post(chat_id, thread_id,
-            "暂时无法核验本条消息的频道或发送者，尚未提交给 CCCC。请稍后重试；若持续失败，请查看连接器错误。", &[]).await
+            "Could not verify this message's channel or sender. It has not been submitted to CCCC. Try again later; if the problem persists, check the connector error.", &[]).await
         {
             self.api.log_error(&self.home, &self.group_id, "lookup_error_reply", &error);
         }
-        // 记录的是失败反馈已尝试，不是成功入账；发送失败也不重复提示。
+        // Remember the feedback attempt, not successful delivery; do not repeat the notice if sending it fails.
         self.remember(field(post, "id"));
     }
 
@@ -401,7 +401,7 @@ async fn stage_file(
     if response.content_length().is_some_and(|size| size > limit) {
         return Err("Mattermost attachment exceeds configured size limit".into());
     }
-    // 较低的组级限制也必须在写入 Blob 前执行，不能仅在下载完之后报错。
+    // Enforce any lower Group file limit before writing the Blob, not just after downloading.
     let stream = response.bytes_stream().scan(0u64, move |total, result| {
         let result = result
             .map_err(|e| e.without_url().to_string())
@@ -415,11 +415,16 @@ async fn stage_file(
             });
         std::future::ready(Some(result))
     });
-    Ok((stage_stream(home, group_id, stream).await?, spec))
+    let upload = stage_stream(home, group_id, stream).await?;
+    if size.is_some_and(|size| size != upload.bytes() as u64) {
+        return Err("Mattermost attachment size does not match file metadata".into());
+    }
+    Ok((upload, spec))
 }
 
 #[cfg(test)]
 mod tests {
+    // Non-ASCII filenames are intentional fixtures for attachment metadata preservation.
     use super::*;
     use serde_json::json;
 
@@ -430,7 +435,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path()).expect("home");
         let group = cccc_core::GroupStore::new(home.clone())
             .expect("store")
-            .create("去重容量", "")
+            .create("Dedupe capacity", "")
             .expect("group")
             .group_id;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -486,21 +491,24 @@ mod tests {
     #[test]
     fn mentions_are_exact_and_only_a_leading_mention_is_stripped() {
         assert_eq!(
-            strip_leading_mention(" @cccc_bot: /send @claude 看看 @gemini 的回答", "cccc_bot"),
-            "/send @claude 看看 @gemini 的回答"
+            strip_leading_mention(
+                " @cccc_bot: /send @claude Review @gemini's answer",
+                "cccc_bot"
+            ),
+            "/send @claude Review @gemini's answer"
         );
         for raw in [
             "@cccc_bot_extra hello",
             "x@cccc_bot hello",
             "someone@cccc_bot.test",
-            "普通聊天",
+            "Ordinary chat",
         ] {
             assert!(!accepts_message("O", raw, raw, "cccc_bot"), "{raw}");
         }
         assert!(accepts_message(
             "O",
-            "请 @cccc_bot 帮忙",
-            "请 @cccc_bot 帮忙",
+            "Ask @cccc_bot for help",
+            "Ask @cccc_bot for help",
             "cccc_bot"
         ));
         assert!(accepts_message("D", "hello", "hello", "cccc_bot"));
@@ -669,7 +677,7 @@ mod tests {
         )
         .await
         .expect("download");
-        let file = finish_upload(upload, spec).expect("保存已验证附件");
+        let file = finish_upload(upload, spec).expect("save validated attachment");
         assert_eq!(file["title"], "中文.txt");
         assert_eq!(file["mime_type"], "text/plain");
         assert_eq!(file["bytes"], 6);

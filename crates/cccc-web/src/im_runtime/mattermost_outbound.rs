@@ -119,7 +119,7 @@ impl MattermostOutbound {
                 .post(
                     &target.chat_id,
                     &target.thread_id,
-                    "部分附件发送失败，请在 CCCC Web 中查看原附件及连接器错误。",
+                    "Some attachments could not be sent. Check the original files and connector error in CCCC Web.",
                     &[],
                 )
                 .await?;
@@ -158,7 +158,7 @@ impl MattermostOutbound {
                     .and_then(safe_filename)
             })
             .unwrap_or("file");
-        // MM 4.8+ 原生单文件 body 上传，与 multipart 等价且可保留原文件名。
+        // Mattermost 4.8+ supports raw single-file uploads, equivalent to multipart and preserving the original filename.
         let request = self
             .api
             .request(Method::POST, "files")

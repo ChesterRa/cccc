@@ -1166,17 +1166,13 @@ export function ChatTab({
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <div className="flex min-h-0 flex-1 flex-col">
                       <PresentationRail
-                        mode="panel"
                         presentation={groupPresentation}
                         isDark={isDark}
                         readOnly={readOnly}
-                        isOpen
                         attentionSlots={presentationAttention}
                         onOpenSlot={openPresentationSlot}
                         onPinSlot={pinPresentationSlot}
-                        onOpenChange={(open) => {
-                          if (!open) selectSidePanel("presentation");
-                        }}
+                        onClose={() => selectSidePanel("presentation")}
                       />
                     </div>
                   </Suspense>
@@ -1245,20 +1241,10 @@ export function ChatTab({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                 <PresentationRail
-                  mode="panel"
                   presentation={groupPresentation}
                   isDark={isDark}
                   readOnly={readOnly}
-                  isOpen={mobileSurface === "presentation"}
-                  onOpenChange={(open) => {
-                    if (open) {
-                      if (selectedGroupId) {
-                        setChatMobileSurface(selectedGroupId, "presentation");
-                      }
-                      return;
-                    }
-                    closeMobilePresentation();
-                  }}
+                  onClose={closeMobilePresentation}
                   attentionSlots={presentationAttention}
                   onOpenSlot={openPresentationSlot}
                   onPinSlot={pinPresentationSlot}

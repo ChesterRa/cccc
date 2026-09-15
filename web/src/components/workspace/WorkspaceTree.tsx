@@ -55,7 +55,7 @@ function WorkspaceTreeRows({
         const { entry } = node;
         const selected = !entry.is_dir && entry.path === selectedPath;
         return (
-          <Fragment key={entry.path}>
+          <Fragment key={node.key}>
             <button
               type="button"
               role="treeitem"

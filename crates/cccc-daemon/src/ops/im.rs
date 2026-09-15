@@ -66,7 +66,7 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     normalize_config(&platform, &mut config)?;
     let current = load(home, &group_id)?;
     let delegated = update(home, &group_id, |state| {
-        // 判断与旧路径写入在同一配置锁内；不能让锁外快照绕过 Web 的 worker 归属。
+        // Check ownership and write under the same config lock so stale snapshots cannot bypass Web worker ownership.
         if platform == "mattermost" || web_owns_config(state.get("config")) {
             return Ok(true);
         }
@@ -536,7 +536,7 @@ mod tests {
     use std::io::{Read, Write};
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> String {
-        // Windows 上 accepted socket 可继承 nonblocking；沿用原生夹具的超时和完整正文读取。
+        // Accepted sockets may inherit nonblocking mode on Windows; normalize it before reading the full HTTP request with a timeout.
         stream.set_nonblocking(false).expect("blocking request");
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(1)))
@@ -572,10 +572,12 @@ mod tests {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
             let address = listener.local_addr().expect("address");
             let mut client = std::net::TcpStream::connect(address).expect("connect");
-            listener.set_nonblocking(nonblocking).expect("mode");
             let (mut stream, _) = listener.accept().expect("accept queued connection");
+            // Connect may finish before a nonblocking accept is ready. Exercise the
+            // reader's socket-mode normalization without depending on handshake timing.
+            stream.set_nonblocking(nonblocking).expect("mode");
             let reader = std::thread::spawn(move || read_http_request(&mut stream));
-            // 连接先建立、请求稍后分段到达，不能把单次 read 当作完整 HTTP 请求。
+            // Connect first, then send the request in fragments; one read does not constitute a complete HTTP request.
             std::thread::sleep(std::time::Duration::from_millis(20));
             client
                 .write_all(b"POST /api/im/stop HTTP/1.1\r\nContent-Length: 2\r\n\r\n")
@@ -1015,7 +1017,7 @@ mod tests {
             server.join().expect("server");
             assert_eq!(result["group_id"], group_id);
             assert_eq!(result["configured"], target != "unset");
-            // 模拟 Web 只确认请求：daemon 不应自作主张改配置/运行态。
+            // The mock Web server only acknowledges the request; the daemon must not independently change config or runtime state.
             assert_eq!(im_state::load(&store, &group_id).expect("after"), before);
         }
     }
@@ -1068,7 +1070,7 @@ mod tests {
                 server.join().expect("server");
                 let actual = im_state::load(&store, &group_id).expect("after");
                 if from == "mattermost" || to == "mattermost" {
-                    // 规范化可能补原生缺省字段，先在同一入口规范化 expected。
+                    // Normalize the expected value through the same entry point to include native defaults.
                     im_state::update(&store, &group_id, |value| {
                         *value = expected;
                         Ok(())

@@ -60,7 +60,7 @@ const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
 
 pub(crate) type ImRequestVersion = (Option<u64>, Option<u64>);
 
-// 共享结果回写者须在配置锁内查询当前平台，不能只看旧启动快照。
+// Shared result writers must check the current platform under the config lock, not a stale startup snapshot.
 pub(crate) fn adapter_commits_start_state(platform: Option<&str>) -> bool {
     platform.is_some_and(|platform| SELF_COMMIT_PLATFORMS.contains(&platform))
 }
@@ -374,7 +374,7 @@ impl ImWorkerRegistry {
             if let Some(home) = home {
                 let checked = GroupStore::new(home.clone()).and_then(|store| {
                     cccc_core::im_state::read_with(&store, group_id, |current| {
-                        // 判断和摘除都在配置锁内；切入新适配器不能插在两者之间。
+                        // Check and remove under the config lock so an adapter switch cannot interleave.
                         if adapter_commits_start_state(current["config"]["platform"].as_str()) {
                             None
                         } else {
@@ -385,7 +385,7 @@ impl ImWorkerRegistry {
                 match checked {
                     Ok(Some(removed)) => removed,
                     Ok(None) => return false,
-                    // 原生旧平台 stop 不依赖配置可读，保留其故障行为。
+                    // Preserve existing platforms' stop behavior when config cannot be read.
                     Err(_) => remove(),
                 }
             } else {
@@ -400,7 +400,7 @@ impl ImWorkerRegistry {
         was_starting || was_running || had_weixin_login
     }
 
-    // 配置锁内已失效旧代次并提交停止状态；不能关闭此后取得新代次的 worker。
+    // The config lock already invalidated the old generation and committed the stopped state; do not close a newer worker.
     pub(crate) async fn stop_invalidated(&self, group_id: &str) {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let worker = {
@@ -447,14 +447,14 @@ impl ImWorkerRegistry {
                 {
                     return Err("IM worker start was superseded by a newer request".into());
                 }
-                // 与保存/停止使用同一配置锁；检查与代次分配之间不能插入失效操作。
+                // Use the save/stop config lock so invalidation cannot interleave with validation and generation allocation.
                 Ok(self.begin_start_locked(group_id))
             })
         });
         match checked {
             Ok(result) => result,
             Err(error) if guarded_source => Err(error.to_string()),
-            // 旧平台原本不依赖此读取；不因新保护引入新的存储失败模式。
+            // Existing platforms do not require this read; preserve their storage failure behavior.
             Err(_) => Ok(self.begin_start_locked(group_id)),
         }
     }
@@ -508,7 +508,7 @@ impl ImWorkerRegistry {
             .remove(group_id);
     }
 
-    // 调用方在 IM 配置锁内读取/比较；配置相同也可能是不同请求。
+    // Callers read and compare under the IM config lock; identical configs can belong to different requests.
     pub(crate) fn request_version(&self, group_id: &str) -> ImRequestVersion {
         let revision = self
             .config_revisions
@@ -628,7 +628,7 @@ fn persist_restore_result(
     group_id: &str,
     result: &Result<(), String>,
 ) -> std::io::Result<()> {
-    // 保留旧恢复入口对 Store 初始化失败的处理；仅保护新适配器状态的归属。
+    // Preserve the restore path's Store initialization failure handling; only guard the new adapter's state ownership.
     let Ok(store) = GroupStore::new(home) else {
         return Ok(());
     };
@@ -1144,7 +1144,7 @@ mod tests {
                 let temp = tempfile::tempdir().expect("tempdir");
                 let home = HomeLayout::from_path(temp.path()).expect("home");
                 let store = GroupStore::new(home.clone()).expect("store");
-                let group = store.create("恢复交接", "").expect("group").group_id;
+                let group = store.create("Restore handoff", "").expect("group").group_id;
                 let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(
                     home.clone(),
                 ));

@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [0.4.40] — Unreleased
 
 ### Added
+- **Native Mattermost IM connector.** Connect a Group through a dedicated Bot using REST and WebSocket, with channel/thread authorization, attachments, streaming replies, and processing reactions. Configure it in the Group's IM Bridge settings; no public callback or extra service is required.
 - **Browse and edit Group workspace files from the Web UI.** A shared Files/Presentation column shows the file tree and Git status; desktop text editing preserves drafts during file navigation and checks for on-disk changes before saving. Phones provide read-only browsing.
 - **Connect selected Groups across member accounts.** Invite another member from the Group’s sidebar menu and confirm both Groups on the account website. Exact Group scopes, duplicate-safe acceptance and bounded revocation reuse the durable message/reply/file pipeline without sharing administrator Tokens or terminals.
 - **CCCC Connect joins instances linked to the same account.** Background Group/Actor discovery and messaging need no manual Network or Group pairing; each instance retains its own data and needs a reachable HTTPS route.

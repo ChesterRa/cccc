@@ -1,612 +1,97 @@
-# CCCC Mattermost 连接器验收
+# Mattermost Acceptance Record
 
-当前补验入口（2026-09-14）：[review16 合同](mattermost-im.md#当前修复合同2026-09-14review16)对应 `d161ecc6` 的完整评审。review15 及更早的结果保留为各自版本证据，不以旧 CI 绿灯代替本轮验证。
+This record accompanies the [specification](mattermost-im.md) and [feature map](mattermost-im-features.md). Evidence is scoped to the tested version and environment. Local tests, controlled protocol fixtures, real-server checks and user acceptance are distinct; none alone proves a release ready on every platform.
 
-review17 范围裁定（2026-09-14）：纯旧平台管理续体的跨组/关窗归属**可能是既有 Bug，用户明确要求本次不修复**，详见[唯一处置说明](mattermost-im.md#review17-范围裁定旧平台管理续体不修复)。本轮只有静态依据，未执行该场景的独立反证；不得以 Mattermost 的通过记录宣称全平台已修复或将其记为已解决。另一项[配置修订记录回收](mattermost-im.md#配置修订记录回收review17)单独验证，不能将 review16 的成功结果挪作其验收证据。
+The connector arrived through [PR #103](https://github.com/ChesterRa/cccc/pull/103). Its [original acceptance record at ea00093b](https://github.com/ChesterRa/cccc/blob/ea00093b07a21d947982a252af42f2755bc9ac0f/docs/specs/mattermost-im-acceptance.md) preserves the complete development chronology, initial failures, reruns and contributor-reported Linux/Windows checks. Private server details, credentials and raw session evidence do not belong in this repository.
 
-## 配置修订记录回收验证（review17）
+## September 15 integration findings
 
-新增 `reaper_retires_deleted_group_revisions_without_a_worker`：真实创建、保存、删除三个无 worker 的测试组，断言记录回收、活动组值不变、巡检返回原停止计数；持初始空版本和保存版本的旧启动均报错，未产生新代次/worker。既有 worker/微信登录关闭用例不改断言。前端生产代码不变，纯旧平台疑似 Bug 按上文排除。
+Two independent probes of the merged code found issues not caught by the earlier green checks:
 
-执行记录（完成于 2026-09-15，验证固定上游 `1eaf1086` 与候选的合并输入）：
+- **Status hidden by a dirty draft:** editing the URL or token during a management request invalidated the whole subsequent status/configuration refresh. The running connector could be presented as stopped, with no Stop button. The existing delayed-operation test matrix was strengthened to assert authoritative status as well as draft preservation: six cases failed before the correction.
+- **Socket fixture accepted too early:** the daemon HTTP fixture made its listener nonblocking before accepting a just-connected client. Twenty isolated runs reproduced `WouldBlock`. The fixture now accepts while blocking and makes only the accepted stream nonblocking, retaining coverage of the production reader's mode normalization and fragmented HTTP handling. Twenty repeat checks then passed.
 
-- Linux 定向新用例通过；只撤回五行清理、保留新增测试的反证，在 `(Some(2), None)` 残留版本断言处按预期失败，随后恢复候选。首次格式检查发现新增测试两处格式不符，按原格式修正后通过；未删除或放宽断言。
-- Linux 原完整入口退出 0：quality、Web 检查/1614 项/构建、package、格式/严格 Clippy、安装器/发布资产、workspace、daemon 库 515 项及其余全量、自启动 3、固定 Codex/Claude 各 1、Kilo 3（128.35 秒）和离线原生检查通过。Windows 原完整入口退出 0：IM 230/3 原有忽略、路由/核心 IM、daemon IM、七组原生 Windows smoke、格式和构建通过。本轮完整入口没有失败重跑。
-- 两平台相同的既有 agent-browser 隔离网页脚本各八组 PASS、退出 0，截图已核对；覆盖真实配置读写、跨组、草稿、错误和排序，不调用真实 Bot/模型。内部 map 回收由新增 Rust 断言验证，不由网页外观证明；未更换日常部署。
-- 检查前两端十一源码及完整受跟踪树一致，50 处文档引用/锚点通过。本节仅在上述完成后补写执行证据，产品代码不再改动；最终提交另核对完整树和文档，并执行全历史扫描、人工检查及新 SHA 的 CI/Code Review。原始日志与版本指纹由内部发布证据保留，不复用旧扫描，也不把用户明确排除项记为已修复。
+The UI fix separates current status ownership from draft hydration. It adds no polling or persistent state. The socket correction changes the fixture, not the production transport. An isolated browser verified start, stop, remove and save while editing, including mobile layout; no real Mattermost server or model was called.
 
-日期：2026-09-07，提交前回归更新于 2026-09-13。对应 [规格](mattermost-im.md) 和 [功能清单](mattermost-im-features.md)。此前面向特定业务的验收表已被本表替代；**T01–T19 技术验证已完成，T20 已获用户明确确认“我已经验收完了，都正常”。真实平台、协议模拟、共享回归和用户确认分别记录；验收完成不等于上游已合并或正式发布。**
+A subsequent language audit found 306 source lines containing Chinese outside locale files. Comments, diagnostics and ordinary test descriptions are standardized to English, along with the new public documents. Fourteen deliberate multilingual body/filename fixture lines remain to exercise Unicode transport. Existing locale files are unchanged.
 
-## 安装后失败与微信管理入口（2026-09-14，review16）
+Verification of the complete source correction passed on Linux: Web static/type checks, all 1,632 Web tests and production build; Rust formatting, strict workspace/all-target Clippy and full workspace/all-target tests. The tooling suite's 120 tests and Ruff passed before the language-only source cleanup; no tooling implementation changed afterward. Isolated browser checks cover actual buttons and draft preservation, not live Bot delivery. Native Windows/macOS and real-server acceptance were not rerun.
 
-以下为当前新增用例及证据边界，已在指定两平台完成适用检查及实际 GUI；推送后仍须核对新 SHA 的 CI 与完整 Code Review。
+The native 0.4.40 Linux package also built successfully. The archive's executable matches the release binary, and the prepared embedded Web assets match the current Web build. This is build evidence, not deployment or live-service acceptance.
 
-| 用例/入口 | 结果断言与边界 |
-|---|---|
-| `failed_final_state_update_removes_only_its_installed_generation` | 已安装受控 worker 后制造状态文件故障，完成入口报错、注册表摘除本代次、stopper 执行、后台任务实际终止；新的活动代次不被摘除或停止；恢复文件后新启动可提交 running。故障模拟不是磁盘满实测，不承诺回滚已发消息 |
-| 设置页删除/停止失败 | 业务拒绝和传输错误在 Mattermost 表单可见，期间新编辑的 URL/Token 不丢、busy 释放、无覆盖式回读；旧平台错误合同保留。旧访问的失败由既有跨组/跨平台用例约束 |
-| 微信登录、退出、验证与自动启动 | 经各自真实回调，延迟在途管理、双向切入/切出 Mattermost，断言请求顺序及最终保存的平台；旧登录不得继续发送过期登录请求。纯旧平台续体对照与经 Mattermost 后切回的失效分别核对 |
-| 两平台真实 GUI | 删除的业务拒绝、fetch/正文中断及外围异常兜底提示，均核对草稿与实际存储；微信登录前保存与 Mattermost 保存双向延迟发送，最终隔离后端配置正确。外围异常为合成响应属性读取故障，不冒称真实网络故障；微信登录响应使用合成结果，不扫码、不访问真实平台，不代表微信平台联调 |
+The documentation build initially detected source-relative links that resolve in the repository but fail on the published site. Those now use pinned GitHub URLs, and adjacent Markdown references are separated correctly. All 29 pinned source targets and the new cross-document anchors were checked. The failed build remains part of the integration evidence; dead-link checks were not disabled.
 
-定向检查：Web 格式/静态/类型及两文件 36 项通过，Rust 新用例通过。反证页面使用 `d161ecc6` 与固定上游的原合并树，配新增六用例为 6 失败/26 通过；Rust 仅撤回新增失败回收后，新断言检出 worker 仍运行。后来追加的旧平台续体对照已纳入下面完整检查，不声称它也执行过该次反证。
+## Follow-up attachment integrity correction
 
-- 固定上游 `1eaf1086` 合并输入的完整 Linux 入口退出 0：quality 119、Web 305 文件/1614 项及检查/构建、package 25、格式/严格 Clippy、安装器/发布资产、workspace、daemon 全量、自启动 3、固定 Codex/Claude 各 1、Kilo 筛选 3（127.13 秒）及四项离线 native 登记检查通过。Windows 完整入口退出 0：格式、IM 229/3 忽略、路由 8、核心 IM 9、daemon IM 14、七组 native smoke 和构建通过。
-- 上述完整逻辑检查后，三语同一兜底键改成通用“操作失败”；随后两端分别补全 Web 检查、1614 项测试与构建。最终两端实际 GUI 各八个 PASS、退出 0，新增错误反馈及微信双向实际保存顺序全部通过，截图已核对；既有三语、窄屏、跨组、初次读取与在途草稿保护断言保留。使用独立 Home、受控平台响应，不改日常部署。
-- 原始失败单独保留：首次定向命令未切换工作目录；Windows GUI 首次错误地期待网络异常使用兜底文案；后续正文异常预期又按功能分支而非实际合并树推断，而上游已将其转换为具体错误。取得完整页面文字后按实际 `apiJson` 合同修正；另一次等待函数查询了此前测试已删除的组，补显式目标参数后通过。没有为这些夹具错误修改共享 API、降低断言或冒称首次全绿。
+A subsequent review reproduced complete HTTP responses whose body length disagreed with file metadata. Staging now compares the actual byte count with a known metadata size before returning the upload. A mismatch drops the temporary upload and prevents message submission. Unknown metadata sizes remain supported.
 
-最终源码指纹、原始日志及文档引用检查保存在内部证据。最终提交须再核对完整合并树、执行全历史扫描并申请新 SHA 评审；这与上述测试完成分开登记。
+The existing multi-file failure regression now covers metadata larger and smaller than the downloaded body, including cleanup and absence of ledger submission. All 62 offline Mattermost tests and strict Web-crate Clippy passed; three live tests remained ignored. The accompanying workspace and Presentation corrections passed all 1,638 Web tests, static checks and isolated Chrome checks. The Linux package was rebuilt and its binary and prepared assets verified. These focused checks do not replace the earlier full-workspace evidence or establish live-server or native Windows/macOS acceptance.
 
-## 管理入口与在途请求顺序（2026-09-14，review15，历史验证）
+## Acceptance matrix
 
-覆盖 daemon 配置/删除/失败回写统一交给 Web 生命周期；保存等管理操作期间继续编辑，后续回读不覆盖草稿且按钮恢复；同组导航/卸载后新管理请求不能越过旧在途请求。旧平台及不同组对照保留，不以 review14 的首次读取和归属回归代替本轮结果。
+Identifiers are retained from the original feature comparison. The historical evidence column summarizes the contributor's earlier records; it does not claim that those live scenarios were rerun during integration.
 
-- 反证：旧 `e34e00ed` 页面配新增测试，10 失败/16 通过；旧 daemon 生产段配新测试，三项新增回归失败、一项原用例通过。均保留原始输出。修复版定向为网页两文件 30 项、daemon IM 14 项通过；新测试的联合 mock 签名曾导致 TypeScript 检查失败，按实际响应类型拆分后检查通过，不降低断言。
-- Windows 完整入口退出 0：格式、IM 228/3 忽略、路由/核心 IM、daemon IM 14、七组 native smoke、二进制构建通过。Linux 同一最新上游 `1eaf1086` 合并输入的完整入口退出 0，无失败重跑：quality 119、Web 305 文件/1607 项及检查/构建、package 25、格式/严格 Clippy、安装器/发布资产、workspace、daemon 库 515 及其余全量、自启动 3、固定 Codex/Claude 各 1、Kilo 筛选 3（128.13 秒）均通过，四项离线 native 登记检查通过。首轮启动命令 PATH 缺 cargo 的失败保留，不计作产品测试失败。
-- 两平台实际 GUI 各七个 PASS，退出 0、截图已检视。新增用例延迟真正的保存/删除请求发送：期间编辑保留新草稿并释放 busy；关窗重开后新保存不越过旧请求，最终持久配置为最后一次操作。原有六组断言保留，不用延迟已提交响应代替服务器请求顺序证据。
-- 两平台实际 daemon 协议→Web→worker 链路通过：使用独立 Home 与受控 HTTP/WS 平台，相同配置、换 Token、切到旧平台及删除均关闭旧 WS 连接，重新启动时最多一条活动连接，配置和真实状态一致。普通 `cccc im` 早已走 Web，不将它误当 daemon 协议的覆盖证据。Windows 夹具首次主目录布局错误、第二次未配置原生管理员令牌均在进入相应业务断言前失败；按原生目录及一次性首次管理员流程配置后通过，未降低产品认证。只清除本夹具新建凭据；没有真实 Mattermost/Actor/模型流量，也不更换日常部署。
-
-两平台八源码指纹与 45 处文档引用/锚点均已核对；最终提交后还须核对完整合并树。日志及指纹索引留于内部证据；提交后仍须全历史扫描和新 SHA 的 CI/完整 Code Review，以上通过不代表已推送或上游已接受。
-
-## 初次回填与用户编辑（2026-09-14，review14）
-
-新增两阶段初始请求延迟用例，分别核对未编辑正常回填、新平台选择、Mattermost 切出/切回、只改 URL 或凭据引用；另有两旧平台仍保持原回填的对照。旧页面配新测试为 2 失败/12 通过，明确抓到迟到值覆盖；候选页面 14 项通过，既有断言不删。
-
-- 固定上游 `9642af11` 的 Linux 合并输入：quality 112、Web 299 文件/1562 项及检查/构建、package 25、格式/严格 Clippy 通过。首次完整 Rust 在未改动的原生终端 WebSocket 测试报 `ResetWithoutClosingHandshake`；同组原样定向 2 项通过，失败根因尚未证实。随后完整 Rust 原样重跑退出 0，workspace、daemon 全量、自启动 3、固定 Codex/Claude 各 1、Kilo 筛选 3 均过；不更改断言或超时，不隐去首次失败。
-- Windows：原验证脚本全过，IM 228/3 忽略、路由 8、核心 IM 9、daemon IM 11、七组 native smoke、格式/二进制构建通过。
-- 两端实际 GUI 均退出 0：既有五个 PASS 加初始读取保护共六个 PASS。延迟真实初始状态响应时选 Slack、延迟初始配置响应时编辑 Mattermost，释放后平台/草稿不变，不新增旧配置读取或保存/启动，实际存储不变；已核对截图。使用独立 Home、合成配置和浏览器延迟，不发送模型或真实 Bot 请求；不替代历史真实平台验收。
-- 两端六源码指纹与 44 处规格引用/锚点一致，原始失败与后续结果分别保留于内部证据。MIME 的处置为固定服务端源码核查，不是实际上传复测。最终提交/合并树、扫描及新 SHA 的评审状态在对应 PR 处置记录中另行确认，不由本节测试通过推定。
-
-发布前发现上游推进至 `1eaf1086`，因此追加最新合并输入验证：完整 Linux 入口退出 0，quality 119、Web 305 文件/1593 项及检查/构建、package 25、格式/严格 Clippy、workspace、daemon 库 512 及其他全量用例、自启动 3、固定 Codex/Claude 各 1、Kilo 筛选 3 均过；新 CI 的四项离线原生测试登记检查通过。Windows 完整脚本也退出 0，IM 228/3 忽略及全部原生检查通过。最新两端 GUI 各六个 PASS；Linux 首次因键盘菜单导航未找到 Settings 子项而失败，按上游新鼠标直达入口调整测试脚本后两端重跑通过，未改产品或删断言。两次导航记录均保留。不把新上游改动夹进本补丁，也不拿旧合并输入替代本轮结果。
-
-## 启动分配版本与同组平台归属（2026-09-14，review13）
-
-新增 `identical_save_invalidates_manual_and_restore_before_allocation`，扩展五种 Web 管理动作的同组切出/切回情形，并覆盖两阶段回读的换组/回组/卸载/换平台/切回；原断言及原生旧平台对照保留。手动启动经过真实 Router，恢复使用实际恢复快照和同一启动函数，模拟平台计数同时检查零身份查询/WS、新请求可启动；不是真实外部站点验收。
-
-- 反证：独立验证树保留新增测试，仅移除启动分配的版本比较，测试在 `stale start: ()` 处失败，旧请求错误地成功。两个请求以有界 `join!` 同时推进，修正了初次反证夹具的串行等待问题；只读/属主错误属于此前环境失败，不计产品复现。Web 回退到 review12 设置页后，最终 11 项中 7 失败/4 通过，旧平台回写、busy 和迟到回读均被检出；修复版定向 11 项通过。独立旧版实际网页也在切平台后新增启动计数的断言失败，不把可能被原生构建自动更新的共享资产当作旧版证据。
-- Windows 最终格式、IM runtime 229、路由 8、核心 IM 9、daemon IM 11、当前 CI 七组 native smoke 及二进制构建全部通过，脚本退出 0。三项真实站点按既有规则忽略。此前旧 daemon stop 夹具两次返回 WouldBlock，首次失败和原样复跑通过分别保留；用户授权后只修测试夹具，新增延迟头部/正文用例，并在两平台通过定向验证，没有改产品网络或降低断言。
-- Linux、Windows 实际设置页均退出 0，含无效地址、保存/启动失败保留草稿、刷新持久化、删除配置、三语、窄屏、跨组和关窗重开。新增同组 Mattermost 启动前保存响应延迟，切到 Telegram 后释放；新草稿不变、无新增启动/回读、按钮可用、存储保留已保存的配置。使用独立后端、合成配置和受控故障，没有真实 Mattermost/Actor/付费模型流量，不更换日常部署。
-- Linux 同一最终源码已完成当前 CI 的适用检查：quality 112 项，Web 299 文件/1,559 项及格式、静态、类型、构建，package 25 项及 wheel/Twine；Rust 格式、严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 串行全量（库 525 项）、自启动 3 项，以及固定 Codex/Claude 各 1 项和 Kilo 筛选 3 项原生离线检查。未启用的 OpenCode 条件项不计实测。证据由完整脚本与原样分组复跑共同覆盖，不宣称一次完整流程全绿。
-- Linux 首次完整流程在最后 Codex 检查未等到 loopback endpoint，定向原样复跑通过；第二次完整 Rust 在原生组合进程自启动检查失败，随后从自启动组起按原脚本命令执行至全部 CLI 检查通过（退出 0）。两次首次失败均保留，根因未确定；没有改这些测试、超时、固定 CLI 版本或产品启动行为。GUI 所用最终二进制与后续构建的 SHA256 一致。最终完整源码树核对、提交扫描、推送后 CI 和完整 Copilot 结果另行登记。
-
-初次失败、完整命令、截图和源码指纹由发布证据留存；反证变异与发布候选分别保存，不能将变异树当作待提交源码。产品修改与获授权的测试修复分别提交。
-
-## 旧管理请求与异步表单交接（2026-09-14，review12）
-
-本轮只处理评审 `5195000928` 的归并意见，未包含其他功能或依赖更新。验证输入是候选补丁与上游 `9642af11` 的隔离合并树，保留完整 Git 元数据；不会将合并验证树中的上游改动夹带进本功能分支。
-
-| 用例 | 可证伪断言 |
-|---|---|
-| `legacy_management_cannot_remove_a_new_mattermost_worker` | 真实 HTTP stop/unset/set 请求已进入旧平台路径、阻塞于生命周期锁时，切入并安装新 Mattermost worker；释放后不得摘除新 worker、代次或状态。以 Slack 替换时仍按原生路径关闭，共六种受控交接 |
-| `prepared_stop_rejects_identical_save_versions` | 相同配置再次保存后配置值确实相等，但旧 stop/unset 快照均被拒绝，当前 IM 内容不变；新快照仍能执行。组文档的原生持久化更新时间不包含在“不变”范围 |
-| `mattermost_url_error_is_distinct_from_missing_credentials`、`mattermost_config_reports_site_errors_without_echoing_input` | Web 与 daemon 分别区分缺/非法地址与缺凭据；固定错误不回显原 URL，原配置不被改写；旧平台规范化测试继续保留 |
-| `SettingsModal.mattermost.test.tsx` 的五个管理动作参数用例 | A→B、A→B→A 及卸载后新组重新挂载，旧保存、启动前保存、启动、停止、删除的成功、业务拒绝、传输异常均不改新 URL/凭据引用/错误，不发起后续旧请求，也不清除新操作的 busy；卸载对应真实 AppModals 关窗行为 |
-| `ignores an old configuration readback after a management action switches Group visits` | 保存成功已经进入异步配置回读后换组；旧回读完成不得覆盖新草稿。复用原有加载序号，不更改公共加载合同 |
-
-执行结果（仅使用指定测试机，当前提交的 GitHub 结果仍需单独确认）：
-
-- Linux 最终固定候选完整执行 quality（112 项）、Web（299 文件、1,558 项，含静态/类型检查及生产构建）、package（25 项及 wheel/Twine）、Rust fmt、workspace/all-targets 严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 串行全量（库 524 项）、独立进程自启动 3 项，均通过。固定 Codex/Claude 各 1 项和 Kilo 筛选 3 项通过；筛选中的 OpenCode 条件项未启用，不算 OpenCode 实测。原生 CLI 使用离线探针/本地模拟模型。完整脚本退出 0，同时取得 `ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`；本轮最终重跑没有失败项，此前失败仍按下文保留。
-- Windows Server 2025 最终候选的格式、IM runtime 227 项、路由 IM 8 项、核心 IM 9 项、daemon IM 10 项、当前 CI 七组原生 smoke 及二进制构建全部通过，脚本退出 0；3 项真实站点用例按原规则忽略，不算平台实测。
-- Linux 与 Windows 的真实设置页验收分别退出 0：无效地址禁用保存/启动、业务拒绝及传输失败可见、失败保留草稿与存储、修正重试、保存回读/刷新、缺凭据启动失败、删除配置、三语与窄屏均覆盖。除挂载中的 Group 切换外，还延迟真实保存请求的响应，正常关窗、侧栏换组、重开设置后释放旧响应；新组地址/凭据草稿不变、未被保存、按钮可用，且没有新发旧组配置读取。故障响应通过浏览器受控模拟；使用隔离后端和合成配置，没有真实 Mattermost、Actor 或付费模型流量，不更换日常部署。
-- 前端新回归在完全未修版本为 5 失败/5 通过，错误包含旧组字段污染；在仅缺卸载保护的中间版本仍为 5 失败/5 通过，错误是旧请求新增配置回读。最终 10 项定向通过。原有配置回读序号用例在旧版也通过，未为它改公共加载合同。
-- 保留首次失败：新增类型触发严格 Clippy 的 type_complexity，改为小型别名而非放宽检查；测试的无错误可选属性最初误期望 null，依既有合同改为 undefined。GUI 还暴露真实关窗卸载遗漏，补失效清理及重挂载回归后两端重跑通过。测试环境的工作目录、浏览器系统库、静态产物路径及 Windows 脚本参数问题单独记录，不混成产品缺陷或首次全绿。
-
-完整命令、初次失败、最终日志和源码指纹由发布证据留存。提交前另核对两端完整受跟踪源码树及本地引用，不把合并验证树内上游已有的设置页调整夹入产品分支。最终提交还须全历史扫描、人工检查、推送及新 SHA 的完整 CI/Copilot 复审；下列历史结果不代替这些门禁。
-
-## 启动前窗口与长流式终态（2026-09-14，review11）
-
-基线 `0da0c9f3`。新增回归均沿用原模块与夹具，已在指定 Linux/Windows 测试机通过：
-
-| 用例 | 具体断言 |
-|---|---|
-| `stopped_restore_snapshot_cannot_allocate_a_new_generation` | 恢复快照已读、代次分配阻塞时停止先落盘；恢复被拒、无新代次/worker/平台连接，停止状态不复活 |
-| `legacy_snapshot_cannot_allocate_after_mattermost_save_before_shutdown` | 旧 Slack 快照等待代次时保存 Mattermost；过期启动不分配新代次，不阻止旧 worker 的真正关闭 |
-| `legacy_start_allocation_keeps_native_snapshot_and_read_failure_behavior` | 两个非 Mattermost 平台保留原生快照处理；组文档及状态不因核对而重写；旧平台无新增读取失败，Mattermost 仍拒绝不可读状态 |
-| `read_callback_preserves_load_results_errors_and_group_document` | 原 `load` 与锁内读取返回一致，原错误种类一致，普通读取后 group 文档字节不变；既有影子状态迁移用例继续回归 |
-| `long_stream_completes_all_posts_once_and_keeps_failed_tail_fallback` | 主帖/线程的正常长流将全部最终帖子重组为一次完整正文，附件发送一次；尾段失败保留完整最终兜底，明确已交付首段可能重复的部分失败边界 |
-
-上传/编辑模拟端现在真实更新对应帖子正文，既有“初稿与不同最终正文”断言继续保留；没有以删除旧断言换取通过。无 Web 界面变更，模拟结果不得宣称新一轮真实 Mattermost/GUI 或用户验收。
-
-执行结果与失败记录：
-
-- Linux 定向 Mattermost 54 项、核心 IM 9 项通过，3 项真实站点按原规则忽略；quality 111、Web 1,526（含类型/静态检查及生产构建）、package 25（含 wheel/Twine）通过。初次完整 Rust 检查在 Web 库 485 项通过后，三个 `assistant_voice_ws_revision` 用例报测试子进程 `web port did not open`，流程退出 101，失败日志保留。
-- 未修改语音源码、测试断言、超时或并发方式；同源码定向复跑三项通过，随后原样重跑完整 Rust 检查也全部通过，退出 0 并取得 `ALL_RUST_CHECKS_PASS`。包括格式、严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 库 525 项及集成组、自启动 3 项、固定 Codex/Claude 各 1 项和 Kilo 筛选 3 项；未启用的条件项不计实测。首次端口未打开的根因尚未确定，不把复验通过说成已证明资源问题或整轮从未失败。
-- Windows 的 IM runtime 226 项、路由 6 项、核心 IM 9 项、原生七组 smoke、格式和二进制构建全部通过，退出 0；3 项真实站点仍按原规则忽略。使用同一未改 Web 源码已有 dist，不据此宣称新 GUI 验收。
-- 两端四份已改 Rust 与两份未改生命周期/入站源码 Blob 一致；三份规格 40 处本地引用/锚点通过。完整命令、最终指纹、初次失败及复验日志由发布证据留存。最终提交扫描、推送后的当前 SHA CI 和完整 Copilot 评审仍需单独确认。
-
-## 失败反馈重放与上传合同（2026-09-14，review10）
-
-基线 `55cd4418`；四条采纳、三条有源码依据不采纳，逐项理由及平台固定引用只在当前规格维护。生产逻辑仅调整 Mattermost 的已处理标记时点，不修改恢复、上传、公共 daemon 或其他平台。
-
-| 功能与用例 | 断言与边界 |
-|---|---|
-| F20/F21：`command_reply_replays_do_not_repeat_decisions_when_feedback_fails` | 帮助、取消订阅、未授权消息，分别测试反馈成功/失败；同 ID 不再回复，取消后新授权不被旧帖重放撤销；新 ID 能再次操作，零下载、反应及 Ledger 消息 |
-| F17/F20/F21：`attachment_failure_replays_do_not_repeat_downloads_or_feedback` | 第二附件失败，反馈成功/失败均只下载和反馈一次；原 ID 重放无新增反应，新 ID 可重试，临时文件清理、零 Ledger 消息 |
-| F20/F21：既有 `daemon_failure_is_private_and_lost_acceptance_is_not_retried` | 追加确定拒绝原帖重放；真实 daemon 拒绝/已入账但丢失响应两种分支均不再次提交，保留原脱敏与实际 Ledger 断言 |
-| F17：`upload_preserves_query_metadata_and_special_filename`、既有 `attaches_blob_files_to_the_original_thread` | 既有 HTTP 夹具核对上传路径、有效频道、非空文件名及原始体类型；精确校验中文和 `# + &` 文件名、body 字节、file_ids 和原线程，不改变生产上传方式 |
-| F24：既有恢复顺序、当前授权及缓存失效用例 | 按已核实服务端合同回归；不声称任意服务端关闭均证明缓存失效，也不新增舍弃游标的回退 |
-| F27：原生 TypeScript 检查 | 在指定 Linux 测试机对未改的 `55cd4418` 源码执行 `tsc --noEmit -p tsconfig.json --listFiles`，退出 0，输出明确含 `SettingsModal.mattermost.test.tsx`；本轮完整检查另行记录 |
-
-执行过程：初次两平台测试编译均发现新增测试缺少 `authorized_chats` 导入；只补测试 import，保留失败日志、不删断言。Linux 定向复验 50 项通过、3 项真实站点用例按原规则忽略。随后指定 Linux 测试机完成完整 quality、Web、package、Rust 格式/Clippy、工作区及 daemon 串行测试、安装器/发布资产和原生 CLI 合同检查，进程退出 0；未启用的条件式真实模型用例不计为实测。指定 Windows 测试机的 IM 222 项、路由 6 项、核心 IM 8 项、原生七组 smoke、格式及构建全部通过，进程退出 0，3 项真实站点用例仍按原规则忽略。两台源码 Blob 一致，三份规格 38 处本地链接/锚点有效。只补下一步指南链接，无 Web 产品界面改动，不用类型检查或模拟上传冒充新一轮 GUI、真实 Mattermost 或 Actor 验收。完整日志及源码指纹由发布证据保留，GitHub 对新提交的 CI 和评审须另行确认。
-
-## 停止与配置替换（2026-09-14，review9）
-
-来源与范围见当前规格；以下四项专用回归已在指定 Linux/Windows 测试机通过，分层执行结果见表后。CCCC 自身的命令行 IM 配置继续保留，不包含 Agent CLI 软件安装、更新或卸载管理。
-
-| 对应功能与新增测试 | 具体结果断言与证据边界 |
-|---|---|
-| F02：`delayed_stop_save_and_unset_cannot_overwrite_a_new_start` | 对 stop、相同/不同配置保存、双向平台替换、unset 六个动作，各暂停旧 worker 关闭并让新 Mattermost 启动成功/失败后再释放；停止状态先清 availability/pid/error，新持久状态及实际 worker 不被旧请求覆盖，stop/unset 返回值反映最新状态。使用真实 Router/注册表/文件状态与模拟平台，不是外部平台联调 |
-| F02：`invalidated_stop_does_not_remove_a_new_generation_or_its_worker` | 在失效旧代次后先创建新代次与 worker，再执行条件关闭；新代次和任务不变、stopper 不执行，最后原生停止仍能回收。覆盖状态已提交、等待生命周期锁期间的新启动 |
-| F02/F20：`manual_stop_clears_mattermost_availability_without_changing_legacy_fields` | 普通 Mattermost 停止清除 availability/pid/error；Slack 对照保留原 adapter_available 语义，其余原停止字段不变；不以对照宣称全部旧平台已真实登录 |
-| F02：`prepared_stop_rejects_replaced_config_without_mutating_state` | stop/unset 的旧配置快照面对新 Mattermost/Slack 配置时均不修改当前 IM 状态；共享持久化的组文档更新时间不在“不变”声明内 |
-
-review8 的保存前置失效、迟到 HTTP/自动恢复成功失败、stop/save/unset/new-start 既有用例和断言全部保留。术语复核沿用 Group、Actor、IM Bridge、Agent CLI，不修改 Web 表单、消息合同或依赖。
-
-最终候选执行结果：
-
-- Linux 隔离容器按当前 CI 完整执行 quality（111 项）、Web（1,526 项及静态/类型/生产构建）、package（25 项及 wheel/Twine），以及 fmt、workspace/all-targets 严格 Clippy、安装器/发布资产、非 daemon workspace、daemon 串行全量（库 525 项）、独立进程自启动 3 项；均通过。固定 Codex/Claude 各 1 项、Kilo 筛选 3 项原生会话测试通过；沿用离线探针/本地模拟模型，OpenCode 的未启用条件项不算实测。完整脚本退出 0，同时取得 `ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`。
-- Windows 原生检查：IM runtime 219 通过、3 项真实站点用例按原规则忽略；路由 6 项、核心 IM 8 项、当前 CI 七组 smoke 共 11 项、fmt 和二进制构建全部通过，脚本退出 0。Web 源码未改，使用同源码已构建的 Web dist；没有因此声称重新执行 GUI 验收。
-- 三份已改 Rust 文件及未改的入站文件在两台测试机与最终候选 Blob 一致；三份文档 36 处本地引用/锚点有效，完整指纹与原始日志保存在内部证据。初次定向 47 项通过、3 项忽略的版本尚不含补齐的返回值断言和配置快照测试；最终完整检查重新涵盖它们，不把初次结果重复计为新增验收。
-- 本轮定向与最终完整检查均没有失败测试；早先 review6/7/8 的失败记录仍单独保留，不改写历史。测试机 SSH 过期会话通过正常账号重新建立，不修改认证配置，也不是产品测试失败。
-
-以上是受控协议、实际 Router/注册表/文件状态及原生平台回归，不是新一轮真实 Mattermost、人类到 Actor、GUI 或付费模型验收。没有更换日常部署。最终提交的全历史扫描与推送后新 CI/评审另行核对，不复用 `9a57c906` 的 GitHub 绿灯。
-
-## 启动交接与失败反馈去重（2026-09-14，review8）
-
-修复前提交 `a30e274be37aaf0f545b7fb5d543d926dcebc036`，本轮为 `feat/mattermost-im` 的未提交改动。只修改 Mattermost 入站、生命周期相关入口及对应三份规格/记录；不修改 CLI 管理、其他平台之间的既有合同、Web 表单或依赖。初次新增七个测试，后续统一判断补一个精确匹配测试，共八个；另在既有 HTTP 过期启动用例增加切出平台的场景，不删改其原断言。
-
-| 对应功能与测试入口 | 具体结果断言与证据边界 |
-|---|---|
-| F02：`start_state_commit_capability_is_exact_and_opt_in` | 自行提交启动状态的唯一清单只包含 Mattermost；未设置、七个旧平台、未知值、大小写/空白变体均不匹配。函数不归一化输入，各调用点保留原有预处理；不改变未登记平台的处理路径 |
-| F02：`legacy_start_completion_respects_mattermost_state_ownership` | 使用原生保存入口，受控延迟 HTTP 所用 `finish_start` 的成功/失败回写。新配置为 Mattermost 时 IM 持久状态逐值不变，不表示工作组文件未保存或其文档更新时间不变；新配置为 Slack 时原成功/失败字段与 API 结果不变。这是实际结果提交函数回归，不是实际登录 Slack 的全程联调 |
-| F02：`legacy_restore_completion_respects_mattermost_state_ownership` | 受控延迟自动恢复所用提交函数；切入 Mattermost 后旧成功/失败均不能回写，旧代次安装被拒并执行 stopper，无存活 worker；旧平台对照保留原 `enabled` 和其余结果字段。测试提交阶段，不声称启动过真实旧平台连接 |
-| F02：`switching_to_mattermost_invalidates_old_start_before_stop_can_run` | 阻塞原生停止锁，经过真实 Router 保存 Mattermost；HTTP 请求尚未完成时配置已保存且旧代次已失效。释放锁后保存成功，无遗留 worker |
-| F02：`superseded_restore_cannot_overwrite_new_platform` | 实际调用 `restore_enabled`，阻塞模拟 Mattermost 身份查询；经真实 HTTP 保存 Slack，再释放旧连接成功/失败路径，最终新配置及运行字段不变，无旧 worker |
-| F02：既有 `superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start` | 增加 Mattermost→Slack 的成功/失败交接；保留保存不同/相同配置、stop、unset、新 start 的所有原场景和断言 |
-| F20：`lookup_failure_replays_are_deduplicated_but_new_posts_can_retry` | 频道查询失败、发送者查询失败、身份不匹配，各覆盖提示成功/失败。同一源帖子两次投递只有一次查询/提示尝试；新 ID 再次尝试；零附件下载、零 Ledger 消息，不把反馈记录当成功入账 |
-| F20：`filtered_lookup_failure_does_not_consume_feedback_deduplication` | 未授权或暂停时无反馈；授权/恢复后同 ID 能反馈，第三次去重，查询两次、提示一次、零下载。其他寻址/线程/Bot 过滤由原有回归继续验证 |
-| F20：`remembered_posts_are_bounded_and_scoped_to_one_worker` | 直接操作生产缓存：8193 个 ID 只保留 8192 个，最早淘汰；重复 ID 不增加容量或淘汰其他项；新 worker 缓存为空。不对真实平台发送海量请求 |
-
-初次执行结果（对应统一判断前的 review8，仅限受影响范围，不是全部 CI）：
-
-- Linux 指定测试机的隔离容器：`cargo test -p cccc-pair-web --lib --locked im_runtime -- --test-threads=1` 通过 216 项、默认忽略 3 项真实站点用例；`routes::im::` 通过 5 项；核心 `im_state` 通过 8 项；`cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 和 `cargo build -p cccc --bin cccc --locked` 全部通过。
-- Windows 指定测试机的隔离目录：相同筛选的 IM runtime 通过 215 项、默认忽略 3 项真实站点用例；路由 5 项、核心 IM 8 项、格式和原生二进制构建全部通过。IM 数量差异来自条件编译。首轮通过后，为补全原生命令输出的独立日志，原样再跑上述检查，仍全部通过；源码没有因此改动。
-- 两平台均在测试机上核对四份产品文件的 Git Blob 指纹，与当前工作区相同；三份文档的 34 处本地引用及所含锚点有效。源码指纹与原始日志留在内部证据，不以文档检查代替产品行为测试。
-
-失败过程保留：Linux 首次隔离容器的 npm 默认缓存目录不可写，改为本轮工作目录缓存；随后新增测试因复用构造函数的私有可见性而编译失败，仅放宽到原模块内部可见。第一次定向测试四项通过但有新增测试未使用 `Json` 返回值的警告，已补保存成功断言并重跑。一次完整检查启动命令因登录 shell 重置 PATH 未找到 Cargo，改用同容器非登录 shell。均未改工具链或放宽既有测试断言。
-
-后续整理（同日）：已把保存、手动启动、自动恢复和结果回写统一到模块级常量及判断函数；自动恢复原有 `string` 去空白与保存原有小写处理不变。P05 仅改注释：不否认客户端前缀的存在，但无该前缀不能排除 daemon 侧结果不明；未改变分类、固定提示或反应。
-
-后续最终复验：Linux 相同筛选的 IM runtime **217 项**、路由 **5 项**、核心 IM **8 项**通过，格式、workspace/all-targets 严格 Clippy 和原生构建通过；Windows 的 IM runtime **216 项**、路由 **5 项**、核心 IM **8 项**、格式和原生构建通过。两平台各默认忽略三项真实站点用例；新增的一项是上述精确匹配测试，不以此增加真实平台验收数量。最终源码指纹两平台一致，三份文档的 34 处本地引用/锚点有效。本次复验没有失败项；前述初次失败历史仍保留，不写成整个 review8 从未失败。执行日志与初次日志分开保存，未重复运行 GUI、真实 Mattermost/Actor 或全部 CI；尚未提交、推送或部署。
-
-本轮证据为受控 HTTP/WebSocket、真实文件状态/注册表及 daemon/Ledger 回归；未重新运行真实 Mattermost、人类→Actor、GUI 或所有 CI 分组。没有 Git 提交、推送、PR 操作或更换日常部署。术语沿用现有 Group、Bot、Actor、授权、订阅、Ledger，B09/B21/B38 与 F02/F20 的修复证据如上，不增加领域概念。
-
-## 多附件暂存回归（2026-09-14，review7，完整检查分组完成，含原样复验）
-
-基于 `ae7149a6`，只调整 Mattermost 入站附件保存时机，及原生附件 helper 的最小等价提取；新增五个测试，旧单文件测试仅适配分开的暂存/保存调用，不删改原断言。不改变其他平台的 `store_stream` 保存语义、UI、配置、依赖或日常部署。
-
-| 功能与用例 | 实际检查的结果 |
-|---|---|
-| F17/T14：`later_attachment_failure_cleans_staging_without_deleting_existing_blobs` | 八种情形：第二文件 HTTP 失败、错误源帖、声明大小超限、HTTP 长度超限、未知长度流超限、流失败、非法 ID，以及预存同内容 Blob；失败无入账、有安全提示、新增临时/最终文件均不保留，预存 Blob 内容不变 |
-| F17/T14：`cancelling_later_attachment_removes_pending_uploads` | 等第二附件进入流传输后取消；第一附件仍暂存、未保存最终文件，取消后临时文件清空，无入账；使用原生任务取消和临时文件析构 |
-| F17/T13：`completed_attachments_are_committed_together_with_full_metadata` | 模拟 Mattermost REST 对接真实 daemon 请求处理，一条 Ledger 消息含两个有序附件；检查标题、类型、MIME、字节数、SHA-256、源文件 ID 与实际内容，重复事件不再次下载或入账 |
-| 共享旧路径：`store_stream_preserves_existing_attachment_contract` | 分块读取后的元数据与原生 `store_bytes` 一致，覆盖 MIME 推断、有效/空白来源 ID、摘要、内容寻址去重和文件内容 |
-| 共享旧路径：`store_stream_cleans_partial_upload_on_read_and_size_errors` | 已写部分内容后出现读取故障或累计体积超限，原错误字符串保持，原生临时文件清理，无最终文件 |
-
-Linux 首次编译因四处旧测试仍调用更名前函数而失败；只更新调用方式，再跑附件相关筛选，23 项通过、0 失败。原始失败日志保留，不能写成首次即通过。Windows 已完成核心 IM 8 项、完整 IM 209 项（3 项真实站点用例默认忽略）、七组原生 smoke 共 11 项、fmt 及构建，全部通过。
-
-Linux 完整 CI 等价检查中，quality/Web/package、fmt/Clippy、安装器通过，随后原生 MCP `shared_runtime_is_sandboxed_and_persists_actor_store` 在五秒等待后返回 `running` 而不是 `completed`，该组为 81 通过/1 失败。`crates/cccc-mcp` 与上游基线无差异；原样单项复验通过（1 项），再原样执行完整 Rust 脚本通过，包括 MCP 82 项、daemon 库 525 项、其余 workspace/集成/自启动及原生离线 CLI 检查。保留首次失败，不修改共享代码/断言、不增加超时或跳过用例；复验通过也不能宣称已经证明或修复首次失败原因。
-
-适用 CI 检查分组均取得通过结果：Ruff、Python 111 项、Web 检查/1,526 项测试/生产构建、25 项打包用例及 wheel/Twine、Rust fmt/严格 Clippy/安装器/完整回归、Windows 上述检查与构建。CI 固定版本 Codex/Claude 各 1 项、Kilo 筛选 3 项通过；其中 OpenCode 条件项未启用，不把条件返回当成 OpenCode 实测。结论不是“首次完整脚本全绿”；本轮代码在两台测试机一致，未把测试期间的记录文档更新当成产品行为变更。最终提交的全历史扫描、推送及新 GitHub CI 状态另行登记，不引用上一提交的 CI 绿灯证明这次补丁。
-
-以上新增用例为受控协议与文件系统测试，其中成功路径实际调用 daemon 并检查 Ledger；不是重新开展真实 Mattermost/Actor 或浏览器验收。保存阶段磁盘故障和 daemon 提交之间的原子性不在本修复范围，禁止通过删除共享最终 Blob 伪造回滚保证。术语沿用既有词汇，无新增领域定义。
-
-## 本次推送前完整检查（2026-09-13，review6）
-
-用户在 V01 完成后授权推送，范围为 `5ca137b1` 之后的两份 Mattermost Rust 文件及四份对应文档，继续更新原 PR #103；不合并、不发布 Release、不更换日常部署。产品代码与上述 review5/V01 候选内容相同，本阶段只补充检查记录。
-
-- Linux 测试机按当前 `.github/workflows/ci.yml` 补齐：Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,526 项前端测试及生产构建、25 项打包用例、wheel 校验与 Twine；Rust fmt、workspace/all-targets 严格 Clippy、安装器及发布资产、非 daemon workspace、daemon 串行全量（库测试 525 项）、独立自启动 3 项均取得通过结果。
-- CI 固定版本 Codex 0.153.2、Claude 2.1.261、Kilo 7.5.14 在隔离容器执行原生会话检查，Codex/Claude 各 1 项、Kilo 筛选 3 项通过。筛选中的 OpenCode 条件项未启用，不能据此称 OpenCode 实测通过；实际测试使用原生离线探针或本地模拟模型，没有复制用户凭据或调用付费推理。
-- Windows 测试机重新运行核心 IM 8 项、完整 IM runtime 204 项（3 项真实站点用例默认忽略）、当前 CI 的七组 Windows smoke 共 11 项，以及 fmt 和原生构建，全部通过。仍保留已有 daemon 测试编译警告，不称全程零警告。两平台 GUI 与 V01 的相同产品代码证据见下一节，未为此次推送重复创建真实 Bot。
-- **失败和复验不能省略**：首次 Linux workspace 的 `shared_runtime_is_sandboxed_and_persists_actor_store` 在等待后返回 `running`，而断言要求 `completed`；原样单项复验通过，随后完整非 daemon workspace 重跑也通过（MCP 库 82 项）。该次重跑后，自启动的 `daemon_stop_waits_for_the_combined_web_process_to_exit` 曾报 daemon 未就绪；原样重跑完整三项自启动用例通过。两项测试及对应共享实现与本分支上游基线一致；启动测试只等待 daemon 状态而非 Web 完成启动，存在时序窗口，但首次失败的确切原因尚未证明。没有改断言、扩大超时、跳过失败项或夹带共享修复。
-
-准确结论是**同一产品源码的适用检查分组均已取得通过结果，包含两项失败后的原样复验**，不是一条完整脚本首次全绿，也不表示上述不稳定性已修复。Linux 最终二进制 SHA-256 仍为 `6f4e209d6573b894c8fcca0d8b7297a6f5a2aba47e6601d19a47302ab2d65d04`。推送前仍须对最终提交及完整 Git 历史执行秘密扫描；实际远端提交、扫描结果和正常 CI 状态在内部发布记录登记，不把待触发 GitHub CI 写成已通过。
-
-## 连接器设计规范复核修订（2026-09-13，代码回归与 V01 业务补收完成）
-
-修改前提交 `5ca137b1`，只修改 Mattermost 入口、入站和对应文档。不改变共享错误、其他连接器、公共 `seen` 或既有日常部署；该修复及 V01 阶段未执行提交、推送和 PR 操作，后续发布前复验单独记录。
-
-| 范围 | 新增用例及证据边界 |
-|---|---|
-| 用户输入进入错误 | `daemon_failure_is_private_and_lost_acceptance_is_not_retried` 使用真实 daemon 收件人解析产生含合成私人目标的拒绝，断言本地错误、组日志、`last_error`、聊天提示均不含该输入或合成 Bot Token，并保留安全帖子 ID |
-| 已受理但响应丢失 | 同一用例让真实 daemon 入账后断开 TCP，检查仅一次提交、仅一条 Ledger 消息、重投同一源帖子不再次提交；聊天显示无法确认，而非建议直接重试；不添加失败反应。**不是实际 Actor 回答验收** |
-| 早期查询失败 | `lookup_failure_feedback_respects_addressing_authorization_and_thread` 覆盖频道/发送者查询失败、授权/未授权、暂停、线程不匹配、未点名、未知频道类型；零附件下载、零模型提交、不修改授权 |
-| 反馈失败与 Bot 过滤 | `lookup_error_reply_failure_is_bounded_and_cached_bots_are_ignored` 检查自身/缓存中其他 Bot 不反馈，单次事件处理遇反馈拒绝时仅尝试一次并记录错误；该历史用例未重复投递失败帖，不证明 MM-LOOKUP-REPLAY 已覆盖 |
-| 受控阻塞写入 | `socket_write_deadline_covers_ping_and_pong_and_can_be_cancelled` 使用阻塞 Sink 调用生产发送函数，验证 Ping/Pong 均在 5 秒超时且可取消；原有重连、序号、背压及停止回归保留。**不等于真实网络写入卡死复现** |
-| 真实业务补收 | 随后使用专用 Bot、私有频道、独立 Group 和真实 Codex Actor 完成 V01；正向链路及恢复前撤销授权两项均通过，方法和边界见下文，不以 Bot 自发帖协议验收替代 |
-
-结果（仅对应本节修订，不沿用下节历史的全量 CI 声明）：
-
-- Linux：Mattermost 定向 41 项通过，完整 IM runtime 205 项通过，均默认忽略 3 项真实站点用例；核心 IM 8 项、workspace/all-targets 严格 Clippy、格式检查与原生二进制构建通过。
-- Windows：完整 IM runtime 204 项通过（默认忽略 3 项 live），核心 IM 8 项、挂起进程启动/Job 子进程回收/组合 Web 绑定失败退出 3 项、格式检查与原生二进制构建通过。数量差异来自条件编译。
-- 两平台 agent-browser 配置页均取得 `START_SAVE_DRAFT_GUI_PASS`、`CROSS_GROUP_GUI_PASS`、`GUI_PASS`。覆盖三语、窄屏、原生地址校验、保存/启动故障与修正、草稿/持久状态、跨组隔离；分别查看 Linux 浅色及 Windows 深色中文错误截图。使用隔离 Home 和合成配置，不调用模型，不替换日常实例。
-- 真实 Mattermost 协议补收单独显式运行 1 项通过；使用已配置 Bot 在原测试频道自发一帖，同连接 ID 恢复。临时凭据副本已清除，未修改服务器配置。**仍不是 V01 人类→Actor 业务链路验收。**
-- 首轮 V01 因缺少人类账号登录态暂停；用户随后授权使用现有测试管理员登录并创建专用 Bot，经正常登录及 MFA 后完成下述补验，没有关闭认证或重置用户密码。
-
-上述修复及 V01 阶段没有运行仓库 Python 测试集、前端单元测试、打包或全部 daemon/workspace 测试，不宣称当时已重跑整条 GitHub CI。没有提交、推送或更新日常部署。
-
-### V01：真实人类身份请求、断线补收和 Actor 回复
-
-在指定 Linux 测试机运行与上述 review5 相同的二进制，SHA-256 为 `6f4e209d6573b894c8fcca0d8b7297a6f5a2aba47e6601d19a47302ab2d65d04`。仅新建隔离测试容器/Home/工作目录、专用私有频道及 Bot；使用已配置的 Codex CLI 0.147.0 登录副本，不复制旧会话。通过原生 Group、Actor、`/subscribe`、待确认配对与撤销接口配置，不直接写授权文件或 Ledger。
-
-人类输入由自动化工具操作已登录的人类测试账号浏览器，通过 Mattermost 同源发帖接口发送；不是人工亲试，也不是 Bot 自发帖。故障代理只中断该隔离实例通往 Mattermost 的 TLS 隧道，不解密 TLS、不重启 worker、不修改服务器或产品代码。
-
-| 场景 | 实际结果 |
-|---|---|
-| 断网期间提问 | 断开隧道后发送唯一编号请求；断网期间 Ledger 无此消息。恢复后同一源帖子 ID 对应恰好 1 条人类入账 |
-| 真实 Actor 回答 | 原生 Codex Actor 实际执行 1 轮，通过 `cccc_message` 回复该 Ledger 事件；Actor 回复 1 条，Mattermost 回帖 1 条，主时间线可见，`root_id` 为空。浏览器定点快照及截图确认正文显示 |
-| 撤权后恢复 | 再次断网并发送另一编号，恢复前通过原生 API 撤销授权及订阅；恢复后收到未授权提示，证明帖子确实被恢复处理，而非连接仍然断开 |
-| 拒绝调用与重复检查 | 撤权恢复后观察 70 秒：该请求 0 条 Ledger 入账、0 条 Actor 回复；Codex 会话的 `task_started` / `task_complete` 数均保持 1，Actor PID 不变。第一次请求及其回复仍各 1 条 |
-| 清理 | 停止独立 Group、桥接和容器；撤销新 Bot Token 后实际返回 HTTP 401，活动测试 Token 为 0；专用 Bot 停用。管理员浏览器正常退出后 `users/me` 返回 401，临时 Codex 登录副本删除，日常实例未重启 |
-
-结果为 `V01_PASS`。原始帖子 ID、Ledger 事件 ID、时间线、会话事件计数及截图只保存在内部验收证据，不把凭据、私有站点或会话写入公开仓库。这只证明本次缓存有效期内的两条有限场景，不保证所有故障下 exactly-once，也不覆盖进程重启后的重放或服务端恢复缓存失效。此次没有更改产品代码，因此不重复前述两平台构建/回归，也不把 Linux 真实站点验收写成 Windows 现场验收。
-
-## PR #103 本轮修复与原生断线补收（2026-09-13，历史验证已完成）
-
-修复基线 `3a34c9fb85c418b2add27e78b32afa2b1f688f58`。本轮修改尚未提交或推送，不合并、不发布、不更换日常实例；仍仅在指定 Linux/Windows 测试机验证。
-
-| 范围 | 新增或补强的验证 |
-|---|---|
-| 身份写入竞争 | `identity_commit_is_serialized_and_failure_keeps_authorization_cleared` 在旧身份提交点阻塞，证明新提交不能越过它；随后重启新身份保留授权。注入身份文件写入失败，验证旧授权已清除而新身份未误记 |
-| 过期错误和身份 | `stale_runtime_errors_and_identity_cannot_mutate_current_state` 验证同配置新代次、不同平台新配置两条路径，旧错误写入/清除及旧身份均不能改当前状态；当前错误文本脱敏 |
-| 保存失败保留草稿 | 实际 `SettingsModal` 增两个用例：旧配置分别为 Telegram/Mattermost 时，Start 保存失败不回读、不调用启动、不丢平台/URL/凭据引用/错误。修正后重新保存、启动失败及状态回读继续正确。独立严格类型检查包括这些测试夹具 |
-| 原生序号与补收 | `socket_cursor_handles_replies_duplicates_gaps_and_new_connections` 和 `websocket_recovers_without_hello_and_preserves_order_and_current_authorization` 验证下一序号、响应包、非帖子事件、重复/缺口、无 hello 恢复首帖、有界队列顺序；补收内容仍受当前授权限制，未授权附件不下载 |
-| 缓存失效提示 | `lost_recovery_cache_remains_visible_after_later_reconnect` 验证新连接 ID 重置序号，之后再次普通重连仍保留缺口提示；日志不含合成 Token |
-| 实际平台协议 | 新 `live_native_websocket_recovers_post_sent_while_disconnected` 默认忽略，仅显式授权运行：断开独立连接，由测试 Bot 在指定测试频道自发一帖，再用同一 ID/下一序号实际补收；不调用模型、不影响日常连接。与故障模拟分开记录 |
-| 两平台真实 Web | 浏览器脚本增加“在旧 Telegram/Mattermost 配置之上启动保存失败”的真实页面操作、启动请求计数、草稿/持久配置/错误截图；保留三语、窄屏、跨组草稿和其余原生配置回归 |
-
-最终结果：
-
-- Linux：针对性 IM runtime 201 项通过（增加新 live 用例前默认忽略 2 项）；4 项实际 SettingsModal 用例及独立夹具严格类型检查通过。随后 Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,526 项前端单测及生产构建、25 项打包用例和 wheel/Twine、Rust fmt/严格 Clippy、安装器/发布资产、完整非 daemon workspace、daemon 串行全量（525 项库测试）、3 项自启动与 CI 要求的 Codex/Claude/Kilo 原生检查均通过，`ALL_RUST_CHECKS_PASS`、`ALL_LINUX_CHECKS_PASS`。Kilo 筛选中的 OpenCode 条件项未启用，不称为真实 OpenCode 联调。
-- Windows：核心 IM 8 项、完整 IM runtime 200 项（3 项 live 默认忽略）、七组 Windows smoke 共 11 项及原生构建通过，`ALL_WINDOWS_CHECKS_PASS`。测试数量与 Linux 的差异来自平台条件编译；没有为通过测试放宽条件或修改既有断言。
-- Linux/Windows 真实 Web：`START_SAVE_DRAFT_GUI_PASS`、`CROSS_GROUP_GUI_PASS`、`GUI_PASS` 全部通过。原生设置页的保存/启动失败及重试、两种旧平台草稿保留、持久配置不变、三语、窄屏和保持挂载时跨组切换均验证。截图分别检查 Linux 深色和 Windows 浅色；截图前滚动到原生错误区域，不更改产品布局。
-- 真实 Mattermost：显式运行新 live 用例，1 项通过，实际补收断线期间由测试 Bot 发送的帖子，连接 ID 保持不变、事件序号连续，`LIVE_NATIVE_RECOVERY_PASS`。只在已授权测试频道保留一条自发协议帖，不调用模型、不重启 Mattermost、不修改日常 Bot 配置；临时凭据副本已移除。
-- 两平台测试源码与工作区传输快照的 2,025 个受版本控制文件一致，PowerShell/CMD/BAT 按 Git 文本规则规范化 CRLF；四份文档中的 57 条本地引用有效。Linux GUI 二进制与完整构建 SHA-256 一致。
-- 首轮命令因登录 shell 重置 PATH 未找到 Cargo，改用原验证容器的非登录 shell 后继续；首次 Rust 编译指出两个入站测试仍使用旧认证签名，补齐合成 Token 后通过。失败轮次保留，不冒称首次通过，也不修改工具链或依赖。Windows 第一轮 GUI 已通过，随后只为让截图包含错误区域补滚动并重跑，产品代码未因此改变。
-
-本轮没有提交、推送、触发 GitHub CI、合并或发布。连接器原生固定重连间隔及其他平台行为不变；未替换日常开发/标准对照实例。未来推送仍须对最终 Git 历史执行独立秘密扫描，本次源码对照不是安全扫描。
-
-## PR #103 第三轮审核修订复验（2026-09-13）
-
-基于 `436028de741031be7b6048bf0cb2f58f261ef64a` 修复本轮三项意见，继续更新原 PR，不涉及 CLI 管理、其他连接器行为或日常部署。
-
-| 修订 | 验证及结果 |
-|---|---|
-| 过期启动不得覆盖新状态 | `superseded_http_start_cannot_overwrite_save_stop_unset_or_new_start` 卡住真实 HTTP 入口的旧启动，分别保存新配置、保存相同配置、停止、删除或再次启动，再释放旧请求；两种 WebSocket 结果共十个组合，新状态完整保留。`stale_success_and_error_commits_are_both_discarded` 分别验证过期成功及错误不能写回 |
-| 永久认证失败不无限重连 | `permanent_reconnect_authentication_failure_stops_registered_worker` 验证 401、403、认证拒绝三种情况：原生 worker 结束，HTTP 状态不运行、不可用、无 PID，保留具体错误；再等待超过原退避周期，没有新增请求。临时 503、429、非法 JSON 仍可重试；既有断线恢复测试继续通过 |
-| 明确工作组草稿生命周期 | 两个实际 SettingsModal 用例均通过，新增 A→B→A 且不编辑 B 的情形，返回 A 后草稿也已清空；同组平台切换和保存只作用于当前组。两平台真实网页在设置窗不卸载时换组，验证清空、重新填写、同组恢复和保存回读 |
-
-- Linux 针对性 Mattermost 测试 28 通过、2 个真实站点 live 用例默认忽略；Ruff、111 项 Python、Web format/lint/typecheck、293 文件的 1,524 项单测、生产构建、25 项打包用例及 wheel/Twine、Rust fmt/Clippy 和安装器/发布资产通过。独立夹具类型检查、完整非 daemon workspace、daemon 串行全量（含 525 项库测试）、三项自启动及按 CI 条件启用的 Codex/Claude/Kilo 原生会话检查全部通过，`ALL_LINUX_CHECKS_PASS`。Kilo 筛选中的 OpenCode 条件用例未启用，不称为真实 OpenCode 联调。
-- Windows 原生测试：核心 IM 8、完整 IM runtime 195（2 live 默认忽略）、七组 Windows smoke 共 11 项及构建通过，`ALL_WINDOWS_CHECKS_PASS`。既有平台条件编译警告保留，不修改无关模块。
-- 两平台原生 Web 的完整配置、无效地址、保存/网络/启动失败及重试、刷新持久化、三语、窄屏、删除配置及保持挂载的跨组草稿隔离均通过，`CROSS_GROUP_GUI_PASS`、`GUI_PASS`。人工检查 Linux 深色及 Windows 浅色截图；Linux GUI 二进制与最终构建的校验和一致。只使用隔离 Home、合成 Group 和凭据引用，浏览器及服务已关闭，原资源恢复。
-- 首次 Rust 编译发现代理测试仍直接对新错误类型调用字符串方法，改用文本表示后通过；独立夹具检查第一次在错误工作目录查找 `vite/client`，改从 Web 项目目录运行后通过。没有放宽生产类型、修改依赖或把失败轮次算作通过。
-
-所有测试、构建、浏览器操作和发布扫描仅在指定测试机执行。本轮没有实际调用 Mattermost 或模型，不把协议模拟替代真实站点验收；既有现场记录保留。推送仍以前置全历史及增量 Gitleaks、两平台源码一致性和文档链接检查通过为门禁；不合并、不发布、不更换日常运行实例。
-
-## PR #103 第二轮审核修订复验（2026-09-13）
-
-本次基于 `90fb70017525615fbde37d28066ffb341638d747` 修复第二轮审核的四项意见，仍只更新原 Mattermost PR，不涉及 CLI 管理、公共调度或其他连接器行为。
-
-| 修订 | 具体证据 |
-|---|---|
-| 附件处理移出 WebSocket 循环 | `slow_attachment_does_not_block_socket_pongs_or_reorder_inbound` 实际启动四个 worker，阻塞文件下载期间仍回应服务端 Ping，之后的 `/help` 不越过附件请求 |
-| 有界处理及顺序 | `socket_backpressure_keeps_sending_heartbeats_and_preserves_order` 把队列缩为 1，超过三次心跳周期仍发送 Ping，不因本地背压误重连，恢复后事件按序到达；接收端关闭后 socket 任务退出。满队列暂停读取的限制见指南，不承诺无限负载下不断线 |
-| 完成反应早于 ID 绑定 | `completion_waits_for_dispatch_binding_and_is_applied_only_once` 验证成功/失败完成均等绑定，重复完成不重复反应，无关完成不清除当前请求；保留既有失败及清理路径 |
-| Mattermost 草稿不跨组恢复 | 新 `SettingsModal.mattermost.test.tsx` 保持同一组件挂载，仅改变 Group；同组恢复，跨组 URL/Token 清空，保存只提交新组内容。测试机临时撤去草稿补丁时，此测试确实因恢复旧组 URL 而失败；恢复补丁后通过 |
-| 既有类型夹具补齐 | 补 `mattermostUrl` 及既有 `weixinAccountId` 必填项，不放宽类型；另以项目 TypeScript 配置显式纳入 `web/tests/` 的该夹具检查，通过 `FIXTURE_STRICT_TYPES_PASS` |
-
-Linux 定向协议测试 28 项通过、2 项凭据依赖 live 用例按默认规则忽略；前端定向测试 27 项通过。Windows 核心 IM 8 项、完整 IM runtime 191 项及七组 11 项 smoke 通过，原生编译通过。新异步用例包含在两平台测试中，不把零项筛选算通过。
-
-完整复验结果：
-
-- Linux：Ruff、111 项 Python；Web format/lint/typecheck、293 个文件的 1,523 项单测及生产构建；25 项打包测试、wheel/Twine 与产物形状；完整 Rust fmt/Clippy、安装器/发布资产、非 daemon workspace、daemon 串行、三项自启动及按 CI 条件启用的 Codex/Claude/Kilo 原生会话检查通过。首次 workspace 的未修改 `verified_live_owner_is_recovered_after_hostname_changes` 报 `Text file busy`；准确筛选到该项复跑通过，随后完整 Rust 流水线重跑至 `ALL_RUST_CHECKS_PASS`，未修改或跳过此测试。不能把首次完整命令记为成功。
-- Windows Server 2025：上述原生回归及构建最终 `ALL_WINDOWS_CHECKS_PASS`；保留既有编译警告，不为本补丁屏蔽或修改无关模块。
-- 两平台真实 Web：原有配置、无效 URL、保存/启动失败与重试、持久化、三语、窄屏及清除配置流程全部重跑；新增原生 Group 删除事件驱动的换组，验证同一个设置窗保持挂载，另一组 URL/Token 不恢复，新组草稿切换和保存回读正确。只删除独立 Home 内本次创建的合成组，无现用资料；浏览器和隔离服务已关闭。人工检查 Linux 浅色、Windows 深色的跨组截图。
-- 新单测首轮发现夹具字段缺失并补齐后全量通过；浏览器脚本早期失败来自 DOM 返回值、隐藏 dialog 选择器和 Windows 命令参数解析，修正脚本后完整重跑，无产品代码为这些定位问题改变。失败批次保留，不混入通过记录。
-
-全部执行于指定测试机，本机未运行测试、构建或扫描。模拟 HTTP/WS、合成 Group 和浏览器错误响应不等于重新进行真实 Mattermost 收发验收；两项默认忽略的 live 用例未在本轮重跑。最终提交仍须通过全历史和增量 Gitleaks、两平台源码一致性及文档链接门禁后才能推送；日常实例没有部署变更。
-
-## PR #103 审核修订复验（2026-09-12）
-
-本次在 `e73666d7682e0a1546a651c22dcb090605c0b52f` 之后修复审核意见，继续更新同一个 PR，不新增 Issue、合并或部署。
-
-| 修订 | 验证方式 | 当前结果 |
+| ID | Required behavior | Historical evidence and limits |
 |---|---|---|
-| 去掉点名后的空消息不回复、不调用；纯附件仍处理 | 同模块协议测试：四类频道、五种空正文/裸点名，以及四类纯附件授权请求 | Linux、Windows 均通过 |
-| Mattermost 站点 URL 校验及保存/启动禁用 | 原有配置工具与页面单测；有效站点、子路径、IPv6、错误协议、凭据、查询、片段、API 后缀 | 29 项针对性前端测试通过 |
-| 保存/启动失败可见并可重试 | 原生 Web + 浏览器模拟保存拒绝、网络失败、启动前保存拒绝；另测真实缺失凭据启动失败 | Linux、Windows 真实页面均通过；失败不保存/不启动，解除故障后可保存重试 |
-| Bot 独立身份是部署要求，不是全局互斥保证 | 指南、三语 UI 和规格核查；不新增跨 Group/实例的 Bot 注册或锁 | 文案已统一，原授权模型不变 |
-| 英文平台表语言一致 | 对照其他平台单元格人工核查 | Mattermost 行已改为英文 |
+| T01 | Native source organization, helpers, visibility, errors, tests and dependencies | Source review against Slack, Telegram and Discord; necessary shared changes documented |
+| T02 | Web/CLI configuration, references, drafts, validation, status, themes, narrow layout and locales | Automated and real-browser checks; user confirmation separately in T20 |
+| T03 | Real startup validation; explicit auth/TLS/proxy errors; redaction; recovery | Real HTTPS/WSS and invalid-token checks; controlled WS auth, proxy/NO_PROXY and TLS failures |
+| T04 | Start/stop/status/config/unset/logs and enabled restore; no Actor stop or old-ledger replay | Live configuration/lifecycle checks; nonempty logs and follow-mode checks |
+| T05 | Pairing, approval, rejection, expiry, revocation and unsubscribe; no unauthorized file download | Real Web/CLI pairing; 600-second expiry and aliases; fixture checks for unauthorized files and exact threads |
+| T06 | Public/private channels, DMs, permitted group DMs and threads; correct routing and authorization | Five real target types reported; channels/threads authorized separately; shared Group context stated |
+| T07 | Default/specific Actors and aliases; no extra recipients from body mentions | Live addressing and unknown-target checks; controlled unrelated/Bot/duplicate filtering |
+| T08 | Commands and aliases through a real Mattermost client | @Bot-prefixed subscribe, unsubscribe, send, pause/resume, help/status and all verbose forms; bare slash interception documented |
+| T09 | Independent per-target subscriptions and shared Group output | Real multi-target pause/resume, verbose and status checks; no claim of private DM sessions |
+| T10 | Public visibility, sender fallback, Markdown, links and code; no loops | Shared privacy/filter assertions and real formatting checks; private terminal content excluded |
+| T11 | Per-target progressive output; complete-final dedupe; fallback after failures | Real main-timeline/thread editing; controlled failed creation/editing, long previews and fallback |
+| T12 | Unicode-safe long text and code, fully reconstructible | Real multilingual/emoji chunks and a 22,158-character code/link body; controlled fallback cases |
+| T13 | Two-way text/files/images/PDF/audio/video and attachment-only messages | Real transport of synthetic TXT/PNG/PDF/WAV/WebM files with hash checks; not content-understanding evidence |
+| T14 | Size, ownership, length, path, redirect and upload failures | Real oversize rejection; controlled unknown length, ownership, redirects, paths, cross-Group Blobs and HTTP 403 |
+| T15 | Stable source IDs, dedupe, Bot/system/edit filtering; no wait for model completion | Source correlation and shared client-ID assertions; controlled repeated/edited/Bot posts |
+| T16 | Own-Bot processing reactions, correlated completion/failure and cleanup | Real reactions; controlled event association, expiry and HTTP 403 without losing message text |
+| T17 | Ledger lag, disconnects, rate limits, auth failures and restart boundaries | Shared lag recovery and real restart boundaries; controlled WS/429/401/403 and lost POST responses without duplicate creation |
+| T18 | Multi-target Group behavior and separate Bots for separate Groups | Real multiple targets; two simulated Bots for Group isolation, not a second real-Bot deployment |
+| T19 | Existing Rust/Web/build/package paths, with evidence for each mapped feature | Version-specific workspace, frontend and package records; no separate connector package |
+| T20 | User configures through Web and tests addressing, files, threads, streams and commands | Contributor recorded explicit user acceptance on September 8, 2026; not fresh acceptance of this integration |
 
-完整复验结果：
+## Historical findings and later corrections
 
-- Linux 指定测试机：Ruff、111 项 Python；Web format/lint/typecheck、292 个文件的 1,522 项测试和生产构建；25 项打包测试、wheel/Twine/产物形状；workspace fmt/Clippy、安装器/发布资产、非 daemon workspace、daemon 串行、3 项自启动回归，以及 CI 规定的 Codex/Claude/Kilo 原生会话检查全部通过，最终 `ALL_LINUX_CHECKS_PASS`。
-- Windows Server 2025 指定测试机：原生编译、8 项核心 IM、188 项 IM runtime（2 项真实服务 live 用例按默认规则忽略）、上游 Windows smoke 七组 11 项实际测试通过，最终 `ALL_WINDOWS_CHECKS_PASS`。
-- 两平台原生 Web：无效地址及修正、保存拒绝、网络故障、启动前保存拒绝、失败不保存/不运行、修正重试、跨平台草稿隔离、保存回读、刷新持久化、缺凭据启动失败、中英日三语、390×844 窄屏和删除配置均通过；并人工检查 Linux 浅色、Windows 深色下的提示及换行截图。隔离服务/浏览器已关闭，日常实例没有更新。
-- 首轮检查捕获并修复一处新增错误状态的 TypeScript 空值判断；随后完整重跑通过，不把首次失败算通过。已有 npm 依赖审计提示和 Windows 编译警告保留，没有更换依赖或屏蔽告警。
+These summaries preserve the useful evidence without treating every review round as a separate current specification. Exact versions, commands and original failure logs are indexed in the [archived record](https://github.com/ChesterRa/cccc/blob/ea00093b07a21d947982a252af42f2755bc9ac0f/docs/specs/mattermost-im-acceptance.md).
 
-术语继续沿用 Group、Bot、聊天目标、授权及 `attachments`，不引入会议/roundtable 概念。以上协议和浏览器故障使用隔离测试资料，不冒称真实 Mattermost 断网或重新完成现场收发验收。本机没有运行测试、构建或扫描。最终推送另需全历史及新增提交的 Gitleaks 扫描、源文件一致性和文档链接核查，原始证据保留在仓库外。
+- **File references:** an Actor returned `refs` instead of using file delivery. No file reached Mattermost in that attempt. It remains an Actor tool-use failure; the connector was not changed to convert references into attachments.
+- **LOG01 → LOG03/LOG05:** an oversize file produced status and user feedback but no readable Group log. The combined CLI path lacked a tracing subscriber. Native Group logging plus stderr corrected that gap; a new oversize upload verified the real log path, and follow mode later showed new records once. Rotation, redaction and write-failure checks remain controlled tests, not real disk-failure evidence.
+- **FILE02 / NET02:** controlled 403 metadata/body failures left no Blob. A server that received a complete POST and lost its response did not receive an automatic duplicate create.
+- **V01:** a real human-origin request missed during a short disconnect was recovered and produced an Actor reply. Revoking access before recovery prevented a later replayed request from reaching the Actor. These were finite Linux live scenarios within the server cache window, not Windows evidence or guarantees after restart/cache expiry.
+- **Reviews 1–6:** address validation, bare-mention filtering, draft preservation, identity serialization, runtime error ownership, native connection recovery, unknown-submit feedback, lookup authorization and heartbeat write deadlines were corrected. Platform fixtures and live protocol checks are recorded separately.
+- **Review 7:** staged multi-file download/validation and cancellation cleanup were checked without deleting shared Blobs. Saving files and submitting a ledger event still do not form one atomic transaction.
+- **Reviews 8–10:** cross-platform startup result ownership, repeated lookup/control/failure feedback, delayed stop/config replacement, upload metadata and safe recovery cursor retention received regressions.
+- **Reviews 11–13:** pre-allocation startup/restore windows, equal-config request revisions, long final streams and platform-visit ownership were checked at actual entry points.
+- **Reviews 14–15:** initial hydration, edits during management, daemon IPC delegation and browser request ordering were checked. These earlier draft assertions did not catch the status-refresh omission found during integration.
+- **Review 16:** failure after worker installation now removes and stops only that generation. Stop/remove errors remain visible, and Weixin-specific management flows participate in Mattermost ordering.
+- **Review 17:** the existing Group sweep now removes revisions for deleted Groups that never had workers. Legacy-only management continuations were explicitly deferred; see the [scope boundary](mattermost-im.md#deliberate-scope-boundary).
 
-## 上游 PR 提交前复验记录（2026-09-12，审核修订前）
+Historical full checks also recorded intermittent terminal WebSocket shutdown and voice test-server startup failures. Unchanged focused and full reruns passed, but those records did not establish a root cause. They must not be rewritten as an initially clean run or as proven platform fixes.
 
-- 本轮已获授权准备上游 PR，关联既有 [Issue #99](https://github.com/ChesterRa/cccc/issues/99)，不另建重复 Issue、不直接合并主分支、不发布 Release、不更新日常部署。下方早期“只发 Issue、不创建 PR”的限制是当时边界，不代表本轮授权。
-- 从已发布的连接器分支合并上游 `22733e9ac607989bb095a4a6b7cb0e518bab9d08`，产品代码复验点为 `8656a48e841fa7f5aded39700711e88c1b9c9955`。后续仅整理本验收记录与指南文字。净差异限定于 Mattermost 的原生 IM 接入、测试和文档；不含 CLI 管理、Experimental 页面、全仓词汇表、依赖或 CI 工作流变更。来源校验测试保留上游原样。
-- **Linux 指定测试机通过**：Ruff、111 项 Python 测试；Web 静态/类型检查、292 个文件的 1,501 项测试及生产构建；25 项打包测试、原生 wheel 检查、Twine 和产物结构断言；workspace fmt、all-targets Clippy（`-D warnings`）、安装器/发布资产脚本测试。随后依上游 CI 顺序执行非 daemon workspace 回归、daemon 串行回归、组合进程 3 项自启动测试及固定版本 Codex/Claude/Kilo 的原生会话测试，最终 `ALL_LINUX_CHECKS_PASS`，退出码 0。
-- **Windows Server 2025 指定测试机通过**：原生编译；`im_state` 8 项；IM runtime 187 项通过、0 失败、2 项真实 Mattermost live 测试按默认规则忽略；上游 Windows smoke 的七组共 11 项实际测试通过（PTY、挂起进程、Job、控制台编码、Web 绑定失败、异常退出、Kilo 启动）。最终 `ALL_WINDOWS_CHECKS_PASS`，退出码 0。已有 Windows 模块编译警告未通过无关补丁或全局 suppress 隐藏。
-- **两平台真实 Web 配置页通过**：以各自原生二进制启动独立 Home/Group，通过浏览器操作原生“设置 → 当前工作组 → IM 桥接”：Mattermost 平台选择、空值禁止保存、站点与环境变量引用填写、跨平台草稿隔离、保存后 API 回读、刷新持久化、缺失凭据时失败可见且不运行、中/英/日三语言、390×844 窄屏及删除配置后 API 确认均完成。浏览器会话和隔离服务已关闭；没有调用 Actor、使用真实 Bot Token 或向真实频道发帖。本轮截图不补签新的深色主题验收，历史主题记录仍单独保留。
-- 本轮浏览器脚本的早期失败来自隔离 Windows Home 缺少 AppData、异步设置面板等待、选择器转义/快照格式，以及 Linux debug 二进制读取旧测试目录静态资源。按原生运行机制修正测试环境与定位后，两平台从全新数据目录完整重跑通过；没有修改连接器业务代码、放宽产品断言或把失败尝试计为通过。Linux 初次 Python 失败来自归档缺 Git 元数据及先前 root 产物权限；补齐真实 Git 状态并恢复非 root 夹具后，完整回归通过。
-- 两轮源码核查分别检查原生接入及既有行为、认证/文件隔离/重试/最终输出合同；这是同一执行者的两轮审查，不冒称独立审核者。命名继续采用 Group、Actor、Bot、聊天目标、授权、订阅、`attachments` 与 `refs` 的原生含义。
-- **证据边界**：本轮重跑隔离协议和双平台 GUI，不冒称重新登录全部聊天平台，也不把默认忽略的真实 Mattermost 用例算作本轮执行。真实测试服收发、附件、线程、流式和用户验收证据见下方 2026-09-08 记录。本机未运行测试、构建或扫描；标准实例、日常开发实例及其登录数据未修改。
-- 推送前继续执行全部 Git 历史和最终提交的 Gitleaks 门禁；原始脱敏报告、服务器日志和截图保存在仓库外，不将凭据或真实内部部署信息带入公开补丁。
+## Regression entry points
 
-## 2026-09-08 历史验收状态
+Use isolated `CCCC_HOME` directories, synthetic credentials and controlled platform fixtures. Do not use a developer's running services for these checks.
 
-- 用户最终验收：2026-09-08 明确反馈“我已经验收完了，都正常”，据此关闭 T20。后续明确授权公开 Fork 推送和上游 Issue，替代此前的暂停指示；本次不修改已验收的运行代码或 Actor 提示词，不创建 PR 或 Release。
-- 推送门禁：每次推送前使用 `gitleaks` 或 `trufflehog` 扫描全部 Git 历史及最终待推送提交，并做人工检查；报告脱敏后保存在仓库外。误报须逐项核实，上游历史例外须有明确批准，不能以目录白名单忽略新增告警。待推送提交或范围变化后重新扫描。
-- 文件回传现象的责任边界：用户上传的 TXT 已正常进入 CCCC，Codex 读出编号 73；随后两条 Bot 帖子的 `file_ids` 均为空。“附件补发”对应的 CCCC 消息只有 `refs` 文件引用，没有 `attachments`。因此该次回传未成功，不能追记为成功发送，也不是 Mattermost 隐藏同名文件。Mattermost 与当前其他原生连接器一样，仅按 `attachments` 传输文件，不将 `refs` 擅自转换为附件；本例未证明连接器缺陷，不改变既有正确附件路径的通过结果。
-- CCCC 原生说明要求使用 `cccc_file(action="send", ...)` 交付文件，发送路径必须在当前工作目录范围内。收到的 `state/blobs/...` 可读取或解析路径，但不能直接作为该发送操作的输入；回传时应先复制到工作目录，再调用文件发送工具并检查结果。补强 Actor 操作说明属于独立改进，本次未实施，也不将其加入连接器补丁。依据：[原生说明](../../resources/cccc-help.md)、[文件工具](../../crates/cccc-mcp/src/local_tools.rs)、[Mattermost 出站](../../crates/cccc-web/src/im_runtime/mattermost_outbound.rs)。
-- FILE02/NET02 通过：下载元数据和文件正文分别 403 时不留下 Blob；完整 POST 已被服务器读取但响应丢失时不重发。IM runtime **187 passed、0 failed、2 ignored**（16.43 秒），clippy 32.27 秒退出 0；两个默认忽略项均是必须显式指定真实凭据和目标的 live 测试。
-- CODE01 真实 MM 通过：合成长代码、中文/Emoji、换行、代码围栏和链接共 **22,158 字符**，两个帖子按服务端顺序拼接与完整带作者原文逐字相等；每帖不超过 16,383 字符，保留原线程及 Bot 作者。空白 sender_title 正确回退 reviewer。测试仅发送协议样本，没有调用 Actor。测试耗时 0.90 秒，1 passed；跨帖代码围栏只承诺原文无损，不承诺每个分片独立呈现完整代码块。
-- UI02 检查通过：只补原生 IM 说明中漏列的 Mattermost 名称，沿用中文/英文/日文 locale，不改变布局。4 个前端文件的 12 项定向测试通过；格式化 814 文件、lint 781 文件及 TypeScript 检查通过；构建 27.99 秒完成（保留既有大分块警告，不改打包策略）。新资源备份后只更新独立实例静态目录，不重启 Actor。三语言通过真实页面原生选择器切换并读取说明和 MM 表单，凭据继续显示环境变量引用。
-- GROUP02 通过：同一临时 Home 下两个 Group 使用不同合成 Bot 身份/Token 和 HTTP/WS 模拟服务，分别验证配置保存回读、授权/verbose、定向出站、撤销一组不改变另一组及错用凭据 401。没有创建真实账号或修改现有绑定；不冒称两个真实 Bot 联调。首次构建遇到测试夹具 HTTP 头类型比较错误，修正后最终 **188 passed、0 failed、2 ignored**（15.75 秒），clippy 27.76 秒退出 0。默认忽略的两项 live 测试均另有明确通过记录。
-- 最终文件核对：本地三个 Mattermost 文件与远端测试挂载逐个 SHA-256 一致，`git diff --check` 通过；Cargo manifest/lock、依赖和发布工作流未改变。前端入口本地构建与远端一致，三语言真实页面复查并恢复中文、自动主题。随后 T20 已获用户明确确认，不以自动化结果代替用户签署。
-- LOG05 原生 `im logs -f` 真实通过：未绑定聊天的空白合成组使用无效测试凭据触发两次实际 HTTP 401，新记录分别在 0.85 秒、0.83 秒内显示，跨两个轮询间隔没有重复；Ctrl+C 退出 0。测试脚本清除合成组配置，恢复原可观测性配置，正常组桥接及订阅不变。不是手工写入日志夹具。
-- CMD02 真客户端补齐 `/verbose` 无参数、true、false、1、0、非法值及最终 `/status`。均使用输入框和 @Bot 前缀，得到预期启用、关闭或用法提示；最终 authorized=true、paused=false、verbose=false。与先前 on/off、配对别名及其他命令证据合并，不重跑已通过的相同步骤。
-- NET01 隔离验证通过：REST/WS 经 HTTP 代理、NO_PROXY 绕过、失效代理及代理后 WS 401；向明文测试端口发送 TLS 明确失败且不回显测试凭据。首次代理用例因夹具 `/sub` 与请求 `/mm` 不一致而返回 404，修正测试地址后为 **182 passed、0 failed、1 ignored**（15.88 秒），clippy 退出 0（33.00 秒）。保持无外网，没有修改真实代理或服务器证书；不宣称已验证过期证书或 HTTPS CONNECT 代理。
-- AUX01 模拟补测通过：403 反应/上传失败记录完整错误且正文继续送达、非本组 Blob 不上传、403 创建请求只尝试一次，以及编辑/无关/其他 Bot 消息忽略和重复 posted 去重。最终 **185 passed、0 failed、1 ignored**（15.53 秒），clippy 退出 0（35.05 秒），`git diff --check` 通过。仅新增同模块断言，不改变线上业务代码。这里不包含传输中断后非幂等重试的模拟证据。
-- **LOG03 修复后真实错误日志链路通过**：新上传 10 MiB + 1 字节合成附件后，用户收到失败提示；组级 im_bridge.log 产生一条包含 UTC 时间、Group、platform、operation=inbound、超限原因的 JSON 记录。原生 CLI 返回内容与文件逐行一致，Docker stderr 中同条记录的 SHA-256 也一致。Unix 文件权限 0600，文件中未检出实际 Bot Token 或管理员令牌。测试时临时开启开发者模式仅供读取，finally 中恢复 false，其他可观测性配置不变。
-- 修复限定于现有三个 Mattermost 源文件：统一错误记录入口覆盖认证、连接、身份核验、入站、出站、附件上传、错误回复、WS 重连及反应操作；复用原生组日志路径与文件锁，不改其他平台、不初始化全局 tracing、不增加依赖。错误脱敏、JSON 单行、长度限制及轮转行为见规格与指南。新增两个同模块用例覆盖追加、重复错误、组隔离、换行/凭据脱敏、0600、状态清除后保留日志、轮转及文件写入失败不 panic。
-- 本轮 IM runtime **180 passed、0 failed、1 ignored**（显式 live 用例不默认运行），15.24 秒；定向 clippy 退出 0，47.60 秒；CLI 程序构建退出 0，1 分 49 秒。同镜像启动检查成功后只替换独立测试实例，旧容器和二进制保留，原 CCCC/CAO 健康。本轮未重跑全部 workspace/Web 测试，不以历史结果冒充本轮全量结果。
-- LOG04 恢复问答通过，真实 Codex 返回“LOG04 恢复正常：37”。容器更新后 Actor 需要显式启动，启动更新提示曾再次触发只读安装目录的 EACCES；未提权升级。给独立测试 Actor 使用既有关闭启动更新检查的命令后正常回复。最后仅重启桥接清除 last_error，订阅仍为 1，错误日志记录仍保留。
-- LOG02 复用已绑定附件 ID 的尝试未被 MM 保留 file_ids，因此不计入故障复测；随后 LOG03 重新上传并核对实际大小、附件关联后才计为通过。下方 LOG01 保留为修复前失败证据，不代表当前仍缺失日志。
-- **LOG01 真实错误日志验收失败**：在独立验收组发送 10 MiB + 1 字节的合成附件。MM 接受帖子后，连接器向用户发送失败提示，last_error 持久化为 `Mattermost attachment exceeds configured size limit`；临时开启开发者模式后 `im logs --lines 100` 退出 0，但其读取的组级 `state/im_bridge.log` 实际不存在、结果为空。Web/daemon 对应日志文件也不存在；Docker json-file 日志在本次触发时间之后为 0 行。错误状态可见不等于错误日志已落盘，不计为日志功能通过。
-- LOG01 源码定位：入站失败返回 socket loop，后者调用 `tracing::warn!` 并更新 last_error；persist_error 只写 im_state，没有追加日志。当前组合 CLI Web 启动路径没有找到 tracing subscriber 初始化；独立 Web main 虽有初始化，但不能据此视为组合 CLI 已初始化。仓库只找到组级 im_bridge.log 的读取端，没有找到对应写入端。修复需同时核对实际启动路径与组级日志读取合同，不以手工写日志或仅放宽过滤级别掩盖缺口。
-- LOG01 恢复：后续普通算术请求得到真实 Codex 回复“LOG01 恢复正常：17”，证明运行未持续中断；成功回复后 last_error 仍保留前次错误，不能声称自动清除。证据记录后仅 stop/start 测试组桥接，恢复 last_error=null、订阅 1；未重启容器或 Actor。开发者模式已恢复 false，其他 observability 设置未变，原 CCCC/CAO 健康。保留合成帖子及附件，未修改业务源码。
-- 2026-09-08 授权后的补测：已通过正常 bootstrap 接口创建独立测试实例管理员令牌。创建前确认上游禁止删除最后一个管理员令牌，用户另行明确批准保留；不再描述为可撤销的临时令牌。CLI 的 set/config/start/stop/status/unset、pending/reject/bind/authorized/revoke 均真实执行成功；重复 bind 返回 400，重复 revoke 返回 false。此前 GET 成功不能解释写操作权限，显式端口也不能替代管理员身份。
-- 公开频道补测通过：使用全新空白 Group、独立工作目录和单个临时 Codex Actor，只发送合成算术请求；真实回复“公开验收结果：56”到达主时间线。测试期间停止原 Group 的同凭据桥接，结束后撤销公开目标、停止并清除新组桥接配置、停止临时 Actor，再恢复原组桥接；原组订阅数 1、last_error=null。未把原私有组绑定到公开频道。
-- 原生界面补测：实际键盘切换深色、英文和日文，Mattermost 地址、凭据引用说明及操作按钮可显示和滚动，未暴露真实 Token。检查后恢复中文、自动主题。发现通用 IM 桥接说明仍漏列 Mattermost，保留为文案待修项；不声称完整多语言审校完成。
-- CLI 日志入口先返回 `developer_mode_required: developer mode is disabled`。用户明确批准后，通过正常 observability API 临时开启开发者模式，两组 `im logs --lines 5` 均退出 0、component=im、lines=[]。随后立即关闭并回读确认 false，其他 observability 配置完全相同；关闭后再次调用恢复拒绝。只验证接口及开关门禁，不将空结果当成实际日志内容或错误落盘已验收。未改运行中生产代码或提前推送。
-- 2026-09-08 用户已明确反馈“测试没问题”，基础收发的用户亲试通过；随后开始剩余功能验收，不能将此反馈扩展成附件、线程、流式及故障用例全部通过。
-- 真实客户端补测：`/help`、`/verbose on`、`/verbose off`、`/pause`、暂停期间普通 mention、`/resume`、空 `/send`、未知命令和 `/status` 均收到预期协议回复。末态 authorized=true、paused=false、verbose=false，回复均在频道主时间线。其余别名、目标和故障路径仍待验证。
-- Linux Rust 回归已分段复验通过：workspace 非 daemon 部分串行通过；daemon 全部 lib/集成/文档测试通过；CLI `daemon_self_launch` 三项通过。首次非 root 并行运行的终端 WebSocket 失败未在单独/串行复验中重现；daemon 首次配置目录权限失败通过临时测试目录消除。保留失败记录，不声称原并行命令已经通过。
+| Area | Entry points and assertions |
+|---|---|
+| Core state and CLI | `im_state` normalization, URL validation, credential aliases and CLI argument translation |
+| Daemon management | `ops::im::tests`: real HTTP delegation, fragmented reads, unavailable/rejected Web and stale ownership |
+| Runtime lifecycle | `im_runtime`, `routes::im`: generation/revision handoff, failed final commit, restore and deleted-Group cleanup |
+| Inbound | `mattermost`, `mattermost_inbound`, `inbound_attachments`: exact authorization, identity failures, control replay, staged files and safe submission outcomes |
+| Outbound | Mattermost protocol fixtures: actual post edits, chunk reconstruction, attachment metadata, per-target dedupe and reaction failures |
+| Network | Controlled REST/WS: TLS/proxy parity, sequence replay, missing hello, gaps, cache loss, auth rejection, heartbeat write timeout and queue backpressure |
+| Web | `SettingsModal.mattermost.test.tsx`, `IMBridgeTab.revoke.test.tsx`, IM API/config tests: status and drafts, failures, Group/platform visits, unmounts and request ordering |
+| Real browser | Delay actual request boundaries; check status/buttons, preserved input, narrow layout, keyboard/focus and visible errors |
+| Release preparation | Web check/test/build, Rust fmt/Clippy/workspace tests, tooling and package build |
 
-### 2026-09-08 本轮新增真实证据
+Three live Mattermost tests remain explicitly ignored by default. They require an authorized test site/channel and credential file, leave synthetic posts, and are not part of ordinary offline regression. Enabling them is not implied by running the repository gate.
 
-- **权限与配对**：同一私聊重复 `/sub`、`/subscribe` 保持同一待审批键。原生 Web 拒绝后请求消失，再次申请生成新键；Web 批准后普通私聊文本交给 foreman 并得到真实回复。未授权正文只获得授权说明。无管理员凭据的 CLI 审批返回 401，未绕过；不把该 CLI 审批路径标为成功。
-- **多目标语义**：私聊与频道批准绑定同一 Group 后，面向 user 的模型回复同时到达两处，符合原生共享语义。不能据此声称私聊上下文隔离。
-- **路由**：新增临时 Codex peer 后，指定 peer 的正文引用 foreman 没有扩大收件人；实际只有 peer 回复。`@all` 得到两位真实 Actor 回执；`@peers` 只投递给 peer。未知 Actor 返回受控失败消息，未改投其他 Actor。
-- **部署问题**：新 Actor 的升级弹窗曾消费投递回车，导致 npm 更新尝试被只读安装权限拒绝。未提权或成功更新；为临时 Actor 加入关闭启动更新检查的命令参数后重测成功。此属 CLI 启动条件，不修改连接器路由以掩盖失败。
-- **线程**：频道已经授权时，新线程仍要求独立批准；未授权消息、配对说明及批准后的真实模型回复均保留原 root_id。主频道和其他已授权目标仍按原生共享规则收到公开外发。
-- **文本文件双向**：原生 MM 上传合成 TXT，入站 Blob 与模型实际读取正确；模型通过文件工具回传后，下载字节数与 SHA-256 均等于原件，中文文件名保留。
-- **多媒体**：合成 PNG、PDF、WAV 混合上传后，由实际 Actor 回传原文件；下载哈希逐一相同。第一份 WebM 仅含容器头，未计入通过；修正后带图像帧的 2,703 字节 WebM 经真实 Actor 回传，下载哈希与输入相同。不承诺模型识图、音视频转写或播放器效果。
-- **仅附件及超限**：空正文、仅上传 TXT 的真实帖子被表示为 `[attachment]` 并附带本组 Blob；真实 Actor 成功读出合成资料。10 MiB + 1 字节的文件虽被 MM 接受，但被连接器拒绝，产生受控错误及失败反应，未转交模型。
-- **生命周期与无效凭据**：停止桥接后 Actor 仍在运行；重启保留授权且不回灌断桥期间的旧帖子。使用无秘密的无效 Token 样本启动时明确返回 HTTP 401，恢复原环境变量引用后启动成功，没有轮换真实 Token 或修改访问策略。
-- **长文本**：明确标识为协议注入、非模型回答的中文/Emoji/换行样本被拆成两条；16,383 与 1,671 个 Unicode 字符按顺序拼接后精确等于完整的带作者正文，没有丢字。
-- **独立暂停**：只暂停私聊订阅时，协议样本到达主频道与已授权线程，不到达私聊；恢复私聊后没有补发旧样本。此为投递开关，不是上下文隔离。
-- **群组私聊**：测试服允许 Bot 与两名已批准测试人员加入三人群组私聊；独立批准后，无 mention 的普通文本交给 foreman 并收到真实回复。
-- **过期与撤销**：真实等待 600 秒后，未批准申请从列表消失，旧键批准返回 HTTP 400 `pending request not found`。`/unsub`、`/unsubscribe` 分别移除群组私聊和私聊订阅；Web 撤销线程成功，重复撤销返回 `revoked=false`，不影响主频道。当前仅保留原主测试频道订阅。
-- **回归**：此前失败的 `branding_upload_rolls_back_staged_asset_when_daemon_commit_fails` 在 UID 1000 环境实际通过（1 passed），未降低断言。
-- **Web 本轮回归**：283 个文件、1,419 项单测通过，耗时 536.55 秒；format、lint、TypeScript 全部通过。真实键盘清空站点后保存禁用，恢复站点后保存启用；切换至 Telegram 不带入 MM 凭据，切回 Mattermost 草稿恢复。本轮没有为此保存其他平台配置。
-- **剩余 Rust 复验**：终端 WebSocket 文件两个用例串行独立通过，workspace 非 daemon 部分串行通过。daemon 第一次因测试使用默认不可写的 Claude 配置目录失败；配置仅用于测试的 `CLAUDE_CONFIG_DIR` 后，其 486 项 lib 测试及全部集成/文档测试通过；随后 CLI 三项自启动回归通过。没有修改真实 Claude 登录或给测试提权。
-- **真实流式协议**：新增默认忽略、必须显式指定测试站点/频道及凭据文件才运行的同模块测试。测试通过真实 Bot 在主时间线和测试线程分别执行 start/update/end，逐阶段读取 MM 帖子确认正文及 ID 不变；最终 chat.message 没有重复创建。保留一条测试根帖与两条最终结果，明确标注“非模型输出”。此不是 PTY Actor 已产生 chat.stream 的证据。
-- **最后定向回归**：真实流式测试 1 项通过；随后 IM runtime 175 项通过、0 失败，1 项需凭据的 live 测试按默认规则忽略（此前已单独实际运行通过）。新改动仅增加测试，没有修改运行中连接器业务代码。
-- **窄屏**：390×844 下实际检查浅色 Mattermost 配置表单，地址、凭据引用与说明均在面板内；保留原生横向设置导航及滚动布局。深色及完整多语言人工验收尚未完成。
+## Completion criteria
 
-以上是局部路径证据，不将 T01–T20 的整行要求自动标绿。
+A passing mock proves the exercised behavior, not the entire live integration. Real API acceptance requires a dedicated Bot, exact approved targets and separate authorization to send messages. Claims about native Windows/macOS behavior require those platforms.
 
-### 用户最终确认前的边界记录（历史）
-
-- 隔离故障补测已通过：WS HTTP 401 拒绝、握手后认证错误/非法 JSON 均返回明确且无 Token 的错误；模拟服务关闭连接后，经原有重连流程恢复，观察到持久化 last_error 从断线错误变为 null。流式首帖 HTTP 403、update 编辑失败后，完整最终消息仍发送；此前 end 失败及多目标兜底测试继续通过。仅模拟服务证据，不冒充对真实 MM 注入断网。
-- 本轮 IM runtime：最终重跑 178 passed、0 failed、1 ignored（显式 live 测试，不默认访问外部站点），耗时 15.31 秒；`cargo clippy --locked -p cccc-pair-web --lib --tests -- -D warnings` 随后通过，退出 0。静态检查首次指出新增断言应使用 `expect_err()`，已修正并重跑，没有忽略警告。
-- CLI 管理写操作的授权缺口已解除；LOG01 日志缺陷已修复并由 LOG03 真实复测确认。轮转、脱敏、组隔离和写入失败是自动化证据，不冒充真实服务器磁盘故障注入。
-- 公开频道已用独立合成 Group 验证并解除绑定。各目标类型有真实收发证据，但不能推导为不同订阅拥有独立上下文。
-- 深色英文/日文配置表单补查已完成，通用说明漏列平台待修；完整代理/TLS/WS 故障注入及全部流式失败分支仍需按用例核对。现有模拟或共享回归覆盖不等于每条真实故障都已复现。
-- 用户仅确认基础收发；不替用户签署完整 T20 体验验收。不因自动化回归已通过而提前发布、推送或提上游 Issue。
-
-### 早期阶段记录（非当前状态）
-
-- 2026-09-08 最新：独立 Codex Actor 已接入并完成真实 MM 两轮问答。指定 Actor 的 `/send` 和普通 mention 默认 foreman 路由均得到真实模型回复，第二轮承接上一轮上下文，答案到达主时间线。只通过该 Actor 的基础路径，不等于 T07 全部路由或文件/流式验收通过。用户亲试仍待反馈，下方 Actor 数 0 为此前阶段记录。
-
-- 已通过：Web 283 个文件、1,419 项测试；IM runtime 175 项、来源校验 8 项；开发程序构建；workspace clippy；Python 112 项及发布资产/安装器脚本测试。
-- 未通过：Linux 全量 Rust 回归。第一轮缺少 Node；补齐 Node 后第二轮在 `branding_upload_rolls_back_staged_asset_when_daemon_commit_fails` 失败（实际 200，预期 400）。
-- 该用例依赖目录权限 0555 令写入失败；此前测试容器以 root 运行，因此先在非 root 环境复验。当前这是源码支持的原因推断，尚非重跑后的结论，不修改业务逻辑或降低断言来通过测试。
-- 误部署的开发实例已撤销，没有仍在聊天服务器运行的 CCCC 测试任务。后续只在独立 CCCC 应用服务器构建和部署。
-- 已在正确应用服务器部署独立新实例，原生 Web 建组、中文切换、Mattermost 配置保存及 CLI 回读通过。已提供入口邀请用户亲试；真实 Mattermost、完整 UI 用例、用户亲试、部署回退及专用错误频道上报仍未验收，未提交 GitHub 或上游 Issue。
-- 测试 Bot 已通过原生管理页面创建：用户完成正常密码和 MFA 登录，Bot Token 的 users/me 返回 200、is_bot=true、roles=system_user；未开启全频道发帖权限。尚未加入测试频道或启动 CCCC 桥接，不能将身份验证等同于收发验收。
-- 后续已在独立 CCCC 实例注入 Token 并启动桥接，原生 API 显示 adapter_available=true、running=true、last_error=null，REST/WS 启动通过。Bot 加入团队被现有团队人数上限拒绝（上限 50、活动成员 50）；未变更配额或移除成员，待用户批准。测试频道未创建、订阅数为 0，收发与配对尚未验收。
-- 2026-09-08 更新：用户明确批准调整测试服人数上限后，已完成配置保存与 API 回读。Bot 成功入队，独立私有频道已建立；真实客户端发送 subscribe、核对后批准、再次发送 status 均成功。订阅数 1，回复保留主时间线。只覆盖 T05/T08 的基础局部路径；Actor 数仍为 0，模型、附件、流式等完整验收未完成。前述人数阻断已解除。
-- 下方日期记录按执行先后保留，包含当时的“正在运行/尚待编译”，这些历史描述不是当前状态。
-
-## 1. 判定规则
-
-- 先区分源码已有、API 可映射、模拟测试、真实 MM 通过及用户亲试，不能混作一种“支持”。
-- F01–F34 全部可直接或等价实现，均是完成要求；N01–N03 是平台专属差异，不省略其对应的通用用途。
-- 不要求七个平台重新真实登录，只回归被公共补丁触及的现有测试；真实 MM 通过也不能宣称七个平台全部联调通过。
-- 测试使用独立 CCCC 数据、测试 Bot 和批准的测试人员。使用单一测试频道验证主链路后，再有意识批准额外 DM/线程，以验证共享 Group 语义，不能误泄露真实组内容。
-
-## 2. 逐项验收
-
-| 用例 | 覆盖 | 操作与通过标准 | 结果 |
-|---|---|---|---|
-| T01 | U01、U02、U03 | 对照 Slack/Telegram/Discord 逐文件审查：命名、可见性、入口、公共 helper、错误、测试和依赖符合现有风格；公共改动均有必要性说明，无额外服务/框架 | 通过源码审查；见下方公共改动说明 |
-| T02 | U04、F01、F27、F33 | Web 平台可选；Token 引用、站点保存/回读、切换草稿、校验、启停和错误正确；CLI 同形；深浅色/窄屏/i18n 沿用现有 UI，用户亲试 | 自动化及真实浏览器通过：原生表单/草稿/校验、三语言、深浅色、窄屏及 UI02；用户体验确认统一保留在 T20 |
-| T03 | F01、F24、F25、F34 | 有效启动成功；无效 Token、WS 认证失败、TLS/代理故障明确失败；无凭据泄露或身份降级；常规断线可恢复，辅助失败不假报模型完成 | 通过：真实 HTTPS/WSS/无效 Token，模拟 WS 认证/重连、NET01 HTTP 代理/NO_PROXY/TLS 错误；未破坏真实证书或网络 |
-| T04 | F02、F26、F32 | start/stop/status/config/unset/logs 及 enabled 恢复遵循公共行为；停止桥接不停止 Actor；重启不回灌旧 ledger，不复活已弃用 backlog 开关 | 通过：配置/清除/启停/自动恢复有真实证据；LOG03 非空日志与 LOG05 follow 增量、无重复及正常退出通过 |
-| T05 | F07、F08、F09、F26 | subscribe/sub→待审批→Web/CLI 批准可用；拒绝、过期、重复处理、撤销和 unsubscribe/unsub 正确；未批准不转发正文和附件 | 通过：真实 Web/CLI 配对管理、600 秒过期及别名记录见上；未授权附件不下载与线程保留由同模块模拟用例补充证明 |
-| T06 | F03、F19 | 公共/私有频道、DM、可加入的群组 DM 和线程分别收发；线程必须保持原 root_id，频道目标到主时间线；不能跨目标串授权或把 DM 说成独立 Session | 通过：五类真实目标收发已验证，频道/线程分别授权；明确同组订阅共享上下文与公开外发 |
-| T07 | F04、F05、F06 | 群 mention 和 DM 普通文本；默认 foreman、指定 Actor、@all/@peers；正文提及他人不误触发，无关消息/Bot 命令不触发，未知收件人按公共语义报错 | 通过：真实默认/指定 Actor、正文引用、@all/@peers 和未知目标；AUX01 补其他 Bot、无关及重复消息过滤 |
-| T08 | F04、F07、F09、F10、F11、F12 | 在 MM 真客户端逐个执行完整文本命令与别名；用 @Bot 前缀避免平台 Slash 拦截，不把 WS 未收到的 /xxx 输入说成成功 | 通过：先前 subscribe/sub、unsubscribe/unsub、send、pause/resume、help/status、verbose on/off，加 CMD02 其余全部参数形式及非法值；保留 @Bot 前缀要求 |
-| T09 | F10、F11、F12、F28 | 同 Group 多目标分别批准，验证默认 verbose、on/off、暂停/恢复、状态/帮助；只改变指定订阅，外发符合原生共享规则，不给它们隔离承诺 | 通过：真实多目标独立暂停/恢复、CMD02 全部 verbose 参数、状态/帮助；共享可见性断言见下 |
-| T10 | F12、F13、F14、F21、F31 | 公共消息、Actor 间消息、公开/私有系统通知、标题回退、Markdown/链接/代码均正确；不泄露私有事件，不形成 Bot 回流 | 通过：共享通知隐私/定向过滤/标题映射断言，加 CODE01 真实 Markdown/代码/链接与作者回退；不转发终端私有内容 |
-| T11 | F15、F16、F28 | 同一 stream 多目标逐渐更新；仅完整终态成功的目标抑制重复正文；无流、过长预览、start/edit/end 失败均保留完整最终兜底 | 通过：真实 MM 主帖/线程更新和去重；失败、超长兜底为模拟协议证据 |
-| T12 | F16、F31 | 超长中文、Emoji、换行和代码按实际 MM 限额分段；全文可还原、作者可辨，不截断 Unicode，不因已有预览而漏段 | 通过：先前真实中文/Emoji 分段及模拟预览兜底，加 CODE01 真实长代码/链接 22,158 字符逐字还原 |
-| T13 | F17、F18、F29、F30 | 文本+多文件、仅附件、图片/文本/PDF/音频/视频逐项双向传输；落本组 Blob，原目标收文件；不宣称模型已读懂或已转写 | 真实 MM 通过；合成 TXT/PNG/PDF/WAV/WebM，哈希核验 |
-| T14 | F17、F18、F25、F27 | 超限/错误长度、无权限文件、路径穿越、跨站携密重定向、上传失败都有受控错误；公共安全约束有效；附件失败不伪装成已成功传给 Actor | 通过：真实超限拒绝，模拟未知长度/归属/重定向/路径校验、AUX01 跨组 Blob 和上传失败、FILE02 下载 403 无残留 |
-| T15 | F19、F20、F21 | 重复 posted、请求重试、来自 Bot/系统的帖子，检查稳定来源/client_id 和去重；旧帖编辑不自动追加请求，接入不等待前一模型完成 | 通过：AUX01 编辑/重复/Bot 忽略，共享稳定 client_id 断言及真实源帖关联；只等 daemon 接收，不等模型完成 |
-| T16 | F22 | 处理中反应创建、结果/失败关联及过期清理正确；仅修改 Bot 自己的反应；无权限/反应失败不阻塞消息，也不把清理当取消 CLI | 通过：真实处理反应，模拟按 event 关联、只删本 Bot 反应/过期清理，AUX01 403 不吞正文且错误入日志 |
-| T17 | F23、F24、F25、F32 | 一次运行期 lag、断线、429、401/403 和进程重启；按公共合同恢复或报错，不承诺未实现的跨重启补发，禁止盲目重发非幂等创建请求 | 通过：共享运行期 lag 补读、真实重启边界，模拟 WS 重连/429/401/403；NET02 完整请求后响应丢失不重复创建 |
-| T18 | F28、U03、U06 | 同组多订阅正常；不同组使用不同 Bot；文档清楚警告同组共享上下文，不引入跨组调度、会议业务或新的逐用户身份模型 | 通过：真实同组多目标，GROUP02 两个模拟 Bot 的凭据/授权/输出隔离；文档明确共享边界，无真实第二 Bot 联调声明 |
-| T19 | U01、U03、U05 | CCCC 现有构建及相关 Rust/Web/打包回归通过；功能表每项有测试证据或具体平台限制说明；发布不是独立连接器包 | 通过：既有全工作区/前端/发布脚本记录，加日志修复后构建和最新 188 项 IM 回归、UI02 定向回归/构建、逐文件哈希核对；未重复冒称本轮全量回归或执行发布 |
-| T20 | U04、U05、U06 | 用户从现有 Web 完成配置，再在 MM 体验点名、DM/线程、文件、流式及命令；报告仅陈述实际通过项 | 通过：2026-09-08 用户明确确认“我已经验收完了，都正常”；refs 引用未回传文件的原始现象与责任边界保留在当前状态，不冒称该次回传成功 |
-
-群组 DM 若目标部署不允许 Bot 加入，应记录明确权限/API 响应及已有代码路径验证结果，不将权限限制写成平台永远不支持，也不要求管理员绕过限制。
-
-### 2026-09-08 验收缺口闭环记录
-
-以下记录各项原有缺口如何闭环，不增加新的验收要求；已验证部分无需无故重复。
-
-- T02：三语言、深浅色、窄屏和配置流程已有证据；UI02 已补通用 IM 说明漏列 Mattermost，三语言真实页面均已验证。
-- T03：正常 HTTPS/WSS、无效凭据、断连及 WS 认证已有证据；NET01 已补 HTTP 代理、NO_PROXY 和 TLS 协议错误。没有对真实证书/代理做破坏性故障注入。
-- T07/T15：点名路由和默认 foreman 已实测；AUX01 的 `edited_unaddressed_and_bot_posts_are_ignored_and_duplicates_do_not_reply_twice` 已验证普通无关消息、其他 Bot、编辑事件忽略及重复 posted 只回复一次。稳定请求标识见下方共享测试映射。
-- T09/T10：目标独立暂停与 verbose 命令已验证；公开/私有通知、Actor 定向过滤及作者回退已对照公共断言（见下）。CODE01 已补实际 Markdown/代码/链接、作者回退及分段还原。
-- T12：CODE01 已补包含代码围栏、链接的长文本真实分段与还原，见当前状态。
-- T14：已有超限、未知长度、重定向拒绝、Blob 安全与文件名校验；AUX01 已补非本组 Blob 不上传及上传 403 正文保留/失败提示/日志。FILE02 已补无权限元数据及正文下载，无 Blob 残留。
-- T16/T17：真实反应及关联、过期清理、429/WS 重连、lag 补读和进程恢复已有证据；AUX01 已补反应 403 的 start/cleanup/finish 日志及正文保留。NET02 已验证服务器完整接收创建请求后断开连接时，只收到一次请求、客户端明确失败，不盲重试。
-- T18：GROUP02 已补不同模拟 Bot 身份/凭据及组授权隔离，不是停掉同一真实 Bot 再切组。
-- T19：相关 Rust/Web/构建/发布脚本及新增差异回归已核对；源码组织、依赖、工作流与文件哈希均完成复查，具体执行批次分别记录。
-- T20：用户已明确确认完整验收结果正常；后续已授权公开 Fork 源码提交及上游 Issue，PR 和正式版本发布另行决定。
-
-### 共享测试的具体覆盖映射（2026-09-08）
-
-这些函数已在 NET01 的 182 项串行回归中执行通过；下列是断言级证据，不是新一轮真实聊天故障注入。
-
-- `im_runtime::tests::actor_targeted_system_notifications_never_escape_to_im`：缺省通知不可外发；`actor_id`/`target_actor_id` 定向通知即使标记 public 也不可外发；明确 public 且 `to=[@all]` 可见。实际 worker 的 `deliver_outbound_event` 在取得订阅和发送前执行此过滤。
-- `im_runtime::tests::non_verbose_targets_only_receive_user_facing_events`：Actor 间消息只送 verbose 目标；`@user` 消息送两类目标。注意该用例只验证目标筛选，通知隐私由上一条更早的过滤负责。
-- `outbound_message::tests::prefers_trimmed_sender_title` 与 `falls_back_to_actor_id_for_missing_or_blank_title`：优先非空显示标题，缺失或空白回退 Actor ID；Mattermost 出站直接复用 `outbound_text(event, true)`。
-- `outbound_message::tests::renders_system_notification_title_and_message` 与 `system_notification_accepts_legacy_text_payload`：通知标题/正文及旧 text 字段映射。
-- `state::tests::inbound_metadata_adds_stable_idempotency_and_attachments`：共享入站参数含 source_message_id、thread、附件和稳定 client_id；该测试样本平台为 WeCom，不冒称 MM 专用实测。Mattermost 的调用点传入 post.id、root_id，已有真实收发 ledger 中的 MM 源帖对应关系另作证据。
-
-### 公共改动必要性审查（2026-09-08）
-
-- `im_runtime.rs` 只增加三个同级模块及 Mattermost start 分派；入口、入站、出站与 Slack/Telegram 同形，运行 worker、公开过滤、目标键、命令、分段及 Blob 继续复用现有实现。
-- `im_state.rs` 增平台/站点字段、URL 规范化及凭据完备检查；daemon/Web IM 入口只扩大平台白名单；CLI 的参数和命令转换只透传站点字段。没有更改 Actor、Session、消息调度和存储合同。
-- `SettingsModal`、`IMBridgeTab`、`imBridgeConfig`、API/类型和三份 locale：新平台、站点字段、原草稿与重置路径、原组件样式；测试覆盖旧平台字段隔离。导航和指南仅新增文档入口。
-- `request_origin_tests.rs` 是额外的测试兼容修正：将 Rust 2024 不允许直接使用的进程全局环境修改改为隔离子进程；保持来源校验的生产代码与断言，不启用宽松来源策略。
-- Cargo manifest、锁文件、依赖、发布工作流未改变；没有独立 crate、服务、MCP 网关或连接器安装器。测试站点、凭据和合成文件生成脚本留在本地运维目录，不随通用补丁发布。
-
-终端并行失败的原因线索：两个 `terminal_ws` 用例在同一测试进程分别启动 daemon，结束时都调用 shutdown；`server_lifecycle::stop_every_runtime` 经 `actor_runtime::stop_all` 调用进程全局的 `cccc_runtime::stop_all`，没有按当前测试 Home 过滤。因此其中一个用例清理可能终止另一个用例的 PTY。此为源码支持的竞态解释，与单独/串行通过相符；未据此修改上游终端逻辑，也不声称已经通过追踪证明首次失败的全部时序。
-
-## 3. 测试习惯与真实证据
-
-- Rust 测试放在现有同类模块的测试组织中，使用当前异步测试/本地模拟服务；Web 延续现有 config 和 IMBridgeTab 测试方式。
-- 用针对性用例验证路由、授权、线程、流终态和网络错误，不增加与小规模使用无关的压测或另一套测试框架。
-- 模拟 chat.stream 通过与真实 Actor 是否产生 chat.stream 分开记录。实际运行时名称、版本和模型照实填写，不固定三家品牌或虚构流式覆盖。
-- 真实测试日志记录构建提交、用例号、平台版本、预期/实际、脱敏证据和用户体验结论。真实 Token、聊天正文及可访问的私人帖子链接不进入公开仓库。
-- 当前部署的权限和服务配置保持不变；测试前另核对测试环境身份，不凭旧记录操作正式服。
-
-真实流式复验使用 `CCCC_MM_TEST_SITE`、`CCCC_MM_TEST_CHANNEL`、`CCCC_MM_TEST_TOKEN_FILE` 三个显式环境变量，凭据文件只读挂载；不得使用正式频道。命令：
-
-```sh
-cargo test --locked -p cccc-pair-web --lib \
-  im_runtime::mattermost::tests::live_stream_updates_main_and_thread_without_duplicate_final \
-  -- --ignored --exact
-```
-
-默认忽略此用例是为避免普通 CI 向外部站点发消息，不是忽略失败；真实凭据、站点和私有帖子链接不写入源码。
-
-局部验证入口，编码后按具体测试名缩小范围：
-
-```sh
-cargo test -p cccc-pair-core im_state --locked
-cargo test -p cccc-pair-web im_runtime --locked
-cargo test -p cccc-pair-daemon --locked im -- --test-threads=1
-npm -C web run check
-npm -C web test
-cargo fmt --all --check
-```
-
-发布前仍须按当前 CI 完成构建、lint 和相关完整回归；下面的局部证据不替代上表完整用例。
-
-### 2026-09-07：配置接入阶段
-
-- Rust 1.88.0 构建环境安装完成；沿用锁文件依赖，未新增依赖或改动上游发布管线。
-- `cargo test -p cccc-pair-core im_state --locked`：8 项通过、0 项失败。包括新增的 Mattermost 站点规范化、必需字段、令牌引用以及旧平台状态回归。
-- `cargo fmt --all --check`：通过。
-- Web 针对性回归：`imBridgeConfig.test.ts`、`IMBridgeTab.revoke.test.tsx`、`imBridgeRevoke.test.ts`、`services/api/im.test.ts`，4 个文件共 14 项通过、0 项失败。覆盖配置透传、不混入其他平台凭据、先保存后启动、保存失败不启动、缺少站点/Token 禁止保存，以及原撤销授权/微信界面回归。
-- `npm -C web run check`：格式、lint 和 TypeScript 检查通过（814 个格式检查文件、781 个 lint 文件，0 警告/错误）。
-- `npm -C web run build`：通过；构建提示部分现有 bundle 超过 520 kB 和插件耗时，未为连接器修改全局分包策略。
-- 收发 worker、真实 Mattermost 联调及用户亲试尚未完成，不把配置可保存等同于可正常桥接。
-
-### 2026-09-07：收发 worker 实现与首次构建
-
-- 新增 `mattermost.rs`、`mattermost_inbound.rs`、`mattermost_outbound.rs`，公共 runtime 仅增加模块声明与平台启动分支。没有新增 crate、SDK 依赖或独立连接器服务。
-- 已写入 Bot 身份与 WS `hello` 校验、公共授权与文本命令、频道/线程/DM、来源标识与去重、同帖流式及最终兜底、Blob 文件双向传输、处理反应、重连及错误状态的代码，**尚待编译和测试证明**。
-- 新增模拟协议用例覆盖子路径认证、线程保持、流式按目标确认、失败编辑和长 Unicode 最终兜底、文件上传、身份变化与 Token 轮换、未授权附件和重复配对请求；测试结果未取得前不记为通过。
-- 本机缺少完整 Rust 构建所需的 pkg-config/OpenSSL 开发库，sudo 安装要求密码，未更改本机权限。已在授权的测试服务器启动独立、资源受限的 Rust 构建容器，使用上游 Dockerfile 同系列 `rust:1.88-bookworm` 镜像及专用缓存。
-- 真实 Mattermost 服务与原有 CCCC/Discord 服务均未因本次构建被停止或覆盖；尚未完成真实测试、用户亲试、GitHub 提交或上游 Issue。
-
-### 首次完整 Rust 编译发现的上游测试问题
-
-- 首次构建退出码 101：原基线 `request_origin_tests.rs` 的 `any_origin_switch_is_opt_in` 直接调用 `std::env::set_var/remove_var`，在 workspace 指定的 Rust 2024 下触发三个 E0133 编译错误。
-- 必要的额外公共改动仅在该测试文件：参考已有 `codex_voice/socket_tests.rs`，用 `Command.env/env_remove` 为隔离子进程设置变量并执行同一测试。不加入 unsafe，不禁用原测试，不修改生产跨域或认证策略。
-- 修正后须重新运行连接器测试以及 `request_origin::tests`，未取得结果前不标为通过。
-
-### 2026-09-07：全量 Web 回归与 Rust 首轮模拟协议结果
-
-- `npm test -- --maxWorkers=2`：283 个测试文件、1,419 项测试全部通过，0 项失败。测试覆盖整个当前 Web 测试集，不等于真实浏览器验收。
-- 独立 Linux 构建执行 `cargo test --locked -j 2 -p cccc-pair-web im_runtime::mattermost`：9 项通过。覆盖 Bot/WS 子路径认证、附件上传、线程保持、流式编辑失败兜底、长 Unicode、未授权附件不下载、配对去重、身份切换和入站过滤。
-- 同一构建执行 `request_origin::tests`：8 项通过，包含修正后的隔离子进程环境开关测试；生产来源校验未修改。
-- 上述 Rust 结果只对应首轮源码快照。随后补充的附件原帖归属校验、429/重定向和处理反应测试正在复测，不沿用旧结果冒充当前全部通过。
-- 尚未完成真实 Mattermost 联调、可用实例交付、用户亲试和发布；T01–T20 的完整判定继续保留待验收。
-
-### 2026-09-07：最新源码回归与程序构建
-
-- 最新源码导出 SHA-256：`17530991fd122538486b4c39e3ba71361e1818d44054b4555b91a61717b31d5a`。该快照包含原帖附件归属校验和新增的限流、重定向及反应用例。
-- `cargo test --locked -j 2 -p cccc-pair-web --lib im_runtime`：175 项通过、0 项失败，涵盖现有 IM 模块回归及新增 Mattermost 用例。
-- `cargo test --locked -j 2 -p cccc-pair-web --lib request_origin::tests`：8 项通过、0 项失败。
-- `cargo build --locked -j 2 -p cccc --bin cccc`：成功。这是开发构建，不等于 release 打包、workspace 全量 lint/测试或真实服务验收。
-- 专用测试 Bot 的创建被 Mattermost 管理命令拒绝：`This command cannot be run in local mode`。已停止账号创建流程，未用修改数据库、权限或服务配置的方式绕过；需要正常的管理员登录路径或管理员预先创建测试 Bot。未生成 Bot/用户令牌。
-
-### 2026-09-07：全工作区 lint 与独立 Web 开发实例
-
-- `cargo clippy --workspace --all-targets --locked -j 2 -- -D warnings`：通过，退出码 0。首次导出没有包含根目录 `tests/fixtures`，检查因缺少 DeepSeek fixture 中断；补齐已跟踪测试资料后通过，未为此修改生产源码。
-- 独立、非 root、仅宿主机回环端口发布的开发实例已启动，`cccc version` 返回 `0.4.37`，根页面 HTTP 200；保留原生首次管理员 bootstrap 验证。
-- 开发二进制 SHA-256：`a5fc9f016fd769834e0b2acc93ee037fc51cbeab37066848a0eea77ef2f7b5e6`。debug 模式需要只读挂载构建时的 Web bundle；这是开发部署，不代替上游 release 打包验证。
-- 浏览器命令出现 CDP 超时。agent-browser 安装及空白页启动诊断通过，但不能据此宣称测试页面能操作；真实界面检查与用户亲试仍待完成。
-- Linux 全量 Rust 回归已按上游分组启动，运行进程及资源占用已核实，尚未取得最终结果。不得把已经通过的 IM 定向用例或 lint 结果当作全量测试结果。
-
-### 2026-09-07：发布工具与安装脚本回归
-
-- 本地 Python 3.12.3、pytest 9.0.3、Ruff 0.15.14；`python3 -m ruff check scripts tests` 通过，`python3 -m pytest -q` 112 项全部通过。当前上游 CI 选择 Python 3.14，本结果不冒充该版本上的执行。
-- `bash scripts/tests/release_assets.sh`：退出码 0，结尾 `OK: release assets`；测试中的额外归档拒绝是预期负例。
-- `bash scripts/tests/install_unix.sh`：退出码 0，结尾 `OK: Unix installer`。使用脚本自身生成的临时 fixture，覆盖校验、旧版本安装、所有权保护与失败回退等路径，不改变已有真实 CCCC 安装。
-- 安装器模拟回退通过不等于本次测试服务器的部署回退及专用错误频道上报已经验收；后两项仍须实际部署验证。
-
-### 2026-09-07：用户纠正部署边界，撤销误部署
-
-- CCCC 应运行在独立应用服务器，连接 Mattermost 测试域名；不应把 CCCC 程序或构建任务部署到 Mattermost/Dify 测试服务器。
-- 已先备份本次新增 CCCC 目录和容器日志，再删除专用容器、卷、镜像、缓存及目录，关闭对应本地 SSH 隧道；未重置数据库、从生产克隆或重新部署现有业务服务。
-- 原有 11 个业务容器的 ID、镜像、启动时间及重启计数在撤销前后相同；Mattermost 内网及测试域名健康检查正常，Dify 网关健康检查正常。
-- 此前 HTTP 200、编译与单测结果仅作为历史证据。误部署实例已不再提供访问，页面亲试未通过；两轮 Linux 全量回归均退出 101，不存在仍在聊天服务器运行的回归任务。后续在正确的 CCCC 服务器继续排查和验收。
-
-### 2026-09-07：正确应用服务器的独立界面验证
-
-- 在应用服务器部署独立非 root 容器，使用新数据、主目录和工作目录，未覆盖原 CCCC/CAO 或复用 CLI 登录。使用上述已验证开发程序及只读 Web bundle，尚非 release 构建。
-- 原生浏览器实际完成建组、中文切换、进入 IM 桥接、选择 Mattermost、填写站点、保存配置。CLI 回读平台、站点和环境变量引用一致；待申请、已授权聊天、启动及删除配置入口正常显示。
-- 本阶段仅保存未配置真实值的 Token 环境变量名，未启动桥接、未调用模型或连接真实 Bot。T02 取得局部证据，不标为完整通过。
-- 已提供新界面入口并通知用户亲试；完整 Rust 非 root 复验及真实 MM 联调仍待继续。
-
-### 2026-09-08：真实频道配对与状态命令
-
-- 使用已登录测试服管理员正常操作；管理员明确批准人数配置调整后才入队，未提升 Bot 权限、绕过配额或关闭 MFA。
-- 新私有频道仅加入管理员、测试用户本人及 Bot，绑定空白独立 Group，不转发原有业务工作组内容。
-- Mattermost 原生输入框发送 `@cccc /subscribe`，由真实 WS 入站产生 pending，Bot 回复配对说明；核对频道与 Group 后调用原生 bind 接口批准。
-- 再经原生输入框发送 `@cccc /status`，实际收到状态回复；authorized=true、paused=false、verbose=false、root_id 为空。CCCC 状态运行中、错误为空、订阅数 1。
-- 组内 Actor 数 0，模型推理、模型回复路由、文件和流式尚未验收。已交付可亲试的频道入口，未把协议命令回复冒充模型回复。
-
-### 2026-09-08：独立 Codex Actor 真实问答
-
-- 用户明确授权只复制 Codex 登录凭据；未复制原配置或历史，不更换为付费 API。CLI 登录状态和 CCCC 原生会话均可用。
-- 在真实 Mattermost 输入框发送 `/send @codex` 提问，CCCC ledger 记录对应入站事件、runtime 接收和 Actor 发出的 chat.message，频道收到模型答案。
-- 第二条以普通 mention 提问，不含显式收件人或要求使用消息工具的额外提示；入站默认交给 foreman，真实模型承接上一条结果并回复。
-- 两条模型回复都在频道主时间线显示，均无 root_id；桥接无错误、订阅 1、Actor 会话 usable。未以后台脚本直接写入模型答案代替验收。
-- 本轮只证明单 Codex、指定收件人/默认 foreman 和连续问答；多 Actor 广播、未知收件人、附件、流式及故障恢复等用例仍待完整验证。已提供用户亲试入口，不提前标记整体完成。
+Before publishing, tie CI and acceptance to the actual candidate commit. Do not carry earlier test counts forward as current evidence, report a build as deployed, or label an excluded legacy issue fixed.

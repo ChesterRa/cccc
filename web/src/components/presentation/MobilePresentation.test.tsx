@@ -160,12 +160,10 @@ describe("mobile presentation surface", () => {
     await act(async () => {
       root.render(
         <PresentationRail
-          mode="panel"
           presentation={presentation}
           isDark={false}
-          isOpen
           attentionSlots={{}}
-          onOpenChange={() => undefined}
+          onClose={() => undefined}
           onOpenSlot={() => undefined}
         />,
       );

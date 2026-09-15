@@ -20,7 +20,7 @@ export type IMConfigDraft = {
 export type IMConfigSaveRequest = IMConfigDraft & { groupId: string; platform: IMPlatform };
 
 export function isValidMattermostUrl(value: string): boolean {
-  // 服务端 im_state::normalize_mattermost_url 是权威合同；本地校验只提供即时反馈。
+  // Server-side im_state::normalize_mattermost_url is authoritative; local validation only provides immediate feedback.
   try {
     const url = new URL(value.trim());
     return (

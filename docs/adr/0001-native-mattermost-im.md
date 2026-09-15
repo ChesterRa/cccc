@@ -1,7 +1,9 @@
-# Mattermost 使用 CCCC 原生 IM 模块
+# Native Mattermost IM Connector
 
-状态：实现方向已确定；功能以 [当前规格](../specs/mattermost-im.md) 为准。
+Status: accepted. The [current specification](../specs/mattermost-im.md) defines the implementation scope.
 
-Mattermost 作为 CCCC 的通用原生聊天平台，沿用已有 IM 配置、生命周期、聊天授权和消息语义，随 CCCC 一起构建发布。独立 HTTP/SSE 服务无法直接出现在现有平台选择中，也不能直接复用内部公共实现；用户因此选择维护 Fork，完成后再考虑上游贡献，许可证沿用 Apache-2.0。
+Mattermost uses CCCC's existing IM configuration, lifecycle, chat authorization and message semantics. It builds and ships with CCCC under Apache-2.0. A separate HTTP/SSE service would require another setup flow and would not directly reuse these internal components.
 
-2026-09-07 范围修订：严格遵循现有连接器的源码组织、编码和 Web 风格，以最小公共补丁实现全部可映射功能；不为此引入会议业务、跨组共享 Bot 路由、动态插件系统或新的 CLI 调度。原规格将通用接入与特定业务增强混合，已按本决定拆开，先前扩展要求不再自动成为基础连接器的架构前提。
+The connector follows the existing source layout and Web design, with only the shared changes needed to support equivalent user capabilities. It does not introduce meeting orchestration, cross-Group routing through a shared Bot, a plugin system or another CLI scheduler.
+
+This scope decision dates to September 7, 2026, when general platform integration was separated from deployment-specific business features. Those earlier feature requests are not prerequisites for the native connector. The implementation was contributed through [PR #103](https://github.com/ChesterRa/cccc/pull/103).

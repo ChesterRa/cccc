@@ -63,7 +63,7 @@ struct SocketCursor {
 const RECOVERY_GAP: &str = "Mattermost WebSocket recovery cache expired; some messages may be missing. Please resend unanswered requests.";
 
 impl SocketCursor {
-    // Mattermost 的 seq 是连接级序号，不是 post_id；非 posted 事件也必须推进。
+    // Mattermost seq is connection-wide, not a post_id; non-posted events must advance it too.
     fn accept(&mut self, event: &Value) -> Result<bool, &'static str> {
         if event.get("seq_reply").is_some() {
             return Ok(false);
@@ -188,7 +188,7 @@ impl MattermostApi {
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, String> {
-        // 仅重试服务器明确拒绝的限流请求；连接中断时不盲目重复创建帖子。
+        // Retry only explicit rate-limit rejections; a lost connection does not prove that post creation failed.
         for attempt in 0..3 {
             let candidate = request
                 .try_clone()
@@ -274,7 +274,7 @@ impl MattermostApi {
     }
 
     async fn open_socket(&self, cursor: &SocketCursor) -> Result<Socket, SocketError> {
-        // HTTP 升级复用 reqwest 的 TLS、HTTP_PROXY/HTTPS_PROXY/NO_PROXY，无额外代理服务。
+        // Reuse reqwest TLS and HTTP_PROXY/HTTPS_PROXY/NO_PROXY for the HTTP upgrade.
         let key = generate_key();
         let response = self
             .request(Method::GET, "websocket")
@@ -418,7 +418,7 @@ async fn complete_start(
     if let Err(error) =
         update_start_state(registry, store, group_id, config, generation, Some(&result))
     {
-        // 与原生 install/stop 使用同一生命周期锁；只摘除本次失败的代次。
+        // Use the install/stop lifecycle lock and remove only this failed generation.
         let lifecycle_lock = registry.lifecycle_lock(group_id);
         let worker = {
             let _guard = lifecycle_lock.lock().await;
@@ -519,7 +519,7 @@ async fn start(
         reactions.clone(),
         config,
     );
-    // 沿用 WeCom 的有界队列与独立入站任务，附件 REST 不占用心跳循环。
+    // Follow WeCom's bounded queue and separate inbound task so attachment requests do not block heartbeats.
     let (inbound_tx, mut inbound_rx) = mpsc::channel(128);
     let inbound_home = home.clone();
     let inbound_group = group_id.to_owned();
@@ -597,8 +597,8 @@ fn verify_identity_with(
         .map_err(|e| e.to_string())?
         .join("mattermost_identity.json");
     let expected = json!({"site":api.site,"bot_id":api.bot_id});
-    // 整段串行化，而非只锁读写之一。不能把身份写入移到 im_state::update
-    // 回调内：回调结束后才提交授权，必须保留“先清授权，后记身份”的失败安全顺序。
+    // Serialize the whole sequence. Do not move the identity write into im_state::update:
+    // authorization commits after the callback; clearing it must precede recording the new identity.
     cccc_core::fs::with_exclusive_lock(&path.with_extension("lock"), || {
         let previous: Value = match cccc_core::fs::read_json(&path) {
             Ok(value) => value,
@@ -606,7 +606,7 @@ fn verify_identity_with(
             Err(error) => return Err(error),
         };
         cccc_core::im_state::update(&store, group_id, |state| {
-            // 配置已被另一个保存请求替换时，本次启动不能修改新配置的授权。
+            // A stale startup must not change authorization for a config replaced by another save.
             if state.get("config").and_then(Value::as_object) != Some(config)
                 || api
                     .worker
@@ -624,13 +624,13 @@ fn verify_identity_with(
             }
             Ok(())
         })?;
-        // 先持久清除旧授权，再记录身份；中途失败重试时只会再次清除，不会错误复用。
+        // Persist authorization removal before identity; retrying an interrupted change must not reuse old grants.
         commit(&path, &expected)
     })
     .map_err(|e| e.to_string())
 }
 
-// CLI 的组合 Web 入口没有 tracing subscriber；组日志必须独立于该全局初始化。
+// The combined CLI/Web entry point has no tracing subscriber; Group logs must work independently.
 pub(super) fn log_error(
     home: &HomeLayout,
     group_id: &str,
@@ -681,7 +681,7 @@ fn append_log(home: &HomeLayout, group_id: &str, line: &str) -> std::io::Result<
 
 impl MattermostApi {
     fn persist_error(&self, home: &HomeLayout, group_id: &str, error: Option<&str>) {
-        // 单独的 API 客户端不拥有运行状态；仅已登记启动的 worker 可以写回。
+        // Standalone API clients do not own runtime state; only a registered worker can update it.
         let Some(worker) = &self.worker else {
             return;
         };
@@ -719,7 +719,7 @@ async fn socket_loop(
                 capacity = inbound.reserve(), if permit.is_none() => {
                     let Ok(capacity) = capacity else { return; };
                     permit = Some(capacity);
-                    // 本地背压不是远端失活；恢复读取后才重新计算接收超时。
+                    // Local backpressure is not remote inactivity; restart the receive timeout when reading resumes.
                     last_received = tokio::time::Instant::now();
                 }
                 message = socket.next(), if permit.is_some() => {
@@ -767,8 +767,8 @@ async fn socket_loop(
         api.persist_error(&home, &group_id, Some(error));
         log_error(&home, &group_id, "disconnect", error, &api.token);
         drop(permit);
-        // 先关闭旧连接，允许服务端将其转为可恢复状态；重连不等待 hello，
-        // 同 ID 恢复会直接发缓存事件，无积压时甚至暂时没有任何应用事件。
+        // Close the old socket so the server can make it resumable. Do not wait for hello on reconnect:
+        // resuming the same ID sends cached events directly, or no application events if nothing is pending.
         drop(socket);
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -850,7 +850,7 @@ impl MattermostReactions {
         .await;
     }
     pub(super) async fn unknown_post(&self, key: &str, post_id: &str) {
-        // 已失去受理结果时仅撤掉处理中标记，不将可能成功的提交标为失败。
+        // When acceptance is unknown, remove the processing marker without marking a possibly successful submission as failed.
         self.finish(self.active.take_where(key, |r| r.post_id == post_id), None)
             .await;
     }
@@ -926,6 +926,7 @@ impl MattermostReactions {
 
 #[cfg(test)]
 mod tests {
+    // Non-ASCII fixture bodies and filenames verify Unicode chunking and file round trips.
     use super::super::{AuthorizedChat, authorized_chats};
     use super::*;
     use axum::{
@@ -1045,7 +1046,7 @@ mod tests {
             let connection = state.ws_connections.fetch_add(1, Ordering::SeqCst);
             upgrade.on_upgrade(move |mut socket| async move {
                 let text = match mode {
-                    2 => json!({"error":{"message":"测试认证拒绝"}}).to_string(),
+                    2 => json!({"error":{"message":"test authentication rejection"}}).to_string(),
                     4 => "invalid-json".to_owned(),
                     10 if connection > 0 => json!({"event":"hello","data":{"connection_id":"n".repeat(26)},"seq":0}).to_string(),
                     _ => json!({"event":"hello","data":{"connection_id":"s".repeat(26)},"seq":0}).to_string(),
@@ -1057,7 +1058,7 @@ mod tests {
                         .expect("Mattermost test operation");
                 }
                 if mode == 9 {
-                    // 首次连接 seq=1 后故意缺 seq=2；恢复必须带 next=2，且没有 hello。
+                    // Skip seq=2 after the first connection's seq=1; resume must request next=2 without requiring hello.
                     let sequences: &[u64] = if connection == 0 { &[1, 3] } else { &[1, 2, 2, 3, 4] };
                     for seq in sequences {
                         let event = if *seq == 3 {
@@ -1160,11 +1161,11 @@ mod tests {
                 if state.blocked_download.load(Ordering::SeqCst) {
                     state.release_download.notified().await;
                 }
-                let id = path.split('/').nth(5).expect("文件 ID");
+                let id = path.split('/').nth(5).expect("file ID");
                 let file = state
                     .inbound_files
                     .lock()
-                    .expect("测试附件")
+                    .expect("test attachment")
                     .get(id)
                     .cloned();
                 let Some(file) = file else {
@@ -1187,22 +1188,25 @@ mod tests {
                     if mode == "blocked" {
                         state.release_download.notified().await;
                     } else if mode == "stream_error" {
-                        yield Err(std::io::Error::other("测试流中断"));
+                        yield Err(std::io::Error::other("test stream interruption"));
                     }
                 };
                 return axum::body::Body::from_stream(body).into_response();
             }
             let upload_metadata = if path == "/sub/api/v4/files" && method == Method::POST {
                 let url = reqwest::Url::parse(&format!("http://localhost{}", request.uri()))
-                    .expect("上传请求 URL");
+                    .expect("upload request URL");
                 let query: std::collections::HashMap<String, String> =
                     url.query_pairs().into_owned().collect();
-                let channel = query.get("channel_id").expect("上传频道");
-                let filename = query.get("filename").expect("上传文件名");
+                let channel = query.get("channel_id").expect("upload channel");
+                let filename = query.get("filename").expect("upload filename");
                 assert!(valid_id(channel));
                 assert!(!filename.is_empty());
                 assert_eq!(
-                    request.headers().get("content-type").expect("上传类型"),
+                    request
+                        .headers()
+                        .get("content-type")
+                        .expect("upload content type"),
                     "application/octet-stream"
                 );
                 Some(
@@ -1232,8 +1236,8 @@ mod tests {
                 state
                     .upload_metadata
                     .lock()
-                    .expect("上传元数据")
-                    .push(upload_metadata.expect("已校验上传元数据"));
+                    .expect("upload metadata")
+                    .push(upload_metadata.expect("validated upload metadata"));
                 state
                     .uploads
                     .lock()
@@ -1259,10 +1263,10 @@ mod tests {
                 if state.fail_edit.load(Ordering::Relaxed) {
                     return StatusCode::FORBIDDEN.into_response();
                 }
-                let id = path.split('/').nth(5).expect("编辑帖子 ID");
-                let index = id.parse::<usize>().expect("模拟帖子序号") - 1;
-                let patch: Value = serde_json::from_slice(&raw).expect("编辑正文");
-                state.posts.lock().expect("帖子")[index]["message"] = patch["message"].clone();
+                let id = path.split('/').nth(5).expect("edited post ID");
+                let index = id.parse::<usize>().expect("mock post index") - 1;
+                let patch: Value = serde_json::from_slice(&raw).expect("edited body");
+                state.posts.lock().expect("posts")[index]["message"] = patch["message"].clone();
                 return axum::Json(json!({"id":path.split('/').nth(5).unwrap_or_default()}))
                     .into_response();
             }
@@ -1335,7 +1339,7 @@ mod tests {
             ("f", "first", "材料.txt", "text/plain"),
             ("g", "second", "图片.png", "image/png"),
         ];
-        *fixture.state.inbound_files.lock().expect("测试附件") = files.into_iter().map(|(id, data, name, mime)| {
+        *fixture.state.inbound_files.lock().expect("test attachment") = files.into_iter().map(|(id, data, name, mime)| {
             let id = id.repeat(26);
             (id.clone(), json!({"id":id,"post_id":"p".repeat(26),"name":name,"mime_type":mime,"size":data.len(),"data":data}))
         }).collect();
@@ -1346,9 +1350,9 @@ mod tests {
             DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(3)),
             fixture.api.clone(),
             MattermostReactions::new(home.clone(), group, fixture.api.clone()),
-            config.as_object().expect("配置"),
+            config.as_object().expect("config"),
         );
-        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot /send @user 看附件","type":"","file_ids":["f".repeat(26),"g".repeat(26)]});
+        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot /send @user See attachments","type":"","file_ids":["f".repeat(26),"g".repeat(26)]});
         (
             inbound,
             json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}}),
@@ -1359,16 +1363,16 @@ mod tests {
         let path = GroupStore::new(home.clone())
             .expect("GroupStore")
             .state_dir(group)
-            .expect("状态目录")
+            .expect("state directory")
             .join("blobs");
         std::fs::read_dir(path)
-            .expect("Blob 目录")
+            .expect("Blob directory")
             .map(|entry| {
                 entry
-                    .expect("Blob 文件")
+                    .expect("Blob file")
                     .file_name()
                     .to_str()
-                    .expect("文件名")
+                    .expect("filename")
                     .to_owned()
             })
             .collect()
@@ -1383,6 +1387,8 @@ mod tests {
             "length",
             "chunked",
             "stream_error",
+            "metadata_larger",
+            "metadata_smaller",
             "invalid_id",
             "existing",
         ] {
@@ -1390,14 +1396,17 @@ mod tests {
             let (_temp, home, group) = scope();
             let (mut inbound, mut event) = attachment_request(&fixture, &home, &group);
             let existing = (mode == "existing").then(|| {
-                cccc_core::blobs::store(&home, &group, b"first").expect("已被其他消息使用的 Blob")
+                cccc_core::blobs::store(&home, &group, b"first")
+                    .expect("Blob shared by existing messages")
             });
             {
-                let mut files = fixture.state.inbound_files.lock().expect("附件");
-                let second = files.get_mut(&"g".repeat(26)).expect("第二附件");
+                let mut files = fixture.state.inbound_files.lock().expect("attachments");
+                let second = files.get_mut(&"g".repeat(26)).expect("second attachment");
                 match mode {
                     "source" => second["post_id"] = json!("q".repeat(26)),
                     "size" => second["size"] = json!(1024 * 1024 + 1),
+                    "metadata_larger" => second["size"] = json!(100),
+                    "metadata_smaller" => second["size"] = json!(1),
                     "length" | "chunked" => {
                         second["data"] = json!("x".repeat(1024 * 1024 + 1));
                         if mode == "chunked" {
@@ -1407,41 +1416,52 @@ mod tests {
                     "existing" => second["body_mode"] = json!("http_error"),
                     "invalid_id" => {
                         let mut post: Value =
-                            serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+                            serde_json::from_str(field(&event["data"], "post")).expect("posts");
                         post["file_ids"][1] = json!("invalid");
                         event["data"]["post"] = json!(post.to_string());
                     }
                     _ => second["body_mode"] = json!(mode),
                 }
             }
-            let error = inbound.handle(&event).await.expect_err("第二附件失败");
+            let error = inbound
+                .handle(&event)
+                .await
+                .expect_err("second attachment failure");
             assert!(
                 !error.contains("submission outcome is unknown"),
-                "{mode}: 未进入 daemon 提交"
+                "{mode}: no daemon submission"
             );
             assert!(!error.contains("test-token"));
             let names = blob_names(&home, &group);
+            if mode.starts_with("metadata_") {
+                assert!(
+                    error.contains("size does not match file metadata"),
+                    "{mode}: {error}"
+                );
+            }
             if let Some(blob) = existing {
                 assert_eq!(names, [blob.sha256].into_iter().collect(), "{mode}");
-                let path = cccc_core::blobs::resolve(&home, &group, &blob.path).expect("原文件");
-                assert_eq!(std::fs::read(path).expect("原内容"), b"first");
+                let path =
+                    cccc_core::blobs::resolve(&home, &group, &blob.path).expect("original file");
+                assert_eq!(std::fs::read(path).expect("original content"), b"first");
             } else {
                 assert!(
                     names.is_empty(),
-                    "{mode}: 不保留最终文件或临时文件 {names:?}"
+                    "{mode}: no final or temporary files remain {names:?}"
                 );
             }
             let store = GroupStore::new(home).expect("GroupStore");
             let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger"))
-                .expect("事件");
+                .expect("events");
             assert!(
                 !events.iter().any(|event| event.kind == "chat.message"),
                 "{mode}"
             );
-            let posts = fixture.state.posts.lock().expect("反馈");
+            let posts = fixture.state.posts.lock().expect("feedback");
             assert_eq!(posts.len(), 1, "{mode}");
             assert!(
-                field(&posts[0], "message").contains("未能交给 CCCC"),
+                field(&posts[0], "message")
+                    .contains("Could not deliver the message or attachments to CCCC"),
                 "{mode}"
             );
         }
@@ -1456,9 +1476,9 @@ mod tests {
             .state
             .inbound_files
             .lock()
-            .expect("附件")
+            .expect("attachments")
             .get_mut(&"g".repeat(26))
-            .expect("第二附件")["body_mode"] = json!("blocked");
+            .expect("second attachment")["body_mode"] = json!("blocked");
         let task = tokio::spawn(async move { inbound.handle(&event).await });
         let entered = tokio::time::timeout(
             Duration::from_secs(5),
@@ -1467,20 +1487,23 @@ mod tests {
         .await;
         let pending = blob_names(&home, &group);
         task.abort();
-        let cancelled = task.await.expect_err("取消任务");
+        let cancelled = task.await.expect_err("cancelled task");
         fixture.state.release_download.notify_one();
-        entered.expect("第二附件已开始传输");
+        entered.expect("second attachment transfer started");
         assert!(cancelled.is_cancelled());
-        assert!(!pending.is_empty(), "第一附件暂存仍在");
+        assert!(!pending.is_empty(), "the first attachment remains staged");
         assert!(
             pending.iter().all(|name| name.len() != 64),
-            "尚无最终内容寻址文件"
+            "no final content-addressed files yet"
         );
-        assert!(blob_names(&home, &group).is_empty(), "原生析构清理全部暂存");
-        assert!(fixture.state.posts.lock().expect("反馈").is_empty());
+        assert!(
+            blob_names(&home, &group).is_empty(),
+            "native destructors remove all staged files"
+        );
+        assert!(fixture.state.posts.lock().expect("feedback").is_empty());
         let store = GroupStore::new(home).expect("GroupStore");
-        let events =
-            cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger")).expect("事件");
+        let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger"))
+            .expect("events");
         assert!(!events.iter().any(|event| event.kind == "chat.message"));
     }
 
@@ -1493,57 +1516,63 @@ mod tests {
         let (mut inbound, event) = attachment_request(&fixture, &home, &group);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
-            .expect("监听");
+            .expect("listen");
         let address = cccc_contracts::DaemonAddress {
             v: 1,
             transport: cccc_contracts::Transport::Tcp,
             path: String::new(),
             host: "127.0.0.1".into(),
-            port: listener.local_addr().expect("地址").port(),
+            port: listener.local_addr().expect("address").port(),
             pid: std::process::id(),
             version: "test".into(),
             ts: "test".into(),
         };
         std::fs::write(
             home.daemon_dir().join("ccccd.addr.json"),
-            serde_json::to_vec(&address).expect("地址 JSON"),
+            serde_json::to_vec(&address).expect("address JSON"),
         )
-        .expect("地址文件");
+        .expect("address file");
         let server_home = home.clone();
         let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("接受请求");
+            let (stream, _) = listener.accept().await.expect("accept request");
             let mut stream = BufReader::new(stream);
             let mut line = String::new();
-            stream.read_line(&mut line).await.expect("请求");
+            stream.read_line(&mut line).await.expect("request");
             let request: cccc_contracts::DaemonRequest =
-                serde_json::from_str(&line).expect("请求 JSON");
+                serde_json::from_str(&line).expect("request JSON");
             let response = cccc_daemon::handle_request(&server_home, &request);
             assert!(response.ok, "{:?}", response.error);
-            let mut bytes = serde_json::to_vec(&response).expect("响应");
+            let mut bytes = serde_json::to_vec(&response).expect("response");
             bytes.push(b'\n');
-            stream.get_mut().write_all(&bytes).await.expect("写响应");
+            stream
+                .get_mut()
+                .write_all(&bytes)
+                .await
+                .expect("write response");
         });
         let result = inbound.handle(&event).await;
         if result.is_err() {
             server.abort();
         }
-        result.expect("两附件入账");
-        server.await.expect("真实 daemon 请求处理完成");
+        result.expect("submit both attachments");
+        server.await.expect("real daemon request completed");
         inbound
             .handle(&event)
             .await
-            .expect("重复事件不再下载或提交");
-        assert_eq!(*fixture.state.downloads.lock().expect("下载次数"), 4);
-        assert_eq!(blob_names(&home, &group).len(), 2, "只有两个最终 Blob");
+            .expect("replay must not download or submit again");
+        assert_eq!(*fixture.state.downloads.lock().expect("download count"), 4);
+        assert_eq!(blob_names(&home, &group).len(), 2, "only two final Blobs");
         let store = GroupStore::new(home.clone()).expect("GroupStore");
-        let events =
-            cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger")).expect("事件");
+        let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("Ledger"))
+            .expect("events");
         let messages: Vec<_> = events
             .iter()
             .filter(|event| event.kind == "chat.message")
             .collect();
         assert_eq!(messages.len(), 1);
-        let attachments = messages[0].data["attachments"].as_array().expect("附件");
+        let attachments = messages[0].data["attachments"]
+            .as_array()
+            .expect("attachments");
         assert_eq!(attachments.len(), 2);
         for (attachment, (id, data, title, mime, kind)) in attachments.iter().zip([
             ("f", "first", "材料.txt", "text/plain", "file"),
@@ -1562,16 +1591,16 @@ mod tests {
             let path = cccc_core::blobs::resolve(
                 &home,
                 &group,
-                attachment["path"].as_str().expect("路径"),
+                attachment["path"].as_str().expect("path"),
             )
-            .expect("Blob 路径");
-            assert_eq!(std::fs::read(path).expect("内容"), data.as_bytes());
+            .expect("Blob path");
+            assert_eq!(std::fs::read(path).expect("content"), data.as_bytes());
         }
     }
 
     #[tokio::test]
     async fn socket_write_deadline_covers_ping_and_pong_and_can_be_cancelled() {
-        // 不依赖内核缓冲大小；阻塞真实生产发送函数使用的 Sink::poll_flush。
+        // Block the production sender's Sink::poll_flush without relying on kernel buffer sizes.
         for message in [
             Message::Ping(Vec::new().into()),
             Message::Pong(Vec::new().into()),
@@ -1617,8 +1646,15 @@ mod tests {
                 "@cccc_bot hello",
                 false,
             ),
-            (2, true, false, "", "普通频道聊天", false),
-            (1, true, false, "", "未知类型不推断私聊", false),
+            (2, true, false, "", "Ordinary channel chat", false),
+            (
+                1,
+                true,
+                false,
+                "",
+                "Unknown channel types must not be inferred as DMs",
+                false,
+            ),
         ] {
             let fixture = fixture().await;
             fixture.state.fail_lookup.store(failure, Ordering::SeqCst);
@@ -1647,7 +1683,7 @@ mod tests {
                 "failure={failure}, authorized={authorized}, paused={paused}, thread={thread}, raw={raw}"
             );
             if expected {
-                assert!(field(&posts[0], "message").contains("尚未提交给 CCCC"));
+                assert!(field(&posts[0], "message").contains("has not been submitted to CCCC"));
                 assert_eq!(field(&posts[0], "channel_id"), "c".repeat(26));
             }
             assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
@@ -1712,7 +1748,7 @@ mod tests {
                     fixture.state.failed_posts.load(Ordering::SeqCst),
                     usize::from(reject_reply)
                 );
-                // 新源帖子可再次尝试，失败身份不会被永久记成 Bot。
+                // A new source post can retry; an identity lookup failure must not permanently classify the sender as a Bot.
                 post["id"] = json!("q".repeat(26));
                 inbound
                     .handle(&event(&post))
@@ -1744,7 +1780,7 @@ mod tests {
         for text in [
             "@cccc_bot /help",
             "@cccc_bot /unsubscribe",
-            "@cccc_bot 未授权消息",
+            "@cccc_bot Unauthorized message",
         ] {
             for reject_reply in [false, true] {
                 let fixture = fixture().await;
@@ -1770,15 +1806,18 @@ mod tests {
                 assert_eq!(inbound.handle(&event(&post)).await.is_err(), reject_reply);
                 if unsubscribe {
                     assert!(authorized_chats(&home, &group, PLATFORM).is_empty());
-                    // 模拟首次取消后用户重新授权；旧帖重放不能再次取消。
+                    // Reauthorize after the first unsubscribe; replaying the old post must not unsubscribe again.
                     authorize_target(&home, &group, "", false);
                 }
-                inbound.handle(&event(&post)).await.expect("原帖去重");
+                inbound
+                    .handle(&event(&post))
+                    .await
+                    .expect("source post deduplication");
                 if unsubscribe {
                     assert_eq!(authorized_chats(&home, &group, PLATFORM).len(), 1);
                 }
                 assert_eq!(
-                    fixture.state.posts.lock().expect("帖子").len(),
+                    fixture.state.posts.lock().expect("posts").len(),
                     usize::from(!reject_reply)
                 );
                 assert_eq!(
@@ -1791,15 +1830,22 @@ mod tests {
                     assert!(authorized_chats(&home, &group, PLATFORM).is_empty());
                 }
                 assert_eq!(
-                    fixture.state.posts.lock().expect("帖子").len(),
+                    fixture.state.posts.lock().expect("posts").len(),
                     2 * usize::from(!reject_reply)
                 );
                 assert_eq!(
                     fixture.state.failed_posts.load(Ordering::SeqCst),
                     2 * usize::from(reject_reply)
                 );
-                assert_eq!(*fixture.state.downloads.lock().expect("下载"), 0);
-                assert!(fixture.state.reactions.lock().expect("反应").is_empty());
+                assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
+                assert!(
+                    fixture
+                        .state
+                        .reactions
+                        .lock()
+                        .expect("reactions")
+                        .is_empty()
+                );
                 let store = GroupStore::new(home).expect("store");
                 assert!(
                     cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
@@ -1825,21 +1871,30 @@ mod tests {
                 .state
                 .inbound_files
                 .lock()
-                .expect("文件")
+                .expect("files")
                 .get_mut(&"g".repeat(26))
-                .expect("第二附件")["body_mode"] = json!("http_error");
-            inbound.handle(&event).await.expect_err("附件失败");
-            let downloads = *fixture.state.downloads.lock().expect("下载");
-            let reactions = fixture.state.reactions.lock().expect("反应").len();
+                .expect("second attachment")["body_mode"] = json!("http_error");
+            inbound
+                .handle(&event)
+                .await
+                .expect_err("attachment failure");
+            let downloads = *fixture.state.downloads.lock().expect("downloads");
+            let reactions = fixture.state.reactions.lock().expect("reactions").len();
             assert_eq!(downloads, 4);
-            inbound.handle(&event).await.expect("原帖去重");
-            assert_eq!(*fixture.state.downloads.lock().expect("下载"), downloads);
+            inbound
+                .handle(&event)
+                .await
+                .expect("source post deduplication");
             assert_eq!(
-                fixture.state.reactions.lock().expect("反应").len(),
+                *fixture.state.downloads.lock().expect("downloads"),
+                downloads
+            );
+            assert_eq!(
+                fixture.state.reactions.lock().expect("reactions").len(),
                 reactions
             );
             assert_eq!(
-                fixture.state.posts.lock().expect("帖子").len(),
+                fixture.state.posts.lock().expect("posts").len(),
                 usize::from(!reject_reply)
             );
             assert_eq!(
@@ -1847,25 +1902,28 @@ mod tests {
                 usize::from(reject_reply)
             );
             let mut post: Value =
-                serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+                serde_json::from_str(field(&event["data"], "post")).expect("posts");
             post["id"] = json!("q".repeat(26));
             event["data"]["post"] = json!(post.to_string());
             for file in fixture
                 .state
                 .inbound_files
                 .lock()
-                .expect("文件")
+                .expect("files")
                 .values_mut()
             {
                 file["post_id"] = json!("q".repeat(26));
             }
-            inbound.handle(&event).await.expect_err("新帖重试");
+            inbound
+                .handle(&event)
+                .await
+                .expect_err("retry with a new post");
             assert_eq!(
-                *fixture.state.downloads.lock().expect("下载"),
+                *fixture.state.downloads.lock().expect("downloads"),
                 2 * downloads
             );
             assert_eq!(
-                fixture.state.posts.lock().expect("帖子").len(),
+                fixture.state.posts.lock().expect("posts").len(),
                 2 * usize::from(!reject_reply)
             );
             assert_eq!(
@@ -2029,7 +2087,7 @@ mod tests {
                         .await
                         .expect("response write");
                 }
-                drop(stream); // 已提交的真实 daemon 操作丢失响应，不模拟成拒绝。
+                drop(stream); // Drop the response after a real daemon submission; this is not a rejection.
                 assert!(
                     tokio::time::timeout(Duration::from_millis(400), listener.accept())
                         .await
@@ -2090,9 +2148,9 @@ mod tests {
             }
             assert!(error.contains(&"p".repeat(26)), "safe source ID retained");
             assert!(field(&posts[0], "message").contains(if lose_reply {
-                "无法确认"
+                "Cannot confirm"
             } else {
-                "未接受这次请求"
+                "rejected this request"
             }));
             let events = cccc_core::ledger::read_all(&store.ledger_path(&group).expect("ledger"))
                 .expect("events");
@@ -2122,7 +2180,7 @@ mod tests {
         let (_temp, home, group) = scope();
         let store = GroupStore::new(home.clone()).expect("store");
         let other = store.create("Other", "").expect("other group");
-        let error = "附件错误\nBearer synthetic-secret";
+        let error = "attachment error\nBearer synthetic-secret";
         log_error(&home, &group, "inbound", error, "synthetic-secret");
         log_error(&home, &group, "inbound", error, "synthetic-secret");
         let path = store
@@ -2138,7 +2196,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["group_id"], group);
         assert_eq!(rows[0]["operation"], "inbound");
-        assert_eq!(rows[0]["error"], "附件错误\nBearer [REDACTED]");
+        assert_eq!(rows[0]["error"], "attachment error\nBearer [REDACTED]");
         assert!(!rows[0]["ts"].as_str().expect("timestamp").is_empty());
         assert!(
             !store
@@ -2190,7 +2248,7 @@ mod tests {
         std::fs::remove_file(&path).expect("remove fixture");
         std::fs::create_dir(&path).expect("unwritable file fixture");
         assert!(append_log(&home, &group, "{}").is_err());
-        log_error(&home, &group, "inbound", "test", ""); // 记录失败不能导致收发任务 panic。
+        log_error(&home, &group, "inbound", "test", ""); // Logging failures must not panic the messaging task.
     }
 
     fn target(thread: bool) -> AuthorizedChat {
@@ -2218,11 +2276,11 @@ mod tests {
     #[tokio::test]
     async fn tls_protocol_errors_are_explicit_and_do_not_echo_credentials() {
         let fixture = fixture().await;
-        // 故意向明文测试端口发 TLS，不能靠关闭证书验证使其通过。
+        // Send TLS to a plaintext fixture; never disable certificate validation to make it pass.
         let config = json!({"mattermost_url":fixture.api.site.replacen("http://", "https://", 1),"bot_token":"tls-test-secret"});
         let result = authenticate(config.as_object().expect("config")).await;
         let error = match result {
-            Ok(_) => panic!("TLS 协议错误不应认证成功"),
+            Ok(_) => panic!("TLS protocol failure must prevent authentication"),
             Err(error) => error,
         };
         assert!(!error.is_empty());
@@ -2238,7 +2296,7 @@ mod tests {
             let result = authenticate(config.as_object().expect("config")).await;
             if case == "rejected" {
                 let error = match result {
-                    Ok(_) => panic!("失效代理不应认证成功"),
+                    Ok(_) => panic!("an unreachable proxy must prevent authentication"),
                     Err(error) => error,
                 };
                 assert!(!error.is_empty());
@@ -2248,11 +2306,11 @@ mod tests {
             let api = result.unwrap_or_else(|error| panic!("REST: {error}"));
             let socket = api.socket().await;
             if case == "ws_rejected" {
-                let error = socket.expect_err("代理后的 WS 拒绝应明确返回");
+                let error = socket.expect_err("report the proxied WebSocket rejection");
                 assert!(error.to_string().contains("401"));
                 assert!(!error.to_string().contains("test-token"));
             } else {
-                socket.expect("REST 和 WS 均应使用同一代理策略");
+                socket.expect("REST and WebSocket must use the same proxy policy");
             }
             return;
         }
@@ -2286,7 +2344,7 @@ mod tests {
             } else {
                 fixture.api.site.as_str()
             };
-            // .invalid 目标只能经本地代理抵达模拟服务，避免直接连接掩盖代理未生效。
+            // The .invalid host is reachable only through the fixture proxy, so a direct connection cannot mask a broken proxy policy.
             let site = if case == "bypass" {
                 fixture.api.site.as_str()
             } else {
@@ -2302,8 +2360,8 @@ mod tests {
             let output =
                 tokio::time::timeout(Duration::from_secs(20), child.kill_on_drop(true).output())
                     .await
-                    .expect("子进程超时")
-                    .expect("子进程执行");
+                    .expect("subprocess timeout")
+                    .expect("subprocess execution");
             assert!(
                 output.status.success(),
                 "{case}: {} {}",
@@ -2329,9 +2387,10 @@ mod tests {
             MattermostOutbound::new(home.clone(), &group, fixture.api.clone(), &Map::new());
         let mut event = Event::new("chat.message", &group);
         event.by = "reviewer".into();
-        event
-            .data
-            .insert("text".into(), json!("反应失败不应吞掉正文"));
+        event.data.insert(
+            "text".into(),
+            json!("Reaction failures must not discard the body"),
+        );
         event.data.insert(
             "attachments".into(),
             json!([{"path":blob.path,"title":"test.txt"}]),
@@ -2340,15 +2399,18 @@ mod tests {
             sender
                 .send_target(&target, &event)
                 .await
-                .expect_err("附件失败")
+                .expect_err("attachment failure")
                 .contains("attachments")
         );
         reactions.complete(&key, Some("event"), false).await;
         assert_eq!(reactions.active.len(&key), 0);
         let posts = fixture.state.posts.lock().expect("posts");
         assert_eq!(posts.len(), 2);
-        assert_eq!(posts[0]["message"], "**reviewer**\n\n反应失败不应吞掉正文");
-        assert!(field(&posts[1], "message").contains("部分附件发送失败"));
+        assert_eq!(
+            posts[0]["message"],
+            "**reviewer**\n\nReaction failures must not discard the body"
+        );
+        assert!(field(&posts[1], "message").contains("Some attachments could not be sent"));
         assert!(
             posts
                 .iter()
@@ -2456,7 +2518,7 @@ mod tests {
             .handle(&wrap("post_edited", &post))
             .await
             .expect("edit ignored");
-        post["message"] = json!("普通聊天，无需机器人回答");
+        post["message"] = json!("Ordinary chat, no Bot response needed");
         inbound
             .handle(&wrap("posted", &post))
             .await
@@ -2501,7 +2563,9 @@ mod tests {
         let sender = MattermostOutbound::new(home, &group, fixture.api.clone(), &Map::new());
         let mut event = Event::new("chat.message", &group);
         event.by = "reviewer".into();
-        event.data.insert("text".into(), json!("只有本组正文"));
+        event
+            .data
+            .insert("text".into(), json!("Only this Group's body"));
         event.data.insert(
             "attachments".into(),
             json!([{"path":blob.path,"title":"test.txt"}]),
@@ -2510,13 +2574,13 @@ mod tests {
         assert!(fixture.state.uploads.lock().expect("uploads").is_empty());
         assert_eq!(
             fixture.state.posts.lock().expect("posts")[0]["message"],
-            "**reviewer**\n\n只有本组正文"
+            "**reviewer**\n\nOnly this Group's body"
         );
         fixture.state.fail_create.store(true, Ordering::SeqCst);
         assert!(
             fixture
                 .api
-                .post(&"c".repeat(26), "", "禁止重复创建", &[])
+                .post(&"c".repeat(26), "", "Do not create a duplicate", &[])
                 .await
                 .expect_err("403")
                 .contains("403")
@@ -2609,7 +2673,7 @@ mod tests {
                     .await
                     .expect("complete request");
                 received.lock().expect("bodies").push(body);
-                // 服务器已收到完整创建请求，但响应前连接断开；不能擅自再创建一次。
+                // The server received the complete create request but dropped the response; do not create a duplicate.
                 drop(reader);
             }
         });
@@ -2625,26 +2689,27 @@ mod tests {
             username: "cccc_bot".into(),
             worker: None,
         };
-        let result = api.post(&"c".repeat(26), "", "仅创建一次", &[]).await;
+        let result = api.post(&"c".repeat(26), "", "Create once", &[]).await;
         server.abort();
         let _ = server.await;
-        let error = result.expect_err("响应丢失应明确失败");
+        let error = result.expect_err("response loss must be reported");
         assert!(!error.contains("synthetic-token"));
         let bodies = bodies.lock().expect("bodies");
         assert_eq!(bodies.len(), 1);
         let body: Value = serde_json::from_slice(&bodies[0]).expect("JSON");
-        assert_eq!(body["message"], "仅创建一次");
+        assert_eq!(body["message"], "Create once");
     }
 
     #[tokio::test]
-    #[ignore = "仅在明确授权的测试频道运行，保留合成长代码线程，不调用模型"]
+    #[ignore = "Requires an authorized test channel; leaves a synthetic long-code thread and makes no model calls"]
     async fn live_long_code_is_losslessly_reassembled() {
-        let site = std::env::var("CCCC_MM_TEST_SITE").expect("测试站点");
-        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("测试频道");
+        let site = std::env::var("CCCC_MM_TEST_SITE").expect("test site");
+        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("test channel");
         assert!(valid_id(&channel));
-        let token =
-            std::fs::read_to_string(std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("凭据文件"))
-                .expect("凭据");
+        let token = std::fs::read_to_string(
+            std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("credential file"),
+        )
+        .expect("credential");
         let config = json!({"mattermost_url":site,"bot_token":token.trim()});
         let api = authenticate(config.as_object().expect("config"))
             .await
@@ -2654,13 +2719,13 @@ mod tests {
             .post(
                 &channel,
                 "",
-                &format!("长代码分段验收 {group}（合成协议，非模型输出）"),
+                &format!("Long-code chunking check {group} (synthetic protocol, not model output)"),
                 &[],
             )
             .await
             .expect("root");
         let text = format!(
-            "```rust\n{}\n```\n[示例链接](https://example.com)\n结束🙂",
+            "```rust\n{}\n```\n[Example link](https://example.com)\nEnd🙂",
             "println!(\"中文🙂\");\n".repeat(1300)
         );
         let mut event = Event::new("chat.message", &group);
@@ -2702,7 +2767,7 @@ mod tests {
         }
         assert_eq!(combined, format!("**reviewer**\n\n{text}"));
         println!(
-            "长代码验收 root={root} chunks={} chars={} posts={ids:?}",
+            "Long-code check root={root} chunks={} chars={} posts={ids:?}",
             ids.len(),
             combined.chars().count()
         );
@@ -2721,7 +2786,7 @@ mod tests {
                 .api
                 .socket()
                 .await
-                .expect_err("应拒绝连接")
+                .expect_err("connection must be rejected")
                 .to_string();
             assert!(error.contains(expected), "{error}");
             assert!(!error.contains("test-token"));
@@ -2992,7 +3057,7 @@ mod tests {
                 );
                 assert_eq!(fixture.state.identity_requests.load(Ordering::SeqCst), 0);
                 assert_eq!(fixture.state.ws_attempts.load(Ordering::SeqCst), 0);
-                // 新读取的请求仍可启动；拒绝旧快照不是禁用当前配置。
+                // A fresh request can still start; rejecting a stale snapshot must not disable the current config.
                 assert_eq!(
                     route_request(app, "/api/im/start", Some(json!({"group_id":group})))
                         .await
@@ -3024,7 +3089,7 @@ mod tests {
             super::super::restore_config(&home, &group, &registry).expect("restore snapshot");
         let lock = registry.lifecycle_lock(&group);
         let guard = lock.lock().await;
-        // 使用恢复入口的同一启动函数，在读快照后、代次分配前确实阻塞。
+        // Block the restore path's actual startup function after reading the snapshot and before allocating a generation.
         let mut restoring = Box::pin(registry.start_with_mode(
             home.clone(),
             DaemonClient::new(home.clone()),
@@ -3092,7 +3157,7 @@ mod tests {
                 let path = format!("/api/im/{action}");
                 let mut old = Box::pin(route_request(app, &path, Some(body)));
                 assert!(futures_util::poll!(&mut old).is_pending());
-                // 旧请求已到生命周期锁；由持锁者提交新配置及安装完成的 worker。
+                // The old request has reached the lifecycle lock; the lock holder commits the new config and installed worker.
                 cccc_core::im_state::update(&store, &group, |state| {
                     state["config"]["platform"] = json!(replacement);
                     if replacement == "mattermost" {
@@ -3167,7 +3232,7 @@ mod tests {
             .expect("old worker");
         let lock = registry.lifecycle_lock(&group);
         let guard = lock.lock().await;
-        // 真正的启动分配入口；拒绝前不调用任何外部 Slack 接口。
+        // Exercise the actual startup allocation entry point; rejection must precede any external Slack request.
         let mut starting = Box::pin(registry.begin_configured_start(
             &home,
             &group,
@@ -3559,7 +3624,7 @@ mod tests {
                 .join("group.yaml");
             let original = std::fs::read(&path).expect("saved config");
             if !newer {
-                // 受控状态文件故障发生在 install 之后；不依赖 OS 权限或随机时序。
+                // Inject the state-file failure after installation without relying on OS permissions or random timing.
                 std::fs::write(&path, "[").expect("corrupt only test state");
             }
             let expected = std::fs::read(&path).expect("expected state");
@@ -3737,7 +3802,7 @@ mod tests {
         let (_temp, home, group) = scope();
         let store = GroupStore::new(home.clone()).expect("store");
         fixture.api.worker = Some(worker_state(&home, &group));
-        let socket = fixture.api.socket().await.expect("首次连接");
+        let socket = fixture.api.socket().await.expect("first connection");
         let (inbound, _receiver) = mpsc::channel(128);
         let task = tokio::spawn(socket_loop(
             home,
@@ -3771,7 +3836,7 @@ mod tests {
         .await;
         task.abort();
         let _ = task.await;
-        checked.expect("应记录断线并在重连后清除错误");
+        checked.expect("log disconnection and clear the error after reconnect");
     }
 
     #[tokio::test]
@@ -3783,53 +3848,57 @@ mod tests {
         fixture.state.fail_create.store(true, Ordering::Relaxed);
         assert!(
             sender
-                .send_target(&target, &stream(&group, "start", "首帖失败"))
+                .send_target(&target, &stream(&group, "start", "Initial post failure"))
                 .await
                 .is_err()
         );
         fixture.state.fail_create.store(false, Ordering::Relaxed);
-        let mut final_event = stream(&group, "end", "完整结论");
+        let mut final_event = stream(&group, "end", "Complete result");
         final_event.kind = "chat.message".into();
         sender
             .send_target(&target, &final_event)
             .await
-            .expect("首帖失败后兜底");
+            .expect("fallback after initial post failure");
         sender
-            .send_target(&target, &stream(&group, "start", "新流"))
+            .send_target(&target, &stream(&group, "start", "New stream"))
             .await
-            .expect("新流");
+            .expect("New stream");
         fixture.state.fail_edit.store(true, Ordering::Relaxed);
         assert!(
             sender
-                .send_target(&target, &stream(&group, "update", "更新失败"))
+                .send_target(&target, &stream(&group, "update", "Update failure"))
                 .await
                 .is_err()
         );
         sender
             .send_target(&target, &final_event)
             .await
-            .expect("更新失败后兜底");
+            .expect("fallback after update failure");
         let posts = fixture.state.posts.lock().expect("posts");
         assert_eq!(posts.len(), 3);
-        assert_eq!(posts[0]["message"], "**reviewer**\n\n完整结论");
+        assert_eq!(posts[0]["message"], "**reviewer**\n\nComplete result");
         assert_eq!(posts[2]["message"], posts[0]["message"]);
     }
 
     #[tokio::test]
-    #[ignore = "仅在明确授权的测试站点和频道运行，会保留三条协议测试帖子"]
+    #[ignore = "Requires an authorized test site and channel; leaves three protocol test posts"]
     async fn live_stream_updates_main_and_thread_without_duplicate_final() {
-        let site = std::env::var("CCCC_MM_TEST_SITE").expect("测试站点");
-        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("测试频道");
+        let site = std::env::var("CCCC_MM_TEST_SITE").expect("test site");
+        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("test channel");
         assert!(valid_id(&channel));
-        let token_path = std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("测试 Bot 凭据文件");
-        let token = std::fs::read_to_string(token_path).expect("读取测试 Bot 凭据");
+        let token_path =
+            std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("test Bot credential file");
+        let token = std::fs::read_to_string(token_path).expect("read test Bot credential");
         let config = json!({"mattermost_url":site,"bot_token":token.trim()});
-        let api = authenticate(config.as_object().expect("配置"))
+        let api = authenticate(config.as_object().expect("config"))
             .await
-            .expect("测试 Bot 身份");
+            .expect("test Bot identity");
         let (_temp, home, group) = scope();
-        let label = format!("协议流式验收 {group}（非模型输出）");
-        let root = api.post(&channel, "", &label, &[]).await.expect("测试根帖");
+        let label = format!("Protocol streaming check {group} (not model output)");
+        let root = api
+            .post(&channel, "", &label, &[])
+            .await
+            .expect("test root post");
         let targets = [
             AuthorizedChat {
                 chat_id: channel.clone(),
@@ -3844,13 +3913,17 @@ mod tests {
         ];
         let sender = MattermostOutbound::new(home, &group, api.clone(), &Map::new());
         let mut post_ids = Vec::new();
-        for (op, suffix) in [("start", "开始"), ("update", "处理中"), ("end", "完成🙂")] {
-            let text = format!("{label}：{suffix}");
+        for (op, suffix) in [
+            ("start", "Start"),
+            ("update", "In progress"),
+            ("end", "Done🙂"),
+        ] {
+            let text = format!("{label}: {suffix}");
             for target in &targets {
                 sender
                     .send_target(target, &stream(&group, op, &text))
                     .await
-                    .expect("流式投递");
+                    .expect("streaming delivery");
             }
             let posts = api
                 .json(
@@ -3859,18 +3932,22 @@ mod tests {
                     None,
                 )
                 .await
-                .expect("读取测试帖子");
+                .expect("read test post");
             for (index, target) in targets.iter().enumerate() {
                 let expected = format!("**reviewer**\n\n{text}");
                 let matching: Vec<_> = posts["posts"]
                     .as_object()
-                    .expect("帖子列表")
+                    .expect("post list")
                     .values()
                     .filter(|post| {
                         post["message"] == expected && post["root_id"] == target.thread_id
                     })
                     .collect();
-                assert_eq!(matching.len(), 1, "每个目标应只有一个当前版本");
+                assert_eq!(
+                    matching.len(),
+                    1,
+                    "each target must have one current version"
+                );
                 let id = field(matching[0], "id").to_owned();
                 if op == "start" {
                     post_ids.push(id);
@@ -3879,13 +3956,13 @@ mod tests {
                 }
             }
         }
-        let mut final_event = stream(&group, "end", &format!("{label}：完成🙂"));
+        let mut final_event = stream(&group, "end", &format!("{label}: Done🙂"));
         final_event.kind = "chat.message".into();
         for target in &targets {
             sender
                 .send_target(target, &final_event)
                 .await
-                .expect("最终消息去重");
+                .expect("final message deduplication");
         }
         let posts = api
             .json(
@@ -3894,14 +3971,17 @@ mod tests {
                 None,
             )
             .await
-            .expect("读取最终帖子");
+            .expect("read final post");
         let count = posts["posts"]
             .as_object()
-            .expect("帖子列表")
+            .expect("post list")
             .values()
             .filter(|post| field(post, "message").contains(&label))
             .count();
-        assert_eq!(count, 3, "只保留测试根帖与两个已编辑的目标帖");
+        assert_eq!(
+            count, 3,
+            "retain only the root post and two edited target posts"
+        );
     }
 
     #[tokio::test]
@@ -3940,7 +4020,7 @@ mod tests {
             .send_target(&thread, &first)
             .await
             .expect("Mattermost test operation");
-        let end = stream(&group, "end", "结论🙂");
+        let end = stream(&group, "end", "Result🙂");
         sender
             .send_target(&main, &end)
             .await
@@ -3965,7 +4045,7 @@ mod tests {
         assert_eq!(posts.len(), 3);
         assert_eq!(posts[0]["root_id"], "");
         assert_eq!(posts[2]["root_id"], "t".repeat(26));
-        assert_eq!(posts[2]["message"], "**reviewer**\n\n结论🙂");
+        assert_eq!(posts[2]["message"], "**reviewer**\n\nResult🙂");
     }
 
     #[tokio::test]
@@ -4010,13 +4090,16 @@ mod tests {
                     .map(|post| field(post, "message"))
                     .collect::<String>();
                 if fail_tail {
-                    // 尾段明确失败后保留完整兜底；已编辑首段是已交付部分，不假称原子回滚。
+                    // Keep the full fallback after a tail chunk fails; the edited first chunk remains delivered, with no atomic rollback.
                     assert_eq!(
                         all_text,
                         format!("{}{}", field(&posts[0], "message"), expected)
                     );
                 } else {
-                    assert_eq!(all_text, expected, "包括编辑后的首帖，不能重复首段");
+                    assert_eq!(
+                        all_text, expected,
+                        "include the edited first post without duplicating its chunk"
+                    );
                 }
                 assert!(posts.iter().all(|post| post["root_id"] == target.thread_id
                     && field(post, "message").chars().count() <= 16_383));
@@ -4046,7 +4129,7 @@ mod tests {
             .await
             .expect("Mattermost test operation");
         sender
-            .send_target(&target, &stream(&group, "end", "初稿"))
+            .send_target(&target, &stream(&group, "end", "Draft"))
             .await
             .expect("Mattermost test operation");
         let mut final_event = stream(&group, "end", &"中文🙂".repeat(6000));
@@ -4066,8 +4149,8 @@ mod tests {
             .collect::<String>();
         assert_eq!(text, format!("**reviewer**\n\n{}", "中文🙂".repeat(6000)));
         assert_eq!(
-            posts[0]["message"], "**reviewer**\n\n初稿",
-            "旧稿与变化后的最终正文分别保留"
+            posts[0]["message"], "**reviewer**\n\nDraft",
+            "retain the old draft and the revised final body separately"
         );
         assert!(
             posts
@@ -4110,7 +4193,11 @@ mod tests {
         assert_eq!(posts[0]["file_ids"], json!(["f".repeat(26)]));
         assert_eq!(posts[0]["root_id"], "t".repeat(26));
         assert_eq!(
-            *fixture.state.upload_metadata.lock().expect("上传元数据"),
+            *fixture
+                .state
+                .upload_metadata
+                .lock()
+                .expect("upload metadata"),
             vec![
                 json!({"channel_id":"c".repeat(26),"filename":"报告.txt","content_type":"application/octet-stream"})
             ]
@@ -4133,18 +4220,22 @@ mod tests {
         sender
             .send_target(&target(true), &event)
             .await
-            .expect("上传及发帖");
+            .expect("upload and post");
         assert_eq!(
-            *fixture.state.upload_metadata.lock().expect("上传元数据"),
+            *fixture
+                .state
+                .upload_metadata
+                .lock()
+                .expect("upload metadata"),
             vec![
                 json!({"channel_id":"c".repeat(26),"filename":title,"content_type":"application/octet-stream"})
             ]
         );
         assert_eq!(
-            *fixture.state.uploads.lock().expect("上传内容"),
+            *fixture.state.uploads.lock().expect("uploaded content"),
             vec![b"raw document".to_vec()]
         );
-        let posts = fixture.state.posts.lock().expect("帖子");
+        let posts = fixture.state.posts.lock().expect("posts");
         assert_eq!(posts.len(), 1);
         assert_eq!(posts[0]["channel_id"], "c".repeat(26));
         assert_eq!(posts[0]["root_id"], "t".repeat(26));
@@ -4164,7 +4255,7 @@ mod tests {
             reactions,
             &Map::new(),
         );
-        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"t".repeat(26),"message":"@cccc_bot 看附件","type":"","file_ids":["f".repeat(26)]});
+        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"t".repeat(26),"message":"@cccc_bot See attachments","type":"","file_ids":["f".repeat(26)]});
         let event = json!({"event":"posted","data":{"channel_type":"O","post":post.to_string()}});
         inbound.handle(&event).await.expect("unauthorized request");
         assert_eq!(*fixture.state.downloads.lock().expect("downloads"), 0);
@@ -4267,7 +4358,7 @@ mod tests {
             );
         }
         assert_eq!(fixture.state.reactions.lock().expect("calls").len(), 6);
-        // 提交失败/取消释放锁后，无关完成也不得清除失败请求以外的反应。
+        // After failure or cancellation releases the lock, unrelated completions must not clear other requests' reactions.
         let post = "r".repeat(26);
         reactions.start(&key, &post).await;
         let binding = reactions.binding.lock().await;
@@ -4295,7 +4386,7 @@ mod tests {
             sender,
             Duration::from_millis(20),
         ));
-        // 超过三次心跳周期且队列无人消费：不得因本地背压误报远端超时。
+        // Leave the queue unconsumed for over three heartbeat periods; local backpressure must not count as a remote timeout.
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(receiver.len(), 1);
         assert!(fixture.state.ws_pings.load(Ordering::SeqCst) >= 3);
@@ -4319,7 +4410,7 @@ mod tests {
         let fixture = fixture().await;
         fixture.state.ws_mode.store(5, Ordering::SeqCst);
         fixture.state.blocked_download.store(true, Ordering::SeqCst);
-        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot 看附件","type":"","file_ids":["f".repeat(26)]});
+        let post = json!({"id":"p".repeat(26),"user_id":"u".repeat(26),"channel_id":"c".repeat(26),"root_id":"","message":"@cccc_bot See attachments","type":"","file_ids":["f".repeat(26)]});
         let mut help = post.clone();
         help["id"] = json!("q".repeat(26));
         help["message"] = json!("@cccc_bot /help");
@@ -4364,7 +4455,10 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             let posts = fixture.state.posts.lock().expect("posts");
-            assert!(field(&posts[0], "message").contains("未能交给 CCCC"));
+            assert!(
+                field(&posts[0], "message")
+                    .contains("Could not deliver the message or attachments to CCCC")
+            );
             assert!(field(&posts[1], "message").contains("/help"));
         })
         .await;
@@ -4461,7 +4555,7 @@ mod tests {
             cccc_core::im_state::load(&store, &group).expect("state")["last_error"],
             "[REDACTED] failure"
         );
-        // 相同配置的新启动也必须挡住旧写入，包括清空错误。
+        // A new startup with the same config must reject stale writes, including error clearing.
         worker
             .generations
             .lock()
@@ -4483,7 +4577,7 @@ mod tests {
                 .join("mattermost_identity.json")
                 .exists()
         );
-        // 配置变更也能独立阻止旧状态写回，不依赖先停 worker。
+        // Config changes must independently reject stale state writes without requiring the worker to stop first.
         worker
             .generations
             .lock()
@@ -4647,41 +4741,42 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "仅在明确授权的测试站点和频道运行；保留一条 Bot 自发测试帖子，不调用模型"]
+    #[ignore = "Requires an authorized test site and channel; leaves one Bot-authored post and makes no model calls"]
     async fn live_native_websocket_recovers_post_sent_while_disconnected() {
-        let site = std::env::var("CCCC_MM_TEST_SITE").expect("测试站点");
-        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("测试频道");
-        let token =
-            std::fs::read_to_string(std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("凭据文件"))
-                .expect("读取凭据");
+        let site = std::env::var("CCCC_MM_TEST_SITE").expect("test site");
+        let channel = std::env::var("CCCC_MM_TEST_CHANNEL").expect("test channel");
+        let token = std::fs::read_to_string(
+            std::env::var("CCCC_MM_TEST_TOKEN_FILE").expect("credential file"),
+        )
+        .expect("read credential");
         let config = json!({"mattermost_url":site,"bot_token":token.trim()});
-        let api = authenticate(config.as_object().expect("配置"))
+        let api = authenticate(config.as_object().expect("config"))
             .await
-            .expect("Bot 身份");
-        let (socket, mut cursor) = api.socket().await.expect("初连");
+            .expect("Bot identity");
+        let (socket, mut cursor) = api.socket().await.expect("initial connection");
         let connection_id = cursor.connection_id.clone();
         drop(socket);
         let post_id = api
             .post(
                 &channel,
                 "",
-                "CCCC 连接器协议测试：验证断线期间的消息补收。本条由测试 Bot 发送，不调用模型。",
+                "CCCC connector protocol test: recover a post sent during disconnection. This post is sent by a test Bot with no model calls.",
                 &[],
             )
             .await
-            .expect("断线期间发帖");
+            .expect("post during disconnection");
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let mut recovered = api.open_socket(&cursor).await.expect("恢复连接");
+        let mut recovered = api.open_socket(&cursor).await.expect("resume connection");
         tokio::time::timeout(Duration::from_secs(20), async {
             while let Some(message) = recovered.next().await {
-                match message.expect("事件帧") {
+                match message.expect("event frame") {
                     Message::Text(text) => {
                         let event: Value = serde_json::from_str(&text).expect("JSON");
-                        if cursor.accept(&event).expect("连续序号")
+                        if cursor.accept(&event).expect("consecutive sequence")
                             && field(&event, "event") == "posted"
                         {
                             let post: Value =
-                                serde_json::from_str(field(&event["data"], "post")).expect("帖子");
+                                serde_json::from_str(field(&event["data"], "post")).expect("posts");
                             if field(&post, "id") == post_id {
                                 return;
                             }
@@ -4691,13 +4786,13 @@ mod tests {
                     _ => {}
                 }
             }
-            panic!("补收前连接结束");
+            panic!("connection closed before replay");
         })
         .await
-        .expect("实际服务器补收测试帖");
+        .expect("replay test post from the actual server");
         assert_eq!(cursor.connection_id, connection_id);
         assert!(!cursor.missed_events);
-        recovered.close(None).await.expect("关闭测试连接");
+        recovered.close(None).await.expect("close test connection");
     }
 
     #[tokio::test]
@@ -4748,7 +4843,7 @@ mod tests {
             let mut recovered = events[1].clone();
             let mut post: Value =
                 serde_json::from_str(field(&recovered["data"], "post")).expect("post");
-            post["message"] = json!("@cccc_bot 未授权补收附件");
+            post["message"] = json!("@cccc_bot Unauthorized replayed attachment");
             post["file_ids"] = json!(["f".repeat(26)]);
             recovered["data"]["post"] = json!(post.to_string());
             inbound

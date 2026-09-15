@@ -268,7 +268,7 @@ fn prepare_stop(
 fn finish_start(state: &AppState, group_id: &str, result: Result<(), String>) -> ApiResult {
     if let Err(error) = result {
         update(state, group_id, |value| {
-            // 配置锁内判断；旧平台迟到的失败不得覆盖自行提交状态的新适配器。
+            // Check under the config lock; a stale platform failure must not overwrite the new adapter's own state commit.
             if adapter_commits_start_state(value["config"]["platform"].as_str()) {
                 return Ok(());
             }
@@ -639,7 +639,7 @@ mod tests {
         home.initialize().expect("initialize");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store
-            .create("相同配置请求测试", "")
+            .create("Same-config request test", "")
             .expect("group")
             .group_id;
         let (shutdown, _) = tokio::sync::broadcast::channel(1);
@@ -718,7 +718,10 @@ mod tests {
         let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
         home.initialize().expect("initialize");
         let store = GroupStore::new(home.clone()).expect("store");
-        let group = store.create("停止交接测试", "").expect("group").group_id;
+        let group = store
+            .create("Stop handoff test", "")
+            .expect("group")
+            .group_id;
         let (shutdown, _) = tokio::sync::broadcast::channel(1);
         let (_, workers, _, state) = crate::app_with_shutdown(
             home,
@@ -759,7 +762,7 @@ mod tests {
                 let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
                 home.initialize().expect("initialize");
                 let store = GroupStore::new(home.clone()).expect("store");
-                let group = store.create("交接测试", "").expect("group").group_id;
+                let group = store.create("Handoff test", "").expect("group").group_id;
                 let (shutdown, _) = tokio::sync::broadcast::channel(1);
                 let (_, workers, _, state) = crate::app_with_shutdown(
                     home,
@@ -776,7 +779,7 @@ mod tests {
                 let old_state = state.clone();
                 let old_group = group.clone();
                 let succeeded = result.is_ok();
-                // 暂停已完成启动的回写阶段：真实调用 HTTP 入口所用的结果提交函数。
+                // Pause after startup and exercise the HTTP handler's actual result-commit function.
                 let old = tokio::spawn(async move {
                     released.await.expect("release");
                     finish_start(&old_state, &old_group, result).is_ok()

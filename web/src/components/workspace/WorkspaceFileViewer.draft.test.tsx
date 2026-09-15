@@ -93,6 +93,53 @@ afterEach(async () => {
   host?.remove();
   vi.resetAllMocks();
 });
+it.each([
+  ["CRLF", "one\r\ntwo\r\nthree\r\n"],
+  ["LF", "one\ntwo\nthree\n"],
+  ["CR", "one\rtwo\rthree\r"],
+  ["mixed", "one\r\ntwo\nthree\rend"],
+])("preserves %s endings across edits, undo, remount and keyboard save", async (_, content) => {
+  await setup();
+  fetchWorkspaceFile.mockResolvedValue({
+    ok: true,
+    result: { ...files.file, content, bytes: content.length },
+  });
+  await act(async () => {
+    await files.openFile("README.md", { reload: true });
+  });
+  const display = content.replace(/\r\n?/g, "\n");
+  expect(host.querySelector("textarea")?.value).toBe(display);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+  await edit(display.replace("two", "tXwo"));
+  expect(files.draft).toBe(content.replace("two", "tXwo"));
+  await edit(display);
+  expect(files.draft).toBe(content);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+
+  await edit(display.replace("three", "inserted\nthree"));
+  const newline = content.match(/\r\n|\r|\n/)![0];
+  const saved = content.replace("three", `inserted${newline}three`);
+  expect(files.draft).toBe(saved);
+  await render(false);
+  await render();
+  expect(files.draft).toBe(saved);
+  saveWorkspaceFile.mockResolvedValue({ ok: true, result: { sha256: "saved" } });
+  await act(async () => {
+    host
+      .querySelector("textarea")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
+  });
+  expect(saveWorkspaceFile).toHaveBeenCalledWith(
+    "group-1",
+    "README.md",
+    saved,
+    "old",
+    "scope-a",
+    "/repo",
+  );
+  expect(files.file?.content).toBe(saved);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+});
 it("preserves unsaved edits across repeated viewer unmounts and saves the restored draft", async () => {
   await setup();
   await edit("unsaved work");

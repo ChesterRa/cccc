@@ -16,6 +16,31 @@ import {
 } from "./workspaceFilesTestSupport";
 
 describe("workspace files surfaces", () => {
+  it("removes only the collapsed symlink branch without accumulating shared file rows", async () => {
+    fetchWorkspaceListing.mockImplementation(async (_group: string, path: string) =>
+      listing(
+        path,
+        path
+          ? [{ name: "file.txt", path: "real/file.txt", is_dir: false }]
+          : [
+              { name: "alias", path: "alias", is_dir: true },
+              { name: "real", path: "real", is_dir: true },
+            ],
+      ),
+    );
+    await mount();
+    await click(rowByName("real"));
+    const rows = () =>
+      [...panel().querySelectorAll('[role="treeitem"]')].map((row) => row.textContent);
+    for (let i = 0; i < 3; i++) {
+      await click(rowByName("alias"));
+      expect(rows()).toEqual(["alias", "file.txt", "real", "file.txt"]);
+      await click(rowByName("alias"));
+      expect(rows()).toEqual(["alias", "real", "file.txt"]);
+    }
+    await click(rowByName("real"));
+    expect(rows()).toEqual(["alias", "real"]);
+  });
   it("fetches a directory only when the user expands it", async () => {
     fetchWorkspaceListing.mockImplementation(async (_group: string, path: string) =>
       listing(

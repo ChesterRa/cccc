@@ -1,357 +1,124 @@
-# CCCC Mattermost 连接器功能规格
+# Native Mattermost IM Connector Specification
 
-历史验收摘要（2026-09-08）：T01–T19 技术验证及用户 T20 确认对应当时版本，IM 188 项、前端差异 12 项结果作为历史保留，不覆盖下方当前修复合同。测试证据等级及 refs 文件引用事件的责任边界见验收记录；不代表上游已合并或发布正式版本。
-源码基线：`2a38ad78700a4a188b45f515434b74cc315b91ec`；此前 v0.4.37 调研只作为历史参考，不代表此基线已经部署。
+This specification describes the Mattermost connector contributed through [PR #103](https://github.com/ChesterRa/cccc/pull/103), including the September 15, 2026 integration corrections. Implementation and test evidence are separate: see the [feature map](mattermost-im-features.md), [acceptance record](mattermost-im-acceptance.md), [user guide](../guide/im-bridge/mattermost.md) and [architecture decision](../adr/0001-native-mattermost-im.md).
 
-入口：[完整功能对照](mattermost-im-features.md)、[验收用例](mattermost-im-acceptance.md)、[原生 IM 概念与边界](../guide/im-bridge/index.md)、[架构决策](../adr/0001-native-mattermost-im.md)。
+The original comparison baseline was `2a38ad78700a4a188b45f515434b74cc315b91ec`. The [pre-integration specification at ea00093b](https://github.com/ChesterRa/cccc/blob/ea00093b07a21d947982a252af42f2755bc9ac0f/docs/specs/mattermost-im.md) preserves the detailed development and review history. Historical passing results do not establish verification of later changes.
 
-## review17 范围裁定：旧平台管理续体不修复
+## Scope and implementation
 
-日期：2026-09-14。来源：[对 `3d4a6458` 的评审意见](https://github.com/ChesterRa/cccc/pull/103#discussion_r4006724800)。**用户明确决定：这可能是一个 Bug，但本次 Mattermost PR 不修复。**
+Mattermost is a native IM platform, built and released with CCCC. It reuses Group configuration, chat authorization, subscriptions, daemon dispatch, ledger output, Blob storage and worker lifecycle. No separate service, crate, SDK, plugin system, installer or dependency is introduced.
 
-- **可能的影响**：未经过 Mattermost 的旧连接器管理操作，在工作组（Group）A 发出保存/启动等请求后切换到 B，旧请求完成时仍可能回读 A 的状态和凭据并覆盖 B 的表单；关窗后的旧异步续体也属于该归属缺口。不能据此宣称已将 A 的配置保存到 B，这需要另外证明实际保存链路。
-- **已有依据与验证边界**：固定上游 [`1eaf1086` 的设置页](https://github.com/ChesterRa/cccc/blob/1eaf108673febbceebf1968b13bc483df60e08c3/web/src/components/SettingsModal.tsx)中，`handleSaveIMConfig`、`handleStartBridge`、`handleRemoveIMConfig`、`handleStopBridge` 已在完成后调用旧 `loadIMStatus`，缺少管理访问归属检查。本轮为静态调用链核对，未独立运行该纯旧平台场景的反证，不冒称平台实测。
-- **本次处置**：保留无 Mattermost 路径的既有行为，不把所有旧平台的跨组/关窗保护加进本 PR，不修改测试断言来假称该问题已修复。该裁定延续 review13 的范围说明，不表示旧行为正确，也不把该意见定为误报。以后若处理，须另行授权、独立补丁及评审。
-- **不扩大排除范围**：涉及 Mattermost 的既有访问归属、草稿及管理顺序保护仍须保留。本次排除不适用于同轮折叠意见中的 `config_revisions` 遗留记录问题；后者按下节修复，执行证据见验收。
+The implementation follows the existing Slack/Telegram layout:
 
-## 配置修订记录回收（review17）
+- `crates/cccc-web/src/im_runtime/mattermost.rs`: REST/WS transport, authentication, lifecycle, recovery and protocol fixtures.
+- `mattermost_inbound.rs`: source filtering, commands, authorization, file staging and daemon submission.
+- `mattermost_outbound.rs`: target posts, progressive edits, final fallback and uploads.
+- Shared registration changes remain in IM state, runtime dispatch, Web/daemon routes and CLI argument translation.
+- Web uses the existing SettingsModal, IMBridgeTab, SelectCombobox, controlled forms, design tokens and locale namespaces.
 
-来源：[对 `3d4a6458` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5199583525)中的折叠意见。`invalidate_start` 会为没有活动 worker 的配置保存创建修订记录；旧巡检只枚举 worker 和微信登录任务，因此漏清理这类已删除工作组。
+Existing helpers remain authoritative for credentials, chat targets, command decisions, recipient semantics, public-output filtering, text formatting, chunks, files and processing reactions. Internal helpers retain local visibility and the existing error types. Network input waits for daemon submission, not for the Actor to finish.
 
-复用原生 `stop_missing(active_groups)` 巡检及 `config_revisions` 的互斥锁，通过 `retain` 保留本次活动组快照中的记录；无需创建 worker 才能清理。清理在首次异步等待之前完成，不跨关闭等待持锁；不新增后台任务、持久字段、配置或依赖，不改变原 worker/微信登录关闭及返回计数。组清单读取失败时，原调用方跳过本次巡检，不把失败当成空清单；本机制沿用该快照边界，不新增工作组创建/删除的跨操作事务保证。
+Source comments, diagnostics, ordinary test descriptions and public documentation use English. Localized Web copy belongs in the existing English, Chinese and Japanese locale files. Multilingual fixture data remains where it verifies Unicode transport or filenames.
 
-新回归覆盖：保存但从未启动的组删除后记录消失；少量重复创建/删除不会累积记录；活动组的修订值保持；重复巡检不增加副作用；持旧版本或初始空版本的请求仍不能为已删除组分配新代次/启动 worker。保留既有 worker、微信登录和待启动失效测试。术语沿用工作组、IM Bridge；修订记录是已有进程内实现细节，无新领域定义。指定两平台适用完整检查和实际网页回归已完成，反证及范围见验收；不由此宣称已通过新 SHA 的 GitHub 评审。
+## Configuration and identity
 
-## 当前修复合同（2026-09-14，review16）
+Configuration adds `platform=mattermost`, `mattermost_url` and the existing `bot_token` / `bot_token_env` fields. CLI uses `--mattermost-url`. Preserve existing aliases and file-policy normalization.
 
-来源：[针对 `d161ecc6` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5198699806)，一条行内及两条折叠建议均采纳。三项均已实施，指定两平台适用检查及实际 GUI 已完成，具体结果与失败记录见验收；不套用历史通过数字，也不把本地验证通过等同新 SHA 已通过 GitHub 评审。
+The URL is a site root, optionally with an installation subpath. Reject embedded credentials, query strings, fragments and API endpoint URLs. Backend normalization is authoritative; frontend validation provides immediate feedback. Production uses HTTPS; HTTP is limited to trusted local or isolated testing. Authentication does not follow redirects or disable certificate validation. REST and WebSocket share reqwest's TLS and proxy policy.
 
-- **安装后的状态失败**：[最后一次启动状态保存失败](https://github.com/ChesterRa/cccc/pull/103#discussion_r4006023775)时，已安装的本次 worker 必须摘除并沿原生有界关闭路径终止。复用注册表的生命周期锁与代次判断，只回滚当前代次，不关闭随后取得新代次的 worker，也不再次覆盖配置。状态文件损坏/提交失败均返回原错误；不承诺撤销失败前已经完成的消息副作用。
-- **管理失败可见**：Mattermost 删除的业务拒绝、传输失败保留草稿，使用既有 `imConfigError`/locale 显示错误并释放 busy；同根因的停止失败一并核对。不让草稿序号屏蔽错误，不让过期访问写入新页面。沿用原生 `apiJson` 返回的具体错误；向上抛出的异常使用同一三语兜底键，文案统一为“操作失败”以涵盖删除/停止。测试须按实际合并上游后的错误转换路径注入故障，不能假设正文读取必然向上抛出。两个旧平台之间原有错误处理不变。
-- **微信入口参与同组排序**：微信登录前保存、登录/验证、退出及登录后自动启动是同一配置/worker 的管理入口，不能绕过 `runIMManagement`。复用原队列与访问检查，涉及 Mattermost 的先后顺序、旧续体无副作用和草稿保护一致；无 Mattermost 的旧平台操作继续原顺序/并发，不重写微信协议或跨客户端控制。
-- **上轮漏项与反证**：安装前/过期回写测试未模拟安装后的保存失败；保存/启动错误用例未断言删除与停止失败；队列用例只经四个通用按钮，未走微信专用/自动入口。本轮在这些实际出口控制时序，断言 worker 的实际终止与新代次保留、错误可见/新草稿保留、实际请求顺序及最终配置；旧路径对照、失败释放和两端实际 GUI 都须补齐。实施和执行结果分别记录，不新增依赖、领域术语或无关功能。
+Startup resolves credentials once, verifies a Bot account and validates the initial WebSocket handshake before reporting Running. Failed identity checks do not fall back to personal accounts or broader permissions.
 
-## 历史修复合同（2026-09-14，review15）
+Use one dedicated Bot identity per Group. Preventing reuse across Groups or running instances is a deployment responsibility; the connector has no global Bot registry or lock.
 
-来源：[针对 `e34e00ed` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5197948824)，一条新行内及两条折叠意见。以下三项均已局部修复，并在指定两平台完成适用全套与实际 Web/worker 验证，具体证据见验收记录；不把正文概数当成额外独立问题，不将测试完成等同新 SHA 已通过 GitHub 评审。
+Changing the site or Bot identity clears pending requests, approvals and subscriptions. Rotating a token for the same Bot preserves them. Serialize identity comparison and update using the existing Group file lock. Persist authorization removal before recording the new identity, outside the IM update callback; a failed intermediate write must not leave new identity metadata paired with old grants. Stale startups cannot change a newer configuration's identity or authorization.
 
-- **daemon 协议配置入口**：[daemon 的 `im_set`](https://github.com/ChesterRa/cccc/pull/103#discussion_r4005397180) 只改持久状态，不能停止 Web 所持有的 Mattermost worker。普通 `cccc im set` 已通过 CLI 的 `web_call` 访问 Web，不是本缺口的触发入口；本轮修复仍可被协议客户端调用的 daemon 操作。涉及 Mattermost 的 set（含切入/切出）、unset 复用原生 start/stop 的 HTTP 委托及管理身份，到现有 Web 配置/生命周期入口执行；不另建 worker 注册表。旧平台直接写入前在原配置锁内检查归属，不能以锁外快照放行。Web 失败不退回本地改配置；Mattermost start/stop 委托失败也不再在 daemon 覆写 Web 拥有的状态，旧平台失败回写若遇到新的 Mattermost 同样跳过。两个旧平台之间的直接配置、返回及失败行为保留。等价提取现有 HTTP 委托时保留旧 start/stop 的请求、超时、认证及错误合同；原生状态更新可能刷新工作组文档时间，不承诺零磁盘写入。
-- **管理请求期间的草稿**：初始读取失效不能保护“保存尚未返回→用户编辑→保存后新回读”。捕获 Mattermost 用户编辑序号，保存/启动/停止/删除后的直接字段清空与两阶段回读都检查该序号。操作忙碌状态清理只依赖访问归属，不依赖草稿序号，避免用户编辑后按钮永久繁忙。点击启动所提交的原始草稿仍是本次请求输入，不将后续编辑悄悄写入该请求。
-- **同组管理请求顺序**：导航丢弃旧续体不等于取消已发出的服务器请求。沿用前端现有按组记录在途 Promise 的方式，将涉及 Mattermost 的保存、启动前保存及启动、停止、删除流程在本浏览器内按组排序；排序状态置于 API 模块而非组件，关窗卸载/重开仍等待先前请求。排队后访问已失效的动作不再发送，失败完成也释放队列；不同 Group 不互相阻塞，两个旧平台之间原有并发不额外串行化。此为本浏览器管理入口的顺序，不是跨客户端事务，不承诺网络结果不明时服务器已取消或完成。
-- **回归**：延迟上述五种管理动作、在返回前只改 URL/Token，再核对草稿保留与 busy 释放；延迟状态/配置回读时同样检查。覆盖同组切平台/切回、卸载重开后再提交新的保存/停止/删除，实际请求发送顺序与最终状态都要断言；旧平台并发、不同组、失败释放分别对照。daemon 验证完整配置委托、切出/删除、Web 不可达/拒绝、迟到失败归属，并保留原 start/stop 夹具。仅在两台指定测试机运行适用全套与实际 Web 回归，不改其他连接器、核心 Ledger、CLI 管理或日常部署。
+## Lifecycle and management ownership
 
-术语沿用 Group、IM Bridge、Bot、配置草稿；Promise 顺序和编辑序号为进程内实现细节，不新增持久字段或领域实体。合同、实际执行结果、最终提交扫描和新 SHA 评审分开记录。
+Web owns the network workers and their runtime state. Operations involving Mattermost use the existing lifecycle and configuration locks:
 
-## 历史修复合同（2026-09-14，review14）
+1. Read configuration and its revision together. Under the same configuration lock, compare both before allocating a startup generation. Equal configuration values alone do not identify the same request.
+2. Saving, stopping, removing or switching platforms invalidates prior startup requests. Old manual and restore requests cannot allocate a worker after that invalidation.
+3. Installing, removing and closing workers respects the generation under the existing lifecycle lock. A delayed stop or failed startup must not close a newer worker.
+4. If the final state commit fails after worker installation, remove and close only that installed generation. Return the original error; this does not roll back messages already sent.
+5. Runtime error writes and clears check both generation and configuration under the config lock. Stale workers may write redacted diagnostics but cannot overwrite current status.
+6. The existing `stop_missing(active_groups)` sweep also retires configuration revisions for deleted Groups, even if they never had a worker. Keep active revisions and existing stop counts. A failed Group listing is not an empty listing.
 
-来源：[针对 `de4cd77c` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5197146735)，零新行内评论但有两条折叠建议，不能按评论数量判定通过。
+Daemon protocol `im_set` / `im_unset` operations involving Mattermost, including switches into or out of it, delegate to Web's existing management endpoint. Check platform ownership under the configuration lock before allowing an older direct-write path. Delegation failure must not fall back to editing state locally. Mattermost start/stop delegation failures likewise must not overwrite Web-owned state. Ordinary CLI management already uses Web; it is not the same entry point as daemon IPC.
 
-- **首次读取覆盖草稿，采纳**：review13 保护了管理回调，却未覆盖初次状态/配置读取期间的用户选择和编辑。复用原生 `imLoadSeq`：用户切入/切出 Mattermost、编辑其 URL/凭据引用时，使已在途读取失效。另记录用户平台选择序号，迟到响应若是 Mattermost，也不得覆盖从默认旧平台做出的新选择。程序回填不算用户操作，未编辑时仍须完整加载保存值；两个旧平台之间的原有回填不变。状态和配置两阶段、同平台编辑、切出/切回及正常初始回填均需反证和结果断言，实际 GUI 覆盖延迟初次读取。
-- **上传请求头直接决定平台 MIME，不采纳该前提**：固定 Mattermost v10.11.0 的 `uploadFileSimple` 没有将 Content-Type 传入上传任务；`UploadFileTask.init` 使用文件名调用 `model.NewInfo`，后者按扩展名获取 MIME。将头改为附件元数据不能实现该建议声称的效果。保留原单文件 body 协议，澄清 F29：入站保留平台返回的 MIME；出站保持文件名/字节，由平台按其规则分类，不承诺原始 `attachments[].mime_type` 原样成为目标站点 FileInfo。此为固定服务端源码依据，不冒充本轮真实平台测试。
+Two-platform paths that never involve Mattermost retain their existing configuration, storage-read failure and concurrency behavior. The connector does not refactor every IM lifecycle into a new framework.
 
-固定证据：[简单上传入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/file.go#L133-L180)、[上传任务初始化](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/app/file.go#L735-L754)、[文件类型推断](https://github.com/mattermost/mattermost/blob/v10.11.0/server/public/model/file_info.go#L131-L144)。本轮不改 MIME 上传代码、其他平台行为、权限或依赖；实施与证据见验收记录。
+### Web status and drafts
 
-## 历史修复合同（2026-09-14，review13）
+Group, modal visit and platform identify the owner of a Mattermost asynchronous action. Closing, switching Groups or leaving and revisiting a platform invalidates old continuations, including their errors, follow-up requests and busy-state cleanup.
 
-来源：[针对 `95f0bfaa` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5196333967)。两条行内采纳，一条折叠意见不纳入本 PR，理由分别如下。
+Status refresh and configuration hydration have separate guards. A current operation's authoritative status must update even if the user edited the URL or token while it was pending. Only stale configuration hydration and direct draft clearing are suppressed by the edit sequence. Check edits again after fetching configuration. This supersedes the earlier behavior that discarded the whole refresh after an edit.
 
-| 来源及根因 | 处置边界与实际入口 | 回归要求 |
-|---|---|---|
-| [启动前同值保存](https://github.com/ChesterRa/cccc/pull/103#discussion_r4004066118)：review12 的请求版本只传入停止提交，启动分配仍只比配置值 | 手动 `set_running → start → start_with_mode → begin_configured_start` 及同形自动恢复均携带在配置锁内读取的版本；在同一锁内比较版本和配置后才分配代次/摘除旧资源。两个旧平台之间仍不做新增拒绝 | 阻塞实际分配入口，保持配置值相等但执行新保存或停止，再释放旧手动/恢复请求；零新代次、worker、身份查询和 WS 请求，状态不变，新读取的请求仍能成功启动 |
-| [同组换平台](https://github.com/ChesterRa/cccc/pull/103#discussion_r4004066167)：review12 的访问对象只有 Group/isOpen，Mattermost→其他平台→Mattermost 会复活旧续体 | 访问对象纳入当前平台；保存、启动前保存、启动、停止、删除全部复用同一归属检查。切换后及时释放旧 busy，旧 finally 不能替新操作清 busy。不改原生平台草稿机制 | 五动作分别覆盖切出及切回、成功/业务拒绝/传输异常；所选平台/草稿/错误不被旧续体改变，无旧回读/新启动；实际 GUI 延迟启动前保存并换平台 |
-| 折叠意见要求所有旧平台之间也检查 Group 归属 | **范围外既有缺口，不作为本 PR 的新增回归修复**：上游 `9642af11` 的保存/启动/停止/删除续体已经无条件调用旧 `loadIMStatus`，本方保留原路径。不是声称该行为正确；改变两个旧平台之间的合同须独立授权，不能借此扩展 Mattermost 补丁。行内意见也明确要求保留 legacy 行为 | 对照固定上游源码及本方 legacy 分支，继续原有 Web 回归；不以修复 Mattermost 宣称解决全平台异步问题 |
+Save failure preserves the Mattermost draft and shows an error; Start proceeds only after its save succeeds. Stop/remove failures also remain visible and release busy state. Switching platforms in one Group preserves the Mattermost draft; switching Groups clears it.
 
-同类漏项原因已明确：上一轮将停止入口的版本覆盖误当成所有使用同一快照的入口均覆盖；前端仅按 Group/关窗分段，没有将用户选择的平台纳入同一次访问。现在按实际资源取得和每个异步续体的归属补齐，不改消息协议、权限、依赖或其他业务。当前验证与发布进度见验收及 PR 处置，未完成项不预填通过。
+Management flows involving Mattermost are ordered per Group within the browser, across component unmounts. Save-before-start is one flow. Weixin login, verification, logout and post-login startup use the same queue where they intersect Mattermost. Queued actions whose visit expired do not send new requests. Failures release the queue; other Groups remain independent. This is not a cross-client transaction or proof that an ambiguous network request was cancelled.
 
-同根因的状态/配置回读也须在写表单之前检查：四个管理回调将原归属函数作为可选参数传入 `loadIMStatus`，分别在状态读取和配置读取完成后核对；无该参数的原生调用维持原行为。不能仅在调用回读前或回读返回后检查，因为中间已经可能覆写平台和草稿。新增延迟两阶段回读的换组、回组、卸载、换平台及切回回归，验证无额外旧配置请求、当前状态与草稿不变。
+### Deliberate scope boundary
 
-固定旧路径依据：[上游 SettingsModal](https://github.com/ChesterRa/cccc/blob/9642af11bae2879d3361be5cb3bb295810128822/web/src/components/SettingsModal.tsx)。
+The [review17 comment](https://github.com/ChesterRa/cccc/pull/103#discussion_r4006724800) identified a possible pre-existing ownership gap in management continuations that never pass through Mattermost: a delayed operation in Group A can refresh A's fields after navigation to B or modal closure. The contributor's scope decision explicitly deferred that legacy-only issue. Static inspection of the old SettingsModal supports the concern; it does not prove a write to the wrong Group.
 
-另获用户明确授权的测试修复：Windows 的原生 `daemon_im_stop_delegates_to_the_web_owned_worker` 两次在模拟端读取时返回 WouldBlock，同函数在固定上游也存在。仅在 `#[cfg(test)]` 模块修正 start/stop 两个 HTTP 夹具：接受连接后显式恢复阻塞读取并设置 1 秒读取超时，沿原生测试的 Content-Length 方式接收完整请求，保留 4096 字节缓冲上限和原路径/正文断言。停止夹具原有的 1 秒接受连接截止不变，不修改产品网络实现；新增延迟头部/正文回归。该测试修复单独提交，与本轮产品修复分别说明。
+This integration does not claim to fix that legacy-only path. Mattermost ownership, draft, status and ordering protections remain required. Deleted-Group revision cleanup is implemented and is not covered by the deferral.
 
-## 历史修复合同（2026-09-14，review12）
+## Authorization and message semantics
 
-来源：[针对 `14ba786b` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5195000928)及[行内意见](https://github.com/ChesterRa/cccc/pull/103#discussion_r4003016280)。一条行内与五条折叠意见归并如下；同根因来源保留，不把重复位置算作不同缺陷。
+Supported targets are public/private channels, direct messages, group direct messages where the server permits Bot membership, and threads. Missing membership is an error, not a reason to elevate Bot privileges.
 
-| 意见与根因 | 必须保持的行为与最小修复 | 反证和结果检查 |
-|---|---|---|
-| 旧平台 stop/unset（及同形保存关闭）先关闭再判断归属 | 在原生命周期锁及配置锁内，检查当前平台后才摘除 worker；保留两个旧平台之间的原状态字段、错误及关闭顺序 | 受控阻塞关闭入口，切入并启动 Mattermost 后释放旧动作；新 worker、代次、状态及身份保持不变；旧平台对照仍关闭 |
-| 相同配置再次保存无法仅由配置值识别 | 沿用原生代次计数器，为配置失效保留进程内修订号；读取停止快照时在同一配置锁内取配置、修订号和活动代次，提交时一起核对 | 相同值保存后，即使尚未开始新 worker，旧快照也失效；新 start 及停止完成后的迟到操作不能改变新状态 |
-| Mattermost URL 错误被缺凭据提示掩盖 | Web/daemon 规范化入口先用已有 URL 校验返回固定地址错误，凭据缺失继续保留原错误；不回显输入 | 缺地址、非法地址、缺 Token 分别返回对应错误且不改原配置；其他平台的规范化不变 |
-| Web 保存/启动的旧 Group 续体回写当前表单 | 复用原生 ref/请求序号方式，Mattermost 管理动作在每个 await 后验证工作组访问代次，过期则不启动后续步骤、不回读、不清空新组字段或 busy/error；停止与删除同形路径一起核对 | A→B 及 A→B→A，分别阻塞保存、启动、停止、删除与状态回读，旧成功/失败不覆盖新表单；当前组仍能正常操作 |
-| 公共 CLI/Web 指南遗漏平台 | 在既有清单补 Mattermost 命令与导航，不引入新功能 | 参数与 CLI 实现一致、链接可达 |
+Authorization applies to an exact chat target in a Group, not individual participant RBAC. Channel targets have an empty thread ID and publish to the main timeline; thread targets preserve `root_id`. Channel approval does not automatically approve its threads. Multiple approved targets share Group context and eligible subscription output; DMs are not private isolated sessions.
 
-同类复发原因：review9–11 主要覆盖了停止状态提交后的关闭等待及启动分配窗口，没有覆盖旧平台在摘除资源之前的交接，也没有区分“配置值相等”和“同一保存请求”；前端草稿隔离测试未延迟管理动作的异步续体。本轮真实 GUI 又识别出 AppModals 在关窗时直接卸载 SettingsModal，故访问代次也必须在卸载时失效，不只检查 Group/isOpen 变化；旧已发请求不因此取消，但不得继续发起旧回读或后续启动。新增重新挂载路径回归，不改变其他平台之间的原逻辑。不改恢复协议或消息路由。修订号仅为进程内控制元数据，不新增持久配置、领域实体或公共 API。术语沿用工作组（Group）、聊天桥接（IM Bridge）及 Bot；执行与发布结果另记，不预填通过。
+The existing `/subscribe` / `/sub`, pairing key, approval/rejection, revocation, unsubscribe, pause/resume, verbose, help and status semantics apply. Pairing keys expire after 10 minutes. These commands do not add model calls or a new permission system. This specification does not authorize changing any live deployment's access scope.
 
-## 历史修复合同（2026-09-14，review11）
+Mattermost intercepts leading slash commands. Document `@<Bot username> /command` as the reliable text-command form; use the actual username, not the display title. No custom slash-command registration or public callback is required.
 
-来源：[针对 `0da0c9f3` 的完整评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5194553805)，两条生命周期意见和一条长流式回复折叠意见。只修这三个窗口，不改变其他旧平台之间的启动合同。
+Authorized DMs can send ordinary text. Channel questions and files require addressing the Bot; recognized CCCC commands that arrive as ordinary posts also count as explicit requests. Ignore a bare mention with no text or files. Strip only the leading Bot mention. Default foreman, explicit Actor IDs, `@all` and `@peers` retain daemon semantics; mentions in the body do not add recipients.
 
-- 恢复读取 enabled 配置后，停止可能先于启动代次分配。恢复启动必须在分配代次时再次检查当前配置及 enabled；已停止或已换配置时不分配新代次、不连接平台、不复活 worker。
-- 旧平台启动快照遇到切入 Mattermost 时，在同一生命周期锁和原生 IM 配置锁内核对快照并分配代次，拒绝过期启动；不得以新的代次阻止已提交切换的关闭动作。两个非 Mattermost 平台的旧路径不增加快照拒绝或新的存储失败模式。
-- 原生 `im_state::load` 只做最小等价提取，增加锁内读取回调供上述核对使用；原 load 的返回、迁移、错误和持久化副作用不变，不用 update 的无条件落盘来实现只读核对。回调不得重入同一 IM 状态锁。
-- 长流式 end 将首段编辑到原帖、按原分段工具依次发送剩余段；全部成功才记录完整终态并抑制随后同正文最终事件。任一编辑/分段失败不记完成，保留最终正文兜底；部分成功后兜底可能重复已发内容，不承诺跨请求原子投递或可靠待发箱。完整成功路径必须对所有最终帖子（含编辑后的首帖）重组断言，不跳过首帖掩盖重复。
+Use real `user_id`, `channel_id`, `root_id`, `post_id` and `file_ids`, preserving native source metadata and stable client IDs. Ignore self/Bot/system posts, edits and unrelated chatter. Authorization and pause checks precede file downloads or model submission.
 
-验收使用生命周期锁受控暂停，分别覆盖恢复快照→停止→分配代次、旧平台快照→切入 Mattermost 保存→关闭，以及旧非 Mattermost 路径不变；长流式正常、尾段失败、最终正文变化和附件继续转发沿原夹具验证。本轮修复已在两平台通过适用检查，首次 Linux 语音集成端口失败与不改源码的定向/完整复验分别见验收记录；不以 review10 的通过替代本轮验证，也不宣称新 SHA 已经通过 GitHub 评审。术语沿用 Group、聊天桥接、Ledger、Attachment，无新增领域实体。
+## Inbound failures and files
 
-## 当前修复合同（2026-09-14，review10）
+The bounded source-post cache records successful dispatch, applied control decisions and attempted failure feedback. Replaying a source post must not repeat authorization changes, file downloads or failure notices. A new post ID can retry. This is an in-memory limit, not persistent exactly-once delivery.
 
-来源：[针对 `55cd4418` 的完整 Copilot 评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5194174665)，包含三条行内意见与四条折叠意见。只处理下表，不修改其他平台、公共提交合同、Web 类型写法或恢复协议。
+Shared daemon errors may contain user input. Convert them to safe categories at the submission boundary. An explicit recipient rejection gives a corrective message; unknown outcomes instruct the user to check CCCC before resending. Do not log raw daemon text or automatically resubmit ambiguous requests. Remove the processing reaction without marking an unknown outcome as a definite failure.
 
-| 意见 | 核实与处置 | 验证要求 |
-|---|---|---|
-| 已知提交/附件失败重放 | 采纳：失败分支在反馈及反应调用之前记入原有 `seen/order`，不因错误回复失败而重新下载、提交或反馈 | 同 ID 重放零新增副作用；回复成功/失败、新 ID 重试、零错误入账 |
-| 命令回复失败后重新执行 | 采纳：公共决策完成后、发送 Reply 前记录已处理 ID；不把这个标记说成成功入账 | 控制命令已产生的授权变更不因重放再次执行；帮助及未授权反馈也受同一边界保护 |
-| 上传夹具未校验请求元数据 | 采纳：在既有 Mattermost HTTP 夹具中校验路径、频道、文件名查询和 Content-Type；补精确中文/特殊字符文件名断言 | 真实请求编码后的字段及字节、返回文件 ID、原线程均核对；不变更上传实现 |
-| 总览缺下一步导航 | 采纳：沿用原指南列表补 Mattermost 链接 | 链接指向已存在指南 |
-| 缓存失效会关闭且无 hello | 不采纳其根因判断：Mattermost v10.11.0 的 `PopulateWebConnConfig` 在连接缺失时分配新 ID；`writePump` 在序号丢失时也重置 ID 并发送 hello。当前游标已识别新 ID、记录且保留 `RECOVERY_GAP`。不能把参数校验失败的关闭路径当成正常缓存失效 | 重跑既有恢复顺序及缓存失效用例；不新增遇关闭就丢弃游标的行为 |
-| 上传仅支持 multipart | 不采纳：同版本 `uploadFileStream` 对非 multipart 调用 `uploadFileSimple`，接收原始 body 与频道/文件名参数。保留当前受支持接口 | 服务端源码依据与加强后的上传夹具分别记证据，不把模拟测试当新一轮真实站点验收 |
-| type-only import 不可用于 typeof | 不采纳：这里是类型查询而非运行时取值；现有 `tsconfig.json` 包含该 `.test.tsx`。仍在测试机用原生 tsc 列出实际纳入文件并核对退出状态 | 必须实际覆盖该文件；不以转译单测替代类型检查 |
+Channel/sender lookup failure feedback is limited to the exact currently authorized, subscribed, unpaused and correctly addressed target. Do not infer an unknown channel type as a DM or notify unauthorized/self/known-Bot sources. Record the feedback attempt even if sending fails.
 
-平台依据固定为 Mattermost [恢复配置及写入循环](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/app/platform/web_conn.go)、[WebSocket 入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/websocket.go)及[文件上传入口](https://github.com/mattermost/mattermost/blob/v10.11.0/server/channels/api4/file.go)。恢复中的普通网络/服务器错误不等于缓存失效证明，不据此主动放弃可恢复序号。
+Files use native authenticated endpoints and Group Blob storage. Verify file-to-post ownership, metadata, filename, size and download length; never trust arbitrary remote URLs. When metadata supplies a size, the staged byte count must match it, even if the HTTP response has a valid Content-Length. Stage all attachments before saving any. On download/validation failure or cancellation, clean up temporary files without deleting shared final Blobs. A file-save or ledger-submit failure is not a cross-file atomic rollback.
 
-去重仍限本次 worker 的 8192 个 ID，先进先出淘汰、重启失效；无反馈的原有过滤条件不变。已确定处理失败的原帖不会自动重试，用户新发帖子仍按当前权限处理；不增加持久队列、不改变 P05 的保守结果分类。术语沿用聊天授权、订阅、Attachment、Ledger；无新增领域实体。本轮实现及测试状态见独立 review10 验收段，尚不以旧 CI 通过宣称完成。
+Enforce the shared 10 MiB file limit and a lower Group `files.max_mb` before Blob writes; `files.enabled=false` disables forwarding. Images, files, PDFs, audio/video and attachment-only input are transport capabilities, not OCR/transcription promises. Incoming MIME comes from Mattermost. Outgoing upload preserves names and bytes; Mattermost classifies the resulting MIME.
 
-## 当前修复合同（2026-09-14，review9）
+Only `attachments` are uploaded. Plain text and `refs` are not converted into files. Agent file delivery uses `cccc_file(action="send", ...)` and must respect its working-directory scope.
 
-来源：[针对 `9a57c906` 的 Copilot 评审](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5193783516)中的两条折叠意见。用户授权仅针对评审建议最小修复、测试及更新同一 PR；不合并、不部署，不修改两个非 Mattermost 平台之间的合同。
+## Outbound, streaming and reactions
 
-- **范围澄清**：本 PR 包含 CCCC 自身命令行的 IM 配置入口（如 `cccc im set mattermost --mattermost-url ...`），不包含为 Actor 提供能力的 Agent CLI 软件安装、更新、卸载管理。保留原有 Web/CLI 配置功能，只纠正 PR 范围的歧义，不删除命令行入口。
-- **停止与配置替换**：涉及 Mattermost 的 stop、set（含相同配置和跨平台替换）、unset 在原配置锁内提交状态并使旧启动代次失效。停止/替换时清除 `adapter_available`、`pid` 与旧 `last_error`；停止不改变聊天授权、订阅或 Actor。stop/unset 还核对所读配置快照，已被替换的请求不作用于新配置。
-- **关闭等待边界**：提交状态后，只在原生生命周期锁内摘除仍无有效启动代次的旧 worker，再沿用 `WorkerHandles::shutdown` 在锁外有界等待。若已有新 start 分配了代次，旧 stop/set/unset 不关闭新 worker；关闭结束后不再回写状态，因而不能覆盖新 start 的成功或失败。配置保存仍在等待生命周期锁之前失效旧代次，保留 review8 已有回归。
-- **旧平台兼容**：原生 `stop` 不改；只有涉及自行提交状态的适配器才走条件关闭。旧平台 stop/unset 的迟到回写遇到当前 Mattermost 时不覆盖新状态，与现有启动回写的归属守卫一致。共享持久化仍可能保存工作组文档并刷新文档时间，不承诺零磁盘改写。
-- **验证要求**：受控暂停旧 worker 关闭，执行新启动成功/失败后释放旧关闭，核对持久状态、实际 worker 与 HTTP 返回；覆盖停止、保存相同/不同配置、跨平台替换和删除配置。另验证保存完成但尚未摘除 worker 时的新代次不被关闭、普通 stop 清除可用状态及旧平台对照。执行结果单独登记，不以 review8 数字证明本轮通过。
+Reuse the common ledger consumer, subscription filters and sender-title fallback. Only eligible public output is forwarded; do not expose private notifications, Actor-directed system events or terminal internals.
 
-术语检查：沿用 Group、Actor、IM Bridge、Agent CLI；CCCC 命令行入口不等于 Agent CLI 管理。未新增领域概念、依赖或持久化字段。本节实现已在指定 Linux/Windows 测试机完成适用检查，结果见 review9 验收记录；提交、扫描、推送及新评审仍是独立门禁，不把测试通过称为上游已接受。
+Create and patch Mattermost posts for `chat.stream` start/update/end, with per-target handles and throttled updates. No stream event means final-message delivery, not terminal-state inference.
 
-## 当前修复合同（2026-09-14，review8）
+Split long text safely by Unicode characters. Reuse the first stream post for the first final chunk, then send remaining chunks. Suppress final text only after the complete matching terminal body has succeeded for that target. If creation, editing or any final chunk fails, retain the full final fallback. Partial success can duplicate already displayed portions; it is not an atomic transaction. Preserve attachments even when matching text is suppressed.
 
-历史时点说明：以下“未提交”是 review8 验证时状态；该批随后以 `9a57c906` 推送。新增修复以本文上方 review9 为准，原章节锚点保留供历史引用。
+Use native file upload plus `file_ids`, keeping channel/thread routing. Reaction failures must not suppress message text. Correlate processing reactions with the accepted event ID before processing a completion; modify only this Bot's reactions. Expiry cleanup is not Actor cancellation.
 
-修复前基线为 `a30e274be37aaf0f545b7fb5d543d926dcebc036`。本节先经静态核对与文档确认，用户随后授权修复及测试；当前改动尚未提交、推送或替换日常部署。旧阶段的“通过”不覆盖这两项，也不把源码发现说成真实平台已发生的事故。当前执行证据见[review8 验收记录](mattermost-im-acceptance.md#启动交接与失败反馈去重2026-09-14review8)。
+## Recovery and observability
 
-| 编号 | 当前缺口与来源 | 处置及验证状态 |
-|---|---|---|
-| MM-CROSS-START | 旧非 Mattermost 启动的 HTTP 结果写回未核对新配置，自动恢复也有旧快照写回路径；见[审核意见](https://github.com/ChesterRa/cccc/pull/103#discussion_r4001319130) | 已实现配置锁内的目标归属保护与切入代次失效；专用回归已补，执行结果见 review8 |
-| MM-LOOKUP-REPLAY | 频道/发送者查询失败在 `remember(post_id)` 前返回，同一帖子再次进入 handler 可重复查询及反馈；见[审核补充意见](https://github.com/ChesterRa/cccc/pull/103#pullrequestreview-5192771599) | 已复用现有缓存记录失败反馈尝试；专用回归已补，执行结果见 review8 |
+REST retries are limited to explicit rate-limit rejections. Do not repeat post creation after an unknown transport outcome. Authentication rejection stops the worker; transient network/server errors reconnect.
 
-### 跨平台启动结果的提交边界
+WebSocket recovery uses the native `connection_id` and next event sequence. All events advance the cursor, not only `posted`. Ignore duplicates; a gap triggers recovery. Initial connections wait for `hello`, but same-ID recovery can immediately replay events or remain idle without a new hello. Do not discard the first replayed event. A new connection ID reports possible cache loss through logs and status; ordinary reconnect success does not erase that gap warning.
 
-- 同一个 Group 由其他平台切换为 Mattermost，或由 Mattermost 切换为其他平台后，旧请求不得修改新配置的 `enabled/running/adapter_available/pid/last_error` 或身份记录。HTTP 手动启动与进程自动恢复、成功和失败出口分别核查，不只保护 `mattermost::start_registered`。
-- 沿用原生配置锁、启动代次和快照，在结果实际写入的边界判定是否仍有效；保存相同配置、stop/unset 和新 start 同样使旧结果失效。仅在保存时扩大一个平台判断，或仅令旧 worker 安装失败，不能证明调用方不会再次回写。旧 worker 的脱敏诊断可保留，但不能变成新配置的当前错误。
-- 只处理涉及 Mattermost 的交接，不顺带改变两个既有非 Mattermost 平台之间的生命周期合同。若最小方案仍需要改变既有公共行为，先说明影响并另行取得授权，不能以本节规避原有零影响要求。
-- 回归用受控阻塞点暂停旧启动，保存新平台后再释放旧成功/失败结果；手动和自动恢复入口均验证最终持久状态与实际 worker 一致。保留既有同配置保存、停止、删除和新启动回归；至少覆盖“其他平台→Mattermost”及反向交接，不开展全平台组合压测。
+Reception and inbound work use separate tasks and a queue of 128 events. Local backpressure pauses reads but is not remote inactivity. Runtime Ping/Pong writes have a 5-second deadline and reconnect uses a fixed 5-second delay. Initial handshake timeout is 15 seconds. Sustained overload can still exceed server recovery capacity.
 
-### 查询失败反馈的重复处理边界
+Ledger lag catch-up is outbound; server-cache recovery is inbound. Neither promises history replay after a process restart or deliberate stop. No REST history polling, persistent outbox, extra database or exactly-once contract is added.
 
-- 反馈前继续使用只读的当前授权、订阅/暂停和寻址检查；未知频道类型不推断私聊，不下载附件、不调用模型、不创建配对申请。自身 Bot、已知其他 Bot 和不满足反馈条件的目标仍忽略。
-- 对符合反馈条件的帖子，在首次失败提示尝试结束后记录其 `post_id`，提示发送失败也记录；同一 worker 缓存范围内再收到该帖子时不重复查询、提示或提交。优先沿用现有 `seen/order` 有界记录：每个 Group 的本次 worker 最多 8192 个 ID、先进先出淘汰、随 worker 结束失效，不增加持久队列或定时重试。这只表示本次失败反馈已处理，不表示消息已入账。
-- 未授权、暂停或未寻址的早返回不能当成已反馈成功；不把失败的发送者永久缓存为 Bot。用户重新发出的新帖子使用新 ID，仍按当时权限重试。淘汰或 worker 重启后不保证提示只出现一次；常规同连接序号重放可被前层游标过滤，并非每次重连都会触发本缺口。
-- 频道查询失败、发送者查询失败以及身份不匹配的反馈出口分别检查；回归重复投递同一 ID、提示发送失败后重复投递、换新 ID、缓存到限与授权过滤，核对实际查询/提示次数、零入账与零附件下载。不得以原来只处理一次事件的测试名称证明重投已去重。
+Errors go to the existing Group `state/im_bridge.log` and stderr independently of tracing initialization. JSON lines include time, Group, operation and redacted error, excluding bodies, file contents and raw HTTP responses. Use the existing file lock, Unix mode 0600 for new files, a 4,096-character error cap and one rotated file at 1 MiB. Logging failures remain visible on stderr without breaking messaging. Developer mode controls log reading, not recording. Status and durable diagnostics have separate lifetimes.
 
-术语检查：本节沿用 Group、Bot、Actor、聊天授权、订阅和协作账本（Ledger）；问题编号、启动代次与反馈缓存是实现/追踪标识，不新增领域实体。首次静态确认、后续实现提交和执行证据分开维护。
+## Excluded business features
 
-### 实现落点与旧路径兼容
+Meeting orchestration, Topic lifecycles, automatic Group preparation, hardcoded owner lists, one-Bot cross-Group routing, a mandatory single chat per Group, default verbose mode, full channel inventories, persistent delivery queues, a new control console and Actor TUI cards are not native connector prerequisites.
 
-- `routes/im.rs::set` 在原配置锁中对切入或切出 Mattermost 失效启动代次，关闭“已保存、尚未取得停止锁”的窗口。`finish_start` 等价提取原 HTTP 启动结果提交，`im_runtime.rs::persist_restore_result` 等价提取原自动恢复提交；两者均在写入的同一配置锁内检查**当前**状态是否属于自行提交状态的适配器。不能以启动前的平台快照代替这个检查。
-- 旧平台结果返回时若当前为 Mattermost，不回写其 IM 状态字段；当前仍为旧平台时保留原成功/失败字段、返回值和错误路径。这里不承诺“零磁盘改写”：守卫返回 `Ok(())` 后，原生 `im_state::update` 仍执行 `persist`，`GroupStore::mutate` 仍保存工作组文档并刷新该文档的 `updated_at`；它不同于 IM 状态内的 `updated_at`。归属判断保留在锁内，不为避免这次保存而移到锁外或修改共享持久化机制。自动恢复原本不改 `enabled`，现在仍不改；Store 初始化失败的原处理也不变。不为两个非 Mattermost 平台增加新的生命周期合同。
-- Mattermost 切出方向继续使用已有配置快照、代次和 `start_registered` 提交保护。测试分别覆盖手动与自动恢复的直接双向交接、成功与失败；不由这些有限交错推导任意连续切换、多次循环切换均已穷尽验证。
-- `mattermost_inbound.rs::lookup_failed` 仅在符合反馈条件且提示尝试结束后调用原 `remember`；提示失败也记，权限/订阅/寻址过滤仍早返回。没有改变 daemon 的入账幂等合同，也没有重试入账。
-- 为同模块测试复用，`MattermostReactions::new` 仅放宽到 `im_runtime` 内部可见；生产行为与调用参数不变。测试仍放原有模块内，不新建公共生命周期服务、测试框架、依赖或配置字段。
-- review8 后续整理：自行提交启动状态的平台只在模块级 `SELF_COMMIT_PLATFORMS` 维护，保存、手动启动、自动恢复及其结果回写统一调用 `adapter_commits_start_state`。判断函数只做精确匹配，不新增大小写或空白归一化；保存入口原有小写转换、自动恢复原有 `string` 去空白保持不变。新增精确匹配与未登记平台回归，不改变旧平台之间的行为。
-- P05 后续仅修正注释依据：客户端错误可有辨识前缀，但共享 `Result<String, String>` 也承载 daemon 的任意 `error.message`；无 `OutcomeUnknown` 前缀不证明未提交。现有固定提示、反应及保守兜底均不改变；今后错误分类细化须另行授权及验证。
+Deployment rollback procedures and a dedicated operational alert channel remain separate deployment concerns. Their earlier mention is not evidence that the runtime implements them.
 
-## 多附件暂存修订（2026-09-14，两平台回归完成）
+## Verification boundary
 
-本轮基于 `ae7149a6`，处理 PR #103 的多附件失败清理意见；不改变其他连接器、消息授权、寻址、附件大小限制或提交结果不明的处理。
-
-- 同一 Mattermost 帖子的全部附件先下载至原生 `BlobUpload` 临时文件，并完成来源、声明大小、HTTP 大小和实际流量验证；全部成功后才逐个调用原生保存步骤，再沿用原有 daemon 提交。
-- 后续附件下载或验证失败，以及暂存阶段的协作式任务取消，依靠原生临时文件析构清理本次未保存内容；不提交部分附件，不留下此前已下载兄弟附件的新增最终 Blob。
-- 不删除内容寻址的最终 Blob：同内容文件可能已被其他消息引用或同时使用。此修订不提供多个 Blob 保存与 Ledger 提交之间的原子事务；保存阶段的磁盘错误、daemon 提交失败或结果不明仍受原生边界约束，不能宣称任何故障均无孤立文件，也不承诺强杀进程后的临时文件清理。
-- 共享 `store_stream` 只进行最小等价提取，仍顺序完成同样的流读取、大小检查和保存，原调用者输入、输出、错误及副作用不变；不改变核心 Blob 格式或增加依赖。
-- 验证必须覆盖：第二附件 HTTP/来源/大小/流读取失败，暂存中取消，既有同内容 Blob 保留，两附件成功后完整元数据与 Ledger 入账，以及其他连接器使用的原 `store_stream` 路径。仅在指定 Linux/Windows 测试机执行；不以旧结果代替本轮回归。
-
-术语沿用 Attachment、Group、Blob、Ledger，不新增领域概念；结果及首次失败/原样复验另记验收记录。本轮没有 Web 界面或日常部署变更。用户同意实现、测试后更新原 PR #103；推送仍须通过最终提交及完整历史扫描，不包含合并或发布 Release。
-
-## 连接器规范复核后的局部修订（2026-09-13，代码回归与 V01 业务补收通过）
-
-本次以 `5ca137b1` 为修改前基线，用户已授权修复及测试。以下为本轮有效合同；Linux/Windows 代码及 Web 回归已通过，随后在 Linux 测试机补齐真实人类身份请求→Actor 的补收与恢复前撤权验收，具体方法和有限场景边界见验收记录，不沿用历史验收数字。
-
-- **错误记录**：共享 daemon 错误可能嵌入用户输入。Mattermost 在接收该错误时转换为固定安全类别，日志及 `last_error` 仅保留类别与源帖子 ID；不改变共享收件人解析或 daemon 的错误合同。
-- **早期查询失败**：频道或发送者查询失败时，仅向当前已授权、已订阅、未暂停且满足原生寻址条件的精确频道/线程发送简短失败提示。频道类型未知时不推断私聊；不调用模型、不下载附件、不自动重试业务提交。自身 Bot、已知其他 Bot、未授权目标不发送此提示。提示本身发送失败只记日志，不循环发送。
-- **结果不明**：daemon 调用失败不能一概解释为“未提交”。只有明确的收件人拒绝可以提示修正目标；无法确认的提交提示先查看 CCCC 是否已受理，不建议盲目重发、不自动再次提交。沿用原生源消息 ID 与幂等键，不新增可靠队列或改变共享回调。
-- **写入截止时间**：Mattermost Ping/Pong 使用局部 5 秒发送超时；超时退出当前连接，仍按原生连接 ID/序号与固定 5 秒间隔重连。握手整体仍受既有 15 秒限制。停止仍使用原生 worker 取消机制。
-- **验证**：在指定 Linux、Windows 测试机覆盖不可信错误串、查询失败授权边界、提交结果不明、受控阻塞写入及既有 IM 回归；另补真实人类请求的“断线补收→入账→Actor→Mattermost 回答”证据。协议补收、模拟 daemon 和真实 Actor 验收分别记载，不能互相替代。
-
-不修改公共 `seen`、其他连接器、CLI 管理或日常部署；修复及 V01 阶段未执行 Git 提交、推送及 PR 操作。用户随后授权推送，继续更新原 PR #103 的来源分支；发布前复验及失败轮次单独登记于验收记录，不包含合并、Release 或部署。
-
-## 上游贡献整理（2026-09-12）
-
-本轮基于上游 `22733e9ac607989bb095a4a6b7cb0e518bab9d08` 整理独立 Mattermost PR，关联 Issue #99。保留已发布分支历史，通过合并接入最新上游，不强推旧提交。不携带 CLI 管理、Experimental 或文档治理；全局 `CONTEXT.md` 不在本 PR 相对上游的差异中。旧来源校验测试冲突采用上游实现，不更改其现行安全策略。
-
-下文基线、授权与验收状态均记录 2026-09-07/08 当时的开发过程；本轮测试及发布以验收记录中的独立修订为准，不把既有现场验收描述为已经重新执行。本轮允许提交 PR，不包含合并上游、Release 或更换现有部署。
-
-## PR #103 审核修订（2026-09-12）
-
-- 入站去除 Bot 点名后，正文为空且没有附件时直接忽略，不回复授权提示、不触发反应或调用智能体；纯附件请求仍沿用原有授权与附件流程。
-- Mattermost Web 地址校验与已有后端合同一致：仅 HTTP/HTTPS 站点，可带安装子路径，不带凭据、查询、片段或 `/api/v4` 后缀。无效地址禁用保存和启动并就地提示；保存或启动失败在页面显示错误，允许修正后重试。
-- “每个 Group 使用独立 Bot”是部署者须遵守的身份隔离要求，不是程序已实现跨 Group/实例重复检测的保证。同一 Bot 的不同 Token 也不应复用；本补丁不新增全局锁或改变其他连接器。
-- 英文平台总表使用英文单元格。新增行为用同模块 Rust 和现有前端测试验证，并在 Linux、Windows 测试机复测真实 Web 页面；协议/故障模拟与真实 Mattermost 现场验收分别记录。
-
-## 1. 六项硬要求
-
-本轮补充（2026-09-13，测试机验证完成；未提交、推送或更换日常部署）：
-
-- 身份校验沿用原生文件锁与提交写入，按 Group 串行执行“读旧身份→核对配置/启动代次→持久清除旧授权→提交新身份”；旧启动不能在新启动之后覆盖身份。仍先清授权再写身份，失败不错误复用旧授权。
-- 所有运行期错误的写入和清除，在原配置锁中校验启动代次及配置快照；过期 worker 仍可写脱敏诊断日志，但不能覆盖新配置的 `last_error`。
-- Mattermost 启动按钮保存失败时不回读旧配置，保留平台、地址、凭据引用草稿和就地错误；保存成功后才启动、刷新状态。其他平台沿用原行为。
-- 入站断线补收使用 Mattermost 原生 `connection_id` / `sequence_number` 恢复协议：保存本次 worker 已接收的下一事件序号，重连由服务器顺序补回缓存事件；所有事件均推进序号，只有 `posted` 进入原有有界入站队列。重复序号忽略，缺口触发重新恢复；认证拒绝仍终止 worker。
-- 初连等待 `hello`；恢复连接可能直接返回补收事件而没有新的 `hello`，不得等待或吞掉首条补收。若服务器返回新连接 ID（服务器重启、缓存过期或跨节点等），重置序号并通过现有日志及 `last_error` 明确提示补收缺口；该提示不因普通重连成功被清除。恢复事件继续执行现行聊天授权、暂停、Bot 过滤及稳定 `client_id` 去重，不扩大权限。
-- 不全量扫描频道，不补回进程重启/主动停止期间的历史，不增加 REST 历史轮询、数据库或新依赖；不承诺缓存外补收、处理成功确认或恰好一次。机制依据：[Mattermost Web 客户端](https://github.com/mattermost/mattermost/blob/v11.9.0/webapp/platform/client/src/websocket.ts)、[服务器恢复实现](https://github.com/mattermost/mattermost/blob/v11.9.0/server/channels/app/platform/web_conn.go)。这是运行期短线恢复，不是 Topic 或会议功能。
-- 注册表失效方法用能力名称 `invalidate_start`；共享恢复入口保留当前已授权的 Mattermost 自行提交状态分支，不重构其他平台的启动返回合同。凭据只解析一次，Web URL 校验注明后端为权威。
-
-新增验收覆盖身份提交竞争、旧错误写入/清除、保存失败草稿、无 hello 补收首帖、重复/缺口序号、缓存失效及恢复后授权过滤。所有构建、测试和真实页面验证仅在指定 Linux/Windows 测试机执行；完整检查与真实 Mattermost 协议补收均通过，具体结果及边界见[验收记录](mattermost-im-acceptance.md)。术语检查：沿用 Group、Bot、IM Bridge、Chat Target、Event、Ledger；传输恢复游标不是新增业务上下文。
-
-本轮补充（2026-09-13，PR #103 第三轮审核）：Mattermost 启动结果仅在原生 worker 启动代次及配置快照均有效时写回；保存（包括保存相同配置）、停止、删除配置或新的启动使旧结果失效。HTTP 与自动恢复入口不重复写回 Mattermost 的启动状态，其他平台的生命周期合同不变。保存时在既有配置锁内失效旧代次，避免“先保存、后停止”的窗口被旧启动覆盖。新增回归覆盖成功与失败的过期结果。
-
-WebSocket 重连遇到 HTTP 401/403 或显式认证失败时记录原生错误并结束 worker；运行状态由既有 worker 生命周期与状态查询收敛为不可用。网络中断、限流和服务器暂时故障仍按原有退避重连；不自动变更凭据或权限。新增回归覆盖终止、不再重试及暂时故障恢复。
-
-Mattermost 未保存草稿在工作组切换时明确清空，不提供跨组草稿缓存；同一工作组内切换平台仍保留草稿，已保存配置仍正常回读，其他平台不变。新增回归覆盖 A→B→A 且未编辑 B 的情况。以上沿用原生组件、配置锁、启动代次和 worker 监督机制，不增加公共调度机制。
-
-本轮补充（2026-09-13，PR #103 第二轮审核）：沿用企业微信连接器的有界入站队列和独立 worker，Mattermost 的附件处理不再占用 WebSocket 心跳循环。队列满时施加读取背压，不丢弃已接收事件，不无限创建任务；背压期间继续发送心跳，恢复读取后重新计算接收超时。入站按接收顺序处理，停止连接器时两个任务一起取消。现行断线行为已由上方原生恢复协议补充；仍不自动全量补拉历史。
-
-处理反应仍复用原生 `Active` 和清理机制，仅在 Mattermost 的 daemon 提交及事件 ID 绑定之间加异步互斥；最终反应等待绑定后再匹配，锁不覆盖附件下载或反应 HTTP。不修改其他连接器的反应语义，不引入完成事件缓存。
-
-Mattermost 平台草稿的第二轮实现采用工作组来源校验；第三轮已将其替换为上述“切换工作组即清空”的合同，不再保留来源标记。同组平台切换仍恢复未保存内容，其他平台草稿机制不变。补齐既有配置测试夹具的必需字段，不放宽生产类型。新增回归须验证慢附件期间心跳、队列背压与顺序、完成早于绑定及重复/无关完成、保持挂载时的跨组草稿隔离。术语沿用工作组（Group）、聊天连接器（IM Connector）、附件和协作事件（Event），不增加领域概念；执行结果另记验收记录。
-
-| 编号 | 用户要求 | 落实规则 |
-|---|---|---|
-| U01 | 源码组织和发布与现有 CCCC 一致 | 先看同类真实文件；单文件实现不人为拆工程，已有分文件习惯也不强行合成巨型文件；随 CCCC 构建发布，不做外置包或 .so |
-| U02 | 代码风格与相似连接器一致 | 沿用模块可见性、start 入口、任务生命周期、错误返回、日志、测试和公共 helper 习惯 |
-| U03 | 对 CCCC 公共源码最小修改 | 仅平台注册、必要配置透传、UI 和文档入口；公共语义变更必须单独说明，不顺便重构 |
-| U04 | Web 配置严格遵循现有做法 | 在现有 IM Bridge 页增平台和必需字段，复用组件、样式、草稿、保存/启动及 i18n |
-| U05 | 核对现有全部连接器功能，覆盖 MM 能支持的部分 | 对照表逐项记录源码、API 映射和验收；不能因阶段划分永久跳过私聊、线程、附件等可实现功能 |
-| U06 | 目标仅为在 Mattermost 使用 CCCC | 不嵌入 roundtable、会议编排、轮数、Topic、摘要或角色设计；这些不是平台接入职责 |
-
-“全部功能”指本基线七个原生 IM 连接器对用户提供的功能并集，不是各平台 SDK 的所有 API，也不是 CCCC 整个 Web 的功能。平台专属协议按用途做等价映射，不为了模仿二维码或 AI 卡片而新增不必要机制。
-
-## 2. 源码组织和发布方式
-
-当前实际组织：
-
-| 参考连接器 | 源码组织 | Mattermost 参考用途 |
-|---|---|---|
-| Telegram | `telegram.rs`、`telegram_inbound.rs`、`telegram_outbound.rs` | 公共命令、媒体传输、订阅目标、处理反应 |
-| Slack | `slack.rs`、`slack_inbound.rs`、`slack_outbound.rs` | REST/WS、线程、附件和同帖渐进更新的主要范本 |
-| Discord | 入口、入站、出站，另有反应、去重、代理辅助文件 | Token 验证、启动失败、反应反馈和最终兜底 |
-| 飞书 | `feishu.rs`、`feishu_inbound.rs`、`feishu_outbound.rs` | 线程授权、公开消息过滤、处理反应 |
-| 钉钉、企业微信、微信 | 按媒体、传输、流式或登录等真实职责拆分 | 仅参考能映射的能力，不复制平台特有协议 |
-
-以上文件位于 [im_runtime](../../crates/cccc-web/src/im_runtime.rs) 同级模块目录。指南有时只列主入口，不能由此推断整个连接器只有一个文件。
-
-Mattermost 先按 Slack 的同级命名组织为 `mattermost.rs`、`mattermost_inbound.rs`、`mattermost_outbound.rs`；简单辅助逻辑留在所属文件，只有确实需要并有同类先例才新增文件，不预建空模块。测试优先按同类放在 `#[cfg(test)]` 内，不建独立服务、crate、SDK 或插件目录。
-
-发布沿用 CCCC 的源码仓库、Cargo workspace、现有 Web bundle 和打包流程，不新增独立连接器安装器。不为本补丁新增系统服务、Docker 运行层或发布管线；本 Fork 的发布目标与上游官方账号隔离。
-
-## 3. 代码与 Web 的具体约束
-
-### 3.1 后端
-
-- 复用组级 worker：`start(home, daemon, group_id, config, ledger_events)`、既有任务返回形式及 `WorkerHandles`；需要主动关闭 WS 时使用已有 Stopper 模式。
-- 复用 `resolve_config_credential`、`inbound_decision_for_thread`、`dispatch_inbound_with`、`AuthorizedChat`、`target_key`、外发过滤、`outbound_text`、分段和 Blob 工具。
-- 保留 `pub(super)` 等局部可见性、现有 `Result<..., String>` 与 `tracing` 习惯；不把内部 helper 导出成新公共 API。
-- 使用现有 `reqwest`、`tokio-tungstenite` 和异步工具；新依赖须先证明必要性。
-- 不改 daemon 的 Group、Actor、Session、收件人或执行顺序。接入收到请求后提交 CCCC，不等智能体回答才接下一条。
-- 遇到公共能力缺口，写明最小补丁理由并补回归；不以复制全部公共逻辑或静默改变其他平台行为解决。
-
-### 3.2 Web
-
-复用 [IMBridgeTab](../../web/src/components/modals/settings/IMBridgeTab.tsx)、[SettingsModal](../../web/src/components/SettingsModal.tsx)、[imBridgeConfig](../../web/src/components/modals/settings/imBridgeConfig.ts) 以及 [IM API](../../web/src/services/api/im.ts)：
-
-- 平台选择继续使用 `SelectCombobox`。
-- 表单继续使用 `settingsWorkspacePanelClass`、`inputClass`、`labelClass` 和现有提示/错误样式；不新增主题、CSS 框架或专属 Dashboard。
-- 字段沿用 React 受控输入、平台草稿缓存、配置回读、保存前校验、保存与启动链路。
-- 待审批、已授权聊天、拒绝/撤销、详细交流开关及运行状态继续使用现有 UI，不重做审批面板。
-- 文案通过现有 `settings` namespace 和 locale 文件补键；保留语言切换、深浅色、窄屏及无障碍标签习惯。
-- Token 输入遵循现有凭据字段及环境变量引用规则，不借本补丁改造全部平台凭据表单。推荐填写环境变量名，真实值不进入日志和测试截图。
-- 文档中的交互步骤以当前代码为准；部分旧指南写“保存自动启动”，不可不核对实际按钮链路就照抄。
-
-### 3.3 允许修改的公共接入点
-
-LOG01 修复约束：组合 CLI 启动路径没有启用 tracing 输出，且现有 `im logs` 只读取组级 `state/im_bridge.log`。Mattermost 错误统一写入该原生路径并输出到 stderr，不修改其他平台的日志初始化或增加服务、依赖、独立模块。记录时间、平台、Group、操作和错误；不记录聊天正文、附件内容或原始 HTTP 响应，已配置 Bot Token 在写入前脱敏。日志采用 JSON 单行，复用现有文件锁，Unix 新文件为 0600；1 MiB 轮转保留一份备份，单条错误最多 4096 字符。文件写入失败须在 stderr 明确可见且不能阻断正常收发。测试覆盖追加、隔离、脱敏、轮转及写入失败，然后复测真实超限附件；开发者模式只控制读取，不控制错误记录。
-
-| 位置 | 仅允许的必要变化 |
-|---|---|
-| [im_runtime.rs](../../crates/cccc-web/src/im_runtime.rs) | 模块声明、start 分派与 Mattermost 自行提交启动状态的代次失效挂接；其他平台路径行为不变 |
-| [im_state.rs](../../crates/cccc-core/src/im_state.rs) | 平台集合、MM 字段规范化、必需字段检查 |
-| [daemon IM](../../crates/cccc-daemon/src/ops/im.rs)、[Web IM](../../crates/cccc-web/src/routes/im.rs) | 平台校验与同形配置透传 |
-| [CLI 参数](../../crates/cccc-cli/src/args/integrations.rs)、[命令转换](../../crates/cccc-cli/src/commands/integrations.rs) | MM server URL 参数及必要透传 |
-| [Web 类型](../../web/src/types.ts)、上述 Web 入口及 locale | 新平台、必要字段、既有交互覆盖 |
-| [IM 指南](../guide/im-bridge/index.md)、文档导航及用户说明 | Mattermost 安装说明与平台入口，跟随现有组织 |
-
-其余文件修改逐项说明目的；不设置武断的“只能改一个现有文件”限制，因为原生平台注册本就跨这些入口。最小修改指必要、局部、可审查，不是省略后端/CLI 校验。
-
-## 4. 标准使用与授权语义
-
-- 沿用上游“一个 Group 使用一个 Bot 凭据及组级 worker”的约定；部署者负责不在多个 Group 或运行实例中复用同一 Bot 身份，程序没有全局重复检测。不新增跨 Group 连接池、锁或全局路由。
-- 更换 MM 站点或 Bot 身份不能把旧接入的授权误用于新接入；同一 Bot 正常轮换 Token 与更换身份要分开验证，不把凭据文本当稳定身份。
-- 允许同一 Group 的多个聊天目标分别授权、订阅、暂停和切换 verbose，保留原生外发语义；部署可只批准一个频道，但连接器不硬编码这一限制。
-- 支持公共频道、私有频道、直接消息、平台实际允许 Bot 加入的群组直接消息和线程；缺少权限返回正常错误，不借管理员账号绕过。
-- 频道目标 `thread_id` 为空时，出站到主时间线；线程目标保存 `root_id`，回复、文件和渐进更新留在原线程。授权匹配沿用公共实现，不擅自让频道批准自动授权所有线程。
-- 聊天授权是访问当前 Group 的授权，不是逐用户 RBAC；同组多个频道/DM 共享该组上下文及符合订阅条件的外发内容。配置指南必须醒目标注，不宣称 DM 天然私密隔离。
-- **本次规格调整不授权改变现有部署的访问范围。** 若部署仍需 Owner 限制，应另行确认如何在不改变通用连接器语义的条件下落实；实际测试只使用获授权的测试人员和目标。
-- 普通群消息必须点名当前 Bot；已识别的 CCCC 命令若作为普通帖子到达，也可作为显式请求。直接消息批准后可直接输入正文。
-- 点名 Actor 使用 CCCC 自身 ID，不要求它们在 MM 另有账号；正文提到另一个 Actor 不追加收件人；不做模型名单、角色或业务关键词推断。
-
-### 4.1 命令与 Mattermost 差异
-
-CCCC 的 `/send`、`/subscribe` 等是公共文本命令解析，不代表已为平台注册 Slash Command。MM 对以 `/` 开头的输入有自己的 [Slash 机制](https://developers.mattermost.com/integrate/slash-commands/)，纯 WS 连接不能保证这种输入变成普通帖子。
-
-基础安装统一给出可投递语法，以 Bot 的实际 username 为准：
-
-| 输入 | 公共语义 |
-|---|---|
-| `@cccc_bot /subscribe`、`@cccc_bot /sub` | 申请当前 Bot 对应 Group 的聊天授权 |
-| `@cccc_bot /send 内容` 或 `@cccc_bot 内容` | 发给默认 `@foreman` |
-| `@cccc_bot /send @reviewer 内容` | 发给指定 Actor |
-| `@cccc_bot /send @all 内容` | 按 CCCC 广播给全部成员 |
-| `@cccc_bot /send @peers 内容` | 按 CCCC 发给非 foreman 成员 |
-| `@cccc_bot /pause`、`@cccc_bot /resume` | 暂停/恢复该聊天目标的桥接 |
-| `@cccc_bot /verbose`、`@cccc_bot /verbose on`、`@cccc_bot /verbose off` | 详细交流开关 |
-| `@cccc_bot /status`、`@cccc_bot /help` | 公共状态和帮助，不新增模型调用 |
-| `@cccc_bot /unsubscribe`、`@cccc_bot /unsub` | 按公共实现取消该订阅 |
-
-这是可实现的命令等价入口，不是漏掉命令功能。原生 `/rt` 面板、动态菜单和 HTTP 回调不是当前公共连接器已具备的合同，本基础补丁不以它们为前置条件，也不借此另开公网管理入口。
-
-## 5. Mattermost 专有适配
-
-最小配置：`platform=mattermost`、MM 站点地址 `mattermost_url`、`bot_token` / `bot_token_env`；CLI 使用 `--mattermost-url`。沿用原生 Token 别名和规范化方法，不复制真实凭据到提交中。
-
-- REST 和 WS 使用同一已验证站点，支持站点子路径；拒绝 URL 内秘密、跨站携密重定向和不安全路径，不关闭 TLS 校验。测试 HTTP 若需要，明确限制使用环境。
-- 启动校验 Bot 身份和 WS 认证结果，失效 Token、权限或不可连接须给正常错误；不报告虚假的 Running。
-- 入站使用 MM 帖子真实 user_id、channel_id、root_id、post_id 和 file_ids，排除自身/Bot/系统事件。保留原生 source_*、client_id 和附件元数据。
-- 出站使用 REST 创建/修改帖子，按授权目标保留主时间线或线程；对多个目标分别判断流完成，不因目标 A 已流式完成就抑制目标 B 的最终正文。
-- `chat.stream` start/update/end 对应同帖创建/编辑；批量更新按平台限制节流，只有完整终态成功后才抑制对应目标的最终消息。保留 Unicode 安全分段、失败后的最终兜底和附件。
-- 处理反馈参考原生 reaction 实现，MM 用帖子反应提供等价能力；失败/清理不能清除其他用户的反应，过期清理不等于杀模型。不新增逐 Actor TUI 状态面板。
-- 所有 MM 支持的文件类型通过通用 Blob 传递：图片、普通文件及音视频文件；不承诺转写、OCR、PDF 提取、编解码或网页抓取。
-- 复用实际公共体积限制与安全文件名，并核验 MM 配置/代理限制；不能把保存的 `files.max_mb` 当成所有旧连接器均已执行该限制的证明。
-- 入站使用 Mattermost 原生连接 ID/序号恢复并复用内存去重；外发复用 ledger lag 补读。这两种补收方向不同，均不保证跨重启历史自动回放。不新增后台积压任务重放、持久待发箱或 exactly-once 承诺。
-- 错误使用现有 tracing 和运行状态路径，错误内容脱敏；401/403 不扩大权限，429 按平台提示退避，辅助反应失败不阻塞正文。
-
-全部功能及依据详见 [对照表](mattermost-im-features.md)。这里只说明实现边界，不替代逐项验收。
-
-## 6. 从前版规格移出的业务与额外增强
-
-以下内容不再作为通用原生连接器基础补丁的强制架构：会议主持/轮数/结束与总结、Topic 生命周期、自动筹备组、硬编码 Owner 白名单、一个 Bot 跨组路由、一组只能一个聊天入口、强制所有回复到主时间线、默认 verbose 开启、全量频道资料登记、独立投递数据库、跨重启补发、`/rt` 控制中心及新建 Actor 状态卡。
-
-这是本次新要求下的范围拆分，不是宣称这些需求已实现或无价值。此前明确提出的部署升级回退、完整运维日志和专用错误频道上报仍保留在部署工作要求中；是否加入运行时连接器作为可选增强，后续单独确认，不把它们伪装成现有原生功能。
-
-## 7. 开发及完成标准
-
-1. 先完成本规格、源码风格清单和逐项功能映射；所有“可直接/等价实现”的功能均进入验收，不只做演示性消息收发。
-2. 按参考模块实现平台及配置接入，再补消息/命令/授权、DM/频道/线程、公开外发、流式、附件、反应、重连和错误。
-3. 同步完善现有 Web 设置和 CLI，不以手工写 JSON 代替可用的 Web 配置。
-4. 针对性单测和模拟 REST/WS 测试通过后部署独立测试构建，通知用户亲自测试；不改现有 CCCC/Discord 服务的授权或配置。
-5. 逐文件审查最小补丁、运行现有相关 CI，并完成真实功能验收后发布自己 Fork 的 CCCC 构建。上游 PR 等用户另行决定。
-
-当前代码已接入 Rust/TS 配置、收发 worker 和协议模拟测试。CCCC 仅部署在独立应用服务器，Mattermost 测试服务器只提供聊天接口。此前误部署已撤销。后续已完成真实联调、日志缺陷修复及相关回归；早期 Linux 测试失败及最终串行复验的证据均保留在验收记录，不将阶段性失败当作当前状态。用户现已确认完整验收结果正常，并授权在执行全历史秘密扫描及人工检查后，推送公开 Fork 并向上游提交 Issue。PR、Release、默认分支变更及部署不在此次范围内。
+Verify shared contracts at the affected CLI, daemon, Web and runtime entry points. Fault tests must assert actual state, delivery or worker cleanup, not only request strings. Use controlled REST/WS and isolated homes for automated tests. Real-server, native-platform and user acceptance evidence must be identified separately; see the [acceptance record](mattermost-im-acceptance.md).

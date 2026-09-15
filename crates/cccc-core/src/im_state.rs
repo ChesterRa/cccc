@@ -680,7 +680,7 @@ fn is_env_var_name(value: &str) -> bool {
         && chars.all(|value| value == '_' || value.is_ascii_uppercase() || value.is_ascii_digit())
 }
 
-/// 站点地址保留安装子路径，禁止携带秘密或把 API URL 当作站点。
+/// Preserve the installation subpath; reject credentials and API endpoints in site URLs.
 pub fn normalize_mattermost_url(value: &str) -> Option<String> {
     let url = url::Url::parse(value.trim()).ok()?;
     if !matches!(url.scheme(), "http" | "https")

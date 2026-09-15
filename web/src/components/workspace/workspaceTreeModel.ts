@@ -6,6 +6,8 @@ export type DirectoryState = { items: WorkspaceEntry[]; loading: boolean; error:
 export type TreeState = { directories: Record<string, DirectoryState>; expanded: string[] };
 
 export type TreeNode = {
+  /** Position in the displayed tree; symlink branches may share an entry.path. */
+  key: string;
   entry: WorkspaceEntry;
   depth: number;
   expanded: boolean;
@@ -84,15 +86,18 @@ export function flattenTree(
   path: string = ROOT_PATH,
   depth = 0,
   ancestors: ReadonlySet<string> = new Set(),
+  branchPath: string = path,
 ): TreeNode[] {
   const directory = directoryAt(state, path);
   if (!directory) return [];
   const rows: TreeNode[] = [];
   for (const entry of directory.items) {
+    const key = branchPath ? `${branchPath}/${entry.name}` : entry.name;
     const cyclic = entry.path === path || ancestors.has(entry.path);
     const expanded = entry.is_dir && !cyclic && isExpanded(state, entry.path);
     const child = directoryAt(state, entry.path);
     rows.push({
+      key,
       entry,
       depth,
       expanded,
@@ -101,7 +106,13 @@ export function flattenTree(
     });
     if (expanded && child && !child.loading && !child.error) {
       rows.push(
-        ...flattenTree(state, entry.path, depth + 1, new Set([...ancestors, path, entry.path])),
+        ...flattenTree(
+          state,
+          entry.path,
+          depth + 1,
+          new Set([...ancestors, path, entry.path]),
+          key,
+        ),
       );
     }
   }

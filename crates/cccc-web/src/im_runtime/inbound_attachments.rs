@@ -176,43 +176,52 @@ pub(super) fn finish_upload(upload: BlobUpload, spec: AttachmentSpec) -> Result<
 
 #[cfg(test)]
 mod tests {
+    // Non-ASCII filenames verify parity between native byte and stream storage.
     use super::*;
 
     #[tokio::test]
     async fn store_stream_preserves_existing_attachment_contract() {
-        let temp = tempfile::tempdir().expect("临时目录");
+        let temp = tempfile::tempdir().expect("temporary directory");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("Home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("GroupStore");
         let group = store.create("attachments", "").expect("Group").group_id;
         for source in ["remote-1", " "] {
             let spec = AttachmentSpec::new("file", "材料.txt", "").with_source_id(source);
-            let expected =
-                store_bytes(&home, &group, b"firstsecond", spec.clone()).expect("原生字节保存");
+            let expected = store_bytes(&home, &group, b"firstsecond", spec.clone())
+                .expect("native byte storage");
             let stream = futures_util::stream::iter([
                 Ok::<_, &str>(b"first".as_slice()),
                 Ok(b"second".as_slice()),
             ]);
             let actual = store_stream(&home, &group, stream, spec)
                 .await
-                .expect("既有流保存入口");
-            assert_eq!(actual, expected, "元数据、摘要、来源 ID 与原生保存一致");
+                .expect("existing stream storage entry point");
+            assert_eq!(
+                actual, expected,
+                "metadata, digest and source ID must match native storage"
+            );
             let path =
-                cccc_core::blobs::resolve(&home, &group, actual["path"].as_str().expect("路径"))
-                    .expect("Blob 路径");
-            assert_eq!(std::fs::read(path).expect("内容"), b"firstsecond");
+                cccc_core::blobs::resolve(&home, &group, actual["path"].as_str().expect("path"))
+                    .expect("Blob path");
+            assert_eq!(std::fs::read(path).expect("content"), b"firstsecond");
         }
         assert_eq!(
-            std::fs::read_dir(store.state_dir(&group).expect("状态目录").join("blobs"))
-                .expect("Blob 目录")
-                .count(),
+            std::fs::read_dir(
+                store
+                    .state_dir(&group)
+                    .expect("state directory")
+                    .join("blobs")
+            )
+            .expect("Blob directory")
+            .count(),
             1,
-            "同内容去重且无临时文件"
+            "deduplicate identical content and leave no temporary files"
         );
     }
 
     #[tokio::test]
     async fn store_stream_cleans_partial_upload_on_read_and_size_errors() {
-        let temp = tempfile::tempdir().expect("临时目录");
+        let temp = tempfile::tempdir().expect("temporary directory");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("Home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("GroupStore");
         let group = store.create("attachments", "").expect("Group").group_id;
@@ -220,7 +229,7 @@ mod tests {
             let last = if oversize {
                 Ok(vec![0; MAX_ATTACHMENT_BYTES as usize])
             } else {
-                Err("读取故障")
+                Err("read failure")
             };
             let stream = futures_util::stream::iter([Ok(vec![1]), last]);
             let error = store_stream(
@@ -230,21 +239,26 @@ mod tests {
                 AttachmentSpec::new("file", "a.bin", ""),
             )
             .await
-            .expect_err("原有错误合同");
+            .expect_err("existing error contract");
             assert_eq!(
                 error,
                 if oversize {
                     "attachment exceeds 10 MiB while downloading"
                 } else {
-                    "读取故障"
+                    "read failure"
                 }
             );
             assert_eq!(
-                std::fs::read_dir(store.state_dir(&group).expect("状态目录").join("blobs"))
-                    .expect("Blob 目录")
-                    .count(),
+                std::fs::read_dir(
+                    store
+                        .state_dir(&group)
+                        .expect("state directory")
+                        .join("blobs")
+                )
+                .expect("Blob directory")
+                .count(),
                 0,
-                "部分临时内容已清理"
+                "partial temporary content must be removed"
             );
         }
     }

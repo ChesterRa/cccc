@@ -1,7 +1,7 @@
 import type { IMConfig, IMPlatform, IMStatus, WeixinLoginStatus } from "../../types";
 import { apiJson } from "./base";
 
-// 与原生按 Group 记录在途请求同形；跨组件卸载保留，纯旧平台之间不新增排序。
+// Track in-flight requests per Group across unmounts; preserve ordering behavior between legacy platforms.
 const managementRequests = new Map<string, { pending: Set<Promise<void>>; serialized: boolean }>();
 
 export async function runIMManagement<T>(
@@ -16,7 +16,7 @@ export async function runIMManagement<T>(
   }
   const preceding = mattermost || entry.serialized ? [...entry.pending] : [];
   entry.serialized ||= mattermost;
-  // 排整个管理流程，不能把启动前保存与启动拆成可被新操作插入的两项。
+  // Queue the whole management flow so no new operation can interleave between saving and starting.
   const request = preceding.length
     ? Promise.all(preceding).then(operation)
     : (async () => operation())();

@@ -385,14 +385,14 @@ describe("SettingsModal Mattermost draft group isolation", () => {
         const pending = new Promise<void>((resolve) => {
           release = resolve;
         });
-        // 精确延迟选定的边界；请求结束后会回读旧保存值，不能以空响应掩盖覆盖。
+        // Delay the selected boundary and return the old saved config afterward; an empty response would hide draft overwrites.
         const status = {
           ok: true as const,
           result: {
-            group_id: "test",
-            configured: true,
-            running: false,
-            enabled: false,
+            group_id: `draft-${phase}-${field}`,
+            configured: phase !== "remove",
+            running: phase === "start",
+            enabled: phase === "start",
             platform: "mattermost",
             subscribers: 0,
           },
@@ -444,6 +444,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
         expect(props().imBotTokenEnv).toBe(before.token);
         expect(props().imPlatform).toBe("mattermost");
         expect(props().imBusy).toBe(false);
+        expect(props().imStatus).toEqual(status.result);
         expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads);
       }
     },
@@ -604,7 +605,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
         expect(props().imBusy).toBe(false);
         expect(api.setIMConfig).not.toHaveBeenCalled();
         expect(api.startIMBridge).not.toHaveBeenCalled();
-        // 状态阶段被取消时，配置请求不会消费该次 mock，避免串入下一场景。
+        // A cancelled status read leaves the config mock unused; remove it before the next scenario.
         vi.mocked(api.fetchIMConfig)
           .mockReset()
           .mockResolvedValue({ ok: true, result: { im: null } });
@@ -697,7 +698,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
             props().setImMattermostUrl("https://new-draft.example.test");
             props().setImBotTokenEnv("NEW_DRAFT_TOKEN");
           });
-          // 新组的另一个保存仍在等待，旧 finally 不能替它清掉 busy。
+          // The new Group still has a pending save; the old finally must not clear its busy state.
           let finishNew!: (value: Awaited<ReturnType<typeof api.setIMConfig>>) => void;
           vi.mocked(api.setIMConfig).mockReturnValueOnce(
             new Promise((resolve) => {
@@ -711,11 +712,11 @@ describe("SettingsModal Mattermost draft group isolation", () => {
           const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
           const starts = vi.mocked(api.startIMBridge).mock.calls.length;
           await act(async () => {
-            if (outcome === "transport") reject(new Error("旧组传输失败"));
+            if (outcome === "transport") reject(new Error("Old Group transport failure"));
             else
               release(
                 outcome === "rejected"
-                  ? { ok: false, error: { code: "old_failure", message: "旧组错误" } }
+                  ? { ok: false, error: { code: "old_failure", message: "Old Group error" } }
                   : { ok: true, result: {} },
               );
             await running;
@@ -833,7 +834,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
       });
       vi.mocked(api.setIMConfig).mockResolvedValue({
         ok: false,
-        error: { code: "save_failed", message: "保存失败，请重试" },
+        error: { code: "save_failed", message: "Save failed. Try again." },
       });
       const reads = vi.mocked(api.fetchIMConfig).mock.calls.length;
       await act(async () => props().onStartBridge());
@@ -842,7 +843,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
       expect(props().imPlatform).toBe("mattermost");
       expect(props().imMattermostUrl).toBe("https://draft.example.test");
       expect(props().imBotTokenEnv).toBe("DRAFT_TOKEN");
-      expect(props().imConfigError).toBe("保存失败，请重试");
+      expect(props().imConfigError).toBe("Save failed. Try again.");
 
       vi.mocked(api.setIMConfig).mockResolvedValue({ ok: true, result: {} });
       vi.mocked(api.fetchIMConfig).mockResolvedValue({
@@ -857,12 +858,12 @@ describe("SettingsModal Mattermost draft group isolation", () => {
       });
       vi.mocked(api.startIMBridge).mockResolvedValue({
         ok: false,
-        error: { code: "connect_failed", message: "连接失败" },
+        error: { code: "connect_failed", message: "Connection failed" },
       });
       await act(async () => props().onStartBridge());
       expect(api.startIMBridge).toHaveBeenCalledOnce();
       expect(api.fetchIMConfig).toHaveBeenCalledTimes(reads + 1);
-      expect(props().imConfigError).toBe("连接失败");
+      expect(props().imConfigError).toBe("Connection failed");
     },
   );
 
@@ -879,7 +880,7 @@ describe("SettingsModal Mattermost draft group isolation", () => {
     expect(props().imBotTokenEnv).toBe("GROUP_A_BOT_TOKEN");
     await choose("telegram");
 
-    // 保持同一个 SettingsModal 挂载，只改变 groupId，覆盖普通关窗重开以外的路径。
+    // Keep SettingsModal mounted and change only groupId to cover switches without closing the modal.
     await renderGroup("group-b");
     await choose("mattermost");
     expect(props().imMattermostUrl).toBe("");

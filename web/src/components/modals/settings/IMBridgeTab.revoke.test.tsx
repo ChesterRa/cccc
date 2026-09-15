@@ -179,11 +179,15 @@ describe("IMBridgeTab revoke loading identity", () => {
   });
 
   it("displays configuration errors only on Mattermost", async () => {
-    const draft = { ...props(), imConfigError: "测试保存失败", imPlatform: "mattermost" as const };
+    const draft = {
+      ...props(),
+      imConfigError: "Test save failure",
+      imPlatform: "mattermost" as const,
+    };
     await act(async () => root.render(<IMBridgeTab {...draft} />));
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("测试保存失败");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Test save failure");
     await act(async () => root.render(<IMBridgeTab {...draft} imPlatform="telegram" />));
-    expect(container.textContent).not.toContain("测试保存失败");
+    expect(container.textContent).not.toContain("Test save failure");
     await act(async () => root.render(<IMBridgeTab {...draft} imConfigError="" />));
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
