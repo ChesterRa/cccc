@@ -81,6 +81,7 @@ afterEach(async () => {
 
 it("does not let a late default Group report replace a newer sidebar choice", async () => {
   const iframe = host.querySelector("iframe");
+  expect(iframe?.hasAttribute("allowfullscreen")).toBe(true);
   const initialRevision = state.selected?.revision;
   await act(async () => state.select("b", "requested"));
   const revision = state.selected?.revision;

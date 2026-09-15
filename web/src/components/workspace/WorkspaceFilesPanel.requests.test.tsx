@@ -47,12 +47,12 @@ describe("workspace files surfaces", () => {
     );
     await mount();
 
-    // The operator clicks README.md, then changes their mind and clicks LICENSE.
-    await click(rowByName("README.md"));
+    // The operator clicks README.txt, then changes their mind and clicks LICENSE.
+    await click(rowByName("README.txt"));
     await click(rowByName("LICENSE"));
     expect(pending).toHaveLength(2);
 
-    // The newest read lands first, then the superseded README.md response arrives late.
+    // The newest read lands first, then the superseded README.txt response arrives late.
     await act(async () => {
       pending[1]?.();
       await Promise.resolve();
@@ -77,10 +77,10 @@ describe("workspace files surfaces", () => {
       result: {
         scope_key: "scope-a",
         scope_url: "/repo",
-        path: "README.md",
+        path: "README.txt",
         content: "one\n",
         bytes: 4,
-        mime_type: "text/markdown",
+        mime_type: "text/plain",
         binary: false,
         truncated: false,
         sha256: "v1",
@@ -91,11 +91,11 @@ describe("workspace files surfaces", () => {
       () =>
         new Promise((resolve) => {
           finishSave = () =>
-            resolve({ ok: true, result: { path: "README.md", sha256: "v2", created: false } });
+            resolve({ ok: true, result: { path: "README.txt", sha256: "v2", created: false } });
         }),
     );
     await mount();
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
 
     const type = async (value: string) => {
       await act(async () => {
@@ -129,15 +129,15 @@ describe("workspace files surfaces", () => {
     );
     fetchWorkspaceFile.mockResolvedValue({
       ok: false,
-      error: { code: "NOT_FOUND", message: "Path not found: README.md" },
+      error: { code: "NOT_FOUND", message: "Path not found: README.txt" },
     });
     await mount();
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
 
     // The viewer never mounts on a failed read, so the panel has to carry the reason.
     expect(mainArea().textContent).toContain("chat");
-    expect(panel().textContent).toContain("Path not found: README.md");
+    expect(panel().textContent).toContain("Path not found: README.txt");
     expect(panel().querySelectorAll('[role="treeitem"]')).toHaveLength(2);
   });
 
@@ -148,7 +148,7 @@ describe("workspace files surfaces", () => {
     await mount({ readOnly: true, onPinPath: vi.fn() });
 
     await act(async () => {
-      rowByName("README.md").dispatchEvent(
+      rowByName("README.txt").dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
       );
     });

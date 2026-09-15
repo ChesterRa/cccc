@@ -1,11 +1,43 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { fetchWorkspaceListing } from "./workspace";
+import { fetchWorkspaceListing, workspaceContentUrl } from "./workspace";
 
 describe("workspace API", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("carries frame authority and exact workspace paths into native media and downloads", () => {
+    const proof = btoa(
+      JSON.stringify({
+        frame_id: "media-frame",
+        target_instance_id: "target",
+        target_device_id: "device",
+        parent_origin: "https://entry.example",
+        expires_at: "2030-01-01T00:00:00Z",
+        signature: "fixture",
+      }),
+    );
+    const location = new URL(
+      `https://target.example/ui/connect?proof=${encodeURIComponent(proof)}`,
+    );
+    vi.stubGlobal("window", { location });
+    const file = {
+      scope_key: "scope a",
+      scope_url: "/project a",
+      path: String.raw`图 #1\\clip.mp4`,
+    };
+    for (const download of [false, true]) {
+      const url = new URL(workspaceContentUrl("g_media", file, download), location);
+      expect(url.pathname).toBe("/api/v1/groups/g_media/workspace/content");
+      expect(url.searchParams.get("path")).toBe(file.path);
+      expect(url.searchParams.get("scope_key")).toBe(file.scope_key);
+      expect(url.searchParams.get("scope_url")).toBe(file.scope_url);
+      expect(url.searchParams.get("connect_frame")).toBe("media-frame");
+      expect(url.searchParams.get("download")).toBe(download ? "true" : null);
+      expect(url.searchParams.has("token")).toBe(false);
+    }
   });
 
   it("sends a boolean the Axum query deserializer accepts", async () => {

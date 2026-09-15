@@ -45,7 +45,7 @@ describe("workspace files surfaces", () => {
     );
     await mount();
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
     await edit("# edited\n");
     await click(saveButton());
 
@@ -70,10 +70,10 @@ describe("workspace files surfaces", () => {
       result: {
         scope_key: "scope-a",
         scope_url: "/repo",
-        path: "README.md",
+        path: "README.txt",
         content: "# old\n",
         bytes: 6,
-        mime_type: "text/markdown",
+        mime_type: "text/plain",
         binary: false,
         truncated: false,
         sha256: "abc",
@@ -81,7 +81,7 @@ describe("workspace files surfaces", () => {
     });
     await mount();
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
     await edit("# unsaved work\n");
 
     await click(panel().querySelector<HTMLElement>("[aria-pressed]")!);

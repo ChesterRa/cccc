@@ -52,7 +52,7 @@ describe("workspace files surfaces", () => {
 
     expect(fetchWorkspaceListing).toHaveBeenCalledTimes(1);
     expect(fetchWorkspaceListing.mock.calls[0][1]).toBe("");
-    expect(panel().textContent).toContain("README.md");
+    expect(panel().textContent).toContain("README.txt");
     expect(panel().textContent).not.toContain("lib.rs");
 
     await click(rowByName("src"));
@@ -71,10 +71,10 @@ describe("workspace files surfaces", () => {
       result: {
         scope_key: "scope-a",
         scope_url: "/repo",
-        path: "README.md",
+        path: "README.txt",
         content: "# hello\n",
         bytes: 8,
-        mime_type: "text/markdown",
+        mime_type: "text/plain",
         binary: false,
         truncated: false,
         sha256: "abc",
@@ -83,12 +83,12 @@ describe("workspace files surfaces", () => {
     await mount();
     expect(mainArea().textContent).toContain("chat");
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
 
     expect(mainArea().querySelector("textarea")?.value).toBe("# hello\n");
     // The tree must survive: the panel no longer swaps itself out for the viewer.
     expect(panel().querySelectorAll('[role="treeitem"]')).toHaveLength(2);
-    expect(panel().querySelector('[aria-selected="true"]')?.textContent).toContain("README.md");
+    expect(panel().querySelector('[aria-selected="true"]')?.textContent).toContain("README.txt");
     expect(panel().querySelector("textarea")).toBeNull();
 
     const close = [...mainArea().querySelectorAll("button")].find(
@@ -109,10 +109,10 @@ describe("workspace files surfaces", () => {
       result: {
         scope_key: "scope-a",
         scope_url: "/repo",
-        path: "README.md",
+        path: "README.txt",
         content: "# old\n",
         bytes: 6,
-        mime_type: "text/markdown",
+        mime_type: "text/plain",
         binary: false,
         truncated: false,
         sha256: "stale",
@@ -124,7 +124,7 @@ describe("workspace files surfaces", () => {
     });
     await mount();
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
     const editor = mainArea().querySelector("textarea");
     expect(editor?.value).toBe("# old\n");
 
@@ -144,7 +144,7 @@ describe("workspace files surfaces", () => {
 
     expect(saveWorkspaceFile).toHaveBeenCalledWith(
       "group-1",
-      "README.md",
+      "README.txt",
       "# edited\n",
       "stale",
       "scope-a",
@@ -173,10 +173,10 @@ describe("workspace files surfaces", () => {
               result: {
                 scope_key: "scope-a",
                 scope_url: "/repo",
-                path: "README.md",
+                path: "README.txt",
                 content: "group A secret\n",
                 bytes: 15,
-                mime_type: "text/markdown",
+                mime_type: "text/plain",
                 binary: false,
                 truncated: false,
                 sha256: "from-a",
@@ -186,7 +186,7 @@ describe("workspace files surfaces", () => {
     );
     await mount({ groupId: "group-a" });
 
-    await click(rowByName("README.md"));
+    await click(rowByName("README.txt"));
     expect(mainArea().textContent).toContain("chat");
 
     // The operator switches groups while group A's read is still in flight.

@@ -1631,13 +1631,30 @@ Result:
 Workspace Web clients must treat `group.set_active_scope`, `group.attach`, and
 `group.detach_scope` as invalidating their active workspace view and reconcile the
 current Group document, rather than applying historical event scope fields.
-The Web workspace list/read/write requests bind `scope_key` and `scope_url` to
-that document; file reads return both values and saves echo the opened identity.
+The Web workspace list/read/write/content requests bind `scope_key` and `scope_url` to
+that document; JSON file reads return both values and saves echo the opened identity.
 Missing identity is rejected with HTTP 400, and a changed key or attached URL with
 HTTP 409 (`workspace_scope_changed`), before resolving the relative path. The
 checked Group snapshot owns the entire filesystem operation; a subsequent scope
 switch cannot retarget an in-flight write. The digest detects content changes
 within that workspace and does not establish workspace identity.
+
+`GET /api/v1/groups/{group_id}/workspace/content` reads original file bytes with
+`path`, `scope_key`, and `scope_url`, under the same Group/exhibit and Connect-frame
+authorization as workspace text reads. `download=true` forces an attachment.
+It supports HEAD and single byte ranges (206/416), without the JSON text limit or
+whole-file buffering. Requests containing `If-Range` receive the current full
+representation because this mutable-file endpoint exposes no strong validator.
+Every subsequent range request rechecks scope and access;
+an already admitted response retains its opened file. Responses use `no-store`
+and `nosniff`; inline raw responses are limited to images, audio, video and PDF.
+SVG remains sandboxed; PDF uses its exact MIME without CSP sandbox, allowing the
+native browser PDF viewer. Content-Disposition supplies the original safe filename
+for inline viewing and explicit downloads. Other raw content is downloaded, never
+rendered as active same-origin HTML. Text-sized Markdown, tables and static HTML
+are rendered by Web from the existing bounded text read; HTML remains scriptless
+and scoped resource URLs retain authorization and workspace identity. Media
+support does not create a daemon operation, ledger event, cloud copy or transcoder.
 
 #### `group_detach_scope`
 

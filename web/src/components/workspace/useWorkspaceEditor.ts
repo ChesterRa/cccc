@@ -2,6 +2,9 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../../services/api";
 import type { WorkspaceFile } from "../../types";
 
+export type WorkspaceOpenFileOptions = { reload?: boolean; fragment?: string };
+export type WorkspaceFileNavigation = { fragment: string };
+
 /** Owns file requests and unsaved drafts independently of tree/panel visibility. */
 export function useWorkspaceEditor(
   groupId: string,
@@ -11,6 +14,7 @@ export function useWorkspaceEditor(
   onOpenPath: (path: string) => void,
 ) {
   const [file, setFile] = useState<WorkspaceFile | null>(null);
+  const [navigation, setNavigation] = useState<WorkspaceFileNavigation | null>(null);
   const [draft, updateDraft] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
@@ -32,6 +36,7 @@ export function useWorkspaceEditor(
     drafts.current.clear();
     pendingSaves.current.clear();
     setFile(null);
+    setNavigation(null);
     updateDraft("");
     setSelectedPath("");
     setFileError("");
@@ -53,17 +58,20 @@ export function useWorkspaceEditor(
   );
 
   const openFile = useCallback(
-    async (path: string, options?: { reload?: boolean }) => {
+    async (path: string, options?: WorkspaceOpenFileOptions) => {
+      const destination = options?.fragment ? { fragment: options.fragment } : null;
       if (!options?.reload && file?.path === path) {
-        if (selectedPath !== path) {
+        if (selectedPath !== path || destination) {
           fileRequest.current += 1;
           setSelectedPath(path);
           setFileLoading(false);
           setFileError("");
         }
+        if (destination) setNavigation(destination);
         return;
       }
       const request = ++fileRequest.current;
+      setNavigation(null);
       setFileLoading(true);
       setFileError("");
       setConflict(false);
@@ -73,6 +81,7 @@ export function useWorkspaceEditor(
       const cached = drafts.current.get(path);
       if (cached && !options?.reload) {
         setFile(cached.file);
+        setNavigation(destination);
         updateDraft(cached.draft);
         setSaving(pendingSaves.current.has(cached.file.path));
         setFileLoading(false);
@@ -90,6 +99,7 @@ export function useWorkspaceEditor(
       const targetDraft = !options?.reload && drafts.current.get(response.result.path);
       if (!targetDraft) drafts.current.delete(response.result.path);
       setFile(targetDraft ? targetDraft.file : response.result);
+      setNavigation(destination);
       updateDraft(targetDraft ? targetDraft.draft : response.result.content);
       setSaving(pendingSaves.current.has(response.result.path));
     },
@@ -99,6 +109,7 @@ export function useWorkspaceEditor(
   const closeFile = useCallback(() => {
     fileRequest.current += 1;
     setFile(null);
+    setNavigation(null);
     updateDraft("");
     setFileError("");
     setFileLoading(false);
@@ -167,6 +178,7 @@ export function useWorkspaceEditor(
 
   return {
     file,
+    navigation,
     draft,
     setDraft,
     selectedPath,

@@ -27,6 +27,7 @@ function Harness({
   files = useWorkspaceFiles(groupId, false, scopeKey, scopeUrl);
   return visible && files.file ? (
     <WorkspaceFileViewer
+      groupId={groupId}
       file={files.file}
       draft={files.draft}
       setDraft={files.setDraft}
@@ -64,7 +65,7 @@ async function setup() {
     result: {
       scope_key: "scope-a",
       scope_url: "/repo",
-      path: "README.md",
+      path: "README.txt",
       content: "disk",
       sha256: "old",
       bytes: 4,
@@ -75,7 +76,7 @@ async function setup() {
   });
   await render();
   await act(async () => {
-    await files.openFile("README.md");
+    await files.openFile("README.txt");
   });
 }
 async function edit(value: string) {
@@ -105,7 +106,7 @@ it.each([
     result: { ...files.file, content, bytes: content.length },
   });
   await act(async () => {
-    await files.openFile("README.md", { reload: true });
+    await files.openFile("README.txt", { reload: true });
   });
   const display = content.replace(/\r\n?/g, "\n");
   expect(host.querySelector("textarea")?.value).toBe(display);
@@ -131,7 +132,7 @@ it.each([
   });
   expect(saveWorkspaceFile).toHaveBeenCalledWith(
     "group-1",
-    "README.md",
+    "README.txt",
     saved,
     "old",
     "scope-a",
@@ -155,7 +156,7 @@ it("preserves unsaved edits across repeated viewer unmounts and saves the restor
   });
   expect(saveWorkspaceFile).toHaveBeenCalledWith(
     "group-1",
-    "README.md",
+    "README.txt",
     "unsaved work",
     "old",
     "scope-a",
@@ -192,7 +193,7 @@ it("adopts disk content on explicit reload and clears the draft when changing gr
   await setup();
   await edit("unsaved");
   await act(async () => {
-    await files.openFile("README.md", { reload: true });
+    await files.openFile("README.txt", { reload: true });
   });
   expect(host.querySelector("textarea")?.value).toBe("disk");
   await edit("group one draft");
@@ -205,7 +206,7 @@ it("ignores repeat selection and restores drafts after switching or closing file
   await setup();
   await edit("unsaved README");
   await act(async () => {
-    await files.openFile("README.md");
+    await files.openFile("README.txt");
   });
   expect(fetchWorkspaceFile).toHaveBeenCalledTimes(1);
   expect(host.querySelector("textarea")?.value).toBe("unsaved README");
@@ -218,7 +219,7 @@ it("ignores repeat selection and restores drafts after switching or closing file
   });
   await edit("unsaved LICENSE");
   await act(async () => {
-    await files.openFile("README.md");
+    await files.openFile("README.txt");
   });
   expect(host.querySelector("textarea")?.value).toBe("unsaved README");
   await act(async () => {
@@ -239,7 +240,7 @@ it("keeps the current draft when another file or an explicit reload fails", asyn
   });
   expect(host.querySelector("textarea")?.value).toBe("keep me");
   await act(async () => {
-    await files.openFile("README.md", { reload: true });
+    await files.openFile("README.txt", { reload: true });
   });
   expect(host.querySelector("textarea")?.value).toBe("keep me");
   expect(files.fileError).toBe("unavailable");
@@ -259,13 +260,13 @@ it("cancels a pending navigation when the current file is selected again", async
     opening = files.openFile("LICENSE");
   });
   await act(async () => {
-    await files.openFile("README.md");
+    await files.openFile("README.txt");
   });
   await act(async () => {
     finish({ ok: true, result: { ...files.file, path: "LICENSE", content: "license" } });
     await opening;
   });
-  expect(files.file?.path).toBe("README.md");
+  expect(files.file?.path).toBe("README.txt");
   expect(host.querySelector("textarea")?.value).toBe("still editing");
 });
 
@@ -273,8 +274,8 @@ it("restores an unsaved draft when reopening an internal symlink", async () => {
   await setup();
   await edit("keep target draft");
   await act(async () => files.closeFile());
-  await act(async () => files.openFile("README-link.md"));
-  expect(files.file?.path).toBe("README.md");
+  await act(async () => files.openFile("README-link.txt"));
+  expect(files.file?.path).toBe("README.txt");
   expect(host.querySelector("textarea")?.value).toBe("keep target draft");
 });
 
@@ -302,7 +303,7 @@ it("preserves an edit reverted to the old content while a save is pending", asyn
     result: { ...files.file, content: "submitted" },
   });
   await act(async () => files.closeFile());
-  await act(async () => files.openFile("README.md"));
+  await act(async () => files.openFile("README.txt"));
   expect(host.querySelector("textarea")?.value).toBe("disk");
 });
 
@@ -321,7 +322,7 @@ it("finishes a save after leaving and returning to its file without a stale dige
     saving = files.saveFile(files.draft);
   });
   await act(async () => files.closeFile());
-  await act(async () => files.openFile("README.md"));
+  await act(async () => files.openFile("README.txt"));
   expect(files.saving).toBe(true);
   await edit("disk");
   await act(async () => files.closeFile());
@@ -329,7 +330,7 @@ it("finishes a save after leaving and returning to its file without a stale dige
     finish({ ok: true, result: { sha256: "saved" } });
     await saving;
   });
-  await act(async () => files.openFile("README.md"));
+  await act(async () => files.openFile("README.txt"));
   expect(files.draft).toBe("disk");
   expect(files.file?.sha256).toBe("saved");
   expect(files.saving).toBe(false);
@@ -363,7 +364,7 @@ it("retires drafts and pending opens when the same Group changes scope or locati
     result: { ...oldFile, scope_key: "scope-b", scope_url: "/other", content: "new workspace" },
   });
   await act(async () => {
-    await files.openFile("README.md");
+    await files.openFile("README.txt");
   });
   expect(files.draft).toBe("new workspace");
   await edit("new edit");
@@ -388,7 +389,7 @@ it("ignores a save completion after a scope switch and sends the opened scope id
   });
   expect(saveWorkspaceFile).toHaveBeenCalledWith(
     "group-1",
-    "README.md",
+    "README.txt",
     "old scope edit",
     "old",
     "scope-a",
