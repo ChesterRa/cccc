@@ -115,6 +115,84 @@ impl BrowserSurfaces {
         }))
     }
 
+    /// Resolve a ChatGPT optimistic echo with one bounded reload. This never dispatches again.
+    /// It exists for the real case where the server accepted a message but the controlled tab
+    /// remained on its client-side `request-*` placeholder.
+    pub(crate) async fn refresh_optimistic_submission(
+        &self,
+        key: &str,
+        target_url: &str,
+        prompt: &str,
+        prior: &Value,
+    ) -> Value {
+        if prior["submission_evidence"] != "optimistic_echo_unconfirmed" {
+            return prior.clone();
+        }
+        let action = prior["send_selector"].as_str().unwrap_or("");
+        let input = prior["input_selector"].as_str().unwrap_or("");
+        let baseline = serde_json::from_value::<SubmissionSnapshot>(prior["baseline"].clone())
+            .unwrap_or_default();
+        let observed = serde_json::from_value::<SubmissionSnapshot>(prior["observed"].clone())
+            .unwrap_or_else(|_| baseline.clone());
+        let finish = |kind: &str, error: Option<&str>| {
+            let mut value = evidence(false, action, kind, input, &baseline, &observed);
+            value["reconciled_by"] = json!("single_page_refresh");
+            if let Some(error) = error {
+                value["refresh_error"] = json!(error);
+            }
+            value
+        };
+        let page = match self.page(key).await {
+            Ok(page) => page,
+            Err(error) => {
+                return finish(
+                    "optimistic_echo_unconfirmed_after_refresh",
+                    Some(&error.to_string()),
+                );
+            }
+        };
+        let current_url = page.url().await.ok().flatten().unwrap_or_default();
+        if !same_page(&current_url, target_url) {
+            return finish("submission_target_changed", None);
+        }
+        if let Err(error) = page.reload().await {
+            return finish(
+                "optimistic_echo_unconfirmed_after_refresh",
+                Some(&error.to_string()),
+            );
+        }
+        if let Err(error) = wait_for_composer(&page).await {
+            return finish(
+                "optimistic_echo_unconfirmed_after_refresh",
+                Some(&error.to_string()),
+            );
+        }
+        let needles = submission_needles(prompt);
+        let outcome = self
+            .verify_attempt(
+                key,
+                &page,
+                SubmissionAttempt {
+                    prompt,
+                    needles: &needles,
+                    input,
+                    action,
+                    baseline: &baseline,
+                },
+            )
+            .await;
+        let mut value = match outcome {
+            PromptSubmissionOutcome::Verified(value)
+            | PromptSubmissionOutcome::Deferred(value)
+            | PromptSubmissionOutcome::Ambiguous(value) => value,
+        };
+        if value["submission_evidence"] == "optimistic_echo_unconfirmed" {
+            value["submission_evidence"] = json!("optimistic_echo_unconfirmed_after_refresh");
+        }
+        value["reconciled_by"] = json!("single_page_refresh");
+        value
+    }
+
     #[cfg(test)]
     pub(crate) async fn submit_prompt_with_attachment(
         &self,
@@ -614,15 +692,7 @@ impl BrowserSurfaces {
                             &snapshot,
                         ));
                     }
-                    if snapshot.echo_found && !provisional_submission(&snapshot) {
-                        self.record_page_state(key, page).await;
-                        return PromptSubmissionOutcome::Verified(with_receipt_needles(
-                            evidence(true, action, "message_echo", input, baseline, &snapshot),
-                            needles,
-                        ));
-                    }
-                    if let Some(submission_evidence) =
-                        verified_submission_evidence(baseline, &snapshot)
+                    if let Some(submission_evidence) = verified_submission_kind(baseline, &snapshot)
                     {
                         self.record_page_state(key, page).await;
                         return PromptSubmissionOutcome::Verified(with_receipt_needles(
@@ -1224,6 +1294,17 @@ fn weak_submission_evidence(
     None
 }
 
+fn verified_submission_kind(
+    baseline: &SubmissionSnapshot,
+    current: &SubmissionSnapshot,
+) -> Option<&'static str> {
+    if current.echo_found && !provisional_submission(current) {
+        Some("message_echo")
+    } else {
+        verified_submission_evidence(baseline, current)
+    }
+}
+
 fn verified_submission_evidence(
     baseline: &SubmissionSnapshot,
     current: &SubmissionSnapshot,
@@ -1235,7 +1316,7 @@ fn verified_submission_evidence(
 pub(crate) fn stored_verified_submission_evidence(value: &Value) -> Option<&'static str> {
     let baseline = serde_json::from_value(value.get("baseline")?.clone()).ok()?;
     let observed = serde_json::from_value(value.get("observed")?.clone()).ok()?;
-    verified_submission_evidence(&baseline, &observed)
+    verified_submission_kind(&baseline, &observed)
 }
 
 fn conversation_route_changed(before: &str, after: &str) -> bool {

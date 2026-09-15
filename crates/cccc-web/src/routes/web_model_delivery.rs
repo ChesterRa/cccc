@@ -440,7 +440,16 @@ async fn deliver_once(
         return Ok(DeliveryOutcome::Idle);
     }
     if target["last_delivery_status"] == "submission_ambiguous" {
-        if recover_verified_ambiguous_submission(state, group_id, actor_id, owner, &target).await? {
+        if recover_verified_ambiguous_submission(
+            state,
+            group_id,
+            actor_id,
+            owner,
+            &target,
+            manage_browser,
+        )
+        .await?
+        {
             return Ok(DeliveryOutcome::Submitted);
         }
         // The attempted turn was already committed to preserve at-most-once delivery. A known
@@ -724,21 +733,39 @@ async fn deliver_once(
             });
         }
         Ok(PromptSubmissionOutcome::Ambiguous(browser)) => {
-            let message = "browser submission was attempted but could not be verified; this message will not be redelivered automatically";
-            return complete_ambiguous_attempt(
-                state,
-                group_id,
-                actor_id,
-                DeliveryAttempt {
-                    owner,
-                    turn_id,
-                    event_ids: turn["event_ids"].clone(),
-                    delivery_id: &delivery_id,
-                },
-                browser,
-                message,
-            )
-            .await;
+            let browser = if manage_browser
+                && browser["submission_evidence"] == "optimistic_echo_unconfirmed"
+            {
+                state
+                    .browser_surfaces
+                    .refresh_optimistic_submission(
+                        session_key,
+                        target_url,
+                        &browser_prompt,
+                        &browser,
+                    )
+                    .await
+            } else {
+                browser
+            };
+            if browser["submitted"] != true {
+                let message = "browser submission was attempted but could not be verified; this message will not be redelivered automatically";
+                return complete_ambiguous_attempt(
+                    state,
+                    group_id,
+                    actor_id,
+                    DeliveryAttempt {
+                        owner,
+                        turn_id,
+                        event_ids: turn["event_ids"].clone(),
+                        delivery_id: &delivery_id,
+                    },
+                    browser,
+                    message,
+                )
+                .await;
+            }
+            browser
         }
         Err(error) if error.to_string().contains(BOUND_CONVERSATION_ERROR_MARKER) => {
             let message = error.to_string();
@@ -1118,6 +1145,7 @@ async fn recover_verified_ambiguous_submission(
     actor_id: &str,
     owner: &BrowserTargetOwner,
     target: &Value,
+    manage_browser: bool,
 ) -> Result<bool, ApiError> {
     let mut submission = target["last_submission_evidence"].clone();
     let provisional = submission["submission_evidence"] == "optimistic_echo_unconfirmed";
@@ -1150,21 +1178,75 @@ async fn recover_verified_ambiguous_submission(
         &event_label,
     )?;
     if provisional {
-        // Reinspect only the already-open sending page. Never reopen or send
-        // merely to resolve an uncertain receipt, and never borrow another chat.
         let surface = state.browser_surfaces.info(surface_key()).await;
-        if surface["active"] != true || surface["url"] != target["url"] {
-            return Ok(false);
-        }
-        let current = state
+        let automatic = state
             .browser_surfaces
-            .inspect_staged_prompt(surface_key(), target_url, &prompt)
-            .await
-            .map_err(|error| ApiError::bad(error.to_string()))?;
-        if current["observed"]["echo_found"] != true {
+            .web_model_auto_close
+            .load(std::sync::atomic::Ordering::Acquire);
+        if manage_browser && surface["active"] == true && !automatic {
+            // A manually opened production page may contain a draft. Never refresh it.
             return Ok(false);
         }
-        submission["observed"] = current["observed"].clone();
+        if surface["active"] == true && surface["url"] == target["url"] {
+            let current = state
+                .browser_surfaces
+                .inspect_staged_prompt(surface_key(), target_url, &prompt)
+                .await
+                .map_err(|error| ApiError::bad(error.to_string()))?;
+            submission["observed"] = current["observed"].clone();
+        }
+        if stored_verified_submission_evidence(&submission).is_none()
+            && submission["observed"]["response_started"] != true
+        {
+            if !manage_browser
+                || target["last_delivery_reconcile_attempts"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    >= 1
+            {
+                return Ok(false);
+            }
+            if surface["active"] != true || surface["url"] != target["url"] {
+                state
+                    .browser_surfaces
+                    .web_model_auto_close
+                    .store(true, std::sync::atomic::Ordering::Release);
+                if super::web_model_browser::ensure_open_for_actor_locked(
+                    state, group_id, actor_id, 1366, 900,
+                )
+                .await
+                .is_err()
+                {
+                    return Ok(false);
+                }
+            }
+            if !update_target(
+                state,
+                group_id,
+                actor_id,
+                owner,
+                json!({"last_delivery_reconcile_attempts":1}),
+            )? {
+                return Ok(false);
+            }
+            submission = state
+                .browser_surfaces
+                .refresh_optimistic_submission(surface_key(), target_url, &prompt, &submission)
+                .await;
+            if submission["submitted"] != true {
+                update_target(
+                    state,
+                    group_id,
+                    actor_id,
+                    owner,
+                    json!({
+                        "last_submission_evidence":submission,
+                        "last_error":"The optimistic browser echo remained unverified after one bounded refresh; the message will not be submitted again."
+                    }),
+                )?;
+                return Ok(false);
+            }
+        }
     }
     let Some(submission_evidence) = stored_verified_submission_evidence(&submission) else {
         return Ok(false);

@@ -818,7 +818,7 @@ async fn cross_chat_delivery_does_not_navigate_away_from_a_draft() {
 #[tokio::test]
 async fn submission_does_not_wait_for_background_intersection_observers() {
     require_chrome!();
-    let (url,server)=local_page(r#"<!doctype html><html><body><form onsubmit="event.preventDefault();window.sent=(window.sent||0)+1;const turn=document.createElement('section');turn.dataset.testid='conversation-turn-1';turn.dataset.turnId='request-client-0';const e=document.createElement('div');e.dataset.messageAuthorRole='user';e.textContent=document.querySelector('textarea').value;turn.append(e);document.body.append(turn);document.querySelector('textarea').value='';setTimeout(()=>{const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-answer';answer.textContent='Received';turn.append(answer);window.accepted=true},600)"><textarea id="prompt-textarea" style="width:500px;height:100px"></textarea><button id="composer-submit-button" type="submit" aria-label="Send prompt">Send</button></form></body></html>"#).await;
+    let (url,server)=local_page(r#"<!doctype html><html><body><form onsubmit="event.preventDefault();window.sent=(window.sent||0)+1;sessionStorage.setItem('send-count',String(Number(sessionStorage.getItem('send-count')||0)+1));sessionStorage.setItem('last-prompt',document.querySelector('textarea').value);const turn=document.createElement('section');turn.dataset.testid='conversation-turn-1';turn.dataset.turnId='request-client-0';const e=document.createElement('div');e.dataset.messageAuthorRole='user';e.textContent=document.querySelector('textarea').value;turn.append(e);document.body.append(turn);document.querySelector('textarea').value='';setTimeout(()=>{const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-answer';answer.textContent='Received';turn.append(answer);window.accepted=true},600)"><textarea id="prompt-textarea" style="width:500px;height:100px"></textarea><button id="composer-submit-button" type="submit" aria-label="Send prompt">Send</button></form><script>if(sessionStorage.getItem('cccc-refresh-receipt')){const turn=document.createElement('section');turn.dataset.testid='conversation-turn-stable';turn.dataset.turnId='server-stable-turn';const user=document.createElement('div');user.dataset.messageAuthorRole='user';user.textContent=sessionStorage.getItem('last-prompt');const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-stable-answer';answer.textContent='Received';turn.append(user,answer);document.body.append(turn)}</script></body></html>"#).await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
     let key = "background-submit";
@@ -860,6 +860,25 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
             assert_eq!(prompt_submission::stored_verified_submission_evidence(&stored).is_some(),
                 response_started, "only a server response can confirm a provisional container");
         }
+        page.evaluate("sessionStorage.setItem('cccc-refresh-receipt','1')")
+            .await.expect("arm one-time server receipt after reload");
+        let stale = json!({
+            "submitted":false,
+            "input_selector":"textarea",
+            "send_selector":"form.requestSubmit",
+            "submission_evidence":"optimistic_echo_unconfirmed",
+            "baseline":{"url":url,"user_message_count":0},
+            "observed":{"url":url,"user_message_count":1,"echo_found":true,
+                "latest_turn_id":"request-client-stale","response_started":false}
+        });
+        let refreshed = manager
+            .refresh_optimistic_submission(key, &url, prompt, &stale)
+            .await;
+        assert_eq!(refreshed["submitted"], true, "{refreshed}");
+        assert_eq!(refreshed["reconciled_by"], "single_page_refresh");
+        assert_eq!(page.evaluate("Number(sessionStorage.getItem('send-count'))")
+            .await.expect("send count after refresh").into_value::<u64>().expect("count"), 1,
+            "reconciliation must reload only; it must never submit again");
     })).await;
     manager.close(key).await.expect("close browser");
     server.abort();
