@@ -150,6 +150,9 @@ interface MarkdownRendererProps {
   invertText?: boolean;
   /** Render Mermaid fences. Kept opt-in because this renderer is shared by non-message surfaces. */
   enableMermaid?: boolean;
+  /** Map document-relative image and link URLs; omitted by ordinary message consumers. */
+  resolveUrl?: (url: string, kind: "image" | "link") => string;
+  onRendered?: () => void;
 }
 
 export function MarkdownRenderer({
@@ -158,6 +161,8 @@ export function MarkdownRenderer({
   className,
   invertText,
   enableMermaid = false,
+  resolveUrl,
+  onRendered,
 }: MarkdownRendererProps) {
   const { t } = useTranslation(["chat", "common"]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,6 +190,37 @@ export function MarkdownRenderer({
       typographer: true,
       breaks: true,
     });
+    if (resolveUrl) {
+      instance.renderer.rules.heading_open = (tokens, index, options, env, renderer) => {
+        const title =
+          tokens[index + 1]?.children?.map((token) => token.content).join("") || "section";
+        const slug =
+          title
+            .toLowerCase()
+            .trim()
+            .replace(/[^\p{L}\p{N}_\s-]/gu, "")
+            .replace(/\s+/g, "-") || "section";
+        const counts: Map<string, number> = (env.workspaceHeadings ??= new Map());
+        const count = counts.get(slug) || 0;
+        counts.set(slug, count + 1);
+        tokens[index].attrSet("id", count ? `${slug}-${count}` : slug);
+        return renderer.renderToken(tokens, index, options);
+      };
+      for (const [rule, attribute, kind] of [
+        ["image", "src", "image"],
+        ["link_open", "href", "link"],
+      ] as const) {
+        const original = instance.renderer.rules[rule];
+        instance.renderer.rules[rule] = (tokens, index, options, env, renderer) => {
+          const token = tokens[index];
+          const resolved = resolveUrl(token.attrGet(attribute) || "", kind);
+          token.attrSet(attribute, instance.validateLink(resolved) ? resolved : "");
+          return original
+            ? original(tokens, index, options, env, renderer)
+            : renderer.renderToken(tokens, index, options);
+        };
+      }
+    }
     const escapedTableScrollRegion = instance.utils.escapeHtml(labels.tableScrollRegion);
     instance.renderer.rules.table_open = (tokens, idx, options, _env, self) =>
       `<div class="markdown-table-scroll" role="region" tabindex="0" aria-label="${escapedTableScrollRegion}">${self.renderToken(tokens, idx, options)}`;
@@ -295,6 +331,7 @@ export function MarkdownRenderer({
     return instance;
   }, [
     enableMermaid,
+    resolveUrl,
     labels.copy,
     labels.copied,
     labels.expand,
@@ -313,6 +350,10 @@ export function MarkdownRenderer({
   // Mermaid renders into this subtree imperatively. Keep the prop object stable so unrelated parent
   // renders do not make React replace the subtree and reset completed diagrams back to "pending".
   const renderedHtml = useMemo(() => ({ __html: htmlContent }), [htmlContent]);
+
+  useEffect(() => {
+    onRendered?.();
+  }, [htmlContent, onRendered]);
 
   const openMermaidPreview = useCallback((trigger: HTMLElement) => {
     const block = trigger.closest<HTMLElement>("[data-mermaid-block]");

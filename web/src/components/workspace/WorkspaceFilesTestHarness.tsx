@@ -29,6 +29,7 @@ export function Harness({
       <div data-testid="main-area">
         {files.file ? (
           <WorkspaceFileViewer
+            groupId={groupId}
             {...{ draft: files.draft, setDraft: files.setDraft }}
             file={files.file}
             isDark={false}
@@ -36,6 +37,8 @@ export function Harness({
             saving={files.saving}
             error={files.fileError}
             conflict={files.conflict}
+            onOpenFile={files.openFile}
+            navigation={files.navigation}
             onClose={files.closeFile}
             onSave={files.saveFile}
             onReload={() => files.file && void files.openFile(files.file.path, { reload: true })}

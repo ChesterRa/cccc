@@ -25,7 +25,7 @@ vi.mock("../../services/api", () => ({
 
 const ROOT_ITEMS = [
   { name: "src", path: "src", is_dir: true, git_dirty_descendant: true },
-  { name: "README.md", path: "README.md", is_dir: false, git_status: "modified" as const },
+  { name: "README.txt", path: "README.txt", is_dir: false, git_status: "modified" as const },
 ];
 
 function listing(path: string, items: unknown[]) {

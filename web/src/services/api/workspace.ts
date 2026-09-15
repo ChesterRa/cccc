@@ -1,8 +1,23 @@
 import type { WorkspaceEntry, WorkspaceFile, WorkspaceListing } from "../../types";
-import { apiJson, asRecord, type ApiResponse } from "./base";
+import { apiJson, asRecord, withAuthToken, type ApiResponse } from "./base";
 
 function groupPath(groupId: string, suffix: string): string {
   return `/api/v1/groups/${encodeURIComponent(groupId)}/workspace/${suffix}`;
+}
+
+/** Native media requests use the existing Web session and Connect frame authority. */
+export function workspaceContentUrl(
+  groupId: string,
+  file: Pick<WorkspaceFile, "path" | "scope_key" | "scope_url">,
+  download = false,
+): string {
+  const query = new URLSearchParams({
+    path: file.path,
+    scope_key: file.scope_key,
+    scope_url: file.scope_url,
+  });
+  if (download) query.set("download", "true");
+  return withAuthToken(`${groupPath(groupId, "content")}?${query}`);
 }
 
 function invalidResponse<T>(message: string): ApiResponse<T> {

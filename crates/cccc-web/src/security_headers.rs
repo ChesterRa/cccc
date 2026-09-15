@@ -14,7 +14,9 @@ pub async fn apply(State(state): State<AppState>, request: Request, next: Next) 
         Err(error) => (None, error.into_response()),
     };
     let headers = response.headers_mut();
-    headers.insert(
+    // Multiple CSP policies are enforced together. Preserve stricter resource
+    // policies (such as sandboxed workspace SVG) while adding frame authority.
+    headers.append(
         header::HeaderName::from_static("content-security-policy"),
         ancestor
             .as_ref()

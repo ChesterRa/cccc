@@ -11,6 +11,8 @@ type LazyMarkdownRendererProps = {
   invertText?: boolean;
   enableMermaid?: boolean;
   fallback?: ReactNode;
+  resolveUrl?: (url: string, kind: "image" | "link") => string;
+  onRendered?: () => void;
 };
 
 export function LazyMarkdownRenderer({
@@ -20,6 +22,8 @@ export function LazyMarkdownRenderer({
   invertText,
   enableMermaid = false,
   fallback = null,
+  resolveUrl,
+  onRendered,
 }: LazyMarkdownRendererProps) {
   return (
     <Suspense fallback={fallback}>
@@ -29,6 +33,8 @@ export function LazyMarkdownRenderer({
         className={className}
         invertText={invertText}
         enableMermaid={enableMermaid}
+        resolveUrl={resolveUrl}
+        onRendered={onRendered}
       />
     </Suspense>
   );

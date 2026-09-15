@@ -1,11 +1,20 @@
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Paperclip, RotateCcw, Save, X } from "lucide-react";
+import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
 import { applyEditorText, editorText } from "./workspaceText";
+import { workspaceContentUrl } from "../../services/api/workspace";
+import { GraphicViewer } from "../viewer/GraphicViewer";
+import { WorkspaceMediaPreview } from "./WorkspaceMediaPreview";
+import { WorkspaceDocumentPreview } from "./WorkspaceDocumentPreview";
+import { workspacePreviewKind } from "./workspacePreview";
+
+import type { WorkspaceFileNavigation, WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 
 type Props = {
+  groupId: string;
   file: WorkspaceFile;
   draft: string;
   setDraft: (content: string) => void;
@@ -18,6 +27,8 @@ type Props = {
   onSave: (content: string) => Promise<boolean>;
   onReload: () => void;
   onAttach: () => void;
+  onOpenFile?: (path: string, options?: WorkspaceOpenFileOptions) => void;
+  navigation?: WorkspaceFileNavigation | null;
 };
 
 function formatBytes(bytes: number): string {
@@ -26,7 +37,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function WorkspaceFileViewer({
+export function WorkspaceFileViewer(props: Props) {
+  const { groupId, file } = props;
+  return (
+    <FileViewer
+      key={JSON.stringify([groupId, file.scope_key, file.scope_url, file.path])}
+      {...props}
+    />
+  );
+}
+
+function FileViewer({
+  groupId,
   file,
   draft,
   setDraft,
@@ -39,25 +61,80 @@ export function WorkspaceFileViewer({
   onSave,
   onReload,
   onAttach,
+  onOpenFile,
+  navigation,
 }: Props) {
   const { t } = useTranslation("chat");
+  const [showSource, setShowSource] = useState(false);
+  const [nativeFragment, setNativeFragment] = useState(navigation?.fragment || "");
+  useEffect(() => {
+    if (navigation) {
+      setShowSource(false);
+      setNativeFragment(navigation.fragment);
+    }
+  }, [navigation]);
+  const kind = workspacePreviewKind(file);
+  const svgSource = file.mime_type === "image/svg+xml" && !file.binary && !file.truncated;
+  const hasSourcePreview = svgSource || ["markdown", "csv", "tsv", "html"].includes(kind);
+  const preview = kind !== "text" && !showSource;
   const dirty = draft !== file.content;
-  const editable = !readOnly && !file.binary && !file.truncated;
+  const editable = !readOnly && !preview && !file.binary && !file.truncated;
+  const contentUrl = workspaceContentUrl(groupId, file) + (kind === "pdf" ? nativeFragment : "");
+  // Render SVG drafts through an image, never inject workspace markup into the App DOM.
+  const imageUrl = useMemo(
+    () => (svgSource && dirty ? `data:image/svg+xml,${encodeURIComponent(draft)}` : contentUrl),
+    [svgSource, dirty, draft, contentUrl],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
         className={classNames(
-          "flex items-center gap-1 border-b px-2 py-1.5",
+          "flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1.5",
           isDark ? "border-white/8" : "border-black/8",
         )}
       >
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={file.path}>
+        <span
+          className="min-w-0 flex-1 basis-24 truncate text-[13px] font-medium"
+          title={file.path}
+        >
           {baseName(file.path)}
           {dirty ? <span className="ml-1 opacity-60">•</span> : null}
           <span className="ml-2 truncate text-[11px] font-normal opacity-45">{file.path}</span>
         </span>
         <span className="shrink-0 text-[11px] opacity-50">{formatBytes(file.bytes)}</span>
+        {hasSourcePreview && (
+          <button
+            type="button"
+            onClick={() => setShowSource(!showSource)}
+            title={t(showSource ? "workspacePreview" : "workspaceViewSource")}
+            aria-label={t(showSource ? "workspacePreview" : "workspaceViewSource")}
+            className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+          >
+            {showSource ? <Eye className="h-3.5 w-3.5" /> : <Code className="h-3.5 w-3.5" />}
+          </button>
+        )}
+        {kind === "pdf" && (
+          <a
+            href={contentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={t("workspaceOpenSeparate")}
+            aria-label={t("workspaceOpenSeparate")}
+            className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
+        <a
+          href={workspaceContentUrl(groupId, file, true)}
+          download={baseName(file.path)}
+          title={t("workspaceDownload")}
+          aria-label={t("workspaceDownload")}
+          className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </a>
         <button
           type="button"
           onClick={onAttach}
@@ -128,10 +205,45 @@ export function WorkspaceFileViewer({
         </div>
       ) : null}
 
-      {file.truncated ? (
+      {preview ? (
+        kind === "image" ? (
+          <GraphicViewer src={imageUrl} alt={baseName(file.path)} />
+        ) : kind === "video" || kind === "audio" ? (
+          <WorkspaceMediaPreview
+            key={contentUrl}
+            src={contentUrl}
+            name={baseName(file.path)}
+            audio={kind === "audio"}
+          />
+        ) : kind === "pdf" ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <p className="shrink-0 px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+              {t("workspacePdfHint")}
+            </p>
+            {navigator.pdfViewerEnabled !== false && (
+              <iframe
+                title={file.path}
+                src={contentUrl}
+                className="min-h-0 w-full flex-1 border-0 bg-white"
+              />
+            )}
+          </div>
+        ) : (
+          <WorkspaceDocumentPreview
+            kind={kind}
+            groupId={groupId}
+            file={file}
+            content={draft}
+            isDark={isDark}
+            onOpenFile={onOpenFile}
+            navigation={navigation}
+          />
+        )
+      ) : file.truncated ? (
         <div className="px-3 py-6 text-center text-[12px] opacity-60">
           {t("workspaceTooLarge", {
-            defaultValue: "This file is too large to open here ({{size}}).",
+            defaultValue:
+              "This file is too large for the text viewer ({{size}}). Download it to open locally.",
             size: formatBytes(file.bytes),
           })}
         </div>

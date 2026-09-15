@@ -206,6 +206,7 @@ export function ConnectRemotePanel({
         <iframe
           ref={iframe}
           src={opened.url}
+          allowFullScreen
           title={instance?.display_name || "CCCC Connect"}
           className={`min-h-0 w-full flex-1 border-0 ${ready ? "" : "invisible"}`}
         />

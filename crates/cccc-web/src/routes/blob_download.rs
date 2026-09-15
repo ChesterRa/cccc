@@ -59,7 +59,7 @@ fn sanitize_download_filename(raw: &str) -> String {
     }
 }
 
-fn attachment_disposition(filename: &str) -> String {
+pub(super) fn attachment_disposition(filename: &str) -> String {
     let filename = sanitize_download_filename(filename);
     let ascii_fallback = filename
         .chars()

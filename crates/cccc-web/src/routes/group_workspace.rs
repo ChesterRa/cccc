@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 
+mod content;
+
 #[derive(Deserialize)]
 struct ListQuery {
     scope_key: String,
@@ -36,6 +38,10 @@ struct FileQuery {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/workspace/list", get(list))
+        .route(
+            "/api/v1/groups/{group_id}/workspace/content",
+            get(content::read),
+        )
         .route(
             "/api/v1/groups/{group_id}/workspace/file",
             get(read).put(write),

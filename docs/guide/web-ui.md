@@ -110,9 +110,42 @@ On phones, Files opens a read-only viewer. Binary files and files larger than 1 
 not editable here. Files stay within the active workspace, and exhibit mode does not
 expose this surface.
 
+Images open in the shared graphics viewer, including files larger than the text
+limit. Videos and audio use native browser controls, without autoplay. PDFs open
+in the browser's PDF viewer, with **Open in a new tab** and **Download file** available
+if inline viewing is disabled or unsupported. Native support depends on the browser
+and the file's encoding.
+
+Markdown renders with tables and Mermaid diagrams. CSV and TSV files open as tables,
+including quoted cells and multiline values; the preview shows up to 200 rows and
+50 columns. Text-sized SVG, Markdown, CSV/TSV and HTML offer **View source** and
+**Preview**. Switching views preserves unsaved edits, and preview uses the current
+draft. The text/source limit remains 1 MiB. Downloads always contain the saved file.
+
+HTML opens as a static, isolated document: scripts, forms, nested pages and linked
+stylesheets are disabled. Inline styles and workspace image/audio/video resources
+are supported; it is not a running website or application preview. Markdown and HTML
+resolve relative file links within the opened workspace and open them in Files.
+Section fragments such as `report.md#details` or `report.html#details` position the
+loaded preview at that section, including repeated same-file links. Positioning
+happens once per navigation; ordinary updates do not pull the reader back. PDF
+page fragments are passed to the browser viewer. HTML audio/video keep native
+controls whether the URL is on the media element or a nested `source`.
+HTML does not load external resources. Workspace paths, including percent-encoded
+names, still undergo the same permission and scope checks. Root-relative document
+links refer to the workspace root. Office documents and other unsupported formats
+can be downloaded; CCCC does not upload them to an online document viewer.
+
+Media and PDFs stream directly from the selected workspace and support byte ranges;
+CCCC does not transcode or upload files to cloud storage. Each request checks the
+Group permissions and opened workspace identity. Remote playback uses
+the instance's upload bandwidth. Public Cloudflare Tunnel access remains subject
+to Cloudflare's video/large-file distribution terms; preview support does not
+establish an exemption or add a Cloudflare Stream subscription.
+
 ### Inspect images and diagrams
 
-Expanded message images, Mermaid diagrams, Presentation images and enlarged
+Workspace images, expanded message images, Mermaid diagrams, Presentation images and enlarged
 quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
 **−** to change scale; dragging pans enlarged content and the wheel keeps native
 scrolling.

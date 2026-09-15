@@ -1003,6 +1003,9 @@ export function ChatTab({
                 >
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <WorkspaceFileViewer
+                      onOpenFile={workspaceFiles.openFile}
+                      navigation={workspaceFiles.navigation}
+                      groupId={selectedGroupId}
                       {...{ draft: workspaceFiles.draft, setDraft: workspaceFiles.setDraft }}
                       file={workspaceFiles.file}
                       isDark={isDark}
@@ -1141,6 +1144,9 @@ export function ChatTab({
               <div className="flex min-h-0 flex-1 flex-col">
                 {workspaceFiles.file ? (
                   <WorkspaceFileViewer
+                    onOpenFile={workspaceFiles.openFile}
+                    navigation={workspaceFiles.navigation}
+                    groupId={selectedGroupId}
                     {...{ draft: workspaceFiles.draft, setDraft: workspaceFiles.setDraft }}
                     file={workspaceFiles.file}
                     isDark={isDark}
