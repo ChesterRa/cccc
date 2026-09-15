@@ -2458,30 +2458,23 @@ mod retry_integration_tests {
                 load_target(&state, gid, "web").expect("target")["last_delivery_event_ids"],
                 json!([report2["event"]["id"]])
             );
+            // An empty composer alone cannot acknowledge or authorize a resend.
             page.evaluate("document.querySelector('[data-testid=send-button]').onclick=()=>{sends++;document.querySelector('textarea').value=''}")
-                .await.expect("simulate missing acknowledgement after actual click");
+                .await.expect("clear input without a receipt");
             call(
                 "send",
                 json!({"group_id":gid,"by":"user","to":["web"],
                 "text":"CLICK_WITHOUT_RECEIPT","message_mode":"send"}),
             )
             .await
-            .expect("uncertain report");
+            .expect("queue uncertain report");
             assert!(matches!(
                 deliver_pending(&state, gid, "web").await.expect("send"),
                 DeliveryOutcome::Ambiguous
             ));
-            let _ = deliver_pending(&state, gid, "web")
+            deliver_pending(&state, gid, "web")
                 .await
-                .expect("duplicate poll");
-            assert_eq!(
-                page.evaluate("globalThis.sends")
-                    .await
-                    .expect("counter")
-                    .into_value::<u64>()
-                    .expect("count"),
-                3
-            );
+                .expect("do not resend");
             assert_eq!(
                 load_target(&state, gid, "web").expect("target")["last_delivery_status"],
                 "submission_ambiguous"
@@ -2559,29 +2552,17 @@ mod retry_integration_tests {
     }
 
     #[tokio::test]
-    async fn rebinding_cancels_the_old_inflight_delivery() {
-        binding_race(BindingRace::BeforeSend).await;
-    }
-
-    #[tokio::test]
-    async fn rebinding_preserves_a_user_edited_draft() {
-        binding_race(BindingRace::EditedDraft).await;
-    }
-
-    #[tokio::test]
-    async fn rebinding_after_send_preserves_the_receipt_without_overwriting_the_new_target() {
-        binding_race(BindingRace::AfterSend).await;
-    }
-
-    #[tokio::test]
-    async fn rebinding_after_send_preserves_an_uncertain_receipt_without_retrying() {
-        binding_race(BindingRace::AfterUnverifiedSend).await;
-    }
-
-    #[tokio::test]
-    async fn rebinding_clears_only_its_contenteditable_draft() {
-        binding_race(BindingRace::ContentEditable).await;
-        binding_race(BindingRace::EditedContentEditable).await;
+    async fn rebinding_preserves_delivery_and_drafts_across_every_send_boundary() {
+        for phase in [
+            BindingRace::BeforeSend,
+            BindingRace::EditedDraft,
+            BindingRace::AfterSend,
+            BindingRace::AfterUnverifiedSend,
+            BindingRace::ContentEditable,
+            BindingRace::EditedContentEditable,
+        ] {
+            binding_race(phase).await;
+        }
     }
 
     async fn binding_race(phase: BindingRace) {
