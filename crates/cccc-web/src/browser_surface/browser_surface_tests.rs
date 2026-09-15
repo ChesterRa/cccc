@@ -818,7 +818,7 @@ async fn cross_chat_delivery_does_not_navigate_away_from_a_draft() {
 #[tokio::test]
 async fn submission_does_not_wait_for_background_intersection_observers() {
     require_chrome!();
-    let (url,server)=local_page(r#"<!doctype html><html><body><form onsubmit="event.preventDefault();window.sent=(window.sent||0)+1;sessionStorage.setItem('send-count',String(Number(sessionStorage.getItem('send-count')||0)+1));sessionStorage.setItem('last-prompt',document.querySelector('textarea').value);const turn=document.createElement('section');turn.dataset.testid='conversation-turn-1';turn.dataset.turnId='request-client-0';const e=document.createElement('div');e.dataset.messageAuthorRole='user';e.textContent=document.querySelector('textarea').value;turn.append(e);document.body.append(turn);document.querySelector('textarea').value='';setTimeout(()=>{const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-answer';answer.textContent='Received';turn.append(answer);window.accepted=true},600)"><textarea id="prompt-textarea" style="width:500px;height:100px"></textarea><button id="composer-submit-button" type="submit" aria-label="Send prompt">Send</button></form><script>if(sessionStorage.getItem('cccc-refresh-receipt')){const turn=document.createElement('section');turn.dataset.testid='conversation-turn-stable';turn.dataset.turnId='server-stable-turn';const user=document.createElement('div');user.dataset.messageAuthorRole='user';user.textContent=sessionStorage.getItem('last-prompt');const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-stable-answer';answer.textContent='Received';turn.append(user,answer);document.body.append(turn)}</script></body></html>"#).await;
+    let (url,server)=local_page(r#"<!doctype html><html><body><form onsubmit="event.preventDefault();window.sent=(window.sent||0)+1;sessionStorage.setItem('send-count',String(Number(sessionStorage.getItem('send-count')||0)+1));sessionStorage.setItem('last-prompt',document.querySelector('textarea').value);const turn=document.createElement('section');turn.dataset.testid='conversation-turn-1';turn.dataset.turnId='request-client-0';const e=document.createElement('div');e.dataset.messageAuthorRole='user';e.textContent=document.querySelector('textarea').value;turn.append(e);document.body.append(turn);document.querySelector('textarea').value='';setTimeout(()=>{const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-answer';answer.textContent='Received';turn.append(answer);window.accepted=true},600)"><textarea id="prompt-textarea" style="width:500px;height:100px"></textarea><button id="composer-submit-button" type="submit" aria-label="Send prompt">Send</button></form><script>if(sessionStorage.getItem('cccc-refresh-receipt')){const turn=document.createElement('section');turn.dataset.testid='conversation-turn-stable';turn.dataset.turnId='server-stable-turn';const user=document.createElement('div');user.dataset.messageAuthorRole='user';user.textContent='';const answer=document.createElement('div');answer.dataset.messageAuthorRole='assistant';answer.dataset.messageId='server-stable-answer';answer.textContent='Received';turn.append(user,answer);document.body.append(turn)}</script></body></html>"#).await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
     let key = "background-submit";
@@ -876,6 +876,19 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
             .await;
         assert_eq!(refreshed["submitted"], true, "{refreshed}");
         assert_eq!(refreshed["reconciled_by"], "single_page_refresh");
+        assert_eq!(
+            refreshed["submission_evidence"],
+            "user_message_count_increased"
+        );
+        let refreshed_started = std::time::Instant::now();
+        assert!(manager
+            .relay_receipt_stable_before_close(key, &refreshed)
+            .await
+            .expect("count-based close check"));
+        assert!(
+            refreshed_started.elapsed() >= std::time::Duration::from_millis(800),
+            "server-backed message count was not observed long enough"
+        );
         assert_eq!(page.evaluate("Number(sessionStorage.getItem('send-count'))")
             .await.expect("send count after refresh").into_value::<u64>().expect("count"), 1,
             "reconciliation must reload only; it must never submit again");

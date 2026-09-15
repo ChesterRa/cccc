@@ -864,6 +864,7 @@ impl BrowserSurfaces {
         key: &str,
         evidence: &Value,
     ) -> Result<bool> {
+        let submission_evidence = evidence["submission_evidence"].as_str().unwrap_or("");
         let needles = evidence["receipt_needles"]
             .as_array()
             .into_iter()
@@ -871,7 +872,15 @@ impl BrowserSurfaces {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        if needles.is_empty() {
+        let expected_user_messages = evidence["observed"]["user_message_count"].as_u64();
+        if (submission_evidence == "message_echo" && needles.is_empty())
+            || (submission_evidence == "user_message_count_increased"
+                && expected_user_messages.is_none())
+            || !matches!(
+                submission_evidence,
+                "message_echo" | "user_message_count_increased"
+            )
+        {
             return Ok(false);
         }
         let expected_url = evidence["tab_url"].as_str().unwrap_or("");
@@ -879,8 +888,13 @@ impl BrowserSurfaces {
         let deadline = Instant::now() + RECEIPT_STABILITY_INTERVAL;
         loop {
             let snapshot = inspect_submission(&page, "", &needles).await?;
-            let stable = snapshot.echo_found
-                && !provisional_submission(&snapshot)
+            let receipt_present = match submission_evidence {
+                "message_echo" => snapshot.echo_found && !provisional_submission(&snapshot),
+                "user_message_count_increased" => expected_user_messages
+                    .is_some_and(|expected| snapshot.user_message_count as u64 >= expected),
+                _ => false,
+            };
+            let stable = receipt_present
                 && snapshot.page_blocker.is_empty()
                 && (expected_url.is_empty() || same_page(expected_url, &snapshot.url));
             if !stable {

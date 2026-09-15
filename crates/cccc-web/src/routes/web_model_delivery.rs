@@ -161,13 +161,18 @@ async fn visit_pending(
             let submission = &target["last_submission_evidence"];
             pending_receipt = submission["submission_evidence"] == "optimistic_echo_unconfirmed";
             let close_receipt_check = target["last_delivery_status"] == "submitted"
-                && matches!(
-                    submission["submission_evidence"].as_str(),
-                    Some("message_echo" | "user_message_count_increased")
-                )
-                && submission["receipt_needles"]
-                    .as_array()
-                    .is_some_and(|needles| !needles.is_empty());
+                && match submission["submission_evidence"].as_str() {
+                    Some("message_echo") => submission["receipt_needles"]
+                        .as_array()
+                        .is_some_and(|needles| !needles.is_empty()),
+                    Some("user_message_count_increased") => {
+                        submission["observed"]["user_message_count"]
+                            .as_u64()
+                            .zip(submission["baseline"]["user_message_count"].as_u64())
+                            .is_some_and(|(observed, baseline)| observed > baseline)
+                    }
+                    _ => false,
+                };
             if !has_draft && !pending_receipt && close_receipt_check {
                 pending_receipt = match state
                     .browser_surfaces
@@ -1063,6 +1068,8 @@ async fn complete_ambiguous_attempt(
     message: &str,
 ) -> Result<DeliveryOutcome, ApiError> {
     let owner = attempt.owner;
+    let reconcile_attempts =
+        u64::from(browser["reconciled_by"].as_str() == Some("single_page_refresh"));
     update_target(
         state,
         group_id,
@@ -1072,7 +1079,7 @@ async fn complete_ambiguous_attempt(
             "last_delivery_status":"submission_ambiguous_completion_pending",
             "last_delivery_turn_id":attempt.turn_id,
             "last_delivery_event_ids":attempt.event_ids.clone(),
-            "last_delivery_reconcile_attempts":0,
+            "last_delivery_reconcile_attempts":reconcile_attempts,
             "last_delivery_at":cccc_contracts::utc_now(),
             "last_submission_evidence":browser,
             "last_error":message
