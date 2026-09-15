@@ -1,5 +1,7 @@
 mod connect_transport;
 pub mod deepseek_setup;
+mod direct_channel;
+mod direct_tls;
 mod dispatch;
 mod dispatch_concurrency;
 mod ops;

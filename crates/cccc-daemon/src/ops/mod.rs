@@ -29,6 +29,7 @@ mod connect_messages;
 pub(crate) mod connect_outbound;
 mod connect_peer;
 mod context;
+mod direct;
 pub(crate) use connect::ConnectService;
 mod context_projection;
 mod deepseek_runtime;
@@ -104,6 +105,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         membership::resolve_operation,
         connect::resolve_operation,
         connect_peer::resolve_operation,
+        direct::resolve_operation,
         connect_outbound::resolve_operation,
         runtime_state::resolve_operation,
         maintenance::resolve_operation,

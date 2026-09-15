@@ -19,16 +19,17 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-pub(super) fn client() -> reqwest::Client {
+pub(crate) fn client() -> PeerClient {
     reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(2))
         .build()
         .expect("client")
+        .into()
 }
 
-pub(super) fn send_request(
+pub(crate) fn send_request(
     source: &str,
     target: &str,
     peer: &str,
@@ -890,12 +891,13 @@ async fn signed_peer_catalog_crosses_real_http_without_web_tokens_and_survives_r
         .expect("store")
         .create("Peer workspace", "")
         .expect("group");
-    let client = reqwest::Client::builder()
+    let client: PeerClient = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(2))
         .build()
-        .expect("client");
+        .expect("client")
+        .into();
     refresh_catalog(&state.source, &client, &peer)
         .await
         .expect("refresh");
@@ -930,12 +932,13 @@ async fn signed_peer_catalog_crosses_real_http_without_web_tokens_and_survives_r
 #[tokio::test]
 async fn endpoint_identity_precedes_disclosure_and_late_revoked_results_are_not_saved() {
     let (_temp, state, peer, server) = setup().await;
-    let client = reqwest::Client::builder()
+    let client: PeerClient = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(2))
         .build()
-        .expect("client");
+        .expect("client")
+        .into();
     state.wrong_identity.store(true, Ordering::Release);
     assert!(
         refresh_catalog(&state.source, &client, &peer)

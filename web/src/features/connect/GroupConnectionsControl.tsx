@@ -1,3 +1,4 @@
+import { DirectConnectionsPanel } from "./DirectConnectionsPanel";
 import { localizedAccountUrl } from "../../components/modals/settings/reachMembershipModel";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,6 +18,7 @@ type Status = {
   error_message: string | null;
   checked_at: string | null;
   links: GroupLink[];
+  direct_routes?: string[];
   expires_at: string | null;
   account_origin: string | null;
   account_id: string | null;
@@ -113,22 +115,67 @@ function GroupConnectionsDialog({
             triggerProps={{ "data-connect-group-select": "true" }}
           />
         )}
-        <GroupConnectionsPanel
-          key={current}
-          groupId={current}
-          invitation={invitation}
-          onOpenAccount={() => {
-            onClose();
-            onOpenAccount();
-          }}
-        />
+        <div className="min-h-0 overflow-y-auto">
+          <GroupConnectionsPanel
+            key={current}
+            groupId={current}
+            groupTitle={groups.find((group) => group.group_id === current)?.title || current}
+            invitation={invitation}
+            onOpenAccount={() => {
+              onClose();
+              onOpenAccount();
+            }}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
+export function GroupConnectionsPanel(props: {
+  groupId: string;
+  groupTitle?: string;
+  invitation?: string;
+  onOpenAccount: () => void;
+}) {
+  const { t } = useTranslation("layout");
+  const [mode, setMode] = useState<"account" | "direct">("account");
+  const active = props.invitation ? "account" : mode;
+  return (
+    <div className="space-y-4">
+      {!props.invitation && (
+        <div className="flex flex-wrap gap-1" aria-label={t("groupConnections.title")}>
+          <Button
+            variant={active === "account" ? "secondary" : "ghost"}
+            aria-pressed={active === "account"}
+            onClick={() => setMode("account")}
+          >
+            {t("direct.account")}
+          </Button>
+          <Button
+            variant={active === "direct" ? "secondary" : "ghost"}
+            aria-pressed={active === "direct"}
+            onClick={() => setMode("direct")}
+          >
+            {t("direct.title")}
+          </Button>
+        </div>
+      )}
+      {active === "direct" ? (
+        <DirectConnectionsPanel
+          key={props.groupId}
+          groupId={props.groupId}
+          groupTitle={props.groupTitle}
+        />
+      ) : (
+        <AccountGroupConnectionsPanel {...props} />
+      )}
+    </div>
+  );
+}
+
 /** Shared Group-scoped content; only the invitation shell offers Group selection. */
-export function GroupConnectionsPanel({
+function AccountGroupConnectionsPanel({
   groupId,
   invitation = "",
   onOpenAccount,
@@ -304,7 +351,11 @@ export function GroupConnectionsPanel({
                 {peer.instance.display_name} · {peer.title}
               </p>
               <p className="text-xs text-[var(--color-text-secondary)]">
-                {t("groupConnections.connected")}
+                {t(
+                  value?.direct_routes?.includes(link.id)
+                    ? "direct.routeSelected"
+                    : "groupConnections.connected",
+                )}
               </p>
               <code className="block break-all text-xs text-[var(--color-text-tertiary)]">
                 {peer.group_id}

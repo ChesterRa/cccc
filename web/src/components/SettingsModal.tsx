@@ -1477,6 +1477,9 @@ export function SettingsModal({
                       <GroupConnectionsPanel
                         key={groupId}
                         groupId={groupId}
+                        groupTitle={
+                          groupDoc?.group_id === groupId ? groupDoc.title || groupId : groupId
+                        }
                         onOpenAccount={() => {
                           setAccountReturnToWebAccess(false);
                           setFocusReachOnOpen(false);

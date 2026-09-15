@@ -187,7 +187,7 @@ fn login_poll(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(status_payload(home)?)
 }
 
-fn initial_instance_name() -> Option<String> {
+pub(super) fn initial_instance_name() -> Option<String> {
     #[cfg(unix)]
     let hostname = nix::unistd::gethostname()
         .ok()?

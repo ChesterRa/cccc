@@ -210,6 +210,21 @@ pub fn load(home: &HomeLayout) -> io::Result<Option<ConnectGroupLinks>> {
 
 /// Lack of a fresh lease is unavailable; a fresh list without the ID is an authoritative revocation.
 pub fn retired(home: &HomeLayout, id: &str) -> io::Result<bool> {
+    if cccc_contracts::direct::is_direct(id) {
+        let store = crate::direct::load(home)?;
+        let Some(relation) = store.relations.iter().find(|r| r.id == id) else {
+            return Ok(true);
+        };
+        return if matches!(
+            relation.state,
+            cccc_contracts::direct::DirectState::Revoked
+                | cccc_contracts::direct::DirectState::Expired
+        ) {
+            Ok(true)
+        } else {
+            crate::direct::current(home, &relation.local).map(|current| !current)
+        };
+    }
     let Some(links) = load(home)? else {
         return Ok(false);
     };

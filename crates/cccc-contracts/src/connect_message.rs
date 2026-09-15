@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct ConnectGroupAddress {
     pub instance_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub device_id: String,
     pub group_id: String,
     pub title: String,
@@ -33,7 +34,9 @@ pub struct ConnectMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
     pub delivery_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_origin: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_id: String,
     pub source: ConnectGroupAddress,
     pub sender: ConnectActor,
@@ -58,7 +61,9 @@ pub struct ConnectCancellation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
     pub delivery_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_origin: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_id: String,
     pub source: ConnectGroupAddress,
     pub sender: ConnectActor,

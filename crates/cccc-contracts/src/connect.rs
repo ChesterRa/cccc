@@ -37,6 +37,7 @@ impl ConnectRegistration {
 pub struct ConnectInstance {
     pub instance_id: String,
     /// A new device binding is a new authorization generation, even with the same instance key.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub device_id: String,
     pub public_key: String,
     pub client_version: String,
@@ -213,11 +214,15 @@ pub struct ConnectCatalogPage {
 pub struct ConnectPeerAuthorization {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_origin: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_id: String,
     pub source_instance_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source_device_id: String,
     pub target_instance_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target_device_id: String,
     pub request_id: String,
     pub issued_at: String,
@@ -243,7 +248,11 @@ impl ConnectPeerAuthorization {
         ]);
         if let Some(id) = &self.connection_id {
             let fields = material.as_array_mut().expect("array material");
-            fields[0] = serde_json::json!("cccc.connect.peer.group.request.v1");
+            fields[0] = serde_json::json!(if crate::direct::is_direct(id) {
+                "cccc.connect.peer.direct.request.v1"
+            } else {
+                "cccc.connect.peer.group.request.v1"
+            });
             fields.push(serde_json::json!(id));
         }
         serde_json::to_vec(&material).expect("serializable Connect peer request")

@@ -15,6 +15,27 @@ use std::{
 };
 use tokio::{task::JoinSet, time::Instant};
 
+#[derive(Clone)]
+pub(crate) struct PeerClient {
+    pub(crate) http: Option<reqwest::Client>,
+    pub(crate) direct: crate::direct_channel::Channels,
+}
+impl From<reqwest::Client> for PeerClient {
+    fn from(http: reqwest::Client) -> Self {
+        Self {
+            http: Some(http),
+            direct: Default::default(),
+        }
+    }
+}
+impl PeerClient {
+    fn http(&self) -> Result<&reqwest::Client, String> {
+        self.http
+            .as_ref()
+            .ok_or_else(|| "Account HTTP transport is unavailable".into())
+    }
+}
+
 const MAX_ACTIVE_PEERS: usize = 8;
 const MAX_CATALOG_PAGES: usize = 16;
 
@@ -33,7 +54,7 @@ struct PeerSchedule {
 }
 
 #[path = "connect_transport_delivery.rs"]
-mod delivery;
+pub(crate) mod delivery;
 
 pub(crate) async fn run(home: HomeLayout, locks: crate::dispatch_concurrency::DispatchLocks) {
     let client = match reqwest::Client::builder()
@@ -41,19 +62,27 @@ pub(crate) async fn run(home: HomeLayout, locks: crate::dispatch_concurrency::Di
         .timeout(Duration::from_secs(5))
         .build()
     {
-        Ok(client) => client,
-        Err(error) => {
-            tracing::warn!(%error,"Connect peer HTTP initialization failed");
-            return;
+        Ok(client) => Some(client),
+        Err(_) => {
+            tracing::warn!(
+                "Connect peer HTTP initialization failed; Direct connections remain available"
+            );
+            None
         }
     };
+    let channels = crate::direct_channel::Channels::default();
+    let client = PeerClient {
+        http: client,
+        direct: channels.clone(),
+    };
     tokio::join!(
+        crate::direct_channel::run(home.clone(), locks.clone(), channels),
         run_catalogs(home.clone(), client.clone()),
         delivery::run(home, client, locks)
     );
 }
 
-async fn run_catalogs(home: HomeLayout, client: reqwest::Client) {
+async fn run_catalogs(home: HomeLayout, client: PeerClient) {
     let mut work = JoinSet::new();
     let mut active = HashMap::new();
     let mut schedule: HashMap<String, PeerSchedule> = HashMap::new();
@@ -77,10 +106,9 @@ async fn run_catalogs(home: HomeLayout, client: reqwest::Client) {
                 }
             }
             _ = tick.tick() => {
-                let Some(snapshot) = connect::load(&home).ok().flatten() else { schedule.clear(); continue; };
-                let Some(directory) = snapshot.directory else { schedule.clear(); continue; };
+                let snapshot=connect::load(&home).ok().flatten();
                 let mut present = HashSet::new();
-                let mut peers=directory.instances.into_iter().map(|peer|(peer,None)).collect::<Vec<_>>();
+                let mut peers=snapshot.as_ref().and_then(|s|s.directory.as_ref()).map(|d|d.instances.iter().filter(|p|snapshot.as_ref().is_some_and(|s|p.instance_id!=s.instance_id)).cloned().map(|p|(p,None)).collect::<Vec<_>>()).unwrap_or_default();
                 if let Some(links)=cccc_core::connect_groups::load(&home).ok().flatten() {
                     for link in &links.links {
                         if let Some((local,remote))=cccc_core::connect_groups::local_endpoint(&links,link)
@@ -89,9 +117,16 @@ async fn run_catalogs(home: HomeLayout, client: reqwest::Client) {
                         }
                     }
                 }
+                if let Ok(store)=cccc_core::direct::load(&home) {
+                    for relation in store.relations {
+                        if let Some(remote)=&relation.remote && cccc_core::direct::binding(&home,&remote.instance_id,&relation.id).is_ok() {
+                            peers.push((cccc_core::direct::instance(remote,&relation.created_at),Some(relation.id)));
+                        }
+                    }
+                }
                 for (peer,connection_id) in peers {
-                    if peer.instance_id == snapshot.instance_id || peer.public_origin.is_none() { continue; }
-                    let route = format!("{}\0{}\0{}\0{}\0{}", snapshot.account_origin,directory.account_id,snapshot.device_id,peer.device_id,peer.public_origin.as_deref().unwrap_or(""));
+                    let Ok(binding)=connect_peer::scoped_binding(&home,&peer.instance_id,connection_id.as_deref()) else {continue;};
+                    let route = format!("{}\0{}\0{}\0{}\0{}", binding.account_origin,binding.account_id,binding.local.device_id,peer.device_id,peer.public_origin.as_deref().unwrap_or("direct"));
                     let key=connection_id.clone().unwrap_or_else(||peer.instance_id.clone());
                     present.insert(key.clone());
                     let entry = schedule.entry(key.clone()).or_default();
@@ -135,24 +170,20 @@ async fn read_json<T: DeserializeOwned>(
 #[cfg(test)]
 async fn refresh_catalog(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &PeerClient,
     remote_id: &str,
 ) -> Result<(), String> {
     refresh_catalog_scoped(home, client, remote_id, None).await
 }
 
-async fn refresh_catalog_scoped(
+pub(crate) async fn refresh_catalog_scoped(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &PeerClient,
     remote_id: &str,
     connection_id: Option<&str>,
 ) -> Result<(), String> {
     let binding = confirm_peer_scoped(home, client, remote_id, connection_id).await?;
-    let origin = binding
-        .remote
-        .public_origin
-        .as_deref()
-        .ok_or("peer has no remote route")?;
+    let origin = binding.remote.public_origin.as_deref().unwrap_or_default();
     let mut groups = Vec::new();
     let mut after = None;
     let mut group_ids = HashSet::new();
@@ -223,11 +254,14 @@ async fn refresh_catalog_scoped(
 
 async fn confirm_peer_scoped(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &PeerClient,
     remote_id: &str,
     connection_id: Option<&str>,
 ) -> Result<connect_peer::PeerBinding, String> {
     let binding = connect_peer::scoped_binding(home, remote_id, connection_id)?;
+    if connection_id.is_some_and(cccc_contracts::direct::is_direct) {
+        return Ok(binding);
+    }
     let origin = binding
         .remote
         .public_origin
@@ -237,6 +271,7 @@ async fn confirm_peer_scoped(
     let nonce = uuid::Uuid::new_v4().to_string();
     let proof: ConnectIdentityProof = read_json(
         client
+            .http()?
             .get(format!("{origin}/api/v1/connect/identity"))
             .query(&[("nonce", &nonce)])
             .send()
@@ -251,11 +286,31 @@ async fn confirm_peer_scoped(
 
 async fn exchange(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &PeerClient,
     binding: &connect_peer::PeerBinding,
     operation: ConnectPeerOperation,
     maximum: usize,
 ) -> Result<serde_json::Value, String> {
+    if binding
+        .group
+        .as_ref()
+        .is_some_and(|g| cccc_contracts::direct::is_direct(&g.id))
+    {
+        let envelope = connect_peer::sign_request(home, &binding.remote.instance_id, operation)?;
+        let response = client.direct.exchange(envelope.clone()).await?;
+        if serde_json::to_vec(&response)
+            .map_err(|e| e.to_string())?
+            .len()
+            > maximum
+        {
+            return Err("Direct response exceeded its size limit".into());
+        }
+        let response: ConnectPeerResponse =
+            serde_json::from_value(response["result"]["response"].clone())
+                .map_err(|_| "Direct peer rejected the request")?;
+        connect_peer::verify_response(home, &envelope, &response)?;
+        return Ok(response.result);
+    }
     let origin = binding
         .remote
         .public_origin
@@ -277,6 +332,7 @@ async fn exchange(
     let envelope = connect_peer::sign_request(home, &binding.remote.instance_id, operation)?;
     let response: serde_json::Value = read_json(
         client
+            .http()?
             .post(format!("{origin}/api/v1/connect/peer"))
             .header(
                 cccc_contracts::connect::CONNECT_PROOF_HEADER,

@@ -116,6 +116,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,
         Some(CommandKind::Login) => commands::membership::login(&client).await,
+        Some(CommandKind::Direct { action }) => commands::direct::run(&client, action).await,
         Some(CommandKind::Logout) => commands::membership::logout(&client).await,
         Some(CommandKind::Reach { action }) => commands::membership::reach(&client, action).await,
         Some(CommandKind::Status) => commands::status::run(&home, PRODUCT_VERSION).await,

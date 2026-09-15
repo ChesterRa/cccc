@@ -53,28 +53,55 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(instance_id) = instance_id else {
-        let snapshot = cccc_core::connect::load(home).map_err(OpError::io)?;
-        let Some(snapshot) = snapshot else {
-            return object(json!({"instances":[],"status":"not_linked"}));
-        };
-        let Some(directory) = snapshot.directory else {
-            return object(
-                json!({"instances":[],"status":"unavailable","error_code":snapshot.error_code,"checked_at":snapshot.checked_at}),
-            );
-        };
+        let snapshot = cccc_core::connect::load(home);
+        let links = cccc_core::connect_groups::load(home);
+        let account_error =
+            (snapshot.is_err() || links.is_err()).then_some("connect_account_unavailable");
+        let snapshot = snapshot.ok().flatten();
+        let directory = snapshot.as_ref().and_then(|s| s.directory.as_ref());
+        let own = cccc_core::instance_identity::InstanceIdentity::load(home)
+            .ok()
+            .map(|i| i.peer_id);
         let instances = directory
-            .instances
-            .into_iter()
-            .filter(|instance| instance.instance_id != snapshot.instance_id)
-            .collect::<Vec<_>>();
-        let external=cccc_core::connect_groups::load(home).map_err(OpError::io)?.map(|links|links.links.iter().filter_map(|link| {
+            .map(|d| {
+                d.instances
+                    .iter()
+                    .filter(|i| Some(i.instance_id.as_str()) != own.as_deref())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut external=links.ok().flatten().map(|links|links.links.iter().filter_map(|link| {
             let (local,remote)=cccc_core::connect_groups::local_endpoint(&links,link)?;
-            if local.group_id!=source_group || !cccc_core::connect_groups::resource_current(home,local).unwrap_or(false) { return None; }
-            Some(json!({"connection_id":link.id,"instance":remote.instance,"group_id":remote.group_id,"title":remote.title}))
+            if local.group_id!=source_group || !cccc_core::connect_groups::resource_current(home,local).unwrap_or(false) {return None;}
+            Some(json!({"connection_id":link.id,"instance":remote.instance,"group_id":remote.group_id,"title":remote.title,"transport":"account"}))
         }).collect::<Vec<_>>()).unwrap_or_default();
+        for relation in cccc_core::direct::load(home)
+            .map_err(OpError::io)?
+            .relations
+        {
+            if relation.local.group_id == source_group
+                && let Some(remote) = &relation.remote
+            {
+                // A direct pin also suppresses the account row while that relation is offline/revoked.
+                external.retain(|row| {
+                    row["instance"]["instance_id"] != remote.instance_id
+                        || row["group_id"] != remote.group_id
+                });
+                if cccc_core::direct::binding(home, &remote.instance_id, &relation.id).is_ok() {
+                    external.push(json!({"connection_id":relation.id,"instance":cccc_core::direct::instance(remote,&relation.created_at),"group_id":remote.group_id,"title":remote.title,"transport":"direct"}));
+                }
+            }
+        }
+        let status = if directory.is_some() || !external.is_empty() {
+            "ready"
+        } else if snapshot.is_some() || account_error.is_some() {
+            "unavailable"
+        } else {
+            "not_linked"
+        };
         return object(
-            json!({"self_instance_id":snapshot.instance_id,"instances":instances,"external_groups":external,
-            "status":"ready","checked_at":snapshot.checked_at,"expires_at":directory.expires_at}),
+            json!({"self_instance_id":own,"instances":instances,"external_groups":external,"status":status,"account_error":account_error,"checked_at":snapshot.as_ref().map(|s|&s.checked_at),"expires_at":directory.map(|d|&d.expires_at)}),
         );
     };
     let target = request.args.get("target_group_id").and_then(Value::as_str);

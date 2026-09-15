@@ -80,10 +80,29 @@ fn group_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let direct = cccc_core::direct::load(home).map_err(OpError::io)?;
+    let direct_routes = external
+        .iter()
+        .filter_map(|link| {
+            let set = links.as_ref()?;
+            let (local, remote) = cccc_core::connect_groups::local_endpoint(set, link)?;
+            direct
+                .relations
+                .iter()
+                .any(|r| {
+                    r.local.group_id == local.group_id
+                        && r.remote.as_ref().is_some_and(|p| {
+                            p.instance_id == remote.instance.instance_id
+                                && p.group_id == remote.group_id
+                        })
+                })
+                .then_some(&link.id)
+        })
+        .collect::<Vec<_>>();
     object(
         json!({"status":state,"error_code":error_code,"error_message":error_message,
         "checked_at":sync.map(|s|&s.checked_at),
-        "links":external,"expires_at":links.as_ref().map(|l|&l.expires_at),
+        "links":external,"direct_routes":direct_routes,"expires_at":links.as_ref().map(|l|&l.expires_at),
         "account_origin":current.as_ref().map(|s|&s.origin),
         "account_id":snapshot.as_ref().and_then(|s|s.directory.as_ref()).map(|d|&d.account_id)}),
     )
@@ -177,13 +196,24 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 // A bounded display projection from the existing expiring grant; it grants no access.
 fn group_connection_summary(home: &HomeLayout) -> Result<serde_json::Value, OpError> {
-    let Some(links) = cccc_core::connect_groups::load(home).map_err(OpError::io)? else {
-        return Ok(serde_json::Value::Null);
-    };
+    let links = cccc_core::connect_groups::load(home).map_err(OpError::io)?;
+    let direct = cccc_core::direct::load(home).map_err(OpError::io)?;
     let mut counts = std::collections::BTreeMap::<String, Option<usize>>::new();
     let mut resources = std::collections::HashMap::new();
-    for link in &links.links {
-        if let Some((local, _)) = cccc_core::connect_groups::local_endpoint(&links, link) {
+    for (links, link) in links
+        .iter()
+        .flat_map(|links| links.links.iter().map(move |link| (links, link)))
+    {
+        if let Some((local, remote)) = cccc_core::connect_groups::local_endpoint(links, link) {
+            if direct.relations.iter().any(|r| {
+                r.local.group_id == local.group_id
+                    && r.remote.as_ref().is_some_and(|p| {
+                        p.instance_id == remote.instance.instance_id
+                            && p.group_id == remote.group_id
+                    })
+            }) {
+                continue;
+            }
             let current = resources
                 .entry((local.group_id.clone(), local.group_generation.clone()))
                 .or_insert_with(|| cccc_core::connect_groups::resource_current(home, local).ok());
@@ -201,7 +231,22 @@ fn group_connection_summary(home: &HomeLayout) -> Result<serde_json::Value, OpEr
             }
         }
     }
-    Ok(json!({"counts": counts, "expires_at": links.expires_at}))
+    for relation in direct.relations {
+        if let Some(remote) = &relation.remote
+            && cccc_core::direct::binding(home, &remote.instance_id, &relation.id).is_ok()
+        {
+            if let Some(count) = counts.entry(relation.local.group_id).or_insert(Some(0)) {
+                *count += 1;
+            }
+        }
+    }
+    if counts.is_empty() && links.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+    let expiry = links
+        .map(|links| links.expires_at)
+        .unwrap_or_else(|| (Utc::now() + chrono::Duration::seconds(120)).to_rfc3339());
+    Ok(json!({"counts": counts, "expires_at": expiry}))
 }
 
 #[derive(Clone, PartialEq)]
