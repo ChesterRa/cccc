@@ -20,7 +20,7 @@ type UseAppChromeResult = {
   canManageGroups: boolean;
   ccccHome: string;
   fetchDirSuggestions: () => Promise<void>;
-  refreshWebAccessSession: () => Promise<boolean>;
+  refreshWebAccessSession: () => Promise<boolean | null>;
 };
 
 export function useAppChrome({
@@ -40,6 +40,13 @@ export function useAppChrome({
   const refreshWebAccessSession = useCallback(async () => {
     try {
       const resp = await api.fetchWebAccessSession();
+      if (
+        !resp.ok &&
+        !["unauthorized", "auth_required", "permission_denied"].includes(resp.error.code)
+      ) {
+        setCanAccessGlobalSettings(null);
+        return null;
+      }
       const session = resp.ok ? (resp.result?.web_access_session ?? null) : null;
       const allowed =
         Boolean(session) &&
@@ -49,7 +56,7 @@ export function useAppChrome({
       return Boolean(session?.is_admin);
     } catch {
       setCanAccessGlobalSettings(null);
-      return false;
+      return null;
     }
   }, []);
 

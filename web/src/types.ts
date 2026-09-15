@@ -1058,6 +1058,7 @@ export type AssistantVoicePromptDraftMutationResult = {
 };
 
 export type MembershipState = {
+  account_label?: string | null;
   logged_in: boolean;
   device_id?: string | null;
   hostname?: string | null;

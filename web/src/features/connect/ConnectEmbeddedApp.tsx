@@ -1,3 +1,8 @@
+import {
+  groupConnectionCount,
+  type GroupConnectionSummary,
+  type ConnectStatusResponse,
+} from "./protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import App from "../../App";
@@ -121,6 +126,8 @@ function AdmittedWorkbench({
 }) {
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groups = useGroupStore((state) => state.groups);
+  const lastSummary = useRef<GroupConnectionSummary | null>(null);
+  const [accountLabel, setAccountLabel] = useState<string | null>(null);
   const [admitted, setAdmitted] = useState(false);
   const appliedRequest = useRef<number | null>(null);
   const expireRef = useRef(expire);
@@ -157,8 +164,16 @@ function AdmittedWorkbench({
         return;
       }
       setAdmitted(true);
-      const response = await fetchGroups();
+      const [response, status] = await Promise.all([
+        fetchGroups(),
+        apiJson<ConnectStatusResponse>("/api/v1/connect", { signal: AbortSignal.timeout(5000) }),
+      ]);
       if (cancelled) return;
+      if (status.ok) {
+        setAccountLabel(status.result.account_label || null);
+        lastSummary.current =
+          status.result.group_connections || (status.result.connect ? lastSummary.current : null);
+      }
       if (response.ok)
         send({
           type: "groups",
@@ -166,6 +181,7 @@ function AdmittedWorkbench({
             group_id: g.group_id,
             title: g.title || g.group_id,
             running: Boolean(g.running),
+            connection: groupConnectionCount(lastSummary.current, g.group_id),
           })),
         });
       timer = window.setTimeout(() => void refresh(), 15000);
@@ -188,6 +204,10 @@ function AdmittedWorkbench({
     send({ type: "selected", group_id: selectedGroupId, revision: selection.revision });
   }, [selectedGroupId, selection, admitted, send]);
   return admitted ? (
-    <App connectEmbedded onOpenParentSidebar={() => send({ type: "sidebar" })} />
+    <App
+      connectEmbedded
+      embeddedAccountLabel={accountLabel}
+      onOpenParentSidebar={() => send({ type: "sidebar" })}
+    />
   ) : null;
 }

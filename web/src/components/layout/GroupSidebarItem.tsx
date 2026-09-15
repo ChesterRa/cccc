@@ -1,3 +1,5 @@
+import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
+import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
@@ -14,6 +16,7 @@ interface GroupSidebarItemProps {
   menuAriaLabel?: string;
   onMenuAction?: () => void;
   connectionsLabel?: string;
+  connection?: GroupConnectionCount;
   onOpenConnections?: () => void;
   onSelect: () => void;
   onWarm?: () => void;
@@ -28,6 +31,7 @@ export function GroupSidebarItem({
   menuAriaLabel,
   onMenuAction,
   connectionsLabel,
+  connection,
   onOpenConnections,
   onSelect,
   onWarm,
@@ -117,6 +121,7 @@ export function GroupSidebarItem({
           </div>
         </div>
 
+        <GroupConnectionBadge connection={connection} onClick={onOpenConnections} />
         {menu.available && (
           <GroupItemMenuTrigger
             isActive={isActive}

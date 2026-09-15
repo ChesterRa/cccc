@@ -2,13 +2,15 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { GroupConnectionsControl } from "./GroupConnectionsControl";
+import { GroupConnectionsControl, GroupConnectionsPanel } from "./GroupConnectionsControl";
 import { useModalStore } from "../../stores/useModalStore";
 import type { GroupMeta } from "../../types";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), t: (key: string) => key }));
 vi.mock("../../services/api/base", () => ({ apiJson: mocks.request }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: mocks.t }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: mocks.t, i18n: { language: "ja", resolvedLanguage: "ja" } }),
+}));
 const groups = [
   { group_id: "a", title: "Local A" },
   { group_id: "b", title: "Local B" },
@@ -92,7 +94,7 @@ it("uses the explicitly selected Group for an incoming invitation and leaves app
   await act(async () => button("groupConnections.accept").click());
   const call = mocks.request.mock.calls.find(([, options]) => options.method === "POST")!;
   expect(JSON.parse(call[1].body)).toEqual({ group_id: "b", invitation });
-  expect([...document.querySelectorAll("a")].some((a) => a.href === url)).toBe(true);
+  expect([...document.querySelectorAll("a")].some((a) => a.href === `${url}&lang=ja`)).toBe(true);
   expect(mocks.request.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(
     1,
   );
@@ -205,4 +207,16 @@ it("retains an invitation until administrator access and the Group list are avai
   await render(true, "");
   expect(groupSelect().dataset.value).toBe("a");
   expect(button("groupConnections.accept")).toBeDefined();
+});
+
+it("reuses the Group panel in settings without a picker and aborts when leaving", async () => {
+  await act(async () =>
+    root.render(<GroupConnectionsPanel groupId="b" onOpenAccount={() => {}} />),
+  );
+  expect(groupSelect()).toBeNull();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(mocks.request.mock.calls[0][0]).toBe("/api/v1/connect/groups?group_id=b");
+  const signal = mocks.request.mock.calls[0][1].signal as AbortSignal;
+  await act(async () => root.render(null));
+  expect(signal.aborted).toBe(true);
 });

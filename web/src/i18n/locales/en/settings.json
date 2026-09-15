@@ -42,7 +42,8 @@
       "pending": "Waiting for approval",
       "cut": "Relink required",
       "offline": "Linked",
-      "online": "Linked · Remote Access online"
+      "online": "Linked · Remote Access online",
+      "linked": "Linked"
     },
     "stateHelp": {
       "loading": "Checking whether this installation is linked to a CCCC account.",
@@ -51,7 +52,8 @@
       "pending": "Approve the code in the account page. CCCC checks the result automatically without interrupting local work.",
       "cut": "The account no longer recognizes this installation. Relink it to create a fresh device credential.",
       "offline": "This instance is linked. Its managed Remote Access tunnel is off; other Web Access methods are configured separately.",
-      "online": "This installation is linked and its managed Remote Access hostname is online."
+      "online": "This installation is linked and its managed Remote Access hostname is online.",
+      "linked": "This instance is linked to your CCCC account. Connection and remote access status are shown below."
     },
     "linkInstallation": "Sign in & link this installation",
     "relinkInstallation": "Relink installation",
@@ -76,7 +78,7 @@
     "openWebAccess": "Open Web Access",
     "continueWebAccess": "Continue to Web Access",
     "disconnect": "Disconnect installation",
-    "disconnectPrompt": "This retires this installation's account credential, managed hostname, and any active Remote Access tunnel. Local groups and agents remain on this machine.",
+    "disconnectPrompt": "Disconnect this instance from your account? Its credentials and public hostname will be retired, and its Connect access, invitations and Group connections will end. Local groups, agents and history remain.",
     "confirmDisconnect": "Disconnect",
     "keepLinked": "Keep linked",
     "connect": {

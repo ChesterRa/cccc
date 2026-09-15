@@ -43,6 +43,7 @@ export interface AppHeaderProps {
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
+  accountLabel?: string | null;
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
@@ -69,6 +70,7 @@ export function AppHeader({
   onSetGroupState,
   onOpenSettings,
   canAccessAccount,
+  accountLabel,
   onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
@@ -310,6 +312,7 @@ export function AppHeader({
                 onThemeChange={onThemeChange}
                 onTextScaleChange={onTextScaleChange}
                 canAccessAccount={canAccessAccount}
+                accountLabel={accountLabel}
                 canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
                 onOpenAccount={onOpenAccount}
                 onOpenSettings={onOpenSettings}

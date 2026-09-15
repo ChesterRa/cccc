@@ -97,6 +97,7 @@ type AppShellProps = {
   onSetGroupState: (state: "active" | "idle" | "paused") => void;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
+  accountLabel?: string | null;
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   onTabChange: (tab: string) => void;
@@ -196,6 +197,7 @@ export function AppShell({
   onSetGroupState,
   onOpenSettings,
   canAccessAccount,
+  accountLabel,
   onOpenAccount,
   onOpenMobileMenu,
   onTabChange,
@@ -307,6 +309,7 @@ export function AppShell({
               onSetGroupState={onSetGroupState}
               onOpenSettings={onOpenSettings}
               canAccessAccount={canAccessAccount}
+              accountLabel={accountLabel}
               onOpenAccount={onOpenAccount}
               onOpenMobileMenu={onOpenMobileMenu}
             />

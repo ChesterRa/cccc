@@ -77,7 +77,7 @@ describe("GroupSidebarSortableList mobile controls", () => {
           menuActionLabel="Archive"
           menuAriaLabel="Actions"
           onMenuAction={vi.fn()}
-          connectionsLabel="External connections"
+          connectionsLabel="Group connections"
           onOpenConnections={onOpenConnections}
           onReorderSection={vi.fn()}
           onSelectGroup={onSelectGroup}
@@ -88,10 +88,7 @@ describe("GroupSidebarSortableList mobile controls", () => {
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]')!;
     await act(async () => trigger.click());
     const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
-    expect(Array.from(items, (item) => item.textContent)).toEqual([
-      "External connections",
-      "Archive",
-    ]);
+    expect(Array.from(items, (item) => item.textContent)).toEqual(["Group connections", "Archive"]);
     await act(async () => items[0].click());
     expect(onOpenConnections).toHaveBeenCalledWith("g_alpha");
     expect(onSelectGroup).not.toHaveBeenCalled();

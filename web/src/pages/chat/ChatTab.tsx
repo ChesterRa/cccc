@@ -34,7 +34,8 @@ import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
-import { clampPresentationSplitWidth } from "../../utils/presentationSplitLayout";
+import { useSidePanelLayout } from "../../hooks/useSidePanelLayout";
+import { SIDE_PANEL_COMPACT_WIDTH } from "../../utils/sidePanelLayout";
 import {
   MOBILE_APP_HEADER_HEIGHT_PX,
   getMobileFloatingControlsTopInsetPx,
@@ -338,8 +339,6 @@ export function ChatTab({
   const setChatPresentationDisplayMode = useUIStore(
     (state) => state.setChatPresentationDisplayMode,
   );
-  const presentationSplitWidth = useUIStore((state) => state.presentationSplitWidth);
-  const setPresentationSplitWidth = useUIStore((state) => state.setPresentationSplitWidth);
   const showError = useUIStore((state) => state.showError);
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
@@ -406,7 +405,6 @@ export function ChatTab({
   const { activeSidePanel, selectSidePanel } = useSidePanelSelection(selectedGroupId);
   const showSplitFiles = !isSmallScreen && activeSidePanel === "files";
   const showSplitPresentation = !isSmallScreen && activeSidePanel === "presentation";
-  const showDesktopSplitPresentation = showSplitPresentation;
   const showSplitSurface = showSplitPresentation || showSplitFiles;
   // A phone has no room for a side column, so the tree becomes its own full-screen surface.
   const showMobileFiles = isSmallScreen && mobileSurface === "files" && !!selectedGroupId;
@@ -438,61 +436,12 @@ export function ChatTab({
     presentationViewer?.groupId === selectedGroupId &&
     presentationViewer.surface !== "split";
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
-  const splitResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const [isSplitResizing, setIsSplitResizing] = useState(false);
-  const [splitLayoutWidth, setSplitLayoutWidth] = useState(0);
-  const effectivePresentationSplitWidth = clampPresentationSplitWidth(
-    presentationSplitWidth,
-    splitLayoutWidth || undefined,
+  const sidePanel = useSidePanelLayout(
+    selectedGroupId,
+    activeSidePanel,
+    !!splitPresentationViewer,
+    splitLayoutRef,
   );
-
-  useEffect(() => {
-    const node = splitLayoutRef.current;
-    if (!node) return undefined;
-
-    const updateWidth = () => {
-      setSplitLayoutWidth(node.clientWidth || 0);
-    };
-
-    updateWidth();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateWidth);
-      return () => window.removeEventListener("resize", updateWidth);
-    }
-
-    const observer = new ResizeObserver(() => updateWidth());
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [showSplitSurface]);
-
-  useEffect(() => {
-    if (!isSplitResizing) return undefined;
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const drag = splitResizeRef.current;
-      if (!drag) return;
-      const nextWidth = drag.startWidth - (event.clientX - drag.startX);
-      const containerWidth = splitLayoutRef.current?.clientWidth || splitLayoutWidth || undefined;
-      setPresentationSplitWidth(clampPresentationSplitWidth(nextWidth, containerWidth));
-    };
-
-    const finishResize = () => {
-      splitResizeRef.current = null;
-      setIsSplitResizing(false);
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishResize);
-    window.addEventListener("pointercancel", finishResize);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", finishResize);
-      window.removeEventListener("pointercancel", finishResize);
-      finishResize();
-    };
-  }, [isSplitResizing, setPresentationSplitWidth, splitLayoutWidth]);
 
   const openPresentationSlot = useCallback(
     (slotId: string) => {
@@ -701,22 +650,6 @@ export function ChatTab({
       showError,
       t,
     ],
-  );
-
-  const handleSplitResizeStart = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!showDesktopSplitPresentation) return;
-      event.preventDefault();
-      event.stopPropagation();
-      splitResizeRef.current = {
-        startX: event.clientX,
-        startWidth: effectivePresentationSplitWidth,
-      };
-      setIsSplitResizing(true);
-      document.body.style.setProperty("cursor", "col-resize");
-      document.body.style.setProperty("user-select", "none");
-    },
-    [effectivePresentationSplitWidth, showDesktopSplitPresentation],
   );
 
   const filterOptions: Array<["all" | "user" | "mail" | "request_reply", string]> = [
@@ -1093,12 +1026,24 @@ export function ChatTab({
             </section>
           ) : null}
 
+          {sidePanel.dragging && (
+            <div className="fixed inset-0 z-[1000] cursor-col-resize" aria-hidden="true" />
+          )}
           {showSplitSurface ? (
             <>
               <div
-                className="relative hidden w-2 flex-shrink-0 cursor-col-resize md:block"
-                onPointerDown={handleSplitResizeStart}
-                aria-hidden="true"
+                className="relative hidden w-2 flex-shrink-0 touch-none cursor-col-resize md:block"
+                onPointerDown={sidePanel.onPointerDown}
+                onKeyDown={sidePanel.onKeyDown}
+                role="separator"
+                tabIndex={0}
+                aria-orientation="vertical"
+                aria-label={t("sidePanelResize")}
+                aria-controls="group-side-panel"
+                aria-valuemin={SIDE_PANEL_COMPACT_WIDTH}
+                aria-valuemax={sidePanel.maxWidth}
+                aria-valuenow={sidePanel.width}
+                data-side-panel-resize
               >
                 <div
                   className={classNames(
@@ -1109,7 +1054,7 @@ export function ChatTab({
                 <div
                   className={classNames(
                     "absolute inset-y-0 -left-1 w-4 rounded-full transition-colors",
-                    isSplitResizing
+                    sidePanel.dragging
                       ? isDark
                         ? "bg-cyan-300/18"
                         : "bg-cyan-500/16"
@@ -1124,7 +1069,8 @@ export function ChatTab({
                   "hidden min-h-0 flex-shrink-0 overflow-hidden border-l md:flex",
                   isDark ? "border-white/8 bg-slate-950/20" : "border-black/8 bg-white/40",
                 )}
-                style={{ width: `${effectivePresentationSplitWidth}px` }}
+                id="group-side-panel"
+                style={{ width: `${sidePanel.width}px` }}
               >
                 {showSplitFiles ? (
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
@@ -1142,7 +1088,7 @@ export function ChatTab({
                       />
                     </div>
                   </Suspense>
-                ) : splitPresentationViewer ? (
+                ) : splitPresentationViewer && !sidePanel.compact ? (
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <PresentationViewerSplitPanel
                       isDark={isDark}
@@ -1166,6 +1112,9 @@ export function ChatTab({
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <div className="flex min-h-0 flex-1 flex-col">
                       <PresentationRail
+                        groupId={selectedGroupId}
+                        compact={sidePanel.compact}
+                        onToggleCompact={sidePanel.toggleCompact}
                         presentation={groupPresentation}
                         isDark={isDark}
                         readOnly={readOnly}
@@ -1241,6 +1190,7 @@ export function ChatTab({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                 <PresentationRail
+                  groupId={selectedGroupId}
                   presentation={groupPresentation}
                   isDark={isDark}
                   readOnly={readOnly}

@@ -19,6 +19,8 @@ is the same instance name shown on the account website. New device grants use
 the machine hostname as an initial name when available; reconnecting does not
 overwrite an existing name. The editor identifies the instance and its address.
 The sidebar marks the current instance and nests each Group under its instance.
+The Account menu shows the account linked to this instance when the account
+service supplies its identity; this is separate from the Web Access Token in use.
 Duplicate instance names receive a short identifier only in the sidebar label.
 
 Each peer needs a reachable HTTPS Web origin. **Remote Access** configures the
@@ -37,6 +39,9 @@ messages and terminals; credentials and data stay with the target origin.
 
 Previously opened remote Group lists remain in the sidebar when you select a
 local Group or another instance. Use each instance's arrow to collapse its list.
+A temporarily failed refresh keeps the last-known list with an explanatory
+status. Expired confirmation disables opening instances; fresh authorization is
+still required. An explicit unlink or access revocation clears that navigation.
 Inactive lists are saved navigation, not live status: their frames and terminals
 close, and opening a Group rechecks access.
 
@@ -75,7 +80,7 @@ Context or arbitrary remote tools. Other Groups do not inherit the connection.
 2. The recipient opens **Group connections** on the account website and copies
    their **Member ID**.
 3. The sender opens the intended Group in native CCCC Web as an administrator,
-   opens the Group’s **⋮ → External connections** menu in the sidebar, and
+   opens **Group connections** in that Group’s settings or sidebar **⋮** menu, and
    chooses **Invite a member**. On the account website, check the selected Group,
    paste the recipient's Member ID and submit the invitation.
 4. The recipient opens **Group connections** on the account website, expands
@@ -106,7 +111,7 @@ already delivered messages remain, and running Actors are not stopped. Deleting
 or importing a Group, resetting it to a replacement Group, or unlinking its
 device requires a fresh connection. Reconnecting never resumes old queued work.
 
-The native **External connections** dialog distinguishes a confirmed empty list
+The native **Group connections** dialog distinguishes a confirmed empty list
 from pending or failed synchronization. A temporary confirmation failure does not
 mean the account was unlinked. The last check and error are shown, and the existing
 background service retries automatically. **Refresh** reads its latest result;
@@ -122,3 +127,12 @@ stop Actors. Offline directory entries are not proof that an instance is online.
 operations are not silently migrated to Connect. Historical messages remain
 readable, with retired remote replies disabled. Remote arbitrary tools and
 automatic Web updates are outside this iteration.
+
+## See Group connections
+
+A connection icon and count beside a Group identify its explicit cross-member
+connections. Open it to see the peer Groups and manage that Group's relations.
+An unconfirmed count shows `?`, not zero. Same-account discovery is not counted
+as Group connections. The account website separates pending invitations, active
+connections and collapsed history, and offers a return link to your own Group.
+Cross-member communication does not grant terminals or a remote Workbench view.

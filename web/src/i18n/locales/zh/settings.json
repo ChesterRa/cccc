@@ -42,7 +42,8 @@
       "pending": "等待批准",
       "cut": "需要重新绑定",
       "offline": "已绑定",
-      "online": "已绑定 · 远程访问在线"
+      "online": "已绑定 · 远程访问在线",
+      "linked": "已关联"
     },
     "stateHelp": {
       "loading": "正在检查这套安装是否已绑定 CCCC 账户。",
@@ -51,7 +52,8 @@
       "pending": "请在账户页批准此代码。CCCC 会自动检查结果，不会影响本地工作。",
       "cut": "账户已不再认可这套安装。请重新绑定以创建新的设备凭据。",
       "offline": "此实例已关联，托管远程访问通道当前未开启；其他访问方式可在 Web Access 中单独配置。",
-      "online": "这套安装已绑定，其托管远程访问主机名当前在线。"
+      "online": "这套安装已绑定，其托管远程访问主机名当前在线。",
+      "linked": "本实例已关联 CCCC 账户。连接与远程访问状态见下方。"
     },
     "linkInstallation": "登录并绑定这套安装",
     "relinkInstallation": "重新绑定",
@@ -76,7 +78,7 @@
     "openWebAccess": "打开 Web Access",
     "continueWebAccess": "继续设置 Web Access",
     "disconnect": "断开这套安装",
-    "disconnectPrompt": "这会退役本机的账户凭据、托管主机名和正在运行的远程访问隧道。本地工作组和 Agent 会保留在这台机器上。",
+    "disconnectPrompt": "要将本实例与账户断开吗？设备凭据和公网地址将被停用，Connect 访问、邀请及 Group 连接也将终止。本地 Group、Agent 和历史记录保留。",
     "confirmDisconnect": "确认断开",
     "keepLinked": "保持绑定",
     "connect": {

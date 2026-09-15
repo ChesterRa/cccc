@@ -1,12 +1,12 @@
+import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { EyeOff, RefreshCw, X } from "lucide-react";
+import { EyeOff, RefreshCw } from "lucide-react";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceEntry } from "../../types";
 import { WorkspaceEntryMenu, type WorkspaceMenuItem } from "./WorkspaceEntryMenu";
 import { WorkspaceTree } from "./WorkspaceTree";
 import type { WorkspaceFilesController } from "./useWorkspaceFiles";
-import { baseName } from "./workspaceTreeModel";
 
 type Props = {
   /**
@@ -86,56 +86,27 @@ export function WorkspaceFilesPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div
-        className={classNames(
-          "flex items-center gap-1 border-b px-2 py-1.5",
-          isDark ? "border-white/8" : "border-black/8",
-        )}
+      <SidePanelHeader
+        title={t("workspaceFilesTitle", { defaultValue: "Files" })}
+        subtitle={files.rootPath || undefined}
+        onClose={onClose}
+        closeLabel={t("workspaceClose", { defaultValue: "Close files" })}
       >
-        <span
-          className="min-w-0 flex-1 truncate text-[13px] font-medium"
-          title={files.rootPath || undefined}
-        >
-          {files.rootPath
-            ? baseName(files.rootPath)
-            : t("workspaceFilesTitle", { defaultValue: "Files" })}
-        </span>
-        <button
-          type="button"
+        <SidePanelButton
+          title={t("workspaceShowIgnored", { defaultValue: "Show git-ignored files" })}
           onClick={() => files.setShowIgnored(!files.showIgnored)}
           aria-pressed={files.showIgnored}
-          title={t("workspaceShowIgnored", { defaultValue: "Show git-ignored files" })}
-          className={classNames(
-            "rounded-md p-1 transition-colors",
-            files.showIgnored ? "opacity-100" : "opacity-40",
-            isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-          )}
+          className={files.showIgnored ? "bg-[var(--glass-tab-bg)]" : undefined}
         >
-          <EyeOff className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={files.refresh}
+          <EyeOff />
+        </SidePanelButton>
+        <SidePanelButton
           title={t("workspaceRefresh", { defaultValue: "Refresh" })}
-          className={classNames(
-            "rounded-md p-1 transition-colors",
-            isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-          )}
+          onClick={files.refresh}
         >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          title={t("workspaceClose", { defaultValue: "Close files" })}
-          className={classNames(
-            "rounded-md p-1 transition-colors",
-            isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-          )}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
+          <RefreshCw />
+        </SidePanelButton>
+      </SidePanelHeader>
 
       {/* A failed open clears the viewer, so its reason has to live next to the tree. */}
       {!files.file && files.fileError ? (

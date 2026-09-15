@@ -1,3 +1,4 @@
+import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Monitor } from "lucide-react";
 import { instanceName } from "../../features/connect/instanceName";
@@ -180,6 +181,7 @@ export function GroupSidebar({
             menuActionLabel={menuActionLabel}
             connectionsLabel={t("groupConnections.title")}
             onOpenConnections={onOpenGroupConnections}
+            connectionSummary={connect?.groupConnections}
             menuAriaLabel={t("groupActions")}
             reorderInstructions={t("reorderWithKeyboard")}
             onMenuAction={handleMenuAction}
@@ -202,6 +204,7 @@ export function GroupSidebar({
                 isCollapsed={isCollapsed}
                 isArchived={isArchivedSection}
                 connectionsLabel={t("groupConnections.title")}
+                connection={groupConnectionCount(connect?.groupConnections, gid)}
                 onOpenConnections={
                   onOpenGroupConnections ? () => onOpenGroupConnections(gid) : undefined
                 }
@@ -227,6 +230,7 @@ export function GroupSidebar({
       onReorderSection,
       onRestoreGroup,
       onOpenGroupConnections,
+      connect?.groupConnections,
       onSelectGroup,
       onWarmGroup,
       readOnly,

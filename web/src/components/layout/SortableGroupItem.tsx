@@ -1,3 +1,5 @@
+import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
+import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { useCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -19,6 +21,7 @@ interface SortableGroupItemProps {
   menuAriaLabel?: string;
   onMenuAction?: () => void;
   connectionsLabel?: string;
+  connection?: GroupConnectionCount;
   onOpenConnections?: () => void;
   /** Move this group one place up (-1) or down (1) in its section. */
   onMoveBy?: (delta: -1 | 1) => void;
@@ -37,6 +40,7 @@ export function SortableGroupItem({
   menuAriaLabel,
   onMenuAction,
   connectionsLabel,
+  connection,
   onOpenConnections,
   onMoveBy,
   onSelect,
@@ -184,6 +188,7 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
+        <GroupConnectionBadge connection={connection} onClick={onOpenConnections} />
         {menu.available && (
           <GroupItemMenuTrigger
             isActive={isActive}

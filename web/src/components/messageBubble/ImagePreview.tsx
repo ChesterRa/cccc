@@ -1,3 +1,5 @@
+import { GraphicViewer } from "../viewer/GraphicViewer";
+import { useModalA11y } from "../../hooks/useModalA11y";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { FloatingPortal } from "@floating-ui/react";
 import { useEffect, useState } from "react";
@@ -143,20 +145,11 @@ export function ImagePreview({
     };
   }, [displaySrc, href, resolvedHref]);
 
+  const isLightboxVisible = isLightboxOpen && !loadError;
+  const { modalRef } = useModalA11y(isLightboxVisible, () => setIsLightboxOpen(false));
   useEffect(() => {
-    if (!isLightboxOpen) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsLightboxOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isLightboxOpen]);
+    if (loadError) setIsLightboxOpen(false);
+  }, [loadError]);
 
   if (loadError) {
     return (
@@ -231,7 +224,9 @@ export function ImagePreview({
             }
             loading={isSvg ? "lazy" : "eager"}
             decoding="async"
-            onError={() => {
+            onError={(event) => {
+              // A previous preview can remain visible while the next source is preloaded.
+              if (event.currentTarget.getAttribute("src") !== (resolvedHref || href)) return;
               IMAGE_LOAD_ERROR_CACHE.add(href);
               setLoadError(true);
             }}
@@ -239,7 +234,7 @@ export function ImagePreview({
         )}
       </button>
 
-      {isLightboxOpen && (
+      {isLightboxVisible && (
         <FloatingPortal>
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6 animate-fade-in">
             <button
@@ -251,9 +246,10 @@ export function ImagePreview({
 
             <div
               className={classNames(
-                "relative z-[81] flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
+                "relative z-[81] flex h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
                 "glass-modal",
               )}
+              ref={modalRef}
               role="dialog"
               aria-modal="true"
               aria-label={t("imagePreviewDialog")}
@@ -310,13 +306,8 @@ export function ImagePreview({
                 </div>
               </div>
 
-              <div className="flex items-center justify-center overflow-auto p-4 sm:p-6">
-                <img
-                  src={displaySrc || resolvedHref || href}
-                  alt={alt}
-                  className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain"
-                  style={isUserMessage || isDark ? undefined : LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE}
-                />
+              <div className="min-h-0 flex-1">
+                <GraphicViewer src={displaySrc || resolvedHref || href} alt={alt} />
               </div>
             </div>
           </div>

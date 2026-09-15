@@ -111,7 +111,7 @@ describe("AccountTab", () => {
     );
 
     expect(html).toContain("account.accountUnavailable");
-    expect(html).toContain("account.status.offline");
+    expect(html).toContain("account.status.linked");
     expect(html).not.toContain("account.relinkInstallation");
   });
 
@@ -127,7 +127,7 @@ describe("AccountTab", () => {
       <AccountTab isDark={false} onOpenWebAccess={() => undefined} />,
     );
 
-    expect(html).toContain("account.status.offline");
+    expect(html).toContain("account.status.linked");
     expect(html).toContain("account.reachUnsupported");
   });
 
@@ -139,4 +139,21 @@ describe("AccountTab", () => {
     expect(html).toContain("account.continueWebAccess");
     expect(html).not.toContain(">account.openWebAccess<");
   });
+  it.each(["off", "connecting", "online", "offline", "unknown"] as const)(
+    "keeps account identity separate from Reach %s",
+    (reach_status) => {
+      state.membership = {
+        logged_in: true,
+        account_label: "owner@example.test",
+        reach_status,
+        online: reach_status === "online",
+      };
+      const html = renderToStaticMarkup(
+        <AccountTab isDark={false} onOpenWebAccess={() => undefined} />,
+      );
+      expect(html).toContain("account.status.linked");
+      expect(html).toContain(`webAccess.reach.connectionHelp.${reach_status}`);
+      expect(html).not.toContain("account.stateHelp.offline");
+    },
+  );
 });

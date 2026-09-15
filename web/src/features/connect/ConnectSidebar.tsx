@@ -1,3 +1,4 @@
+import { GroupConnectionBadge } from "./GroupConnectionBadge";
 import { useTranslation } from "react-i18next";
 import { Monitor, LockKeyhole, ChevronRight } from "lucide-react";
 import { instanceListing } from "./useConnectWorkbench";
@@ -25,6 +26,13 @@ export function ConnectSidebar({
           CCCC Connect
         </div>
       ) : null}
+      {!collapsed && (workbench.failed || workbench.available === false) ? (
+        <p role="status" className="px-2 pb-2 text-xs leading-5 text-[var(--color-text-muted)]">
+          {t(
+            workbench.available === false ? "connect.confirmationExpired" : "connect.refreshFailed",
+          )}
+        </p>
+      ) : null}
       {workbench.instances.map((instance) => {
         const label = instanceName(
           instance,
@@ -49,6 +57,7 @@ export function ConnectSidebar({
             <div className="flex items-center">
               <button
                 type="button"
+                disabled={workbench.available === false}
                 onClick={() => choose()}
                 title={[instance.display_name, status, instance.public_origin]
                   .filter(Boolean)
@@ -91,6 +100,7 @@ export function ConnectSidebar({
                     <ConnectGroupItem
                       key={group.group_id}
                       group={group}
+                      disabled={workbench.available === false}
                       live={active}
                       selected={active && workbench.selected?.groupId === group.group_id}
                       onSelect={() => choose(group.group_id)}
@@ -116,12 +126,14 @@ export function ConnectSidebar({
 
 function ConnectGroupItem({
   group,
+  disabled,
   live,
   selected,
   onSelect,
   onOpenConnections,
 }: {
   group: RemoteGroup;
+  disabled?: boolean;
   live: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -129,13 +141,15 @@ function ConnectGroupItem({
 }) {
   const { t } = useTranslation("layout");
   const label = `${t("groupActions")} · ${group.title || group.group_id}`;
-  const menu = useGroupMenu(label, [
-    { label: t("groupConnections.title"), onClick: onOpenConnections },
-  ]);
+  const menu = useGroupMenu(
+    label,
+    disabled ? [] : [{ label: t("groupConnections.title"), onClick: onOpenConnections }],
+  );
   return (
     <div className="group/item relative flex items-center pr-1">
       <button
         type="button"
+        disabled={disabled}
         onClick={onSelect}
         onContextMenu={menu.onContextMenu}
         onKeyDown={menu.onKeyDown}
@@ -147,12 +161,19 @@ function ConnectGroupItem({
         />
         <span className="truncate">{group.title || group.group_id}</span>
       </button>
-      <GroupItemMenuTrigger
-        isActive={selected}
-        label={label}
-        open={menu.open}
-        onToggle={menu.toggle}
+      <GroupConnectionBadge
+        connection={group.connection}
+        onClick={onOpenConnections}
+        disabled={disabled}
       />
+      {menu.available && (
+        <GroupItemMenuTrigger
+          isActive={selected}
+          label={label}
+          open={menu.open}
+          onToggle={menu.toggle}
+        />
+      )}
       {menu.menu}
     </div>
   );

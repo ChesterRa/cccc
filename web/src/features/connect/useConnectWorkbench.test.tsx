@@ -39,6 +39,34 @@ describe("Connect entry access lifecycle", () => {
     await act(async () => root.unmount());
     vi.useRealTimers();
   });
+  it("retains the account label offline and clears it when Connect confirms device rejection", async () => {
+    mocks.request.mockResolvedValue({
+      ok: true,
+      result: { ...snapshot().result, account_label: "owner@example.test" },
+    });
+    await act(async () => root.render(<Probe />));
+    expect(state.accountLabel).toBe("owner@example.test");
+    mocks.request.mockResolvedValue({
+      ok: false,
+      error: { code: "network_error", message: "Offline" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.accountLabel).toBe("owner@example.test");
+    mocks.request.mockResolvedValue({
+      ok: true,
+      result: {
+        connect: {
+          ...snapshot().result.connect,
+          directory: null,
+          error_code: "membership_disabled",
+        },
+        account_label: null,
+      },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.accountLabel).toBeNull();
+    expect(state.instances).toEqual([]);
+  });
   it("does not read Connect for a restricted entry and recovers a later admin session", async () => {
     mocks.access.mockResolvedValue(false);
     await act(async () => root.render(<Probe />));
@@ -115,5 +143,54 @@ describe("Connect entry access lifecycle", () => {
     mocks.access.mockResolvedValue(false);
     await act(async () => vi.advanceTimersByTimeAsync(15000));
     expect(state.listings).toEqual({});
+  });
+  it("retains orientation through a failed read without extending the directory grant, then clears revoked access", async () => {
+    await act(async () => root.render(<Probe />));
+    await act(async () => {
+      state.select("b", "group-b");
+      state.remember(state.instances[0], [{ group_id: "group-b", title: "B", running: true }]);
+    });
+    mocks.request.mockResolvedValue({
+      ok: false,
+      error: { code: "network_error", message: "Offline" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.failed).toBe(true);
+    expect(state.activeInstance?.instance_id).toBe("b");
+    expect(state.listings.b.groups).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(120000));
+    expect(state.instances).toHaveLength(1);
+    expect(state.available).toBe(false);
+    expect(state.activeInstance).toBeNull();
+    expect(state.selected?.groupId).toBe("group-b");
+    mocks.access.mockResolvedValue(false);
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.instances).toEqual([]);
+    expect(state.listings).toEqual({});
+    expect(state.selected).toBeNull();
+    expect(state.accountLabel).toBeNull();
+  });
+  it("does not mistake an unavailable entry check for a revoked session", async () => {
+    await act(async () => root.render(<Probe />));
+    mocks.access.mockResolvedValue(null);
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.instances).toHaveLength(1);
+    expect(state.failed).toBe(true);
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+  });
+  it("keeps expired labels for orientation and clears them on a confirmed unlink", async () => {
+    await act(async () => root.render(<Probe />));
+    const expired = snapshot();
+    Object.assign(expired.result.connect, {
+      directory: null,
+      error_code: "connect_directory_expired",
+    });
+    mocks.request.mockResolvedValue(expired);
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.instances).toHaveLength(1);
+    expect(state.available).toBe(false);
+    mocks.request.mockResolvedValue({ ok: true, result: { connect: null, account_label: null } });
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(state.instances).toHaveLength(0);
   });
 });

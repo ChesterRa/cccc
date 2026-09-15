@@ -26,8 +26,10 @@ The Web UI has these main areas:
 ### Group message and terminal views
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
-**External connections** lives in each Group’s sidebar **⋮** menu, including remote Groups
-in CCCC Connect. It manages the Group whose menu you opened.
+**Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
+in CCCC Connect. The settings entry manages the current Group; the sidebar menu manages the Group
+whose menu you opened. Only incoming invitations ask which local Group should accept
+the connection.
 **Settings and more** collects theme, text size, language, account and the full settings entry.
 Appearance choices use application menus for theme, text size and language. Selecting an
 option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
@@ -80,6 +82,12 @@ Actor to inspect the complete output. Restoring a Group or reconnecting its acti
 restores history without replaying it as new bubbles; ordinary message unread indicators are
 independent of these brief progress previews. The same rules apply to every managed Runtime.
 
+### Right sidebar
+
+Files and Presentation share one resizable sidebar with matching header controls. Each Group remembers its expanded width and Presentation density. Files always opens at the expanded width; its file draft survives switching to Presentation and back.
+
+Presentation shows lightweight image, text and table previews. Drag it narrower to snap into four compact slots, or use the collapse button; expanding restores the remembered width. The divider supports arrow keys, and Enter toggles compact Presentation. Viewing thumbnails does not clear update indicators or start interactive browser/PDF sessions. Open a slot to view its full content through the existing window/split viewer. Phones retain dedicated full-screen surfaces.
+
 ### Workspace files
 
 Open **Files** in the Group header to browse the active workspace. The file tree and
@@ -101,6 +109,21 @@ to load it again; an error does not mean the directory is empty.
 On phones, Files opens a read-only viewer. Binary files and files larger than 1 MiB are
 not editable here. Files stay within the active workspace, and exhibit mode does not
 expose this surface.
+
+### Inspect images and diagrams
+
+Expanded message images, Mermaid diagrams, Presentation images and enlarged
+quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
+**−** to change scale; dragging pans enlarged content and the wheel keeps native
+scrolling.
+Touch screens support pinch zoom. Focus the viewport for `+`/`−`, `0` (fit),
+`1` (actual size) and native arrow-key scrolling. Closing a modal restores focus
+to its opener. Regular message scrolling, PDF controls and interactive browser
+surfaces retain their own behavior. The workspace text editor is unchanged.
+Refreshing the same workspace-linked Presentation image preserves its zoom and
+position, including across a failed refresh and recovery. Failures show an error
+without discarding the viewing position. Switching to another slot or publication
+starts with **Fit** again.
 
 ### Codex Voice (Experimental)
 

@@ -152,11 +152,29 @@ manual/Tailscale provider. An enabled canonical manual origin can be advertised;
 otherwise the directory carries a null route.
 
 `connect_status { by?: "user" }` is a read-only daemon operation returning
-`{ connect: ConnectSnapshot | null }`. The snapshot includes issuer/device/instance,
+`{ connect: ConnectSnapshot | null, account_label?: string | null, group_connections?: { counts: Record<string, number | null>, expires_at: string } | null }`. The snapshot includes issuer/device/instance,
 the valid directory or null, `checked_at`, `error_code` and `error_message`.
 `GET /api/v1/connect` is its administrator-only Web port. Restricted and anonymous
 Web callers do not receive the directory. No private signing key or device/Web
 credential is returned.
+
+`account_label` is display metadata from the account's authenticated device and
+registration responses. It is stored on the current local membership binding,
+not in peer authority or Actor catalogues. Confirmed device or credential rejection
+during background refresh clears that binding's label without requiring the Account
+settings to be opened. Transient failures retain it; a delayed response cannot clear
+a replacement binding. Group counts project only current
+cross-member links from the existing expiring grant; they exclude same-account
+discovery. A null summary or per-Group count means unconfirmed, never zero.
+Summary failure does not invalidate the same-account directory. No additional
+per-Group browser poll or account request is required.
+
+Workbench navigation may retain last-known labels after transient read failure
+or expiry, but cannot open/retain a frame beyond the existing authorization
+lifetime. Explicit rejection, unlink, entry privilege loss, or binding replacement
+clears retained navigation. Remote native frames can include the same bounded
+count/expiry in their existing Group-list messages; this is display metadata,
+not additional access.
 
 ## Workbench transport and browser authority
 
@@ -220,7 +238,7 @@ navigation carries a monotonically increasing revision; target selection reports
 echo it. The entry ignores reports from earlier revisions, including a late
 initial/default Group selection, without remounting the frame. Target-local
 navigation may update the entry within the current revision. A `select` message MAY carry
-`action: "connections"` to open that Group’s External connections dialog after target
+`action: "connections"` to open the Group connections dialog for that Group after target
 administrator admission and Group existence checks. This is applied at most once per
 navigation revision, performs no sharing mutation, and does not grant additional access.
 Ordinary navigation clears the previous Group dialog. Restricted
@@ -647,7 +665,7 @@ the issuer is unavailability, never proof that an uncertain delivery did not occ
   confirmation URL. Web uses explicit POST to initiate this selection.
 - `/api/v1/connect/groups` exposes these operations only to Web administrators
   (GET status, POST selection); restricted views/exhibits cannot manage links.
-- The account `/connect` page shows the member ID, invitations and connections.
+- The account `/connect` page shows the member ID, pending invitations, active connections and collapsed history.
   `/connect/select` requires an authenticated member matching the selection ticket.
   GET presents confirmation; CSRF-protected POST creates or accepts an invitation.
   Transient resource-unavailable errors retain the selected Groups and recipient
@@ -656,7 +674,12 @@ the issuer is unavailability, never proof that an uncertain delivery did not occ
   A definitive native selection rejection instead explains reselection/new invitation
   and does not offer repeated submission of the unusable ticket.
   Recipient links open `/?connect_invite=<id>` on a selected owned instance; the
-  native Group chooser does not automatically accept an invitation.
+  native Group chooser does not automatically accept an invitation. Cross-site
+  links preserve supported `lang` values. After browser confirmation, the account
+  page identifies the affected relation and offers a `?group=<id>&lang=<lang>`
+  navigation link only through the member's currently registered matching device
+  and instance. This return link does not bypass native Web authentication or
+  confer remote Group access.
 - Cancel/reject/revoke use CSRF-protected browser POSTs. Disconnect also has a
   confirmation page. Device retirement closes its invitations and connections
   atomically; account deletion removes its relation metadata. Closed records and

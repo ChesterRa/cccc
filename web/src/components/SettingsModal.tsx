@@ -1,4 +1,5 @@
 // SettingsModal renders the settings modal.
+import { GroupConnectionsPanel } from "../features/connect/GroupConnectionsControl";
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -1321,6 +1322,9 @@ export function SettingsModal({
     { id: "space", label: t("tabs.space") },
     { id: "messaging", label: t("tabs.messaging") },
     { id: "im", label: t("tabs.im") },
+    ...(globalSettingsEnabled
+      ? [{ id: "connections" as const, label: t("layout:groupConnections.title") }]
+      : []),
     { id: "transcript", label: t("tabs.transcript") },
     { id: "copyGroups", label: t("tabs.copyGroups") },
   ];
@@ -1456,6 +1460,32 @@ export function SettingsModal({
               </div>
             ) : !tabs.some((tab) => tab.id === activeTab) ? null : (
               <Suspense fallback={<SettingsTabFallback />}>
+                {scope === "group" &&
+                  activeTab === "connections" &&
+                  groupId &&
+                  globalSettingsEnabled && (
+                    <section className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold">
+                          {t("layout:groupConnections.title")} ·{" "}
+                          {groupDoc?.group_id === groupId ? groupDoc.title || groupId : groupId}
+                        </h3>
+                        <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                          {t("layout:groupConnections.description")}
+                        </p>
+                      </div>
+                      <GroupConnectionsPanel
+                        key={groupId}
+                        groupId={groupId}
+                        onOpenAccount={() => {
+                          setAccountReturnToWebAccess(false);
+                          setFocusReachOnOpen(false);
+                          setScope("global");
+                          setGlobalTab("account");
+                        }}
+                      />
+                    </section>
+                  )}
                 {activeTab === "automation" && (
                   <AutomationTab
                     isDark={isDark}

@@ -8,12 +8,14 @@ import { isMousePointer, useHoverIntent } from "../../hooks/useHoverIntent";
 
 export function AppSettingsMenu({
   canAccessAccount,
+  accountLabel,
   canOpenSettings,
   onOpenAccount,
   onOpenSettings,
   ...appearance
 }: AppearancePreferencesProps & {
   canAccessAccount: boolean;
+  accountLabel?: string | null;
   canOpenSettings: boolean;
   onOpenAccount: () => void;
   onOpenSettings: () => void;
@@ -120,7 +122,17 @@ export function AppSettingsMenu({
         {canAccessAccount ? (
           <button type="button" className={row} onClick={() => openDialog(onOpenAccount)}>
             <AccountIcon size={17} />
-            {t("account")}
+            <span className="min-w-0 text-left">
+              <span className="block">{t("account")}</span>
+              {accountLabel ? (
+                <span
+                  className="block max-w-56 truncate text-xs text-[var(--color-text-muted)]"
+                  title={t("linkedAccount", { account: accountLabel })}
+                >
+                  {accountLabel}
+                </span>
+              ) : null}
+            </span>
           </button>
         ) : null}
         <button

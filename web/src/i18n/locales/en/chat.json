@@ -1,4 +1,9 @@
 {
+  "presentationCloseSplitAction": "Close presentation",
+  "presentationOpenWindowAction": "Open in window",
+  "sidePanelResize": "Resize side panel",
+  "presentationExpandSlots": "Expand Presentation",
+  "presentationCompactSlots": "Collapse to compact slots",
   "nextSteps": "Next steps",
   "noMessagesYet": "No messages yet.",
   "emptyStateTitle": "No messages yet.",
@@ -62,7 +67,7 @@
     "diagram": "Mermaid diagram",
     "expand": "Expand",
     "expandDiagram": "Expand Mermaid diagram",
-    "previewHint": "Scroll to inspect large diagrams. Press Esc to close.",
+    "previewHint": "Drag to pan; use + / − to zoom. Press Esc to close.",
     "viewSource": "View source",
     "viewDiagram": "View diagram",
     "rendering": "Rendering diagram…",
@@ -411,6 +416,8 @@
   "download": "Download {{name}}",
   "openImagePreview": "Open image preview: {{name}}",
   "imagePreviewDialog": "Image preview",
+  "imagePreviewUnavailable": "Image preview unavailable",
+  "downloadOriginalImage": "Open the original image",
   "imagePreviewHint": "Click the backdrop or press Escape to close",
   "showObligationStatus": "Show obligation status",
   "showRecipientStatus": "Show recipient status",
@@ -627,5 +634,14 @@
   "workspaceBinary": "Binary file — no text preview.",
   "workspaceTooLarge": "This file is too large to open here ({{size}}).",
   "workspaceLoading": "Loading…",
-  "workspaceCloseFile": "Close file"
+  "workspaceCloseFile": "Close file",
+  "graphicViewer": {
+    "controls": "View controls",
+    "fit": "Fit",
+    "actual": "Actual size",
+    "out": "Zoom out",
+    "in": "Zoom in",
+    "region": "Image viewer: {{name}}",
+    "hint": "Drag to pan, scroll to move. Use + / − to zoom, 0 to fit, 1 for actual size, and arrow keys to scroll."
+  }
 }

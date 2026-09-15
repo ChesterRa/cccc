@@ -10,6 +10,7 @@ const groupTabIds = new Set<GroupTabId>([
   "space",
   "messaging",
   "im",
+  "connections",
   "transcript",
   "copyGroups",
 ]);

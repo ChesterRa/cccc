@@ -41,7 +41,7 @@ export function useDeepLink({
     const params = new URLSearchParams(window.location.search);
     const gid = String(params.get("group") || "").trim();
     const eid = String(params.get("event") || "").trim();
-    if (gid && eid) {
+    if (gid) {
       deepLinkRef.current = { groupId: gid, eventId: eid };
     }
   }, []);
@@ -52,7 +52,7 @@ export function useDeepLink({
     if (!dl) return;
     const gid = String(dl.groupId || "").trim();
     const eid = String(dl.eventId || "").trim();
-    if (!gid || !eid) {
+    if (!gid) {
       deepLinkRef.current = null;
       return;
     }
@@ -70,7 +70,7 @@ export function useDeepLink({
     }
 
     setActiveTab("chat");
-    void openChatWindow(gid, eid);
+    if (eid) void openChatWindow(gid, eid);
     deepLinkRef.current = null;
   }, [groups, openChatWindow, selectedGroupId, setActiveTab, setSelectedGroupId, showError]);
 

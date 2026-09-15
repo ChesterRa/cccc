@@ -127,10 +127,12 @@
     "downloading": "Downloading…",
     "savedGroups": "Saved group list · access checked when opened",
     "collapseGroups": "Collapse groups in {{name}}",
-    "expandGroups": "Expand groups in {{name}}"
+    "expandGroups": "Expand groups in {{name}}",
+    "refreshFailed": "Could not refresh. Showing the last known instances.",
+    "confirmationExpired": "Confirmation expired. Reconnect before opening an instance."
   },
   "groupConnections": {
-    "title": "External connections",
+    "title": "Group connections",
     "description": "Connect this Group with another member’s Group. Exchange messages and files without sharing terminals or full history.",
     "localGroup": "Local Group",
     "invitation": "Select the Group you want to connect. Review both sides and confirm on the account website.",
@@ -142,13 +144,16 @@
     "refresh": "Refresh",
     "continue": "Continue on website",
     "sync": "Changes synchronize within two minutes. Once connected, Actors in this Group can discover and contact the other Group.",
-    "empty": "No active external connections for this Group.",
+    "empty": "No active Group connections for this Group.",
     "connected": "Connected · two-way messages and files",
     "disconnect": "Disconnect",
     "syncing": "Checking Group connections…",
     "syncFailed": "Group connections could not be confirmed. Existing connections may still be present on the website. Synchronization will retry automatically.",
     "unsupported": "This account service does not support Group connections yet. Same-account Connect remains available.",
-    "checkedAt": "Last checked: {{time}}"
+    "checkedAt": "Last checked: {{time}}",
+    "count": "Group connections: {{count}}",
+    "countUnknown": "Group connections: status unconfirmed"
   },
-  "workspaceFilesButton": "Workspace files"
+  "workspaceFilesButton": "Workspace files",
+  "linkedAccount": "Linked account for this instance: {{account}}"
 }

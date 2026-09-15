@@ -1,257 +1,205 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { GroupPresentation, PresentationSlot } from "../../types";
-import { ChevronLeftIcon } from "../Icons";
+import { PanelRightClose, PanelRightOpen, Plus, X } from "lucide-react";
+import type { GroupPresentation } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { ensurePresentation } from "../../utils/presentation";
+import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
+import { PresentationSlotPreview } from "./PresentationSlotPreview";
 
 type PresentationRailProps = {
+  groupId: string;
   presentation: GroupPresentation | null;
   isDark: boolean;
   readOnly?: boolean;
+  compact?: boolean;
+  onToggleCompact?: () => void;
   onClose?: () => void;
   attentionSlots?: Record<string, boolean>;
   onOpenSlot: (slotId: string) => void;
   onPinSlot?: (slotId: string) => void;
 };
 
-function formatUpdatedAt(value: string | undefined, locale: string): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleString(locale, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getCardTypeLabel(
-  type: string,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  switch (String(type || "").trim()) {
-    case "markdown":
-      return t("presentationTypeMarkdown", { defaultValue: "Markdown" });
-    case "table":
-      return t("presentationTypeTable", { defaultValue: "Table" });
-    case "image":
-      return t("presentationTypeImage", { defaultValue: "Image" });
-    case "pdf":
-      return t("presentationTypePdf", { defaultValue: "PDF" });
-    case "web_preview":
-      return t("presentationTypeWebPreview", { defaultValue: "Web" });
-    default:
-      return t("presentationTypeFile", { defaultValue: "File" });
-  }
-}
-
-function getFilledSlots(presentation: GroupPresentation | null): PresentationSlot[] {
-  return Array.isArray(presentation?.slots) ? presentation.slots.filter((slot) => !!slot.card) : [];
-}
-
-function getPreviewText(
-  slot: PresentationSlot,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  const card = slot.card;
-  if (!card) return "";
-  const summary = String(card.summary || "").trim();
-  if (summary) return summary;
-  const sourceLabel = String(card.source_label || "").trim();
-  if (sourceLabel) return sourceLabel;
-  if (card.card_type === "table") {
-    const rowCount = card.content.table?.rows?.length || 0;
-    return t("presentationRowsSummary", { count: rowCount, defaultValue: `${rowCount} rows` });
-  }
-  return getCardTypeLabel(card.card_type, t);
-}
-
 export function PresentationRail({
+  groupId,
   presentation,
   isDark,
   readOnly,
+  compact = false,
+  onToggleCompact,
   onClose,
   attentionSlots,
   onOpenSlot,
   onPinSlot,
 }: PresentationRailProps) {
   const { t, i18n } = useTranslation("chat");
-  const normalizedPresentation = useMemo(() => ensurePresentation(presentation), [presentation]);
-  const filledSlots = useMemo(
-    () => getFilledSlots(normalizedPresentation),
-    [normalizedPresentation],
-  );
-  const hasCards = filledSlots.length > 0;
-  const highlightSlotId = String(normalizedPresentation.highlight_slot_id || "").trim();
-
-  const updatedAt = formatUpdatedAt(normalizedPresentation.updated_at, i18n.language);
+  const normalized = useMemo(() => ensurePresentation(presentation), [presentation]);
+  const filled = normalized.slots.filter((slot) => slot.card).length;
+  const date = new Date(normalized.updated_at || "");
+  const updated =
+    filled && Number.isFinite(date.getTime())
+      ? date.toLocaleString(i18n.language, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const restoreToggleFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (restoreToggleFocus.current) toggleRef.current?.focus();
+    restoreToggleFocus.current = false;
+  }, [compact]);
+  const toggleCompact = (event: MouseEvent<HTMLButtonElement>) => {
+    restoreToggleFocus.current = document.activeElement === event.currentTarget;
+    onToggleCompact?.();
+  };
+  const closeLabel = t("presentationCloseDockAction");
   return (
     <section
-      className={classNames(
-        "flex h-full min-h-0 flex-col",
-        isDark ? "bg-slate-950/20" : "bg-white/40",
-      )}
-      aria-label={t("presentationSectionLabel", { defaultValue: "Presentation" })}
+      className="@container flex h-full min-h-0 w-full flex-col"
+      aria-label={t("presentationSectionLabel")}
+      data-presentation-density={compact ? "compact" : "expanded"}
     >
+      {compact ? (
+        <div className="flex shrink-0 justify-center border-b border-[var(--glass-border-subtle)] py-1.5">
+          <SidePanelButton
+            title={t("presentationExpandSlots")}
+            ref={toggleRef}
+            onClick={toggleCompact}
+          >
+            <PanelRightOpen />
+          </SidePanelButton>
+        </div>
+      ) : (
+        <SidePanelHeader
+          title={t("presentationTitle")}
+          subtitle={`${filled}/${normalized.slots.length}${updated ? ` · ${t("presentationUpdatedAt", { value: updated })}` : ""}`}
+          onClose={onClose}
+          closeLabel={closeLabel}
+        >
+          {onToggleCompact && (
+            <SidePanelButton
+              title={t("presentationCompactSlots")}
+              ref={toggleRef}
+              onClick={toggleCompact}
+            >
+              <PanelRightClose />
+            </SidePanelButton>
+          )}
+        </SidePanelHeader>
+      )}
       <div
         className={classNames(
-          "flex items-center justify-between gap-3 px-4 py-2 border-b",
-          isDark ? "border-white/5" : "border-black/5",
+          "min-h-0 flex-1 overflow-y-auto scrollbar-subtle",
+          compact ? "p-2" : "p-3",
         )}
       >
-        <div className="min-w-0">
-          <h2
-            className={classNames(
-              "text-sm font-semibold",
-              isDark ? "text-slate-100" : "text-gray-900",
-            )}
-          >
-            {t("presentationTitle", { defaultValue: "Presentation" })}
-          </h2>
-          <p className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
-            {hasCards && updatedAt
-              ? t("presentationUpdatedAt", {
-                  value: updatedAt,
-                  defaultValue: `Updated ${updatedAt}`,
-                })
-              : t("presentationEmptyHelp", {
-                  defaultValue: "Tap an empty slot to pin a URL or a local file.",
-                })}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div
-            className={classNames(
-              "text-xs font-medium",
-              isDark ? "text-slate-400" : "text-gray-500",
-            )}
-          >
-            {filledSlots.length}/{normalizedPresentation.slots.length}
-          </div>
-          {onClose ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className={classNames(
-                "flex h-10 w-10 items-center justify-center rounded-full border backdrop-blur-xl transition-all duration-200",
-                isDark
-                  ? "border-white/10 bg-slate-950/62 text-slate-100 hover:border-white/16 hover:bg-slate-900/82"
-                  : "border-black/10 bg-white/78 text-gray-900 hover:border-black/14 hover:bg-white/92",
-              )}
-              title={t("presentationCloseDockAction", { defaultValue: "Hide presentation" })}
-              aria-label={t("presentationCloseDockAction", { defaultValue: "Hide presentation" })}
-              data-mobile-presentation-close="true"
-            >
-              <ChevronLeftIcon size={20} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-auto p-4">
-        <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
-          {normalizedPresentation.slots.map((slot) => {
+        <div
+          className={
+            compact ? "flex flex-col gap-2" : "grid grid-cols-1 gap-3 @[480px]:grid-cols-2"
+          }
+        >
+          {normalized.slots.map((slot, index) => {
             const card = slot.card;
-            const isHighlighted = slot.slot_id === highlightSlotId;
-            const hasSlotAttention = !!attentionSlots?.[slot.slot_id];
+            const attention = !!attentionSlots?.[slot.slot_id];
+            const label = card
+              ? t("presentationOpenSlot", { index: index + 1, title: card.title })
+              : readOnly || !onPinSlot
+                ? `${index + 1} · ${t("presentationSlotEmptyTitle")}`
+                : t("presentationPinSlotTitle", { index: index + 1 });
             return (
               <button
                 key={slot.slot_id}
                 type="button"
-                onClick={() => {
-                  if (card) {
-                    onOpenSlot(slot.slot_id);
-                    return;
-                  }
-                  if (!readOnly) {
-                    onPinSlot?.(slot.slot_id);
-                  }
-                }}
+                title={card?.title || t("presentationSlotEmptyTitle")}
+                aria-label={attention ? `${label} · ${t("presentationUpdatedNotice")}` : label}
+                disabled={!card && (readOnly || !onPinSlot)}
+                onClick={() => (card ? onOpenSlot(slot.slot_id) : onPinSlot?.(slot.slot_id))}
                 className={classNames(
-                  "relative rounded-3xl border p-4 text-left transition-all",
-                  "min-h-[164px] shadow-sm hover:-translate-y-0.5",
-                  isDark
-                    ? "border-white/10 bg-slate-900/70 hover:border-white/18"
-                    : "border-black/10 bg-white/85 hover:border-black/16",
-                  !card &&
-                    readOnly &&
-                    (isDark ? "cursor-default opacity-80" : "cursor-default opacity-90"),
-                  isHighlighted &&
-                    (isDark
-                      ? "ring-2 ring-[rgb(143,163,187)]/38"
-                      : "ring-2 ring-[rgb(62,80,103)]/18"),
-                  hasSlotAttention &&
-                    (isDark
-                      ? "ring-2 ring-cyan-300/70 presentation-slot-attention presentation-slot-attention-dark"
-                      : "ring-2 ring-cyan-500/60 presentation-slot-attention presentation-slot-attention-light"),
+                  "relative min-w-0 overflow-hidden rounded-lg border border-[var(--glass-border-subtle)] text-left transition-colors hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-60",
+                  compact ? "flex h-12 w-full items-center justify-center" : "p-2.5",
+                  !card && "border-dashed",
+                  slot.slot_id === normalized.highlight_slot_id && "bg-[var(--glass-tab-bg)]",
+                  attention && (isDark ? "ring-2 ring-cyan-300/60" : "ring-2 ring-cyan-600/50"),
                 )}
-                aria-label={t("presentationOpenSlot", {
-                  index: slot.index,
-                  title: card?.title || t("presentationSlotEmpty", { defaultValue: "Empty" }),
-                  defaultValue: `Open presentation slot ${slot.index}: ${card?.title || "Empty"}`,
-                })}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <span
+                {card ? (
+                  <>
+                    <div
+                      className={classNames(
+                        "pointer-events-none flex items-center justify-center overflow-hidden",
+                        compact ? "h-7 w-7" : "h-28 rounded-md bg-[var(--color-bg-secondary)]",
+                      )}
+                    >
+                      <PresentationSlotPreview
+                        key={`${slot.slot_id}:${card.published_at}:${card.content.url || ""}`}
+                        groupId={groupId}
+                        slot={slot}
+                        compact={compact}
+                      />
+                    </div>
+                    {!compact && (
+                      <div className="mt-2 flex min-w-0 items-center gap-2">
+                        <span className="text-[11px] tabular-nums text-[var(--color-text-tertiary)]">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                          {card.title}
+                        </span>
+                      </div>
+                    )}
+                    {compact && (
+                      <span className="absolute bottom-0.5 left-1 text-[9px] text-[var(--color-text-tertiary)]">
+                        {index + 1}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <div
                     className={classNames(
-                      "inline-flex h-8 min-w-[2rem] items-center justify-center rounded-full px-2 text-xs font-semibold",
-                      isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700",
+                      "flex items-center justify-center gap-2 text-[var(--color-text-tertiary)]",
+                      !compact && "min-h-10 text-xs",
                     )}
                   >
-                    {slot.index}
-                  </span>
-                  <span
-                    className={classNames(
-                      "rounded-full px-2 py-1 text-[11px] font-medium",
-                      card
-                        ? isDark
-                          ? "bg-white/[0.08] text-white"
-                          : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-                        : isDark
-                          ? "bg-slate-800 text-slate-300"
-                          : "bg-gray-100 text-gray-600",
+                    {readOnly || !onPinSlot ? (
+                      <span>{index + 1}</span>
+                    ) : (
+                      <Plus className="h-4 w-4" />
                     )}
-                  >
-                    {card
-                      ? getCardTypeLabel(card.card_type, t)
-                      : t("presentationPinAction", { defaultValue: "Pin" })}
-                  </span>
-                </div>
-                <div
-                  className={classNames(
-                    "mt-4 text-sm font-semibold leading-5",
-                    isDark ? "text-slate-100" : "text-gray-900",
-                  )}
-                >
-                  {card
-                    ? card.title
-                    : t("presentationSlotEmptyTitle", { defaultValue: "Empty slot" })}
-                </div>
-                <div
-                  className={classNames(
-                    "mt-2 text-xs leading-5",
-                    isDark ? "text-slate-400" : "text-gray-600",
-                  )}
-                >
-                  {card
-                    ? getPreviewText(slot, t)
-                    : readOnly
-                      ? t("presentationEmptyReadOnlyHint", {
-                          defaultValue:
-                            "Waiting for an agent or an authorized user to publish here.",
-                        })
-                      : t("presentationEmptyActionHint", {
-                          defaultValue: "Tap to pin a URL or upload a local file.",
-                        })}
-                </div>
+                    {!compact && (
+                      <span>
+                        {readOnly || !onPinSlot
+                          ? t("presentationSlotEmptyTitle")
+                          : t("presentationPinSlotTitle", { index: index + 1 })}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {attention && (
+                  <span
+                    className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-cyan-500"
+                    aria-hidden="true"
+                  />
+                )}
               </button>
             );
           })}
         </div>
+        {!compact && filled === 0 && (
+          <p className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">
+            {t(readOnly ? "presentationEmptyReadOnlyHint" : "presentationEmptyActionHint")}
+          </p>
+        )}
       </div>
+      {compact && onClose && (
+        <div className="flex shrink-0 justify-center border-t border-[var(--glass-border-subtle)] py-1">
+          <SidePanelButton title={closeLabel} onClick={onClose}>
+            <X />
+          </SidePanelButton>
+        </div>
+      )}
     </section>
   );
 }

@@ -5353,6 +5353,7 @@ Stable error classes:
   membership: {
     logged_in: boolean
     device_id?: string | null
+    account_label?: string | null
     hostname?: string | null
     web_url?: string | null
     online: boolean
@@ -5379,6 +5380,15 @@ Stable error classes:
 ```
 
 `membership_status` is user-only. Implementations MUST reject non-user callers before assembling it. `hostname` is the reserved, tokenless device origin; its presence does not prove that DNS or a tunnel has been provisioned. `web_url` is the tokenless Web sign-in address, assembled locally and null while logged out. It MUST NOT contain a bearer credential. The Web port can separately issue a short-lived, one-time Web login grant for the current authorized administrator. Website account sign-in does not authenticate a browser to the local CCCC Web. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+
+`account_label` is optional display-only identity (currently the verified account
+email). The authenticated device status and Connect directory refresh synchronize
+it to the issuer-bound local membership state. New device grants clear the prior
+label; cut/unlinked devices never expose it. Connect refresh MUST clear it on
+confirmed device or credential rejection, independently of `membership_status`.
+Transient transport failures retain it, and updates remain bound to the device
+and issuer that initiated the request. Older issuers may omit it. It does
+not identify the browser's Web Access Token principal or grant any Web rights.
 
 `reach_enabled` is the saved Reach intent; `in_reach` only identifies the selected
 provider. Neither proves connectivity. `reach_status` is an ephemeral projection:

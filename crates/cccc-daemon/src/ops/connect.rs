@@ -39,7 +39,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 }
 
 fn group_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    status(home, request)?;
+    require_user(request)?;
     let group = super::connect_peer::authorize_local_source(home, request)?;
     let snapshot = connect::load(home).map_err(OpError::io)?;
     let links = cccc_core::connect_groups::load(home).map_err(OpError::io)?;
@@ -90,7 +90,7 @@ fn group_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn group_select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    status(home, request)?;
+    require_user(request)?;
     let group = super::connect_peer::authorize_local_source(home, request)?;
     let ticket = cccc_core::connect_groups::ticket(home, &group)
         .map_err(|e| OpError::new("connect_group_unavailable", e.to_string()))?;
@@ -116,7 +116,7 @@ fn group_select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn rename(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     // Apply the same user-only boundary as directory status before contacting the account.
-    status(home, request)?;
+    require_user(request)?;
     let name = request
         .args
         .get("display_name")
@@ -149,7 +149,7 @@ fn rename(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"display_name":confirmed}))
 }
 
-fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+fn require_user(request: &DaemonRequest) -> Result<(), OpError> {
     if request
         .args
         .get("by")
@@ -162,8 +162,46 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "Connect workbench status requires user access",
         ));
     }
+    Ok(())
+}
+
+fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    require_user(request)?;
     let snapshot = connect::load(home).map_err(OpError::io)?;
-    object(json!({"connect": snapshot}))
+    let member = membership::load(home).map_err(OpError::io)?;
+    object(
+        json!({"connect": snapshot, "account_label": member.account_label.filter(|_| member.logged_in && !member.disabled),
+        "group_connections": group_connection_summary(home).unwrap_or(serde_json::Value::Null)}),
+    )
+}
+
+// A bounded display projection from the existing expiring grant; it grants no access.
+fn group_connection_summary(home: &HomeLayout) -> Result<serde_json::Value, OpError> {
+    let Some(links) = cccc_core::connect_groups::load(home).map_err(OpError::io)? else {
+        return Ok(serde_json::Value::Null);
+    };
+    let mut counts = std::collections::BTreeMap::<String, Option<usize>>::new();
+    let mut resources = std::collections::HashMap::new();
+    for link in &links.links {
+        if let Some((local, _)) = cccc_core::connect_groups::local_endpoint(&links, link) {
+            let current = resources
+                .entry((local.group_id.clone(), local.group_generation.clone()))
+                .or_insert_with(|| cccc_core::connect_groups::resource_current(home, local).ok());
+            match current {
+                Some(true) => {
+                    let count = counts.entry(local.group_id.clone()).or_insert(Some(0));
+                    if let Some(value) = count {
+                        *value += 1;
+                    }
+                }
+                None => {
+                    counts.insert(local.group_id.clone(), None);
+                }
+                Some(false) => {}
+            }
+        }
+    }
+    Ok(json!({"counts": counts, "expires_at": links.expires_at}))
 }
 
 #[derive(Clone, PartialEq)]
@@ -282,6 +320,32 @@ impl Drop for ConnectService {
     }
 }
 
+fn update_account_label(
+    home: &HomeLayout,
+    requested: &Intent,
+    label: Option<String>,
+) -> std::io::Result<()> {
+    if membership::load(home)?.account_label == label {
+        return Ok(());
+    }
+    membership::update(home, |current| {
+        if current.logged_in
+            && !current.disabled
+            && current.device_token.as_deref() == Some(&requested.token)
+            && current.device_id.as_deref() == Some(&requested.device_id)
+            && current
+                .account_origin
+                .as_deref()
+                .map(membership::canonical_account_origin)
+                .as_deref()
+                == Some(&requested.origin)
+        {
+            current.account_label = label;
+        }
+        Ok(())
+    })
+}
+
 fn refresh(home: &HomeLayout, requested: &Intent, cancelled: &AtomicBool) -> std::io::Result<()> {
     if cancelled.load(Ordering::Acquire) {
         return Ok(());
@@ -332,19 +396,26 @@ fn refresh(home: &HomeLayout, requested: &Intent, cancelled: &AtomicBool) -> std
         ..Default::default()
     };
     let error = match result {
-        Ok(directory) => match connect::validate_directory(
+        Ok((directory, account_label)) => match connect::validate_directory(
             &directory,
             &requested.device_id,
             &identity.peer_id,
             Utc::now(),
         ) {
             Ok(()) => {
+                update_account_label(home, requested, account_label)?;
                 snapshot.directory = Some(directory);
                 None
             }
             Err(error) => Some(("connect_invalid_directory".into(), error.to_string())),
         },
         Err(error) => {
+            if matches!(
+                error.code,
+                "membership_disabled" | "membership_not_logged_in"
+            ) {
+                update_account_label(home, requested, None)?;
+            }
             // Only a transient transport problem may retain the unexpired previous grant.
             if matches!(
                 error.code,
@@ -414,7 +485,15 @@ fn refresh(home: &HomeLayout, requested: &Intent, cancelled: &AtomicBool) -> std
         }
         let (error_code, error_message) = match group_result {
             Ok(()) => (None, None),
-            Err((code, message)) => (Some(code), Some(message)),
+            Err((code, message)) => {
+                if matches!(
+                    code.as_str(),
+                    "membership_disabled" | "membership_not_logged_in"
+                ) {
+                    update_account_label(home, requested, None)?;
+                }
+                (Some(code), Some(message))
+            }
         };
         // A concurrent rename/refresh may already have installed a newer directory.
         // Sharing diagnostics must not overwrite that account snapshot with this one.

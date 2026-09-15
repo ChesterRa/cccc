@@ -359,35 +359,6 @@
   padding-inline: 0;
 }
 
-.mermaid-preview-canvas {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 1rem;
-  background: #ffffff;
-}
-
-.dark .mermaid-preview-canvas {
-  background: #0b0c10;
-}
-
-.mermaid-preview-diagram {
-  display: flex;
-  width: max(100%, var(--mermaid-preview-natural-width, 0px));
-  min-height: 100%;
-  align-items: center;
-  justify-content: center;
-}
-
-.mermaid-preview-diagram svg {
-  display: block;
-  width: 100% !important;
-  max-width: none !important;
-  height: auto !important;
-  margin: auto;
-}
-
 .mermaid-preview-source {
   flex: 1;
   min-width: 0;
