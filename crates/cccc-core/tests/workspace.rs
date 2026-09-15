@@ -213,3 +213,57 @@ fn concurrent_saves_sharing_one_digest_keep_exactly_one_write() {
     let after = workspace::read_file(&fixture.group, "src/lib.rs").expect("reread");
     assert_eq!(after.sha256, winners[0]);
 }
+
+#[test]
+#[cfg(unix)]
+fn workspace_paths_preserve_leading_and_trailing_spaces() {
+    let f = fixture();
+    std::fs::write(f.repo.join("note.txt"), "neighbor").expect("workspace whitespace fixture");
+    for name in [" note.txt", "note.txt "] {
+        std::fs::write(f.repo.join(name), "selected").expect("workspace whitespace fixture");
+        let file = workspace::read_file(&f.group, name).expect("workspace whitespace fixture");
+        assert_eq!(
+            file.content, "selected",
+            "reading {name:?} must use the listed path"
+        );
+        workspace::write_file(&f.group, name, "updated", &file.sha256)
+            .expect("workspace whitespace fixture");
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join(name)).expect("workspace whitespace fixture"),
+            "updated"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("note.txt")).expect("workspace whitespace fixture"),
+            "neighbor"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn posix_backslash_names_do_not_alias_nested_paths() {
+    let f = fixture();
+    std::fs::create_dir(f.repo.join("foo")).expect("nested directory");
+    std::fs::write(f.repo.join("foo/bar.txt"), "neighbor").expect("nested file");
+    std::fs::write(f.repo.join(r"foo\bar.txt"), "selected").expect("backslash name");
+    let listing = workspace::list(&f.group, "", workspace::ListOptions::default()).expect("list");
+    let entry = listing
+        .items
+        .iter()
+        .find(|entry| entry.name == r"foo\bar.txt")
+        .expect("entry");
+    assert_eq!(entry.path, r"foo\bar.txt");
+    let file = workspace::read_file(&f.group, &entry.path).expect("read selected file");
+    assert_eq!(file.content, "selected");
+    assert_eq!(file.path, entry.path);
+    workspace::write_file(&f.group, &file.path, "edited", &file.sha256)
+        .expect("write selected file");
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join(r"foo\bar.txt")).expect("selected"),
+        "edited"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("foo/bar.txt")).expect("neighbor"),
+        "neighbor"
+    );
+}

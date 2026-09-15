@@ -76,6 +76,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const sseRegistryRef = useRef(createSseConnectionRegistry<EventSource>());
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
+  const scopeRefreshEpoch = useRef(0);
   const headlessReconnectDelayRef = useRef<number>(1000);
   const headlessReconnectTimerRef = useRef<number | null>(null);
   const hiddenDisconnectTimerRef = useRef<number | null>(null);
@@ -116,8 +117,25 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   );
 
   useEffect(() => {
+    scopeRefreshEpoch.current += 1;
     selectedGroupIdRef.current = selectedGroupId;
+    return () => {
+      scopeRefreshEpoch.current += 1;
+    };
   }, [selectedGroupId]);
+
+  async function refreshGroupScope(groupId: string) {
+    const epoch = ++scopeRefreshEpoch.current;
+    const response = await api.fetchGroup(groupId, { noCache: true });
+    if (
+      response.ok &&
+      response.result.group?.group_id === groupId &&
+      scopeRefreshEpoch.current === epoch &&
+      selectedGroupIdRef.current === groupId
+    ) {
+      useGroupStore.getState().setGroupDoc(response.result.group);
+    }
+  }
 
   async function fetchContext(groupId: string, opts?: FetchContextOptions) {
     if (opts?.fresh && contextRefreshTimerRef.current) {
@@ -865,6 +883,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       setSSEStatus("connected");
       hasConnectedOnceRef.current = true;
       needsVisibilityCatchupRef.current = false;
+      // Group scope changes may have happened before this subscription opened.
+      void refreshGroupScope(groupId);
 
       // New SSE connections start at EOF, so every reconnect needs a
       // cursor-based catch-up to cover the disconnect window. The first
@@ -894,6 +914,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           actors: actorsRef.current,
           activeTab: activeTabRef.current,
           chatAtBottom: chatAtBottomRef.current,
+          onGroupScopeChanged: () => {
+            void refreshGroupScope(groupId);
+          },
           onContextSync: () => {
             contextRefreshTimerRef.current = scheduleContextOverviewCatchup(groupId, {
               invalidateContextRead: api.invalidateContextRead,

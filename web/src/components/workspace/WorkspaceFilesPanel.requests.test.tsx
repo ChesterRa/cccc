@@ -31,6 +31,8 @@ describe("workspace files surfaces", () => {
             resolve({
               ok: true,
               result: {
+                scope_key: "scope-a",
+                scope_url: "/repo",
                 path,
                 content: `content of ${path}\n`,
                 bytes: 10,
@@ -73,6 +75,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "one\n",
         bytes: 4,
@@ -153,4 +157,29 @@ describe("workspace files surfaces", () => {
     expect(labels).toContain("Attach as context");
     expect(labels).not.toContain("Pin to a Presentation slot");
   });
+});
+
+it("shows a failed subdirectory and retries only when asked", async () => {
+  let attempts = 0;
+  fetchWorkspaceListing.mockImplementation(async (_group: string, path: string) => {
+    if (!path) return listing(path, ROOT_ITEMS);
+    attempts += 1;
+    return attempts === 1
+      ? { ok: false, error: { code: "PERMISSION", message: "Permission denied: src" } }
+      : listing(path, [{ name: "recovered.rs", path: "src/recovered.rs", is_dir: false }]);
+  });
+  await mount();
+  await click(rowByName("src"));
+  expect(panel().querySelector('[role="alert"]')?.textContent).toContain("Permission denied: src");
+  expect(attempts).toBe(1);
+  await click(rowByName("src"));
+  await click(rowByName("src"));
+  expect(attempts).toBe(1);
+  const retry = [...panel().querySelectorAll("button")].find(
+    (button) => button.textContent === "Retry",
+  )!;
+  await click(retry);
+  expect(attempts).toBe(2);
+  expect(panel().querySelector('[role="alert"]')).toBeNull();
+  expect(rowByName("recovered.rs")).toBeTruthy();
 });

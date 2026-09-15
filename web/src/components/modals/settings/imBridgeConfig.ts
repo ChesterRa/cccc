@@ -5,6 +5,7 @@ import * as api from "../../../services/api";
 export type IMConfigDraft = {
   botTokenEnv: string;
   appTokenEnv: string;
+  mattermostUrl: string;
   feishuDomain: string;
   feishuAppId: string;
   feishuAppSecret: string;
@@ -18,12 +19,31 @@ export type IMConfigDraft = {
 
 export type IMConfigSaveRequest = IMConfigDraft & { groupId: string; platform: IMPlatform };
 
+export function isValidMattermostUrl(value: string): boolean {
+  // Server-side im_state::normalize_mattermost_url is authoritative; local validation only provides immediate feedback.
+  try {
+    const url = new URL(value.trim());
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !!url.hostname &&
+      !url.username &&
+      !url.password &&
+      !url.href.includes("?") &&
+      !url.href.includes("#") &&
+      !url.pathname.replace(/\/+$/, "").endsWith("/api/v4")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function canStartIMBridge(platform: IMPlatform, weixinLoggedIn: boolean): boolean {
   return platform !== "weixin" || weixinLoggedIn;
 }
 
 function toIMConfigExtra(config: IMConfigDraft) {
   return {
+    mattermost_url: config.mattermostUrl,
     feishu_domain: config.feishuDomain,
     feishu_app_id: config.feishuAppId,
     feishu_app_secret: config.feishuAppSecret,

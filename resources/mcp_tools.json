@@ -127,7 +127,7 @@
   },
   {
     "name": "cccc_connect",
-    "description": "Discover same-account CCCC instances and external Group connections approved for your local Group. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
+    "description": "Discover same-account CCCC instances and Group connections approved for your local Group, including standalone Direct connections without an account. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -194,3 +194,51 @@ fn default_ports_normalize_across_schemes() {
     );
     assert!(cookie_csrf_allowed_with_proxy(&request, false));
 }
+
+#[test]
+fn explicit_ports_are_not_interchangeable_with_other_schemes_defaults() {
+    for (host, origin) in [
+        ("cccc.example:443", "https://cccc.example:80"),
+        ("cccc.example:80", "https://cccc.example"),
+        ("cccc.example", "https://cccc.example:80"),
+    ] {
+        let mut request = HeaderMap::new();
+        request.insert(
+            header::HOST,
+            HeaderValue::from_str(host).expect("Host fixture"),
+        );
+        request.insert(
+            header::ORIGIN,
+            HeaderValue::from_str(origin).expect("Origin fixture"),
+        );
+        assert!(
+            !cookie_csrf_allowed_with_proxy(&request, false),
+            "{host} accepted {origin}"
+        );
+    }
+}
+
+#[test]
+fn a_trusted_proxy_scheme_is_not_discarded() {
+    let request = headers();
+    assert!(!origin_allowed_with_proxy(
+        &request,
+        "http://cccc.example",
+        true
+    ));
+}
+
+#[test]
+fn ipv6_authorities_keep_explicit_ports_exact() {
+    let request = HeaderMap::from_iter([(header::HOST, HeaderValue::from_static("[::1]:8848"))]);
+    assert!(origin_allowed_with_proxy(
+        &request,
+        "https://[::1]:8848",
+        false
+    ));
+    assert!(!origin_allowed_with_proxy(
+        &request,
+        "https://[::1]:8849",
+        false
+    ));
+}

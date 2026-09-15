@@ -4,7 +4,7 @@ Status: source implementation. This standard defines the same-account
 directory, native aggregate Workbench and durable Group/Actor communication,
 including MCP discovery/send/file ports, ordinary replies and cancellation.
 It also defines account-confirmed connections between two Groups owned by
-different members. Manual Group Bridge is retired. Automatic Web updates and
+different members, plus standalone Direct Group connections. Manual Group Bridge is retired. Automatic Web updates and
 cross-instance Voice are not implemented.
 
 Linux isolated integration evidence does not claim hosted deployment, public
@@ -152,11 +152,29 @@ manual/Tailscale provider. An enabled canonical manual origin can be advertised;
 otherwise the directory carries a null route.
 
 `connect_status { by?: "user" }` is a read-only daemon operation returning
-`{ connect: ConnectSnapshot | null }`. The snapshot includes issuer/device/instance,
+`{ connect: ConnectSnapshot | null, account_label?: string | null, group_connections?: { counts: Record<string, number | null>, expires_at: string } | null }`. The snapshot includes issuer/device/instance,
 the valid directory or null, `checked_at`, `error_code` and `error_message`.
 `GET /api/v1/connect` is its administrator-only Web port. Restricted and anonymous
 Web callers do not receive the directory. No private signing key or device/Web
 credential is returned.
+
+`account_label` is display metadata from the account's authenticated device and
+registration responses. It is stored on the current local membership binding,
+not in peer authority or Actor catalogues. Confirmed device or credential rejection
+during background refresh clears that binding's label without requiring the Account
+settings to be opened. Transient failures retain it; a delayed response cannot clear
+a replacement binding. Group counts project only current
+cross-member links from the existing expiring grant; they exclude same-account
+discovery. A null summary or per-Group count means unconfirmed, never zero.
+Summary failure does not invalidate the same-account directory. No additional
+per-Group browser poll or account request is required.
+
+Workbench navigation may retain last-known labels after transient read failure
+or expiry, but cannot open/retain a frame beyond the existing authorization
+lifetime. Explicit rejection, unlink, entry privilege loss, or binding replacement
+clears retained navigation. Remote native frames can include the same bounded
+count/expiry in their existing Group-list messages; this is display metadata,
+not additional access.
 
 ## Workbench transport and browser authority
 
@@ -219,7 +237,11 @@ All parent/child messages check exact origin, window and frame ID. Each entry
 navigation carries a monotonically increasing revision; target selection reports
 echo it. The entry ignores reports from earlier revisions, including a late
 initial/default Group selection, without remounting the frame. Target-local
-navigation may update the entry within the current revision. Restricted
+navigation may update the entry within the current revision. A `select` message MAY carry
+`action: "connections"` to open the Group connections dialog for that Group after target
+administrator admission and Group existence checks. This is applied at most once per
+navigation revision, performs no sharing mutation, and does not grant additional access.
+Ordinary navigation clears the previous Group dialog. Restricted
 tokens and unconfigured target bootstrapping never mount the embedded workbench
 or disclose its Groups. The entry and active target check current human access
 every 15 seconds; frame proofs renew every 45 seconds and expire without fresh
@@ -331,7 +353,10 @@ membership authority or proves reachability. Binding changes reject late results
 and old caches. `connect_catalog { group_id, instance_id?, by?,
 target_group_id?, after?, limit? }` checks local Group membership. Without
 `instance_id`, it returns the current remote instances, local instance ID and
-qualification state/expiry; without membership it returns an empty directory.
+qualification state/expiry. Without membership, the instance-wide directory is
+empty; approved Direct Group pairs remain available in `external_groups`.
+An unreadable optional account cache reports `account_error` while preserving
+independently authorized Direct discovery. It never supplies an account grant.
 With `instance_id`, it returns `{ instance, catalog, fresh, next }`, filtering
 optional exact target Group and cursor. The local default page size is 20,
 clamped to 1–64. It never starts a refresh or Actor. The core MCP tool
@@ -643,7 +668,7 @@ the issuer is unavailability, never proof that an uncertain delivery did not occ
   confirmation URL. Web uses explicit POST to initiate this selection.
 - `/api/v1/connect/groups` exposes these operations only to Web administrators
   (GET status, POST selection); restricted views/exhibits cannot manage links.
-- The account `/connect` page shows the member ID, invitations and connections.
+- The account `/connect` page shows the member ID, pending invitations, active connections and collapsed history.
   `/connect/select` requires an authenticated member matching the selection ticket.
   GET presents confirmation; CSRF-protected POST creates or accepts an invitation.
   Transient resource-unavailable errors retain the selected Groups and recipient
@@ -652,7 +677,12 @@ the issuer is unavailability, never proof that an uncertain delivery did not occ
   A definitive native selection rejection instead explains reselection/new invitation
   and does not offer repeated submission of the unusable ticket.
   Recipient links open `/?connect_invite=<id>` on a selected owned instance; the
-  native Group chooser does not automatically accept an invitation.
+  native Group chooser does not automatically accept an invitation. Cross-site
+  links preserve supported `lang` values. After browser confirmation, the account
+  page identifies the affected relation and offers a `?group=<id>&lang=<lang>`
+  navigation link only through the member's currently registered matching device
+  and instance. This return link does not bypass native Web authentication or
+  confer remote Group access.
 - Cancel/reject/revoke use CSRF-protected browser POSTs. Disconnect also has a
   confirmation page. Device retirement closes its invitations and connections
   atomically; account deletion removes its relation metadata. Closed records and
@@ -667,3 +697,101 @@ For `cccc_connect`, omitting `instance_id` returns same-account `instances` plus
 that Group's Actors, supply both its `instance_id` and `target_group_id`. Sends
 continue to use `dst_instance_id` and `dst_group_id`; the daemon resolves the exact
 authorized connection. Ordinary replies and file delivery reuse existing ports.
+
+## Standalone Direct Group connections
+
+A Direct connection grants collaboration between exactly two Group generations.
+It needs no account, directory lease, public domain, Web listener or Web Token.
+It uses the current catalog, messages, replies, files, cancellation, durable
+outbox and signed receipt implementation. It grants no terminal, arbitrary tool,
+filesystem/history or aggregate Workbench access. Multiple pairs are independent;
+a connected Group does not relay or discover its other connections automatically.
+
+The daemon owns a separately enabled TCP listener, with an explicit listen IP and
+port and an advertised `host:port`. Only the joining instance needs an outbound
+route to that address. The single socket carries requests and replies from both
+sides; no reverse inbound port is needed. Web Access, browser sessions and
+membership remain independent. Disabling the listener stops receiving channels;
+using invitations to connect outward remains possible. This setting applies to
+all receiving Direct connections in the instance. No NAT traversal, relay,
+broadcast discovery, firewall edits or router configuration is performed.
+
+Transport uses TLS 1.3 with mutual Ed25519 raw public keys (RFC 7250) and ALPN
+`cccc-direct/1`, using the persisted instance key. The joining client pins the
+invitation's exact host key. The listener verifies possession of the presented
+client key, then independently checks its invitation and approved Group grant.
+Possessing a TLS identity alone grants no application access. Ordinary HTTP
+account-peer endpoints MUST reject Direct authority; ordinary HTTPS certificate
+validation is unchanged. A copied Home is the same cryptographic identity and
+must not be run as an independent instance.
+
+An invitation is `cccc-direct:` plus base64url JSON with version `v:1`, a fresh
+`direct-<UUID>` ID, address, exact host instance/key/Group generation, expiry and
+random secret. The 30-minute invitation is shared through a trusted channel;
+it is not a navigation URL. The receiving store holds a secret digest. The
+joining store retains the invitation privately for authenticated reconnects.
+An invitation can bind one requesting peer and one exact Group. Import is
+idempotent for that pairing. The receiver must explicitly approve the request;
+joining does not self-approve. Pending state survives restarts. Expiry blocks
+new approval, not an already approved connection. A locally pending join MUST
+continue to reconcile the pinned receiver's decision after its deadline, with a
+slower retry cadence (60 seconds after a failed attempt, rather than 5). Network
+failure leaves the result unknown. Only an authenticated receiver can confirm
+`active`, terminal `expired` (no approval before the deadline), or `revoked`
+(including a removed/unknown invitation). Terminal decisions stop dialing. No
+expired invitation can be newly imported or approved; this recovery only checks
+requests already persisted on the joining side. Revocation cannot be undone;
+reconnection requires a new invitation. A Group replacement or identity change
+invalidates its grants. Names are descriptive snapshots, not authority.
+
+`direct_connections.json` is owner-only daemon state. Removed grant IDs remain
+as compact retirement markers, so removing a row cannot make an old invitation
+usable again. Their secrets, names and disposable catalogs are removed. Successful
+Group deletion and reset retire the deleted Group's records and free their quota.
+A deletion rolled back before unregistering preserves its Direct records. An
+administrator can inspect, revoke and remove orphaned records by their original
+Group ID if a prior deletion was interrupted; no new grant or approval is allowed
+for a missing Group. GET/status calls neither
+create identities nor open listeners or start jobs. Status omits invitation
+secrets and distinguishes configured, listening, pending approval, active but
+offline, online, expired and revoked. A joining `pending` record past its deadline
+stays visible as checking approval, until confirmed or explicitly cancelled; the
+local clock alone does not place it in closed history. Online is bounded-fresh channel evidence,
+not proof that a particular message was received. Listener errors and connection
+attempt errors are shown separately. Polling does not reset form drafts.
+
+Direct uses the existing typed peer operations. Its `connection_id` is mandatory
+and uniquely names the local grant; account/device fields are absent on the wire
+and represented as empty internally. They MUST NOT contain fictitious accounts
+or cloud lease values. Signed request material uses the existing ordered fields
+and connection ID with domain `cccc.connect.peer.direct.request.v1`. Each request
+is checked against the current key, exact pair, resource generation, digest and
+60-second request lifetime; responses remain signed and correlated to that
+request. A live channel is not continuing authorization. The dispatcher uses the
+same Group locks as other ports; network waits hold no dispatcher permits.
+
+Frames are a four-byte big-endian length followed by JSON, bounded to 14 MiB;
+the initial hello is bounded to 8 KiB. Handshakes and writes have 10-second
+budgets, idle reads 45 seconds, with idle keepalives. Queues and request
+concurrency are bounded. Connection loss returns uncertainty to the existing
+outbox; no second durable queue is introduced. Receipt recovery precedes retry,
+so losing a response cannot create a new logical delivery. Malformed or stalled
+peers cannot hold a global dispatcher lock.
+
+An explicit Direct record pins the route for its exact pair even while offline
+or revoked. It never automatically falls back to account authority. Removal is
+allowed only after revocation or confirmed unapproved invitation expiry (the
+receiving side owns its decision; a pending joining side must reconcile or cancel).
+Removing a pin
+permits future independently authorized routing, but existing work remains bound
+to its original connection ID. A known revoked/deleted/replaced grant retires
+pending work under the existing failed versus unconfirmed receipt rules.
+
+Administration uses `connect_direct_status`, `connect_direct_configure`,
+`connect_direct_invite`, `connect_direct_join`, `connect_direct_approve`,
+`connect_direct_revoke`, and `connect_direct_remove`. These are user-only daemon
+operations. Web exposes administrator-only GET/POST `/api/v1/connect/direct`;
+restricted, anonymous remote and exhibit sessions cannot manage them. Actor MCP
+continues using `cccc_connect` discovery and the existing messaging tools;
+it cannot create or approve grants. The CLI exposes `cccc direct`; invitation
+import reads stdin rather than accepting a secret in the command line.

@@ -1610,6 +1610,7 @@ Result:
 ```
 
 Notes:
+- Successful deletion MUST retire all Direct records and disposable catalogs owned by the deleted Group, preserve retired IDs, and release their relation quota. Reset uses the same deletion cleanup; it MUST NOT transfer those grants to the replacement Group.
 - Successful deletion MUST revoke every remote connector credential bound to the deleted group. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
 - Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.
 
@@ -1626,6 +1627,17 @@ Result:
 ```ts
 { group_id: string; active_scope_key: string; event: CCCSEventV1 }
 ```
+
+Workspace Web clients must treat `group.set_active_scope`, `group.attach`, and
+`group.detach_scope` as invalidating their active workspace view and reconcile the
+current Group document, rather than applying historical event scope fields.
+The Web workspace list/read/write requests bind `scope_key` and `scope_url` to
+that document; file reads return both values and saves echo the opened identity.
+Missing identity is rejected with HTTP 400, and a changed key or attached URL with
+HTTP 409 (`workspace_scope_changed`), before resolving the relative path. The
+checked Group snapshot owns the entire filesystem operation; a subsequent scope
+switch cannot retarget an in-flight write. The digest detects content changes
+within that workspace and does not establish workspace identity.
 
 #### `group_detach_scope`
 
@@ -5342,6 +5354,7 @@ Stable error classes:
   membership: {
     logged_in: boolean
     device_id?: string | null
+    account_label?: string | null
     hostname?: string | null
     web_url?: string | null
     online: boolean
@@ -5368,6 +5381,15 @@ Stable error classes:
 ```
 
 `membership_status` is user-only. Implementations MUST reject non-user callers before assembling it. `hostname` is the reserved, tokenless device origin; its presence does not prove that DNS or a tunnel has been provisioned. `web_url` is the tokenless Web sign-in address, assembled locally and null while logged out. It MUST NOT contain a bearer credential. The Web port can separately issue a short-lived, one-time Web login grant for the current authorized administrator. Website account sign-in does not authenticate a browser to the local CCCC Web. Actor-bound Web Model connector URLs remain part of the actor connector API and MUST NOT be selected or exposed through global membership status.
+
+`account_label` is optional display-only identity (currently the verified account
+email). The authenticated device status and Connect directory refresh synchronize
+it to the issuer-bound local membership state. New device grants clear the prior
+label; cut/unlinked devices never expose it. Connect refresh MUST clear it on
+confirmed device or credential rejection, independently of `membership_status`.
+Transient transport failures retain it, and updates remain bound to the device
+and issuer that initiated the request. Older issuers may omit it. It does
+not identify the browser's Web Access Token principal or grant any Web rights.
 
 `reach_enabled` is the saved Reach intent; `in_reach` only identifies the selected
 provider. Neither proves connectivity. `reach_status` is an ephemeral projection:
@@ -6727,3 +6749,54 @@ revision. A failed browser checkpoint retry stops the sequence and retains the
 remaining IDs and text in its error details. The Web UI reports failure and
 returns this unconfirmed text to the original Group's composer for user recovery;
 it MUST NOT dispatch it automatically, mark it committed, or retry indefinitely.
+
+### Standalone Direct Group administration
+
+The operations below are user-only (`by` must be `user`, default `user`). They do
+not require membership and do not grant Web administration to the remote peer.
+New Direct grants and approvals require an existing local `group_id`. Administrator
+status/revoke/remove also accept an original missing Group ID, permitting cleanup
+of records left by an interrupted deletion; another Group ID cannot remove them.
+
+| Operation | Additional arguments | Result |
+| --- | --- | --- |
+| `connect_direct_status` | `group_id` | Listener configuration, local `addresses: [{interface, bind, address}]` suggestions, fresh runtime diagnostics, redacted relations for this Group |
+| `connect_direct_configure` | `listener: {bind, address} \| null`, `display_name?`, `expected_listener?` | `{configured:true}`; actual listener state is checked separately |
+| `connect_direct_invite` | `group_id`, `expected_listener?: {bind, address}` | `{invitation}`; explicit secret-bearing response, never polled |
+| `connect_direct_join` | `group_id`, `invitation` | `{id}`; persists the request, not approval |
+| `connect_direct_approve` | `group_id`, `id` | `{updated:true}`; receiver approves the exact pending pair |
+| `connect_direct_revoke` | `group_id`, `id` | `{updated:true}`; authorization is revoked before return |
+| `connect_direct_remove` | `group_id`, `id` | `{removed:true}`; only revoked or expired unapproved records |
+
+`connect_direct_status` is read-only; configuration uses its own store
+lock without a global dispatcher permit, while invitation/join/approval/revocation/removal use Group write permits
+and the shared local store lock. Peer network waits do not hold these permits.
+Status never returns the invitation or secret digest. Local addresses are read
+from operational interfaces on the daemon machine, excluding loopback, wildcard,
+multicast and link-local addresses; suggestions do not promise reachability or
+change saved settings. Enumeration failure yields an empty list, allowing manual
+configuration. Each suggestion carries a matching IPv4/IPv6 wildcard bind and the
+configured local port (default 8847). No discovery packet is sent.
+When supplied, `expected_listener` compares the full saved listener under the store
+lock: configure accepts null to mean previously disabled; invite requires an object.
+A mismatch rejects the mutation instead of overwriting another setup or issuing an
+invitation for a different address. Omitted expectations preserve explicit CLI use.
+The Web create action can sequence configuration, bounded readiness reads and one
+invitation mutation. No peer wait holds a dispatcher permit; closing the page or a
+failed/uncertain step must not schedule a delayed invitation or retry a POST. Relation `expires_at`
+reports the invitation deadline; it does not expire an already active grant.
+For a joining pending record, `expired:true` means the local deadline passed, not
+that approval was refused. `state:expired` is the receiver's terminal refusal;
+unconfirmed pending records remain reconcilable and require cancellation before
+removal. Local deletion/reset retires the old Group's Direct records and catalogs,
+retaining their IDs as retirement markers.
+`initiated` distinguishes the joining side from the receiving administrator who
+must approve. A saved pending request alone does not prove peer contact.
+`connect_catalog` includes
+approved Direct pairs in `external_groups` without an account; it never grants
+instance-wide discovery. `connect_status.group_connections` includes active
+Direct relations. `connect_group_status.direct_routes` identifies account link
+IDs whose exact pair has an explicit Direct route preference; this is a display
+projection, not a replacement grant or confirmation of delivery. The
+[Connect standard](CCCC_CONNECT_V1.md#standalone-direct-group-connections)
+defines identity, transport, routing and durable delivery semantics.

@@ -18,8 +18,13 @@ vi.mock("../../services/api", () => ({ fetchWorkspaceFile, saveWorkspaceFile }))
 let files: WorkspaceFilesController;
 let root: Root;
 let host: HTMLDivElement;
-function Harness({ visible = true, groupId = "group-1" }) {
-  files = useWorkspaceFiles(groupId, false);
+function Harness({
+  visible = true,
+  groupId = "group-1",
+  scopeKey = "scope-a",
+  scopeUrl = "/repo",
+}) {
+  files = useWorkspaceFiles(groupId, false, scopeKey, scopeUrl);
   return visible && files.file ? (
     <WorkspaceFileViewer
       file={files.file}
@@ -37,8 +42,17 @@ function Harness({ visible = true, groupId = "group-1" }) {
     />
   ) : null;
 }
-async function render(visible = true, groupId = "group-1") {
-  await act(async () => root.render(<Harness visible={visible} groupId={groupId} />));
+async function render(
+  visible = true,
+  groupId = "group-1",
+  scopeKey = "scope-a",
+  scopeUrl = "/repo",
+) {
+  await act(async () =>
+    root.render(
+      <Harness visible={visible} groupId={groupId} scopeKey={scopeKey} scopeUrl={scopeUrl} />,
+    ),
+  );
 }
 async function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,6 +62,8 @@ async function setup() {
   fetchWorkspaceFile.mockResolvedValue({
     ok: true,
     result: {
+      scope_key: "scope-a",
+      scope_url: "/repo",
       path: "README.md",
       content: "disk",
       sha256: "old",
@@ -77,6 +93,53 @@ afterEach(async () => {
   host?.remove();
   vi.resetAllMocks();
 });
+it.each([
+  ["CRLF", "one\r\ntwo\r\nthree\r\n"],
+  ["LF", "one\ntwo\nthree\n"],
+  ["CR", "one\rtwo\rthree\r"],
+  ["mixed", "one\r\ntwo\nthree\rend"],
+])("preserves %s endings across edits, undo, remount and keyboard save", async (_, content) => {
+  await setup();
+  fetchWorkspaceFile.mockResolvedValue({
+    ok: true,
+    result: { ...files.file, content, bytes: content.length },
+  });
+  await act(async () => {
+    await files.openFile("README.md", { reload: true });
+  });
+  const display = content.replace(/\r\n?/g, "\n");
+  expect(host.querySelector("textarea")?.value).toBe(display);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+  await edit(display.replace("two", "tXwo"));
+  expect(files.draft).toBe(content.replace("two", "tXwo"));
+  await edit(display);
+  expect(files.draft).toBe(content);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+
+  await edit(display.replace("three", "inserted\nthree"));
+  const newline = content.match(/\r\n|\r|\n/)![0];
+  const saved = content.replace("three", `inserted${newline}three`);
+  expect(files.draft).toBe(saved);
+  await render(false);
+  await render();
+  expect(files.draft).toBe(saved);
+  saveWorkspaceFile.mockResolvedValue({ ok: true, result: { sha256: "saved" } });
+  await act(async () => {
+    host
+      .querySelector("textarea")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
+  });
+  expect(saveWorkspaceFile).toHaveBeenCalledWith(
+    "group-1",
+    "README.md",
+    saved,
+    "old",
+    "scope-a",
+    "/repo",
+  );
+  expect(files.file?.content).toBe(saved);
+  expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
+});
 it("preserves unsaved edits across repeated viewer unmounts and saves the restored draft", async () => {
   await setup();
   await edit("unsaved work");
@@ -90,7 +153,14 @@ it("preserves unsaved edits across repeated viewer unmounts and saves the restor
   await act(async () => {
     host.querySelector<HTMLButtonElement>('button[title="Save"]')!.click();
   });
-  expect(saveWorkspaceFile).toHaveBeenCalledWith("group-1", "README.md", "unsaved work", "old");
+  expect(saveWorkspaceFile).toHaveBeenCalledWith(
+    "group-1",
+    "README.md",
+    "unsaved work",
+    "old",
+    "scope-a",
+    "/repo",
+  );
   expect(host.querySelector<HTMLButtonElement>('button[title="Save"]')!.disabled).toBe(true);
 });
 it("keeps typing made during a save even when the viewer is hidden before the response", async () => {
@@ -197,4 +267,138 @@ it("cancels a pending navigation when the current file is selected again", async
   });
   expect(files.file?.path).toBe("README.md");
   expect(host.querySelector("textarea")?.value).toBe("still editing");
+});
+
+it("restores an unsaved draft when reopening an internal symlink", async () => {
+  await setup();
+  await edit("keep target draft");
+  await act(async () => files.closeFile());
+  await act(async () => files.openFile("README-link.md"));
+  expect(files.file?.path).toBe("README.md");
+  expect(host.querySelector("textarea")?.value).toBe("keep target draft");
+});
+
+it("preserves an edit reverted to the old content while a save is pending", async () => {
+  await setup();
+  await edit("submitted");
+  let finish!: (value: unknown) => void;
+  saveWorkspaceFile.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let saving!: Promise<boolean>;
+  await act(async () => {
+    saving = files.saveFile(files.draft);
+  });
+  await edit("disk");
+  await act(async () => {
+    finish({ ok: true, result: { sha256: "saved" } });
+    await saving;
+  });
+  fetchWorkspaceFile.mockResolvedValue({
+    ok: true,
+    result: { ...files.file, content: "submitted" },
+  });
+  await act(async () => files.closeFile());
+  await act(async () => files.openFile("README.md"));
+  expect(host.querySelector("textarea")?.value).toBe("disk");
+});
+
+it("finishes a save after leaving and returning to its file without a stale digest", async () => {
+  await setup();
+  await edit("submitted");
+  let finish!: (value: unknown) => void;
+  saveWorkspaceFile.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let saving!: Promise<boolean>;
+  await act(async () => {
+    saving = files.saveFile(files.draft);
+  });
+  await act(async () => files.closeFile());
+  await act(async () => files.openFile("README.md"));
+  expect(files.saving).toBe(true);
+  await edit("disk");
+  await act(async () => files.closeFile());
+  await act(async () => {
+    finish({ ok: true, result: { sha256: "saved" } });
+    await saving;
+  });
+  await act(async () => files.openFile("README.md"));
+  expect(files.draft).toBe("disk");
+  expect(files.file?.sha256).toBe("saved");
+  expect(files.saving).toBe(false);
+});
+
+it("retires drafts and pending opens when the same Group changes scope or location", async () => {
+  await setup();
+  await edit("old workspace draft");
+  const oldFile = files.file!;
+  let finish!: (value: unknown) => void;
+  fetchWorkspaceFile.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let opening!: Promise<void>;
+  await act(async () => {
+    opening = files.openFile("LICENSE");
+  });
+  await render(true, "group-1", "scope-b", "/other");
+  expect(files.file).toBeNull();
+  expect(files.draft).toBe("");
+  await act(async () => {
+    finish({ ok: true, result: { ...oldFile, path: "LICENSE" } });
+    await opening;
+  });
+  expect(files.file).toBeNull();
+  fetchWorkspaceFile.mockResolvedValue({
+    ok: true,
+    result: { ...oldFile, scope_key: "scope-b", scope_url: "/other", content: "new workspace" },
+  });
+  await act(async () => {
+    await files.openFile("README.md");
+  });
+  expect(files.draft).toBe("new workspace");
+  await edit("new edit");
+  await render(true, "group-1", "scope-b", "/relocated");
+  expect(files.file).toBeNull();
+  expect(files.draft).toBe("");
+});
+
+it("ignores a save completion after a scope switch and sends the opened scope identity", async () => {
+  await setup();
+  await edit("old scope edit");
+  let finish!: (value: unknown) => void;
+  saveWorkspaceFile.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let saving!: Promise<boolean>;
+  await act(async () => {
+    saving = files.saveFile(files.draft);
+  });
+  expect(saveWorkspaceFile).toHaveBeenCalledWith(
+    "group-1",
+    "README.md",
+    "old scope edit",
+    "old",
+    "scope-a",
+    "/repo",
+  );
+  await render(true, "group-1", "scope-b", "/other");
+  await act(async () => {
+    finish({ ok: true, result: { sha256: "saved" } });
+    await saving;
+  });
+  expect(files.file).toBeNull();
+  expect(files.saving).toBe(false);
 });

@@ -43,6 +43,7 @@ export interface MobileMenuSheetProps {
   onOpenFiles?: () => void;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
+  accountLabel?: string | null;
   onOpenAccount: () => void;
   onOpenGroupEdit?: () => void;
   onStartGroup: () => void;
@@ -67,6 +68,7 @@ export function MobileMenuSheet({
   onOpenFiles,
   onOpenSettings,
   canAccessAccount,
+  accountLabel,
   onOpenAccount,
   onOpenGroupEdit,
   onStartGroup,
@@ -282,7 +284,17 @@ export function MobileMenuSheet({
               >
                 <div className="flex items-center gap-3">
                   <AccountIcon size={18} />
-                  <span>{t("account")}</span>
+                  <span className="min-w-0 text-left">
+                    <span className="block">{t("account")}</span>
+                    {accountLabel ? (
+                      <span
+                        className="block max-w-56 truncate text-xs text-[var(--color-text-muted)]"
+                        title={t("linkedAccount", { account: accountLabel })}
+                      >
+                        {accountLabel}
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
               </button>
             ) : null}

@@ -26,6 +26,10 @@ The Web UI has these main areas:
 ### Group message and terminal views
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
+**Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
+in CCCC Connect. The settings entry manages the current Group; the sidebar menu manages the Group
+whose menu you opened. Only incoming invitations ask which local Group should accept
+the connection.
 **Settings and more** collects theme, text size, language, account and the full settings entry.
 Appearance choices use application menus for theme, text size and language. Selecting an
 option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
@@ -35,7 +39,9 @@ sheet with the same choices and access rules; choice panels are portalled above 
 
 Use **Messages / Terminals** in the Group header to switch the current Group's work view.
 On narrow headers, the view icon switches between these views. Presentation also opens from
-the header. Switching views only replaces the history area; the message composer stays in place.
+the header, beside **Files** on desktop, with its own update indicator. Files and Presentation
+share one side column: selecting the other swaps panels; selecting the active one closes it.
+Switching views only replaces the history area; the message composer stays in place.
 Each Group remembers its view and terminal page in this browser, including after a page reload. Message drafts and
 the message reading position survive switching between views.
 
@@ -75,6 +81,49 @@ two Actors visible at once. Updates from the same Actor replace the previous exc
 Actor to inspect the complete output. Restoring a Group or reconnecting its activity stream
 restores history without replaying it as new bubbles; ordinary message unread indicators are
 independent of these brief progress previews. The same rules apply to every managed Runtime.
+
+### Right sidebar
+
+Files and Presentation share one resizable sidebar with matching header controls. Each Group remembers its expanded width and Presentation density. Files always opens at the expanded width; its file draft survives switching to Presentation and back.
+
+Presentation shows lightweight image, text and table previews. Drag it narrower to snap into four compact slots, or use the collapse button; expanding restores the remembered width. The divider supports arrow keys, and Enter toggles compact Presentation. Viewing thumbnails does not clear update indicators or start interactive browser/PDF sessions. Open a slot to view its full content through the existing window/split viewer. Phones retain dedicated full-screen surfaces.
+
+### Workspace files
+
+Open **Files** in the Group header to browse the active workspace. The file tree and
+Presentation share the right-hand column. Opening a text file on desktop places its
+editor in the message area and keeps the composer available. Closing the editor returns
+to messages; covered messages do not count as viewed for unread tracking.
+
+Save with the toolbar button or `Ctrl+S` / `Cmd+S`. Unsaved edits survive closing and
+reopening files within the current Group, including internal symlinks to the same file.
+Save before switching Groups, changing the active workspace, or reloading the page.
+Changing the active workspace clears the file view and its drafts; stale saves are rejected
+instead of writing into the newly selected workspace. If the file changed on disk since it
+was opened, saving reports a conflict; **Reload** discards the draft and loads the current
+file. This check does not lock out external editors or Actors.
+
+A directory that cannot be loaded shows its error below the row. Use **Retry** there
+to load it again; an error does not mean the directory is empty.
+
+On phones, Files opens a read-only viewer. Binary files and files larger than 1 MiB are
+not editable here. Files stay within the active workspace, and exhibit mode does not
+expose this surface.
+
+### Inspect images and diagrams
+
+Expanded message images, Mermaid diagrams, Presentation images and enlarged
+quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
+**−** to change scale; dragging pans enlarged content and the wheel keeps native
+scrolling.
+Touch screens support pinch zoom. Focus the viewport for `+`/`−`, `0` (fit),
+`1` (actual size) and native arrow-key scrolling. Closing a modal restores focus
+to its opener. Regular message scrolling, PDF controls and interactive browser
+surfaces retain their own behavior. The workspace text editor is unchanged.
+Refreshing the same workspace-linked Presentation image preserves its zoom and
+position, including across a failed refresh and recovery. Failures show an error
+without discarding the viewing position. Switching to another slot or publication
+starts with **Fit** again.
 
 ### Codex Voice (Experimental)
 
@@ -509,7 +558,7 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### IM Bridge
 
-Configure Telegram, Slack, Discord, Feishu, DingTalk, or WeCom integration.
+Configure Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or [Mattermost](./im-bridge/mattermost) integration.
 
 ### Group Space
 

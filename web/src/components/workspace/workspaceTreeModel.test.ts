@@ -87,6 +87,7 @@ describe("workspaceTreeModel", () => {
     state = expandPaths(state, ["a", "a/b"]);
 
     const rows = flattenTree(state);
+    expect(new Set(rows.map((node) => node.key)).size).toBe(rows.length);
     expect(rows.map((node) => node.entry.path)).toEqual(["a", "a/b", "a/b", "a/b/leaf.txt"]);
     const looped = rows.filter((node) => node.entry.path === "a/b");
     expect(looped[0].expanded).toBe(true);
@@ -103,6 +104,34 @@ describe("workspaceTreeModel", () => {
     expect(refreshed.expanded).toEqual(["src"]);
     expect(pendingDirectories(refreshed)).toEqual([ROOT_PATH, "src"]);
   });
+});
+
+it("gives shared symlink targets stable keys in each displayed branch", () => {
+  let state = setDirectory(emptyTreeState(), "", { items: [dir("alias"), dir("real")] });
+  for (const path of ["alias", "real"]) {
+    state = setDirectory(state, path, { items: [dir("real/nested")] });
+  }
+  state = setDirectory(state, "real/nested", { items: [file("real/nested/file.txt")] });
+  state = expandPaths(state, ["alias", "real", "real/nested"]);
+  const rows = flattenTree(state);
+  expect(new Set(rows.map((node) => node.key)).size).toBe(rows.length);
+  expect(rows.filter((node) => !node.entry.is_dir).map((node) => node.key)).toEqual([
+    "alias/nested/file.txt",
+    "real/nested/file.txt",
+  ]);
+  expect(rows.filter((node) => !node.entry.is_dir).map((node) => node.entry.path)).toEqual([
+    "real/nested/file.txt",
+    "real/nested/file.txt",
+  ]);
+  state = toggleExpanded(state, "alias");
+  expect(flattenTree(state).map((node) => node.key)).toEqual([
+    "alias",
+    "real",
+    "real/nested",
+    "real/nested/file.txt",
+  ]);
+  state = toggleExpanded(state, "alias");
+  expect(flattenTree(state)).toEqual(rows);
 });
 
 it.each(["constructor", "toString", "__proto__"])(

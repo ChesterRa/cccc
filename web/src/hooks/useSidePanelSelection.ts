@@ -7,8 +7,7 @@ export type SidePanelSurface = "files" | "presentation";
 /**
  * One right-hand column, two surfaces.
  *
- * The work-area rail and the header settings menu both select that column, so the toggle rules
- * live here instead of being restated at each entry point.
+ * The Group work controls select the column; keep switching and viewer cleanup together.
  */
 export function useSidePanelSelection(groupId: string) {
   const filesPanelOpen = useUIStore((state) =>

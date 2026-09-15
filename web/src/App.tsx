@@ -47,8 +47,10 @@ import { ConnectRemotePanel } from "./features/connect/ConnectRemotePanel";
 export default function App({
   connectEmbedded = false,
   onOpenParentSidebar,
+  embeddedAccountLabel,
 }: {
   connectEmbedded?: boolean;
+  embeddedAccountLabel?: string | null;
   onOpenParentSidebar?: () => void;
 }) {
   // Theme
@@ -488,6 +490,7 @@ export default function App({
         onSetGroupState={handleSetGroupState}
         onOpenSettings={() => openModal("settings")}
         canAccessAccount={canManageGroups}
+        accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
         onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
         onOpenMobileMenu={() => openModal("mobileMenu")}
         onTabChange={handleTabChange}
@@ -536,6 +539,7 @@ export default function App({
             onSetGroupState={handleSetGroupState}
             fetchContext={fetchContext}
             canManageGroups={canManageGroups}
+            accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
           />
         </Suspense>
       ) : null}

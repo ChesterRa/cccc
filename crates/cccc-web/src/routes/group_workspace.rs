@@ -17,6 +17,8 @@ use crate::api::{ApiError, ApiResult, success};
 
 #[derive(Deserialize)]
 struct ListQuery {
+    scope_key: String,
+    scope_url: String,
     #[serde(default)]
     path: String,
     #[serde(default)]
@@ -25,6 +27,8 @@ struct ListQuery {
 
 #[derive(Deserialize)]
 struct FileQuery {
+    scope_key: String,
+    scope_url: String,
     #[serde(default)]
     path: String,
 }
@@ -43,21 +47,27 @@ async fn list(
     Path(group_id): Path<String>,
     Query(query): Query<ListQuery>,
 ) -> ApiResult {
-    let group = load_group(&state, &group_id)?;
-    let listing = workspace::list(
-        &group,
-        &query.path,
-        ListOptions {
-            show_ignored: query.show_ignored,
-        },
-    )
-    .map_err(|error| path_error(&query.path, error))?;
-    Ok(success(json!({
-        "root_path": listing.root,
-        "path": listing.path,
-        "parent": listing.parent,
-        "items": listing.items,
-    })))
+    tokio::task::spawn_blocking(move || {
+        let group = load_group(&state, &group_id, &query.scope_key, &query.scope_url)?;
+        let listing = workspace::list(
+            &group,
+            &query.path,
+            ListOptions {
+                show_ignored: query.show_ignored,
+            },
+        )
+        .map_err(|error| path_error(&query.path, error))?;
+        Ok(success(json!({
+            "scope_key": group.active_scope_key,
+            "scope_url": query.scope_url,
+            "root_path": listing.root,
+            "path": listing.path,
+            "parent": listing.parent,
+            "items": listing.items,
+        })))
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("workspace_unavailable", error.to_string()))?
 }
 
 async fn read(
@@ -65,10 +75,14 @@ async fn read(
     Path(group_id): Path<String>,
     Query(query): Query<FileQuery>,
 ) -> ApiResult {
-    let group = load_group(&state, &group_id)?;
-    let file = workspace::read_file(&group, &query.path)
-        .map_err(|error| path_error(&query.path, error))?;
-    Ok(success(serde_json::to_value(file).unwrap_or_default()))
+    tokio::task::spawn_blocking(move || {
+        let group = load_group(&state, &group_id, &query.scope_key, &query.scope_url)?;
+        let file = workspace::read_file(&group, &query.path)
+            .map_err(|error| path_error(&query.path, error))?;
+        Ok(success(serde_json::to_value(file).unwrap_or_default()))
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("workspace_unavailable", error.to_string()))?
 }
 
 async fn write(
@@ -76,29 +90,43 @@ async fn write(
     Path(group_id): Path<String>,
     JsonBody(body): JsonBody<Value>,
 ) -> ApiResult {
-    let group = load_group(&state, &group_id)?;
-    let path = text(&body, "path");
-    let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
-        ApiError::bad_code("invalid_content", "content must be a string", json!({}))
-    })?;
-    let expected = text(&body, "sha256");
-    match workspace::write_file(&group, &path, content, &expected)
-        .map_err(|error| path_error(&path, error))?
-    {
-        WriteOutcome::Written { sha256, created } => Ok(success(json!({
-            "path": path,
-            "sha256": sha256,
-            "created": created,
-        }))),
-        WriteOutcome::Conflict { sha256 } => Err(ApiError::conflict(
-            "workspace_write_conflict",
-            "the file changed on disk since it was opened",
-            json!({"path": path, "sha256": sha256}),
-        )),
-    }
+    tokio::task::spawn_blocking(move || {
+        let group = load_group(
+            &state,
+            &group_id,
+            &text(&body, "scope_key"),
+            &text(&body, "scope_url"),
+        )?;
+        let path = text(&body, "path");
+        let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
+            ApiError::bad_code("invalid_content", "content must be a string", json!({}))
+        })?;
+        let expected = text(&body, "sha256");
+        match workspace::write_file(&group, &path, content, &expected)
+            .map_err(|error| path_error(&path, error))?
+        {
+            WriteOutcome::Written { sha256, created } => Ok(success(json!({
+                "path": path,
+                "sha256": sha256,
+                "created": created,
+            }))),
+            WriteOutcome::Conflict { sha256 } => Err(ApiError::conflict(
+                "workspace_write_conflict",
+                "the file changed on disk since it was opened",
+                json!({"path": path, "sha256": sha256}),
+            )),
+        }
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("workspace_unavailable", error.to_string()))?
 }
 
-fn load_group(state: &AppState, group_id: &str) -> Result<cccc_core::GroupDoc, ApiError> {
+fn load_group(
+    state: &AppState,
+    group_id: &str,
+    scope_key: &str,
+    scope_url: &str,
+) -> Result<cccc_core::GroupDoc, ApiError> {
     if state.web_mode.is_read_only() {
         return Err(ApiError::forbidden_code(
             "read_only",
@@ -107,16 +135,36 @@ fn load_group(state: &AppState, group_id: &str) -> Result<cccc_core::GroupDoc, A
     }
     let store =
         GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
-    store
+    if scope_key.is_empty() || scope_url.is_empty() {
+        return Err(ApiError::bad_code(
+            "invalid_scope",
+            "scope_key and scope_url are required",
+            json!({}),
+        ));
+    }
+    let group = store
         .load(group_id)
-        .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
+        .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))?;
+    if scope_key != group.active_scope_key
+        || !group
+            .scopes
+            .iter()
+            .any(|scope| scope.scope_key == scope_key && scope.url == scope_url)
+    {
+        return Err(ApiError::conflict(
+            "workspace_scope_changed",
+            "The active workspace changed. Reopen the file before saving.",
+            json!({}),
+        ));
+    }
+    // Resolve the whole operation against this checked snapshot, never a later active scope.
+    Ok(group)
 }
 
 fn text(body: &Value, key: &str) -> String {
     body.get(key)
         .and_then(Value::as_str)
         .unwrap_or_default()
-        .trim()
         .to_owned()
 }
 

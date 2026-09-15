@@ -1,3 +1,4 @@
+import { groupConnectionCount } from "../../features/connect/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Monitor } from "lucide-react";
 import { instanceName } from "../../features/connect/instanceName";
@@ -47,6 +48,7 @@ export interface GroupSidebarProps {
   onReorderSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
   onArchiveGroup: (groupId: string) => void;
   onRestoreGroup: (groupId: string) => void;
+  onOpenGroupConnections?: (groupId: string) => void;
 }
 
 export function GroupSidebar({
@@ -69,6 +71,7 @@ export function GroupSidebar({
   onReorderSection,
   onArchiveGroup,
   onRestoreGroup,
+  onOpenGroupConnections,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
   const branding = useBrandingStore((s) => s.branding);
@@ -176,6 +179,9 @@ export function GroupSidebar({
             isCollapsed={false}
             readOnly={readOnly}
             menuActionLabel={menuActionLabel}
+            connectionsLabel={t("groupConnections.title")}
+            onOpenConnections={onOpenGroupConnections}
+            connectionSummary={connect?.groupConnections}
             menuAriaLabel={t("groupActions")}
             reorderInstructions={t("reorderWithKeyboard")}
             onMenuAction={handleMenuAction}
@@ -197,6 +203,11 @@ export function GroupSidebar({
                 isActive={gid === selectedGroupId}
                 isCollapsed={isCollapsed}
                 isArchived={isArchivedSection}
+                connectionsLabel={t("groupConnections.title")}
+                connection={groupConnectionCount(connect?.groupConnections, gid)}
+                onOpenConnections={
+                  onOpenGroupConnections ? () => onOpenGroupConnections(gid) : undefined
+                }
                 menuActionLabel={isCollapsed ? undefined : menuActionLabel}
                 menuAriaLabel={isCollapsed ? undefined : `${t("groupActions")} · ${g.title || gid}`}
                 onMenuAction={isCollapsed ? undefined : () => handleMenuAction(gid)}
@@ -218,6 +229,8 @@ export function GroupSidebar({
       onClose,
       onReorderSection,
       onRestoreGroup,
+      onOpenGroupConnections,
+      connect?.groupConnections,
       onSelectGroup,
       onWarmGroup,
       readOnly,

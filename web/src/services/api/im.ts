@@ -1,6 +1,38 @@
 import type { IMConfig, IMPlatform, IMStatus, WeixinLoginStatus } from "../../types";
 import { apiJson } from "./base";
 
+// Track in-flight requests per Group across unmounts; preserve ordering behavior between legacy platforms.
+const managementRequests = new Map<string, { pending: Set<Promise<void>>; serialized: boolean }>();
+
+export async function runIMManagement<T>(
+  groupId: string,
+  mattermost: boolean,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let entry = managementRequests.get(groupId);
+  if (!entry) {
+    entry = { pending: new Set(), serialized: false };
+    managementRequests.set(groupId, entry);
+  }
+  const preceding = mattermost || entry.serialized ? [...entry.pending] : [];
+  entry.serialized ||= mattermost;
+  // Queue the whole management flow so no new operation can interleave between saving and starting.
+  const request = preceding.length
+    ? Promise.all(preceding).then(operation)
+    : (async () => operation())();
+  const completion = request.then(
+    () => {},
+    () => {},
+  );
+  entry.pending.add(completion);
+  try {
+    return await request;
+  } finally {
+    entry.pending.delete(completion);
+    if (entry.pending.size === 0) managementRequests.delete(groupId);
+  }
+}
+
 export interface IMAuthorizedChat {
   chat_id: string;
   thread_id: number | string;
@@ -35,6 +67,7 @@ export async function setIMConfig(
   botTokenEnv: string,
   appTokenEnv?: string,
   extra?: {
+    mattermost_url?: string;
     feishu_domain?: string;
     feishu_app_id?: string;
     feishu_app_secret?: string;
@@ -48,11 +81,20 @@ export async function setIMConfig(
 ) {
   const body: Record<string, unknown> = { group_id: groupId, platform };
 
-  if (platform === "telegram" || platform === "slack" || platform === "discord") {
+  if (
+    platform === "telegram" ||
+    platform === "slack" ||
+    platform === "discord" ||
+    platform === "mattermost"
+  ) {
     body.bot_token_env = botTokenEnv;
     if (platform === "slack" && appTokenEnv) {
       body.app_token_env = appTokenEnv;
     }
+  }
+
+  if (platform === "mattermost" && extra) {
+    body.mattermost_url = extra.mattermost_url;
   }
 
   if (platform === "feishu" && extra) {

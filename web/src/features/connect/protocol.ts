@@ -34,7 +34,27 @@ export type FrameProof = {
 };
 
 export type OpenFrame = { origin: string; url: string; proof: FrameProof };
-export type RemoteGroup = Pick<GroupMeta, "group_id" | "title" | "running">;
+export type GroupConnectionSummary = { counts: Record<string, number | null>; expires_at: string };
+export type GroupConnectionCount = { count: number | null; expires_at: string };
+export type ConnectStatusResponse = {
+  connect: ConnectSnapshot | null;
+  account_label?: string | null;
+  group_connections?: GroupConnectionSummary | null;
+};
+export type RemoteGroup = Pick<GroupMeta, "group_id" | "title" | "running"> & {
+  connection?: GroupConnectionCount;
+};
+export function groupConnectionCount(
+  summary: GroupConnectionSummary | null | undefined,
+  groupId: string,
+): GroupConnectionCount | undefined {
+  return summary
+    ? {
+        count: summary.counts[groupId] === undefined ? 0 : summary.counts[groupId],
+        expires_at: summary.expires_at,
+      }
+    : undefined;
+}
 export const CONNECT_CHANNEL = "cccc.connect.frame.v1";
 
 export function isConnectFramePath(path: string): boolean {
@@ -118,7 +138,19 @@ export function remoteGroups(value: unknown): RemoteGroup[] | null {
     )
   )
     return null;
-  return value.map((g) => ({ group_id: g.group_id, title: g.title, running: g.running }));
+  return value.map((g) => ({
+    group_id: g.group_id,
+    title: g.title,
+    running: g.running,
+    ...((g.connection?.count === null ||
+      (Number.isSafeInteger(g.connection?.count) &&
+        g.connection.count >= 0 &&
+        g.connection.count <= 128)) &&
+    typeof g.connection.expires_at === "string" &&
+    Number.isFinite(Date.parse(g.connection.expires_at))
+      ? { connection: { count: g.connection.count, expires_at: g.connection.expires_at } }
+      : {}),
+  }));
 }
 
 export function frameResourceUrl(url: string, location: Location = window.location): string {

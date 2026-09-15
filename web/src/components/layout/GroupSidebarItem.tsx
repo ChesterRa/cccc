@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { GroupConnectionBadge } from "../../features/connect/GroupConnectionBadge";
+import type { GroupConnectionCount } from "../../features/connect/protocol";
 import { GroupMeta } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { GroupItemMenuTrigger } from "./GroupItemMenuTrigger";
-import { GroupMenuAction } from "./GroupMenuAction";
+import { useGroupMenu } from "./useGroupMenu";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 interface GroupSidebarItemProps {
@@ -14,6 +15,9 @@ interface GroupSidebarItemProps {
   menuActionLabel?: string;
   menuAriaLabel?: string;
   onMenuAction?: () => void;
+  connectionsLabel?: string;
+  connection?: GroupConnectionCount;
+  onOpenConnections?: () => void;
   onSelect: () => void;
   onWarm?: () => void;
 }
@@ -26,11 +30,19 @@ export function GroupSidebarItem({
   menuActionLabel,
   menuAriaLabel,
   onMenuAction,
+  connectionsLabel,
+  connection,
+  onOpenConnections,
   onSelect,
   onWarm,
 }: GroupSidebarItemProps) {
   const gid = String(group.group_id || "");
-  const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useGroupMenu(menuAriaLabel || menuActionLabel || "", [
+    ...(onOpenConnections && connectionsLabel
+      ? [{ label: connectionsLabel, onClick: onOpenConnections }]
+      : []),
+    ...(onMenuAction && menuActionLabel ? [{ label: menuActionLabel, onClick: onMenuAction }] : []),
+  ]);
   const status = getGroupStatusFromSource(group);
 
   if (isCollapsed) {
@@ -81,7 +93,9 @@ export function GroupSidebarItem({
         role="button"
         tabIndex={0}
         onClick={onSelect}
+        onContextMenu={menu.onContextMenu}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || menu.onKeyDown(event)) return;
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
           onSelect();
@@ -107,28 +121,17 @@ export function GroupSidebarItem({
           </div>
         </div>
 
-        {onMenuAction && menuActionLabel && (
-          <div className="relative shrink-0">
-            <GroupItemMenuTrigger
-              isActive={isActive}
-              label={menuAriaLabel || menuActionLabel}
-              open={menuOpen}
-              onToggle={() => setMenuOpen((prev) => !prev)}
-            />
-            {menuOpen && (
-              <div className="absolute right-0 top-full z-20 mt-2 min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel">
-                <GroupMenuAction
-                  label={menuActionLabel}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onMenuAction();
-                  }}
-                />
-              </div>
-            )}
-          </div>
+        <GroupConnectionBadge connection={connection} onClick={onOpenConnections} />
+        {menu.available && (
+          <GroupItemMenuTrigger
+            isActive={isActive}
+            label={menuAriaLabel || menuActionLabel || connectionsLabel || ""}
+            open={menu.open}
+            onToggle={menu.toggle}
+          />
         )}
       </div>
+      {menu.menu}
     </div>
   );
 }

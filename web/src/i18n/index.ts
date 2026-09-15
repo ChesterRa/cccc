@@ -19,7 +19,8 @@ export const i18nReady = i18n
       escapeValue: false, // React already escapes
     },
     detection: {
-      order: ["localStorage", "navigator"],
+      order: ["querystring", "localStorage", "navigator"],
+      lookupQuerystring: "lang",
       lookupLocalStorage: "cccc-language",
       caches: ["localStorage"],
     },

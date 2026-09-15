@@ -7,15 +7,15 @@ use std::{fs, io, sync::Mutex};
 /// the check, and every write but the last is silently discarded.
 ///
 /// Process-wide rather than per-path: workspace saves are hand-driven and complete in
-/// milliseconds, so a map of per-path locks would only add lifetime bookkeeping. A writer
-/// outside this process still races, which is precisely what the digest check reports as
-/// a conflict.
+/// milliseconds, so a map of per-path locks would only add lifetime bookkeeping. The digest
+/// detects external edits completed before the check; writers outside this process do not
+/// take this lock and can still race with the replacement.
 static WRITE_GUARD: Mutex<()> = Mutex::new(());
 
 /// Writes `content`, refusing when the on-disk bytes no longer match `expected_sha256`.
 ///
-/// An empty `expected_sha256` means "the file must not exist yet", so a create races
-/// safely against an Actor that just wrote the same path.
+/// An empty `expected_sha256` means "the file must not exist at the digest check".
+/// This detects an Actor creating the path before that check, not after it.
 pub fn write_file(
     group: &GroupDoc,
     relative: &str,

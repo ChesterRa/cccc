@@ -4,6 +4,7 @@ pub mod connect;
 pub mod connect_groups;
 pub mod connect_message;
 pub mod deepseek;
+pub mod direct;
 pub mod event;
 pub mod ipc;
 pub mod message;

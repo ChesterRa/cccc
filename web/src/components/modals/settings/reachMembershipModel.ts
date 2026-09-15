@@ -50,6 +50,13 @@ export function membershipAdminWebUrl(membership: MembershipState | null | undef
   }
 }
 
+export function membershipAccountKind(
+  membership: MembershipState | null | undefined,
+): "logged_out" | "pending" | "cut" | "linked" {
+  if (!membership?.logged_in) return membership?.pending ? "pending" : "logged_out";
+  return membership.cut || membership.disabled ? "cut" : "linked";
+}
+
 export function membershipPanelKind(
   membership: MembershipState | null | undefined,
 ): "logged_out" | "pending" | "cut" | "offline" | "online" {
@@ -77,7 +84,7 @@ function accountLanguage(value: unknown): "zh" | "en" | "ja" | "" {
   return language === "zh" || language === "en" || language === "ja" ? language : "";
 }
 
-function localizedAccountUrl(url: URL, language: unknown): string {
+export function localizedAccountUrl(url: URL, language: unknown): string {
   const normalized = accountLanguage(language);
   if (normalized) url.searchParams.set("lang", normalized);
   return url.toString();

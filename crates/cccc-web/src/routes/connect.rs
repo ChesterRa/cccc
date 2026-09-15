@@ -20,6 +20,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/connect", get(status))
         .route("/api/v1/connect/name", post(rename))
+        .route(
+            "/api/v1/connect/direct",
+            get(direct_status).post(direct_action),
+        )
         .route("/api/v1/connect/identity", get(identity))
         .route("/api/v1/connect/group-check", post(group_check))
         .route(
@@ -38,6 +42,43 @@ pub fn routes() -> Router<AppState> {
 #[derive(serde::Deserialize)]
 struct GroupQuery {
     group_id: String,
+}
+
+async fn direct_status(
+    State(state): State<AppState>,
+    Query(query): Query<GroupQuery>,
+) -> ApiResult {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "Direct connections require administrator access",
+        ));
+    }
+    call(
+        &state,
+        "connect_direct_status",
+        object(json!({"group_id":query.group_id,"by":"user"})),
+    )
+    .await
+}
+async fn direct_action(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult {
+    if state.web_mode.is_read_only() {
+        return Err(ApiError::forbidden(
+            "Direct connections require administrator access",
+        ));
+    }
+    let action = body["action"].as_str().unwrap_or("").to_owned();
+    if !matches!(
+        action.as_str(),
+        "configure" | "invite" | "join" | "approve" | "revoke" | "remove"
+    ) {
+        return Err(ApiError::forbidden("Unknown direct action"));
+    }
+    let mut args = object(body);
+    args.insert("by".into(), json!("user"));
+    call(&state, &format!("connect_direct_{action}"), args).await
 }
 
 async fn group_status(State(state): State<AppState>, Query(query): Query<GroupQuery>) -> ApiResult {
@@ -135,8 +176,19 @@ impl FromRequestParts<AppState> for PeerAuthorization {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded)
             .map_err(|_| ApiError::forbidden("invalid Connect proof encoding"))?;
-        let proof = serde_json::from_slice(&bytes)
-            .map_err(|_| ApiError::forbidden("invalid Connect proof"))?;
+        let proof: cccc_contracts::connect::ConnectPeerAuthorization =
+            serde_json::from_slice(&bytes)
+                .map_err(|_| ApiError::forbidden("invalid Connect proof"))?;
+        if proof
+            .connection_id
+            .as_deref()
+            .is_some_and(cccc_contracts::direct::is_direct)
+        {
+            return Err(ApiError::forbidden_code(
+                "connect_peer_denied",
+                "Direct authority is not accepted by the account HTTP port",
+            ));
+        }
         cccc_core::connect_peer::authenticate_authorization(&state.home, &proof)
             .map_err(|message| ApiError::forbidden_code("connect_peer_denied", message))?;
         Ok(Self(proof))

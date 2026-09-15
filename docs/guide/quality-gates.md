@@ -71,8 +71,17 @@ npm -C web run check
 
 The native product embeds `web/dist`. `npm -C web run build` is sufficient before
 rebuilding the Rust executable; `scripts/build_web.sh` and
-`scripts/build_web.ps1` are convenience wrappers. `CCCC_WEB_DIST` remains the
-explicit test override.
+`scripts/build_web.ps1` are convenience wrappers. `./scripts/build_package.sh`
+builds both the frontend and the native archive. Restart the running CCCC process
+with the resulting executable to load the new embedded UI.
+
+The Web build script tracks inputs and exports its asset directory relative to
+the current Rust package. This also applies when checkouts share a Cargo target
+directory. `tests/test_web_build_paths.py` runs real Cargo builds across two
+checkouts, including frontend-only updates and packaged assets. For release
+verification, compare the new executable's HTTP-served `/ui/index.html` and
+`/ui/assets/` files with the intended `web/dist`; a successful frontend build
+alone does not prove which assets the executable contains.
 
 CI pins Node 24.19.0. `npm run check` runs Vite+ Oxfmt/Oxlint followed by the
 independent TypeScript 5.9 `tsc --noEmit` check. Type-aware Vite+ checks remain

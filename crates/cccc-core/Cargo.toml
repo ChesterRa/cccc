@@ -19,6 +19,7 @@ directories.workspace = true
 fs2.workspace = true
 flate2.workspace = true
 hmac.workspace = true
+if-addrs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

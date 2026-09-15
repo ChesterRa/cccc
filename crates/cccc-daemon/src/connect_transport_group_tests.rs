@@ -5,6 +5,75 @@ use cccc_core::{GroupStore, connect_groups};
 use serde_json::json;
 
 #[tokio::test]
+async fn direct_pair_pins_routing_even_when_a_broader_account_grant_exists() {
+    use cccc_contracts::direct::DirectListener;
+    use cccc_core::direct;
+    let (_temp, state, peer, server) = setup().await;
+    let source = GroupStore::new(state.source.clone())
+        .expect("store")
+        .create("A", "")
+        .expect("group");
+    let target = GroupStore::new(state.target.clone())
+        .expect("store")
+        .create("B", "")
+        .expect("group");
+    direct::configure(
+        &state.source,
+        Some(DirectListener {
+            bind: "127.0.0.1:8847".into(),
+            address: "127.0.0.1:8847".into(),
+        }),
+        None,
+    )
+    .expect("configure");
+    let text = direct::invite(&state.source, &source.group_id).expect("invite");
+    let id = direct::join(&state.target, &target.group_id, &text).expect("join");
+    let relation = direct::load(&state.target)
+        .expect("store")
+        .relations
+        .remove(0);
+    direct::hello(
+        &state.source,
+        &id,
+        &relation.invitation.expect("invite").secret,
+        &relation.local,
+        &relation.local.public_key,
+    )
+    .expect("claim");
+    assert!(connect_peer::binding(&state.source, &peer).is_ok());
+    assert!(
+        connect_peer::group_binding(&state.source, &peer, &source.group_id, &target.group_id)
+            .is_err()
+    );
+    direct::set_state(&state.source, &source.group_id, &id, true).expect("approve");
+    assert_eq!(
+        connect_peer::group_binding(&state.source, &peer, &source.group_id, &target.group_id)
+            .expect("direct")
+            .group
+            .expect("scope")
+            .id,
+        id
+    );
+    direct::set_state(&state.source, &source.group_id, &id, false).expect("revoke");
+    assert!(
+        connect_peer::group_binding(&state.source, &peer, &source.group_id, &target.group_id)
+            .is_err()
+    );
+    direct::remove(&state.source, &source.group_id, &id).expect("remove");
+    assert!(
+        connect_peer::group_binding(&state.source, &peer, &source.group_id, &target.group_id)
+            .expect("future account route")
+            .group
+            .is_none()
+    );
+    assert!(
+        connect_peer::scoped_binding(&state.source, &peer, Some(&id)).is_err(),
+        "old work cannot acquire the new route"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn external_group_messages_replies_files_and_revocation_share_the_durable_pipeline() {
     let (_temp, state, peer, server) = setup().await;
     let source_store = GroupStore::new(state.source.clone()).expect("source store");

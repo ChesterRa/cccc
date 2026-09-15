@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn direct_connection_management_never_becomes_a_public_peer_endpoint() {
+    for method in [Method::GET, Method::POST] {
+        assert!(requires_admin(&method, "/api/v1/connect/direct"));
+        assert!(!is_public(&method, "/api/v1/connect/direct"));
+    }
+}
+
+#[test]
 fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {
     assert!(!requires_admin(&Method::GET, "/api/v1/profiles"));
     assert!(requires_admin(&Method::POST, "/api/v1/actor_profiles"));

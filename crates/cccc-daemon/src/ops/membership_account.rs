@@ -84,6 +84,7 @@ pub(super) struct DeviceStatus {
     pub hostname: Option<String>,
     pub disabled: bool,
     pub connection: Option<DeviceConnection>,
+    pub account_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -325,6 +326,7 @@ impl AccountClient {
     pub fn fetch_device(&self, device_token: &str) -> Result<DeviceStatus, AccountError> {
         let data = self.request(Method::GET, "/v1/device", None, Some(device_token))?;
         Ok(DeviceStatus {
+            account_label: non_blank(&data, "account_label"),
             device_id: non_blank(&data, "device_id"),
             hostname: non_blank(&data, "hostname")
                 .as_deref()
@@ -364,7 +366,7 @@ impl AccountClient {
         &self,
         device_token: &str,
         registration: &ConnectRegistration,
-    ) -> Result<ConnectDirectory, AccountError> {
+    ) -> Result<(ConnectDirectory, Option<String>), AccountError> {
         self.connect_directory(
             device_token,
             Some(serde_json::to_value(registration).map_err(network_error)?),
@@ -408,7 +410,7 @@ impl AccountClient {
         &self,
         device_token: &str,
         registration: Option<Value>,
-    ) -> Result<ConnectDirectory, AccountError> {
+    ) -> Result<(ConnectDirectory, Option<String>), AccountError> {
         let method = if registration.is_some() {
             Method::POST
         } else {
@@ -420,7 +422,10 @@ impl AccountClient {
             registration,
             Some(device_token),
         )?;
-        serde_json::from_value(Value::Object(response)).map_err(network_error)
+        let label = non_blank(&response, "account_label");
+        serde_json::from_value(Value::Object(response))
+            .map(|directory| (directory, label))
+            .map_err(network_error)
     }
 
     fn request(

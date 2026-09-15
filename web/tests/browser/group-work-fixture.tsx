@@ -232,6 +232,7 @@ export function Fixture() {
   const { textScale, setTextScale } = useTextScale();
   const [readOnly, setReadOnly] = useState(false);
   const [canAccessAccount, setCanAccessAccount] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -287,7 +288,7 @@ export function Fixture() {
     activeTab,
     busy: "",
     isTransitioning: false,
-    sidebarOpen: false,
+    sidebarOpen,
     sidebarCollapsed: false,
     sidebarWidth: 248,
     isDark: dark,
@@ -352,6 +353,8 @@ export function Fixture() {
     "onTouchEnd",
   ])
     Object.assign(props, { [name]: noop });
+  props.onOpenSidebar = () => setSidebarOpen(true);
+  props.onCloseSidebar = () => setSidebarOpen(false);
   props.onOpenMobileMenu = () => setMenuOpen(true);
   props.onThemeChange = setTheme;
   props.onTextScaleChange = setTextScale;

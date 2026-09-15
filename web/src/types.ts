@@ -43,6 +43,8 @@ export type WorkspaceEntry = {
 };
 
 export type WorkspaceListing = {
+  scope_key: string;
+  scope_url: string;
   root_path: string;
   path: string;
   parent: string | null;
@@ -50,6 +52,8 @@ export type WorkspaceListing = {
 };
 
 export type WorkspaceFile = {
+  scope_key: string;
+  scope_url: string;
   path: string;
   content: string;
   bytes: number;
@@ -1054,6 +1058,7 @@ export type AssistantVoicePromptDraftMutationResult = {
 };
 
 export type MembershipState = {
+  account_label?: string | null;
   logged_in: boolean;
   device_id?: string | null;
   hostname?: string | null;
@@ -1414,6 +1419,7 @@ export type IMPlatform =
   | "telegram"
   | "slack"
   | "discord"
+  | "mattermost"
   | "feishu"
   | "dingtalk"
   | "wecom"
@@ -1427,9 +1433,10 @@ export type IMConfig = {
   // Canonical token fields
   bot_token?: string;
   app_token?: string;
-  // Token env fields (Slack/Telegram/Discord)
+  // Token env fields (Slack/Telegram/Discord/Mattermost)
   bot_token_env?: string;
   app_token_env?: string;
+  mattermost_url?: string;
   // Feishu fields
   feishu_domain?: string;
   feishu_app_id?: string;

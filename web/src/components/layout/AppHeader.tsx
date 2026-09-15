@@ -1,8 +1,7 @@
-import { GroupConnectionsControl } from "../../features/connect/GroupConnectionsControl";
 import { GroupMembersMenu } from "./GroupMembersMenu";
 import { useEffect, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale, Theme } from "../../types";
+import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import {
   getGroupControlVisual,
@@ -22,8 +21,6 @@ import {
 import { IconButton } from "../ui/icon-button";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 import { AppSettingsMenu } from "./AppSettingsMenu";
-import { useSidePanelSelection } from "../../hooks/useSidePanelSelection";
-import { useModalStore } from "../../stores/useModalStore";
 
 export interface AppHeaderProps {
   theme: Theme;
@@ -49,7 +46,7 @@ export interface AppHeaderProps {
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
   onOpenSettings: () => void;
   canAccessAccount: boolean;
-  groups?: GroupMeta[];
+  accountLabel?: string | null;
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
@@ -78,20 +75,13 @@ export function AppHeader({
   onSetGroupState,
   onOpenSettings,
   canAccessAccount,
-  groups = [],
+  accountLabel,
   onOpenAccount,
   onOpenMobileMenu,
   sseStatus,
   workControlsRef,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
-  // The presentation surface is reached from this header's menu; the work rail keeps the files one.
-  const { activeSidePanel, selectSidePanel } = useSidePanelSelection(selectedGroupId);
-  const presentationAttention = useModalStore((state) =>
-    selectedGroupId
-      ? Object.keys(state.presentationAttention[selectedGroupId] || {}).length > 0
-      : false,
-  );
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const headerRailClass = "flex items-center gap-1 p-[3px]";
@@ -274,12 +264,6 @@ export function AppHeader({
 
       {/* Right Actions */}
       <div className="flex shrink-0 items-center gap-1.5">
-        <GroupConnectionsControl
-          enabled={!webReadOnly && canAccessAccount}
-          groupId={selectedGroupId}
-          groups={groups}
-          onOpenAccount={onOpenAccount}
-        />
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}
@@ -344,15 +328,10 @@ export function AppHeader({
                 onThemeChange={onThemeChange}
                 onTextScaleChange={onTextScaleChange}
                 canAccessAccount={canAccessAccount}
+                accountLabel={accountLabel}
                 canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
                 onOpenAccount={onOpenAccount}
                 onOpenSettings={onOpenSettings}
-                presentation={{
-                  active: activeSidePanel === "presentation",
-                  attention: presentationAttention,
-                  disabled: !selectedGroupId,
-                  onToggle: () => selectSidePanel("presentation"),
-                }}
               />
             </div>
 

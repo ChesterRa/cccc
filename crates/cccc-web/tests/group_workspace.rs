@@ -10,12 +10,16 @@ async fn workspace_routes_list_read_and_write_within_the_active_scope() {
     let fixture = fixture();
     let app = auth_support::authenticated_app(fixture.home.clone());
     let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
 
     let (status, listing) = json(
         &app,
-        Request::get(format!("/api/v1/groups/{group}/workspace/list"))
-            .body(Body::empty())
-            .expect("request"),
+        Request::get(format!(
+            "/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}"
+        ))
+        .body(Body::empty())
+        .expect("request"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -35,7 +39,7 @@ async fn workspace_routes_list_read_and_write_within_the_active_scope() {
     let (status, file) = json(
         &app,
         Request::get(format!(
-            "/api/v1/groups/{group}/workspace/file?path=src%2Flib.rs"
+            "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
         ))
         .body(Body::empty())
         .expect("request"),
@@ -50,7 +54,7 @@ async fn workspace_routes_list_read_and_write_within_the_active_scope() {
         Request::put(format!("/api/v1/groups/{group}/workspace/file"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                serde_json::json!({"path":"src/lib.rs","content":"fn main() { 2; }\n","sha256":sha})
+                serde_json::json!({"scope_key":"scope_repo", "scope_url":fixture.repo.to_string_lossy(), "path":"src/lib.rs","content":"fn main() { 2; }\n","sha256":sha})
                     .to_string(),
             ))
             .expect("request"),
@@ -92,12 +96,16 @@ async fn the_show_ignored_flag_is_accepted_and_reveals_ignored_entries() {
 
     let app = auth_support::authenticated_app(fixture.home.clone());
     let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
 
     let (status, hidden) = json(
         &app,
-        Request::get(format!("/api/v1/groups/{group}/workspace/list"))
-            .body(Body::empty())
-            .expect("request"),
+        Request::get(format!(
+            "/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}"
+        ))
+        .body(Body::empty())
+        .expect("request"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -108,7 +116,7 @@ async fn the_show_ignored_flag_is_accepted_and_reveals_ignored_entries() {
     let (status, shown) = json(
         &app,
         Request::get(format!(
-            "/api/v1/groups/{group}/workspace/list?show_ignored=true"
+            "/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}&show_ignored=true"
         ))
         .body(Body::empty())
         .expect("request"),
@@ -127,11 +135,13 @@ async fn a_stale_digest_is_rejected_over_http_instead_of_overwriting() {
     let fixture = fixture();
     let app = auth_support::authenticated_app(fixture.home.clone());
     let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
 
     let (_, file) = json(
         &app,
         Request::get(format!(
-            "/api/v1/groups/{group}/workspace/file?path=src%2Flib.rs"
+            "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
         ))
         .body(Body::empty())
         .expect("request"),
@@ -145,7 +155,7 @@ async fn a_stale_digest_is_rejected_over_http_instead_of_overwriting() {
         Request::put(format!("/api/v1/groups/{group}/workspace/file"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                serde_json::json!({"path":"src/lib.rs","content":"fn browser() {}\n","sha256":sha})
+                serde_json::json!({"scope_key":"scope_repo", "scope_url":fixture.repo.to_string_lossy(), "path":"src/lib.rs","content":"fn browser() {}\n","sha256":sha})
                     .to_string(),
             ))
             .expect("request"),
@@ -165,13 +175,15 @@ async fn every_workspace_entrypoint_refuses_paths_outside_the_scope() {
     let fixture = fixture();
     let app = auth_support::authenticated_app(fixture.home.clone());
     let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
     // The decoy sits beside the scope root, reachable only by climbing out of it.
     let escape = "..%2Fsecret.txt";
 
     let (status, _) = json(
         &app,
         Request::get(format!(
-            "/api/v1/groups/{group}/workspace/list?path={escape}"
+            "/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}&path={escape}"
         ))
         .body(Body::empty())
         .expect("request"),
@@ -182,7 +194,7 @@ async fn every_workspace_entrypoint_refuses_paths_outside_the_scope() {
     let (status, read) = json(
         &app,
         Request::get(format!(
-            "/api/v1/groups/{group}/workspace/file?path={escape}"
+            "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path={escape}"
         ))
         .body(Body::empty())
         .expect("request"),
@@ -196,7 +208,7 @@ async fn every_workspace_entrypoint_refuses_paths_outside_the_scope() {
         Request::put(format!("/api/v1/groups/{group}/workspace/file"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                r#"{"path":"../secret.txt","content":"owned\n","sha256":""}"#,
+                serde_json::json!({"scope_key":"scope_repo", "scope_url":fixture.repo.to_string_lossy(), "path":"../secret.txt", "content":"owned\n", "sha256":""}).to_string(),
             ))
             .expect("request"),
     )
@@ -220,10 +232,14 @@ async fn exhibit_mode_hides_workspace_files_including_reads() {
     let app =
         auth_support::authenticated_app_with_mode(fixture.home.clone(), cccc_web::WebMode::Exhibit);
     let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
 
     for path in [
-        format!("/api/v1/groups/{group}/workspace/list"),
-        format!("/api/v1/groups/{group}/workspace/file?path=src%2Flib.rs"),
+        format!("/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}"),
+        format!(
+            "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
+        ),
     ] {
         let (status, payload) = json(
             &app,
@@ -233,4 +249,168 @@ async fn exhibit_mode_hides_workspace_files_including_reads() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{path} must be blocked");
         assert_eq!(payload["error"]["code"], "read_only", "{path}");
     }
+}
+
+#[tokio::test]
+async fn whitespace_in_file_names_survives_http_read_and_save() {
+    let fixture = fixture();
+    let app = auth_support::authenticated_app(fixture.home.clone());
+    let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
+    std::fs::write(fixture.repo.join("note.txt"), "neighbor")
+        .expect("workspace HTTP whitespace fixture");
+    for (path, encoded) in [(" note.txt", "%20note.txt"), ("note.txt ", "note.txt%20")] {
+        std::fs::write(fixture.repo.join(path), "selected")
+            .expect("workspace HTTP whitespace fixture");
+        let (status, file) = json(
+            &app,
+            Request::get(format!(
+                "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path={encoded}"
+            ))
+            .body(Body::empty())
+            .expect("workspace HTTP whitespace fixture"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(file["result"]["content"], "selected");
+        assert_eq!(file["result"]["path"], path);
+        let (status, _) = json(&app, Request::put(format!(
+            "/api/v1/groups/{group}/workspace/file"
+        )).header(header::CONTENT_TYPE, "application/json").body(Body::from(
+            serde_json::json!({"scope_key":"scope_repo", "scope_url":fixture.repo.to_string_lossy(), "path":path,"content":"edited","sha256":file["result"]["sha256"]}).to_string()
+        )).expect("workspace HTTP whitespace fixture")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            std::fs::read_to_string(fixture.repo.join(path))
+                .expect("workspace HTTP whitespace fixture"),
+            "edited"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.repo.join("note.txt"))
+                .expect("workspace HTTP whitespace fixture"),
+            "neighbor"
+        );
+    }
+}
+
+#[tokio::test]
+async fn saving_an_open_file_after_group_use_does_not_write_the_new_scope() {
+    use cccc_core::{GroupStore, Scope, group_scope};
+    let fixture = fixture();
+    let app = auth_support::authenticated_app(fixture.home.clone());
+    let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
+    let (_, opened) = json(&app, Request::get(format!(
+        "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
+    )).body(Body::empty()).expect("read request")).await;
+    let other = tempfile::tempdir().expect("second scope");
+    std::fs::create_dir(other.path().join("src")).expect("src");
+    std::fs::write(other.path().join("src/lib.rs"), "fn main() {}\n").expect("identical file");
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    group_scope::attach(
+        &store,
+        group,
+        Scope {
+            scope_key: "scope_other".into(),
+            url: other.path().to_string_lossy().into_owned(),
+            label: "other".into(),
+            git_remote: String::new(),
+        },
+    )
+    .expect("attach other scope");
+    group_scope::activate(&store, group, "scope_repo").expect("activate original");
+    group_scope::activate(&store, group, "scope_other").expect("group_use other");
+    let (status, result) = json(&app, Request::put(format!("/api/v1/groups/{group}/workspace/file"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({"scope_key":"scope_repo", "scope_url":fixture.repo.to_string_lossy(), "path":"src/lib.rs", "content":"changed", "sha256":opened["result"]["sha256"]}).to_string()))
+        .expect("save request")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"]["code"], "workspace_scope_changed");
+    for root in [&fixture.repo, &other.path().to_path_buf()] {
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/lib.rs")).expect("unchanged file"),
+            "fn main() {}\n"
+        );
+    }
+}
+
+#[tokio::test]
+async fn scope_identity_is_required_and_cannot_follow_a_relocated_binding() {
+    use cccc_core::{GroupStore, Scope, group_scope};
+    let fixture = fixture();
+    let app = auth_support::authenticated_app(fixture.home.clone());
+    let group = &fixture.group_id;
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
+    let file_url = format!("/api/v1/groups/{group}/workspace/file");
+    let (status, _) = json(
+        &app,
+        Request::get(format!("{file_url}?path=src%2Flib.rs"))
+            .body(Body::empty())
+            .expect("unbound read"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, opened) = json(
+        &app,
+        Request::get(format!(
+            "{file_url}?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
+        ))
+        .body(Body::empty())
+        .expect("bound read"),
+    )
+    .await;
+    assert_eq!(opened["result"]["scope_key"], "scope_repo");
+    assert_eq!(
+        opened["result"]["scope_url"],
+        fixture.repo.to_string_lossy().as_ref()
+    );
+    let body = serde_json::json!({"path":"src/lib.rs", "content":"edited", "sha256":opened["result"]["sha256"]});
+    let (status, _) = json(
+        &app,
+        Request::put(&file_url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("unbound write"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let other = tempfile::tempdir().expect("relocated scope");
+    std::fs::create_dir(other.path().join("src")).expect("src");
+    std::fs::write(other.path().join("src/lib.rs"), "fn main() {}\n").expect("same content");
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    group_scope::attach(
+        &store,
+        group,
+        Scope {
+            scope_key: "scope_repo".into(),
+            url: other.path().to_string_lossy().into_owned(),
+            label: "relocated".into(),
+            git_remote: String::new(),
+        },
+    )
+    .expect("reattach same identity at another path");
+    for suffix in ["list", "file"] {
+        let (status, _) = json(&app, Request::get(format!("/api/v1/groups/{group}/workspace/{suffix}?scope_key=scope_repo&scope_url={scope}&path=src"))
+            .body(Body::empty()).expect("stale read")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+    let mut body = body;
+    body["scope_key"] = "scope_repo".into();
+    body["scope_url"] = fixture.repo.to_string_lossy().into_owned().into();
+    let (status, _) = json(
+        &app,
+        Request::put(&file_url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("stale write"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        std::fs::read_to_string(other.path().join("src/lib.rs")).expect("neighbor"),
+        "fn main() {}\n"
+    );
 }

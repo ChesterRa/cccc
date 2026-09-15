@@ -24,6 +24,9 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod mattermost;
+mod mattermost_inbound;
+mod mattermost_outbound;
 mod outbound_attachment;
 mod outbound_chunks;
 mod outbound_message;
@@ -53,12 +56,22 @@ use outbound_message::outbound_text;
 use state::*;
 use worker::{Stopper, WorkerHandles, no_op_stopper};
 
+const SELF_COMMIT_PLATFORMS: &[&str] = &["mattermost"];
+
+pub(crate) type ImRequestVersion = (Option<u64>, Option<u64>);
+
+// Shared result writers must check the current platform under the config lock, not a stale startup snapshot.
+pub(crate) fn adapter_commits_start_state(platform: Option<&str>) -> bool {
+    platform.is_some_and(|platform| SELF_COMMIT_PLATFORMS.contains(&platform))
+}
+
 pub(crate) struct ImWorkerRegistry {
     workers: Mutex<HashMap<String, WorkerHandles>>,
     lifecycle_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     restoring: Mutex<HashSet<String>>,
     restore_tasks: Mutex<Vec<JoinHandle<()>>>,
     generations: Arc<Mutex<HashMap<String, u64>>>,
+    config_revisions: Mutex<HashMap<String, u64>>,
     next_generation: std::sync::atomic::AtomicU64,
     discord_deduper: Arc<discord_dedup::DiscordMessageDeduper>,
     weixin_logins: weixin_login::LoginRegistry,
@@ -73,6 +86,7 @@ impl ImWorkerRegistry {
             restoring: Mutex::new(HashSet::new()),
             restore_tasks: Mutex::new(Vec::new()),
             generations: Arc::new(Mutex::new(HashMap::new())),
+            config_revisions: Mutex::new(HashMap::new()),
             next_generation: std::sync::atomic::AtomicU64::new(0),
             discord_deduper: Arc::new(discord_dedup::DiscordMessageDeduper::default()),
             weixin_logins: weixin_login::LoginRegistry::default(),
@@ -93,7 +107,7 @@ impl ImWorkerRegistry {
             let home = home.clone();
             let client = client.clone();
             let task = runtime.spawn(async move {
-                let Some(config) = restore_config(&home, &group_id) else {
+                let Some((config, version)) = restore_config(&home, &group_id, &registry) else {
                     registry
                         .restoring
                         .lock()
@@ -102,34 +116,12 @@ impl ImWorkerRegistry {
                     return;
                 };
                 let result = registry
-                    .start(home.clone(), client, &group_id, &config)
+                    .start_with_mode(home.clone(), client, &group_id, &config, true, version)
                     .await;
-                if let Ok(store) = GroupStore::new(home)
-                    && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
-                        if !value.is_object() {
-                            *value = json!({});
-                        }
-                        let state = value.as_object_mut().expect("IM state initialized");
-                        state.insert("running".into(), Value::Bool(result.is_ok()));
-                        state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
-                        state.insert(
-                            "pid".into(),
-                            if result.is_ok() {
-                                json!(std::process::id())
-                            } else {
-                                Value::Null
-                            },
-                        );
-                        state.insert(
-                            "last_error".into(),
-                            result
-                                .as_ref()
-                                .err()
-                                .map_or(Value::Null, |error| json!(error)),
-                        );
-                        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
-                        Ok(())
-                    })
+                // These adapters commit start state under their configuration/generation guard.
+                let platform = string(&config, "platform");
+                if !adapter_commits_start_state(Some(&platform))
+                    && let Err(error) = persist_restore_result(home, &group_id, &result)
                 {
                     tracing::warn!(%error, %group_id, "failed to persist restored IM worker state");
                 }
@@ -217,8 +209,24 @@ impl ImWorkerRegistry {
         client: DaemonClient,
         group_id: &str,
         config: &Map<String, Value>,
+        version: ImRequestVersion,
     ) -> Result<(), String> {
-        let (generation, previous) = self.begin_start(group_id).await;
+        self.start_with_mode(home, client, group_id, config, false, version)
+            .await
+    }
+
+    async fn start_with_mode(
+        &self,
+        home: HomeLayout,
+        client: DaemonClient,
+        group_id: &str,
+        config: &Map<String, Value>,
+        restoring: bool,
+        version: ImRequestVersion,
+    ) -> Result<(), String> {
+        let (generation, previous) = self
+            .begin_configured_start(&home, group_id, config, restoring, version)
+            .await?;
         if let Some(previous) = previous {
             previous.shutdown().await;
         }
@@ -252,6 +260,10 @@ impl ImWorkerRegistry {
                 slack::start(home, client, group_id, config, self.ledger_events.clone()).await?;
             return self
                 .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
+        }
+        if platform == "mattermost" {
+            return mattermost::start_registered(self, home, client, group_id, config, generation)
                 .await;
         }
         if platform == "feishu" {
@@ -334,21 +346,51 @@ impl ImWorkerRegistry {
     }
 
     pub(crate) async fn stop(&self, group_id: &str) -> bool {
+        self.stop_with_mode(group_id, None).await
+    }
+
+    pub(crate) async fn stop_legacy(&self, home: &HomeLayout, group_id: &str) -> bool {
+        self.stop_with_mode(group_id, Some(home)).await
+    }
+
+    async fn stop_with_mode(&self, group_id: &str, home: Option<&HomeLayout>) -> bool {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let (was_starting, worker) = {
             let _lifecycle_guard = lifecycle_lock.lock().await;
-            let was_starting = self
-                .generations
-                .lock()
-                .expect("IM generation registry poisoned")
-                .remove(group_id)
-                .is_some();
-            let worker = self
-                .workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .remove(group_id);
-            (was_starting, worker)
+            let remove = || {
+                let was_starting = self
+                    .generations
+                    .lock()
+                    .expect("IM generation registry poisoned")
+                    .remove(group_id)
+                    .is_some();
+                let worker = self
+                    .workers
+                    .lock()
+                    .expect("IM worker registry poisoned")
+                    .remove(group_id);
+                (was_starting, worker)
+            };
+            if let Some(home) = home {
+                let checked = GroupStore::new(home.clone()).and_then(|store| {
+                    cccc_core::im_state::read_with(&store, group_id, |current| {
+                        // Check and remove under the config lock so an adapter switch cannot interleave.
+                        if adapter_commits_start_state(current["config"]["platform"].as_str()) {
+                            None
+                        } else {
+                            Some(remove())
+                        }
+                    })
+                });
+                match checked {
+                    Ok(Some(removed)) => removed,
+                    Ok(None) => return false,
+                    // Preserve existing platforms' stop behavior when config cannot be read.
+                    Err(_) => remove(),
+                }
+            } else {
+                remove()
+            }
         };
         let was_running = worker.is_some();
         if let Some(worker) = worker {
@@ -358,9 +400,73 @@ impl ImWorkerRegistry {
         was_starting || was_running || had_weixin_login
     }
 
+    // The config lock already invalidated the old generation and committed the stopped state; do not close a newer worker.
+    pub(crate) async fn stop_invalidated(&self, group_id: &str) {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let worker = {
+            let _guard = lifecycle_lock.lock().await;
+            if self
+                .generations
+                .lock()
+                .expect("IM generation registry poisoned")
+                .contains_key(group_id)
+            {
+                return;
+            }
+            self.weixin_logins.clear(group_id);
+            self.workers
+                .lock()
+                .expect("IM worker registry poisoned")
+                .remove(group_id)
+        };
+        if let Some(worker) = worker {
+            worker.shutdown().await;
+        }
+    }
+
+    async fn begin_configured_start(
+        &self,
+        home: &HomeLayout,
+        group_id: &str,
+        config: &Map<String, Value>,
+        restoring: bool,
+        version: ImRequestVersion,
+    ) -> Result<(u64, Option<WorkerHandles>), String> {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let _guard = lifecycle_lock.lock().await;
+        let guarded_source =
+            adapter_commits_start_state(config.get("platform").and_then(Value::as_str));
+        let checked = GroupStore::new(home.clone()).and_then(|store| {
+            cccc_core::im_state::read_with(&store, group_id, |current| {
+                let guarded = guarded_source
+                    || adapter_commits_start_state(current["config"]["platform"].as_str());
+                if guarded
+                    && (current.get("config").and_then(Value::as_object) != Some(config)
+                        || self.request_version(group_id) != version
+                        || (restoring && current["enabled"] != true))
+                {
+                    return Err("IM worker start was superseded by a newer request".into());
+                }
+                // Use the save/stop config lock so invalidation cannot interleave with validation and generation allocation.
+                Ok(self.begin_start_locked(group_id))
+            })
+        });
+        match checked {
+            Ok(result) => result,
+            Err(error) if guarded_source => Err(error.to_string()),
+            // Existing platforms do not require this read; preserve their storage failure behavior.
+            Err(_) => Ok(self.begin_start_locked(group_id)),
+        }
+    }
+
+    #[cfg(test)]
     async fn begin_start(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
         let lifecycle_lock = self.lifecycle_lock(group_id);
         let _lifecycle_guard = lifecycle_lock.lock().await;
+        self.begin_start_locked(group_id)
+    }
+
+    fn begin_start_locked(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
         let generation = self
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -384,6 +490,39 @@ impl ImWorkerRegistry {
             .get(group_id)
             .copied()
             == Some(generation)
+    }
+
+    // Mattermost saves call this inside the existing configuration lock, before writing.
+    pub(crate) fn invalidate_start(&self, group_id: &str) {
+        let revision = self
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .insert(group_id.to_owned(), revision);
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .remove(group_id);
+    }
+
+    // Callers read and compare under the IM config lock; identical configs can belong to different requests.
+    pub(crate) fn request_version(&self, group_id: &str) -> ImRequestVersion {
+        let revision = self
+            .config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .get(group_id)
+            .copied();
+        let generation = self
+            .generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .get(group_id)
+            .copied();
+        (revision, generation)
     }
 
     fn lifecycle_lock(&self, group_id: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -426,9 +565,18 @@ impl ImWorkerRegistry {
             .expect("IM generation registry poisoned")
             .clear();
         self.weixin_logins.clear_all();
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .clear();
     }
 
     pub(crate) async fn stop_missing(&self, active_groups: &HashSet<String>) -> usize {
+        // Revisions also exist for saved configurations without a running worker.
+        self.config_revisions
+            .lock()
+            .expect("IM configuration revision registry poisoned")
+            .retain(|group_id, _| active_groups.contains(group_id));
         let mut stale = self
             .workers
             .lock()
@@ -475,6 +623,45 @@ impl ImWorkerRegistry {
     }
 }
 
+fn persist_restore_result(
+    home: HomeLayout,
+    group_id: &str,
+    result: &Result<(), String>,
+) -> std::io::Result<()> {
+    // Preserve the restore path's Store initialization failure handling; only guard the new adapter's state ownership.
+    let Ok(store) = GroupStore::new(home) else {
+        return Ok(());
+    };
+    cccc_core::im_state::update(&store, group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
+        if !value.is_object() {
+            *value = json!({});
+        }
+        let state = value.as_object_mut().expect("IM state initialized");
+        state.insert("running".into(), Value::Bool(result.is_ok()));
+        state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
+        state.insert(
+            "pid".into(),
+            if result.is_ok() {
+                json!(std::process::id())
+            } else {
+                Value::Null
+            },
+        );
+        state.insert(
+            "last_error".into(),
+            result
+                .as_ref()
+                .err()
+                .map_or(Value::Null, |error| json!(error)),
+        );
+        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+        Ok(())
+    })
+}
+
 fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return Vec::new();
@@ -493,13 +680,22 @@ fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
         .collect()
 }
 
-fn restore_config(home: &HomeLayout, group_id: &str) -> Option<Map<String, Value>> {
+fn restore_config(
+    home: &HomeLayout,
+    group_id: &str,
+    registry: &ImWorkerRegistry,
+) -> Option<(Map<String, Value>, ImRequestVersion)> {
     let store = GroupStore::new(home.clone()).ok()?;
-    let state = cccc_core::im_state::load(&store, group_id).ok()?;
-    if !state["enabled"].as_bool().unwrap_or(false) {
-        return None;
-    }
-    state.get("config")?.as_object().cloned()
+    cccc_core::im_state::read_with(&store, group_id, |state| {
+        if !state["enabled"].as_bool().unwrap_or(false) {
+            return None;
+        }
+        Some((
+            state.get("config")?.as_object()?.clone(),
+            registry.request_version(group_id),
+        ))
+    })
+    .ok()?
 }
 
 fn worker(tasks: Vec<JoinHandle<()>>, stopper: Stopper) -> WorkerHandles {
@@ -731,6 +927,27 @@ mod tests {
     use cccc_core::ledger;
 
     #[test]
+    fn start_state_commit_capability_is_exact_and_opt_in() {
+        assert!(adapter_commits_start_state(Some("mattermost")));
+        assert!(!adapter_commits_start_state(None));
+        for platform in [
+            "telegram",
+            "discord",
+            "slack",
+            "feishu",
+            "dingtalk",
+            "wecom",
+            "weixin",
+            "",
+            "unknown",
+            "Mattermost",
+            " mattermost ",
+        ] {
+            assert!(!adapter_commits_start_state(Some(platform)), "{platform:?}");
+        }
+    }
+
+    #[test]
     fn only_final_chat_messages_complete_processing_feedback() {
         for kind in ["chat.stream", "system.notify"] {
             let event = Event::new(kind, "group");
@@ -791,6 +1008,59 @@ mod tests {
         );
         assert_eq!(registry.stop_missing(&HashSet::new()).await, 1);
         assert!(!registry.is_running("g_deleted"));
+    }
+
+    #[tokio::test]
+    async fn reaper_retires_deleted_group_revisions_without_a_worker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let registry =
+            ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home.clone()));
+        let kept = store.create("kept", "").expect("kept group").group_id;
+        registry.invalidate_start(&kept);
+        let kept_version = registry.request_version(&kept);
+        let active_groups = HashSet::from([kept.clone()]);
+        let config = json!({"platform":"mattermost","bot_token_env":"TEST_TOKEN"})
+            .as_object()
+            .expect("config")
+            .clone();
+
+        for _ in 0..3 {
+            let deleted = store.create("deleted", "").expect("group").group_id;
+            let initial_version = registry.request_version(&deleted);
+            cccc_core::im_state::update(&store, &deleted, |state| {
+                registry.invalidate_start(&deleted);
+                *state = json!({"config":config});
+                Ok(())
+            })
+            .expect("save");
+            let saved_version = registry.request_version(&deleted);
+            assert!(saved_version.0.is_some());
+            assert!(!registry.is_running(&deleted));
+            assert!(store.delete(&deleted).expect("delete"));
+
+            assert_eq!(registry.stop_missing(&active_groups).await, 0);
+            assert_eq!(registry.request_version(&deleted), (None, None));
+            assert_eq!(registry.request_version(&kept), kept_version);
+            assert_eq!(
+                registry.config_revisions.lock().expect("revisions").len(),
+                1
+            );
+            // Clearing a revision must not let either kind of old request start a deleted group.
+            for version in [initial_version, saved_version] {
+                assert!(
+                    registry
+                        .begin_configured_start(&home, &deleted, &config, false, version)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(registry.request_version(&deleted), (None, None));
+                assert!(!registry.is_running(&deleted));
+            }
+        }
+        assert_eq!(registry.stop_missing(&active_groups).await, 0);
+        assert_eq!(registry.request_version(&kept), kept_version);
     }
 
     #[tokio::test]
@@ -865,6 +1135,87 @@ mod tests {
         let candidates = restore_candidates(&home);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].0, enabled.group_id);
+    }
+
+    #[tokio::test]
+    async fn legacy_restore_completion_respects_mattermost_state_ownership() {
+        for platform in ["mattermost", "slack"] {
+            for result in [Ok(()), Err("old restore failure".to_owned())] {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let home = HomeLayout::from_path(temp.path()).expect("home");
+                let store = GroupStore::new(home.clone()).expect("store");
+                let group = store.create("Restore handoff", "").expect("group").group_id;
+                let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(
+                    home.clone(),
+                ));
+                let (generation, _) = registry.begin_start(&group).await;
+                let (release, released) = tokio::sync::oneshot::channel();
+                let old_home = home.clone();
+                let old_group = group.clone();
+                let succeeded = result.is_ok();
+                let old = tokio::spawn(async move {
+                    released.await.expect("release");
+                    persist_restore_result(old_home, &old_group, &result)
+                });
+                cccc_core::im_state::update(&store, &group, |state| {
+                    if platform == "mattermost" {
+                        registry.invalidate_start(&group);
+                    }
+                    *state = json!({
+                        "config":{"platform":platform,"bot_token":"test-token"},
+                        "enabled":false,"running":false,"pid":null,
+                        "adapter_available":false,"last_error":"new diagnostic"
+                    });
+                    Ok(())
+                })
+                .expect("save");
+                if platform == "mattermost" {
+                    assert!(!registry.is_generation_current(&group, generation));
+                    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let flag = stopped.clone();
+                    let stopper: Stopper = Arc::new(move || {
+                        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    });
+                    assert!(
+                        registry
+                            .install(&group, generation, worker(Vec::new(), stopper))
+                            .await
+                            .is_err()
+                    );
+                    assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+                }
+                let before = cccc_core::im_state::load(&store, &group).expect("before");
+                release.send(()).expect("release result");
+                old.await.expect("old task").expect("persist");
+                let after = cccc_core::im_state::load(&store, &group).expect("after");
+                if platform == "mattermost" {
+                    assert_eq!(after, before);
+                } else {
+                    assert_eq!(after["config"], before["config"]);
+                    assert_eq!(after["enabled"], false, "restore must not change enabled");
+                    assert_eq!(after["running"], succeeded);
+                    assert_eq!(after["adapter_available"], succeeded);
+                    assert_eq!(
+                        after["pid"],
+                        if succeeded {
+                            json!(std::process::id())
+                        } else {
+                            Value::Null
+                        }
+                    );
+                    assert_eq!(
+                        after["last_error"],
+                        if succeeded {
+                            Value::Null
+                        } else {
+                            json!("old restore failure")
+                        }
+                    );
+                }
+                assert!(!registry.is_running(&group));
+                registry.shutdown().await;
+            }
+        }
     }
 
     #[tokio::test]

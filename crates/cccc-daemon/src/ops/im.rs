@@ -46,7 +46,14 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let platform = required_arg(request, "platform")?.to_ascii_lowercase();
     if !matches!(
         platform.as_str(),
-        "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom" | "weixin"
+        "telegram"
+            | "slack"
+            | "discord"
+            | "feishu"
+            | "dingtalk"
+            | "wecom"
+            | "weixin"
+            | "mattermost"
     ) {
         return Err(OpError::new("invalid_args", "unsupported IM platform"));
     }
@@ -58,27 +65,43 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .collect();
     normalize_config(&platform, &mut config)?;
     let current = load(home, &group_id)?;
-    preserve_config_policy(
-        &platform,
-        &mut config,
-        current.get("config").and_then(Value::as_object),
-    );
-    update(home, &group_id, |state| {
-        state.insert("config".into(), Value::Object(config));
+    let delegated = update(home, &group_id, |state| {
+        // Check ownership and write under the same config lock so stale snapshots cannot bypass Web worker ownership.
+        if platform == "mattermost" || web_owns_config(state.get("config")) {
+            return Ok(true);
+        }
+        preserve_config_policy(
+            &platform,
+            &mut config,
+            current.get("config").and_then(Value::as_object),
+        );
+        state.insert("config".into(), Value::Object(config.clone()));
         state.insert("enabled".into(), Value::Bool(false));
         state.insert("running".into(), Value::Bool(false));
         state.insert("updated_at".into(), json!(utc_now()));
-        Ok(())
+        Ok(false)
     })?;
+    if delegated {
+        config.insert("group_id".into(), json!(group_id));
+        let mut result = delegate_im_action(home, "set", &Value::Object(config))?;
+        result.insert("group_id".into(), json!(group_id));
+        return Ok(result);
+    }
     object(json!({"group_id":group_id,"configured":true,"platform":platform}))
 }
 
 fn unset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
-    update(home, &group_id, |state| {
+    let delegated = update(home, &group_id, |state| {
+        if web_owns_config(state.get("config")) {
+            return Ok(true);
+        }
         state.clear();
-        Ok(())
+        Ok(false)
     })?;
+    if delegated {
+        return delegate_worker_action(home, &group_id, "unset");
+    }
     object(json!({"group_id":group_id,"configured":false}))
 }
 
@@ -88,9 +111,13 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
     if running && !current.get("config").is_some_and(Value::is_object) {
         return Err(OpError::new("invalid_state", "IM bridge is not configured"));
     }
+    let web_owned = web_owns_config(current.get("config"));
     if running {
         return delegate_start(home, &group_id).inspect_err(|error| {
             let _ = update(home, &group_id, |state| {
+                if web_owned || web_owns_config(state.get("config")) {
+                    return Ok(());
+                }
                 state.insert("enabled".into(), Value::Bool(true));
                 state.insert("running".into(), Value::Bool(false));
                 state.insert("pid".into(), Value::Null);
@@ -103,6 +130,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
     }
     delegate_worker_action(home, &group_id, "stop").inspect_err(|error| {
         let _ = update(home, &group_id, |state| {
+            if web_owned || web_owns_config(state.get("config")) {
+                return Ok(());
+            }
             state.insert("enabled".into(), Value::Bool(false));
             state.insert("running".into(), Value::Bool(false));
             state.insert("pid".into(), Value::Null);
@@ -114,11 +144,19 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
     })
 }
 
+fn web_owns_config(config: Option<&Value>) -> bool {
+    config.and_then(|value| value["platform"].as_str()) == Some("mattermost")
+}
+
 fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
     delegate_worker_action(home, group_id, "start")
 }
 
 fn delegate_worker_action(home: &HomeLayout, group_id: &str, action: &str) -> OpResult {
+    delegate_im_action(home, action, &json!({"group_id":group_id}))
+}
+
+fn delegate_im_action(home: &HomeLayout, action: &str, body: &Value) -> OpResult {
     let global = settings::load(home).map_err(OpError::io)?;
     let host = global
         .remote_access
@@ -145,7 +183,7 @@ fn delegate_worker_action(home: &HomeLayout, group_id: &str, action: &str) -> Op
         .map_err(OpError::invalid)?;
     let mut request = client
         .post(format!("http://{}:{port}/api/im/{action}", url_host(host)))
-        .json(&json!({"group_id":group_id}));
+        .json(body);
     if let Some(token) = AccessTokenStore::new(home.clone())
         .map_err(OpError::io)?
         .list()
@@ -194,6 +232,18 @@ fn url_host(host: &str) -> String {
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), OpError> {
     let normalized = im_state::canonicalize_config(platform, config)
         .ok_or_else(|| OpError::new("invalid_args", "unsupported IM platform"))?;
+    if platform == "mattermost"
+        && normalized
+            .get("mattermost_url")
+            .and_then(Value::as_str)
+            .and_then(im_state::normalize_mattermost_url)
+            .is_none()
+    {
+        return Err(OpError::new(
+            "invalid_args",
+            "Mattermost site URL is invalid",
+        ));
+    }
     if !im_state::has_required_credentials(platform, &normalized) {
         return Err(OpError::new(
             "invalid_args",
@@ -477,13 +527,69 @@ fn legacy_target_from_key(key: &str) -> (String, Value) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bind, delegate_start, normalize_config, preserve_config_policy, revoke, running,
-        status_payload, url_host,
+        bind, delegate_start, normalize_config, preserve_config_policy, revoke, running, set,
+        status_payload, unset, url_host,
     };
     use cccc_contracts::DaemonRequest;
     use cccc_core::{GroupStore, HomeLayout, im_state, settings};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::io::{Read, Write};
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        // Accepted sockets may inherit nonblocking mode on Windows; normalize it before reading the full HTTP request with a timeout.
+        stream.set_nonblocking(false).expect("blocking request");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("request timeout");
+        let mut bytes = [0_u8; 4096];
+        let mut used = 0;
+        loop {
+            let count = stream.read(&mut bytes[used..]).expect("read request");
+            assert!(count > 0, "incomplete or oversized fixture request");
+            used += count;
+            if let Some(end) = bytes[..used]
+                .windows(4)
+                .position(|part| part == b"\r\n\r\n")
+            {
+                let header = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                let length = header
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .expect("fixture content length")
+                    .trim()
+                    .parse::<usize>()
+                    .expect("valid content length");
+                if used >= end + 4 + length {
+                    return String::from_utf8(bytes[..used].to_vec()).expect("request utf8");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn http_fixture_waits_for_delayed_headers_and_body() {
+        for nonblocking in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+            let address = listener.local_addr().expect("address");
+            let mut client = std::net::TcpStream::connect(address).expect("connect");
+            let (mut stream, _) = listener.accept().expect("accept queued connection");
+            // Connect may finish before a nonblocking accept is ready. Exercise the
+            // reader's socket-mode normalization without depending on handshake timing.
+            stream.set_nonblocking(nonblocking).expect("mode");
+            let reader = std::thread::spawn(move || read_http_request(&mut stream));
+            // Connect first, then send the request in fragments; one read does not constitute a complete HTTP request.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            client
+                .write_all(b"POST /api/im/stop HTTP/1.1\r\nContent-Length: 2\r\n\r\n")
+                .expect("headers");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            client.write_all(b"{}").expect("body");
+            assert_eq!(
+                reader.join().expect("reader"),
+                "POST /api/im/stop HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}"
+            );
+        }
+    }
 
     #[test]
     fn web_url_brackets_ipv6_hosts() {
@@ -704,6 +810,30 @@ mod tests {
     }
 
     #[test]
+    fn mattermost_config_reports_site_errors_without_echoing_input() {
+        for (raw, message) in [
+            (
+                json!({"bot_token":"test-token"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"bot_token":"test-token","mattermost_url":"https://user:secret@mm.example.test"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"mattermost_url":"https://mm.example.test"}),
+                "missing credentials for mattermost",
+            ),
+        ] {
+            let mut config = raw.as_object().expect("object").clone();
+            let error = normalize_config("mattermost", &mut config).expect_err("invalid");
+            assert_eq!(error.code, "invalid_args");
+            assert_eq!(error.message, message);
+            assert_eq!(Value::Object(config), raw);
+        }
+    }
+
+    #[test]
     fn daemon_im_start_delegates_to_the_web_owned_worker() {
         let temp = tempfile::tempdir().expect("temp");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -719,9 +849,7 @@ mod tests {
 
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = [0_u8; 4096];
-            let read = stream.read(&mut request).expect("read request");
-            let request = String::from_utf8_lossy(&request[..read]);
+            let request = read_http_request(&mut stream);
             assert!(request.starts_with("POST /api/im/start HTTP/1.1"));
             assert!(request.contains("\"group_id\":\"g_test\""));
             let body = r#"{"ok":true,"result":{"group_id":"g_test","running":true,"adapter_available":true}}"#;
@@ -773,9 +901,7 @@ mod tests {
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut request = [0_u8; 4096];
-                        let read = stream.read(&mut request).expect("read request");
-                        let request = String::from_utf8_lossy(&request[..read]).into_owned();
+                        let request = read_http_request(&mut stream);
                         let body = r#"{"ok":true,"result":{"group_id":"g_test","running":false,"adapter_available":false}}"#;
                         write!(
                             stream,
@@ -808,5 +934,206 @@ mod tests {
         let observed = server.join().expect("server");
         assert!(observed.starts_with("POST /api/im/stop HTTP/1.1"));
         assert!(observed.contains(&format!("\"group_id\":\"{}\"", group.group_id)));
+    }
+
+    fn mock_management_web(
+        home: &HomeLayout,
+        respond: impl FnOnce(&str) -> Value + Send + 'static,
+    ) -> std::thread::JoinHandle<String> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let mut global = settings::load(home).expect("settings");
+        global.remote_access = json!({"web_host":"127.0.0.1","web_port":listener.local_addr().expect("address").port()})
+            .as_object().cloned().expect("remote access");
+        settings::save(home, &global).expect("settings");
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let request = read_http_request(&mut stream);
+                        let body = respond(&request).to_string();
+                        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).expect("response");
+                        return request;
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("expected delegated management request: {error}"),
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn mattermost_config_changes_delegate_complete_payload_without_local_state_writes() {
+        for (from, target) in [
+            ("telegram", "mattermost"),
+            ("mattermost", "mattermost"),
+            ("mattermost", "slack"),
+            ("mattermost", "unset"),
+        ] {
+            let temp = tempfile::tempdir().expect("temp");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            home.initialize().expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let group_id = store.create("IM delegation", "").expect("group").group_id;
+            im_state::update(&store, &group_id, |value| {
+                *value = json!({"config":{"platform":from,"bot_token_env":"OLD_TOKEN","mattermost_url":"https://old.example.test"},"enabled":true,"running":true,"adapter_available":true,"pid":42,"last_error":"unchanged"});
+                Ok(())
+            }).expect("state");
+            let before = im_state::load(&store, &group_id).expect("before");
+            let expected_id = group_id.clone();
+            let server = mock_management_web(&home, move |request| {
+                let action = if target == "unset" { "unset" } else { "set" };
+                assert!(request.starts_with(&format!("POST /api/im/{action} HTTP/1.1")));
+                let payload: Value =
+                    serde_json::from_str(request.split_once("\r\n\r\n").expect("body").1)
+                        .expect("json");
+                assert_eq!(payload["group_id"], expected_id);
+                assert!(payload.get("by").is_none());
+                if target != "unset" {
+                    assert_eq!(payload["platform"], target);
+                    assert_eq!(payload["bot_token_env"], "NEW_TOKEN");
+                    assert_eq!(payload["files"]["enabled"], false);
+                    if target == "mattermost" {
+                        assert_eq!(payload["mattermost_url"], "https://new.example.test/chat");
+                    } else {
+                        assert_eq!(payload["app_token_env"], "APP_TOKEN");
+                    }
+                }
+                json!({"ok":true,"result":{"group_id":expected_id,"configured":target != "unset","platform":target}})
+            });
+            let request = DaemonRequest { v: 1, op: "im_set".into(), args: json!({"group_id":group_id,"by":"user","platform":target,"bot_token_env":"NEW_TOKEN","app_token_env":"APP_TOKEN","mattermost_url":"https://new.example.test/chat/","files":{"enabled":false,"max_mb":3}}).as_object().cloned().expect("args") };
+            let result = if target == "unset" {
+                unset(&home, &request)
+            } else {
+                set(&home, &request)
+            }
+            .expect("delegate");
+            server.join().expect("server");
+            assert_eq!(result["group_id"], group_id);
+            assert_eq!(result["configured"], target != "unset");
+            // The mock Web server only acknowledges the request; the daemon must not independently change config or runtime state.
+            assert_eq!(im_state::load(&store, &group_id).expect("after"), before);
+        }
+    }
+
+    #[test]
+    fn mattermost_delegation_errors_preserve_web_state_and_legacy_errors_keep_old_behavior() {
+        for (from, to) in [
+            ("mattermost", "mattermost"),
+            ("mattermost", "telegram"),
+            ("telegram", "mattermost"),
+            ("telegram", "telegram"),
+        ] {
+            for action in ["start", "stop"] {
+                let temp = tempfile::tempdir().expect("temp");
+                let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+                home.initialize().expect("home");
+                let store = GroupStore::new(home.clone()).expect("store");
+                let group_id = store.create("IM failure", "").expect("group").group_id;
+                let initial = json!({"config":{"platform":from,"bot_token_env":"TOKEN","mattermost_url":"https://mm.example.test"},"enabled":false,"running":true,"adapter_available":true,"pid":42,"last_error":"new owner"});
+                im_state::update(&store, &group_id, |value| {
+                    *value = initial.clone();
+                    Ok(())
+                })
+                .expect("state");
+                let mut replacement = initial;
+                replacement["config"]["platform"] = json!(to);
+                let expected = replacement.clone();
+                let server_home = home.clone();
+                let server_group = group_id.clone();
+                let server = mock_management_web(&home, move |_| {
+                    let store = GroupStore::new(server_home).expect("store");
+                    im_state::update(&store, &server_group, |value| {
+                        *value = replacement;
+                        Ok(())
+                    })
+                    .expect("replacement");
+                    json!({"ok":false,"error":{"code":"fixture","message":"Web rejected"}})
+                });
+                let request = DaemonRequest {
+                    v: 1,
+                    op: format!("im_{action}"),
+                    args: json!({"group_id":group_id})
+                        .as_object()
+                        .cloned()
+                        .expect("args"),
+                };
+                let error = running(&home, &request, action == "start").expect_err("rejected");
+                assert_eq!(error.code, "adapter_unavailable");
+                assert_eq!(error.message, "Web rejected");
+                server.join().expect("server");
+                let actual = im_state::load(&store, &group_id).expect("after");
+                if from == "mattermost" || to == "mattermost" {
+                    // Normalize the expected value through the same entry point to include native defaults.
+                    im_state::update(&store, &group_id, |value| {
+                        *value = expected;
+                        Ok(())
+                    })
+                    .expect("expected");
+                    assert_eq!(
+                        actual,
+                        im_state::load(&store, &group_id).expect("normalized expected")
+                    );
+                } else {
+                    assert_eq!(actual["enabled"], action == "start");
+                    assert_eq!(actual["running"], false);
+                    assert_eq!(actual["adapter_available"], false);
+                    assert_eq!(actual["pid"], Value::Null);
+                    assert_eq!(actual["last_error"], "Web rejected");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mattermost_set_and_unset_fail_closed_without_web_but_legacy_config_stays_local() {
+        for platform in ["mattermost", "telegram"] {
+            let temp = tempfile::tempdir().expect("temp");
+            let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+            home.initialize().expect("home");
+            let store = GroupStore::new(home.clone()).expect("store");
+            let group_id = store.create("IM no Web", "").expect("group").group_id;
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("unused Web address");
+            let mut global = settings::load(&home).expect("settings");
+            global.remote_access = json!({"web_host":"127.0.0.1","web_port":listener.local_addr().expect("address").port()}).as_object().cloned().expect("remote");
+            settings::save(&home, &global).expect("settings");
+            drop(listener);
+            im_state::update(&store, &group_id, |value| { *value = json!({"config":{"platform":platform,"bot_token_env":"OLD","mattermost_url":"https://old.example.test"},"running":true}); Ok(()) }).expect("state");
+            let before = im_state::load(&store, &group_id).expect("before");
+            let request = DaemonRequest { v:1, op:"im_set".into(), args:json!({"group_id":group_id,"platform":platform,"bot_token_env":"NEW","mattermost_url":"https://new.example.test"}).as_object().cloned().expect("args") };
+            let saved = set(&home, &request);
+            if platform == "mattermost" {
+                assert_eq!(saved.expect_err("no Web").code, "adapter_unavailable");
+                assert_eq!(
+                    im_state::load(&store, &group_id).expect("after save"),
+                    before
+                );
+                assert_eq!(
+                    unset(&home, &request).expect_err("no Web").code,
+                    "adapter_unavailable"
+                );
+                assert_eq!(
+                    im_state::load(&store, &group_id).expect("after unset"),
+                    before
+                );
+            } else {
+                assert_eq!(saved.expect("local save")["configured"], true);
+                assert_eq!(
+                    im_state::load(&store, &group_id).expect("saved")["config"]["bot_token_env"],
+                    "NEW"
+                );
+                assert_eq!(
+                    unset(&home, &request).expect("local unset")["configured"],
+                    false
+                );
+                assert!(im_state::load(&store, &group_id).expect("cleared")["config"].is_null());
+            }
+        }
     }
 }

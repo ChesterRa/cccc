@@ -73,11 +73,12 @@ fn server(
         if change_binding {
             membership::update(&home, |state| {
                 state.device_id = Some("new-binding".into());
+                state.account_label = Some("replacement@example.test".into());
                 Ok(())
             })
             .expect("fixture operation");
         }
-        let payload = if reject {
+        let mut payload = if reject {
             json!({"error":{"code":"device_disabled","message":"Device retired"}})
         } else {
             serde_json::to_value(ConnectDirectory {
@@ -98,6 +99,9 @@ fn server(
             })
             .expect("fixture operation")
         };
+        if !reject {
+            payload["account_label"] = json!("owner@example.test");
+        }
         let body = serde_json::to_string(&payload).expect("fixture operation");
         let status = if reject { "403 Forbidden" } else { "200 OK" };
         write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).expect("fixture operation");
@@ -149,7 +153,19 @@ fn refresh_registers_identity_without_web_tokens_and_status_is_read_only() {
             .policy,
         Read
     ));
-    assert!(status(&home, &request).is_ok());
+    assert_eq!(
+        status(&home, &request).expect("status")["account_label"],
+        "owner@example.test"
+    );
+    let saved = membership::load(&home).expect("member");
+    assert_eq!(saved.account_label.as_deref(), Some("owner@example.test"));
+    membership::update(&home, |member| {
+        member.disabled = true;
+        Ok(())
+    })
+    .expect("cut");
+    assert!(status(&home, &request).expect("cut status")["account_label"].is_null());
+    membership::save(&home, &saved).expect("restore fixture");
     assert_eq!(
         first.checked_at,
         connect::load(&home)
@@ -157,27 +173,60 @@ fn refresh_registers_identity_without_web_tokens_and_status_is_read_only() {
             .expect("fixture operation")
             .checked_at
     );
+    assert!(refresh(&home, &requested, &AtomicBool::new(false)).is_err());
+    assert_eq!(
+        status(&home, &request).expect("offline status")["account_label"],
+        "owner@example.test",
+        "a transport failure does not reject the account identity"
+    );
 }
 
 #[test]
 fn retired_or_changed_bindings_do_not_receive_a_cached_grant() {
-    for (reject, change_binding) in [(true, false), (false, true)] {
+    for (reject, change_binding) in [(true, false), (false, true), (true, true)] {
         let (_temp, home) = fixture();
         let (origin, rx, server) = server(home.clone(), reject, change_binding);
         bind(&home, &origin);
+        membership::update(&home, |member| {
+            member.account_label = Some("previous@example.test".into());
+            Ok(())
+        })
+        .expect("seed cached identity");
         let requested = intent(&home)
             .expect("fixture operation")
             .expect("fixture operation");
         let result = refresh(&home, &requested, &AtomicBool::new(false));
         rx.recv().expect("fixture operation");
         server.join().expect("fixture operation");
-        assert_eq!(result.is_err(), reject);
+        assert_eq!(result.is_err(), reject && !change_binding);
         assert!(
             connect::load(&home)
                 .expect("fixture operation")
                 .and_then(|snapshot| snapshot.directory)
                 .is_none()
         );
+        let request = DaemonRequest {
+            v: 1,
+            op: "connect_status".into(),
+            args: Default::default(),
+        };
+        let label =
+            status(&home, &request).expect("status after account response")["account_label"]
+                .clone();
+        if change_binding {
+            assert_eq!(label, "replacement@example.test");
+        } else {
+            assert!(
+                label.is_null(),
+                "a rejected device must not expose cached identity"
+            );
+            assert!(
+                membership::load(&home)
+                    .expect("membership")
+                    .account_label
+                    .is_none()
+            );
+        }
     }
 }
 
@@ -281,7 +330,7 @@ fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
         )
     }
     let app = Router::new().route("/v1/connect/instances", post(|Json(r): Json<ConnectRegistration>| async move {
-        Json(json!({"protocol_version":1,"account_id":"owner","device_id":"device-a",
+        Json(json!({"protocol_version":1,"account_id":"owner","device_id":"device-a","account_label":"owner@example.test",
             "issued_at":Utc::now().to_rfc3339(),"expires_at":(Utc::now()+chrono::Duration::seconds(119)).to_rfc3339(),
             "instances":[{"instance_id":r.instance_id,"public_key":r.public_key,"client_version":r.client_version,
                 "public_origin":r.public_origin,"device_id":"device-a","display_name":"A","registered_at":Utc::now().to_rfc3339()}]}))
@@ -323,13 +372,25 @@ fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
     let inspect = || group_status(&home, &request).expect("status");
     assert_eq!(inspect()["status"], "syncing");
     let requested = intent(&home).expect("intent").expect("linked");
-    for code in [503, 200, 503, 200, 404] {
+    for code in [503, 200, 503, 200, 404, 403, 401, 200] {
         issuer.code.store(code, Ordering::Relaxed);
         refresh(&home, &requested, &AtomicBool::new(false))
             .expect("same-account directory remains usable");
         let snapshot = connect::load(&home).expect("load").expect("linked");
         assert!(snapshot.directory.is_some());
         assert!(snapshot.error_code.is_none());
+        assert_eq!(
+            membership::load(&home)
+                .expect("membership")
+                .account_label
+                .as_deref(),
+            if matches!(code, 401 | 403) {
+                None
+            } else {
+                Some("owner@example.test")
+            },
+            "only a device rejection clears the display identity"
+        );
         let before = issuer.reads.load(Ordering::Relaxed);
         let status = inspect();
         assert_eq!(
@@ -406,6 +467,10 @@ fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
         vec![&links[0].id, &links[2].id]
     );
     assert!(
+        group_connection_summary(&home).expect("partially unreadable")["counts"][&group.group_id]
+            .is_null()
+    );
+    assert!(
         cccc_core::connect_peer::scoped_binding(&home, &remote.peer_id, Some(&links[0].id))
             .is_err()
     );
@@ -425,6 +490,10 @@ fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
     refresh(&home, &requested, &AtomicBool::new(false)).expect("recover without new invitation");
     assert!(issuer.invalidated.lock().expect("reported").is_empty());
     assert_eq!(inspect()["status"], "ready");
+    let counts = group_connection_summary(&home).expect("summary");
+    assert_eq!(counts["counts"][&group.group_id], 1);
+    assert_eq!(counts["counts"][&healthy.group_id], 1);
+    assert!(counts["counts"].get(&deleted.group_id).is_none());
     cccc_core::connect_peer::scoped_binding(&home, &remote.peer_id, Some(&links[0].id))
         .expect("original link recovers");
     let path = home.root().join("secrets/connect_groups.json");
@@ -432,6 +501,11 @@ fn sharing_sync_failure_recovery_expiry_and_link_state_stay_distinct() {
     grant["expires_at"] = json!("2000-01-01T00:00:00Z");
     cccc_core::fs::write_secret_json(&path, &grant).expect("expire fixture grant");
     assert_eq!(inspect()["status"], "unavailable");
+    assert!(
+        group_connection_summary(&home)
+            .expect("expired summary")
+            .is_null()
+    );
     let mut snapshot = connect::load(&home).expect("snapshot").expect("linked");
     snapshot.directory.as_mut().expect("directory").expires_at = "2000-01-01T00:00:00Z".into();
     connect::save(&home, &snapshot).expect("expire directory");

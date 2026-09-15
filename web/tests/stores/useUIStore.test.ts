@@ -191,3 +191,20 @@ describe("Group work view preferences", () => {
     expect(mod.groupMessagesVisible("g1", mod.useUIStore.getState())).toBe(false);
   });
 });
+
+describe("workspace editor visibility", () => {
+  it("keeps a file tree compatible with visible chat, but excludes the covering file viewer", async () => {
+    const mod = await import("../../src/stores/useUIStore");
+    const store = mod.useUIStore;
+    store.getState().setActiveTab("chat");
+    store.getState().setSmallScreen(false);
+    store.getState().setGroupWorkView("files-group", "messages");
+    store.getState().setChatFilesPanelOpen("files-group", true);
+    expect(mod.groupMessagesVisible("files-group", store.getState())).toBe(true);
+    store.getState().setWorkspaceFileViewerGroupId("files-group");
+    expect(mod.groupMessagesVisible("files-group", store.getState())).toBe(false);
+    expect(mod.groupMessagesVisible("another-group", store.getState())).toBe(true);
+    store.getState().setWorkspaceFileViewerGroupId("");
+    expect(mod.groupMessagesVisible("files-group", store.getState())).toBe(true);
+  });
+});

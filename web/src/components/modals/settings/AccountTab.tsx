@@ -5,7 +5,7 @@ import { RefreshIcon } from "../../Icons";
 import {
   membershipApprovalUrl,
   membershipManagementUrl,
-  membershipPanelKind,
+  membershipAccountKind,
   membershipReachStatus,
 } from "./reachMembershipModel";
 import {
@@ -28,10 +28,10 @@ interface AccountTabProps {
   onOpenWebAccess: () => void;
 }
 
-type AccountViewKind = ReturnType<typeof membershipPanelKind> | "loading" | "unavailable";
+type AccountViewKind = ReturnType<typeof membershipAccountKind> | "loading" | "unavailable";
 
 function statusClass(kind: AccountViewKind): string {
-  if (kind === "online") {
+  if (kind === "linked") {
     return "border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300";
   }
   if (kind === "cut" || kind === "pending") {
@@ -59,7 +59,7 @@ export function AccountTab({
     disconnect,
   } = useMembershipController(isActive);
   const kind: AccountViewKind = membership
-    ? membershipPanelKind(membership)
+    ? membershipAccountKind(membership)
     : membershipBusy
       ? "loading"
       : membershipError
@@ -112,7 +112,7 @@ export function AccountTab({
               </span>
               {kind !== "logged_out" && accountOrigin ? (
                 <span className="truncate text-xs text-[var(--color-text-muted)]">
-                  {accountOrigin}
+                  {membership?.account_label || accountOrigin}
                 </span>
               ) : null}
             </div>
@@ -141,7 +141,7 @@ export function AccountTab({
               {t("account.relinkInstallation")}
             </button>
           ) : null}
-          {kind === "offline" || kind === "online" ? (
+          {kind === "linked" ? (
             <div className="flex shrink-0 flex-wrap gap-2">
               {managementUrl ? (
                 <a
@@ -221,7 +221,7 @@ export function AccountTab({
           </p>
         ) : null}
 
-        {kind === "offline" || kind === "online" ? (
+        {kind === "linked" ? (
           <div className={settingsWorkspaceSoftPanelClass(isDark)}>
             <dl className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -249,7 +249,7 @@ export function AccountTab({
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
             {t("account.connect.description")}
           </p>
-          {kind === "offline" || kind === "online" ? (
+          {kind === "linked" ? (
             <ConnectStatus
               key={`${accountOrigin}/${membership?.device_id}`}
               active={isActive}
@@ -281,19 +281,19 @@ export function AccountTab({
               type="button"
               onClick={onOpenWebAccess}
               className={
-                kind === "offline" && reachSupported && reachStatus === "off"
+                kind === "linked" && reachSupported && reachStatus === "off"
                   ? primaryButtonClass(false)
                   : secondaryButtonClass()
               }
             >
-              {returnToWebAccess || (kind === "offline" && reachSupported && reachStatus === "off")
+              {returnToWebAccess || (kind === "linked" && reachSupported && reachStatus === "off")
                 ? t("account.continueWebAccess")
                 : t("account.openWebAccess")}
             </button>
           </div>
         </div>
 
-        {kind === "offline" || kind === "online" ? (
+        {kind === "linked" ? (
           <div className="border-t border-[var(--glass-border-subtle)] pt-4">
             {confirmDisconnect ? (
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

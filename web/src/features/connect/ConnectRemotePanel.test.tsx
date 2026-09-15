@@ -104,3 +104,27 @@ it("accepts target navigation in the current revision without issuing another na
   await fromTarget({ type: "selected", group_id: "wrong-frame", revision, frame_id: "different" });
   expect(state.selected?.groupId).toBe("created-in-target");
 });
+
+it("forwards the remote Group menu action through the existing admitted frame", async () => {
+  const frame = host.querySelector("iframe")!;
+  const postMessage = frame.contentWindow!.postMessage;
+  await act(async () => state.select("b", "group-b", "connections"));
+  expect(postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      type: "select",
+      group_id: "group-b",
+      action: "connections",
+      revision: state.selected!.revision,
+    }),
+    "https://b.test",
+  );
+  expect(host.querySelector("iframe")).toBe(frame);
+  await act(async () => state.select("b", "group-b"));
+  expect(postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ action: undefined }),
+    "https://b.test",
+  );
+  expect(mocks.request.mock.calls.filter(([path]) => path === "/api/v1/connect/open")).toHaveLength(
+    1,
+  );
+});

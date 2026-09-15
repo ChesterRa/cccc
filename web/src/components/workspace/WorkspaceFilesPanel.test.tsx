@@ -16,6 +16,31 @@ import {
 } from "./workspaceFilesTestSupport";
 
 describe("workspace files surfaces", () => {
+  it("removes only the collapsed symlink branch without accumulating shared file rows", async () => {
+    fetchWorkspaceListing.mockImplementation(async (_group: string, path: string) =>
+      listing(
+        path,
+        path
+          ? [{ name: "file.txt", path: "real/file.txt", is_dir: false }]
+          : [
+              { name: "alias", path: "alias", is_dir: true },
+              { name: "real", path: "real", is_dir: true },
+            ],
+      ),
+    );
+    await mount();
+    await click(rowByName("real"));
+    const rows = () =>
+      [...panel().querySelectorAll('[role="treeitem"]')].map((row) => row.textContent);
+    for (let i = 0; i < 3; i++) {
+      await click(rowByName("alias"));
+      expect(rows()).toEqual(["alias", "file.txt", "real", "file.txt"]);
+      await click(rowByName("alias"));
+      expect(rows()).toEqual(["alias", "real", "file.txt"]);
+    }
+    await click(rowByName("real"));
+    expect(rows()).toEqual(["alias", "real"]);
+  });
   it("fetches a directory only when the user expands it", async () => {
     fetchWorkspaceListing.mockImplementation(async (_group: string, path: string) =>
       listing(
@@ -44,6 +69,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "# hello\n",
         bytes: 8,
@@ -80,6 +107,8 @@ describe("workspace files surfaces", () => {
     fetchWorkspaceFile.mockResolvedValue({
       ok: true,
       result: {
+        scope_key: "scope-a",
+        scope_url: "/repo",
         path: "README.md",
         content: "# old\n",
         bytes: 6,
@@ -113,7 +142,14 @@ describe("workspace files surfaces", () => {
     expect(save?.disabled).toBe(false);
     await click(save as HTMLElement);
 
-    expect(saveWorkspaceFile).toHaveBeenCalledWith("group-1", "README.md", "# edited\n", "stale");
+    expect(saveWorkspaceFile).toHaveBeenCalledWith(
+      "group-1",
+      "README.md",
+      "# edited\n",
+      "stale",
+      "scope-a",
+      "/repo",
+    );
     expect(mainArea().textContent).toContain("changed on disk since you opened it");
     const reload = [...mainArea().querySelectorAll("button")].find((node) =>
       node.textContent?.includes("Reload"),
@@ -135,6 +171,8 @@ describe("workspace files surfaces", () => {
             resolve({
               ok: true,
               result: {
+                scope_key: "scope-a",
+                scope_url: "/repo",
                 path: "README.md",
                 content: "group A secret\n",
                 bytes: 15,

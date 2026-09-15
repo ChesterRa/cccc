@@ -68,6 +68,9 @@ pub fn scoped_binding(
     let Some(id) = connection_id else {
         return binding(home, remote_id);
     };
+    if cccc_contracts::direct::is_direct(id) {
+        return crate::direct::binding(home, remote_id, id);
+    }
     let links = crate::connect_groups::load(home)
         .map_err(|e| e.to_string())?
         .ok_or("external Group confirmation expired")?;
@@ -102,6 +105,19 @@ pub fn group_binding(
     source_group: &str,
     target_group: &str,
 ) -> Result<PeerBinding, String> {
+    if let Some(relation) = crate::direct::load(home)
+        .map_err(|e| e.to_string())?
+        .relations
+        .iter()
+        .find(|r| {
+            r.local.group_id == source_group
+                && r.remote
+                    .as_ref()
+                    .is_some_and(|p| p.instance_id == remote_id && p.group_id == target_group)
+        })
+    {
+        return crate::direct::binding(home, remote_id, &relation.id);
+    }
     if let Ok(binding) = binding(home, remote_id) {
         return Ok(binding);
     }

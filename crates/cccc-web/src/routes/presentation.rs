@@ -221,20 +221,26 @@ async fn workspace_list(
     Path(group_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult {
-    let store =
-        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
-    let group = store
-        .load(&group_id)
-        .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let (root, path, parent, items) =
-        presentation::list_workspace(&group, query.get("path").map(String::as_str).unwrap_or(""))
+    tokio::task::spawn_blocking(move || {
+        let store = GroupStore::new(state.home.clone())
             .map_err(|error| ApiError::bad(error.to_string()))?;
-    Ok(Json(json!({"ok":true,"result":{
-        "root_path":root,
-        "path":path,
-        "parent":parent,
-        "items":items
-    }})))
+        let group = store
+            .load(&group_id)
+            .map_err(|error| ApiError::not_found(error.to_string()))?;
+        let (root, path, parent, items) = presentation::list_workspace(
+            &group,
+            query.get("path").map(String::as_str).unwrap_or(""),
+        )
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+        Ok(Json(json!({"ok":true,"result":{
+            "root_path":root,
+            "path":path,
+            "parent":parent,
+            "items":items
+        }})))
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("workspace_unavailable", error.to_string()))?
 }
 
 async fn asset(

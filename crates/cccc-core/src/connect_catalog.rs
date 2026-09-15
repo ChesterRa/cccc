@@ -9,10 +9,14 @@ use std::io;
 pub struct PeerCatalog {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_origin: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_device_id: String,
     pub remote_instance_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub remote_device_id: String,
     pub remote_origin: String,
     pub checked_at: String,
@@ -20,16 +24,28 @@ pub struct PeerCatalog {
 }
 
 pub fn save(home: &HomeLayout, catalog: &PeerCatalog) -> io::Result<()> {
-    // Revalidate at commit: asynchronous results cannot repopulate a retired binding.
-    validate(home, catalog).map_err(io::Error::other)?;
-    fs::write_secret_json(
-        &path(
-            home,
-            &catalog.remote_instance_id,
-            catalog.connection_id.as_deref(),
-        )?,
-        catalog,
-    )
+    // Direct grant deletion and cache commits share a lock, so late refreshes
+    // cannot leave a deleted connection's cache behind.
+    let save = || {
+        validate(home, catalog).map_err(io::Error::other)?;
+        fs::write_secret_json(
+            &path(
+                home,
+                &catalog.remote_instance_id,
+                catalog.connection_id.as_deref(),
+            )?,
+            catalog,
+        )
+    };
+    if catalog
+        .connection_id
+        .as_deref()
+        .is_some_and(cccc_contracts::direct::is_direct)
+    {
+        fs::with_exclusive_lock(&home.root().join("direct_connections.lock"), save)
+    } else {
+        save()
+    }
 }
 
 pub fn load(home: &HomeLayout, remote_id: &str) -> io::Result<Option<PeerCatalog>> {
@@ -76,8 +92,13 @@ fn path(
         ));
     }
     let key = if let Some(id) = connection_id {
-        uuid::Uuid::parse_str(id).map_err(io::Error::other)?;
-        format!("group-{id}")
+        uuid::Uuid::parse_str(id.strip_prefix("direct-").unwrap_or(id))
+            .map_err(io::Error::other)?;
+        if cccc_contracts::direct::is_direct(id) {
+            id.into()
+        } else {
+            format!("group-{id}")
+        }
     } else {
         instance_id.to_owned()
     };
@@ -102,7 +123,7 @@ fn validate(home: &HomeLayout, catalog: &PeerCatalog) -> Result<(), String> {
         || binding.account_id != catalog.account_id
         || binding.local.device_id != catalog.local_device_id
         || binding.remote.device_id != catalog.remote_device_id
-        || binding.remote.public_origin.as_deref() != Some(catalog.remote_origin.as_str())
+        || binding.remote.public_origin.as_deref().unwrap_or_default() != catalog.remote_origin
         || checked > now + chrono::Duration::seconds(30)
     {
         return Err("peer catalog belongs to a previous binding or has invalid timing".into());

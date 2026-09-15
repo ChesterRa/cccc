@@ -13,6 +13,9 @@ pub struct MembershipState {
     pub logged_in: bool,
     #[serde(default)]
     pub account_origin: Option<String>,
+    /// Display-only identity of the linked account, never Web authorization.
+    #[serde(default)]
+    pub account_label: Option<String>,
     #[serde(default)]
     pub device_id: Option<String>,
     #[serde(default)]

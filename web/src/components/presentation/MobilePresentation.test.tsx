@@ -156,21 +156,24 @@ describe("mobile presentation surface", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders a back control on the phone slot panel", async () => {
+  it("closes the phone slot panel from its shared header", async () => {
+    const close = vi.fn();
     await act(async () => {
       root.render(
         <PresentationRail
-          mode="panel"
+          groupId="g1"
           presentation={presentation}
           isDark={false}
-          isOpen
           attentionSlots={{}}
-          onOpenChange={() => undefined}
+          onClose={close}
           onOpenSlot={() => undefined}
         />,
       );
     });
 
-    expect(host.querySelector("[data-mobile-presentation-close]")).not.toBeNull();
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-side-panel-header] button")!.click(),
+    );
+    expect(close).toHaveBeenCalledOnce();
   });
 });

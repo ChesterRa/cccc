@@ -87,6 +87,7 @@ interface AppModalsProps {
   onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
+  accountLabel?: string | null;
 }
 
 function sortPresentationSlotIds(slotIds: string[]): string[] {
@@ -133,6 +134,7 @@ export function AppModals({
   onSetGroupState,
   fetchContext,
   canManageGroups,
+  accountLabel,
 }: AppModalsProps) {
   const { t } = useTranslation(["actors", "chat", "modals"]);
   // Stores
@@ -1858,6 +1860,7 @@ export function AppModals({
         }}
         onOpenSettings={() => openModal("settings")}
         canAccessAccount={canManageGroups}
+        accountLabel={accountLabel}
         onOpenAccount={() => openSettingsTarget({ scope: "global", tab: "account" })}
         onOpenGroupEdit={
           canManageGroups

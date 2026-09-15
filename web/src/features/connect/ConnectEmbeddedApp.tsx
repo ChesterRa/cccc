@@ -1,3 +1,8 @@
+import {
+  groupConnectionCount,
+  type GroupConnectionSummary,
+  type ConnectStatusResponse,
+} from "./protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import App from "../../App";
@@ -5,13 +10,16 @@ import { AuthGate } from "../../components/AuthGate";
 import { apiJson } from "../../services/api/base";
 import { fetchGroups } from "../../services/api";
 import { useGroupStore } from "../../stores";
+import { useModalStore } from "../../stores/useModalStore";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
+
+type EmbeddedSelection = { groupId: string; revision: number; action?: "connections" };
 
 export function ConnectEmbeddedApp() {
   const { t } = useTranslation("layout");
   const [proof, setProof] = useState(() => readFrameProof(window.location));
   const [expired, setExpired] = useState(false);
-  const [selection, setSelection] = useState<{ groupId: string; revision: number } | null>(null);
+  const [selection, setSelection] = useState<EmbeddedSelection | null>(null);
   const proofRef = useRef(proof);
   const send = useCallback((message: Record<string, unknown>) => {
     const current = proofRef.current;
@@ -36,7 +44,13 @@ export function ConnectEmbeddedApp() {
       ) {
         const { group_id, revision } = event.data;
         setSelection((previous) =>
-          previous && previous.revision >= revision ? previous : { groupId: group_id, revision },
+          previous && previous.revision >= revision
+            ? previous
+            : {
+                groupId: group_id,
+                revision,
+                action: event.data.action === "connections" ? "connections" : undefined,
+              },
         );
       }
       if (
@@ -106,29 +120,36 @@ function AdmittedWorkbench({
   expire,
 }: {
   frameId: string;
-  selection: { groupId: string; revision: number } | null;
+  selection: EmbeddedSelection | null;
   send: (message: Record<string, unknown>) => void;
   expire: () => void;
 }) {
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groups = useGroupStore((state) => state.groups);
+  const lastSummary = useRef<GroupConnectionSummary | null>(null);
+  const [accountLabel, setAccountLabel] = useState<string | null>(null);
   const [admitted, setAdmitted] = useState(false);
   const appliedRequest = useRef<number | null>(null);
   const expireRef = useRef(expire);
   expireRef.current = expire;
   useEffect(() => {
-    if (!selection || appliedRequest.current === selection.revision) return;
+    if (!admitted || !selection || appliedRequest.current === selection.revision) return;
     // Wait for the native list before applying a parent navigation. An absent
     // Group (e.g. deleted since listing) leaves native selection in control.
     if (selection.groupId && !groups.length) return;
     appliedRequest.current = selection.revision;
-    if (
-      groups.some((g) => g.group_id === selection.groupId) &&
-      useGroupStore.getState().selectedGroupId !== selection.groupId
-    ) {
+    const targetExists = groups.some((g) => g.group_id === selection.groupId);
+    // A new navigation closes the previous Group's dialog. Repeated frame
+    // messages in the same revision cannot reopen a dialog the user dismissed.
+    useModalStore
+      .getState()
+      .setGroupConnections(
+        targetExists && selection.action === "connections" ? selection.groupId : null,
+      );
+    if (targetExists && useGroupStore.getState().selectedGroupId !== selection.groupId) {
       useGroupStore.getState().setSelectedGroupId(selection.groupId);
     }
-  }, [selection, groups]);
+  }, [selection, groups, admitted]);
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -143,8 +164,16 @@ function AdmittedWorkbench({
         return;
       }
       setAdmitted(true);
-      const response = await fetchGroups();
+      const [response, status] = await Promise.all([
+        fetchGroups(),
+        apiJson<ConnectStatusResponse>("/api/v1/connect", { signal: AbortSignal.timeout(5000) }),
+      ]);
       if (cancelled) return;
+      if (status.ok) {
+        setAccountLabel(status.result.account_label || null);
+        lastSummary.current =
+          status.result.group_connections || (status.result.connect ? lastSummary.current : null);
+      }
       if (response.ok)
         send({
           type: "groups",
@@ -152,6 +181,7 @@ function AdmittedWorkbench({
             group_id: g.group_id,
             title: g.title || g.group_id,
             running: Boolean(g.running),
+            connection: groupConnectionCount(lastSummary.current, g.group_id),
           })),
         });
       timer = window.setTimeout(() => void refresh(), 15000);
@@ -174,6 +204,10 @@ function AdmittedWorkbench({
     send({ type: "selected", group_id: selectedGroupId, revision: selection.revision });
   }, [selectedGroupId, selection, admitted, send]);
   return admitted ? (
-    <App connectEmbedded onOpenParentSidebar={() => send({ type: "sidebar" })} />
+    <App
+      connectEmbedded
+      embeddedAccountLabel={accountLabel}
+      onOpenParentSidebar={() => send({ type: "sidebar" })}
+    />
   ) : null;
 }

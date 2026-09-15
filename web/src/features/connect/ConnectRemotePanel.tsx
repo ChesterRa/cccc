@@ -55,6 +55,7 @@ export function ConnectRemotePanel({
           type: "select",
           group_id: latest.current.workbench.selected?.groupId || "",
           revision: latest.current.workbench.selected?.revision,
+          action: latest.current.workbench.selected?.action,
         },
         current.origin,
       );
@@ -164,10 +165,17 @@ export function ConnectRemotePanel({
         type: "select",
         group_id: workbench.selected?.groupId || "",
         revision: workbench.selected?.revision,
+        action: workbench.selected?.action,
       },
       opened.origin,
     );
-  }, [opened, ready, workbench.selected?.groupId, workbench.selected?.revision]);
+  }, [
+    opened,
+    ready,
+    workbench.selected?.groupId,
+    workbench.selected?.revision,
+    workbench.selected?.action,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="connect-remote-panel">

@@ -19,7 +19,12 @@ const { localStorageMock } = vi.hoisted(() => {
 
   const storage = makeStorage();
   vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", { setTimeout, clearTimeout, localStorage: storage });
+  vi.stubGlobal("window", {
+    setTimeout,
+    clearTimeout,
+    localStorage: storage,
+    location: { search: "", hash: "" },
+  });
   return { localStorageMock: storage };
 });
 

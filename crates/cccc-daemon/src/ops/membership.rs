@@ -126,6 +126,7 @@ fn login_poll(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             let device_token = grant.device_token.clone();
             membership::update(home, |state| {
                 state.logged_in = true;
+                state.account_label = None;
                 state.account_origin = Some(origin.clone());
                 state.device_id = Some(grant.device_id);
                 state.device_token = Some(grant.device_token);
@@ -186,7 +187,7 @@ fn login_poll(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(status_payload(home)?)
 }
 
-fn initial_instance_name() -> Option<String> {
+pub(super) fn initial_instance_name() -> Option<String> {
     #[cfg(unix)]
     let hostname = nix::unistd::gethostname()
         .ok()?
@@ -488,6 +489,7 @@ fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
         .filter(|pending| !pending_expired(pending));
     let mut body = json!({
         "logged_in":state.logged_in,
+        "account_label":state.account_label.as_ref().filter(|_| state.logged_in && !state.disabled),
         "device_id":state.device_id,
         "hostname":urls.hostname,
         "web_url":urls.web,
@@ -557,6 +559,17 @@ fn refresh_cut_from_account(
     if remote.disabled {
         mark_cut(home, remote.device_id, remote.hostname)?;
         return Ok((None, Some(true)));
+    }
+    if state.account_label != remote.account_label {
+        membership::update(home, |current| {
+            if current.device_token == state.device_token
+                && current.account_origin == state.account_origin
+            {
+                current.account_label = remote.account_label;
+            }
+            Ok(())
+        })
+        .map_err(OpError::io)?;
     }
     Ok((remote.connection, Some(true)))
 }

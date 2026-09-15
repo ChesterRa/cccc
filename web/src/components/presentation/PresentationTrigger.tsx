@@ -46,7 +46,10 @@ export function PresentationTrigger({
       type="button"
       onClick={onOpen}
       className={classNames(
-        "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)]",
+        "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)]",
+        isOpen
+          ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
+          : "text-[var(--color-text-secondary)]",
         hasAttention &&
           (isDark
             ? "presentation-slot-attention presentation-slot-attention-dark"

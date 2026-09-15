@@ -1,3 +1,5 @@
+import { GraphicViewer } from "../viewer/GraphicViewer";
+import { getPresentationReferenceHref } from "./presentationAssets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "../../stores";
@@ -16,18 +18,12 @@ import {
   WindowViewIcon,
 } from "../Icons";
 import { ModalFrame } from "../modals/ModalFrame";
+import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
 import { useModalA11y } from "../../hooks/useModalA11y";
-import type {
-  GroupPresentation,
-  LedgerEvent,
-  PresentationMessageRef,
-  PresentationSlot,
-} from "../../types";
+import type { GroupPresentation, LedgerEvent, PresentationMessageRef } from "../../types";
 import {
   fetchPresentationBrowserSurfaceSession,
   getGroupBlobUrl,
-  getPresentationAssetUrl,
-  refreshAuthTokenInUrl,
   uploadPresentationReferenceSnapshot,
 } from "../../services/api";
 import { classNames } from "../../utils/classNames";
@@ -82,18 +78,6 @@ type PresentationViewerModalProps = PresentationViewerBaseProps & {
 type PresentationViewerSplitPanelProps = PresentationViewerBaseProps & {
   onOpenWindow?: () => void;
 };
-
-function getReferenceHref(
-  groupId: string,
-  slot: PresentationSlot | null,
-  cacheBust?: string | number,
-): string {
-  const card = slot?.card;
-  if (!card) return "";
-  const url = String(card.content.url || "").trim();
-  if (url) return refreshAuthTokenInUrl(url);
-  return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
-}
 
 async function dataUrlToFile(dataUrl: string, filename: string): Promise<File | null> {
   const raw = String(dataUrl || "").trim();
@@ -199,7 +183,7 @@ function PresentationViewer({
     ? `${card?.published_at || "linked"}:${refreshTick}`
     : undefined;
   const href = useMemo(
-    () => getReferenceHref(groupId, slot, cacheBust),
+    () => getPresentationReferenceHref(groupId, slot, cacheBust),
     [cacheBust, groupId, slot],
   );
   const publishedAt = formatTimestamp(card?.published_at, i18n.language);
@@ -225,7 +209,6 @@ function PresentationViewer({
     ? "h-screen w-screen max-w-none sm:h-[96vh] sm:w-[96vw] sm:max-w-[96vw]"
     : "h-screen w-screen max-w-none sm:h-[88vh] sm:w-[min(1280px,96vw)]";
   const immersiveViewportClassName = "h-full min-h-0";
-  const imageViewportClassName = isExpanded ? "max-h-[calc(96vh-14rem)]" : "max-h-[70vh]";
   const fullScreenLabel = isExpanded
     ? t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" })
     : t("presentationFullScreenAction", { defaultValue: "Full screen" });
@@ -257,7 +240,12 @@ function PresentationViewer({
     () => getGroupBlobUrl(groupId, String(quotedSnapshot?.path || "").trim()),
     [groupId, quotedSnapshot?.path],
   );
-  const prefersInnerViewportScroll = cardType === "web_preview" || cardType === "pdf";
+  const { modalRef: snapshotModalRef } = useModalA11y(
+    isOpen && snapshotLightboxOpen && !!currentSnapshotUrl,
+    () => setSnapshotLightboxOpen(false),
+  );
+  const prefersInnerViewportScroll =
+    cardType === "web_preview" || cardType === "pdf" || cardType === "image";
   const useOuterEvidenceScroll = !prefersInnerViewportScroll;
   const canRestoreRefInViewer = useMemo(
     () => canRestorePresentationRefInViewer(cardType),
@@ -787,16 +775,11 @@ function PresentationViewer({
       </div>
     </div>
   ) : card.card_type === "image" ? (
-    <div className="flex min-h-[360px] items-center justify-center">
-      <img
-        src={href}
-        alt={card.title}
-        className={classNames(
-          imageViewportClassName,
-          "max-w-full rounded-3xl border border-[var(--glass-border-subtle)] object-contain shadow-xl",
-        )}
-      />
-    </div>
+    <GraphicViewer
+      resourceKey={`${groupId}:${slotId}:${card.published_at}`}
+      src={href}
+      alt={card.title}
+    />
   ) : card.card_type === "pdf" ? (
     <iframe
       title={card.title}
@@ -1072,6 +1055,10 @@ function PresentationViewer({
               aria-label={t("presentationCloseSnapshotAction", { defaultValue: "Close snapshot" })}
             />
             <div
+              ref={snapshotModalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("presentationSnapshotFromQuoteLabel")}
               className={classNames(
                 "relative z-10 flex h-full max-h-full w-full max-w-6xl min-h-0 flex-col overflow-hidden rounded-3xl border shadow-2xl",
                 isDark ? "border-white/10 bg-slate-950/96" : "border-black/10 bg-white/96",
@@ -1134,11 +1121,10 @@ function PresentationViewer({
                   <CloseIcon aria-hidden="true" className="h-4 w-4" strokeWidth={1.6} />
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto bg-black/10 p-4">
-                <img
+              <div className="min-h-0 flex-1">
+                <GraphicViewer
                   src={currentSnapshotUrl}
                   alt={t("presentationQuotedSnapshotAlt", { defaultValue: "Quoted snapshot" })}
-                  className="mx-auto h-auto max-h-full max-w-full rounded-2xl object-contain"
                 />
               </div>
             </div>
@@ -1205,35 +1191,23 @@ function PresentationViewer({
         )}
         aria-label={t("presentationTitle", { defaultValue: "Presentation" })}
       >
-        <div
-          className={classNames(
-            "flex items-center justify-between gap-2 border-b px-3 py-1.5",
-            isDark ? "border-white/8" : "border-black/8",
-          )}
+        <SidePanelHeader
+          title={card?.title || t("presentationTitle")}
+          subtitle={card ? getCardTypeLabel(card.card_type, t) : undefined}
+          onClose={onClose}
+          closeLabel={t("presentationCloseSplitAction")}
         >
-          <div className="min-w-0 flex items-center gap-2">
-            <div
-              className={classNames(
-                "truncate text-sm font-semibold",
-                isDark ? "text-slate-100" : "text-gray-900",
-              )}
-            >
-              {card?.title || t("presentationTitle", { defaultValue: "Presentation" })}
-            </div>
-            {card ? (
-              <span
-                className={classNames(
-                  "flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                  isDark
-                    ? "bg-white/[0.08] text-white"
-                    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
-                )}
-              >
-                {getCardTypeLabel(card.card_type, t)}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-1">
+          {onOpenWindow && (
+            <SidePanelButton title={t("presentationOpenWindowAction")} onClick={onOpenWindow}>
+              <WindowViewIcon />
+            </SidePanelButton>
+          )}
+        </SidePanelHeader>
+        {(showWebPreviewModeToggle ||
+          canRefresh ||
+          copyReferenceValue ||
+          (!readOnly && (onReplaceSlot || onClearSlot) && slot)) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 py-1">
             {showWebPreviewModeToggle ? (
               <div
                 className={classNames(
@@ -1281,109 +1255,43 @@ function PresentationViewer({
                 </button>
               </div>
             ) : null}
-            {canRefresh ? (
-              <button
-                type="button"
-                onClick={() => setRefreshTick((value) => value + 1)}
-                className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                  isDark
-                    ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    : "bg-gray-100 text-gray-800 hover:bg-gray-200",
-                )}
-                aria-label={refreshActionLabel}
-                title={refreshActionLabel}
-              >
-                <RefreshIcon size={14} />
-              </button>
-            ) : null}
-            {copyReferenceValue ? (
-              <button
-                type="button"
-                onClick={() => {
-                  void handleCopyReference();
-                }}
-                className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
-                  copiedReference
-                    ? isDark
-                      ? "bg-white/[0.08] text-white"
-                      : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
-                    : isDark
-                      ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                      : "bg-gray-100 text-gray-800 hover:bg-gray-200",
-                )}
-                aria-label={copyActionLabel}
-                title={copyActionLabel}
-              >
-                <CopyIcon size={14} />
-              </button>
-            ) : null}
-            {onOpenWindow ? (
-              <button
-                type="button"
-                onClick={onOpenWindow}
-                className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                  isDark
-                    ? "bg-slate-800 text-white hover:bg-slate-700 hover:text-white"
-                    : "bg-gray-100 text-[rgb(35,36,37)] hover:bg-gray-200 hover:text-black",
-                )}
-                aria-label={t("presentationOpenWindowAction", { defaultValue: "Open in window" })}
-                title={t("presentationOpenWindowAction", { defaultValue: "Open in window" })}
-              >
-                <WindowViewIcon size={14} />
-              </button>
-            ) : null}
-            {!readOnly && onReplaceSlot && slot ? (
-              <button
-                type="button"
-                onClick={() => onReplaceSlot(slot.slot_id)}
-                className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                  isDark
-                    ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    : "bg-gray-100 text-gray-800 hover:bg-gray-200",
-                )}
-                aria-label={editActionLabel}
-                title={editActionLabel}
-              >
-                <EditIcon size={14} />
-              </button>
-            ) : null}
-            {!readOnly && onClearSlot && slot ? (
-              <button
-                type="button"
-                onClick={() => void handleClearSlot()}
-                disabled={!!clearingSlotId}
-                className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
-                  isDark
-                    ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
-                    : "bg-rose-50 text-rose-700 hover:bg-rose-100",
-                )}
-                aria-label={clearActionLabel}
-                title={clearActionLabel}
-              >
-                <TrashIcon size={14} />
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={onClose}
-              className={classNames(
-                "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                isDark
-                  ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                  : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {canRefresh && (
+                <SidePanelButton
+                  title={refreshActionLabel}
+                  onClick={() => setRefreshTick((value) => value + 1)}
+                >
+                  <RefreshIcon />
+                </SidePanelButton>
               )}
-              aria-label={t("presentationCloseSplitAction", { defaultValue: "Close presentation" })}
-              title={t("presentationCloseSplitAction", { defaultValue: "Close presentation" })}
-            >
-              <CloseIcon size={14} />
-            </button>
+              {copyReferenceValue && (
+                <SidePanelButton title={copyActionLabel} onClick={() => void handleCopyReference()}>
+                  <CopyIcon />
+                </SidePanelButton>
+              )}
+              {!readOnly && onReplaceSlot && slot && (
+                <SidePanelButton
+                  title={editActionLabel}
+                  onClick={() => onReplaceSlot(slot.slot_id)}
+                >
+                  <EditIcon />
+                </SidePanelButton>
+              )}
+              {!readOnly && onClearSlot && slot && (
+                <SidePanelButton
+                  title={clearActionLabel}
+                  onClick={() => void handleClearSlot()}
+                  disabled={!!clearingSlotId}
+                  className={
+                    isDark ? "text-rose-200 hover:bg-rose-500/15" : "text-rose-700 hover:bg-rose-50"
+                  }
+                >
+                  <TrashIcon />
+                </SidePanelButton>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {viewerBody}
       </section>
     );

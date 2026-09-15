@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::{task::JoinSet, time::Instant};
 
-pub(super) async fn run(home: HomeLayout, client: reqwest::Client, locks: DispatchLocks) {
+pub(super) async fn run(home: HomeLayout, client: super::PeerClient, locks: DispatchLocks) {
     let mut work = JoinSet::new();
     let mut active: HashMap<tokio::task::Id, (String, String)> = HashMap::new();
     let mut due: HashMap<(String, String), Instant> = HashMap::new();
@@ -64,9 +64,9 @@ pub(super) async fn run(home: HomeLayout, client: reqwest::Client, locks: Dispat
     }
 }
 
-pub(super) async fn process(
+pub(crate) async fn process(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &super::PeerClient,
     locks: &DispatchLocks,
     peer: &str,
     id: &str,
@@ -172,7 +172,7 @@ enum Attempt {
 
 async fn attempt(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &super::PeerClient,
     entry: &mut ConnectOutboxEntry,
 ) -> Result<Attempt, DeliveryError> {
     connect_delivery::work_binding(home, &entry.work).map_err(DeliveryError::Peer)?;
@@ -279,7 +279,7 @@ async fn attempt(
 
 async fn attempt_cancellation(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    client: &super::PeerClient,
     entry: &mut ConnectOutboxEntry,
 ) -> Result<Attempt, DeliveryError> {
     let ConnectWork::Cancel(cancel) = &entry.work else {
@@ -423,7 +423,7 @@ async fn finalize(
 }
 
 #[derive(Debug)]
-pub(super) enum DeliveryError {
+pub(crate) enum DeliveryError {
     Local(String),
     Peer(String),
 }

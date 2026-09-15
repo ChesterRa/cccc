@@ -42,7 +42,8 @@
       "pending": "承認待ち",
       "cut": "再リンクが必要",
       "offline": "リンク済み",
-      "online": "リンク済み · リモートアクセスオンライン"
+      "online": "リンク済み · リモートアクセスオンライン",
+      "linked": "連携済み"
     },
     "stateHelp": {
       "loading": "このインストールが CCCC アカウントにリンク済みか確認しています。",
@@ -51,7 +52,8 @@
       "pending": "アカウントページでコードを承認してください。CCCC はローカル作業を妨げず、自動的に結果を確認します。",
       "cut": "アカウントはこのインストールを認識しなくなりました。再リンクして新しいデバイス資格情報を作成してください。",
       "offline": "このインスタンスは関連付け済みです。管理されたリモートアクセスのトンネルは停止中です。他の接続方法は Web Access で個別に設定できます。",
-      "online": "このインストールはリンク済みで、管理されたリモートアクセスホスト名がオンラインです。"
+      "online": "このインストールはリンク済みで、管理されたリモートアクセスホスト名がオンラインです。",
+      "linked": "このインスタンスは CCCC アカウントに連携済みです。接続とリモートアクセスの状態は下に表示されます。"
     },
     "linkInstallation": "サインインしてこのインストールをリンク",
     "relinkInstallation": "インストールを再リンク",
@@ -76,7 +78,7 @@
     "openWebAccess": "Web Access を開く",
     "continueWebAccess": "Web Access の設定を続ける",
     "disconnect": "インストールを切断",
-    "disconnectPrompt": "このインストールのアカウント資格情報、管理ホスト名、実行中のリモートアクセストンネルを廃止します。ローカルのグループとエージェントはこのマシンに残ります。",
+    "disconnectPrompt": "このインスタンスのアカウント連携を解除しますか？デバイス認証情報と公開アドレスは失効し、Connect アクセス、招待、グループ接続も終了します。ローカルのグループ、エージェント、履歴は残ります。",
     "confirmDisconnect": "切断する",
     "keepLinked": "リンクを維持",
     "connect": {
@@ -905,7 +907,7 @@
   },
   "imBridge": {
     "title": "IMブリッジ",
-    "description": "このグループを Telegram、Slack、Discord、Feishu/Lark、DingTalk、または WeCom に接続します。",
+    "description": "このグループを Telegram、Slack、Discord、Mattermost、Feishu/Lark、DingTalk、または WeCom に接続します。",
     "running": "稼働中",
     "stopped": "停止中",
     "platform": "プラットフォーム",
@@ -913,6 +915,12 @@
     "botTokenTelegram": "ボットトークン (トークンまたは環境変数)",
     "botTokenSlack": "ボットトークン (xoxb または環境変数)",
     "botTokenDiscord": "ボットトークン (トークンまたは環境変数)",
+    "mattermostUrl": "Mattermost サイト URL",
+    "mattermostUrlInvalid": "認証情報、クエリ、フラグメント、/api/v4 サフィックスを含まない HTTP または HTTPS のサイト URL を入力してください。",
+    "mattermostConfigFailed": "Mattermost ブリッジの操作に失敗しました。接続と設定を確認して再試行してください。",
+    "mattermostBotIsolationHint": "各グループと実行中の CCCC インスタンスには、トークンが異なる場合も別のボットを使用してください。これは運用上の要件です。CCCC はグループやインスタンス間のボット重複を検出しません。",
+    "mattermostUrlHint": "設置先のサブパスを含むサイトのルートを入力してください。/api/v4、クエリ、認証情報は含めないでください。HTTPS を推奨します。HTTP ではトークンやメッセージは暗号化されません。",
+    "mattermostUsageHint": "ボットをチャンネルに追加して @Bot /subscribe を送信します。Mattermost のスラッシュコマンド処理を避けるため、DM でも同じ接頭辞を付けてコマンドを送信してください。承認後は @Bot /send @actor メッセージ を使用し、DM では通常のテキストも送信できます。同じグループのチャットはコンテキストと購読出力を共有し、個別に隔離されません。",
     "botToken": "ボットトークン",
     "botTokenHintSlack": "xoxb-… トークンまたは環境変数名を貼り付けます。アウトバウンドメッセージには必須です。",
     "botTokenHint": "ボットトークンまたは環境変数名を貼り付けます。ボット認証に必要です。",

@@ -179,7 +179,9 @@ fn delete_with_steps(
             ));
         }
         finalize_group_space(store, &retired_space);
+        let retirement = crate::direct::retire_group(store.home(), group_id);
         cleanup_tombstones(store, group_id)?;
+        retirement?;
         return Ok(false);
     }
     let ledger_path = dir.join("ledger.jsonl");
@@ -230,6 +232,8 @@ fn delete_with_steps(
         ));
     }
     crate::ledger_index::invalidate_path(&ledger_path);
+    // The Group is unregistered; rollback paths above keep existing authority.
+    let retirement = crate::direct::retire_group(store.home(), group_id);
     let cleanup = remove_tombstone(&tombstone).map_err(|error| {
         io::Error::other(format!(
             "rollback_failed: group was unregistered but tombstone {} could not be removed: {error}",
@@ -237,6 +241,7 @@ fn delete_with_steps(
         ))
     });
     finalize_group_space(store, &retired_space);
+    retirement?;
     cleanup?;
     Ok(true)
 }
@@ -301,6 +306,49 @@ fn cleanup_tombstones(store: &GroupStore, group_id: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::HomeLayout;
+
+    #[test]
+    fn failed_delete_preserves_direct_grants_and_committed_cleanup_is_retryable() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("Direct owner", "").expect("group");
+        crate::direct::configure(
+            &home,
+            Some(cccc_contracts::direct::DirectListener {
+                bind: "127.0.0.1:8847".into(),
+                address: "127.0.0.1:8847".into(),
+            }),
+            None,
+        )
+        .expect("listener");
+        crate::direct::invite(&home, &group.group_id).expect("invite");
+        let before = crate::direct::load(&home).expect("store");
+        delete_with_steps(
+            &store,
+            &group.group_id,
+            |_| Ok(()),
+            |_, _| Err(io::Error::other("injected registry failure")),
+        )
+        .expect_err("rollback");
+        assert!(store.load(&group.group_id).is_ok());
+        assert!(crate::direct::load(&home).expect("store") == before);
+        let id = &before.relations[0].id;
+        let cache = home
+            .root()
+            .join("state/connect/catalog")
+            .join(format!("{id}.json"));
+        fs::create_dir_all(&cache).expect("inject cache removal failure");
+        delete(&store, &group.group_id).expect_err("cleanup failure remains visible");
+        assert!(!store.group_dir(&group.group_id).expect("dir").exists());
+        assert!(!has_tombstone(&home, &group.group_id));
+        assert!(crate::direct::load(&home).expect("retryable records") == before);
+        fs::remove_dir(&cache).expect("repair cache");
+        assert!(!delete(&store, &group.group_id).expect("retry after committed deletion"));
+        let after = crate::direct::load(&home).expect("retired");
+        assert!(after.relations.is_empty());
+        assert!(after.retired.contains(id));
+    }
 
     #[test]
     fn failed_tombstone_cleanup_is_explicit_and_retryable() {

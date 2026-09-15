@@ -1,5 +1,5 @@
+import { GraphicViewer } from "./viewer/GraphicViewer";
 import { FloatingPortal } from "@floating-ui/react";
-import type { CSSProperties } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,7 +20,12 @@ const expandIconMarkup = renderToStaticMarkup(
   <ExpandIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />,
 );
 
-type MermaidPreviewState = { svg: string; source: string; naturalWidth: number };
+type MermaidPreviewState = {
+  svg: string;
+  source: string;
+  naturalWidth: number;
+  naturalHeight: number;
+};
 
 type MermaidLabels = {
   copy: string;
@@ -48,7 +53,6 @@ function MermaidPreviewDialog({
   const [copied, setCopied] = useState(false);
   const titleId = useId();
   const { modalRef } = useModalA11y(true, onClose);
-  const renderedSvg = useMemo(() => ({ __html: preview.svg }), [preview.svg]);
 
   useEffect(() => {
     if (!copied) return;
@@ -125,17 +129,12 @@ function MermaidPreviewDialog({
               <code>{preview.source}</code>
             </pre>
           ) : (
-            <div className="mermaid-preview-canvas">
-              <div
-                className="mermaid-preview-diagram"
-                style={
-                  {
-                    "--mermaid-preview-natural-width": `${preview.naturalWidth}px`,
-                  } as CSSProperties
-                }
-                dangerouslySetInnerHTML={renderedSvg}
-              />
-            </div>
+            <GraphicViewer
+              svg={preview.svg}
+              width={preview.naturalWidth}
+              height={preview.naturalHeight}
+              alt={labels.diagram}
+            />
           )}
         </div>
       </div>
@@ -329,11 +328,17 @@ export function MarkdownRenderer({
     } catch {
       return;
     }
-    const naturalWidth = Number(svg.viewBox?.baseVal?.width || 0);
+    const naturalWidth = Number(
+      svg.viewBox?.baseVal?.width || svg.getBoundingClientRect().width || 1,
+    );
+    const naturalHeight = Number(
+      svg.viewBox?.baseVal?.height || svg.getBoundingClientRect().height || 1,
+    );
     setMermaidPreview({
       svg: target.innerHTML,
       source,
-      naturalWidth: Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 0,
+      naturalWidth: Number.isFinite(naturalWidth) && naturalWidth > 0 ? naturalWidth : 1,
+      naturalHeight: Number.isFinite(naturalHeight) && naturalHeight > 0 ? naturalHeight : 1,
     });
   }, []);
 

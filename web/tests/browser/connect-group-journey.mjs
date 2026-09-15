@@ -81,12 +81,18 @@ export async function connectGroupJourney({
     await evaluate("localStorage.setItem('i18nextLng','en')");
     await navigate(url);
     await eventually(
-      () =>
-        evaluate(
-          "!![...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='External connections' && !b.disabled)",
-        ),
+      () => evaluate("!!document.querySelector('aside button[aria-haspopup=menu]')"),
       "Group connection entry",
     );
+  };
+  const openConnections = async () => {
+    // Open the selected Group's menu; connections are a Group action, not a header toggle.
+    await evaluate("document.querySelector('aside button[aria-haspopup=menu]').click()");
+    await eventually(
+      () => evaluate("!!document.querySelector('[role=menuitem]')"),
+      "Group actions menu",
+    );
+    await click("External connections");
   };
   const continueToAccount = async (button) => {
     await click(button);
@@ -120,7 +126,7 @@ export async function connectGroupJourney({
     !(await body()).includes("fixture-b"),
     "other-member instance must not enter the aggregate sidebar",
   );
-  await click("External connections");
+  await openConnections();
   await eventually(
     () =>
       evaluate(
@@ -147,7 +153,7 @@ export async function connectGroupJourney({
   assert(!(await body()).includes("Both selected Groups must be online"));
   await screenshot("groups-selection-changed.png");
   await openNative(0);
-  await click("External connections");
+  await openConnections();
   await eventually(
     () =>
       evaluate(
@@ -282,7 +288,7 @@ export async function connectGroupJourney({
   );
 
   await openNative(1);
-  await click("External connections");
+  await openConnections();
   await eventually(
     () => evaluate(`!!(${groupDialog})?.innerText.includes('Workspace A')`),
     "native connection summary",

@@ -56,6 +56,8 @@ pub struct Listing {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FileContent {
+    pub scope_key: String,
+    pub scope_url: String,
     pub path: String,
     pub content: String,
     pub bytes: u64,
@@ -78,19 +80,23 @@ pub enum WriteOutcome {
     },
 }
 
-/// Absolute, canonicalized root of the group's active scope.
-pub fn root(group: &GroupDoc) -> io::Result<PathBuf> {
-    let scope = group
+/// The active attachment supplies the workspace location and identity.
+fn active_scope(group: &GroupDoc) -> io::Result<&crate::Scope> {
+    group
         .scopes
         .iter()
         .find(|scope| scope.scope_key == group.active_scope_key)
-        .ok_or_else(|| io::Error::other("group has no active scope"))?;
-    Path::new(&scope.url).canonicalize()
+        .ok_or_else(|| io::Error::other("group has no active scope"))
+}
+
+/// Absolute, canonicalized root of the group's active scope.
+pub fn root(group: &GroupDoc) -> io::Result<PathBuf> {
+    Path::new(&active_scope(group)?.url).canonicalize()
 }
 
 /// Rejects absolute paths and any component that could climb out of the root.
 pub fn safe_relative(value: &str) -> io::Result<PathBuf> {
-    let path = Path::new(value.trim());
+    let path = Path::new(value);
     if path.as_os_str().is_empty()
         || path.is_absolute()
         || path.components().any(|part| {
@@ -150,7 +156,7 @@ pub fn resolve_for_create(root: &Path, relative: &str) -> io::Result<PathBuf> {
 
 pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Result<Listing> {
     let root = root(group)?;
-    let (directory, normalized) = if relative.trim().is_empty() {
+    let (directory, normalized) = if relative.is_empty() {
         (root.clone(), String::new())
     } else {
         let resolved = resolve_existing(&root, relative)?;
@@ -218,7 +224,10 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
 
     let parent = Path::new(&normalized)
         .parent()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .map(|path| {
+            path.to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/")
+        })
         .filter(|path| !path.is_empty())
         .or_else(|| (!normalized.is_empty()).then(String::new));
 
@@ -231,6 +240,7 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
 }
 
 pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
+    let scope = active_scope(group)?;
     let root = root(group)?;
     let path = resolve_existing(&root, relative)?;
     if !path.is_file() {
@@ -238,13 +248,15 @@ pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
             "path must be a file under the active scope",
         ));
     }
-    let normalized = to_relative(&root, &path).unwrap_or_else(|| relative.trim().to_owned());
+    let normalized = to_relative(&root, &path).unwrap_or_else(|| relative.to_owned());
     let mime_type = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
     let bytes = fs::metadata(&path)?.len();
     if bytes > MAX_READ_BYTES {
         return Ok(FileContent {
+            scope_key: group.active_scope_key.clone(),
+            scope_url: scope.url.clone(),
             path: normalized,
             content: String::new(),
             bytes,
@@ -257,6 +269,8 @@ pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
     let raw = fs::read(&path)?;
     let binary = is_binary(&raw);
     Ok(FileContent {
+        scope_key: group.active_scope_key.clone(),
+        scope_url: scope.url.clone(),
         path: normalized,
         sha256: digest(&raw),
         content: if binary {
@@ -276,7 +290,7 @@ fn to_relative(root: &Path, path: &Path) -> Option<String> {
         path.strip_prefix(root)
             .ok()?
             .to_string_lossy()
-            .replace('\\', "/"),
+            .replace(std::path::MAIN_SEPARATOR, "/"),
     )
 }
 

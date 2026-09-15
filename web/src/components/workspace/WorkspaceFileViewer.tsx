@@ -3,6 +3,7 @@ import { Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
+import { applyEditorText, editorText } from "./workspaceText";
 
 type Props = {
   file: WorkspaceFile;
@@ -140,9 +141,9 @@ export function WorkspaceFileViewer({
         </div>
       ) : editable ? (
         <textarea
-          value={draft}
+          value={editorText(draft)}
           spellCheck={false}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => setDraft(applyEditorText(draft, event.target.value, file.content))}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "s") {
               event.preventDefault();

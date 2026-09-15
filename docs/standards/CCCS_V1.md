@@ -654,3 +654,10 @@ must be committed before their old queue records are removed. No remote grant is
 inferred from history. Read-only status projections may annotate affected messages
 with `_retired_bridge=true`; replay must preserve it and consumers must not offer
 an active reply through that retired route. See [Daemon IPC](CCCC_DAEMON_IPC_V1.md#8172-cccc-connect-and-manual-bridge-retirement).
+
+Standalone Direct Group connections use the same cross-instance provenance,
+Actor generation, immutable connection ID and durable receipt rules. Their
+`direct-<UUID>` grant authorizes only the paired Group generations and carries no
+membership account/device authority. Removal or replacement cannot redirect an
+existing delivery or let a new connection fulfill its obligation. See the
+[Direct connection specification](CCCC_CONNECT_V1.md#standalone-direct-group-connections).

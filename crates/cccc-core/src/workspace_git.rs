@@ -50,11 +50,11 @@ pub fn status_map(root: &Path, scope: &str) -> BTreeMap<String, GitStatus> {
 /// `"."` keeps the walk inside the workspace root even when the root sits below the repository
 /// root; a named directory narrows it further.
 fn status_pathspec(scope: &str) -> String {
-    let scope = scope.trim().trim_matches('/');
+    let scope = scope.trim_matches('/');
     if scope.is_empty() {
         ".".to_owned()
     } else {
-        scope.to_owned()
+        format!(":(literal){scope}")
     }
 }
 
@@ -98,7 +98,10 @@ fn parse_status(stdout: &str, prefix: &str) -> BTreeMap<String, GitStatus> {
         if matches!(status, GitStatus::Renamed) {
             tokens.next();
         }
-        let Some(relative) = path.trim_start().strip_prefix(prefix) else {
+        let Some(relative) = path
+            .strip_prefix(' ')
+            .and_then(|path| path.strip_prefix(prefix))
+        else {
             continue;
         };
         let relative = relative.trim_end_matches('/');
@@ -134,6 +137,7 @@ fn classify(code: &str) -> GitStatus {
 fn git_stdout(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Option<String> {
     let mut child = Command::new("git")
         .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .current_dir(cwd)
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -178,6 +182,19 @@ mod tests {
     }
 
     #[test]
+    fn status_paths_preserve_whitespace_in_file_names() {
+        let parsed = parse_status(
+            " M  leading.txt\0?? trailing.txt \0 M sub/ nested.txt \0",
+            "",
+        );
+        assert_eq!(parsed[" leading.txt"], GitStatus::Modified);
+        assert_eq!(parsed["trailing.txt "], GitStatus::Untracked);
+        assert_eq!(parsed["sub/ nested.txt "], GitStatus::Modified);
+        let nested = parse_status(" M sub/ nested.txt \0", "sub/");
+        assert_eq!(nested[" nested.txt "], GitStatus::Modified);
+    }
+
+    #[test]
     fn rename_records_consume_their_source_path() {
         // `R  new\0old` must not leave `old` behind as a bogus entry.
         let stdout = "R  docs/new.md\0docs/old.md\0 M keep.rs\0";
@@ -192,12 +209,12 @@ mod tests {
         // The root listing still needs the whole workspace for its dirty-descendant rollups,
         // but expanding a directory must not re-walk the repository.
         assert_eq!(status_pathspec(""), ".");
-        assert_eq!(status_pathspec("   "), ".");
+        assert_eq!(status_pathspec("   "), ":(literal)   ");
         assert_eq!(
             status_pathspec("crates/cccc-web/src"),
-            "crates/cccc-web/src"
+            ":(literal)crates/cccc-web/src"
         );
-        assert_eq!(status_pathspec("/crates/"), "crates");
+        assert_eq!(status_pathspec("/crates/"), ":(literal)crates");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import { groupConnectionCount, type GroupConnectionSummary } from "../../features/connect/protocol";
 import {
   DndContext,
   closestCenter,
@@ -21,6 +22,9 @@ interface GroupSidebarSortableListProps {
   isCollapsed: boolean;
   readOnly?: boolean;
   menuActionLabel?: string;
+  connectionsLabel?: string;
+  connectionSummary?: GroupConnectionSummary | null;
+  onOpenConnections?: (groupId: string) => void;
   menuAriaLabel?: string;
   /** Screen-reader instructions for a sortable row; replaces dnd-kit's default. */
   reorderInstructions?: string;
@@ -39,6 +43,9 @@ export function GroupSidebarSortableList({
   isCollapsed,
   readOnly,
   menuActionLabel,
+  connectionsLabel,
+  connectionSummary,
+  onOpenConnections,
   menuAriaLabel,
   reorderInstructions,
   onMenuAction,
@@ -101,6 +108,9 @@ export function GroupSidebarSortableList({
                 isArchived={isArchivedSection}
                 dragDisabled={!!readOnly}
                 menuActionLabel={menuActionLabel}
+                connectionsLabel={connectionsLabel}
+                connection={groupConnectionCount(connectionSummary, gid)}
+                onOpenConnections={onOpenConnections ? () => onOpenConnections(gid) : undefined}
                 menuAriaLabel={
                   menuAriaLabel ? `${menuAriaLabel} · ${group.title || gid}` : undefined
                 }

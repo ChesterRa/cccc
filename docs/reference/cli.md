@@ -257,6 +257,7 @@ Manage IM Bridge.
 cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
 cccc im set slack --bot-token-env SLACK_BOT_TOKEN --app-token-env SLACK_APP_TOKEN
 cccc im set discord --token-env DISCORD_BOT_TOKEN
+cccc im set mattermost --mattermost-url https://mattermost.example.com --bot-token-env MATTERMOST_BOT_TOKEN
 cccc im set feishu --app-key-env FEISHU_APP_ID --app-secret-env FEISHU_APP_SECRET
 cccc im set dingtalk --app-key-env DINGTALK_APP_KEY --app-secret-env DINGTALK_APP_SECRET --robot-code-env DINGTALK_ROBOT_CODE
 

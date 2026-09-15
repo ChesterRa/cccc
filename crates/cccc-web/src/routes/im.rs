@@ -11,9 +11,17 @@ use std::io;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
+use crate::im_runtime::{ImRequestVersion, adapter_commits_start_state};
 
 const PLATFORMS: &[&str] = &[
-    "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin",
+    "telegram",
+    "slack",
+    "discord",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "weixin",
+    "mattermost",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -90,15 +98,29 @@ async fn set(
         &mut config,
         current.get("config").and_then(Value::as_object),
     );
-    update(&state, &group_id, |value| {
+    let invalidated = update(&state, &group_id, |value| {
+        let invalidated = adapter_commits_start_state(Some(&platform))
+            || adapter_commits_start_state(value["config"]["platform"].as_str());
+        if invalidated {
+            state.im_workers.invalidate_start(&group_id);
+        }
         let state = object(value);
+        if invalidated {
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("last_error".into(), Value::Null);
+        }
         state.insert("config".into(), Value::Object(config.clone()));
         state.insert("enabled".into(), Value::Bool(false));
         state.insert("running".into(), Value::Bool(false));
         state.insert("updated_at".into(), Value::String(utc_now()));
-        Ok(())
+        Ok(invalidated)
     })?;
-    state.im_workers.stop(&group_id).await;
+    if invalidated {
+        state.im_workers.stop_invalidated(&group_id).await;
+    } else {
+        state.im_workers.stop_legacy(&state.home, &group_id).await;
+    }
     Ok(success(json!({"configured":true,"platform":platform})))
 }
 
@@ -109,12 +131,25 @@ async fn unset(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    state.im_workers.stop(&group_id).await;
-    update(&state, &group_id, |value| {
+    if let Ok((current, version)) = load_request_snapshot(&state, &group_id)
+        && adapter_commits_start_state(current["config"]["platform"].as_str())
+    {
+        if prepare_stop(&state, &group_id, &current, version, true)? {
+            state.im_workers.stop_invalidated(&group_id).await;
+        }
+        return Ok(success(json!({
+            "configured":load(&state, &group_id)?["config"].is_object(),"group_id":group_id
+        })));
+    }
+    state.im_workers.stop_legacy(&state.home, &group_id).await;
+    let cleared = update(&state, &group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(false);
+        }
         *value = json!({});
-        Ok(())
+        Ok(true)
     })?;
-    Ok(success(json!({"configured":false,"group_id":group_id})))
+    Ok(success(json!({"configured":!cleared,"group_id":group_id})))
 }
 
 async fn start(
@@ -141,7 +176,7 @@ async fn set_running(
 ) -> ApiResult {
     let group_id = required(body, "group_id")?;
     ensure_access(principal, &group_id)?;
-    let current = load(state, &group_id)?;
+    let (current, version) = load_request_snapshot(state, &group_id)?;
     if running && !current.get("config").is_some_and(Value::is_object) {
         return Err(ApiError::bad("IM bridge is not configured"));
     }
@@ -151,37 +186,45 @@ async fn set_running(
             .and_then(Value::as_object)
             .cloned()
             .ok_or_else(|| ApiError::bad("IM bridge is not configured"))?;
-        if let Err(error) = state
-            .im_workers
-            .start(state.home.clone(), state.client.clone(), &group_id, &config)
-            .await
-        {
-            update(state, &group_id, |value| {
-                let state = object(value);
-                state.insert("enabled".into(), Value::Bool(true));
-                state.insert("running".into(), Value::Bool(false));
-                state.insert("pid".into(), Value::Null);
-                state.insert("adapter_available".into(), Value::Bool(false));
-                state.insert("last_error".into(), json!(error));
-                state.insert("updated_at".into(), Value::String(utc_now()));
-                Ok(())
-            })?;
-            return Err(ApiError::bad(error));
+        // Mattermost commits its result under the configuration lock and native generation guard.
+        // A superseded request must not write either its success or its error over a newer action.
+        if adapter_commits_start_state(config.get("platform").and_then(Value::as_str)) {
+            state
+                .im_workers
+                .start(
+                    state.home.clone(),
+                    state.client.clone(),
+                    &group_id,
+                    &config,
+                    version,
+                )
+                .await
+                .map_err(ApiError::bad)?;
+            return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
         }
-        update(state, &group_id, |value| {
-            let state = object(value);
-            state.insert("enabled".into(), Value::Bool(true));
-            state.insert("running".into(), Value::Bool(true));
-            state.insert("pid".into(), json!(std::process::id()));
-            state.insert("adapter_available".into(), Value::Bool(true));
-            state.insert("last_error".into(), Value::Null);
-            state.insert("updated_at".into(), Value::String(utc_now()));
-            Ok(())
-        })?;
+        let result = state
+            .im_workers
+            .start(
+                state.home.clone(),
+                state.client.clone(),
+                &group_id,
+                &config,
+                version,
+            )
+            .await;
+        return finish_start(state, &group_id, result);
+    }
+    if adapter_commits_start_state(current["config"]["platform"].as_str()) {
+        if prepare_stop(state, &group_id, &current, version, false)? {
+            state.im_workers.stop_invalidated(&group_id).await;
+        }
         return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
     }
-    state.im_workers.stop(&group_id).await;
+    state.im_workers.stop_legacy(&state.home, &group_id).await;
     update(state, &group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
         let state = object(value);
         state.insert("enabled".into(), Value::Bool(false));
         state.insert("running".into(), Value::Bool(false));
@@ -191,6 +234,69 @@ async fn set_running(
         Ok(())
     })?;
     Ok(success(status_payload(&group_id, &load(state, &group_id)?)))
+}
+
+fn prepare_stop(
+    state: &AppState,
+    group_id: &str,
+    current: &Value,
+    version: ImRequestVersion,
+    unset: bool,
+) -> Result<bool, ApiError> {
+    update(state, group_id, |value| {
+        if value.get("config") != current.get("config")
+            || state.im_workers.request_version(group_id) != version
+        {
+            return Ok(false);
+        }
+        state.im_workers.invalidate_start(group_id);
+        if unset {
+            *value = json!({});
+        } else {
+            let state = object(value);
+            state.insert("enabled".into(), Value::Bool(false));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("last_error".into(), Value::Null);
+            state.insert("updated_at".into(), Value::String(utc_now()));
+        }
+        Ok(true)
+    })
+}
+
+fn finish_start(state: &AppState, group_id: &str, result: Result<(), String>) -> ApiResult {
+    if let Err(error) = result {
+        update(state, group_id, |value| {
+            // Check under the config lock; a stale platform failure must not overwrite the new adapter's own state commit.
+            if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+                return Ok(());
+            }
+            let state = object(value);
+            state.insert("enabled".into(), Value::Bool(true));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("last_error".into(), json!(error));
+            state.insert("updated_at".into(), Value::String(utc_now()));
+            Ok(())
+        })?;
+        return Err(ApiError::bad(error));
+    }
+    update(state, group_id, |value| {
+        if adapter_commits_start_state(value["config"]["platform"].as_str()) {
+            return Ok(());
+        }
+        let state = object(value);
+        state.insert("enabled".into(), Value::Bool(true));
+        state.insert("running".into(), Value::Bool(true));
+        state.insert("pid".into(), json!(std::process::id()));
+        state.insert("adapter_available".into(), Value::Bool(true));
+        state.insert("last_error".into(), Value::Null);
+        state.insert("updated_at".into(), Value::String(utc_now()));
+        Ok(())
+    })?;
+    Ok(success(status_payload(group_id, &load(state, group_id)?)))
 }
 
 fn reconcile_runtime_state(
@@ -396,6 +502,15 @@ async fn verbose(
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), ApiError> {
     let normalized = im_state::canonicalize_config(platform, config)
         .ok_or_else(|| ApiError::bad("unsupported IM platform"))?;
+    if platform == "mattermost"
+        && normalized
+            .get("mattermost_url")
+            .and_then(Value::as_str)
+            .and_then(im_state::normalize_mattermost_url)
+            .is_none()
+    {
+        return Err(ApiError::bad("Mattermost site URL is invalid"));
+    }
     if !im_state::has_required_credentials(platform, &normalized) {
         return Err(ApiError::bad(format!("missing credentials for {platform}")));
     }
@@ -427,6 +542,17 @@ fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     im_state::load(&store, group_id)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
+}
+
+fn load_request_snapshot(
+    state: &AppState,
+    group_id: &str,
+) -> Result<(Value, ImRequestVersion), ApiError> {
+    let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
+    im_state::read_with(&store, group_id, |current| {
+        (current, state.im_workers.request_version(group_id))
+    })
+    .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
 }
 
 fn update<T>(
@@ -505,6 +631,218 @@ fn io_error(error: io::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn prepared_stop_rejects_identical_save_versions() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store
+            .create("Same-config request test", "")
+            .expect("group")
+            .group_id;
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (_, workers, _, state) = crate::app_with_shutdown(
+            home,
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "request-test".into(),
+        );
+        let body = json!({"group_id":group,"platform":"mattermost",
+            "mattermost_url":"https://mm.example.test","bot_token":"test-token"});
+        let principal = Principal {
+            user_id: "local".into(),
+            allowed_groups: vec![],
+            is_admin: true,
+            raw_token: String::new(),
+        };
+        for unset in [false, true] {
+            let _ = set(
+                State(state.clone()),
+                Extension(principal.clone()),
+                Json(body.clone()),
+            )
+            .await
+            .expect("save");
+            let (current, version) = load_request_snapshot(&state, &group).expect("snapshot");
+            let _ = set(
+                State(state.clone()),
+                Extension(principal.clone()),
+                Json(body.clone()),
+            )
+            .await
+            .expect("identical save");
+            let before = load(&state, &group).expect("before");
+            assert_eq!(before["config"], current["config"]);
+            assert!(!prepare_stop(&state, &group, &current, version, unset).expect("stale stop"));
+            assert_eq!(load(&state, &group).expect("after"), before);
+            let (current, version) =
+                load_request_snapshot(&state, &group).expect("current snapshot");
+            assert!(prepare_stop(&state, &group, &current, version, unset).expect("current stop"));
+        }
+        workers.shutdown().await;
+    }
+
+    #[test]
+    fn mattermost_url_error_is_distinct_from_missing_credentials() {
+        for (raw, message) in [
+            (
+                json!({"bot_token":"test-token"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"bot_token":"test-token","mattermost_url":"https://user:secret@mm.example.test"}),
+                "Mattermost site URL is invalid",
+            ),
+            (
+                json!({"mattermost_url":"https://mm.example.test"}),
+                "missing credentials for mattermost",
+            ),
+        ] {
+            let mut config = raw.as_object().expect("object").clone();
+            let error = normalize_config("mattermost", &mut config).expect_err("invalid");
+            assert_eq!(error.to_string(), format!("invalid_request: {message}"));
+            assert_eq!(Value::Object(config), raw);
+        }
+    }
+
+    #[tokio::test]
+    async fn prepared_stop_rejects_replaced_config_without_mutating_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store
+            .create("Stop handoff test", "")
+            .expect("group")
+            .group_id;
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (_, workers, _, state) = crate::app_with_shutdown(
+            home,
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "stop-handoff-test".into(),
+        );
+        let current = json!({"config":{"platform":"mattermost","bot_token":"old-test-token"}});
+        for platform in ["mattermost", "slack"] {
+            update(&state, &group, |value| {
+                *value = json!({"config":{"platform":platform,"bot_token":"new-test-token"},
+                    "enabled":true,"running":true,"adapter_available":true,
+                    "pid":123,"last_error":"new diagnostic"});
+                Ok(())
+            })
+            .expect("replacement");
+            let before = load(&state, &group).expect("before");
+            for unset in [false, true] {
+                assert!(
+                    !prepare_stop(&state, &group, &current, (None, None), unset).expect("ignored")
+                );
+                assert_eq!(load(&state, &group).expect("after"), before);
+            }
+        }
+        workers.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_start_completion_respects_mattermost_state_ownership() {
+        for platform in ["mattermost", "slack"] {
+            for result in [Ok(()), Err("old startup failure".to_owned())] {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
+                home.initialize().expect("initialize");
+                let store = GroupStore::new(home.clone()).expect("store");
+                let group = store.create("Handoff test", "").expect("group").group_id;
+                let (shutdown, _) = tokio::sync::broadcast::channel(1);
+                let (_, workers, _, state) = crate::app_with_shutdown(
+                    home,
+                    shutdown.clone(),
+                    crate::WebMode::Normal,
+                    None,
+                    crate::LiveBinding {
+                        host: "127.0.0.1".into(),
+                        port: 0,
+                    },
+                    "handoff-test".into(),
+                );
+                let (release, released) = tokio::sync::oneshot::channel();
+                let old_state = state.clone();
+                let old_group = group.clone();
+                let succeeded = result.is_ok();
+                // Pause after startup and exercise the HTTP handler's actual result-commit function.
+                let old = tokio::spawn(async move {
+                    released.await.expect("release");
+                    finish_start(&old_state, &old_group, result).is_ok()
+                });
+                let principal = Principal {
+                    user_id: "test-admin".into(),
+                    allowed_groups: vec![],
+                    is_admin: true,
+                    raw_token: String::new(),
+                };
+                let saved = set(
+                    State(state.clone()),
+                    Extension(principal),
+                    Json(json!({
+                        "group_id":group,"platform":platform,
+                        "bot_token":"test-token","app_token":"test-app-token",
+                        "mattermost_url":"http://127.0.0.1:9"
+                    })),
+                )
+                .await
+                .expect("save replacement");
+                assert_eq!(saved.0["ok"], true);
+                update(&state, &group, |value| {
+                    value["last_error"] = json!("new diagnostic");
+                    value["adapter_available"] = json!(false);
+                    value["pid"] = Value::Null;
+                    Ok(())
+                })
+                .expect("new state");
+                let before = load(&state, &group).expect("before");
+                release.send(()).expect("release result");
+                assert_eq!(old.await.expect("old completion"), succeeded);
+                let after = load(&state, &group).expect("after");
+                if platform == "mattermost" {
+                    assert_eq!(after, before, "old result must not alter new state");
+                } else {
+                    assert_eq!(after["config"], before["config"]);
+                    assert_eq!(after["enabled"], true);
+                    assert_eq!(after["running"], succeeded);
+                    assert_eq!(after["adapter_available"], succeeded);
+                    assert_eq!(
+                        after["pid"],
+                        if succeeded {
+                            json!(std::process::id())
+                        } else {
+                            Value::Null
+                        }
+                    );
+                    assert_eq!(
+                        after["last_error"],
+                        if succeeded {
+                            Value::Null
+                        } else {
+                            json!("old startup failure")
+                        }
+                    );
+                }
+                assert!(!workers.is_running(&group));
+                workers.shutdown().await;
+                let _ = shutdown.send(());
+            }
+        }
+    }
 
     #[test]
     fn normalizes_cli_credential_aliases() {

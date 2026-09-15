@@ -1,7 +1,11 @@
+import { GroupConnectionBadge } from "./GroupConnectionBadge";
 import { useTranslation } from "react-i18next";
 import { Monitor, LockKeyhole, ChevronRight } from "lucide-react";
 import { instanceListing } from "./useConnectWorkbench";
 import type { ConnectWorkbench } from "./useConnectWorkbench";
+import { GroupItemMenuTrigger } from "../../components/layout/GroupItemMenuTrigger";
+import { useGroupMenu } from "../../components/layout/useGroupMenu";
+import type { RemoteGroup } from "./protocol";
 import { instanceName } from "./instanceName";
 
 export function ConnectSidebar({
@@ -21,6 +25,13 @@ export function ConnectSidebar({
         <div className="px-2 pb-2 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
           CCCC Connect
         </div>
+      ) : null}
+      {!collapsed && (workbench.failed || workbench.available === false) ? (
+        <p role="status" className="px-2 pb-2 text-xs leading-5 text-[var(--color-text-muted)]">
+          {t(
+            workbench.available === false ? "connect.confirmationExpired" : "connect.refreshFailed",
+          )}
+        </p>
       ) : null}
       {workbench.instances.map((instance) => {
         const label = instanceName(
@@ -46,6 +57,7 @@ export function ConnectSidebar({
             <div className="flex items-center">
               <button
                 type="button"
+                disabled={workbench.available === false}
                 onClick={() => choose()}
                 title={[instance.display_name, status, instance.public_origin]
                   .filter(Boolean)
@@ -85,22 +97,18 @@ export function ConnectSidebar({
                 ) : null}
                 {expanded &&
                   listing?.groups.map((group) => (
-                    <button
+                    <ConnectGroupItem
                       key={group.group_id}
-                      type="button"
-                      onClick={() => choose(group.group_id)}
-                      aria-current={
-                        active && workbench.selected?.groupId === group.group_id
-                          ? "page"
-                          : undefined
-                      }
-                      className={`flex min-h-9 w-full items-center gap-2 rounded-lg pl-8 pr-3 text-left text-sm hover:bg-[var(--glass-panel-bg)] ${active && workbench.selected?.groupId === group.group_id ? "bg-[var(--glass-panel-bg)] font-medium" : "text-[var(--color-text-secondary)]"}`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${active && group.running ? "bg-emerald-400" : "bg-[var(--color-text-tertiary)]"}`}
-                      />
-                      <span className="truncate">{group.title || group.group_id}</span>
-                    </button>
+                      group={group}
+                      disabled={workbench.available === false}
+                      live={active}
+                      selected={active && workbench.selected?.groupId === group.group_id}
+                      onSelect={() => choose(group.group_id)}
+                      onOpenConnections={() => {
+                        workbench.select(instance.instance_id, group.group_id, "connections");
+                        onSelected();
+                      }}
+                    />
                   ))}
                 {expanded && listing && !listing.groups.length ? (
                   <p className="px-3 text-xs text-[var(--color-text-tertiary)]">
@@ -112,6 +120,61 @@ export function ConnectSidebar({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function ConnectGroupItem({
+  group,
+  disabled,
+  live,
+  selected,
+  onSelect,
+  onOpenConnections,
+}: {
+  group: RemoteGroup;
+  disabled?: boolean;
+  live: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onOpenConnections: () => void;
+}) {
+  const { t } = useTranslation("layout");
+  const label = `${t("groupActions")} · ${group.title || group.group_id}`;
+  const menu = useGroupMenu(
+    label,
+    disabled ? [] : [{ label: t("groupConnections.title"), onClick: onOpenConnections }],
+  );
+  return (
+    <div className="group/item relative flex items-center pr-1">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onSelect}
+        onContextMenu={menu.onContextMenu}
+        onKeyDown={menu.onKeyDown}
+        aria-current={selected ? "page" : undefined}
+        className={`flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg pl-8 pr-2 text-left text-sm hover:bg-[var(--glass-panel-bg)] ${selected ? "bg-[var(--glass-panel-bg)] font-medium" : "text-[var(--color-text-secondary)]"}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${live && group.running ? "bg-emerald-400" : "bg-[var(--color-text-tertiary)]"}`}
+        />
+        <span className="truncate">{group.title || group.group_id}</span>
+      </button>
+      <GroupConnectionBadge
+        connection={group.connection}
+        onClick={onOpenConnections}
+        disabled={disabled}
+      />
+      {menu.available && (
+        <GroupItemMenuTrigger
+          isActive={selected}
+          label={label}
+          open={menu.open}
+          onToggle={menu.toggle}
+        />
+      )}
+      {menu.menu}
     </div>
   );
 }

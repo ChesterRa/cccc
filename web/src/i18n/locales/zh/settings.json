@@ -42,7 +42,8 @@
       "pending": "等待批准",
       "cut": "需要重新绑定",
       "offline": "已绑定",
-      "online": "已绑定 · 远程访问在线"
+      "online": "已绑定 · 远程访问在线",
+      "linked": "已关联"
     },
     "stateHelp": {
       "loading": "正在检查这套安装是否已绑定 CCCC 账户。",
@@ -51,7 +52,8 @@
       "pending": "请在账户页批准此代码。CCCC 会自动检查结果，不会影响本地工作。",
       "cut": "账户已不再认可这套安装。请重新绑定以创建新的设备凭据。",
       "offline": "此实例已关联，托管远程访问通道当前未开启；其他访问方式可在 Web Access 中单独配置。",
-      "online": "这套安装已绑定，其托管远程访问主机名当前在线。"
+      "online": "这套安装已绑定，其托管远程访问主机名当前在线。",
+      "linked": "本实例已关联 CCCC 账户。连接与远程访问状态见下方。"
     },
     "linkInstallation": "登录并绑定这套安装",
     "relinkInstallation": "重新绑定",
@@ -76,7 +78,7 @@
     "openWebAccess": "打开 Web Access",
     "continueWebAccess": "继续设置 Web Access",
     "disconnect": "断开这套安装",
-    "disconnectPrompt": "这会退役本机的账户凭据、托管主机名和正在运行的远程访问隧道。本地工作组和 Agent 会保留在这台机器上。",
+    "disconnectPrompt": "要将本实例与账户断开吗？设备凭据和公网地址将被停用，Connect 访问、邀请及 Group 连接也将终止。本地 Group、Agent 和历史记录保留。",
     "confirmDisconnect": "确认断开",
     "keepLinked": "保持绑定",
     "connect": {
@@ -900,7 +902,7 @@
   },
   "imBridge": {
     "title": "IM 桥接",
-    "description": "将此工作组连接到 Telegram、Slack、Discord、飞书/Lark、钉钉或企业微信。",
+    "description": "将此工作组连接到 Telegram、Slack、Discord、Mattermost、飞书/Lark、钉钉或企业微信。",
     "running": "运行中",
     "stopped": "已停止",
     "platform": "平台",
@@ -908,6 +910,12 @@
     "botTokenTelegram": "Bot Token（令牌或环境变量）",
     "botTokenSlack": "Bot Token（xoxb- 或环境变量）",
     "botTokenDiscord": "Bot Token（令牌或环境变量）",
+    "mattermostUrl": "Mattermost 站点地址",
+    "mattermostUrlInvalid": "请输入 HTTP 或 HTTPS 站点地址，不含凭据、查询参数、片段或 /api/v4 后缀。",
+    "mattermostConfigFailed": "Mattermost 连接器操作失败。请检查连接与配置后重试。",
+    "mattermostBotIsolationHint": "每个工作组及运行中的 CCCC 实例应使用独立 Bot 身份，不同令牌也不能复用同一 Bot。这是部署要求；CCCC 不会跨工作组或实例检测 Bot 是否重复使用。",
+    "mattermostUrlHint": "填写站点根地址，可包含安装子路径，不要附加 /api/v4、查询参数或凭据。建议使用 HTTPS；HTTP 不加密令牌和消息。",
+    "mattermostUsageHint": "把 Bot 加入频道后发送 @Bot /subscribe；私聊也用此前缀执行命令，避免 Mattermost 拦截斜杠命令。经批准后使用 @Bot /send @actor 消息，私聊可直接发送普通正文。所有绑定到本工作组的聊天共享上下文和订阅输出，不构成私密隔离。",
     "botToken": "Bot 令牌",
     "botTokenHintSlack": "粘贴 xoxb-… 令牌或环境变量名；发送消息时必需。",
     "botTokenHint": "粘贴 bot 令牌或环境变量名；用于 bot 认证。",
