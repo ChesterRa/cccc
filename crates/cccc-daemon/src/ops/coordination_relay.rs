@@ -1102,7 +1102,7 @@ fn accept_handled_sources(
             super::runtime_delivery::DeliveryOutcome::Accepted,
         )?;
     }
-    release_active_turn_if_handled(home, group, actor_id, &handled_ids, decision_id)?;
+    release_active_turn_if_handled(home, group, actor_id, &handled_ids, decision_id, &events)?;
     Ok(())
 }
 
@@ -1112,6 +1112,7 @@ fn release_active_turn_if_handled(
     actor_id: &str,
     handled_ids: &[String],
     decision_id: &str,
+    events: &[Event],
 ) -> Result<(), OpError> {
     let state = super::runtime_state::actor_state(home, &group.group_id, actor_id)?;
     if state["status"] != "working" {
@@ -1135,6 +1136,18 @@ fn release_active_turn_if_handled(
     if turn_id.is_empty() {
         return Ok(());
     }
+    let delivery_id = events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.kind == "web_model.browser_delivery.submitting"
+                && event.data["actor_id"] == actor_id
+                && event.data["turn_id"] == turn_id
+                && event.data["event_ids"] == json!(active_event_ids)
+        })
+        .and_then(|event| event.data["delivery_id"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("coordination:{decision_id}"));
     let request = DaemonRequest {
         v: 1,
         op: "runtime_complete_turn".into(),
@@ -1144,7 +1157,7 @@ fn release_active_turn_if_handled(
             "by":actor_id,
             "turn_id":turn_id,
             "event_ids":active_event_ids,
-            "delivery_id":format!("coordination:{decision_id}"),
+            "delivery_id":delivery_id,
             "status":"done",
             "summary":"Handled inside the active web-model turn by a durable relay decision."
         })

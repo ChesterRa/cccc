@@ -719,6 +719,21 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
         "read was incorrectly treated as acknowledgement"
     );
 
+    let browser_attempt = DaemonRequest {
+        v: 1,
+        op: "web_model_browser_delivery_record".into(),
+        args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead",
+            "turn_id":wait["turn"]["turn_id"],"event_ids":wait["turn"]["event_ids"],
+            "delivery_id":"browser-in-turn","browser_delivery":{"state":"submitting"}})
+        .as_object()
+        .cloned()
+        .expect("browser attempt"),
+    };
+    super::super::runtime_state::resolve_operation(&browser_attempt)
+        .expect("browser delivery operation")
+        .execute(&fixture.home, &browser_attempt)
+        .expect("browser dispatch recorded before decision");
+
     fixture
         .decide(json!({
             "event_ids":[report.id],"decision":"wait_user",
@@ -739,6 +754,21 @@ fn reading_mail_is_not_acknowledgement_but_deciding_cancels_later_browser_wake()
         "waiting",
         "the claimed browser turn remained stuck after in-turn handling"
     );
+    let browser_completion = DaemonRequest {
+        v: 1,
+        op: "runtime_complete_turn".into(),
+        args: json!({"group_id":fixture.group.group_id,"actor_id":"web-lead","by":"web-lead",
+            "turn_id":wait["turn"]["turn_id"],"event_ids":wait["turn"]["event_ids"],
+            "delivery_id":"browser-in-turn","status":"done"})
+        .as_object()
+        .cloned()
+        .expect("browser completion"),
+    };
+    let completion = super::super::runtime_state::resolve_operation(&browser_completion)
+        .expect("completion operation")
+        .execute(&fixture.home, &browser_completion)
+        .expect("late browser confirmation reuses the decision's completion");
+    assert_eq!(completion["delivery_id"], "browser-in-turn");
 }
 
 #[test]
