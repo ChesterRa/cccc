@@ -260,12 +260,14 @@ async fn asset(
     } else {
         "inline"
     };
-    let safe_name = file_name.replace(['\r', '\n', '"'], "_");
     super::file_response::stream(
         &path,
         &mime,
         Some("no-store"),
-        Some(&format!("{disposition}; filename=\"{safe_name}\"")),
+        Some(&super::file_response::content_disposition(
+            disposition,
+            &file_name,
+        )),
     )
     .await
     .map_err(|error| ApiError::not_found(error.to_string()))

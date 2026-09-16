@@ -33,6 +33,7 @@ import {
   ApiResponse,
   clearActorsReadOnlyRequest,
   clearGroupsReadRequest,
+  filenameFromContentDisposition,
   groupPromptsRequestKey,
   groupPromptsRequestKey as groupPromptsKey,
   groupsRequestKey,
@@ -1495,9 +1496,10 @@ export async function exportGroupCopy(
       }
       return { ok: false, error: { code: "COPY_EXPORT_FAILED", message } };
     }
-    const header = resp.headers.get("content-disposition") || "";
-    const match = /filename="?([^";]+)"?/i.exec(header);
-    const filename = match?.[1] || `cccc-group-${groupId}.zip`;
+    const filename = filenameFromContentDisposition(
+      resp.headers.get("content-disposition") || "",
+      `cccc-group-${groupId}.zip`,
+    );
     return { ok: true, result: { blob: await resp.blob(), filename } };
   } catch (error) {
     return {

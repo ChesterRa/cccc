@@ -6,6 +6,7 @@ import { classNames } from "../../utils/classNames";
 import type { WorkspaceEntry } from "../../types";
 import { WorkspaceEntryMenu, type WorkspaceMenuItem } from "./WorkspaceEntryMenu";
 import { WorkspaceTree } from "./WorkspaceTree";
+import { WorkspaceFilesPlaceholder } from "./WorkspaceFilesPlaceholder";
 import type { WorkspaceFilesController } from "./useWorkspaceFiles";
 
 type Props = {
@@ -80,8 +81,9 @@ export function WorkspaceFilesPanel({
     return items;
   };
 
+  const rootDirectory = files.tree.directories[""];
   const rootError = files.scopeAvailable
-    ? files.tree.directories[""]?.error || ""
+    ? rootDirectory?.error || ""
     : t("workspaceNoScope", { defaultValue: "Attach a workspace to this Group to browse files." });
 
   return (
@@ -122,6 +124,12 @@ export function WorkspaceFilesPanel({
 
       {rootError ? (
         <div className="px-3 py-6 text-center text-[12px] opacity-60">{rootError}</div>
+      ) : files.rows.length === 0 ? (
+        <WorkspaceFilesPlaceholder
+          loading={!rootDirectory || rootDirectory.loading}
+          showIgnored={files.showIgnored}
+          onShowIgnored={() => files.setShowIgnored(true)}
+        />
       ) : (
         <WorkspaceTree
           rows={files.rows}

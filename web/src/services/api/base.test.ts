@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   apiJson,
+  filenameFromContentDisposition,
   isAuthRequiredErrorCode,
   normalizePresentationBrowserSurfaceState,
   onAuthRequired,
@@ -191,5 +192,34 @@ describe("normalizePresentationBrowserSurfaceState", () => {
       display_owner: "cccc_xvfb",
       adopted: true,
     });
+  });
+});
+
+describe("filenameFromContentDisposition", () => {
+  it("decodes a Chinese group package from the RFC 5987 parameter", () => {
+    const header =
+      'attachment; filename="cccc-group--______--g_0e88539bb583.zip"; ' +
+      "filename*=UTF-8''cccc%2Dgroup%2D%2D%E5%AE%89%E5%8D%93%E6%96%B0%E8%AE%BE%E5%A4%87%2D%2Dg%5F0e88539bb583%2Ezip";
+    expect(filenameFromContentDisposition(header, "fallback.zip")).toBe(
+      "cccc-group--安卓新设备--g_0e88539bb583.zip",
+    );
+  });
+
+  it("never prefers the ASCII fallback when an extended name is present", () => {
+    const header = "attachment; filename=\"__.txt\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.txt";
+    expect(filenameFromContentDisposition(header, "fallback.txt")).toBe("报告.txt");
+  });
+
+  it("falls back to the plain parameter and then to the caller default", () => {
+    expect(filenameFromContentDisposition('attachment; filename="notes.txt"', "fallback.txt")).toBe(
+      "notes.txt",
+    );
+    expect(filenameFromContentDisposition("attachment", "fallback.txt")).toBe("fallback.txt");
+    expect(filenameFromContentDisposition("", "fallback.txt")).toBe("fallback.txt");
+  });
+
+  it("survives a malformed escape by using the ASCII parameter", () => {
+    const header = "attachment; filename=\"notes.txt\"; filename*=UTF-8''%E4%";
+    expect(filenameFromContentDisposition(header, "fallback.txt")).toBe("notes.txt");
   });
 });

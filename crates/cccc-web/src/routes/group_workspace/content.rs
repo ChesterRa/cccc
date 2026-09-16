@@ -74,7 +74,7 @@ pub(super) async fn read(
         }),
     );
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let disposition = super::super::blob_download::attachment_disposition(&name);
+    let disposition = super::super::file_response::content_disposition("attachment", &name);
     let disposition = if preview {
         disposition.replacen("attachment;", "inline;", 1)
     } else {

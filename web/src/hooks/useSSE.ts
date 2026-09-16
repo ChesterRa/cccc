@@ -1,4 +1,5 @@
-// SSE connection management for the ledger stream.
+import { openEventStream, type EventStreamSource } from "../services/realtime/eventStream";
+// Ledger and headless subscriptions on the shared realtime connection.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
 import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
@@ -71,9 +72,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
   const clearPresentationSlotAttention = useModalStore((s) => s.clearPresentationSlotAttention);
 
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const headlessEventSourceRef = useRef<EventSource | null>(null);
-  const sseRegistryRef = useRef(createSseConnectionRegistry<EventSource>());
+  const eventSourceRef = useRef<EventStreamSource | null>(null);
+  const headlessEventSourceRef = useRef<EventStreamSource | null>(null);
+  const sseRegistryRef = useRef(createSseConnectionRegistry<EventStreamSource>());
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
   const scopeRefreshEpoch = useRef(0);
@@ -794,7 +795,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const params = new URLSearchParams();
     if (!replay) params.set("replay", "false");
     const headlessPath = `/api/v1/groups/${encodeURIComponent(groupId)}/headless/stream${params.toString() ? `?${params.toString()}` : ""}`;
-    const headlessEs = new EventSource(api.withAuthToken(headlessPath));
+    const headlessEs = openEventStream(api.withAuthToken(headlessPath));
     const headlessToken = sseRegistryRef.current.set("headless", groupId, headlessEs);
     headlessEs.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(headlessToken)) return;
@@ -871,7 +872,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
 
     setSSEStatus("connecting");
-    const es = new EventSource(
+    const es = openEventStream(
       api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`),
     );
     const ledgerToken = sseRegistryRef.current.set("ledger", groupId, es);
@@ -886,7 +887,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       // Group scope changes may have happened before this subscription opened.
       void refreshGroupScope(groupId);
 
-      // New SSE connections start at EOF, so every reconnect needs a
+      // New ledger subscriptions start at EOF, so every reconnect needs a
       // cursor-based catch-up to cover the disconnect window. The first
       // connection also establishes the durable boundary used by later tabs.
       if (isReconnect) {
@@ -899,8 +900,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     es.onerror = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       setSSEStatus("disconnected");
-      // Keep this EventSource alive: native reconnect carries Last-Event-ID,
-      // allowing the Rust stream to replay only the missed ledger events.
+      // Keep this logical subscription alive: the shared transport reconnects
+      // with its delivered cursor so Rust can replay the missed ledger events.
     };
 
     es.addEventListener("ledger", (e) => {

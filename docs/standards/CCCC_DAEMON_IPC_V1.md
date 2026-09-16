@@ -6817,3 +6817,24 @@ IDs whose exact pair has an explicit Direct route preference; this is a display
 projection, not a replacement grant or confirmation of delivery. The
 [Connect standard](CCCC_CONNECT_V1.md#standalone-direct-group-connections)
 defines identity, transport, routing and durable delivery semantics.
+
+### Web realtime transport (not daemon IPC)
+
+`GET /api/v1/events/ws` upgrades an authenticated browser connection. The optional
+`connect_frame` query parameter carries the existing frame capability. On one
+socket the client may maintain one subscription for each `global`, `ledger`, and
+`headless` channel. These use the same event sources as their SSE counterparts.
+
+- Subscribe: `{"type":"subscribe","channel":"ledger","id":2,"group_id":"g_example","cursor":"last-event-id"}`.
+- Headless subscribe additionally accepts `replay` (default `true`).
+- Unsubscribe: `{"type":"unsubscribe","channel":"ledger","id":2}`.
+- Ready: `{"type":"ready","channel":"ledger","id":2}`.
+- Event: `{"type":"event","channel":"ledger","id":2,"message":{"event":"ledger","id":"event-id","data":{}}}`.
+- Producer termination or rejection: `{"type":"closed","channel":"ledger","id":2,"code":"permission_denied"}`; `code` may be absent for EOF.
+- Connection-level rejection: `{"type":"fatal","code":"auth_required"}`.
+- Heartbeat: `{"type":"heartbeat"}`; WebSocket Ping/Pong also verifies peer liveness.
+
+Subscription IDs must identify the logical subscription, change when a Group is
+replaced, and be echoed on all its packets. Subscribing again replaces that channel's
+producer; unsubscribe only affects the matching ID. Scope and live authority checks
+apply to subscription messages because the socket URL itself contains no Group ID.

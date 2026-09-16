@@ -389,3 +389,7 @@ it("reconciles scope changes with fresh Group documents and rejects late refresh
     host.remove();
   }
 });
+// These tests exercise event consumers; transport multiplexing has its own wire tests.
+vi.mock("../services/realtime/eventStream", () => ({
+  openEventStream: (url: string) => new EventSource(url),
+}));

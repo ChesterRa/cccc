@@ -654,5 +654,8 @@
     "in": "Zoom in",
     "region": "Image viewer: {{name}}",
     "hint": "Drag to pan, scroll to move. Use + / − to zoom, 0 to fit, 1 for actual size, and arrow keys to scroll."
-  }
+  },
+  "workspaceEmpty": "No files to display",
+  "workspaceEmptyHint": "Add files to this workspace, then refresh.",
+  "workspaceEmptyFilteredHint": "Files may be hidden by Git ignore rules."
 }

@@ -163,15 +163,18 @@ class FixtureSocket {
   actor: string;
   group: string;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private realtime: boolean;
   constructor(public url: string) {
     const parsed = new URL(url);
+    this.realtime = parsed.pathname === "/api/v1/events/ws";
     this.actor = parsed.pathname.split("/").at(-2)!;
     this.group = parsed.pathname.split("/")[4];
-    probe.sockets.push(this);
+    if (!this.realtime) probe.sockets.push(this);
     setTimeout(() => {
       if (this.readyState === 3) return;
       this.readyState = 1;
       this.onopen?.({});
+      if (this.realtime) return;
       if (parsed.searchParams.get("takeover") === "true") probe.externalWriters.delete(this.actor);
       this.onmessage?.({
         data: JSON.stringify({
@@ -204,7 +207,27 @@ class FixtureSocket {
     frame.set(payload, 1);
     this.onmessage?.({ data: frame.buffer });
   }
-  send(data: ArrayBuffer | Uint8Array) {
+  send(data: ArrayBuffer | Uint8Array | string) {
+    if (typeof data === "string") {
+      const packet = JSON.parse(data);
+      if (this.realtime && packet.type === "subscribe")
+        queueMicrotask(() => {
+          if (this.readyState !== 1) return;
+          this.onmessage?.({
+            data: JSON.stringify({ type: "ready", channel: packet.channel, id: packet.id }),
+          });
+          if (packet.channel === "headless")
+            this.onmessage?.({
+              data: JSON.stringify({
+                type: "event",
+                channel: packet.channel,
+                id: packet.id,
+                message: { event: "headless.snapshot", data: { events: [] } },
+              }),
+            });
+        });
+      return;
+    }
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     const text = new TextDecoder().decode(bytes.slice(1));
     this.frames.push({ type: bytes[0], text });

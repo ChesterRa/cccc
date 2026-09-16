@@ -1,10 +1,8 @@
 use axum::extract::{Path, Query, State};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
+use super::file_response::{content_disposition, sanitize_filename};
 use crate::AppState;
 use crate::api::ApiError;
-
-const MAX_DOWNLOAD_FILENAME_CHARS: usize = 180;
 
 #[derive(Default, serde::Deserialize)]
 pub(super) struct BlobDownloadQuery {
@@ -25,56 +23,16 @@ pub(super) async fn download(
     let filename = query
         .filename
         .as_deref()
-        .map(sanitize_download_filename)
+        .map(sanitize_filename)
         .filter(|value| !value.is_empty());
     let content_type = blob_content_type(filename.as_deref().unwrap_or(&blob_name), &prefix);
     let disposition = query
         .download
         .unwrap_or(false)
-        .then(|| attachment_disposition(filename.as_deref().unwrap_or("download")));
+        .then(|| content_disposition("attachment", filename.as_deref().unwrap_or("download")));
     super::file_response::stream(&path, &content_type, None, disposition.as_deref())
         .await
         .map_err(|error| ApiError::not_found(error.to_string()))
-}
-
-fn sanitize_download_filename(raw: &str) -> String {
-    let leaf = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
-    let cleaned = leaf
-        .chars()
-        .filter_map(|character| {
-            if character.is_control() {
-                None
-            } else if character == '"' {
-                Some('_')
-            } else {
-                Some(character)
-            }
-        })
-        .take(MAX_DOWNLOAD_FILENAME_CHARS)
-        .collect::<String>();
-    if cleaned.is_empty() || matches!(cleaned.as_str(), "." | "..") {
-        "download".to_owned()
-    } else {
-        cleaned
-    }
-}
-
-pub(super) fn attachment_disposition(filename: &str) -> String {
-    let filename = sanitize_download_filename(filename);
-    let ascii_fallback = filename
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric()
-                || matches!(character, '.' | '-' | '_' | ' ' | '(' | ')')
-            {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let encoded = utf8_percent_encode(&filename, NON_ALPHANUMERIC);
-    format!("attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}")
 }
 
 fn blob_content_type(filename: &str, bytes: &[u8]) -> String {
@@ -108,26 +66,7 @@ fn blob_content_type(filename: &str, bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_disposition, blob_content_type, sanitize_download_filename};
-
-    #[test]
-    fn keeps_only_a_safe_leaf_filename() {
-        assert_eq!(
-            sanitize_download_filename("../folder\\report\r\n\"final\".txt"),
-            "report_final_.txt"
-        );
-        assert_eq!(sanitize_download_filename(".."), "download");
-        assert_eq!(sanitize_download_filename("\r\n"), "download");
-    }
-
-    #[test]
-    fn emits_ascii_and_utf8_content_disposition_names() {
-        let disposition = attachment_disposition("分析 报告.txt");
-        assert!(disposition.starts_with("attachment; filename=\"__ __.txt\""));
-        assert!(disposition.contains("filename*=UTF-8''"));
-        assert!(disposition.contains("%E5%88%86%E6%9E%90"));
-        assert!(!disposition.contains(['\r', '\n']));
-    }
+    use super::blob_content_type;
 
     #[test]
     fn uses_the_display_filename_for_text_and_binary_signature_for_images() {

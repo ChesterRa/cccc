@@ -34,6 +34,7 @@ mod nomcp_resources;
 mod nomcp_send;
 mod presentation;
 mod presentation_browser;
+mod realtime;
 mod remote_access;
 mod remote_access_projection;
 mod settings;
@@ -106,6 +107,7 @@ pub fn router() -> Router<AppState> {
         .merge(settings::routes())
         .merge(capabilities::routes())
         .merge(streams::routes())
+        .merge(realtime::routes())
         .merge(terminal::routes())
 }
 

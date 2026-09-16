@@ -103,6 +103,10 @@ instead of writing into the newly selected workspace. If the file changed on dis
 was opened, saving reports a conflict; **Reload** discards the draft and loads the current
 file. This check does not lock out external editors or Actors.
 
+An empty file panel shows **No files to display** after loading completes. If ignored
+files are hidden, use **Show git-ignored files** to reveal them. Otherwise, add files
+to the workspace and use **Refresh**. Loading and failed requests have separate states.
+
 A directory that cannot be loaded shows its error below the row. Use **Retry** there
 to load it again; an error does not mean the directory is empty.
 
@@ -802,3 +806,27 @@ is rejected — and the scheme alone adds nothing, since an attacker able to
 serve a page from this host would already control the site. Proxies that
 rewrite `Host` still need `CCCC_WEB_TRUST_PROXY_HEADERS=1` or an explicit
 `CCCC_WEB_CORS_ORIGINS` entry.
+
+### Shared realtime connection
+
+The Web UI uses one `/api/v1/events/ws` WebSocket per page for global metadata,
+current-Group ledger events, and headless output. Switching Groups replaces the
+subscriptions on the existing socket. Background pages release their subscriptions
+and close the socket when none remain. This avoids occupying the HTTP/1.1 pool
+with three persistent SSE requests per visible page; ordinary API requests remain
+available with several workbench windows open.
+
+Each subscription has an ID. Both sides ignore packets from retired IDs. Reconnects
+resume the ledger from its last delivered event ID and request a headless snapshot
+from the same tail that supplies subsequent deltas. Existing UI catch-up and
+coalescing continue to apply. Global events contain only permitted Group metadata.
+Token and Connect-frame authority are rechecked while connected; each Group
+subscription also validates Group access before opening its producer.
+
+The server uses a bounded eight-packet output queue and a five-second socket-write
+deadline. Heartbeats detect broken connections, and closing the socket cancels all
+its producers. A failed channel retries independently; transport failure reconnects
+with backoff. The UI does not fall back to HTTP SSE, which would recreate the
+connection-pool blockage. The existing SSE endpoints remain available for external
+clients and use the same typed event producers. Deploy the updated UI and backend
+together to enable the new endpoint.

@@ -654,5 +654,8 @@
     "in": "放大",
     "region": "图像查看：{{name}}",
     "hint": "拖动平移，滚轮滚动。+ / − 缩放，0 适应窗口，1 原始大小，方向键滚动。"
-  }
+  },
+  "workspaceEmpty": "暂无可显示的文件",
+  "workspaceEmptyHint": "添加文件到此工作区后，点击右上角刷新。",
+  "workspaceEmptyFilteredHint": "文件可能被 Git 忽略规则隐藏。"
 }
