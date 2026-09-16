@@ -770,7 +770,6 @@ async fn shared_web_model_operations_preserve_busy_drafts_and_serialize_manual_n
         .await
         .expect("close shared browser");
     server.abort();
-    eprintln!("shared browser launched, busy draft preserved, manual command serialized");
 }
 
 #[tokio::test]
@@ -1004,9 +1003,6 @@ document.body.append(m);i.value=''}</script></body>"#,
                     .expect("connected wait")
                     .is_none()
             );
-            eprintln!(
-                "CONNECTED_WAIT cycle={cycle} pid={pid} exit_status=None; live page verified next"
-            );
         }
         let page = manager.page("exit-restart").await.expect("test page");
         let work = async {
@@ -1036,7 +1032,6 @@ document.body.append(m);i.value=''}</script></body>"#,
                 .expect("count");
             let message_texts: Vec<String> = page.evaluate("Array.from(document.querySelectorAll('[data-message-author-role=user]'), e => e.textContent)")
                 .await.expect("message diagnostics").into_value().expect("message texts");
-            eprintln!("EXIT_RESTART_MESSAGES cycle={cycle} messages={message_texts:?}");
             assert_eq!(
                 count, 1,
                 "repeated submission duplicated the report: {message_texts:?}"
@@ -1044,7 +1039,6 @@ document.body.append(m);i.value=''}</script></body>"#,
         };
         let outcome =
             futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(work)).await;
-        let started = std::time::Instant::now();
         crate::shutdown::browser_surfaces(&manager).await;
         let process = tokio::process::Command::new("ps")
             .args(["-p", &pid.to_string(), "-o", "stat="])
@@ -1064,10 +1058,6 @@ document.body.append(m);i.value=''}</script></body>"#,
             !manager.info("exit-restart").await["active"]
                 .as_bool()
                 .unwrap_or(false)
-        );
-        eprintln!(
-            "MACOS_EXIT_CYCLE={cycle} pid={pid} shutdown_ms={} exited={exited} storage=retained report_count=1",
-            started.elapsed().as_millis()
         );
     }
     server.abort();

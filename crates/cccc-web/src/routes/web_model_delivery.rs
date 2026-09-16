@@ -1874,6 +1874,7 @@ mod retry_integration_tests {
     use cccc_core::{GroupStore, HomeLayout, ledger, web_model_connectors};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::task::JoinHandle;
     use tokio::time::{Duration, timeout};
 
     async fn web_group(state: &AppState, title: &str) -> String {
@@ -1984,6 +1985,15 @@ mod retry_integration_tests {
         fn profile(&self) -> std::path::PathBuf {
             self._temp.path().join("browser")
         }
+    }
+
+    async fn serve_test_app(app: axum::Router) -> (String, JoinHandle<std::io::Result<()>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        (url, server)
     }
 
     async fn finish_browser_test(
@@ -2107,7 +2117,6 @@ mod retry_integration_tests {
                             if !matches!(group.as_str(), "a" | "b") {
                                 return axum::response::Html(String::new());
                             }
-                            eprintln!("DELIVERY_PAGE_VISIT={group}");
                             visits.fetch_add(1, Ordering::SeqCst);
                             if group == "a" && ready.load(Ordering::SeqCst) == 2 {
                                 return axum::response::Html(
@@ -2136,11 +2145,7 @@ mod retry_integration_tests {
                     }
                 }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("fixture");
-        let url = format!("http://{}", listener.local_addr().expect("address"));
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let (url, server) = serve_test_app(app).await;
         let result=futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async {
             let call=|op,values:Value|daemon_call(&state,op,values.as_object().cloned().expect("args"));
             let mut groups=Vec::new();
@@ -2232,7 +2237,6 @@ mod retry_integration_tests {
             call("send",json!({"group_id":groups[1],"by":"user","to":["web"],"text":"RETAIN_DURING_HOLD","message_mode":"send"})).await.expect("retained report");
             visit_pending(&state,&groups[1],"web",true).await.expect("held account");
             assert_eq!(visits.load(Ordering::SeqCst),final_visits,"another group's report bypassed account restriction");
-            eprintln!("ON_DEMAND: no-work closed; busy/loading close; durable 300s shared gate; native supervisor resumes originals once; manual setup/draft protected then handed off; account hold blocks all groups");
         })).await;
         finish_browser_test(harness, vec![server]).await;
         result.expect("on-demand assertions");
@@ -2273,11 +2277,7 @@ mod retry_integration_tests {
                     }
                 }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let base = format!("http://{}", listener.local_addr().expect("address"));
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let (base, server) = serve_test_app(app).await;
         let result = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(timeout(
             Duration::from_secs(35), async {
                 let mut groups = Vec::new();
@@ -2390,10 +2390,6 @@ mod retry_integration_tests {
         let state = harness.state.clone();
         let home = harness.home.clone();
         let browser = Arc::clone(&harness.browser);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let url = format!("http://{}/", listener.local_addr().expect("address"));
         let server_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let page_ready = Arc::clone(&server_ready);
         let app = axum::Router::new().route("/", axum::routing::get(move || {
@@ -2402,7 +2398,8 @@ mod retry_integration_tests {
                 r#"<!doctype html><html><body><section data-testid="conversation-turn-1" data-turn-id="done"><div data-message-author-role="assistant" data-message-id="done">Finished answer</div><button data-testid="copy-turn-action-button">Copy</button></section><textarea id="prompt-textarea" placeholder="Message"></textarea><button data-testid="send-button" type="button">Send</button><script>globalThis.sends=0;document.querySelector('[data-testid="send-button"]').onclick=()=>{sends++;let n=document.createElement('div');n.dataset.messageAuthorRole='user';n.textContent=document.querySelector('textarea').value;document.body.append(n);document.querySelector('textarea').value=''}</script></body></html>"#
             } else { "<!doctype html><html><body>Loading conversation</body></html>" }) }
         }));
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let (base, server) = serve_test_app(app).await;
+        let url = format!("{base}/");
         let operation = async {
             let call =
                 |op, args: Value| daemon_call(&state, op, args.as_object().cloned().expect("args"));
@@ -2752,10 +2749,6 @@ mod retry_integration_tests {
         let state = harness.state.clone();
         let home = harness.home.clone();
         let browser = Arc::clone(&harness.browser);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let url = format!("http://{}/", listener.local_addr().expect("addr"));
         let app = axum::Router::new().fallback(axum::routing::get(|| async {
             axum::response::Html(r#"<!doctype html><textarea id="prompt-textarea"></textarea><button data-testid="send-button" disabled>Send</button><script>
             window.sends=0;window.holdReceipt=false;
@@ -2766,7 +2759,8 @@ mod retry_integration_tests {
             if(location.pathname==='/new')document.querySelector('button').disabled=false;
             </script>"#)
         }));
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let (base, server) = serve_test_app(app).await;
+        let url = format!("{base}/");
         let operation = async {
             let call =
                 |op, args: Value| daemon_call(&state, op, args.as_object().cloned().expect("args"));

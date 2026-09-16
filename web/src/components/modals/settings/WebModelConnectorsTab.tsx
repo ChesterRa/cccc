@@ -368,9 +368,7 @@ export default function WebModelConnectorsTab({
       ? "warn"
       : selectedMcpUrl && chatGptSeen
         ? "ready"
-        : selectedMcpUrl
-          ? "needs"
-          : "needs";
+        : "needs";
   const webAccessReady = publicEndpointReady && uiAccessTokenPresent;
   const webAccessPrerequisiteLabel = webAccessReady
     ? wm("prerequisites.webAccessReady")
@@ -803,54 +801,10 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const bindConversation = async (
-    conversationUrl = "",
-    options?: { newChat?: boolean; notice?: string },
-  ) => {
-    if (!groupId || !actorId) return;
-    const gid = groupId;
-    const aid = actorId;
-    setBrowserBusy(true);
-    setError("");
-    try {
-      const resp = await api.bindCurrentWebModelBrowserConversation({
-        groupId: gid,
-        actorId: aid,
-        conversationUrl,
-        newChat: Boolean(options?.newChat),
-      });
-      if (!matchesWebModelActorSelection(currentSelectionRef.current, gid, aid)) return;
-      if (resp.ok) {
-        const nextSession = resp.result?.browser_session || null;
-        const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
-        const currentSelection = currentSelectionRef.current;
-        if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
-          setBrowserSession(nextSession);
-          const draft = savedTargetDraftFromSession(nextSession);
-          setTargetDraftMode(draft.mode);
-          setConversationUrlDraft(draft.url);
-          setTargetDraftTouched(false);
-          pushNotice(
-            options?.notice ||
-              (options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound")),
-          );
-        }
-      } else {
-        setError(resp.error?.message || wm("errors.bindConversationFailed"));
-      }
-    } catch {
-      if (matchesWebModelActorSelection(currentSelectionRef.current, gid, aid))
-        setError(wm("errors.bindConversationFailed"));
-    } finally {
-      if (matchesWebModelActorSelection(currentSelectionRef.current, gid, aid))
-        setBrowserBusy(false);
-    }
-  };
-
   const saveDeliveryTarget = async () => {
     if (targetSaveDisabled) return;
-    const next = targetDraftMode === "new" ? wm("target.optionNew") : targetDraftUrl;
+    const newChat = targetDraftMode === "new";
+    const next = newChat ? wm("target.optionNew") : targetDraftUrl;
     if (
       !window.confirm(
         wm("t05.confirmTarget", {
@@ -864,14 +818,38 @@ export default function WebModelConnectorsTab({
       )
     )
       return;
-    if (targetDraftMode === "new") {
-      await bindConversation("https://chatgpt.com/", {
-        newChat: true,
-        notice: wm("notices.targetSavedNewChat"),
+    const gid = groupId;
+    const aid = actorId;
+    setBrowserBusy(true);
+    setError("");
+    try {
+      const resp = await api.bindCurrentWebModelBrowserConversation({
+        groupId: gid,
+        actorId: aid,
+        conversationUrl: newChat ? "https://chatgpt.com/" : targetDraftUrl,
+        newChat,
       });
-      return;
+      if (!matchesWebModelActorSelection(currentSelectionRef.current, gid, aid)) return;
+      if (resp.ok) {
+        const nextSession = resp.result?.browser_session || null;
+        const key = browserSessionKey(gid, aid);
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
+        setBrowserSession(nextSession);
+        const draft = savedTargetDraftFromSession(nextSession);
+        setTargetDraftMode(draft.mode);
+        setConversationUrlDraft(draft.url);
+        setTargetDraftTouched(false);
+        pushNotice(wm(newChat ? "notices.targetSavedNewChat" : "notices.targetSavedExisting"));
+      } else {
+        setError(resp.error?.message || wm("errors.bindConversationFailed"));
+      }
+    } catch {
+      if (matchesWebModelActorSelection(currentSelectionRef.current, gid, aid))
+        setError(wm("errors.bindConversationFailed"));
+    } finally {
+      if (matchesWebModelActorSelection(currentSelectionRef.current, gid, aid))
+        setBrowserBusy(false);
     }
-    await bindConversation(targetDraftUrl, { notice: wm("notices.targetSavedExisting") });
   };
 
   const copyValue = async (value: string, labelText: string) => {
