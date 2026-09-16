@@ -35,6 +35,7 @@
     "mermaid": "11.16.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
+    "react-diff-view": "3.3.3",
     "react-dom": "^19.2.7",
     "react-i18next": "^17.0.9",
     "tailwind-merge": "^3.6.0",

@@ -12,7 +12,7 @@ export function DropOverlay({ isOpen, isDark: _isDark, maxFileMb }: DropOverlayP
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-overlay">
+    <div className="pointer-events-none fixed inset-0 z-overlay">
       <div className="glass-overlay absolute inset-0" aria-hidden="true" />
       <div className="absolute inset-0 flex items-center justify-center p-6">
         <div

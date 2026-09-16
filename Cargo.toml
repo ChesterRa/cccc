@@ -51,6 +51,7 @@ serenity = { version = "0.12.5", default-features = false, features = ["client",
 lark-channel = { version = "0.4", features = ["websocket"] }
 weixin-agent = "0.2.0"
 fs2 = "0.4"
+fs_at = "0.2.1"
 flate2 = "1.1"
 futures-util = "0.3"
 http-body-util = "0.1"
@@ -92,6 +93,7 @@ if-addrs = "0.15"
 uuid = { version = "1.17", features = ["v4", "serde"] }
 unicode-width = "0.2"
 windows-sys = "0.61"
+renamore = "0.3.2"
 same-file = "1.0.6"
 win32job = "2.0.3"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }

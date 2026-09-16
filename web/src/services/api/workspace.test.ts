@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { fetchWorkspaceListing, workspaceContentUrl } from "./workspace";
+import {
+  fetchWorkspaceListing,
+  workspaceContentUrl,
+  uploadWorkspaceFile,
+  changeWorkspaceEntry,
+  fetchWorkspaceChanges,
+} from "./workspace";
 
 describe("workspace API", () => {
   afterEach(() => {
@@ -86,6 +92,41 @@ describe("workspace API", () => {
     const [url] = fetchMock.mock.calls[0] || [];
     expect(String(url)).toContain("path=src");
     expect(String(url)).not.toContain("show_ignored");
+  });
+  it("uses raw upload bytes, exact metadata and frame authority for all new workspace APIs", async () => {
+    const proof = btoa(
+      JSON.stringify({
+        frame_id: "upload-frame",
+        target_instance_id: "target",
+        target_device_id: "device",
+        parent_origin: "https://entry.example",
+        expires_at: "2030-01-01T00:00:00Z",
+        signature: "fixture",
+      }),
+    );
+    const location = new URL(
+      `https://target.example/ui/connect?proof=${encodeURIComponent(proof)}`,
+    );
+    vi.stubGlobal("window", { location });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ ok: true, result: {} }), {
+            headers: { "content-type": "application/json" },
+          }),
+      );
+    const file = new File(["hello"], "name.txt");
+    const controller = new AbortController();
+    await uploadWorkspaceFile("g", "scope", "/repo", "dir/name.txt", file, controller.signal);
+    await changeWorkspaceEntry("g", "scope", "/repo", { operation: "delete", path: "name.txt" });
+    await fetchWorkspaceChanges("g", "scope", "/repo", controller.signal);
+    for (const [url] of fetchMock.mock.calls)
+      expect(new URL(String(url), location).searchParams.get("connect_frame")).toBe("upload-frame");
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(url), location).searchParams.get("bytes")).toBe("5");
+    expect(options?.body).toBe(file);
+    expect(new Headers(options?.headers).get("content-type")).toBe("application/octet-stream");
   });
 });
 

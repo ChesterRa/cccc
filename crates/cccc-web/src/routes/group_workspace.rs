@@ -6,7 +6,7 @@
 use axum::Router;
 use axum::extract::Json as JsonBody;
 use axum::extract::{Path, Query, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use cccc_core::GroupStore;
 use cccc_core::workspace::{self, ListOptions, WriteOutcome};
 use serde::Deserialize;
@@ -15,7 +15,9 @@ use serde_json::{Value, json};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 
+mod changes;
 mod content;
+mod entries;
 
 #[derive(Deserialize)]
 struct ListQuery {
@@ -37,6 +39,22 @@ struct FileQuery {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/v1/groups/{group_id}/workspace/changes",
+            get(changes::list),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/workspace/diff",
+            get(changes::diff),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/workspace/entries",
+            post(entries::change),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/workspace/upload",
+            post(entries::upload),
+        )
         .route("/api/v1/groups/{group_id}/workspace/list", get(list))
         .route(
             "/api/v1/groups/{group_id}/workspace/path",
@@ -201,6 +219,11 @@ fn text(body: &Value, key: &str) -> String {
 /// Keeps "outside the scope" distinguishable from "missing", so the panel can say which.
 fn path_error(raw: &str, error: std::io::Error) -> ApiError {
     match error.kind() {
+        std::io::ErrorKind::AlreadyExists => ApiError::conflict(
+            "workspace_entry_exists",
+            format!("An entry already exists at the destination: {raw}"),
+            json!({}),
+        ),
         std::io::ErrorKind::NotFound => {
             ApiError::not_found_code("NOT_FOUND", format!("Path not found: {raw}"))
         }

@@ -26,6 +26,8 @@ export function useWorkspaceEditor(
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const entryChange = useRef(false);
+  const [changingEntries, setChangingEntries] = useState(false);
   const fileRequest = useRef(0);
   const groupGeneration = useRef(0);
   const drafts = useRef(new Map<string, { file: WorkspaceFile; draft: string }>());
@@ -42,6 +44,8 @@ export function useWorkspaceEditor(
   useLayoutEffect(() => {
     fileRequest.current += 1;
     groupGeneration.current += 1;
+    entryChange.current = false;
+    setChangingEntries(false);
     drafts.current.clear();
     pendingSaves.current.clear();
     setWorkspaceDirty(dirtyOwner.current, false);
@@ -81,7 +85,7 @@ export function useWorkspaceEditor(
 
   const openFile = useCallback(
     async (path: string, options?: WorkspaceOpenFileOptions) => {
-      if (options?.reload && pendingSaves.current.has(path)) return null;
+      if (entryChange.current || (options?.reload && pendingSaves.current.has(path))) return null;
       setPathLoading(false);
       setPathError("");
       const destination = options?.fragment ? { fragment: options.fragment } : null;
@@ -142,6 +146,7 @@ export function useWorkspaceEditor(
 
   const locatePath = useCallback(
     async (path: string) => {
+      if (entryChange.current) return;
       // Share the editor's navigation generation: a newer file click or scope change
       // must retire this lookup before it can open a file or move focus in the tree.
       const request = ++fileRequest.current;
@@ -183,6 +188,7 @@ export function useWorkspaceEditor(
     async (content: string) => {
       if (
         !file ||
+        entryChange.current ||
         file.scope_key !== scopeKey ||
         file.scope_url !== scopeUrl ||
         pendingSaves.current.has(file.path)
@@ -241,7 +247,66 @@ export function useWorkspaceEditor(
     [file, groupId, scopeKey, scopeUrl, refresh, publishDirty],
   );
 
+  const beginEntryChange = useCallback(() => {
+    if (entryChange.current || pendingSaves.current.size) return false;
+    entryChange.current = true;
+    setChangingEntries(true);
+    fileRequest.current += 1;
+    setFileLoading(false);
+    setPathLoading(false);
+    return true;
+  }, []);
+  const endEntryChange = useCallback(() => {
+    entryChange.current = false;
+    setChangingEntries(false);
+  }, []);
+  const hasDraftsUnder = useCallback(
+    (path: string) =>
+      [...drafts.current.keys()].some((key) => !path || key === path || key.startsWith(path + "/")),
+    [],
+  );
+  const reconcileEntry = useCallback(
+    (path: string, destination?: string, mimeType?: string) => {
+      const remap = (value: string) =>
+        value === path || value.startsWith(path + "/")
+          ? destination === undefined
+            ? null
+            : destination + value.slice(path.length)
+          : value;
+      const movedFile = (file: WorkspaceFile, moved: string) => ({
+        ...file,
+        path: moved,
+        mime_type: file.path === path && mimeType !== undefined ? mimeType : file.mime_type,
+      });
+      const next = new Map<string, { file: WorkspaceFile; draft: string }>();
+      for (const [key, value] of drafts.current) {
+        const moved = remap(key);
+        if (moved !== null) next.set(moved, { ...value, file: movedFile(value.file, moved) });
+      }
+      drafts.current = next;
+      const current = visibleFile.current;
+      if (current) {
+        const moved = remap(current.path);
+        if (moved === null) closeFile();
+        else if (moved !== current.path) {
+          const updated = movedFile(current, moved);
+          visibleFile.current = updated;
+          setFile(updated);
+          setSelectedPath(moved);
+          setNavigation(null);
+        }
+      }
+      publishDirty();
+    },
+    [closeFile, publishDirty],
+  );
+
   return {
+    beginEntryChange,
+    endEntryChange,
+    reconcileEntry,
+    hasDraftsUnder,
+    changingEntries,
     file,
     navigation,
     draft,

@@ -1672,6 +1672,66 @@ are rendered by Web from the existing bounded text read; HTML remains scriptless
 and scoped resource URLs retain authorization and workspace identity. Media
 support does not create a daemon operation, ledger event, cloud copy or transcoder.
 
+Workspace management uses the same Group, exhibit, scope and Connect-frame checks.
+Paths must be exactly representable as UTF-8. Listings with non-UTF-8 entry names
+and resolutions to non-UTF-8 canonical paths fail explicitly; lossy conversion must
+not publish another entry's identity. Removing a UTF-8-named link remains an entry
+operation and does not require a readable target.
+`POST /api/v1/groups/{group_id}/workspace/entries` accepts `scope_key`, `scope_url`
+and one typed operation: `{operation: "create", path, directory: boolean}`,
+`{operation: "move", path, destination}`, or `{operation: "delete", path}`.
+Paths are workspace-relative. Creation and move never overwrite an existing entry;
+collisions return HTTP 409 (`workspace_entry_exists`). Moves require an existing
+parent and native exclusive-rename support; there is no copy/delete or overwrite
+fallback. Successful responses return the normalized entry `path`, plus `destination`
+and its path-derived `mime_type` for a move. Web applies the returned MIME to the moved
+file in both the visible editor and cached drafts without reloading unsaved contents;
+moving a folder preserves its descendants' file types. Entry operations resolve the parent under the scope, retaining the final
+symlink itself: moving or removing a link does not move or remove its target.
+Workspace-root and Git-metadata mutations are rejected. Directory removal is recursive
+and permanent, without following contained links. A failed recursive deletion may
+have removed some entries; Web retains drafts and refreshes the tree rather than
+claiming rollback. Text saves and these operations share process-local serialization;
+this does not lock out external programs.
+
+`POST /api/v1/groups/{group_id}/workspace/upload` takes `scope_key`, `scope_url`,
+`path` and `bytes` in its query and raw file bytes in its body. The declared and
+received lengths must match and must not exceed 100 MiB. An owned temporary file
+in the destination directory is published without replacement only after receipt,
+flush, and a fresh scope/token/Connect-frame check. Failed or canceled requests
+clean up their temporary file relative to the originally opened parent directory,
+even if another request or external program has moved that directory. Publication
+checks the staged file's identity as well as its destination; a recreated old path
+cannot redirect the upload or its cleanup. Multi-file/folder uploads are sequential browser
+batches, limited to 1,000 entries and 100 MiB total; completed entries remain when
+later entries fail or the user stops. Existing directories are not implicitly merged.
+Web keeps uploads separate from composer attachments. Tree moves use the same entry
+operation as the menu, and successful moves transfer affected drafts to the new paths.
+An internal drag carries a one-use random token issued by the current Files panel;
+its entry identity remains in that panel's memory. Drop/end, scope changes and
+unmount retire it. Self-reported origin or workspace metadata from a foreign page
+does not authorize a move.
+
+`GET /api/v1/groups/{group_id}/workspace/changes` takes the scope identity and
+returns `{repository, branch, entries, limited}`. Entries contain workspace-relative
+`path`, index/worktree status characters, optional in-scope `previous_path`, and
+`untracked`, `conflicted`, `directory` flags. Native Git status is bounded to the
+active workspace, including when it is a repository subdirectory. A non-repository
+is distinct from a failed or timed-out query. At most 2,000 entries are returned;
+`limited` explicitly marks a shortened list. Queries are user-driven, without
+background scans or daemon work.
+
+`GET /api/v1/groups/{group_id}/workspace/diff` additionally takes `path` and
+`side: "worktree" | "staged"`, returning `{patch, limited}`. Only a currently listed
+change can be selected. Worktree compares saved bytes with the index; staged compares
+the index with HEAD, including an unborn branch. Untracked/conflicted entries open
+in Files. Git uses literal pathspecs, disables external diff/text conversion and
+rename expansion, and never changes the index. A renamed file can appear as an
+addition/deletion in its patch to avoid pulling an out-of-scope source into the view.
+Output is limited to 1 MiB/10,000 lines per diff, with an explicit limit result rather
+than a partial patch. Binary or metadata-only changes remain visible as Git text.
+No stage, unstage, discard, commit, branch-switch, pull or push operation is exposed.
+
 #### `group_detach_scope`
 
 Args:

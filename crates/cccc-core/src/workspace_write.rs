@@ -10,7 +10,7 @@ use std::{fs, io, sync::Mutex};
 /// milliseconds, so a map of per-path locks would only add lifetime bookkeeping. The digest
 /// detects external edits completed before the check; writers outside this process do not
 /// take this lock and can still race with the replacement.
-static WRITE_GUARD: Mutex<()> = Mutex::new(());
+pub(super) static WRITE_GUARD: Mutex<()> = Mutex::new(());
 
 /// Writes `content`, refusing when the on-disk bytes no longer match `expected_sha256`.
 ///

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { useWorkspaceChanges } from "./useWorkspaceChanges";
+import { useWorkspaceMutations } from "./useWorkspaceMutations";
 import * as api from "../../services/api";
 import { useWorkspaceEditor, type WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 import {
@@ -29,6 +31,15 @@ export function useWorkspaceFiles(
   scopeKey: string,
   scopeUrl: string,
 ) {
+  const [mode, setMode] = useState<"files" | "changes">("files");
+  const [revision, setRevision] = useState(0);
+  const changes = useWorkspaceChanges(
+    groupId,
+    scopeKey,
+    scopeUrl,
+    active && mode === "changes",
+    revision,
+  );
   const [tree, setTree] = useState<TreeState>(emptyTreeState);
   const [showIgnored, updateShowIgnored] = useState(() => {
     try {
@@ -72,8 +83,9 @@ export function useWorkspaceFiles(
   }, [showIgnored]);
 
   const pending = useMemo(
-    () => (active && groupId && scopeKey && scopeUrl ? pendingDirectories(tree) : []),
-    [active, groupId, scopeKey, scopeUrl, tree],
+    () =>
+      active && mode === "files" && groupId && scopeKey && scopeUrl ? pendingDirectories(tree) : [],
+    [active, mode, groupId, scopeKey, scopeUrl, tree],
   );
 
   useEffect(() => {
@@ -121,6 +133,7 @@ export function useWorkspaceFiles(
   }, []);
 
   const refresh = useCallback(() => {
+    setRevision((value) => value + 1);
     // Retire the listings already in flight: they describe the tree being discarded, and
     // would otherwise land on top of the reload they were replaced by.
     listingGeneration.current += 1;
@@ -151,6 +164,7 @@ export function useWorkspaceFiles(
     [refresh, revealFile],
   );
   const editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, refresh, onOpenPath, onLocatePath);
+  const mutations = useWorkspaceMutations(groupId, scopeKey, scopeUrl, editor, refresh);
   const {
     openFile: openEditorFile,
     locatePath: locateEditorPath,
@@ -159,6 +173,7 @@ export function useWorkspaceFiles(
   // A newer navigation retires the previous reveal, even while its directory is loading.
   const openFile = useCallback(
     (path: string, options?: WorkspaceOpenFileOptions) => {
+      setMode("files");
       setRevealRequest(null);
       return openEditorFile(path, options);
     },
@@ -183,6 +198,10 @@ export function useWorkspaceFiles(
   }, [tree, revealRequest]);
   const completeReveal = useCallback(() => setRevealRequest(null), []);
   return {
+    mode,
+    setMode,
+    changes,
+    mutations,
     groupId,
     scopeKey,
     scopeUrl,

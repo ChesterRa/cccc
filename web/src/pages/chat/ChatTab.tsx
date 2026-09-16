@@ -73,9 +73,9 @@ const WorkspaceFilesPanel = lazy(() =>
     default: module.WorkspaceFilesPanel,
   })),
 );
-const WorkspaceFileViewer = lazy(() =>
-  import("../../components/workspace/WorkspaceFileViewer").then((module) => ({
-    default: module.WorkspaceFileViewer,
+const WorkspaceViewer = lazy(() =>
+  import("../../components/workspace/WorkspaceViewer").then((module) => ({
+    default: module.WorkspaceViewer,
   })),
 );
 const SetupChecklist = lazy(() =>
@@ -420,7 +420,9 @@ export function ChatTab({
     workspaceScope?.scope_key || "",
     workspaceScope?.url || "",
   );
-  const showWorkspaceFileViewer = showSplitFiles && !!workspaceFiles.file;
+  const hasWorkspaceViewer =
+    workspaceFiles.mode === "changes" ? !!workspaceFiles.changes.selection : !!workspaceFiles.file;
+  const showWorkspaceFileViewer = showSplitFiles && hasWorkspaceViewer;
   const setWorkspaceFileViewerGroupId = useUIStore((state) => state.setWorkspaceFileViewerGroupId);
   useLayoutEffect(() => {
     if (!showWorkspaceFileViewer) return;
@@ -985,7 +987,7 @@ export function ChatTab({
               {/* `--color-chat-bg` is a 75% glass tint, so it alone would let the chat
                   underneath show through. The overlay composites it over the opaque page
                   background to match the chat surface exactly while staying fully opaque. */}
-              {showWorkspaceFileViewer && workspaceFiles.file ? (
+              {showWorkspaceFileViewer ? (
                 <div
                   className="absolute inset-0 z-20 flex min-h-0 flex-col"
                   style={{
@@ -995,28 +997,11 @@ export function ChatTab({
                   data-workspace-file-viewer="true"
                 >
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <WorkspaceFileViewer
-                      onOpenFile={workspaceFiles.openFile}
-                      navigation={workspaceFiles.navigation}
-                      groupId={selectedGroupId}
-                      {...{ draft: workspaceFiles.draft, setDraft: workspaceFiles.setDraft }}
-                      file={workspaceFiles.file}
+                    <WorkspaceViewer
+                      files={workspaceFiles}
                       isDark={isDark}
                       readOnly={!!readOnly}
-                      saving={workspaceFiles.saving}
-                      loading={workspaceFiles.fileLoading}
-                      reloadVersion={workspaceFiles.reloadVersion}
-                      error={workspaceFiles.fileError}
-                      conflict={workspaceFiles.conflict}
-                      onClose={workspaceFiles.closeFile}
-                      onSave={workspaceFiles.saveFile}
-                      onReload={() =>
-                        workspaceFiles.file &&
-                        void workspaceFiles.openFile(workspaceFiles.file.path, { reload: true })
-                      }
-                      onAttach={() =>
-                        workspaceFiles.file && attachWorkspacePath(workspaceFiles.file.path)
-                      }
+                      onAttach={attachWorkspacePath}
                     />
                   </Suspense>
                 </div>
@@ -1099,31 +1084,13 @@ export function ChatTab({
           >
             <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
               <div className="flex min-h-0 flex-1 flex-col">
-                {workspaceFiles.file ? (
-                  <WorkspaceFileViewer
-                    onOpenFile={workspaceFiles.openFile}
-                    navigation={workspaceFiles.navigation}
-                    groupId={selectedGroupId}
-                    {...{ draft: workspaceFiles.draft, setDraft: workspaceFiles.setDraft }}
-                    file={workspaceFiles.file}
+                {hasWorkspaceViewer ? (
+                  <WorkspaceViewer
+                    files={workspaceFiles}
                     isDark={isDark}
-                    // Editing a repo from a phone keyboard is too easy to fat-finger while
-                    // Actors write the same tree, so the phone surface stays read-only.
                     readOnly
-                    saving={workspaceFiles.saving}
-                    loading={workspaceFiles.fileLoading}
-                    reloadVersion={workspaceFiles.reloadVersion}
-                    error={workspaceFiles.fileError}
-                    conflict={workspaceFiles.conflict}
-                    onClose={workspaceFiles.closeFile}
-                    onSave={async () => false}
-                    onReload={() =>
-                      workspaceFiles.file &&
-                      void workspaceFiles.openFile(workspaceFiles.file.path, { reload: true })
-                    }
-                    onAttach={() => {
-                      if (!workspaceFiles.file) return;
-                      attachWorkspacePath(workspaceFiles.file.path);
+                    onAttach={(path) => {
+                      attachWorkspacePath(path);
                       closeMobileFiles();
                     }}
                   />

@@ -64,6 +64,7 @@ pub mod web_login_grants;
 pub mod web_model_connectors;
 pub mod web_runtime_proof;
 pub mod workspace;
+pub mod workspace_changes;
 pub mod workspace_git;
 
 pub use capability_builtin::{

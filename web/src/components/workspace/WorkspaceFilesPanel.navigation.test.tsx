@@ -63,7 +63,7 @@ async function menuAction(label: string) {
 }
 async function enterPath(path: string) {
   await act(async () => {
-    const input = panel().querySelector("input")!;
+    const input = panel().querySelector<HTMLInputElement>('input[type="text"]')!;
     input.focus();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, path);
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -108,7 +108,7 @@ it("opens an absolute path and reveals it through the filter, then collapses and
   expect(fetchWorkspaceFile).toHaveBeenCalledTimes(1);
 
   // A later directory refresh must not replay an earlier reveal and steal focus.
-  const input = panel().querySelector("input")!;
+  const input = panel().querySelector<HTMLInputElement>('input[type="text"]')!;
   input.focus();
   await click(panel().querySelector<HTMLElement>('[title="Refresh directory"]')!);
   expect(document.activeElement).toBe(input);
@@ -123,7 +123,7 @@ it("rejects outside paths before reading and retires input and menus on a scope 
   await optionsMenu();
   await render({ scopeKey: "scope-b", scopeUrl: "/other" });
   expect(document.querySelector('[role="menu"]')).toBeNull();
-  expect(panel().querySelector("input")?.value).toBe("");
+  expect(panel().querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("");
   expect(panel().querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -151,7 +151,7 @@ it("offers the same scoped row actions from the visible button and keyboard with
       new KeyboardEvent("keydown", { key: "End", bubbles: true }),
     ),
   );
-  expect(document.activeElement?.getAttribute("download")).toBe("README.txt");
+  expect(document.activeElement?.textContent).toBe("workspaceManage.delete");
   await act(async () =>
     document.activeElement!.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
@@ -285,3 +285,123 @@ it.each(["stay", "file", "editor", "menu", "keyboard"])(
     }
   },
 );
+
+it("does not turn a drag starting on the row menu button into a file move", async () => {
+  filesFixture();
+  await mount();
+  const row = rowByName("README.txt");
+  await act(async () =>
+    row.querySelector("button")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })),
+  );
+  const drag = new Event("dragstart", { bubbles: true, cancelable: true });
+  await act(async () => row.dispatchEvent(drag));
+  expect(drag.defaultPrevented).toBe(true);
+});
+
+it("rejects a tree move from another instance origin even when Group and scope IDs match", async () => {
+  filesFixture();
+  await mount();
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({ ok: true, result: { path: "README.txt", destination: "src/README.txt" } }),
+      ),
+    );
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: {
+      types: ["application/x-cccc-workspace-entry"],
+      getData: () =>
+        JSON.stringify({
+          origin: "https://another-instance.example",
+          groupId: "group-1",
+          scopeKey: "scope-a",
+          scopeUrl: "/repo",
+          path: "README.txt",
+          name: "README.txt",
+        }),
+    },
+  });
+  await act(async () => rowByName("src").dispatchEvent(event));
+  expect(fetch).not.toHaveBeenCalled();
+  expect(panel().textContent).toContain("workspaceManage.sameWorkspace");
+  fetch.mockRestore();
+});
+
+it("rejects forged current-origin metadata as authority for a tree move", async () => {
+  filesFixture();
+  await mount();
+  const fetch = vi.spyOn(globalThis, "fetch");
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: {
+      types: ["application/x-cccc-workspace-entry"],
+      getData: () =>
+        JSON.stringify({
+          origin: window.location.origin,
+          groupId: "group-1",
+          scopeKey: "scope-a",
+          scopeUrl: "/repo",
+          path: "README.txt",
+          name: "README.txt",
+        }),
+    },
+  });
+  await act(async () => rowByName("src").dispatchEvent(event));
+  expect(fetch).not.toHaveBeenCalled();
+  fetch.mockRestore();
+});
+
+function dragEvent(type: string, data: Map<string, string>) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: {
+      get types() {
+        return [...data.keys()];
+      },
+      getData: (key: string) => data.get(key) || "",
+      setData: (key: string, value: string) => data.set(key, value),
+    },
+  });
+  return event;
+}
+it("accepts a local drag once and rejects its replay or canceled token", async () => {
+  filesFixture();
+  await mount();
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: { path: "README.txt", destination: "src/README.txt", mime_type: "text/plain" },
+          }),
+        ),
+    );
+  const data = new Map<string, string>();
+  await act(async () => rowByName("README.txt").dispatchEvent(dragEvent("dragstart", data)));
+  expect(data.get("application/x-cccc-workspace-entry")).toBeTruthy();
+  await act(async () => rowByName("src").dispatchEvent(dragEvent("drop", data)));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await act(async () => rowByName("src").dispatchEvent(dragEvent("drop", data)));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const canceled = new Map<string, string>();
+  await act(async () => rowByName("README.txt").dispatchEvent(dragEvent("dragstart", canceled)));
+  await act(async () => rowByName("README.txt").dispatchEvent(dragEvent("dragend", canceled)));
+  await act(async () => rowByName("src").dispatchEvent(dragEvent("drop", canceled)));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fetch.mockRestore();
+});
+it("retires a drag when switching workspace scopes", async () => {
+  filesFixture();
+  await mount();
+  const data = new Map<string, string>();
+  await act(async () => rowByName("README.txt").dispatchEvent(dragEvent("dragstart", data)));
+  await render({ scopeKey: "next-scope", scopeUrl: "/next-repo" });
+  const fetch = vi.spyOn(globalThis, "fetch");
+  await act(async () => rowByName("src").dispatchEvent(dragEvent("drop", data)));
+  expect(fetch).not.toHaveBeenCalled();
+  fetch.mockRestore();
+});

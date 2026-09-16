@@ -167,3 +167,80 @@ export async function saveWorkspaceFile(
     },
   };
 }
+
+export type WorkspaceOperation =
+  | { operation: "create"; path: string; directory: boolean }
+  | { operation: "move"; path: string; destination: string }
+  | { operation: "delete"; path: string };
+
+export function changeWorkspaceEntry(
+  groupId: string,
+  scopeKey: string,
+  scopeUrl: string,
+  operation: WorkspaceOperation,
+): Promise<ApiResponse<{ path: string; destination?: string; mime_type?: string }>> {
+  return apiJson(withAuthToken(groupPath(groupId, "entries")), {
+    method: "POST",
+    body: JSON.stringify({ ...operation, scope_key: scopeKey, scope_url: scopeUrl }),
+  });
+}
+
+export function uploadWorkspaceFile(
+  groupId: string,
+  scopeKey: string,
+  scopeUrl: string,
+  path: string,
+  file: File,
+  signal: AbortSignal,
+): Promise<ApiResponse<{ path: string; bytes: number }>> {
+  const query = new URLSearchParams({
+    scope_key: scopeKey,
+    scope_url: scopeUrl,
+    path,
+    bytes: String(file.size),
+  });
+  return apiJson(withAuthToken(`${groupPath(groupId, "upload")}?${query}`), {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: file,
+    signal,
+  });
+}
+
+export type WorkspaceChange = {
+  path: string;
+  index: string;
+  worktree: string;
+  previous_path: string | null;
+  untracked: boolean;
+  conflicted: boolean;
+  directory: boolean;
+};
+export type WorkspaceChanges = {
+  repository: boolean;
+  branch: string;
+  entries: WorkspaceChange[];
+  limited: boolean;
+};
+export type WorkspaceDiffSide = "worktree" | "staged";
+export type WorkspacePatch = { patch: string; limited: boolean };
+export function fetchWorkspaceChanges(
+  groupId: string,
+  scopeKey: string,
+  scopeUrl: string,
+  signal: AbortSignal,
+): Promise<ApiResponse<WorkspaceChanges>> {
+  const query = new URLSearchParams({ scope_key: scopeKey, scope_url: scopeUrl });
+  return apiJson(withAuthToken(`${groupPath(groupId, "changes")}?${query}`), { signal });
+}
+export function fetchWorkspaceDiff(
+  groupId: string,
+  scopeKey: string,
+  scopeUrl: string,
+  path: string,
+  side: WorkspaceDiffSide,
+  signal: AbortSignal,
+): Promise<ApiResponse<WorkspacePatch>> {
+  const query = new URLSearchParams({ scope_key: scopeKey, scope_url: scopeUrl, path, side });
+  return apiJson(withAuthToken(`${groupPath(groupId, "diff")}?${query}`), { signal });
+}

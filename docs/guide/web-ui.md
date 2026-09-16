@@ -128,9 +128,54 @@ as message context, copy a relative or absolute path, download a file, or pin a 
 file to Presentation when permitted. Attaching inserts a path into the composer; it does
 not upload the file.
 
+On desktop, **File browser options → New file / New folder / Upload files / Upload
+folder** works at the workspace root. The same actions in a folder's menu target
+that folder. File and folder menus also provide **Rename**, **Move to…**, and
+**Delete**. Move destinations include the full workspace-relative name, and their
+parent folder must already exist. Name collisions preserve the existing item.
+Deleting a folder permanently deletes its contents; the confirmation names the path
+and warns about affected unsaved edits. There is no recycle bin or undo.
+
+Drag files or folders from your computer onto the Files tree to upload them; the
+highlighted folder and drop label identify the destination. Drop on the panel
+background for the workspace root. Native folder drops preserve subdirectories and
+empty folders. The folder picker includes the browser-provided file tree; browsers
+cannot include empty folders through that picker. If directory drops are unsupported,
+use the upload menu instead. Each selection is limited to 1,000 files/folders and
+100 MiB total. Uploads stop at the first conflict or failure. **Stop upload** keeps
+completed entries; it does not roll back the batch. Git metadata cannot be uploaded.
+Dropping here does not attach files to your message.
+
+Drag one existing tree entry from the current Files panel onto a folder (or the panel background) to move it within
+the workspace. **Move to…** offers the same operation without dragging. Moves and
+renames carry unsaved drafts to the new paths; a pending save must finish first.
+Changing a file's extension also updates its preview type while keeping unsaved text.
+A destination with another unsaved draft is rejected so both drafts are retained.
+Moving files does not rewrite imports or Presentation references. Refresh or repin
+those references when needed.
+
+Files uses UTF-8 paths. A directory containing names that cannot be represented
+exactly shows an error; manage those names in the terminal. Names are never silently
+replaced with another file's path.
+
+Select **Changes** next to **Files** to inspect the active workspace's Git changes.
+The list separates working-tree modifications, staged changes, conflicts and untracked
+items. Select a tracked change to see its diff in the main area; use **Unified** or
+**Side by side** when the viewer is wide enough. Untracked files open in Files,
+untracked folders reveal their contents, and conflicts open the current file for
+inspection. The view uses saved content; unsaved drafts remain intact when switching
+views. **Refresh directory** refreshes the current Git view as well. Lists are read
+on entry and after local writes while visible, without periodic background scanning.
+
+Changes is read-only: CCCC does not stage, discard, commit or push on behalf of the
+user. These remain terminal operations because Actors may share the repository's
+index. Large lists/diffs show an explicit limit; Git failures are not shown as a
+clean workspace. Phones retain their existing read-only Files behavior and can view
+Git changes in the same full-screen surface.
+
 Symbolic links have a link icon. If the target is missing, outside the workspace,
 or inaccessible, its row explains why and disables content actions; you can still
-copy its path. CCCC does not repair links created by other tools or download files
+copy its path, or rename/remove the link on desktop without changing its target. CCCC does not repair links created by other tools or download files
 outside the workspace. After fixing a link on disk, use **Refresh directory**.
 
 An empty file panel shows **No files to display** after loading completes. If ignored

@@ -13,6 +13,9 @@ use std::path::{Component, Path, PathBuf};
 #[path = "workspace_write.rs"]
 mod write;
 pub use write::write_file;
+#[path = "workspace_mutations.rs"]
+mod mutations;
+pub use mutations::{WorkspaceUpload, create_entry, delete_entry, move_entry};
 
 use crate::GroupDoc;
 use crate::workspace_git::{self, GitStatus};
@@ -116,7 +119,20 @@ fn active_scope(group: &GroupDoc) -> io::Result<&crate::Scope> {
 
 /// Absolute, canonicalized root of the group's active scope.
 pub fn root(group: &GroupDoc) -> io::Result<PathBuf> {
-    Path::new(&active_scope(group)?.url).canonicalize()
+    let root = Path::new(&active_scope(group)?.url).canonicalize()?;
+    require_utf8_path(&root)?;
+    Ok(root)
+}
+
+fn non_utf8_path_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "This path contains a filename that cannot be represented as UTF-8. Use the terminal to manage it.",
+    )
+}
+
+fn require_utf8_path(path: &Path) -> io::Result<()> {
+    path.to_str().ok_or_else(non_utf8_path_error).map(|_| ())
 }
 
 /// Rejects absolute paths and any component that could climb out of the root.
@@ -146,6 +162,7 @@ pub fn safe_relative(value: &str) -> io::Result<PathBuf> {
 pub fn resolve_existing(root: &Path, relative: &str) -> io::Result<PathBuf> {
     let candidate = root.join(safe_relative(relative)?).canonicalize()?;
     if candidate.starts_with(root) {
+        require_utf8_path(&candidate)?;
         Ok(candidate)
     } else {
         Err(io::Error::other(OutsideScope))
@@ -233,11 +250,15 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
         ));
     }
 
+    let mut unrepresentable_path = false;
     let mut entries = fs::read_dir(&directory)?
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let path = entry.path();
-            let relative = to_relative(&root, &path)?;
+            let Some(relative) = to_relative(&root, &path) else {
+                unrepresentable_path = true;
+                return None;
+            };
             // `.git` is plumbing, never a browsable part of the workspace.
             if relative == ".git" || relative.starts_with(".git/") {
                 return None;
@@ -289,6 +310,10 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
             })
         })
         .collect::<Vec<_>>();
+
+    if unrepresentable_path {
+        return Err(non_utf8_path_error());
+    }
 
     let candidates: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
     let (ignored, status) = workspace_git::decorations(&root, &normalized, &candidates);
@@ -376,7 +401,7 @@ fn to_relative(root: &Path, path: &Path) -> Option<String> {
     Some(
         path.strip_prefix(root)
             .ok()?
-            .to_string_lossy()
+            .to_str()?
             .replace(std::path::MAIN_SEPARATOR, "/"),
     )
 }

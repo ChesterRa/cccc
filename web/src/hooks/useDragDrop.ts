@@ -67,6 +67,13 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
 
   // Drag/drop event listeners.
   useEffect(() => {
+    const inWorkspace = (e: DragEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest("[data-workspace-drop]"))
+        return false;
+      dragDepthRef.current = 0;
+      setDropOverlayOpen(false);
+      return true;
+    };
     const hasFiles = (e: DragEvent) => {
       const dt = e.dataTransfer;
       if (!dt) return false;
@@ -80,25 +87,25 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
     };
 
     const onDragEnter = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (inWorkspace(e) || !hasFiles(e)) return;
       e.preventDefault();
       dragDepthRef.current += 1;
       setDropOverlayOpen(true);
     };
 
     const onDragOver = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (inWorkspace(e) || !hasFiles(e)) return;
       e.preventDefault();
     };
 
     const onDragLeave = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (inWorkspace(e) || !hasFiles(e)) return;
       dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
       if (dragDepthRef.current === 0) setDropOverlayOpen(false);
     };
 
     const onDrop = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (inWorkspace(e) || !hasFiles(e)) return;
       e.preventDefault();
       dragDepthRef.current = 0;
       setDropOverlayOpen(false);

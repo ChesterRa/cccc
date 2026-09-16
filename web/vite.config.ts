@@ -97,6 +97,13 @@ export default defineConfig({
           // the initial shared vendor chunk or one oversized manual chunk.
           if (MERMAID_DEPENDENCY_PATTERN.test(id) || /[\\/]node_modules[\\/]mermaid[\\/]/.test(id))
             return;
+          // Keep the read-only diff renderer and its private graph behind the viewer import.
+          if (
+            /[\\/]node_modules[\\/](react-diff-view|gitdiff-parser|diff-match-patch|lodash|shallow-equal|warning|classnames)[\\/]/.test(
+              id,
+            )
+          )
+            return;
           // React core + libs that import react (must stay in the same chunk
           // to avoid circular cross-chunk dependencies during initialisation)
           if (/[\\/]node_modules[\\/](react|react-dom|zustand|@tanstack|scheduler)[\\/]/.test(id))

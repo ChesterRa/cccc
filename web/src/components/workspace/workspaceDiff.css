@@ -1,0 +1,21 @@
+.workspace-diff {
+  --diff-background-color: var(--color-bg-primary);
+  --diff-text-color: var(--color-text-primary);
+  --diff-font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --diff-selection-background-color: var(--glass-tab-bg);
+  --diff-gutter-insert-background-color: color-mix(in srgb, #10b981 24%, var(--color-bg-primary));
+  --diff-gutter-delete-background-color: color-mix(in srgb, #f43f5e 24%, var(--color-bg-primary));
+  --diff-code-insert-background-color: color-mix(in srgb, #10b981 12%, var(--color-bg-primary));
+  --diff-code-delete-background-color: color-mix(in srgb, #f43f5e 12%, var(--color-bg-primary));
+  --diff-gutter-insert-text-color: var(--color-text-primary);
+  --diff-gutter-delete-text-color: var(--color-text-primary);
+  --diff-code-insert-text-color: var(--color-text-primary);
+  --diff-code-delete-text-color: var(--color-text-primary);
+}
+.workspace-diff .diff {
+  font-size: 12px;
+  line-height: 1.65;
+}
+.workspace-diff .diff-code {
+  white-space: pre;
+}

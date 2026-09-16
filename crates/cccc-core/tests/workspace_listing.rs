@@ -235,3 +235,32 @@ fn listing_identifies_links_without_leaking_external_target_metadata() {
     assert!(repaired.is_dir);
     assert_eq!(repaired.unavailable, None);
 }
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_names_and_link_targets_never_alias_another_utf8_filename() {
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
+    let f = fixture();
+    let raw = std::ffi::OsStr::from_bytes(b"name-\xff.txt");
+    std::fs::write(f.repo.join(raw), "unrepresentable").expect("raw filename");
+    std::fs::write(f.repo.join("name-\u{fffd}.txt"), "different file").expect("neighbor");
+    let result = workspace::list(&f.group, "", ListOptions { show_ignored: true });
+    assert_eq!(
+        result.expect_err("no lossy actionable paths").kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    symlink(raw, f.repo.join("alias.txt")).expect("link");
+    assert!(
+        workspace::read_file(&f.group, "alias.txt").is_err(),
+        "canonical identity must be representable exactly"
+    );
+    workspace::delete_entry(&f.group, "alias.txt").expect("the link itself can still be removed");
+    assert!(
+        f.repo.join(raw).exists(),
+        "removing a link leaves its target intact"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("name-\u{fffd}.txt")).expect("neighbor intact"),
+        "different file"
+    );
+}

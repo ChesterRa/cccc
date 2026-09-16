@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useRef, useState, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
@@ -15,6 +15,8 @@ import type { WorkspaceEntry, WorkspaceGitStatus } from "../../types";
 import type { TreeNode } from "./workspaceTreeModel";
 
 type Props = {
+  onDragEntry?: (event: DragEvent, entry: WorkspaceEntry) => void;
+  dropTarget?: string | null;
   rows: TreeNode[];
   selectedPath: string;
   isDark: boolean;
@@ -51,6 +53,8 @@ function GitBadge({ status, isDark }: { status: WorkspaceGitStatus; isDark: bool
 }
 
 function WorkspaceTreeRows({
+  onDragEntry,
+  dropTarget,
   rows,
   selectedPath,
   isDark,
@@ -63,6 +67,7 @@ function WorkspaceTreeRows({
 }: Props) {
   const { t } = useTranslation("chat");
   const treeRef = useRef<HTMLDivElement>(null);
+  const dragFromRow = useRef(true);
   const [focusedKey, setFocusedKey] = useState("");
   const activeKey =
     rows.find((row) => row.key === focusedKey)?.key ??
@@ -84,6 +89,10 @@ function WorkspaceTreeRows({
   return (
     <div
       ref={treeRef}
+      onPointerDownCapture={(event) => {
+        // Native dragstart targets the draggable row, even when the press began on More.
+        dragFromRow.current = !(event.target instanceof Element && event.target.closest("button"));
+      }}
       aria-label={t("workspaceFilesTitle", { defaultValue: "Files" })}
       role="tree"
       className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1"
@@ -119,6 +128,19 @@ function WorkspaceTreeRows({
           <Fragment key={node.key}>
             <div
               role="treeitem"
+              draggable={!!onDragEntry}
+              onDragStart={(event) => {
+                if (!dragFromRow.current) {
+                  event.preventDefault();
+                  return;
+                }
+                onDragEntry?.(event, entry);
+              }}
+              data-workspace-directory={
+                entry.is_dir && !entry.unavailable
+                  ? entry.path
+                  : entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/")))
+              }
               tabIndex={node.key === activeKey ? 0 : -1}
               aria-level={node.depth + 1}
               onFocus={() => setFocusedKey(node.key)}
@@ -165,6 +187,9 @@ function WorkspaceTreeRows({
               className={classNames(
                 // Roomier rows on phones, where these are touch targets rather than mouse targets.
                 "group/row flex w-full items-center gap-1 py-2 pr-2 text-left text-[13px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)] sm:py-[3px]",
+                dropTarget === entry.path &&
+                  entry.is_dir &&
+                  "ring-1 ring-inset ring-[var(--color-border-focus)]",
                 entry.unavailable ? "cursor-default" : "cursor-pointer",
                 selected
                   ? isDark
