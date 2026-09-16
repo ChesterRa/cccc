@@ -171,3 +171,67 @@ fn slow_git_hook_times_out_without_trapping_files_or_leaving_descendants() {
         "owned descendants must be terminated"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn listing_identifies_links_without_leaking_external_target_metadata() {
+    use cccc_core::workspace::EntryUnavailable;
+    use std::os::unix::fs::symlink;
+    let fixture = fixture();
+    let outside = fixture.repo.parent().expect("parent").join("external");
+    std::fs::create_dir(&outside).expect("outside directory");
+    let _socket = std::os::unix::net::UnixListener::bind(fixture.repo.join("socket"))
+        .expect("fixture socket");
+    for (target, name) in [
+        (fixture.repo.join("src/lib.rs"), "file-link"),
+        (fixture.repo.join("src"), "dir-link"),
+        (outside.clone(), "outside-link"),
+        (outside.join("missing"), "missing-link"),
+        (fixture.repo.join("loop-link"), "loop-link"),
+    ] {
+        symlink(target, fixture.repo.join(name)).expect("link");
+    }
+    let listing = workspace::list(&fixture.group, "", ListOptions::default()).expect("list");
+    let find = |name| {
+        listing
+            .items
+            .iter()
+            .find(|item| item.name == name)
+            .expect("entry")
+    };
+    let file = find("file-link");
+    assert!(file.is_symlink);
+    assert!(!file.is_dir);
+    assert_eq!(file.size, Some(13));
+    assert_eq!(file.unavailable, None);
+    assert!(find("dir-link").is_dir);
+    assert!(find("dir-link").is_symlink);
+    assert!(!find("src").is_symlink);
+    assert_eq!(
+        find("socket").unavailable,
+        Some(EntryUnavailable::Unsupported)
+    );
+    assert_eq!(find("socket").size, None);
+    for (name, reason) in [
+        ("outside-link", EntryUnavailable::OutsideScope),
+        ("missing-link", EntryUnavailable::Missing),
+        ("loop-link", EntryUnavailable::Unreadable),
+    ] {
+        let item = find(name);
+        assert!(item.is_symlink);
+        assert_eq!(item.unavailable, Some(reason));
+        assert!(!item.is_dir);
+        assert_eq!(item.size, None);
+        assert_eq!(item.mime_type, None);
+    }
+    std::fs::remove_file(fixture.repo.join("missing-link")).expect("remove link");
+    symlink(fixture.repo.join("src"), fixture.repo.join("missing-link")).expect("repair link");
+    let refreshed = workspace::list(&fixture.group, "", ListOptions::default()).expect("refresh");
+    let repaired = refreshed
+        .items
+        .iter()
+        .find(|item| item.name == "missing-link")
+        .expect("repaired");
+    assert!(repaired.is_dir);
+    assert_eq!(repaired.unavailable, None);
+}

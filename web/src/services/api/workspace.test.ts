@@ -126,3 +126,47 @@ it("round-trips literal paths and the opened workspace identity through read and
     vi.restoreAllMocks();
   }
 });
+
+it("resolves path type with exact scope identity, including the root and literal filenames", async () => {
+  const { resolveWorkspacePath } = await import("./workspace");
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  try {
+    for (const path of ["", String.raw`literal\name #1.txt`, ".pytest_cache/v/cache"]) {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              scope_key: "scope-a",
+              scope_url: "/repo",
+              path,
+              is_dir: !path.endsWith(".txt"),
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+      expect(await resolveWorkspacePath("g_paths", path, "scope-a", "/repo")).toEqual({
+        ok: true,
+        result: { path, is_dir: !path.endsWith(".txt") },
+      });
+      const url = new URL(String(fetchMock.mock.calls.at(-1)![0]), "http://localhost");
+      expect(url.pathname).toBe("/api/v1/groups/g_paths/workspace/path");
+      expect(url.searchParams.get("path")).toBe(path);
+      expect(url.searchParams.get("scope_key")).toBe("scope-a");
+      expect(url.searchParams.get("scope_url")).toBe("/repo");
+    }
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { scope_key: "old-scope", scope_url: "/repo", path: "", is_dir: true },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    expect((await resolveWorkspacePath("g_paths", "", "scope-a", "/repo")).ok).toBe(false);
+  } finally {
+    vi.restoreAllMocks();
+  }
+});

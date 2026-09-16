@@ -39,6 +39,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/workspace/list", get(list))
         .route(
+            "/api/v1/groups/{group_id}/workspace/path",
+            get(inspect_path),
+        )
+        .route(
             "/api/v1/groups/{group_id}/workspace/content",
             get(content::read),
         )
@@ -46,6 +50,26 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/workspace/file",
             get(read).put(write),
         )
+}
+
+async fn inspect_path(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> ApiResult {
+    tokio::task::spawn_blocking(move || {
+        let group = load_group(&state, &group_id, &query.scope_key, &query.scope_url)?;
+        let (path, is_dir) = workspace::inspect_path(&group, &query.path)
+            .map_err(|error| path_error(&query.path, error))?;
+        Ok(success(json!({
+            "scope_key": group.active_scope_key,
+            "scope_url": query.scope_url,
+            "path": path,
+            "is_dir": is_dir,
+        })))
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("workspace_unavailable", error.to_string()))?
 }
 
 async fn list(
@@ -183,10 +207,25 @@ fn path_error(raw: &str, error: std::io::Error) -> ApiError {
         std::io::ErrorKind::PermissionDenied => {
             ApiError::forbidden_code("PERMISSION", format!("Permission denied: {raw}"))
         }
-        _ if error.to_string().contains("active scope") => ApiError::forbidden_code(
-            "outside_scope",
-            format!("Path is outside the group workspace: {raw}"),
+        std::io::ErrorKind::IsADirectory => ApiError::bad_code(
+            "not_a_file",
+            format!("Path is a directory, not a file: {raw}"),
+            json!({}),
         ),
+        std::io::ErrorKind::NotADirectory => ApiError::bad_code(
+            "not_a_directory",
+            format!("Path is not a directory: {raw}"),
+            json!({}),
+        ),
+        _ if error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<workspace::OutsideScope>()) =>
+        {
+            ApiError::forbidden_code(
+                "outside_scope",
+                format!("Path is outside the group workspace: {raw}"),
+            )
+        }
         _ => ApiError::bad_code("workspace_error", error.to_string(), json!({})),
     }
 }

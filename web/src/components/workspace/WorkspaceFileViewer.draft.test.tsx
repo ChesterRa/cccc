@@ -34,6 +34,8 @@ function Harness({
       isDark={false}
       readOnly={false}
       saving={files.saving}
+      loading={files.fileLoading}
+      reloadVersion={files.reloadVersion}
       error={files.fileError}
       conflict={files.conflict}
       onClose={files.closeFile}
@@ -255,7 +257,7 @@ it("cancels a pending navigation when the current file is selected again", async
         finish = resolve;
       }),
   );
-  let opening!: Promise<void>;
+  let opening!: ReturnType<typeof files.openFile>;
   await act(async () => {
     opening = files.openFile("LICENSE");
   });
@@ -347,7 +349,7 @@ it("retires drafts and pending opens when the same Group changes scope or locati
         finish = resolve;
       }),
   );
-  let opening!: Promise<void>;
+  let opening!: ReturnType<typeof files.openFile>;
   await act(async () => {
     opening = files.openFile("LICENSE");
   });
@@ -402,4 +404,125 @@ it("ignores a save completion after a scope switch and sends the opened scope id
   });
   expect(files.file).toBeNull();
   expect(files.saving).toBe(false);
+});
+
+it.each(["file", "close", "scope", "return"])(
+  "keeps failed-save feedback with its file after %s navigation",
+  async (next) => {
+    await setup();
+    await edit("submitted");
+    const original = files.file!;
+    let finish!: (value: unknown) => void;
+    saveWorkspaceFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let saving!: Promise<boolean>;
+    await act(async () => {
+      saving = files.saveFile(files.draft);
+    });
+    if (next === "file") {
+      fetchWorkspaceFile.mockResolvedValueOnce({
+        ok: true,
+        result: { ...original, path: "LICENSE" },
+      });
+      await act(async () => files.openFile("LICENSE"));
+    } else if (next === "scope") {
+      await render(true, "group-1", "scope-b", "/other");
+      fetchWorkspaceFile.mockResolvedValueOnce({
+        ok: true,
+        result: { ...original, scope_key: "scope-b", scope_url: "/other" },
+      });
+      await act(async () => files.openFile("README.txt"));
+    } else {
+      await act(async () => files.closeFile());
+      if (next === "return") await act(async () => files.openFile("README.txt"));
+    }
+    await act(async () => {
+      finish({
+        ok: false,
+        error: { code: "workspace_write_conflict", message: "File changed on disk" },
+      });
+      await saving;
+    });
+    expect(files.fileError).toBe(next === "return" ? "File changed on disk" : "");
+    expect(files.conflict).toBe(next === "return");
+    expect(files.saving).toBe(false);
+    if (next === "return") expect(files.draft).toBe("submitted");
+  },
+);
+
+it("requires explicit confirmation before reloading a dirty file, and retains it if the read fails", async () => {
+  await setup();
+  await edit("unsaved");
+  const reload = host.querySelector<HTMLButtonElement>('[title="Reload file"]')!;
+  await act(async () => reload.click());
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(fetchWorkspaceFile).toHaveBeenCalledTimes(1);
+  const cancel = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+    (button) => button.textContent === "Cancel",
+  )!;
+  await act(async () => cancel.click());
+  expect(files.draft).toBe("unsaved");
+  await act(async () => reload.click());
+  fetchWorkspaceFile.mockResolvedValue({ ok: false, error: { message: "offline" } });
+  const discard = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+    (button) => button.textContent === "Discard and reload",
+  )!;
+  await act(async () => discard.click());
+  expect(files.draft).toBe("unsaved");
+  expect(files.fileError).toBe("offline");
+});
+
+it("preserves typing made while a confirmed reload is in flight", async () => {
+  await setup();
+  await edit("discard this");
+  const baseline = files.file!;
+  let finish!: (value: unknown) => void;
+  fetchWorkspaceFile.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let pending!: ReturnType<typeof files.openFile>;
+  await act(async () => {
+    pending = files.openFile("README.txt", { reload: true });
+  });
+  await edit("new typing");
+  await act(async () => {
+    finish({ ok: true, result: { ...baseline, content: "new disk content", sha256: "new" } });
+    await pending;
+  });
+  expect(files.draft).toBe("new typing");
+  // Retain the original digest so a later save detects the external modification.
+  expect(files.file?.sha256).toBe("old");
+});
+
+it("does not reload over an in-flight save", async () => {
+  await setup();
+  await edit("submitted");
+  let finish!: (value: unknown) => void;
+  saveWorkspaceFile.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let pending!: Promise<boolean>;
+  await act(async () => {
+    pending = files.saveFile(files.draft);
+  });
+  expect(host.querySelector<HTMLButtonElement>('[title="Reload file"]')?.disabled).toBe(true);
+  await act(async () => {
+    await files.openFile("README.txt", { reload: true });
+  });
+  expect(fetchWorkspaceFile).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    finish({ ok: true, result: { sha256: "saved" } });
+    await pending;
+  });
+  expect(files.file?.content).toBe("submitted");
 });

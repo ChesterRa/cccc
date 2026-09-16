@@ -22,6 +22,16 @@ function file(path: string): WorkspaceEntry {
 }
 
 describe("workspaceTreeModel", () => {
+  it("hides cached descendants when an expanded link becomes unavailable", () => {
+    let state = setDirectory(emptyTreeState(), ROOT_PATH, {
+      items: [{ ...dir("link"), is_symlink: true, unavailable: "missing" }],
+    });
+    state = setDirectory(state, "link", { items: [file("link/old.txt")] });
+    state = toggleExpanded(state, "link");
+    expect(flattenTree(state).map((node) => [node.entry.path, node.expanded])).toEqual([
+      ["link", false],
+    ]);
+  });
   it("reveals only the directories the user opened", () => {
     let state = emptyTreeState();
     state = setDirectory(state, ROOT_PATH, { items: [dir("src"), file("README.md")] });

@@ -1,8 +1,10 @@
 import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { EyeOff, RefreshCw } from "lucide-react";
+import { ArrowRight, MoreHorizontal, RefreshCw } from "lucide-react";
 import { classNames } from "../../utils/classNames";
+import { workspaceContentUrl } from "../../services/api/workspace";
+import { workspaceAbsolutePath, workspaceRelativePath } from "./workspacePath";
 import type { WorkspaceEntry } from "../../types";
 import { WorkspaceEntryMenu, type WorkspaceMenuItem } from "./WorkspaceEntryMenu";
 import { WorkspaceTree } from "./WorkspaceTree";
@@ -24,22 +26,39 @@ type Props = {
   onPinPath?: (path: string) => void;
 };
 
-type MenuState = { entry: WorkspaceEntry; x: number; y: number } | null;
+type MenuState = { entry?: WorkspaceEntry; x: number; y: number; anchor: HTMLElement } | null;
 
-export function WorkspaceFilesPanel({
-  files,
-  isDark,
-  readOnly,
-  onClose,
-  onAttachPath,
-  onPinPath,
-}: Props) {
+export function WorkspaceFilesPanel(props: Props) {
+  const { groupId, scopeKey, scopeUrl } = props.files;
+  return <FilesPanel key={JSON.stringify([groupId, scopeKey, scopeUrl])} {...props} />;
+}
+
+function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath }: Props) {
   const { t } = useTranslation("chat");
   const [menu, setMenu] = useState<MenuState>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const { completeReveal } = files;
+  const revealRow = useCallback(
+    (row: HTMLElement) => {
+      // The user may have moved to the editor, composer or an overlay during the lookup.
+      if (panelRef.current?.contains(document.activeElement)) {
+        row.scrollIntoView({ block: "nearest" });
+        row.focus({ preventScroll: true });
+      }
+      completeReveal();
+    },
+    [completeReveal],
+  );
 
-  const openContextMenu = useCallback((entry: WorkspaceEntry, x: number, y: number) => {
-    setMenu({ entry, x, y });
-  }, []);
+  const [pathInput, setPathInput] = useState("");
+  const [pathError, setPathError] = useState("");
+
+  const openContextMenu = useCallback(
+    (entry: WorkspaceEntry, x: number, y: number, anchor: HTMLElement) => {
+      setMenu({ entry, x, y, anchor });
+    },
+    [],
+  );
 
   const openFile = useCallback(
     (path: string) => {
@@ -53,11 +72,12 @@ export function WorkspaceFilesPanel({
   }, []);
 
   const menuItems = (entry: WorkspaceEntry): WorkspaceMenuItem[] => {
-    const absolute = files.rootPath ? `${files.rootPath}/${entry.path}` : entry.path;
+    const absolute = workspaceAbsolutePath(files.rootPath, entry.path);
     const items: WorkspaceMenuItem[] = [
       {
         key: "attach",
         label: t("workspaceAttachContext", { defaultValue: "Attach as context" }),
+        disabled: !!entry.unavailable,
         onSelect: () => onAttachPath(entry.path),
       },
       {
@@ -71,10 +91,24 @@ export function WorkspaceFilesPanel({
         onSelect: () => copy(absolute),
       },
     ];
+    if (!entry.is_dir) {
+      items.push({
+        key: "download",
+        label: t("workspaceDownload", { defaultValue: "Download" }),
+        disabled: !!entry.unavailable,
+        href: workspaceContentUrl(
+          files.groupId,
+          { path: entry.path, scope_key: files.scopeKey, scope_url: files.scopeUrl },
+          true,
+        ),
+        download: entry.name,
+      });
+    }
     if (!entry.is_dir && onPinPath && !readOnly) {
       items.push({
         key: "pin",
         label: t("workspacePinToSlot", { defaultValue: "Pin to a Presentation slot" }),
+        disabled: !!entry.unavailable,
         onSelect: () => onPinPath(entry.path),
       });
     }
@@ -87,7 +121,12 @@ export function WorkspaceFilesPanel({
     : t("workspaceNoScope", { defaultValue: "Attach a workspace to this Group to browse files." });
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <div
+      ref={panelRef}
+      className="flex h-full min-h-0 min-w-0 flex-col"
+      onPointerDownCapture={completeReveal}
+      onKeyDownCapture={completeReveal}
+    >
       <SidePanelHeader
         title={t("workspaceFilesTitle", { defaultValue: "Files" })}
         subtitle={files.rootPath || undefined}
@@ -95,22 +134,71 @@ export function WorkspaceFilesPanel({
         closeLabel={t("workspaceClose", { defaultValue: "Close files" })}
       >
         <SidePanelButton
-          title={t("workspaceShowIgnored", { defaultValue: "Show git-ignored files" })}
-          onClick={() => files.setShowIgnored(!files.showIgnored)}
-          aria-pressed={files.showIgnored}
-          className={files.showIgnored ? "bg-[var(--glass-tab-bg)]" : undefined}
-        >
-          <EyeOff />
-        </SidePanelButton>
-        <SidePanelButton
-          title={t("workspaceRefresh", { defaultValue: "Refresh" })}
+          title={t("workspaceRefresh", { defaultValue: "Refresh directory" })}
           onClick={files.refresh}
+          disabled={!files.scopeAvailable}
         >
           <RefreshCw />
         </SidePanelButton>
+        <SidePanelButton
+          title={t("workspaceOptions", { defaultValue: "File browser options" })}
+          aria-haspopup="menu"
+          aria-expanded={!!menu && !menu.entry}
+          onClick={(event) => {
+            const anchor = event.currentTarget;
+            const rect = anchor.getBoundingClientRect();
+            setMenu({ anchor, x: rect.left, y: rect.bottom });
+          }}
+        >
+          <MoreHorizontal />
+        </SidePanelButton>
       </SidePanelHeader>
 
-      {/* A failed open clears the viewer, so its reason has to live next to the tree. */}
+      <form
+        className="flex shrink-0 gap-1 border-b border-[var(--glass-border-subtle)] p-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const path = workspaceRelativePath(pathInput, files.rootPath);
+          if (path === null) {
+            setPathError(
+              t("workspacePathInvalid", {
+                defaultValue: "Enter a file or folder path inside this workspace.",
+              }),
+            );
+            return;
+          }
+          setPathError("");
+          void files.locatePath(path);
+        }}
+      >
+        <input
+          type="text"
+          value={pathInput}
+          onChange={(event) => {
+            setPathInput(event.target.value);
+            setPathError("");
+          }}
+          aria-label={t("workspaceOpenPath", { defaultValue: "Go to file or folder" })}
+          placeholder={t("workspaceOpenPath", { defaultValue: "Go to file or folder" })}
+          disabled={!files.scopeAvailable}
+          className="min-w-0 flex-1 rounded-md border border-[var(--glass-border-subtle)] bg-transparent px-2 py-1 text-xs outline-none focus:border-[var(--color-border-focus)]"
+        />
+        <SidePanelButton
+          type="submit"
+          title={t("workspaceOpenFile", { defaultValue: "Go" })}
+          disabled={!files.scopeAvailable || !pathInput.trim()}
+          aria-busy={files.pathLoading || files.fileLoading}
+        >
+          <ArrowRight />
+        </SidePanelButton>
+      </form>
+      {(pathError || files.pathError) && (
+        <p role="alert" className="px-3 py-2 text-xs text-rose-600">
+          {pathError || files.pathError}
+        </p>
+      )}
+
+      {/* With no open viewer, read errors belong next to the tree. */}
       {!files.file && files.fileError ? (
         <div
           className={classNames(
@@ -139,6 +227,8 @@ export function WorkspaceFilesPanel({
           onOpenFile={openFile}
           onRetryDirectory={files.retryDirectory}
           onContextMenu={openContextMenu}
+          revealRequest={files.revealRequest}
+          onReveal={revealRow}
         />
       )}
 
@@ -146,7 +236,38 @@ export function WorkspaceFilesPanel({
         <WorkspaceEntryMenu
           x={menu.x}
           y={menu.y}
-          items={menuItems(menu.entry)}
+          anchor={menu.anchor}
+          label={
+            menu.entry
+              ? menu.entry.name
+              : t("workspaceOptions", { defaultValue: "File browser options" })
+          }
+          items={
+            menu.entry
+              ? menuItems(menu.entry)
+              : [
+                  {
+                    key: "ignored",
+                    label: t("workspaceHideIgnored", { defaultValue: "Hide Git-ignored files" }),
+                    checked: !files.showIgnored,
+                    onSelect: () => files.setShowIgnored(!files.showIgnored),
+                  },
+                  {
+                    key: "reveal",
+                    label: t("workspaceRevealFile", { defaultValue: "Reveal current file" }),
+                    disabled: !files.file,
+                    onSelect: () => {
+                      if (files.file) files.revealFile(files.file.path);
+                    },
+                  },
+                  {
+                    key: "collapse",
+                    label: t("workspaceCollapseAll", { defaultValue: "Collapse all folders" }),
+                    disabled: !files.tree.expanded.length,
+                    onSelect: files.collapseAll,
+                  },
+                ]
+          }
           isDark={isDark}
           onClose={() => setMenu(null)}
         />

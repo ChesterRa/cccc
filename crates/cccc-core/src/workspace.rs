@@ -22,6 +22,18 @@ pub const MAX_READ_BYTES: u64 = 1_048_576;
 
 const READ_SNIFF_BYTES: usize = 8_192;
 
+/// Distinguishes a rejected workspace boundary from filesystem and path-type errors.
+#[derive(Debug)]
+pub struct OutsideScope;
+
+impl std::fmt::Display for OutsideScope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("path must stay under the active scope")
+    }
+}
+
+impl std::error::Error for OutsideScope {}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListOptions {
     /// Include entries matched by `.gitignore`.
@@ -29,10 +41,23 @@ pub struct ListOptions {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryUnavailable {
+    Missing,
+    OutsideScope,
+    Unreadable,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_symlink: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<EntryUnavailable>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,8 +122,13 @@ pub fn root(group: &GroupDoc) -> io::Result<PathBuf> {
 /// Rejects absolute paths and any component that could climb out of the root.
 pub fn safe_relative(value: &str) -> io::Result<PathBuf> {
     let path = Path::new(value);
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
+    if path.as_os_str().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path must not be empty",
+        ));
+    }
+    if path.is_absolute()
         || path.components().any(|part| {
             matches!(
                 part,
@@ -106,7 +136,7 @@ pub fn safe_relative(value: &str) -> io::Result<PathBuf> {
             )
         })
     {
-        Err(io::Error::other("path must stay under the active scope"))
+        Err(io::Error::other(OutsideScope))
     } else {
         Ok(path.into())
     }
@@ -118,19 +148,51 @@ pub fn resolve_existing(root: &Path, relative: &str) -> io::Result<PathBuf> {
     if candidate.starts_with(root) {
         Ok(candidate)
     } else {
-        Err(io::Error::other("path must stay under the active scope"))
+        Err(io::Error::other(OutsideScope))
     }
 }
 
 pub fn resolve_file(group: &GroupDoc, relative: &str) -> io::Result<PathBuf> {
     let path = resolve_existing(&root(group)?, relative)?;
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(io::Error::other(
-            "path must be a file under the active scope",
-        ))
+    require_file(&path)?;
+    Ok(path)
+}
+
+fn require_file(path: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(());
     }
+    Err(io::Error::new(
+        if metadata.is_dir() {
+            io::ErrorKind::IsADirectory
+        } else {
+            io::ErrorKind::InvalidInput
+        },
+        "path must name a regular file",
+    ))
+}
+
+/// Returns a canonical workspace-relative path and its type without loading its contents.
+/// As with directory listing, the empty path refers to the workspace root.
+pub fn inspect_path(group: &GroupDoc, relative: &str) -> io::Result<(String, bool)> {
+    let root = root(group)?;
+    let path = if relative.is_empty() {
+        root.clone()
+    } else {
+        resolve_existing(&root, relative)?
+    };
+    let metadata = fs::metadata(&path)?;
+    if !metadata.is_dir() && !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path must name a file or directory",
+        ));
+    }
+    Ok((
+        to_relative(&root, &path).unwrap_or_default(),
+        metadata.is_dir(),
+    ))
 }
 
 /// Resolves a path that may not exist yet by canonicalizing its parent directory.
@@ -147,8 +209,9 @@ pub fn resolve_for_create(root: &Path, relative: &str) -> io::Result<PathBuf> {
         None => root.to_path_buf(),
     };
     if !parent.is_dir() {
-        return Err(io::Error::other(
-            "parent must be a directory under the active scope",
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "parent must be a directory",
         ));
     }
     Ok(parent.join(name))
@@ -164,8 +227,9 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
         (resolved, normalized)
     };
     if !directory.is_dir() {
-        return Err(io::Error::other(
-            "workspace path must be a directory under the active scope",
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "workspace path must be a directory",
         ));
     }
 
@@ -178,19 +242,47 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
             if relative == ".git" || relative.starts_with(".git/") {
                 return None;
             }
-            let is_dir = path.is_dir();
+            let is_symlink = entry.file_type().is_ok_and(|kind| kind.is_symlink());
+            // Resolve links through the same boundary as reads. Do not publish target
+            // metadata for external links or open file contents during a listing.
+            let metadata = if is_symlink {
+                resolve_existing(&root, &relative).and_then(fs::metadata)
+            } else {
+                entry.metadata()
+            };
+            let unavailable = match &metadata {
+                Ok(meta) if meta.is_file() || meta.is_dir() => None,
+                Ok(_) => Some(EntryUnavailable::Unsupported),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    Some(EntryUnavailable::Missing)
+                }
+                Err(error)
+                    if error
+                        .get_ref()
+                        .is_some_and(|inner| inner.is::<OutsideScope>()) =>
+                {
+                    Some(EntryUnavailable::OutsideScope)
+                }
+                Err(_) => Some(EntryUnavailable::Unreadable),
+            };
+            let is_dir = metadata.as_ref().is_ok_and(|meta| meta.is_dir());
+            let size = metadata
+                .as_ref()
+                .ok()
+                .filter(|meta| meta.is_file())
+                .map(fs::Metadata::len);
             Some(Entry {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 path: relative,
                 is_dir,
-                mime_type: (!is_dir).then(|| {
+                is_symlink,
+                mime_type: (!is_dir && unavailable.is_none()).then(|| {
                     mime_guess::from_path(&path)
                         .first_or_octet_stream()
                         .to_string()
                 }),
-                size: (!is_dir)
-                    .then(|| entry.metadata().ok().map(|meta| meta.len()))
-                    .flatten(),
+                size,
+                unavailable,
                 git_status: None,
                 git_dirty_descendant: false,
                 ignored: false,
@@ -242,11 +334,7 @@ pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
     let scope = active_scope(group)?;
     let root = root(group)?;
     let path = resolve_existing(&root, relative)?;
-    if !path.is_file() {
-        return Err(io::Error::other(
-            "path must be a file under the active scope",
-        ));
-    }
+    require_file(&path)?;
     let normalized = to_relative(&root, &path).unwrap_or_else(|| relative.to_owned());
     let mime_type = mime_guess::from_path(&path)
         .first_or_octet_stream()

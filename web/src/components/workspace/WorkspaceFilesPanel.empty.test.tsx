@@ -22,6 +22,7 @@ it("shows loading until the empty root listing settles", async () => {
 });
 
 it("offers to reveal ignored files and replaces the empty state with results", async () => {
+  localStorage.setItem("cccc-workspace-show-ignored", "false");
   fetchWorkspaceListing.mockImplementation(
     async (_group: string, path: string, options: { showIgnored: boolean }) =>
       listing(
@@ -49,7 +50,6 @@ it("suggests adding files and refreshing when the unfiltered directory is empty"
     listing(path, []),
   );
   await mount();
-  await click(panel().querySelector('[role="status"] button')!);
   expect(panel().querySelector('[role="status"]')?.textContent).toContain(
     "Add files to this workspace, then refresh.",
   );

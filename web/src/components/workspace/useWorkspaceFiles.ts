@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import * as api from "../../services/api";
-import { useWorkspaceEditor } from "./useWorkspaceEditor";
+import { useWorkspaceEditor, type WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 import {
   ROOT_PATH,
   ancestorsOf,
@@ -30,7 +30,22 @@ export function useWorkspaceFiles(
   scopeUrl: string,
 ) {
   const [tree, setTree] = useState<TreeState>(emptyTreeState);
-  const [showIgnored, setShowIgnored] = useState(false);
+  const [showIgnored, updateShowIgnored] = useState(() => {
+    try {
+      return localStorage.getItem("cccc-workspace-show-ignored") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const setShowIgnored = useCallback((value: boolean) => {
+    updateShowIgnored(value);
+    try {
+      localStorage.setItem("cccc-workspace-show-ignored", String(value));
+    } catch {
+      // Browsing still works when the browser disallows preference storage.
+    }
+  }, []);
+  const [revealRequest, setRevealRequest] = useState<{ path: string } | null>(null);
   const [rootPath, setRootPath] = useState("");
   // Guards the load effect against re-entering a directory that is already in flight.
   const inFlight = useRef(new Set<string>());
@@ -45,6 +60,7 @@ export function useWorkspaceFiles(
     inFlight.current.clear();
     setTree(emptyTreeState());
     setRootPath("");
+    setRevealRequest(null);
   }, [groupId, scopeKey, scopeUrl]);
 
   // The ignored-file filter only decides which entries the tree lists. Unsaved edits belong
@@ -52,7 +68,7 @@ export function useWorkspaceFiles(
   useEffect(() => {
     listingGeneration.current += 1;
     inFlight.current.clear();
-    setTree(emptyTreeState());
+    setTree((current) => invalidateDirectories(current));
   }, [showIgnored]);
 
   const pending = useMemo(
@@ -115,8 +131,61 @@ export function useWorkspaceFiles(
   const onOpenPath = useCallback((path: string) => {
     setTree((current) => expandPaths(current, ancestorsOf(path)));
   }, []);
-  const editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, refresh, onOpenPath);
+  const revealFile = useCallback(
+    (path: string, isDirectory = false) => {
+      // Explicit reveal must also find a target hidden by the optional Git filter.
+      setShowIgnored(true);
+      setTree((current) =>
+        expandPaths(current, [...ancestorsOf(path), ...(isDirectory && path ? [path] : [])]),
+      );
+      setRevealRequest({ path });
+    },
+    [setShowIgnored],
+  );
+  const onLocatePath = useCallback(
+    (path: string, isDirectory: boolean) => {
+      // A pasted path can name something created after the cached directory listing.
+      refresh();
+      revealFile(path, isDirectory);
+    },
+    [refresh, revealFile],
+  );
+  const editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, refresh, onOpenPath, onLocatePath);
+  const {
+    openFile: openEditorFile,
+    locatePath: locateEditorPath,
+    closeFile: closeEditorFile,
+  } = editor;
+  // A newer navigation retires the previous reveal, even while its directory is loading.
+  const openFile = useCallback(
+    (path: string, options?: WorkspaceOpenFileOptions) => {
+      setRevealRequest(null);
+      return openEditorFile(path, options);
+    },
+    [openEditorFile],
+  );
+  const locatePath = useCallback(
+    (path: string) => {
+      setRevealRequest(null);
+      return locateEditorPath(path);
+    },
+    [locateEditorPath],
+  );
+  const closeFile = useCallback(() => {
+    setRevealRequest(null);
+    closeEditorFile();
+  }, [closeEditorFile]);
+  useEffect(() => {
+    const root = tree.directories[ROOT_PATH];
+    if (revealRequest?.path === ROOT_PATH && root && !root.loading && !root.items.length) {
+      setRevealRequest(null);
+    }
+  }, [tree, revealRequest]);
+  const completeReveal = useCallback(() => setRevealRequest(null), []);
   return {
+    groupId,
+    scopeKey,
+    scopeUrl,
     rows,
     rootPath,
     scopeAvailable: !!scopeKey && !!scopeUrl,
@@ -126,6 +195,16 @@ export function useWorkspaceFiles(
     toggleDirectory,
     retryDirectory,
     refresh,
+    revealRequest,
+    revealFile,
+    completeReveal,
+    collapseAll: () => {
+      setRevealRequest(null);
+      setTree((current) => ({ ...current, expanded: [] }));
+    },
     ...editor,
+    openFile,
+    locatePath,
+    closeFile,
   };
 }

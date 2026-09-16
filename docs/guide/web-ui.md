@@ -100,12 +100,42 @@ reopening files within the current Group, including internal symlinks to the sam
 Save before leaving the workspace. Switching Groups or instances with unsaved file edits asks whether to stay or discard; refreshing or closing the page uses the browser’s unsaved-changes warning. Closing the file viewer retains its drafts while you stay in the same workspace. A scope change or loss of access initiated elsewhere still retires the old editor; drafts never authorize saving into another scope.
 Changing the active workspace clears the file view and its drafts; stale saves are rejected
 instead of writing into the newly selected workspace. If the file changed on disk since it
-was opened, saving reports a conflict; **Reload** discards the draft and loads the current
-file. This check does not lock out external editors or Actors.
+was opened, saving reports a conflict. **Reload file** reads the latest contents from disk,
+including updated media at the same path. With unsaved edits, it asks before discarding them;
+canceling or a failed read keeps the draft. Edits made while the reload is waiting are also
+retained. Reload is unavailable during a save. This check does not lock out external editors
+or Actors.
+
+The tree shows workspace files by default, including untracked and Git-ignored files.
+Git's own root metadata directory remains hidden. Use **File browser options → Hide
+Git-ignored files** to reduce clutter; this preference is remembered in this browser.
+Folders load only when expanded. **Refresh directory** refreshes the tree, preserving
+expansion and file drafts; **Reload file** refreshes the open viewer.
+
+Paste a workspace-relative or absolute path into **Go to file or folder**, then press
+Enter. Files open in the viewer; folders expand and receive focus in the tree without
+closing your current file or losing its draft. Use `.` or the workspace root path to
+return to the top of the tree. Missing paths and paths outside the workspace report
+different errors. **Reveal current file** expands its parent folders
+and moves focus to its row; explicit reveal also clears the Git ignore filter so the
+target can be shown. **Collapse all folders** only folds the tree, keeping the file open.
+If you move on while a location is loading, its result does not take focus away from
+the editor, message composer, or another file selection.
+Use arrow keys to move through the tree and expand/collapse folders, and Enter to open.
+
+Each row's **…** button, right-click, or Shift+F10 opens the same actions: attach the path
+as message context, copy a relative or absolute path, download a file, or pin a supported
+file to Presentation when permitted. Attaching inserts a path into the composer; it does
+not upload the file.
+
+Symbolic links have a link icon. If the target is missing, outside the workspace,
+or inaccessible, its row explains why and disables content actions; you can still
+copy its path. CCCC does not repair links created by other tools or download files
+outside the workspace. After fixing a link on disk, use **Refresh directory**.
 
 An empty file panel shows **No files to display** after loading completes. If ignored
 files are hidden, use **Show git-ignored files** to reveal them. Otherwise, add files
-to the workspace and use **Refresh**. Loading and failed requests have separate states.
+to the workspace and use **Refresh directory**. Loading and failed requests have separate states.
 
 A directory that cannot be loaded shows its error below the row. Use **Retry** there
 to load it again; an error does not mean the directory is empty.

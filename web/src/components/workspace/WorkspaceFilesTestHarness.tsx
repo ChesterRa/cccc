@@ -35,6 +35,8 @@ export function Harness({
             isDark={false}
             readOnly={readOnly}
             saving={files.saving}
+            loading={files.fileLoading}
+            reloadVersion={files.reloadVersion}
             error={files.fileError}
             conflict={files.conflict}
             onOpenFile={files.openFile}

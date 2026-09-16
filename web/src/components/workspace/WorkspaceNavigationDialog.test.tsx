@@ -17,7 +17,7 @@ let root: Root, host: HTMLDivElement;
 let editor: ReturnType<typeof useWorkspaceEditor>;
 const noop = () => {};
 function Probe({ groupId = "a", scopeKey = "scope" }) {
-  editor = useWorkspaceEditor(groupId, scopeKey, "/repo", noop, noop);
+  editor = useWorkspaceEditor(groupId, scopeKey, "/repo", noop, noop, noop);
   return <WorkspaceNavigationDialog />;
 }
 beforeEach(async () => {

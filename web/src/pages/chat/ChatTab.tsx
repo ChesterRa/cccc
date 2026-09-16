@@ -1004,6 +1004,8 @@ export function ChatTab({
                       isDark={isDark}
                       readOnly={!!readOnly}
                       saving={workspaceFiles.saving}
+                      loading={workspaceFiles.fileLoading}
+                      reloadVersion={workspaceFiles.reloadVersion}
                       error={workspaceFiles.fileError}
                       conflict={workspaceFiles.conflict}
                       onClose={workspaceFiles.closeFile}
@@ -1035,7 +1037,6 @@ export function ChatTab({
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                       <WorkspaceFilesPanel
-                        key={`${selectedGroupId}:${workspaceScope?.scope_key}:${workspaceScope?.url}`}
                         files={workspaceFiles}
                         isDark={isDark}
                         readOnly={!!readOnly}
@@ -1109,7 +1110,9 @@ export function ChatTab({
                     // Editing a repo from a phone keyboard is too easy to fat-finger while
                     // Actors write the same tree, so the phone surface stays read-only.
                     readOnly
-                    saving={false}
+                    saving={workspaceFiles.saving}
+                    loading={workspaceFiles.fileLoading}
+                    reloadVersion={workspaceFiles.reloadVersion}
                     error={workspaceFiles.fileError}
                     conflict={workspaceFiles.conflict}
                     onClose={workspaceFiles.closeFile}
@@ -1126,7 +1129,6 @@ export function ChatTab({
                   />
                 ) : (
                   <WorkspaceFilesPanel
-                    key={`${selectedGroupId}:${workspaceScope?.scope_key}:${workspaceScope?.url}`}
                     files={workspaceFiles}
                     isDark={isDark}
                     readOnly

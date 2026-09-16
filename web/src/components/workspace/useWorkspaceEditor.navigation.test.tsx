@@ -24,7 +24,7 @@ const file = (path: string): WorkspaceFile => ({
   bytes: 100,
 });
 function Harness({ groupId = "g_a", scopeKey = "scope-a", scopeUrl = "/repo" }) {
-  editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, noop, noop);
+  editor = useWorkspaceEditor(groupId, scopeKey, scopeUrl, noop, noop, noop);
   return editor.file ? (
     <WorkspaceFileViewer
       groupId={groupId}
@@ -86,7 +86,7 @@ it("carries fragments through fresh and cached navigation, and cancels a pending
         finish = resolve;
       }),
   );
-  let pending!: Promise<void>;
+  let pending!: ReturnType<typeof editor.openFile>;
   await act(async () => {
     pending = editor.openFile("delayed.md", { fragment: "#elsewhere" });
   });
@@ -114,7 +114,7 @@ it("retires fragment intent on failures, scope changes and close, ignoring late 
         finish = resolve;
       }),
   );
-  let pending!: Promise<void>;
+  let pending!: ReturnType<typeof editor.openFile>;
   await act(async () => {
     pending = editor.openFile("next.md", { fragment: "#details" });
   });
