@@ -1,4 +1,8 @@
-import { mergeConnectDelivery } from "../utils/mergeLedgerEvents";
+import {
+  mergeConnectDelivery,
+  mergeObligationStatus,
+  mergeReadStatus,
+} from "../utils/mergeLedgerEvents";
 import { replyObligationActor } from "../utils/crossInstanceMessages";
 import type {
   Actor,
@@ -929,9 +933,9 @@ export function mergeLedgerEventStatuses(
       ...event,
       _read_status:
         (event.data as ChatMessageData | undefined)?.message_mode === "mail"
-          ? (patch.read_status ?? event._read_status)
+          ? mergeReadStatus(patch.read_status, event._read_status)
           : undefined,
-      _obligation_status: patch.obligation_status ?? event._obligation_status,
+      _obligation_status: mergeObligationStatus(patch.obligation_status, event._obligation_status),
       _retired_bridge: patch.retired_bridge || event._retired_bridge,
       _connect_delivery: mergeConnectDelivery(patch.connect_delivery, event._connect_delivery),
       _connect_cancellation: mergeConnectDelivery(

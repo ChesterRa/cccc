@@ -34,6 +34,8 @@ export type WorkspaceEntry = {
   name: string;
   path: string;
   is_dir: boolean;
+  is_symlink?: boolean;
+  unavailable?: "missing" | "outside_scope" | "unreadable" | "unsupported";
   mime_type?: string;
   size?: number;
   git_status?: WorkspaceGitStatus;

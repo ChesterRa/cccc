@@ -17,6 +17,8 @@ pub(crate) enum Policy {
     /// Exclusive access to the requested Group, or the global scope without one.
     Write,
     GlobalWrite,
+    /// Membership and remote-access ownership, without blocking Group work.
+    RemoteAccess,
     /// Completion/read/input paths that must remain available during lifecycle
     /// draining. Authorization and resource synchronization remain in the handler.
     ResourceOwned,

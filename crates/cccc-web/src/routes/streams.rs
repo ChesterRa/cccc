@@ -1,13 +1,13 @@
+use super::realtime::event::{EventStream, StreamEvent};
 use axum::Router;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, HeaderName};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::convert::Infallible;
-use std::time::Duration;
 use tokio::sync::broadcast;
 
 use crate::AppState;
@@ -25,13 +25,9 @@ fn should_replay_group_event(event: &cccc_contracts::Event) -> bool {
     event.kind != ACTOR_ACTIVITY_EVENT_KIND
 }
 
-fn sse_event(name: &'static str, event: cccc_contracts::Event) -> Event {
-    let event_id = event.id.clone();
-    Event::default()
-        .event(name)
-        .id(event_id)
-        .json_data(event)
-        .unwrap_or_default()
+fn sse_event(name: &'static str, event: cccc_contracts::Event) -> StreamEvent {
+    let id = event.id.clone();
+    StreamEvent::new(name, event).with_id(id)
 }
 
 #[derive(Serialize)]
@@ -43,18 +39,18 @@ struct GlobalEvent<'a> {
     group_id: &'a str,
 }
 
-fn global_sse_event(event: &cccc_contracts::Event) -> Event {
-    Event::default()
-        .event(GLOBAL_EVENT_NAME)
-        .id(&event.id)
-        .json_data(GlobalEvent {
+fn global_sse_event(event: &cccc_contracts::Event) -> StreamEvent {
+    StreamEvent::new(
+        GLOBAL_EVENT_NAME,
+        GlobalEvent {
             v: event.v,
             id: &event.id,
             ts: &event.ts,
             kind: &event.kind,
             group_id: &event.group_id,
-        })
-        .unwrap_or_default()
+        },
+    )
+    .with_id(event.id.clone())
 }
 
 pub fn routes() -> Router<AppState> {
@@ -68,6 +64,15 @@ async fn global_events(
     Extension(principal): Extension<Principal>,
     Query(frame): Query<ResourceFrameQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    Sse::new(global_source(state, principal, frame).map(|event| event.map(StreamEvent::into_sse)))
+        .keep_alive(KeepAlive::default())
+}
+
+pub(super) fn global_source(
+    state: AppState,
+    principal: Principal,
+    frame: ResourceFrameQuery,
+) -> EventStream {
     let mut receiver = state.ledger_events.subscribe_global();
     let shutdown_guard = state.shutdown.clone();
     let mut shutdown = state.shutdown.subscribe();
@@ -108,7 +113,7 @@ async fn global_events(
             }
         }
     };
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Box::pin(stream)
 }
 
 async fn group_events(
@@ -118,16 +123,30 @@ async fn group_events(
     Extension(principal): Extension<Principal>,
     Query(frame): Query<ResourceFrameQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let mut receiver = state
-        .ledger_events
-        .subscribe_group(&group_id)
-        .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let last_event_id = headers
+    let cursor = headers
         .get(HeaderName::from_static("last-event-id"))
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .trim()
         .to_owned();
+    Ok(Sse::new(
+        group_source(state, group_id, principal, frame, cursor)?
+            .map(|event| event.map(StreamEvent::into_sse)),
+    )
+    .keep_alive(KeepAlive::default()))
+}
+
+pub(super) fn group_source(
+    state: AppState,
+    group_id: String,
+    principal: Principal,
+    frame: ResourceFrameQuery,
+    last_event_id: String,
+) -> Result<EventStream, ApiError> {
+    let mut receiver = state
+        .ledger_events
+        .subscribe_group(&group_id)
+        .map_err(|error| ApiError::not_found(error.to_string()))?;
     let event_hub = state.ledger_events.clone();
     let shutdown_guard = state.shutdown.clone();
     let mut shutdown = state.shutdown.subscribe();
@@ -216,17 +235,11 @@ async fn group_events(
             }
         }
     };
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(Box::pin(stream))
 }
 
-fn stream_error(code: &str, message: String) -> Event {
-    Event::default()
-        .event("error")
-        .json_data(serde_json::json!({
-            "ok":false,
-            "error":{"code":code,"message":message}
-        }))
-        .unwrap_or_default()
+fn stream_error(code: &str, message: String) -> StreamEvent {
+    StreamEvent::error(code, message)
 }
 
 fn remember_replayed(seen: &mut HashSet<String>, order: &mut VecDeque<String>, event_id: &str) {
@@ -241,10 +254,8 @@ fn remember_replayed(seen: &mut HashSet<String>, order: &mut VecDeque<String>, e
     }
 }
 
-fn connected_event() -> Event {
-    Event::default()
-        .comment("connected")
-        .retry(Duration::from_secs(1))
+fn connected_event() -> StreamEvent {
+    StreamEvent::connected()
 }
 
 #[cfg(test)]

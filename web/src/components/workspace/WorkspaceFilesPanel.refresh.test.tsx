@@ -84,12 +84,13 @@ describe("workspace files surfaces", () => {
     await click(rowByName("README.txt"));
     await edit("# unsaved work\n");
 
-    await click(panel().querySelector<HTMLElement>("[aria-pressed]")!);
+    await click(panel().querySelector<HTMLElement>('[title="File browser options"]')!);
+    await click(document.querySelector<HTMLElement>('[role="menuitemcheckbox"]')!);
 
     // The filter decides which rows the tree lists; it has no claim on the editor.
     expect(mainArea().querySelector("textarea")?.value).toBe("# unsaved work\n");
     expect(fetchWorkspaceListing.mock.calls.at(-1)?.[2]).toEqual({
-      showIgnored: true,
+      showIgnored: false,
       scopeKey: "scope-a",
       scopeUrl: "/repo",
     });

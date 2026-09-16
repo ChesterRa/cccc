@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Downloads keep their Chinese names.** Group packages, blob attachments, and Presentation assets now send a percent-encoded RFC 5987 filename, so browsers stop rendering non-ASCII names as mojibake.
+- **Multiple workbench windows no longer consume the HTTP/1.1 pool with SSE.** The UI multiplexes global, ledger, and headless events over one WebSocket per page, preserving cursor replay, headless snapshots, and live permission checks.
+
 ## [0.4.40] — Unreleased
 
 ### Added

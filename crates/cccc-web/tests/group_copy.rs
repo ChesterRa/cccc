@@ -105,3 +105,38 @@ async fn group_copy_export_preview_and_staged_import_work_without_python() {
     assert_eq!(events[0].kind, "group.create");
     assert_eq!(events[0].data["imported"], true);
 }
+
+#[tokio::test]
+async fn exporting_a_chinese_group_sends_an_ascii_header_that_decodes_back_to_the_title() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("安卓新设备平台", "").expect("group");
+    let app = auth_support::authenticated_app(home);
+    let exported = app
+        .oneshot(
+            Request::get(format!("/api/v1/groups/{}/copy/export", group.group_id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("export");
+    assert_eq!(exported.status(), StatusCode::OK);
+
+    // A header carrying raw UTF-8 bytes is what browsers render as ISO-8859-1
+    // mojibake, so the wire form must stay ASCII end to end.
+    let disposition = exported.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .expect("content-disposition is ascii");
+    assert!(disposition.is_ascii(), "{disposition}");
+    let encoded = disposition
+        .split("filename*=UTF-8''")
+        .nth(1)
+        .expect("rfc 5987 filename parameter");
+    let decoded = percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .expect("utf-8 filename");
+    assert!(decoded.contains("安卓新设备平台"), "{decoded}");
+    assert!(decoded.starts_with("cccc-group--"), "{decoded}");
+    assert!(decoded.ends_with(".zip"), "{decoded}");
+}

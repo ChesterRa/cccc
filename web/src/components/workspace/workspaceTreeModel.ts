@@ -94,7 +94,7 @@ export function flattenTree(
   for (const entry of directory.items) {
     const key = branchPath ? `${branchPath}/${entry.name}` : entry.name;
     const cyclic = entry.path === path || ancestors.has(entry.path);
-    const expanded = entry.is_dir && !cyclic && isExpanded(state, entry.path);
+    const expanded = entry.is_dir && !entry.unavailable && !cyclic && isExpanded(state, entry.path);
     const child = directoryAt(state, entry.path);
     rows.push({
       key,

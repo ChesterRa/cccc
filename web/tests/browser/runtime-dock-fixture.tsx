@@ -16,28 +16,51 @@ const actors: Actor[] = ["claude", "codex", "grok", "opencode", "kilo"].map((run
   enabled: true,
   effective_working_state: "working",
 }));
-const sources: FakeEventSource[] = [];
-class FakeEventSource {
-  listeners = new Map<string, EventListener[]>();
+const sockets: FixtureSocket[] = [];
+class FixtureSocket {
+  static OPEN = 1;
+  readyState = 0;
+  subscriptions = new Map<string, number>();
   onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
-  closed = false;
+  onclose: (() => void) | null = null;
   constructor(public url: string) {
-    sources.push(this);
-    setTimeout(() => this.onopen?.(), 0);
+    sockets.push(this);
+    setTimeout(() => {
+      this.readyState = FixtureSocket.OPEN;
+      this.onopen?.();
+    }, 0);
   }
-  addEventListener(type: string, listener: EventListener) {
-    this.listeners.set(type, [...(this.listeners.get(type) || []), listener]);
+  send(text: string) {
+    const command = JSON.parse(text);
+    if (command.type === "subscribe") {
+      this.subscriptions.set(command.channel, command.id);
+      queueMicrotask(() =>
+        this.onmessage?.({
+          data: JSON.stringify({ type: "ready", channel: command.channel, id: command.id }),
+        }),
+      );
+    } else if (command.type === "unsubscribe") {
+      this.subscriptions.delete(command.channel);
+    }
   }
   close() {
-    this.closed = true;
+    this.readyState = 3;
+    this.subscriptions.clear();
   }
   emit(type: string, value: unknown) {
-    for (const listener of this.listeners.get(type) || [])
-      listener(new MessageEvent(type, { data: JSON.stringify(value) }));
+    this.onmessage?.({
+      data: JSON.stringify({
+        type: "event",
+        channel: "headless",
+        id: this.subscriptions.get("headless"),
+        message: { event: type, data: value },
+      }),
+    });
   }
 }
-Object.assign(window, { EventSource: FakeEventSource });
+Object.assign(window, { WebSocket: FixtureSocket });
 window.fetch = async () =>
   new Response(JSON.stringify({ ok: true, result: {} }), {
     headers: { "Content-Type": "application/json" },
@@ -56,9 +79,11 @@ const options = {
   actorsRef: { current: actors },
 };
 const stream = () =>
-  [...sources]
+  [...sockets]
     .reverse()
-    .find((source) => !source.closed && source.url.includes("/headless/stream"))!;
+    .find(
+      (socket) => socket.readyState === FixtureSocket.OPEN && socket.subscriptions.has("headless"),
+    )!;
 const frames = (
   groupId: string,
   actorId: string,

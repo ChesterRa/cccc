@@ -1,4 +1,4 @@
-use super::operation::{Operation, Policy::GlobalWrite};
+use super::operation::{Operation, Policy::RemoteAccess};
 use cccc_contracts::DaemonRequest;
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{HomeLayout, cloudflared, membership, settings};
@@ -25,13 +25,13 @@ struct PublicUrls {
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "membership_status" => Operation::new(GlobalWrite, status),
-        "membership_login" => Operation::new(GlobalWrite, login),
-        "membership_login_poll" => Operation::new(GlobalWrite, login_poll),
-        "membership_logout" => Operation::new(GlobalWrite, logout),
-        "membership_reach_install" => Operation::new(GlobalWrite, reach_install),
-        "membership_reach_on" => Operation::new(GlobalWrite, reach_on),
-        "membership_reach_off" => Operation::new(GlobalWrite, reach_off),
+        "membership_status" => Operation::new(RemoteAccess, status),
+        "membership_login" => Operation::new(RemoteAccess, login),
+        "membership_login_poll" => Operation::new(RemoteAccess, login_poll),
+        "membership_logout" => Operation::new(RemoteAccess, logout),
+        "membership_reach_install" => Operation::new(RemoteAccess, reach_install),
+        "membership_reach_on" => Operation::new(RemoteAccess, reach_on),
+        "membership_reach_off" => Operation::new(RemoteAccess, reach_off),
         _ => return None,
     })
 }

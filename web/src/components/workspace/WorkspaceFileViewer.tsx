@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { classNames } from "../../utils/classNames";
@@ -10,6 +10,7 @@ import { GraphicViewer } from "../viewer/GraphicViewer";
 import { WorkspaceMediaPreview } from "./WorkspaceMediaPreview";
 import { WorkspaceDocumentPreview } from "./WorkspaceDocumentPreview";
 import { workspacePreviewKind } from "./workspacePreview";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
 
 import type { WorkspaceFileNavigation, WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 
@@ -21,6 +22,8 @@ type Props = {
   isDark: boolean;
   readOnly: boolean;
   saving: boolean;
+  loading?: boolean;
+  reloadVersion?: number;
   error: string;
   conflict: boolean;
   onClose: () => void;
@@ -55,6 +58,8 @@ function FileViewer({
   isDark,
   readOnly,
   saving,
+  loading = false,
+  reloadVersion = 0,
   error,
   conflict,
   onClose,
@@ -66,6 +71,9 @@ function FileViewer({
 }: Props) {
   const { t } = useTranslation("chat");
   const [showSource, setShowSource] = useState(false);
+  const [confirmReload, setConfirmReload] = useState(false);
+  const cancelReload = useRef<HTMLButtonElement>(null);
+  const reloadButton = useRef<HTMLButtonElement>(null);
   const [nativeFragment, setNativeFragment] = useState(navigation?.fragment || "");
   useEffect(() => {
     if (navigation) {
@@ -79,7 +87,14 @@ function FileViewer({
   const preview = kind !== "text" && !showSource;
   const dirty = draft !== file.content;
   const editable = !readOnly && !preview && !file.binary && !file.truncated;
-  const contentUrl = workspaceContentUrl(groupId, file) + (kind === "pdf" ? nativeFragment : "");
+  const contentUrl =
+    workspaceContentUrl(groupId, file) +
+    (reloadVersion ? `&reload=${reloadVersion}` : "") +
+    (kind === "pdf" ? nativeFragment : "");
+  const requestReload = () => {
+    if (dirty) setConfirmReload(true);
+    else onReload();
+  };
   // Render SVG drafts through an image, never inject workspace markup into the App DOM.
   const imageUrl = useMemo(
     () => (svgSource && dirty ? `data:image/svg+xml,${encodeURIComponent(draft)}` : contentUrl),
@@ -103,6 +118,17 @@ function FileViewer({
           <span className="ml-2 truncate text-[11px] font-normal opacity-45">{file.path}</span>
         </span>
         <span className="shrink-0 text-[11px] opacity-50">{formatBytes(file.bytes)}</span>
+        <button
+          ref={reloadButton}
+          type="button"
+          onClick={requestReload}
+          disabled={saving || loading}
+          title={t("workspaceReload", { defaultValue: "Reload file" })}
+          aria-label={t("workspaceReload", { defaultValue: "Reload file" })}
+          className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)] disabled:opacity-30"
+        >
+          <RotateCcw className={classNames("h-3.5 w-3.5", loading && "animate-spin")} />
+        </button>
         {hasSourcePreview && (
           <button
             type="button"
@@ -149,12 +175,12 @@ function FileViewer({
         {editable ? (
           <button
             type="button"
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || loading}
             onClick={() => void onSave(draft)}
             title={t("workspaceSave", { defaultValue: "Save" })}
             className={classNames(
               "rounded-md p-1 transition-colors",
-              !dirty || saving
+              !dirty || saving || loading
                 ? "opacity-30"
                 : isDark
                   ? "text-emerald-300 hover:bg-white/8"
@@ -195,11 +221,12 @@ function FileViewer({
           {conflict ? (
             <button
               type="button"
-              onClick={onReload}
+              onClick={requestReload}
+              disabled={saving || loading}
               className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 underline-offset-2 hover:underline"
             >
               <RotateCcw className="h-3 w-3" />
-              {t("workspaceReload", { defaultValue: "Reload" })}
+              {t("workspaceReload", { defaultValue: "Reload file" })}
             </button>
           ) : null}
         </div>
@@ -253,13 +280,14 @@ function FileViewer({
         </div>
       ) : editable ? (
         <textarea
+          data-workspace-editor="true"
           value={editorText(draft)}
           spellCheck={false}
           onChange={(event) => setDraft(applyEditorText(draft, event.target.value, file.content))}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "s") {
               event.preventDefault();
-              if (dirty && !saving) void onSave(draft);
+              if (dirty && !saving && !loading) void onSave(draft);
             }
           }}
           className={classNames(
@@ -277,9 +305,59 @@ function FileViewer({
             isDark ? "text-slate-200" : "text-slate-800",
           )}
         >
-          {file.content}
+          {draft}
         </pre>
       )}
+      <Dialog open={confirmReload} onOpenChange={setConfirmReload}>
+        <DialogContent
+          className="gap-4 p-6"
+          onEscapeKeyDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            // Keep the enclosing phone surface's document handlers out of this dialog.
+            if (event.key === "Tab") event.stopPropagation();
+          }}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            cancelReload.current?.focus();
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            reloadButton.current?.focus();
+          }}
+        >
+          <DialogTitle className="pr-8">
+            {t("workspaceReloadConfirm", { defaultValue: "Discard edits and reload?" })}
+          </DialogTitle>
+          <DialogDescription>
+            {t("workspaceReloadWarning", {
+              defaultValue:
+                "Unsaved changes in this file will be replaced with its latest contents from disk.",
+            })}
+          </DialogDescription>
+          <div className="flex flex-wrap justify-end gap-2">
+            <DialogClose asChild>
+              <button
+                ref={cancelReload}
+                type="button"
+                className="rounded-lg border border-[var(--glass-border-subtle)] px-3 py-2 text-sm"
+              >
+                {t("workspaceCancel", { defaultValue: "Cancel" })}
+              </button>
+            </DialogClose>
+            <button
+              type="button"
+              disabled={saving || loading}
+              className="rounded-lg bg-[var(--color-accent-primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-40"
+              onClick={() => {
+                setConfirmReload(false);
+                onReload();
+              }}
+            >
+              {t("workspaceDiscardReload", { defaultValue: "Discard and reload" })}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

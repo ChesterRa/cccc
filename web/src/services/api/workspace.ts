@@ -30,8 +30,36 @@ function isEntry(value: unknown): value is WorkspaceEntry {
     !!item &&
     typeof item.name === "string" &&
     typeof item.path === "string" &&
-    typeof item.is_dir === "boolean"
+    typeof item.is_dir === "boolean" &&
+    (item.is_symlink === undefined || typeof item.is_symlink === "boolean") &&
+    (item.unavailable === undefined ||
+      (typeof item.unavailable === "string" &&
+        ["missing", "outside_scope", "unreadable", "unsupported"].includes(item.unavailable)))
   );
+}
+
+/** Resolve pasted paths without reading file contents or enumerating a directory. */
+export async function resolveWorkspacePath(
+  groupId: string,
+  path: string,
+  scopeKey: string,
+  scopeUrl: string,
+): Promise<ApiResponse<{ path: string; is_dir: boolean }>> {
+  const response = await apiJson<unknown>(
+    `${groupPath(groupId, "path")}?${new URLSearchParams({ path, scope_key: scopeKey, scope_url: scopeUrl })}`,
+  );
+  if (!response.ok) return response;
+  const result = asRecord(response.result);
+  if (
+    !result ||
+    result.scope_key !== scopeKey ||
+    result.scope_url !== scopeUrl ||
+    typeof result.path !== "string" ||
+    typeof result.is_dir !== "boolean"
+  ) {
+    return invalidResponse("Invalid workspace path response");
+  }
+  return { ok: true, result: { path: result.path, is_dir: result.is_dir } };
 }
 
 export async function fetchWorkspaceListing(

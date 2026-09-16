@@ -29,6 +29,7 @@ const file = (path: string, mime: string): WorkspaceFile => ({
 
 function Harness({ file, readOnly = false }: { file: WorkspaceFile; readOnly?: boolean }) {
   const [draft, setDraft] = useState(file.content);
+  const [reloadVersion, setReloadVersion] = useState(0);
   return (
     <WorkspaceFileViewer
       groupId="g_a"
@@ -42,7 +43,8 @@ function Harness({ file, readOnly = false }: { file: WorkspaceFile; readOnly?: b
       conflict={false}
       onClose={noop}
       onSave={async () => true}
-      onReload={noop}
+      reloadVersion={reloadVersion}
+      onReload={() => setReloadVersion((value) => value + 1)}
       onAttach={noop}
     />
   );
@@ -191,3 +193,19 @@ it("renders tables by default and preserves CRLF when switching to source, editi
   );
   expect(host.querySelector("textarea")?.value).toContain("changed, text");
 });
+
+it.each([
+  ["drawing.png", "image/png", "img"],
+  ["clip.mp4", "video/mp4", "video"],
+  ["report.pdf", "application/pdf", "iframe"],
+])(
+  "requests fresh %s contents on explicit reload even when metadata has not changed",
+  async (path, mime, selector) => {
+    await render(file(path, mime));
+    const original = host.querySelector(selector)!.getAttribute("src");
+    await act(async () => host.querySelector<HTMLButtonElement>('[title="Reload file"]')!.click());
+    const updated = host.querySelector(selector)!.getAttribute("src");
+    expect(updated).not.toBe(original);
+    expect(new URL(updated!, location.href).searchParams.get("reload")).toBe("1");
+  },
+);

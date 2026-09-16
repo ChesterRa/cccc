@@ -1,3 +1,8 @@
+import {
+  finishWorkspaceNavigation,
+  requestWorkspaceNavigation,
+  useWorkspaceNavigation,
+} from "../../stores/workspaceNavigation";
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -128,4 +133,34 @@ it("forwards the remote Group menu action through the existing admitted frame", 
   expect(mocks.request.mock.calls.filter(([path]) => path === "/api/v1/connect/open")).toHaveLength(
     1,
   );
+});
+
+it("guards leaving a dirty remote editor and clears its flag when the verified frame is retired", async () => {
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
+  await act(async () => state.select("c"));
+  expect(state.selected?.instanceId).toBe("b");
+  await act(async () => finishWorkspaceNavigation(false));
+  expect(state.selected?.instanceId).toBe("b");
+  await act(async () => requestWorkspaceNavigation(() => state.selectLocal()));
+  expect(state.selected?.instanceId).toBe("b");
+  await act(async () => finishWorkspaceNavigation(true));
+  expect(state.selected).toBeNull();
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
+});
+
+it("does not let an unverified source create an unsaved-edits prompt", async () => {
+  await act(async () =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: window,
+        origin: instance.public_origin,
+        data: { channel: CONNECT_CHANNEL, frame_id: frameId, type: "workspace_dirty", dirty: true },
+      }),
+    ),
+  );
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  await fromTarget({ type: "expired" });
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
 });

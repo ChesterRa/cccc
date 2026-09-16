@@ -236,6 +236,7 @@ async fn exhibit_mode_hides_workspace_files_including_reads() {
         .collect::<String>();
 
     for path in [
+        format!("/api/v1/groups/{group}/workspace/path?scope_key=scope_repo&scope_url={scope}"),
         format!("/api/v1/groups/{group}/workspace/list?scope_key=scope_repo&scope_url={scope}"),
         format!(
             "/api/v1/groups/{group}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=src%2Flib.rs"
@@ -413,4 +414,131 @@ async fn scope_identity_is_required_and_cannot_follow_a_relocated_binding() {
         std::fs::read_to_string(other.path().join("src/lib.rs")).expect("neighbor"),
         "fn main() {}\n"
     );
+}
+
+#[tokio::test]
+async fn workspace_directory_is_not_reported_as_outside_scope() {
+    let fixture = fixture();
+    std::fs::create_dir_all(fixture.repo.join(".pytest_cache/v/cache")).expect("cache directory");
+    let app = auth_support::authenticated_app(fixture.home.clone());
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
+    let (status, payload) = json(
+        &app,
+        Request::get(format!(
+            "/api/v1/groups/{}/workspace/file?scope_key=scope_repo&scope_url={scope}&path=.pytest_cache/v/cache",
+            fixture.group_id,
+        ))
+        .body(Body::empty()).expect("request"),
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert_eq!(payload["error"]["code"], "not_a_file");
+}
+
+#[tokio::test]
+async fn path_lookup_distinguishes_files_directories_missing_and_escaped_paths() {
+    let fixture = fixture();
+    std::fs::create_dir_all(fixture.repo.join(".pytest_cache/v/cache")).expect("cache directory");
+    std::fs::write(fixture.repo.join("literal\\name.txt"), "literal").expect("literal filename");
+    std::os::unix::fs::symlink(".pytest_cache/v/cache", fixture.repo.join("alias"))
+        .expect("internal symlink");
+    std::os::unix::fs::symlink(
+        fixture.repo.parent().expect("scope parent"),
+        fixture.repo.join("outside"),
+    )
+    .expect("external symlink");
+    let app = auth_support::authenticated_app(fixture.home.clone());
+    let scope = url::form_urlencoded::byte_serialize(fixture.repo.to_string_lossy().as_bytes())
+        .collect::<String>();
+    let base = format!("/api/v1/groups/{}/workspace", fixture.group_id);
+    for (path, canonical, is_dir) in [
+        ("", "", true),
+        (".", "", true),
+        (".pytest_cache/v/cache", ".pytest_cache/v/cache", true),
+        ("alias", ".pytest_cache/v/cache", true),
+        ("src/lib.rs", "src/lib.rs", false),
+        ("literal\\name.txt", "literal\\name.txt", false),
+    ] {
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("scope_key", "scope_repo")
+            .append_pair("scope_url", &fixture.repo.to_string_lossy())
+            .append_pair("path", path)
+            .finish();
+        let (status, payload) = json(
+            &app,
+            Request::get(format!("{base}/path?{query}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {payload}");
+        assert_eq!(payload["result"]["path"], canonical);
+        assert_eq!(payload["result"]["is_dir"], is_dir);
+        assert_eq!(payload["result"]["scope_key"], "scope_repo");
+        assert_eq!(
+            payload["result"]["scope_url"],
+            fixture.repo.to_string_lossy().as_ref()
+        );
+    }
+    for (route, path, status, code) in [
+        ("path", "missing", StatusCode::NOT_FOUND, "NOT_FOUND"),
+        (
+            "path",
+            "../secret.txt",
+            StatusCode::FORBIDDEN,
+            "outside_scope",
+        ),
+        ("path", "outside", StatusCode::FORBIDDEN, "outside_scope"),
+        (
+            "list",
+            "src/lib.rs",
+            StatusCode::BAD_REQUEST,
+            "not_a_directory",
+        ),
+    ] {
+        let (actual, payload) = json(
+            &app,
+            Request::get(format!(
+                "{base}/{route}?scope_key=scope_repo&scope_url={scope}&path={path}"
+            ))
+            .body(Body::empty())
+            .expect("request"),
+        )
+        .await;
+        assert_eq!(actual, status, "{payload}");
+        assert_eq!(payload["error"]["code"], code);
+    }
+    let (status, payload) = json(
+        &app,
+        Request::get(format!(
+            "{base}/path?scope_key=old_scope&scope_url={scope}&path=src"
+        ))
+        .body(Body::empty())
+        .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(payload["error"]["code"], "workspace_scope_changed");
+
+    let tokens =
+        cccc_core::access_tokens::AccessTokenStore::new(fixture.home.clone()).expect("token store");
+    tokens
+        .create(
+            "other group",
+            vec!["g_other".into()],
+            false,
+            Some("path-test-restricted"),
+        )
+        .expect("restricted token");
+    let (status, _) = json(
+        &app,
+        Request::get(format!(
+            "{base}/path?scope_key=scope_repo&scope_url={scope}&path=src"
+        ))
+        .header(header::AUTHORIZATION, "Bearer path-test-restricted")
+        .body(Body::empty())
+        .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

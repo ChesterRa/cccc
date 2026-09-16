@@ -9,7 +9,6 @@ import {
   mainArea,
   rowByName,
   click,
-  host,
   fetchWorkspaceListing,
   fetchWorkspaceFile,
   saveWorkspaceFile,
@@ -153,7 +152,9 @@ describe("workspace files surfaces", () => {
       );
     });
 
-    const labels = [...host.querySelectorAll('[role="menuitem"]')].map((node) => node.textContent);
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (node) => node.textContent,
+    );
     expect(labels).toContain("Attach as context");
     expect(labels).not.toContain("Pin to a Presentation slot");
   });

@@ -1,6 +1,15 @@
-import { Fragment, memo } from "react";
+import { Fragment, memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, File, Folder, Loader2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  File,
+  FileSymlink,
+  Folder,
+  FolderSymlink,
+  Loader2,
+  MoreHorizontal,
+} from "lucide-react";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceEntry, WorkspaceGitStatus } from "../../types";
 import type { TreeNode } from "./workspaceTreeModel";
@@ -12,7 +21,9 @@ type Props = {
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onRetryDirectory: (path: string) => void;
-  onContextMenu: (entry: WorkspaceEntry, x: number, y: number) => void;
+  onContextMenu: (entry: WorkspaceEntry, x: number, y: number, anchor: HTMLElement) => void;
+  revealRequest?: { path: string } | null;
+  onReveal: (row: HTMLElement) => void;
 };
 
 const GIT_BADGE: Record<WorkspaceGitStatus, { letter: string; light: string; dark: string }> = {
@@ -47,33 +58,114 @@ function WorkspaceTreeRows({
   onOpenFile,
   onRetryDirectory,
   onContextMenu,
+  revealRequest,
+  onReveal,
 }: Props) {
   const { t } = useTranslation("chat");
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [focusedKey, setFocusedKey] = useState("");
+  const activeKey =
+    rows.find((row) => row.key === focusedKey)?.key ??
+    rows.find((row) => row.entry.path === selectedPath)?.key ??
+    rows[0]?.key;
+  useEffect(() => {
+    if (!revealRequest) return;
+    const index =
+      revealRequest.path === ""
+        ? 0
+        : rows.findIndex((row) => row.entry.path === revealRequest.path);
+    const element = treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]')[index];
+    if (!element) return;
+    onReveal(element);
+  }, [rows, revealRequest, onReveal]);
+  const focusRow = (index: number) => {
+    treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]')[index]?.focus();
+  };
   return (
-    <div role="tree" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
-      {rows.map((node) => {
+    <div
+      ref={treeRef}
+      aria-label={t("workspaceFilesTitle", { defaultValue: "Files" })}
+      role="tree"
+      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1"
+    >
+      {rows.map((node, index) => {
         const { entry } = node;
         const selected = !entry.is_dir && entry.path === selectedPath;
+        const unavailable =
+          entry.unavailable === "missing"
+            ? entry.is_symlink
+              ? t("workspaceLinkMissing", { defaultValue: "Link target not found" })
+              : t("workspaceEntryMissing", { defaultValue: "Item no longer exists" })
+            : entry.unavailable === "outside_scope"
+              ? t("workspaceLinkOutside", { defaultValue: "Link target is outside this workspace" })
+              : entry.unavailable === "unreadable"
+                ? t("workspaceEntryUnreadable", { defaultValue: "Cannot access this item" })
+                : entry.unavailable === "unsupported"
+                  ? t("workspaceEntryUnsupported", { defaultValue: "Not a regular file or folder" })
+                  : "";
+        const Icon = entry.is_symlink
+          ? entry.is_dir
+            ? FolderSymlink
+            : FileSymlink
+          : entry.is_dir
+            ? Folder
+            : File;
+        const activate = () => {
+          if (entry.unavailable) return;
+          if (entry.is_dir) onToggleDirectory(entry.path);
+          else onOpenFile(entry.path);
+        };
         return (
           <Fragment key={node.key}>
-            <button
-              type="button"
+            <div
               role="treeitem"
+              tabIndex={node.key === activeKey ? 0 : -1}
+              aria-level={node.depth + 1}
+              onFocus={() => setFocusedKey(node.key)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "ArrowDown") focusRow(Math.min(rows.length - 1, index + 1));
+                else if (event.key === "ArrowUp") focusRow(Math.max(0, index - 1));
+                else if (event.key === "Home") focusRow(0);
+                else if (event.key === "End") focusRow(rows.length - 1);
+                else if (event.key === "ArrowRight") {
+                  if (entry.is_dir && !node.expanded) activate();
+                  else if (entry.is_dir && rows[index + 1]?.depth > node.depth) focusRow(index + 1);
+                } else if (event.key === "ArrowLeft") {
+                  if (entry.is_dir && node.expanded) onToggleDirectory(entry.path);
+                  else {
+                    for (let parent = index - 1; parent >= 0; parent--) {
+                      if (rows[parent].depth < node.depth) {
+                        focusRow(parent);
+                        break;
+                      }
+                    }
+                  }
+                } else if (event.key === "Enter" || event.key === " ") {
+                  activate();
+                } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  onContextMenu(entry, rect.left, rect.bottom, event.currentTarget);
+                } else return;
+                event.preventDefault();
+              }}
               aria-expanded={entry.is_dir ? node.expanded : undefined}
               aria-selected={selected}
-              title={entry.path}
-              style={{ paddingLeft: 8 + node.depth * 12 }}
-              onClick={() =>
-                entry.is_dir ? onToggleDirectory(entry.path) : onOpenFile(entry.path)
+              title={
+                entry.ignored
+                  ? entry.path + " · " + t("workspaceGitIgnored", { defaultValue: "Git ignored" })
+                  : entry.path
               }
+              style={{ paddingLeft: 8 + node.depth * 12 }}
+              onClick={activate}
               onContextMenu={(event) => {
                 event.preventDefault();
-                onContextMenu(entry, event.clientX, event.clientY);
+                onContextMenu(entry, event.clientX, event.clientY, event.currentTarget);
               }}
               className={classNames(
                 // Roomier rows on phones, where these are touch targets rather than mouse targets.
-                "flex w-full items-center gap-1 py-2 pr-2 text-left text-[13px] transition-colors sm:py-[3px]",
-                entry.ignored && "opacity-45",
+                "group/row flex w-full items-center gap-1 py-2 pr-2 text-left text-[13px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)] sm:py-[3px]",
+                entry.unavailable ? "cursor-default" : "cursor-pointer",
                 selected
                   ? isDark
                     ? "bg-cyan-400/12 text-cyan-100"
@@ -94,14 +186,24 @@ function WorkspaceTreeRows({
                   )
                 ) : null}
               </span>
-              <span className="flex w-4 shrink-0 items-center justify-center opacity-60">
-                {entry.is_dir ? (
-                  <Folder className="h-3.5 w-3.5" />
-                ) : (
-                  <File className="h-3.5 w-3.5" />
+              <span
+                className="flex w-4 shrink-0 items-center justify-center opacity-60"
+                title={
+                  entry.is_symlink
+                    ? t("workspaceSymbolicLink", { defaultValue: "Symbolic link" })
+                    : undefined
+                }
+              >
+                <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{entry.name}</span>
+                {unavailable && (
+                  <span className="block break-words text-xs text-[var(--color-text-secondary)]">
+                    {unavailable}
+                  </span>
                 )}
               </span>
-              <span className="truncate">{entry.name}</span>
               {entry.git_status ? <GitBadge status={entry.git_status} isDark={isDark} /> : null}
               {!entry.git_status && entry.git_dirty_descendant ? (
                 <span
@@ -112,7 +214,24 @@ function WorkspaceTreeRows({
                   )}
                 />
               ) : null}
-            </button>
+              <button
+                type="button"
+                tabIndex={node.key === activeKey ? 0 : -1}
+                aria-label={t("workspaceEntryActions", {
+                  name: entry.name,
+                  defaultValue: "Actions for {{name}}",
+                })}
+                aria-haspopup="menu"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)] focus-visible:opacity-100 sm:h-5 sm:w-5 sm:opacity-0 sm:group-hover/row:opacity-100 sm:group-focus-within/row:opacity-100"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  onContextMenu(entry, rect.left, rect.bottom, event.currentTarget);
+                }}
+              >
+                <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </div>
             {node.error ? (
               <div
                 role="alert"

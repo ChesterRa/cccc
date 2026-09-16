@@ -269,6 +269,9 @@ data: {
   invalid because CCCS v1 does not define a human Mail Inbox.
 - "Inclusive" means the referenced Mail event itself is considered read.
 - If a client cannot efficiently determine ordering, it SHOULD treat `event_id` as an opaque watermark maintained by the daemon.
+- A late status snapshot MUST NOT make an already consumed Mail unread again.
+  The daemon still owns the current recipient set, including Actor generation
+  changes; clients MUST NOT restore recipients removed by an authoritative snapshot.
 
 ### 6.3 `chat.reply_request.cancelled`
 
@@ -291,6 +294,9 @@ data: {
   that recipient is `replied`; otherwise the cancellation state is
   `cancelled`. Later replies remain visible but do not change `cancelled` back
   into `replied`.
+- Clients merging live events with HTTP snapshots MUST NOT reopen a terminal
+  obligation when an older pending snapshot arrives. A terminal daemon snapshot
+  remains authoritative for resolving reply versus cancellation by append order.
 
 For Connect, the daemon derives the exact qualified original request and persists
 cancellation through the same durable outbox as messages. Only the original Actor

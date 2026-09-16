@@ -1631,13 +1631,29 @@ Result:
 Workspace Web clients must treat `group.set_active_scope`, `group.attach`, and
 `group.detach_scope` as invalidating their active workspace view and reconcile the
 current Group document, rather than applying historical event scope fields.
-The Web workspace list/read/write/content requests bind `scope_key` and `scope_url` to
+The Web workspace path/list/read/write/content requests bind `scope_key` and `scope_url` to
 that document; JSON file reads return both values and saves echo the opened identity.
 Missing identity is rejected with HTTP 400, and a changed key or attached URL with
 HTTP 409 (`workspace_scope_changed`), before resolving the relative path. The
 checked Group snapshot owns the entire filesystem operation; a subsequent scope
 switch cannot retarget an in-flight write. The digest detects content changes
 within that workspace and does not establish workspace identity.
+
+`GET /api/v1/groups/{group_id}/workspace/path` resolves an existing `path` under
+the same scope and access checks, returning `{scope_key, scope_url, path, is_dir}`.
+The returned path is canonical and workspace-relative; an empty path names the root.
+The endpoint reads metadata only. Web opens files in the viewer and reveals folders
+in the tree without replacing the current file or draft. Missing paths, wrong path
+types, and escaped paths remain distinct errors; only a boundary violation is
+`outside_scope`. This lookup creates no daemon work or ledger event.
+
+Workspace listings mark symbolic links with `is_symlink: true`. An inaccessible
+entry carries `unavailable`: `missing`, `outside_scope`, `unreadable`, or
+`unsupported` (not a regular file or directory). External link targets and their
+metadata are not disclosed. This is a listing-time observation; reads and
+downloads still validate the scope and path independently. Web keeps path-copy
+actions available but disables opening, downloading, attaching and pinning an
+unavailable entry. Refreshing the directory reevaluates its availability.
 
 `GET /api/v1/groups/{group_id}/workspace/content` reads original file bytes with
 `path`, `scope_key`, and `scope_url`, under the same Group/exhibit and Connect-frame
@@ -5450,6 +5466,12 @@ Reach-owned `enabled` / `web_public_url` state before returning. A timeout, DNS
 failure, 5xx response, or malformed response is transient and MUST preserve the
 binding and helper state. Daemons therefore MUST serialize `membership_status`
 with membership mutations rather than treating it as a side-effect-free read.
+Membership and remote-access operations share exclusive ownership, but their
+network waits MUST NOT hold the global Group read/write permit. Global mutations
+and Reach restore commits also acquire this ownership before their global permit;
+restore still fetches outside both permits and verifies its captured intent before
+committing. Ordinary Group reads and writes remain available while the account
+service is slow.
 
 #### `membership_login` / `membership_login_poll` / `membership_logout`
 
@@ -6817,3 +6839,24 @@ IDs whose exact pair has an explicit Direct route preference; this is a display
 projection, not a replacement grant or confirmation of delivery. The
 [Connect standard](CCCC_CONNECT_V1.md#standalone-direct-group-connections)
 defines identity, transport, routing and durable delivery semantics.
+
+### Web realtime transport (not daemon IPC)
+
+`GET /api/v1/events/ws` upgrades an authenticated browser connection. The optional
+`connect_frame` query parameter carries the existing frame capability. On one
+socket the client may maintain one subscription for each `global`, `ledger`, and
+`headless` channel. These use the same event sources as their SSE counterparts.
+
+- Subscribe: `{"type":"subscribe","channel":"ledger","id":2,"group_id":"g_example","cursor":"last-event-id"}`.
+- Headless subscribe additionally accepts `replay` (default `true`).
+- Unsubscribe: `{"type":"unsubscribe","channel":"ledger","id":2}`.
+- Ready: `{"type":"ready","channel":"ledger","id":2}`.
+- Event: `{"type":"event","channel":"ledger","id":2,"message":{"event":"ledger","id":"event-id","data":{}}}`.
+- Producer termination or rejection: `{"type":"closed","channel":"ledger","id":2,"code":"permission_denied"}`; `code` may be absent for EOF.
+- Connection-level rejection: `{"type":"fatal","code":"auth_required"}`.
+- Heartbeat: `{"type":"heartbeat"}`; WebSocket Ping/Pong also verifies peer liveness.
+
+Subscription IDs must identify the logical subscription, change when a Group is
+replaced, and be echoed on all its packets. Subscribing again replaces that channel's
+producer; unsubscribe only affects the matching ID. Scope and live authority checks
+apply to subscription messages because the socket URL itself contains no Group ID.

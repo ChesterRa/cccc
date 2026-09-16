@@ -1,3 +1,4 @@
+import { setWorkspaceDirty } from "../../stores/workspaceNavigation";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiJson } from "../../services/api/base";
@@ -31,9 +32,11 @@ export function ConnectRemotePanel({
     let deadline: number | undefined;
     let readyDeadline: number | undefined;
     let current: OpenFrame | null = null;
+    const dirtyOwner = Symbol("embedded workspace");
     let verifiedPeer = false;
     const frameId = crypto.randomUUID();
     const clear = (forget = true) => {
+      setWorkspaceDirty(dirtyOwner, false);
       setOpened(null);
       setReady(false);
       const target = latest.current.workbench.activeInstance;
@@ -77,6 +80,10 @@ export function ConnectRemotePanel({
           setReady(true);
           sendSelection();
           break;
+        case "workspace_dirty":
+          if (typeof event.data.dirty === "boolean")
+            setWorkspaceDirty(dirtyOwner, event.data.dirty);
+          break;
         case "groups": {
           const groups = remoteGroups(event.data.groups);
           if (groups) latest.current.workbench.remember(target, groups);
@@ -94,6 +101,7 @@ export function ConnectRemotePanel({
           latest.current.onOpenSidebar();
           break;
         case "locked":
+          setWorkspaceDirty(dirtyOwner, false);
           latest.current.workbench.remember(target, null);
           break;
         case "expired":
@@ -149,6 +157,7 @@ export function ConnectRemotePanel({
     void open();
     return () => {
       cancelled = true;
+      setWorkspaceDirty(dirtyOwner, false);
       window.removeEventListener("message", handle);
       window.clearTimeout(timer);
       window.clearTimeout(deadline);

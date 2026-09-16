@@ -5,9 +5,11 @@
 
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+const QUERY_BUDGET: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,7 +28,21 @@ pub enum GitStatus {
 /// only needs badges for its own entries and rollups for their subtrees, so the walk is limited
 /// to that subtree instead of the whole repository.
 pub fn status_map(root: &Path, scope: &str) -> BTreeMap<String, GitStatus> {
-    let Some(prefix) = repo_prefix(root) else {
+    status_map_before(root, scope, Instant::now() + QUERY_BUDGET)
+}
+
+pub(crate) fn decorations(
+    root: &Path,
+    scope: &str,
+    candidates: &[String],
+) -> (BTreeSet<String>, BTreeMap<String, GitStatus>) {
+    let deadline = Instant::now() + QUERY_BUDGET;
+    let ignored = ignored_before(root, candidates, deadline);
+    (ignored, status_map_before(root, scope, deadline))
+}
+
+fn status_map_before(root: &Path, scope: &str, deadline: Instant) -> BTreeMap<String, GitStatus> {
+    let Some(prefix) = repo_prefix(root, deadline) else {
         return BTreeMap::new();
     };
     let pathspec = status_pathspec(scope);
@@ -41,6 +57,7 @@ pub fn status_map(root: &Path, scope: &str) -> BTreeMap<String, GitStatus> {
             &pathspec,
         ],
         None,
+        deadline,
     ) else {
         return BTreeMap::new();
     };
@@ -60,6 +77,10 @@ fn status_pathspec(scope: &str) -> String {
 
 /// Subset of `candidates` (workspace-relative paths) matched by `.gitignore` rules.
 pub fn ignored(root: &Path, candidates: &[String]) -> BTreeSet<String> {
+    ignored_before(root, candidates, Instant::now() + QUERY_BUDGET)
+}
+
+fn ignored_before(root: &Path, candidates: &[String], deadline: Instant) -> BTreeSet<String> {
     if candidates.is_empty() {
         return BTreeSet::new();
     }
@@ -69,6 +90,7 @@ pub fn ignored(root: &Path, candidates: &[String]) -> BTreeSet<String> {
         root,
         &["check-ignore", "-z", "--stdin"],
         Some(input.as_bytes()),
+        deadline,
     ) else {
         return BTreeSet::new();
     };
@@ -80,8 +102,8 @@ pub fn ignored(root: &Path, candidates: &[String]) -> BTreeSet<String> {
 }
 
 /// Path of `root` relative to the repository root, with a trailing slash (empty at the top).
-fn repo_prefix(root: &Path) -> Option<String> {
-    git_stdout(root, &["rev-parse", "--show-prefix"], None)
+fn repo_prefix(root: &Path, deadline: Instant) -> Option<String> {
+    git_stdout(root, &["rev-parse", "--show-prefix"], None, deadline)
         .map(|value| value.trim_end_matches(['\n', '\r']).to_owned())
 }
 
@@ -134,31 +156,28 @@ fn classify(code: &str) -> GitStatus {
     GitStatus::Modified
 }
 
-fn git_stdout(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Option<String> {
-    let mut child = Command::new("git")
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .current_dir(cwd)
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let output = std::thread::scope(|scope| {
-        if let Some(bytes) = stdin {
-            let mut pipe = child.stdin.take()?;
-            // Drain stdout while feeding stdin: either pipe can fill before git finishes.
-            scope.spawn(move || {
-                // A closed pipe means git rejected the input; waiting still reaps the child.
-                let _ = pipe.write_all(bytes);
-            });
-        }
-        child.wait_with_output().ok()
-    })?;
+fn git_stdout(
+    cwd: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    deadline: Instant,
+) -> Option<String> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    // Git is optional decoration. Reuse finite-command ownership so a stuck
+    // fsmonitor (including descendants holding pipes open) cannot trap browsing.
+    let output = cccc_runtime::capture_command_blocking(
+        Command::new("git")
+            .args(args)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .current_dir(cwd),
+        stdin,
+        remaining,
+        8 * 1024 * 1024,
+    )
+    .ok()?;
+    if output.stdout_truncated {
+        return None;
+    }
     // `check-ignore` exits 1 when nothing matched, which is a valid empty answer.
     if !output.status.success() && output.stdout.is_empty() {
         return None;

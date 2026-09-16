@@ -97,11 +97,45 @@ to messages; covered messages do not count as viewed for unread tracking.
 
 Save with the toolbar button or `Ctrl+S` / `Cmd+S`. Unsaved edits survive closing and
 reopening files within the current Group, including internal symlinks to the same file.
-Save before switching Groups, changing the active workspace, or reloading the page.
+Save before leaving the workspace. Switching Groups or instances with unsaved file edits asks whether to stay or discard; refreshing or closing the page uses the browser’s unsaved-changes warning. Closing the file viewer retains its drafts while you stay in the same workspace. A scope change or loss of access initiated elsewhere still retires the old editor; drafts never authorize saving into another scope.
 Changing the active workspace clears the file view and its drafts; stale saves are rejected
 instead of writing into the newly selected workspace. If the file changed on disk since it
-was opened, saving reports a conflict; **Reload** discards the draft and loads the current
-file. This check does not lock out external editors or Actors.
+was opened, saving reports a conflict. **Reload file** reads the latest contents from disk,
+including updated media at the same path. With unsaved edits, it asks before discarding them;
+canceling or a failed read keeps the draft. Edits made while the reload is waiting are also
+retained. Reload is unavailable during a save. This check does not lock out external editors
+or Actors.
+
+The tree shows workspace files by default, including untracked and Git-ignored files.
+Git's own root metadata directory remains hidden. Use **File browser options → Hide
+Git-ignored files** to reduce clutter; this preference is remembered in this browser.
+Folders load only when expanded. **Refresh directory** refreshes the tree, preserving
+expansion and file drafts; **Reload file** refreshes the open viewer.
+
+Paste a workspace-relative or absolute path into **Go to file or folder**, then press
+Enter. Files open in the viewer; folders expand and receive focus in the tree without
+closing your current file or losing its draft. Use `.` or the workspace root path to
+return to the top of the tree. Missing paths and paths outside the workspace report
+different errors. **Reveal current file** expands its parent folders
+and moves focus to its row; explicit reveal also clears the Git ignore filter so the
+target can be shown. **Collapse all folders** only folds the tree, keeping the file open.
+If you move on while a location is loading, its result does not take focus away from
+the editor, message composer, or another file selection.
+Use arrow keys to move through the tree and expand/collapse folders, and Enter to open.
+
+Each row's **…** button, right-click, or Shift+F10 opens the same actions: attach the path
+as message context, copy a relative or absolute path, download a file, or pin a supported
+file to Presentation when permitted. Attaching inserts a path into the composer; it does
+not upload the file.
+
+Symbolic links have a link icon. If the target is missing, outside the workspace,
+or inaccessible, its row explains why and disables content actions; you can still
+copy its path. CCCC does not repair links created by other tools or download files
+outside the workspace. After fixing a link on disk, use **Refresh directory**.
+
+An empty file panel shows **No files to display** after loading completes. If ignored
+files are hidden, use **Show git-ignored files** to reveal them. Otherwise, add files
+to the workspace and use **Refresh directory**. Loading and failed requests have separate states.
 
 A directory that cannot be loaded shows its error below the row. Use **Retry** there
 to load it again; an error does not mean the directory is empty.
@@ -759,7 +793,7 @@ by default and require restarting the Web process to change CORS responses.
 
 When a reverse proxy terminates HTTPS or exposes CCCC under another host, it
 must overwrite the browser-facing host and protocol headers. These values are
-used by every browser WebSocket (terminal, Voice Secretary, projected browser)
+used by every browser WebSocket (realtime events, terminal, Voice Secretary, projected browser)
 and by Cookie-authenticated write protection:
 
 ```nginx
@@ -802,3 +836,27 @@ is rejected — and the scheme alone adds nothing, since an attacker able to
 serve a page from this host would already control the site. Proxies that
 rewrite `Host` still need `CCCC_WEB_TRUST_PROXY_HEADERS=1` or an explicit
 `CCCC_WEB_CORS_ORIGINS` entry.
+
+### Shared realtime connection
+
+The Web UI uses one `/api/v1/events/ws` WebSocket per page for global metadata,
+current-Group ledger events, and headless output. Switching Groups replaces the
+subscriptions on the existing socket. Background pages release their subscriptions
+and close the socket when none remain. This avoids occupying the HTTP/1.1 pool
+with three persistent SSE requests per visible page; ordinary API requests remain
+available with several workbench windows open.
+
+Each subscription has an ID. Both sides ignore packets from retired IDs. Reconnects
+resume the ledger from its last delivered event ID and request a headless snapshot
+from the same tail that supplies subsequent deltas. Existing UI catch-up and
+coalescing continue to apply. Global events contain only permitted Group metadata.
+Token and Connect-frame authority are rechecked while connected; each Group
+subscription also validates Group access before opening its producer.
+
+The server uses a bounded eight-packet output queue and a five-second socket-write
+deadline. Heartbeats detect broken connections, and closing the socket cancels all
+its producers. A failed channel retries independently; transport failure reconnects
+with backoff. The UI does not fall back to HTTP SSE, which would recreate the
+connection-pool blockage. The existing SSE endpoints remain available for external
+clients and use the same typed event producers. Deploy the updated UI and backend
+together to enable the new endpoint.

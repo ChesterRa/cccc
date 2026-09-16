@@ -861,3 +861,25 @@ export async function apiForm<T>(
     return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);
   }
 }
+
+/**
+ * Read a download name out of a Content-Disposition header.
+ *
+ * Browsers hand header values back decoded as ISO-8859-1, so the plain
+ * `filename=` parameter is mojibake whenever the server put non-ASCII bytes
+ * there. Prefer the percent-encoded RFC 5987 `filename*` parameter, which is
+ * pure ASCII on the wire and decodes back to the original UTF-8 name.
+ */
+export function filenameFromContentDisposition(header: string, fallback: string): string {
+  const extended = /(?:^|;)\s*filename\*\s*=\s*UTF-8''([^;\s]+)/i.exec(header);
+  if (extended) {
+    try {
+      const decoded = decodeURIComponent(extended[1]).trim();
+      if (decoded) return decoded;
+    } catch {
+      // A malformed escape falls through to the ASCII parameter below.
+    }
+  }
+  const plain = /(?:^|;)\s*filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  return plain?.[1].trim() || fallback;
+}

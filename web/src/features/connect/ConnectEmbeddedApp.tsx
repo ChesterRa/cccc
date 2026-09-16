@@ -1,4 +1,8 @@
 import {
+  requestWorkspaceNavigation,
+  useWorkspaceNavigation,
+} from "../../stores/workspaceNavigation";
+import {
   groupConnectionCount,
   type GroupConnectionSummary,
   type ConnectStatusResponse,
@@ -124,6 +128,10 @@ function AdmittedWorkbench({
   send: (message: Record<string, unknown>) => void;
   expire: () => void;
 }) {
+  const workspaceDirty = useWorkspaceNavigation((state) => state.owners.size > 0);
+  useEffect(() => {
+    send({ type: "workspace_dirty", dirty: workspaceDirty });
+  }, [workspaceDirty, send]);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groups = useGroupStore((state) => state.groups);
   const lastSummary = useRef<GroupConnectionSummary | null>(null);
@@ -139,16 +147,21 @@ function AdmittedWorkbench({
     if (selection.groupId && !groups.length) return;
     appliedRequest.current = selection.revision;
     const targetExists = groups.some((g) => g.group_id === selection.groupId);
-    // A new navigation closes the previous Group's dialog. Repeated frame
-    // messages in the same revision cannot reopen a dialog the user dismissed.
-    useModalStore
-      .getState()
-      .setGroupConnections(
-        targetExists && selection.action === "connections" ? selection.groupId : null,
-      );
-    if (targetExists && useGroupStore.getState().selectedGroupId !== selection.groupId) {
-      useGroupStore.getState().setSelectedGroupId(selection.groupId);
-    }
+    const apply = () => {
+      // A new navigation closes the previous Group's dialog. Repeated frame
+      // messages in the same revision cannot reopen a dialog the user dismissed.
+      useModalStore
+        .getState()
+        .setGroupConnections(
+          targetExists && selection.action === "connections" ? selection.groupId : null,
+        );
+      if (targetExists && useGroupStore.getState().selectedGroupId !== selection.groupId) {
+        useGroupStore.getState().setSelectedGroupId(selection.groupId);
+      }
+    };
+    if (targetExists && useGroupStore.getState().selectedGroupId !== selection.groupId)
+      requestWorkspaceNavigation(apply);
+    else apply();
   }, [selection, groups, admitted]);
   useEffect(() => {
     let cancelled = false;

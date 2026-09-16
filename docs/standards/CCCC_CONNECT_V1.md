@@ -253,12 +253,12 @@ online or administrator confirmation. Reopening always authenticates the target
 again before receiving content. Expired entry directory/entry access, device or
 origin replacement, and an active target lock clear the affected navigation.
 No inactive iframe, TUI connection, bearer cache, or content synchronization is
-kept alive merely to preserve the sidebar. Plain Group SSE and terminal connections also recheck current token access
+kept alive merely to preserve the sidebar. Realtime event and terminal connections also recheck current token access
 every 15 seconds; embedded resource connections additionally check the frame.
-Embedded Group resources and the global `/api/v1/events/stream` carry
+Embedded Group resources, the shared `/api/v1/events/ws` socket and the legacy global `/api/v1/events/stream` carry
 `connect_frame`; WebSocket URL construction compares `ws`/`wss` with the
 corresponding `http`/`https` origin, preserving the exact host and effective port.
-The global stream checks current frame and target administrator authority before
+The shared socket and global stream check current frame and target administrator authority before
 emitting metadata and on the same 15-second interval. An expired frame or either
 retired device binding closes embedded streams even while the target Token
 remains valid and the browser has not unmounted the workbench. Ordinary
@@ -507,8 +507,11 @@ separately. Confirmation means both Groups recorded cancellation, never that
 an already running task stopped.
 
 A separate bounded delivery scheduler shares the same HTTP client and protocol
-with discovery. It scans active IDs once per second, runs at most 4 jobs, and
-allows only one active job per peer. Retries persist and back off 5–60 seconds;
+with discovery. It scans active IDs once per second and when a worker finishes,
+so ready work can use released capacity without waiting another poll interval.
+It runs at most 4 jobs and allows only one active job per peer. Available slots
+rotate among eligible peers so busy queues cannot starve another destination.
+Retries persist and back off 5–60 seconds;
 local corrupt records or projection failures defer only that job, while network
 failures defer the unavailable peer. Other peers and healthy records remain
 processable. Dispatcher permits cover only local projections; acquisition itself

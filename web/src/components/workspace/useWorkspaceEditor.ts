@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../../services/api";
+import { setWorkspaceDirty } from "../../stores/workspaceNavigation";
 import type { WorkspaceFile } from "../../types";
 
 export type WorkspaceOpenFileOptions = { reload?: boolean; fragment?: string };
@@ -12,6 +13,7 @@ export function useWorkspaceEditor(
   scopeUrl: string,
   refresh: () => void,
   onOpenPath: (path: string) => void,
+  onLocatePath: (path: string, isDirectory: boolean) => void,
 ) {
   const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [navigation, setNavigation] = useState<WorkspaceFileNavigation | null>(null);
@@ -19,11 +21,18 @@ export function useWorkspaceEditor(
   const [selectedPath, setSelectedPath] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState("");
+  const [pathLoading, setPathLoading] = useState(false);
+  const [pathError, setPathError] = useState("");
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const fileRequest = useRef(0);
   const groupGeneration = useRef(0);
   const drafts = useRef(new Map<string, { file: WorkspaceFile; draft: string }>());
+  const dirtyOwner = useRef(Symbol("workspace editor"));
+  const publishDirty = useCallback(() => {
+    setWorkspaceDirty(dirtyOwner.current, drafts.current.size > 0 || pendingSaves.current.size > 0);
+  }, []);
   // A save belongs to its file even when the user opens a different viewer.
   const pendingSaves = useRef(new Set<string>());
   const visibleFile = useRef(file);
@@ -35,15 +44,27 @@ export function useWorkspaceEditor(
     groupGeneration.current += 1;
     drafts.current.clear();
     pendingSaves.current.clear();
+    setWorkspaceDirty(dirtyOwner.current, false);
     setFile(null);
     setNavigation(null);
     updateDraft("");
     setSelectedPath("");
     setFileError("");
     setFileLoading(false);
+    setPathLoading(false);
+    setPathError("");
     setConflict(false);
     setSaving(false);
+    setReloadVersion(0);
   }, [groupId, scopeKey, scopeUrl]);
+  useLayoutEffect(() => {
+    const owner = dirtyOwner.current;
+    return () => {
+      fileRequest.current += 1;
+      groupGeneration.current += 1;
+      setWorkspaceDirty(owner, false);
+    };
+  }, []);
   const setDraft = useCallback(
     (value: string) => {
       updateDraft(value);
@@ -52,23 +73,27 @@ export function useWorkspaceEditor(
         if (value === file.content && !pendingSaves.current.has(file.path))
           drafts.current.delete(file.path);
         else drafts.current.set(file.path, { file, draft: value });
+        publishDirty();
       }
     },
-    [file],
+    [file, publishDirty],
   );
 
   const openFile = useCallback(
     async (path: string, options?: WorkspaceOpenFileOptions) => {
+      if (options?.reload && pendingSaves.current.has(path)) return null;
+      setPathLoading(false);
+      setPathError("");
       const destination = options?.fragment ? { fragment: options.fragment } : null;
       if (!options?.reload && file?.path === path) {
-        if (selectedPath !== path || destination) {
+        if (pathLoading || selectedPath !== path || destination) {
           fileRequest.current += 1;
           setSelectedPath(path);
           setFileLoading(false);
           setFileError("");
         }
         if (destination) setNavigation(destination);
-        return;
+        return path;
       }
       const request = ++fileRequest.current;
       setNavigation(null);
@@ -85,29 +110,66 @@ export function useWorkspaceEditor(
         updateDraft(cached.draft);
         setSaving(pendingSaves.current.has(cached.file.path));
         setFileLoading(false);
-        return;
+        return cached.file.path;
       }
       const response = await api.fetchWorkspaceFile(groupId, path, scopeKey, scopeUrl);
-      if (request !== fileRequest.current) return;
+      if (request !== fileRequest.current) return null;
       setFileLoading(false);
       if (!response.ok) {
         setFileError(response.error.message);
-        return;
+        return null;
       }
       // The server resolves internal symlinks to their canonical workspace path.
       // Look up that identity before replacing an unsaved target with disk bytes.
-      const targetDraft = !options?.reload && drafts.current.get(response.result.path);
+      const latestDraft = drafts.current.get(response.result.path);
+      // A reload may discard only the draft that existed when it was requested.
+      // Typing or a late save during the read must not be overwritten by disk bytes.
+      const targetDraft =
+        latestDraft && (!options?.reload || latestDraft !== cached) ? latestDraft : undefined;
       if (!targetDraft) drafts.current.delete(response.result.path);
+      publishDirty();
       setFile(targetDraft ? targetDraft.file : response.result);
+      setSelectedPath(response.result.path);
+      onOpenPath(response.result.path);
       setNavigation(destination);
       updateDraft(targetDraft ? targetDraft.draft : response.result.content);
       setSaving(pendingSaves.current.has(response.result.path));
+      if (options?.reload) setReloadVersion((version) => version + 1);
+      return response.result.path;
     },
-    [groupId, scopeKey, scopeUrl, file, selectedPath, onOpenPath],
+    [groupId, scopeKey, scopeUrl, file, selectedPath, pathLoading, onOpenPath, publishDirty],
+  );
+
+  const locatePath = useCallback(
+    async (path: string) => {
+      // Share the editor's navigation generation: a newer file click or scope change
+      // must retire this lookup before it can open a file or move focus in the tree.
+      const request = ++fileRequest.current;
+      setFileLoading(false);
+      setPathLoading(true);
+      setPathError("");
+      setSelectedPath(file?.path ?? "");
+      const response = await api.resolveWorkspacePath(groupId, path, scopeKey, scopeUrl);
+      if (request !== fileRequest.current) return;
+      setPathLoading(false);
+      if (!response.ok) {
+        setPathError(response.error.message);
+        return;
+      }
+      if (response.result.is_dir) {
+        onLocatePath(response.result.path, true);
+      } else {
+        const opened = await openFile(response.result.path);
+        if (opened !== null) onLocatePath(opened, false);
+      }
+    },
+    [groupId, scopeKey, scopeUrl, file, openFile, onLocatePath],
   );
 
   const closeFile = useCallback(() => {
     fileRequest.current += 1;
+    setPathLoading(false);
+    setPathError("");
     setFile(null);
     setNavigation(null);
     updateDraft("");
@@ -126,9 +188,9 @@ export function useWorkspaceEditor(
         pendingSaves.current.has(file.path)
       )
         return false;
-      const request = fileRequest.current;
       const generation = groupGeneration.current;
       pendingSaves.current.add(file.path);
+      publishDirty();
       setSaving(true);
       setFileError("");
       const response = await api.saveWorkspaceFile(
@@ -150,6 +212,7 @@ export function useWorkspaceEditor(
             draft: cached.draft,
           });
       }
+      publishDirty();
       if (visibleFile.current?.path === file.path) {
         setSaving(false);
         if (response.ok) {
@@ -163,8 +226,10 @@ export function useWorkspaceEditor(
         }
       }
       if (response.ok) refresh();
-      // Errors belong to the request's viewer, not to a later navigation.
-      if (request !== fileRequest.current) return false;
+      // Directory lookups do not replace the editor. Report saves against the still-visible
+      // file and baseline, including when the user leaves and returns while a save is pending.
+      if (visibleFile.current?.path !== file.path || visibleFile.current.sha256 !== file.sha256)
+        return false;
       if (!response.ok) {
         setConflict(response.error.code === "workspace_write_conflict");
         setFileError(response.error.message);
@@ -173,7 +238,7 @@ export function useWorkspaceEditor(
       setConflict(false);
       return true;
     },
-    [file, groupId, scopeKey, scopeUrl, refresh],
+    [file, groupId, scopeKey, scopeUrl, refresh, publishDirty],
   );
 
   return {
@@ -184,8 +249,12 @@ export function useWorkspaceEditor(
     selectedPath,
     fileLoading,
     fileError,
+    pathLoading,
+    pathError,
+    locatePath,
     saving,
     conflict,
+    reloadVersion,
     openFile,
     closeFile,
     saveFile,

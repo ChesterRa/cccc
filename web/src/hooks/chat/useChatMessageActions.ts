@@ -1,3 +1,4 @@
+import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { useCallback } from "react";
 import type { TFunction } from "i18next";
 import { useGroupStore, useUIStore } from "../../stores";
@@ -117,15 +118,19 @@ export function useChatMessageActions(input: {
         );
         return;
       }
-      const url = new URL(window.location.href);
-      url.searchParams.set("group", groupId);
-      url.searchParams.set("event", eventId);
-      url.searchParams.set("tab", "chat");
-      window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
-      if (input.selectedGroupId === groupId) {
-        useUIStore.getState().setActiveTab("chat");
-        void input.openChatWindow(groupId, eventId);
-      } else useGroupStore.getState().setSelectedGroupId(groupId);
+      const navigate = () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("group", groupId);
+        url.searchParams.set("event", eventId);
+        url.searchParams.set("tab", "chat");
+        window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
+        if (input.selectedGroupId === groupId) {
+          useUIStore.getState().setActiveTab("chat");
+          void input.openChatWindow(groupId, eventId);
+        } else useGroupStore.getState().setSelectedGroupId(groupId);
+      };
+      if (input.selectedGroupId === groupId) navigate();
+      else requestWorkspaceNavigation(navigate);
     },
     [input],
   );

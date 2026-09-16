@@ -19,7 +19,7 @@ export async function connectGroupJourney({
   failures,
 }) {
   const groupDialog =
-    "[...document.querySelectorAll('[role=dialog]')].find(d=>d.getClientRects().length && d.innerText.includes('External connections'))";
+    "[...document.querySelectorAll('[role=dialog]')].find(d=>d.getClientRects().length && d.innerText.includes('Group connections'))";
   const body = () => evaluate("document.body?.innerText || ''");
   const navigate = async (url) => {
     const navigation = await call("Page.navigate", { url });
@@ -92,7 +92,7 @@ export async function connectGroupJourney({
       () => evaluate("!!document.querySelector('[role=menuitem]')"),
       "Group actions menu",
     );
-    await click("External connections");
+    await click("Group connections");
   };
   const continueToAccount = async (button) => {
     await click(button);

@@ -38,7 +38,6 @@ async fn export(
         group_copy::export(&store, &group_id)
     })
     .await?;
-    let safe = filename.replace(['\r', '\n', '"'], "_");
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -46,8 +45,9 @@ async fn export(
     );
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!(
-            "attachment; filename=\"{safe}\"; filename*=UTF-8''{safe}"
+        HeaderValue::from_str(&super::file_response::content_disposition(
+            "attachment",
+            &filename,
         ))
         .map_err(|error| ApiError::bad(error.to_string()))?,
     );

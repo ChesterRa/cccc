@@ -5,6 +5,7 @@ use cccc_client::DaemonClient;
 use cccc_core::{GroupStore, HomeLayout, ledger};
 use futures_util::{StreamExt, stream};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn local_principal() -> Principal {
     Principal {
@@ -61,8 +62,10 @@ async fn an_already_open_group_stream_stops_after_its_token_is_removed() {
 
 async fn encoded_event_name(name: &'static str) -> String {
     let event = cccc_contracts::Event::new("chat.message", "g_test");
-    let response =
-        Sse::new(stream::iter([Ok::<_, Infallible>(sse_event(name, event))])).into_response();
+    let response = Sse::new(stream::iter([Ok::<_, Infallible>(
+        sse_event(name, event).into_sse(),
+    )]))
+    .into_response();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("read SSE body");

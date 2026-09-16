@@ -1,3 +1,5 @@
+import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
+import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
 import { useEffect, useState, type CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { AppHeader } from "../layout/AppHeader";
@@ -268,7 +270,10 @@ export function AppShell({
           isDark={isDark}
           readOnly={webReadOnly}
           codexVoice={canUseVoice ? codexVoice : undefined}
-          onSelectGroup={onSelectGroup}
+          onSelectGroup={(groupId) => {
+            if (!remoteWorkspace && groupId === selectedGroupId) onSelectGroup(groupId);
+            else requestWorkspaceNavigation(() => onSelectGroup(groupId));
+          }}
           onWarmGroup={onWarmGroup}
           onCreateGroup={onCreateGroup}
           onClose={onCloseSidebar}
@@ -410,6 +415,7 @@ export function AppShell({
         )}
       </main>
 
+      <WorkspaceNavigationDialog />
       <GroupConnectionsControl
         enabled={!webReadOnly && canAccessAccount}
         groupId={selectedGroupId}

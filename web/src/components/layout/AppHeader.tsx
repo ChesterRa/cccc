@@ -203,6 +203,7 @@ export function AppHeader({
           variant="secondary"
           className="-ml-1 text-[var(--color-text-secondary)] md:hidden"
           onClick={onOpenSidebar}
+          data-sidebar-toggle="true"
           label={t("openSidebar")}
         >
           <MenuIcon size={18} />
