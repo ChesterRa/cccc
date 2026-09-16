@@ -657,5 +657,11 @@
   },
   "workspaceEmpty": "表示できるファイルがありません",
   "workspaceEmptyHint": "ワークスペースにファイルを追加してから、更新してください。",
-  "workspaceEmptyFilteredHint": "Git の除外ルールで非表示になっている可能性があります。"
+  "workspaceEmptyFilteredHint": "Git の除外ルールで非表示になっている可能性があります。",
+  "workspaceUnsaved": {
+    "title": "未保存のファイル変更を破棄しますか",
+    "description": "ファイルの変更は保存されていません。このまま保存するか、変更を破棄して移動できます。",
+    "stay": "ここに留まる",
+    "discard": "破棄して移動"
+  }
 }

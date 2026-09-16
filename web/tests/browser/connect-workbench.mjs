@@ -452,11 +452,27 @@ try {
   await once(cdp, "open");
   let sequence = 0;
   const pending = new Map();
+  const realtimeSockets = new Map();
   cdp.on("message", (raw) => {
     const message = JSON.parse(raw);
     if (!message.id) {
       if (message.method === "Runtime.exceptionThrown")
         failures.push(message.params.exceptionDetails.text);
+      const key = `${message.sessionId || "main"}:${message.params?.requestId}`;
+      if (message.method === "Network.webSocketCreated") {
+        const url = new URL(message.params.url);
+        if (url.pathname === "/api/v1/events/ws")
+          realtimeSockets.set(key, { host: url.host, ready: new Set(), events: new Set() });
+      }
+      if (message.method === "Network.webSocketFrameReceived" && realtimeSockets.has(key)) {
+        const frame = message.params.response;
+        if (frame.opcode === 1) {
+          const packet = JSON.parse(frame.payloadData);
+          const socket = realtimeSockets.get(key);
+          if (packet.type === "ready") socket.ready.add(packet.channel);
+          if (packet.type === "event") socket.events.add(packet.message.event);
+        }
+      }
       return;
     }
     const callback = pending.get(message.id);
@@ -606,8 +622,14 @@ try {
       "target Group metadata",
     );
     await eventually(
-      () => requests.some((r) => r.index === 1 && r.path.endsWith("/ledger/stream")),
-      "native target SSE",
+      () =>
+        [...realtimeSockets.values()].some(
+          (socket) =>
+            socket.host === new URL(origins[1]).host &&
+            ["global", "ledger", "headless"].every((channel) => socket.ready.has(channel)) &&
+            socket.events.has("headless.snapshot"),
+        ),
+      "native target multiplexed subscriptions and snapshot",
     );
     if (scaleProbe)
       await evaluate(
@@ -727,6 +749,13 @@ try {
         ),
       "target upload ledger",
     );
+    await eventually(
+      () =>
+        [...realtimeSockets.values()].some(
+          (socket) => socket.host === new URL(origins[1]).host && socket.events.has("ledger"),
+        ),
+      "target live ledger event over WebSocket",
+    );
     assert(
       !readFileSync(join(homes[0], "groups", groups[0], "ledger.jsonl"), "utf8").includes(
         "uploaded-from-browser.txt",
@@ -734,7 +763,7 @@ try {
       "entry ledger is untouched by target upload",
     );
     process.stdout.write(
-      "Target login, native SSE, terminal input/resize and file upload/download passed.\n",
+      "Target login, multiplexed events, terminal input/resize and file upload/download passed.\n",
     );
     const cookies = (await call("Storage.getCookies")).cookies.filter((cookie) =>
       cookie.name.startsWith("__Host-cccc_access_"),
@@ -811,8 +840,76 @@ try {
       await call("Page.enable", {}, world);
       await call("Network.setCookieControls", cookieControls, world);
     };
+    await evaluate("document.querySelector('[data-workspace-files-toggle]').click()", world);
+    await eventually(
+      () =>
+        evaluate(
+          "[...document.querySelectorAll('[role=treeitem]')].some(e=>e.textContent.includes('fixture.txt'))",
+          world,
+        ),
+      "remote workspace file tree",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=treeitem]')].find(e=>e.textContent.includes('fixture.txt')).click()",
+      world,
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "[...document.querySelectorAll('textarea')].some(e=>e.value==='attachment-1')",
+          world,
+        ),
+      "remote workspace editor",
+    );
+    await evaluate(
+      "(()=>{const e=[...document.querySelectorAll('textarea')].find(e=>e.value==='attachment-1');e.focus();e.select();})()",
+      world,
+    );
+    await call("Input.insertText", { text: "UNSAVED REMOTE EDIT" }, world);
+    await eventually(
+      () =>
+        evaluate(
+          "(()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented;})()",
+        ),
+      "entry learns remote dirty state",
+    );
     await evaluate(
       "[...document.querySelectorAll('aside [role=button]')].find(b=>b.textContent.trim()==='Workspace A').click()",
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "[...document.querySelectorAll('[role=dialog]')].some(e=>e.textContent.includes('Leave unsaved file edits?'))",
+        ),
+      "entry protects remote drafts",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent==='Stay here').click()",
+    );
+    assert(
+      await evaluate(
+        "[...document.querySelectorAll('textarea')].some(e=>e.value==='UNSAVED REMOTE EDIT')",
+        world,
+      ),
+      "cancel preserves remote edits and frame",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('aside [role=button]')].find(b=>b.textContent.trim()==='Workspace A').click()",
+    );
+    await eventually(
+      () =>
+        evaluate(
+          "[...document.querySelectorAll('[role=dialog] button')].some(e=>e.textContent==='Discard and continue')",
+        ),
+      "explicit discard choice",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent==='Discard and continue').click()",
+    );
+    assert.equal(
+      readFileSync(join(dir, "workspace-1/fixture.txt"), "utf8"),
+      "attachment-1",
+      "navigation never saves files implicitly",
     );
     await eventually(
       () => evaluate("document.querySelectorAll('iframe').length===0"),
@@ -1154,7 +1251,7 @@ try {
         ),
       "current frame terminal URL",
     );
-    for (const path of [terminalPath, "/api/v1/events/stream", new URL(preview.url).pathname]) {
+    for (const path of [terminalPath, "/api/v1/events/ws", new URL(preview.url).pathname]) {
       const actual = requests.filter((request) => request.index === 1 && request.path === path);
       assert(actual.length > 0, `native workbench opened ${path}`);
       assert(
@@ -1179,6 +1276,21 @@ try {
       () => evaluate("window.fixtureSocket?.readyState===WebSocket.OPEN", world),
       "independent target socket",
     );
+    const realtimeRequest = requests.findLast(
+      (request) =>
+        request.index === 1 &&
+        request.path === "/api/v1/events/ws" &&
+        new URL(request.url, origins[1]).searchParams.get("connect_frame") === activeFrame,
+    );
+    assert(realtimeRequest, "current frame opened its event socket");
+    await evaluate(
+      `(()=>{const url=new URL(${JSON.stringify(realtimeRequest.url)},location.origin);url.protocol='wss:';const socket=window.fixtureRealtime=new WebSocket(url);socket.onopen=()=>socket.send(JSON.stringify({type:'subscribe',channel:'global',id:1}));socket.onmessage=e=>{if(JSON.parse(e.data).type==='ready')window.fixtureRealtimeReady=true;};socket.onclose=()=>window.fixtureRealtimeClosed=true;})()`,
+      world,
+    );
+    await eventually(
+      () => evaluate("window.fixtureRealtimeReady===true", world),
+      "independent target event subscription",
+    );
     const editCurrentToken = async (index, method, body, session) => {
       const result = await evaluate(
         `(async()=>{const list=await fetch('/api/v1/access-tokens').then(r=>r.json());const current=list.result.access_tokens.find(t=>t.user_id===${JSON.stringify(`admin-${index}`)});return fetch('/api/v1/access-tokens/'+current.token_id,{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},body:${body ? `JSON.stringify(${JSON.stringify(body)})` : "undefined"}}).then(r=>r.json())})()`,
@@ -1188,8 +1300,9 @@ try {
     };
     await editCurrentToken(1, "DELETE", null, world);
     await eventually(
-      () => evaluate("window.fixtureSocketClosed===true", world),
-      "server closes already-open revoked socket",
+      () =>
+        evaluate("window.fixtureSocketClosed===true && window.fixtureRealtimeClosed===true", world),
+      "server closes already-open revoked terminal and event sockets",
       20000,
     );
     await eventually(
@@ -1226,12 +1339,13 @@ try {
         targetAdminLogin: true,
         entryTokenIsolation: true,
         thirdPartyCookiesBlocked: true,
-        nativeSse: true,
+        nativeRealtimeWebSocket: true,
         terminalInputAndResize: true,
         authenticatedDownload: true,
         targetUpload: true,
         nestedPresentation: true,
         targetSessionReuse: true,
+        remoteDraftNavigation: true,
         targetLogoutReopen: true,
         keyboardSettings: true,
         accountConnectionStatus: true,

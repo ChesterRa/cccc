@@ -1,4 +1,4 @@
-use super::operation::{Operation, Policy::GlobalWrite};
+use super::operation::{Operation, Policy::RemoteAccess};
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{HomeLayout, settings};
@@ -11,12 +11,12 @@ const REMOTE_ACCESS_MODE: &str = "tailnet_only";
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "remote_access_state" => Operation::new(GlobalWrite, |home, _request| state(home)),
-        "remote_access_configure" => Operation::new(GlobalWrite, configure),
-        "remote_access_start" => Operation::new(GlobalWrite, |home, request| {
+        "remote_access_state" => Operation::new(RemoteAccess, |home, _request| state(home)),
+        "remote_access_configure" => Operation::new(RemoteAccess, configure),
+        "remote_access_start" => Operation::new(RemoteAccess, |home, request| {
             set_running(home, request, true)
         }),
-        "remote_access_stop" => Operation::new(GlobalWrite, |home, request| {
+        "remote_access_stop" => Operation::new(RemoteAccess, |home, request| {
             set_running(home, request, false)
         }),
         _ => return None,

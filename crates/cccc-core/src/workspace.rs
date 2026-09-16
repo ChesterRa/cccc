@@ -199,7 +199,7 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
         .collect::<Vec<_>>();
 
     let candidates: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
-    let ignored = workspace_git::ignored(&root, &candidates);
+    let (ignored, status) = workspace_git::decorations(&root, &normalized, &candidates);
     for entry in &mut entries {
         entry.ignored = ignored.contains(&entry.path);
     }
@@ -207,7 +207,6 @@ pub fn list(group: &GroupDoc, relative: &str, options: ListOptions) -> io::Resul
         entries.retain(|entry| !entry.ignored);
     }
 
-    let status = workspace_git::status_map(&root, &normalized);
     for entry in &mut entries {
         entry.git_status = status.get(&entry.path).copied();
         if entry.is_dir {

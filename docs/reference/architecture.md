@@ -94,8 +94,9 @@ MCP shutdown releases only those sessions, leaving other hosts and Actor/Analyst
 runtimes alone. Their process-local state does not replace Group
 configuration, message history, authorization, or delivery facts.
 
-Finite MCP shell/Git commands and daemon MCP-setup helpers share the runtime's
-bounded command capture function. It feeds stdin while draining both output
+Finite MCP shell/Git commands, optional workspace Git decorations, and daemon
+MCP-setup helpers share the runtime's bounded command capture function. It feeds
+stdin while draining both output
 streams, applies one deadline, and releases the existing process-group / Windows
 Job owner on completion or cancellation. Shell results report truncation; setup
 helpers reject oversized output rather than interpreting partial configuration.

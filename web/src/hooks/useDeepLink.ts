@@ -1,3 +1,4 @@
+import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 // useDeepLink - Handle deep links (?group=<id>&event=<event_id>)
 // Extracts deep link parsing, application, and openMessageWindow function
 
@@ -81,24 +82,28 @@ export function useDeepLink({
       const eid = String(eventId || "").trim();
       if (!gid || !eid) return;
 
-      // Update URL
-      const url = new URL(window.location.href);
-      url.searchParams.set("group", gid);
-      url.searchParams.set("event", eid);
-      url.searchParams.set("tab", "chat");
-      window.history.replaceState({}, "", url.pathname + "?" + url.searchParams.toString());
+      const navigate = () => {
+        // Update URL
+        const url = new URL(window.location.href);
+        url.searchParams.set("group", gid);
+        url.searchParams.set("event", eid);
+        url.searchParams.set("tab", "chat");
+        window.history.replaceState({}, "", url.pathname + "?" + url.searchParams.toString());
 
-      // If we're already in the target group, jump immediately
-      if (selectedGroupId === gid) {
-        setActiveTab("chat");
-        void openChatWindow(gid, eid);
-        deepLinkRef.current = null;
-        return;
-      }
+        // If we're already in the target group, jump immediately
+        if (selectedGroupId === gid) {
+          setActiveTab("chat");
+          void openChatWindow(gid, eid);
+          deepLinkRef.current = null;
+          return;
+        }
 
-      // Otherwise, queue a deep link and switch groups; the effect will open the window
-      deepLinkRef.current = { groupId: gid, eventId: eid };
-      setSelectedGroupId(gid);
+        // Otherwise, queue a deep link and switch groups; the effect will open the window
+        deepLinkRef.current = { groupId: gid, eventId: eid };
+        setSelectedGroupId(gid);
+      };
+      if (selectedGroupId === gid) navigate();
+      else requestWorkspaceNavigation(navigate);
     },
     [selectedGroupId, setActiveTab, openChatWindow, setSelectedGroupId],
   );

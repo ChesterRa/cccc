@@ -1,3 +1,4 @@
+import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiJson } from "../../services/api/base";
 import type {
@@ -133,15 +134,23 @@ export function useConnectWorkbench(
     directory && selected
       ? instances.find((entry) => entry.instance_id === selected.instanceId) || null
       : null;
+  const selectionRef = useRef(selected);
+  selectionRef.current = selected;
   const select = useCallback((instanceId: string, groupId = "", action?: "connections") => {
-    setCollapsedInstances((previous) => previous.filter((id) => id !== instanceId));
-    setSelected((previous) => ({
-      instanceId,
-      groupId,
-      action,
-      epoch: previous?.instanceId === instanceId ? previous.epoch : (previous?.epoch || 0) + 1,
-      revision: (previous?.revision || 0) + 1,
-    }));
+    const apply = () => {
+      setCollapsedInstances((previous) => previous.filter((id) => id !== instanceId));
+      setSelected((previous) => ({
+        instanceId,
+        groupId,
+        action,
+        epoch: previous?.instanceId === instanceId ? previous.epoch : (previous?.epoch || 0) + 1,
+        revision: (previous?.revision || 0) + 1,
+      }));
+    };
+    // The embedded editor guards Group changes in its own document. Switching
+    // instances destroys that document, so its dirty flag is checked here.
+    if (selectionRef.current?.instanceId === instanceId) apply();
+    else requestWorkspaceNavigation(apply);
   }, []);
   // A target may report its initial/default selection after a newer sidebar
   // click. Only reports from the current navigation may update the entry.

@@ -8,6 +8,14 @@ import type { SidePanelSurface } from "./useSidePanelSelection";
 
 let root: ReturnType<typeof createRoot>, host: HTMLDivElement;
 let layout: ReturnType<typeof useSidePanelLayout>;
+let frames: Map<number, FrameRequestCallback>;
+let nextFrame: number;
+const flushFrames = () =>
+  act(async () => {
+    const pending = [...frames.values()];
+    frames.clear();
+    pending.forEach((callback) => callback(0));
+  });
 function Harness({
   group = "a",
   surface = "presentation",
@@ -31,13 +39,15 @@ function Harness({
 const render = (group = "a", surface: SidePanelSurface = "presentation") =>
   act(async () => root.render(<Harness group={group} surface={surface} />));
 const state = (group = "a") => getChatSession(group, useUIStore.getState().chatSessions);
-const pointer = (type: string, x: number) =>
-  act(async () => {
+const pointer = async (type: string, x: number, flush = true) => {
+  await act(async () => {
     const target = type === "pointerdown" ? host.querySelector("[data-divider]")! : window;
     target.dispatchEvent(
       new PointerEvent(type, { clientX: x, button: 0, bubbles: true, cancelable: true }),
     );
   });
+  if (flush) await flushFrames();
+};
 const key = (key: string) =>
   act(async () =>
     host
@@ -46,6 +56,15 @@ const key = (key: string) =>
   );
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  frames = new Map();
+  nextFrame = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+    frames.delete(id);
+  });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   localStorage.clear();
   useUIStore.setState({ chatSessions: {} });
@@ -122,4 +141,30 @@ it("lets keyboard resizing collapse at the minimum and restore the saved width",
   await key("ArrowRight");
   expect(layout.width).toBe(280);
   expect(layout.compact).toBe(false);
+});
+
+it("coalesces movement but commits the latest position when released before the next frame", async () => {
+  await render("a", "files");
+  await pointer("pointerdown", 500);
+  await pointer("pointermove", 470, false);
+  await pointer("pointermove", 430, false);
+  expect(frames.size).toBe(1);
+  expect(layout.width).toBe(360);
+  await flushFrames();
+  expect(layout.width).toBe(430);
+  expect(state().sidePanelWidth).toBe(360);
+  await pointer("pointermove", 410, false);
+  await pointer("pointerup", 410);
+  expect(state().sidePanelWidth).toBe(450);
+  expect(frames.size).toBe(0);
+  expect(layout.dragging).toBe(false);
+
+  await pointer("pointerdown", 500);
+  await pointer("pointermove", 400, false);
+  await render("b", "files");
+  expect(frames.size).toBe(0);
+  await flushFrames();
+  expect(layout.width).toBe(360);
+  expect(state("a").sidePanelWidth).toBe(450);
+  expect(state("b").sidePanelWidth).toBe(360);
 });

@@ -1,3 +1,4 @@
+import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 // AppModals renders all modal components in one place.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -1263,7 +1264,7 @@ export function AppModals({
       resetCreateGroupForm();
       closeModal("createGroup");
       await refreshGroups();
-      setSelectedGroupId(groupId);
+      requestWorkspaceNavigation(() => setSelectedGroupId(groupId));
     } finally {
       setBusy("");
     }

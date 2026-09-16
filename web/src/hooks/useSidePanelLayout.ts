@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -52,6 +53,7 @@ export function useSidePanelLayout(
 
   useEffect(() => {
     if (!dragging) return;
+    let frame: number | null = null;
     const oldCursor = document.body.style.cursor;
     const oldSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
@@ -63,14 +65,23 @@ export function useSidePanelLayout(
       const nextCompact =
         surface === "presentation" && shouldCompactSidePanel(proposed, current.latest.compact);
       current.latest = {
-        width: nextCompact
-          ? current.latest.width
-          : clampSidePanelWidth(proposed, container.current?.clientWidth),
+        width: nextCompact ? current.latest.width : clampSidePanelWidth(proposed, containerWidth),
         compact: nextCompact,
       };
-      setDraft(current.latest);
+      if (frame === null) {
+        frame = requestAnimationFrame(() => {
+          frame = null;
+          const next = gesture.current?.latest;
+          if (next)
+            setDraft((previous) =>
+              previous?.width === next.width && previous.compact === next.compact ? previous : next,
+            );
+        });
+      }
     };
     const finish = (event: globalThis.PointerEvent) => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
       const next = gesture.current?.latest;
       if (next && event.type === "pointerup") {
         save(groupId, {
@@ -86,6 +97,7 @@ export function useSidePanelLayout(
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
     return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
@@ -94,13 +106,13 @@ export function useSidePanelLayout(
       gesture.current = null;
       setDraft(null);
     };
-  }, [dragging, groupId, surface, viewing, container, save, closeViewer]);
+  }, [dragging, groupId, surface, viewing, containerWidth, save, closeViewer]);
 
-  const toggleCompact = () => {
+  const toggleCompact = useCallback(() => {
     if (surface !== "presentation") return;
     save(groupId, { compact: !compact });
     if (!compact && viewing) closeViewer(null);
-  };
+  }, [surface, groupId, compact, viewing, save, closeViewer]);
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!surface || event.button !== 0) return;
     event.preventDefault();

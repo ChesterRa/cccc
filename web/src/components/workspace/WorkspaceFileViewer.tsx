@@ -253,6 +253,7 @@ function FileViewer({
         </div>
       ) : editable ? (
         <textarea
+          data-workspace-editor="true"
           value={editorText(draft)}
           spellCheck={false}
           onChange={(event) => setDraft(applyEditorText(draft, event.target.value, file.content))}

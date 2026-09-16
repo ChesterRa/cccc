@@ -137,3 +137,37 @@ fn a_nested_listing_still_rolls_up_changes_from_deeper_in_its_own_subtree() {
         .expect("src");
     assert!(src.git_dirty_descendant);
 }
+
+#[cfg(unix)]
+#[test]
+fn slow_git_hook_times_out_without_trapping_files_or_leaving_descendants() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = fixture();
+    git(&fixture.repo, &["init", "-q"]);
+    git(&fixture.repo, &["add", "."]);
+    let hook = fixture.repo.join(".git/slow-monitor");
+    let escaped = fixture.repo.to_string_lossy().replace("'", "'\"'\"'");
+    std::fs::write(&hook, format!("#!/bin/sh\n(sleep 5; touch '{escaped}/leaked-hook') &\nwait\nprintf 'token\\000/\\000'\n"))
+        .expect("write hook");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700))
+        .expect("hook permissions");
+    git(
+        &fixture.repo,
+        &[
+            "config",
+            "core.fsmonitor",
+            hook.to_str().expect("hook path"),
+        ],
+    );
+    let started = std::time::Instant::now();
+    let listing =
+        workspace::list(&fixture.group, "", ListOptions::default()).expect("base listing survives");
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    assert!(names(&listing.items).contains(&"src".to_owned()));
+    assert!(listing.items.iter().all(|entry| entry.git_status.is_none()));
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    assert!(
+        !fixture.repo.join("leaked-hook").exists(),
+        "owned descendants must be terminated"
+    );
+}

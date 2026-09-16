@@ -209,6 +209,187 @@ async fn connect_delivery_recovers_lost_receipt_without_resending_and_keeps_orig
 }
 
 #[tokio::test]
+async fn connect_scheduler_gives_a_quiet_peer_a_turn_before_busy_peers_drain() {
+    let mut peers = Vec::new();
+    for _ in 0..5 {
+        peers.push(setup().await);
+    }
+    peers.sort_by(|a, b| a.2.cmp(&b.2));
+    let home = peers[0].1.source.clone();
+    let mut snapshot = connect::load(&home).expect("snapshot").expect("binding");
+    let directory = snapshot.directory.as_mut().expect("directory");
+    let source_identity = directory.instances[0].clone();
+    directory.instances.truncate(1);
+    for (_, state, peer, _) in &peers {
+        let mut target_snapshot = connect::load(&state.target)
+            .expect("target")
+            .expect("binding");
+        let target_directory = target_snapshot.directory.as_mut().expect("directory");
+        let device_id = format!("device-{peer}");
+        membership::update(&state.target, |state| {
+            state.device_id = Some(device_id.clone());
+            Ok(())
+        })
+        .expect("distinct target device");
+        target_snapshot.device_id = device_id.clone();
+        target_directory.device_id = device_id.clone();
+        target_directory.instances[1].device_id = device_id;
+        directory
+            .instances
+            .push(target_directory.instances[1].clone());
+        target_directory.instances[0] = source_identity.clone();
+        connect::save(&state.target, &target_snapshot).expect("target directory");
+    }
+    connect::save(&home, &snapshot).expect("source directory");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let source = store.create("Sender", "").expect("source");
+    let client = client();
+    let mut quiet_delivery = String::new();
+    for (index, (_, state, peer, _)) in peers.iter().enumerate() {
+        let target = GroupStore::new(state.target.clone())
+            .expect("store")
+            .create("Receiver", "")
+            .expect("target");
+        refresh_catalog(&home, &client, peer)
+            .await
+            .expect("catalog");
+        // Four busy destinations can fill every worker slot. A fifth destination
+        // must not wait for any of those queues to empty before its first turn.
+        for n in 0..if index == 4 { 1 } else { 32 } {
+            let accepted = crate::dispatch::dispatch(
+                &home,
+                &send_request(
+                    &source.group_id,
+                    &target.group_id,
+                    peer,
+                    json!(["user"]),
+                    &format!("fair-{index}-{n}"),
+                ),
+            );
+            assert!(accepted.ok, "{accepted:?}");
+            if index == 4 {
+                quiet_delivery = accepted.result["delivery_id"].as_str().expect("id").into();
+            }
+        }
+    }
+    let worker = tokio::spawn(delivery::run(
+        home.clone(),
+        client,
+        crate::dispatch_concurrency::DispatchLocks::default(),
+    ));
+    let drained = tokio::time::timeout(Duration::from_secs(20), async {
+        while !cccc_core::connect_delivery::pending_ids(&home)
+            .expect("queue")
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    for (_, _, _, server) in &peers {
+        server.abort();
+    }
+    assert!(drained.is_ok(), "all healthy peers must drain");
+    let events = cccc_core::ledger::read_all(&store.ledger_path(&source.group_id).expect("path"))
+        .expect("ledger");
+    let receipts: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "chat.cross_group_receipt")
+        .collect();
+    assert_eq!(receipts.len(), 129);
+    assert!(receipts.iter().all(|event| event.data["status"] == "sent"));
+    let position = receipts
+        .iter()
+        .position(|event| event.data["delivery_id"] == quiet_delivery)
+        .expect("quiet peer receipt");
+    assert!(
+        position < 16,
+        "quiet peer waited behind {position} receipts from busy peers"
+    );
+}
+
+#[tokio::test]
+async fn connect_scheduler_drains_ready_work_without_waiting_a_tick_per_message() {
+    let (_temp, state, peer, server) = setup().await;
+    let source = GroupStore::new(state.source.clone())
+        .expect("store")
+        .create("Source", "")
+        .expect("source");
+    let target = GroupStore::new(state.target.clone())
+        .expect("store")
+        .create("Target", "")
+        .expect("target");
+    let client = client();
+    refresh_catalog(&state.source, &client, &peer)
+        .await
+        .expect("catalog");
+    let mut ready = Vec::new();
+    let mut delayed = String::new();
+    for n in 0..13 {
+        let accepted = crate::dispatch::dispatch(
+            &state.source,
+            &send_request(
+                &source.group_id,
+                &target.group_id,
+                &peer,
+                json!(["user"]),
+                &format!("burst-{n}"),
+            ),
+        );
+        assert!(accepted.ok, "{accepted:?}");
+        let id = accepted.result["delivery_id"]
+            .as_str()
+            .expect("id")
+            .to_owned();
+        if n == 12 {
+            let mut entry = cccc_core::connect_delivery::load(&state.source, &peer, &id)
+                .expect("load")
+                .expect("entry");
+            entry.progress.next_attempt_at =
+                Some((Utc::now() + ChronoDuration::seconds(60)).to_rfc3339());
+            cccc_core::connect_delivery::update_progress(&state.source, &peer, &id, entry.progress)
+                .expect("backoff");
+            delayed = id;
+        } else {
+            ready.push(id);
+        }
+    }
+    let worker = tokio::spawn(delivery::run(
+        state.source.clone(),
+        client,
+        crate::dispatch_concurrency::DispatchLocks::default(),
+    ));
+    // This is a scheduling bound, not a microbenchmark: a one-second delay per
+    // ready message cannot finish, while loopback delivery has ample headroom.
+    let drained = tokio::time::timeout(Duration::from_secs(5), async {
+        while ready.iter().any(|id| {
+            cccc_core::connect_delivery::load(&state.source, &peer, id)
+                .expect("queue")
+                .is_some()
+        }) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    server.abort();
+    assert!(
+        drained.is_ok(),
+        "ready work must resume when a worker finishes"
+    );
+    assert_eq!(state.deliveries.load(Ordering::Acquire), 12);
+    assert!(
+        cccc_core::connect_delivery::load(&state.source, &peer, &delayed)
+            .expect("queue")
+            .is_some(),
+        "completion must not bypass a persisted retry deadline"
+    );
+}
+
+#[tokio::test]
 async fn connect_scheduler_isolates_a_broken_record_and_retires_deleted_source_work() {
     let (_temp, state, peer, server) = setup().await;
     let source_store = GroupStore::new(state.source.clone()).expect("store");

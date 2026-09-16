@@ -1,3 +1,4 @@
+import { requestWorkspaceNavigation } from "../../../stores/workspaceNavigation";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
@@ -172,8 +173,10 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
       setInfo(t("copyGroups.imported"));
       await refreshGroups();
       if (nextGroupId) {
-        setSelectedGroupId(nextGroupId);
-        await loadGroup(nextGroupId);
+        requestWorkspaceNavigation(() => {
+          setSelectedGroupId(nextGroupId);
+          void loadGroup(nextGroupId);
+        });
       }
       window.setTimeout(() => setInfo(""), 1600);
     } catch {

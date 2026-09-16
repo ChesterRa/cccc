@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser regression for the real Runtime Dock with isolated synthetic SSE.
+"""Browser regression for the real Runtime Dock with isolated synthetic WebSocket events.
 
 Requires Chrome, requests and websocket-client. Run an isolated Vite server first:
   CCCC_WEB_PORT=19999 npm -C web run dev -- --host 127.0.0.1 --port 15561

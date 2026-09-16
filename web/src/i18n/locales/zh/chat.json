@@ -657,5 +657,11 @@
   },
   "workspaceEmpty": "暂无可显示的文件",
   "workspaceEmptyHint": "添加文件到此工作区后，点击右上角刷新。",
-  "workspaceEmptyFilteredHint": "文件可能被 Git 忽略规则隐藏。"
+  "workspaceEmptyFilteredHint": "文件可能被 Git 忽略规则隐藏。",
+  "workspaceUnsaved": {
+    "title": "放弃未保存的文件修改？",
+    "description": "文件修改尚未保存。可以留在当前工作区保存，或放弃修改后继续。",
+    "stay": "留在这里",
+    "discard": "放弃修改并继续"
+  }
 }

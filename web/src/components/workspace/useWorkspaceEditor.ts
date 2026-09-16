@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../../services/api";
+import { setWorkspaceDirty } from "../../stores/workspaceNavigation";
 import type { WorkspaceFile } from "../../types";
 
 export type WorkspaceOpenFileOptions = { reload?: boolean; fragment?: string };
@@ -24,6 +25,10 @@ export function useWorkspaceEditor(
   const fileRequest = useRef(0);
   const groupGeneration = useRef(0);
   const drafts = useRef(new Map<string, { file: WorkspaceFile; draft: string }>());
+  const dirtyOwner = useRef(Symbol("workspace editor"));
+  const publishDirty = useCallback(() => {
+    setWorkspaceDirty(dirtyOwner.current, drafts.current.size > 0 || pendingSaves.current.size > 0);
+  }, []);
   // A save belongs to its file even when the user opens a different viewer.
   const pendingSaves = useRef(new Set<string>());
   const visibleFile = useRef(file);
@@ -35,6 +40,7 @@ export function useWorkspaceEditor(
     groupGeneration.current += 1;
     drafts.current.clear();
     pendingSaves.current.clear();
+    setWorkspaceDirty(dirtyOwner.current, false);
     setFile(null);
     setNavigation(null);
     updateDraft("");
@@ -44,6 +50,14 @@ export function useWorkspaceEditor(
     setConflict(false);
     setSaving(false);
   }, [groupId, scopeKey, scopeUrl]);
+  useLayoutEffect(() => {
+    const owner = dirtyOwner.current;
+    return () => {
+      fileRequest.current += 1;
+      groupGeneration.current += 1;
+      setWorkspaceDirty(owner, false);
+    };
+  }, []);
   const setDraft = useCallback(
     (value: string) => {
       updateDraft(value);
@@ -52,9 +66,10 @@ export function useWorkspaceEditor(
         if (value === file.content && !pendingSaves.current.has(file.path))
           drafts.current.delete(file.path);
         else drafts.current.set(file.path, { file, draft: value });
+        publishDirty();
       }
     },
-    [file],
+    [file, publishDirty],
   );
 
   const openFile = useCallback(
@@ -98,12 +113,13 @@ export function useWorkspaceEditor(
       // Look up that identity before replacing an unsaved target with disk bytes.
       const targetDraft = !options?.reload && drafts.current.get(response.result.path);
       if (!targetDraft) drafts.current.delete(response.result.path);
+      publishDirty();
       setFile(targetDraft ? targetDraft.file : response.result);
       setNavigation(destination);
       updateDraft(targetDraft ? targetDraft.draft : response.result.content);
       setSaving(pendingSaves.current.has(response.result.path));
     },
-    [groupId, scopeKey, scopeUrl, file, selectedPath, onOpenPath],
+    [groupId, scopeKey, scopeUrl, file, selectedPath, onOpenPath, publishDirty],
   );
 
   const closeFile = useCallback(() => {
@@ -129,6 +145,7 @@ export function useWorkspaceEditor(
       const request = fileRequest.current;
       const generation = groupGeneration.current;
       pendingSaves.current.add(file.path);
+      publishDirty();
       setSaving(true);
       setFileError("");
       const response = await api.saveWorkspaceFile(
@@ -150,6 +167,7 @@ export function useWorkspaceEditor(
             draft: cached.draft,
           });
       }
+      publishDirty();
       if (visibleFile.current?.path === file.path) {
         setSaving(false);
         if (response.ok) {
@@ -173,7 +191,7 @@ export function useWorkspaceEditor(
       setConflict(false);
       return true;
     },
-    [file, groupId, scopeKey, scopeUrl, refresh],
+    [file, groupId, scopeKey, scopeUrl, refresh, publishDirty],
   );
 
   return {

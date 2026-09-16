@@ -12,9 +12,10 @@ use cccc_core::{
     membership,
 };
 use chrono::Utc;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use tower::ServiceExt;
 
 async fn stream_until(body: &mut axum::body::BodyDataStream, marker: &str) {
@@ -56,6 +57,53 @@ async fn embedded_stream_revocation(reason: &str) {
             .status(),
         StatusCode::OK
     );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let mut request = format!(
+        "ws://{}/api/v1/events/ws?connect_frame={}",
+        listener.local_addr().expect("address"),
+        proof.frame_id,
+    )
+    .into_client_request()
+    .expect("socket request");
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", token.token).parse().expect("header"),
+    );
+    let socket_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, socket_app).await.expect("serve");
+    });
+    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("socket");
+    for (id, channel) in [(1, "global"), (2, "ledger"), (3, "headless")] {
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "subscribe", "id": id, "channel": channel,
+                    "group_id": group.group_id, "replay": true,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("subscribe");
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut ready = std::collections::HashSet::new();
+        while ready.len() < 3 {
+            if let Message::Text(text) = socket.next().await.expect("open socket").expect("frame") {
+                let value: Value = serde_json::from_str(&text).expect("packet");
+                if value["type"] == "ready" {
+                    ready.insert(value["id"].as_u64().expect("subscription id"));
+                }
+            }
+        }
+    })
+    .await
+    .expect("all embedded subscriptions ready");
     let mut streams = Vec::new();
     for path in [
         format!("/api/v1/events/stream?connect_frame={}", proof.frame_id),
@@ -117,9 +165,32 @@ async fn embedded_stream_revocation(reason: &str) {
             "server ends revoked embedded stream"
         );
     }
+    tokio::time::timeout(std::time::Duration::from_secs(18), async {
+        let mut rejected = false;
+        while let Some(message) = socket.next().await {
+            match message.expect("frame") {
+                Message::Text(text) => {
+                    let value: Value = serde_json::from_str(&text).expect("packet");
+                    rejected |= value["type"] == "fatal" && value["code"] == "auth_required";
+                }
+                Message::Close(_) => {
+                    assert!(
+                        rejected,
+                        "frame revocation rejects the entire multiplexed socket"
+                    );
+                    return;
+                }
+                _ => {}
+            }
+        }
+        panic!("expected server close frame");
+    })
+    .await
+    .expect("revoked embedded socket closes");
     let after = cccc_contracts::Event::new("chat.message", &group.group_id);
     cccc_core::ledger::append(&ledger, &after).expect("after revoke");
     stream_until(&mut streams[2], &after.id).await;
+    server.abort();
 }
 
 #[tokio::test]

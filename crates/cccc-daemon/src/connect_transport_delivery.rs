@@ -17,6 +17,7 @@ pub(super) async fn run(home: HomeLayout, client: super::PeerClient, locks: Disp
     let mut active: HashMap<tokio::task::Id, (String, String)> = HashMap::new();
     let mut due: HashMap<(String, String), Instant> = HashMap::new();
     let mut peer_delays: HashMap<String, (u32, Instant)> = HashMap::new();
+    let mut last_peer: Option<String> = None;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -43,23 +44,47 @@ pub(super) async fn run(home: HomeLayout, client: super::PeerClient, locks: Disp
                     }
                 }
             }
-            _=tick.tick()=> {
-                let ids=match connect_delivery::pending_ids(&home) {
-                    Ok(ids)=>ids,Err(error)=>{tracing::warn!(%error,"Connect outbox enumeration failed");continue;}
-                };
-                let present:HashSet<_>=ids.iter().cloned().collect();
-                due.retain(|key,_|present.contains(key));
-                peer_delays.retain(|peer,_|ids.iter().any(|(id,_)|id==peer));
-                for key in ids {
-                    if active.len()>=4 {break;}
-                    if active.values().any(|active_key:&(String,String)|active_key.0==key.0)
-                        || due.get(&key).is_some_and(|time|*time>Instant::now())
-                        || peer_delays.get(&key.0).is_some_and(|(_,time)|*time>Instant::now()) {continue;}
-                    let home=home.clone();let client=client.clone();let locks=locks.clone();let task_key=key.clone();
-                    let task=work.spawn(async move { process(&home,&client,&locks,&task_key.0,&task_key.1).await });
-                    active.insert(task.id(),key);
-                }
+            _=tick.tick()=> {}
+        }
+        // The timer discovers new durable work. A completed worker also releases
+        // capacity immediately; ready messages do not each pay the poll interval.
+        let mut ids = match connect_delivery::pending_ids(&home) {
+            Ok(ids) => ids,
+            Err(error) => {
+                tracing::warn!(%error, "Connect outbox enumeration failed");
+                continue;
             }
+        };
+        let present: HashSet<_> = ids.iter().cloned().collect();
+        due.retain(|key, _| present.contains(key));
+        peer_delays.retain(|peer, _| ids.iter().any(|(id, _)| id == peer));
+        // pending_ids is sorted by peer. Resume after the last admitted peer so
+        // a busy destination cannot continually reclaim a newly available slot.
+        let start = last_peer
+            .as_ref()
+            .map_or(0, |peer| ids.partition_point(|(id, _)| id <= peer));
+        ids.rotate_left(start);
+        for key in ids {
+            if active.len() >= 4 {
+                break;
+            }
+            if active.values().any(|active_key| active_key.0 == key.0)
+                || due.get(&key).is_some_and(|time| *time > Instant::now())
+                || peer_delays
+                    .get(&key.0)
+                    .is_some_and(|(_, time)| *time > Instant::now())
+            {
+                continue;
+            }
+            let home = home.clone();
+            let client = client.clone();
+            let locks = locks.clone();
+            let task_key = key.clone();
+            let task = work.spawn(async move {
+                process(&home, &client, &locks, &task_key.0, &task_key.1).await
+            });
+            last_peer = Some(key.0.clone());
+            active.insert(task.id(), key);
         }
     }
 }

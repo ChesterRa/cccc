@@ -2,7 +2,7 @@ use super::{
     membership_account::AccountClient,
     operation::{
         Operation,
-        Policy::{GlobalWrite, Read},
+        Policy::{Read, RemoteAccess},
     },
 };
 use crate::dispatch::{OpError, OpResult, object};
@@ -31,7 +31,7 @@ mod tests;
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "connect_status" => Operation::new(Read, status),
-        "connect_rename" => Operation::new(GlobalWrite, rename),
+        "connect_rename" => Operation::new(RemoteAccess, rename),
         "connect_group_status" => Operation::new(Read, group_status),
         "connect_group_select" => Operation::new(Read, group_select),
         _ => return None,

@@ -1,6 +1,37 @@
-import type { ConnectDeliveryStatus, LedgerEvent } from "../types";
+import type { ConnectDeliveryStatus, LedgerEvent, ObligationStatus } from "../types";
 
 const CROSS_GROUP_RECEIPT_KIND = "chat.cross_group_receipt";
+
+export function mergeReadStatus(
+  incoming?: Record<string, boolean>,
+  existing?: Record<string, boolean>,
+): Record<string, boolean> | undefined {
+  if (!incoming || !existing) return incoming ?? existing;
+  // Keep the authoritative recipient set, including generation-based removals.
+  return Object.fromEntries(
+    Object.entries(incoming).map(([actor, read]) => [actor, read || existing[actor] === true]),
+  );
+}
+
+export function mergeObligationStatus(
+  incoming?: Record<string, ObligationStatus>,
+  existing?: Record<string, ObligationStatus>,
+): Record<string, ObligationStatus> | undefined {
+  if (!incoming || !existing) return incoming ?? existing;
+  return Object.fromEntries(
+    Object.entries(incoming).map(([actor, status]) => {
+      const previous = existing[actor];
+      // A late pending snapshot cannot reopen a completed obligation. A terminal
+      // snapshot still owns append-order resolution; delivery attempts may retry.
+      return [
+        actor,
+        previous && !status.replied && !status.cancelled && (previous.replied || previous.cancelled)
+          ? { ...status, replied: previous.replied, cancelled: previous.cancelled }
+          : status,
+      ];
+    }),
+  );
+}
 
 export function mergeConnectDelivery(
   incoming?: ConnectDeliveryStatus,
@@ -20,8 +51,11 @@ export function mergeEventWithExistingStatus(
   return {
     ...incoming,
     _retired_bridge: incoming._retired_bridge || existing._retired_bridge,
-    _read_status: incoming._read_status ?? existing._read_status,
-    _obligation_status: incoming._obligation_status ?? existing._obligation_status,
+    _read_status: mergeReadStatus(incoming._read_status, existing._read_status),
+    _obligation_status: mergeObligationStatus(
+      incoming._obligation_status,
+      existing._obligation_status,
+    ),
     _connect_delivery: mergeConnectDelivery(incoming._connect_delivery, existing._connect_delivery),
     _connect_cancellation: mergeConnectDelivery(
       incoming._connect_cancellation,

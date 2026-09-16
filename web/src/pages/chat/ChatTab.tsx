@@ -34,8 +34,7 @@ import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
-import { useSidePanelLayout } from "../../hooks/useSidePanelLayout";
-import { SIDE_PANEL_COMPACT_WIDTH } from "../../utils/sidePanelLayout";
+import { ResizableSidePanel } from "../../components/layout/ResizableSidePanel";
 import {
   MOBILE_APP_HEADER_HEIGHT_PX,
   getMobileFloatingControlsTopInsetPx,
@@ -436,12 +435,6 @@ export function ChatTab({
     presentationViewer?.groupId === selectedGroupId &&
     presentationViewer.surface !== "split";
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
-  const sidePanel = useSidePanelLayout(
-    selectedGroupId,
-    activeSidePanel,
-    !!splitPresentationViewer,
-    splitLayoutRef,
-  );
 
   const openPresentationSlot = useCallback(
     (slotId: string) => {
@@ -1029,55 +1022,18 @@ export function ChatTab({
             </section>
           ) : null}
 
-          {sidePanel.dragging && (
-            <div className="fixed inset-0 z-[1000] cursor-col-resize" aria-hidden="true" />
-          )}
-          {showSplitSurface ? (
-            <>
-              <div
-                className="relative hidden w-2 flex-shrink-0 touch-none cursor-col-resize md:block"
-                onPointerDown={sidePanel.onPointerDown}
-                onKeyDown={sidePanel.onKeyDown}
-                role="separator"
-                tabIndex={0}
-                aria-orientation="vertical"
-                aria-label={t("sidePanelResize")}
-                aria-controls="group-side-panel"
-                aria-valuemin={SIDE_PANEL_COMPACT_WIDTH}
-                aria-valuemax={sidePanel.maxWidth}
-                aria-valuenow={sidePanel.width}
-                data-side-panel-resize
-              >
-                <div
-                  className={classNames(
-                    "absolute inset-y-0 left-1/2 w-px -translate-x-1/2",
-                    isDark ? "bg-white/8" : "bg-black/8",
-                  )}
-                />
-                <div
-                  className={classNames(
-                    "absolute inset-y-0 -left-1 w-4 rounded-full transition-colors",
-                    sidePanel.dragging
-                      ? isDark
-                        ? "bg-cyan-300/18"
-                        : "bg-cyan-500/16"
-                      : isDark
-                        ? "hover:bg-white/8"
-                        : "hover:bg-black/6",
-                  )}
-                />
-              </div>
-              <div
-                className={classNames(
-                  "hidden min-h-0 flex-shrink-0 overflow-hidden border-l md:flex",
-                  isDark ? "border-white/8 bg-slate-950/20" : "border-black/8 bg-white/40",
-                )}
-                id="group-side-panel"
-                style={{ width: `${sidePanel.width}px` }}
-              >
-                {showSplitFiles ? (
+          {showSplitSurface && activeSidePanel ? (
+            <ResizableSidePanel
+              groupId={selectedGroupId}
+              surface={activeSidePanel}
+              viewing={!!splitPresentationViewer}
+              container={splitLayoutRef}
+              isDark={isDark}
+            >
+              {({ compact, toggleCompact }) =>
+                showSplitFiles ? (
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                       <WorkspaceFilesPanel
                         key={`${selectedGroupId}:${workspaceScope?.scope_key}:${workspaceScope?.url}`}
                         files={workspaceFiles}
@@ -1091,7 +1047,7 @@ export function ChatTab({
                       />
                     </div>
                   </Suspense>
-                ) : splitPresentationViewer && !sidePanel.compact ? (
+                ) : splitPresentationViewer && !compact ? (
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                     <PresentationViewerSplitPanel
                       isDark={isDark}
@@ -1113,11 +1069,11 @@ export function ChatTab({
                 ) : (
                   // Presentation with no slot opened: the slot list that phones already use.
                   <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                       <PresentationRail
                         groupId={selectedGroupId}
-                        compact={sidePanel.compact}
-                        onToggleCompact={sidePanel.toggleCompact}
+                        compact={compact}
+                        onToggleCompact={toggleCompact}
                         presentation={groupPresentation}
                         isDark={isDark}
                         readOnly={readOnly}
@@ -1128,9 +1084,9 @@ export function ChatTab({
                       />
                     </div>
                   </Suspense>
-                )}
-              </div>
-            </>
+                )
+              }
+            </ResizableSidePanel>
           ) : null}
 
           <MobilePresentationSurface

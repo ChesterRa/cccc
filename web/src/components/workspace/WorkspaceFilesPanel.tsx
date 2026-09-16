@@ -87,7 +87,7 @@ export function WorkspaceFilesPanel({
     : t("workspaceNoScope", { defaultValue: "Attach a workspace to this Group to browse files." });
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
       <SidePanelHeader
         title={t("workspaceFilesTitle", { defaultValue: "Files" })}
         subtitle={files.rootPath || undefined}

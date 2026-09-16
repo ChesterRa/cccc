@@ -5450,6 +5450,12 @@ Reach-owned `enabled` / `web_public_url` state before returning. A timeout, DNS
 failure, 5xx response, or malformed response is transient and MUST preserve the
 binding and helper state. Daemons therefore MUST serialize `membership_status`
 with membership mutations rather than treating it as a side-effect-free read.
+Membership and remote-access operations share exclusive ownership, but their
+network waits MUST NOT hold the global Group read/write permit. Global mutations
+and Reach restore commits also acquire this ownership before their global permit;
+restore still fetches outside both permits and verifies its captured intent before
+committing. Ordinary Group reads and writes remain available while the account
+service is slow.
 
 #### `membership_login` / `membership_login_poll` / `membership_logout`
 

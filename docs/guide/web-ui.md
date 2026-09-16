@@ -97,7 +97,7 @@ to messages; covered messages do not count as viewed for unread tracking.
 
 Save with the toolbar button or `Ctrl+S` / `Cmd+S`. Unsaved edits survive closing and
 reopening files within the current Group, including internal symlinks to the same file.
-Save before switching Groups, changing the active workspace, or reloading the page.
+Save before leaving the workspace. Switching Groups or instances with unsaved file edits asks whether to stay or discard; refreshing or closing the page uses the browser’s unsaved-changes warning. Closing the file viewer retains its drafts while you stay in the same workspace. A scope change or loss of access initiated elsewhere still retires the old editor; drafts never authorize saving into another scope.
 Changing the active workspace clears the file view and its drafts; stale saves are rejected
 instead of writing into the newly selected workspace. If the file changed on disk since it
 was opened, saving reports a conflict; **Reload** discards the draft and loads the current
@@ -763,7 +763,7 @@ by default and require restarting the Web process to change CORS responses.
 
 When a reverse proxy terminates HTTPS or exposes CCCC under another host, it
 must overwrite the browser-facing host and protocol headers. These values are
-used by every browser WebSocket (terminal, Voice Secretary, projected browser)
+used by every browser WebSocket (realtime events, terminal, Voice Secretary, projected browser)
 and by Cookie-authenticated write protection:
 
 ```nginx
