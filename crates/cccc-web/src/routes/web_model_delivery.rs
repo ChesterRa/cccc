@@ -125,6 +125,33 @@ async fn visit_pending(
     {
         return Ok(DeliveryOutcome::Idle);
     }
+    if automatic
+        && surface["active"] == true
+        && let Some((open_group, open_actor, target, owner)) = page_target(state, &surface)?
+        && (open_group != group_id || open_actor != actor_id)
+        && target["last_delivery_status"] == "submission_ambiguous"
+    {
+        // Settle the current page before another group's visit can replace it.
+        let recovered = recover_verified_ambiguous_submission(
+            state,
+            &open_group,
+            &open_actor,
+            &owner,
+            &target,
+            manage_browser,
+        )
+        .await?;
+        if !recovered
+            && state
+                .browser_surfaces
+                .relay_surface_deferral(surface_key())
+                .await
+                .map_err(|error| ApiError::bad(error.to_string()))?
+                .is_some_and(|blocked| blocked["submission_evidence"] == "not_sent_chat_busy")
+        {
+            return Ok(DeliveryOutcome::Idle);
+        }
+    }
     let result = deliver_once(state, group_id, actor_id, surface_key(), manage_browser).await;
     if state
         .browser_surfaces
@@ -134,7 +161,13 @@ async fn visit_pending(
         // Keep a newly created chat until its durable /c/... target is known.
         // Never close a human draft, a login window explicitly opened by the
         // user, or a different group's in-flight navigation.
-        let target = super::web_model_delivery_state::target(state, group_id, actor_id)?;
+        let mut target = super::web_model_delivery_state::target(state, group_id, actor_id)?;
+        let surface = state.browser_surfaces.info(surface_key()).await;
+        if target["url"] != surface["url"]
+            && let Some((_, _, open_target, _)) = page_target(state, &surface)?
+        {
+            target = open_target;
+        }
         let pending_url = target["kind"] == "new_chat"
             && matches!(
                 target["last_delivery_status"].as_str(),
@@ -145,7 +178,7 @@ async fn visit_pending(
                         | "submission_ambiguous"
                 )
             );
-        let visited = state.browser_surfaces.info(surface_key()).await["active"] == true;
+        let visited = surface["active"] == true;
         let mut pending_receipt = false;
         if !pending_url && visited {
             let blocked = state
@@ -212,6 +245,41 @@ async fn visit_pending(
         }
     }
     result
+}
+
+fn page_target(
+    state: &AppState,
+    surface: &Value,
+) -> Result<Option<(String, String, Value, BrowserTargetOwner)>, ApiError> {
+    let Some(url) = surface["url"].as_str().filter(|url| !url.is_empty()) else {
+        return Ok(None);
+    };
+    let store = cccc_core::GroupStore::new(state.home.clone())
+        .map_err(|error| ApiError::bad(error.to_string()))?;
+    for group in store
+        .list()
+        .map_err(|error| ApiError::bad(error.to_string()))?
+    {
+        let group = store
+            .load(&group.group_id)
+            .map_err(|error| ApiError::bad(error.to_string()))?;
+        for actor in group
+            .actors
+            .iter()
+            .filter(|actor| actor.runtime == cccc_contracts::ActorRuntime::WebModel)
+        {
+            let (target, owner) = snapshot(state, &group.group_id, &actor.id)?;
+            if target["url"] == url {
+                return Ok(Some((
+                    group.group_id.clone(),
+                    actor.id.clone(),
+                    target,
+                    owner,
+                )));
+            }
+        }
+    }
+    Ok(None)
 }
 
 struct SessionGuard {
@@ -2584,6 +2652,42 @@ mod retry_integration_tests {
                     .expect("count"),
                 4,
                 "late observation must not send again"
+            );
+            let other_group = web_group(&state, "next receipt visitor").await;
+            web_model_connectors::save_browser_target(
+                &home,
+                &other_group,
+                "web",
+                Some(json!({"kind":"existing_chat","url":format!("{url}other"),
+                    "last_delivery_status":"submitted", "last_submission_evidence":{
+                        "submission_evidence":"message_echo", "submitted":true,
+                        "receipt_needles":["OTHER_GROUP_RECEIPT"], "tab_url":format!("{url}other")}})),
+            )
+            .expect("other target");
+            update_target(
+                &state,
+                gid,
+                "web",
+                &snapshot(&state, gid, "web").expect("owner").1,
+                json!({"last_delivery_status":"submission_ambiguous",
+                    "last_submission_evidence":awaiting}),
+            )
+            .expect("receipt awaiting its next visit");
+            browser.web_model_auto_close.store(true, Ordering::Release);
+            super::super::web_model_browser::schedule_delivery_check(&home, false)
+                .expect("other visitor due");
+            visit_pending(&state, &other_group, "web", true)
+                .await
+                .expect("other group visit");
+            assert_eq!(
+                load_target(&state, gid, "web").expect("original target")["last_delivery_status"],
+                "submitted",
+                "another group must reconcile the open page before replacing it"
+            );
+            assert_eq!(
+                browser.info(surface_key()).await["active"],
+                false,
+                "an idle visitor must close using the current page's receipt"
             );
             browser.web_model_auto_close.store(true, Ordering::Release);
             super::super::web_model_browser::schedule_delivery_check(&home, false)
