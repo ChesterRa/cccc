@@ -25,7 +25,7 @@ fn setup_prompt(runtime: ActorRuntime) -> String {
         "args": ["mcp"],
     });
     format!(
-        "[CCCC] MCP setup request\nYou are running inside {runtime_label}. Before setup, check whether cccc_bootstrap is available in this session.\n\nIdempotency requirement:\n- If cccc_bootstrap is available, skip MCP setup entirely and continue with the CCCC session bootstrap below.\n- Only when cccc_bootstrap is not available, install or update the \"cccc\" MCP server using this runtime's normal user/global MCP configuration method.\n- Do not reinstall just to verify the config; do not modify unrelated MCP servers.\n- The MCP process must inherit CCCC_HOME, CCCC_GROUP_ID and CCCC_ACTOR_ID from this runtime. Do not pin these values in shared user/global configuration: other CCCC instances and Actors have different values.\n\nCCCC MCP server details:\n{}\n\nAfter setup, continue with the CCCC session bootstrap below. If this runtime requires a restart before new MCP tools appear, say so clearly in the terminal.",
+        "[CCCC] MCP setup request\nYou are running inside {runtime_label}. Before setup, check both the available CCCC tools and the registered cccc server command and arguments against the details below.\n\nIdempotency requirement:\n- If cccc_bootstrap is available and the registered command and arguments match, skip MCP setup and continue with the CCCC session bootstrap below. The tool name alone does not establish that this is the current CCCC server.\n- Only when the server is missing or its registration is stale, install or update the \"cccc\" MCP server using this runtime's normal user/global MCP configuration method.\n- Do not reinstall just to verify the config; do not modify unrelated MCP servers. If registration matches but tools are missing or still use an old schema, request a runtime/MCP restart instead of repeatedly rewriting the configuration.\n- The MCP process must inherit CCCC_HOME, CCCC_GROUP_ID and CCCC_ACTOR_ID from this runtime. Do not pin these values in shared user/global configuration: other CCCC instances and Actors have different values.\n\nCCCC MCP server details:\n{}\n\nAfter setup, continue with the CCCC session bootstrap below. If this runtime requires a restart before new MCP tools appear, say so clearly in the terminal.",
         serde_json::to_string_pretty(&contract).unwrap_or_else(|_| "{}".into())
     )
 }
@@ -47,7 +47,9 @@ mod tests {
 
         let prompt = render(&home, &group, &actor);
         assert!(prompt.starts_with("[CCCC] MCP setup request\n"));
-        assert!(prompt.contains("If cccc_bootstrap is available, skip MCP setup entirely"));
+        assert!(prompt.contains("the registered command and arguments match, skip MCP setup"));
+        assert!(prompt.contains("The tool name alone does not establish"));
+        assert!(prompt.contains("request a runtime/MCP restart"));
         assert!(prompt.contains("Do not reinstall just to verify the config"));
         assert!(prompt.contains("inherit CCCC_HOME, CCCC_GROUP_ID and CCCC_ACTOR_ID"));
         assert!(!prompt.contains("\"env\""));

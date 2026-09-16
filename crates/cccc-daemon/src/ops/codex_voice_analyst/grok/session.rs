@@ -13,7 +13,6 @@ pub(super) async fn initialize(
     purpose: SessionPurpose,
     configured_rules: &str,
     resume_session_id: Option<&str>,
-    mcp_server: Value,
     allow_fresh_after_resume_failure: bool,
 ) -> io::Result<(String, bool)> {
     let rules = match purpose {
@@ -29,7 +28,9 @@ pub(super) async fn initialize(
     let session_params = |method: &str, session_id: Option<&str>| {
         let mut params = json!({
             "cwd":cwd,
-            "mcpServers":[mcp_server.clone()],
+            // The native TUI reloads this same registry. A client-only entry
+            // would be replaced on attach, potentially restoring an old MCP.
+            "mcpServers":[],
             "_meta":{"yoloMode":true},
         });
         if !rules.trim().is_empty() {

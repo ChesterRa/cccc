@@ -165,6 +165,58 @@ fn binary_and_oversized_files_are_flagged_rather_than_inlined() {
 }
 
 #[test]
+fn source_files_and_transport_streams_with_the_same_extension_keep_their_content_type() {
+    let fixture = fixture();
+    for name in [
+        "module.ts",
+        "types.d.ts",
+        "module.mts",
+        "module.cts",
+        "view.tsx",
+    ] {
+        let source = "export const greeting: string = '\u{4f60}\u{597d}';\n";
+        std::fs::write(fixture.repo.join(name), source).expect("source");
+        let read = workspace::read_file(&fixture.group, name).expect("read source");
+        assert!(!read.binary, "{name}");
+        assert_eq!(read.content, source, "{name}");
+        assert!(!read.sha256.is_empty());
+    }
+    std::fs::write(fixture.repo.join("stream.ts"), [0x47, 0x40, 0, 0x10, 0xff])
+        .expect("transport stream");
+    let stream = workspace::read_file(&fixture.group, "stream.ts").expect("read stream");
+    assert!(stream.binary);
+    assert!(stream.mime_type.starts_with("video/"));
+    assert!(stream.content.is_empty());
+}
+
+#[test]
+fn oversized_files_use_a_bounded_sample_to_distinguish_text_from_media() {
+    let fixture = fixture();
+    for (name, prefix, binary) in [
+        ("large.ts", b"export const value = 1;".as_slice(), false),
+        ("large.mts", b"// module".as_slice(), false),
+        ("stream.ts", b"\x47\x40\x00\x10\xff".as_slice(), true),
+        ("clip.mp4", b"\x00\x00\x00\x20ftypisom".as_slice(), true),
+    ] {
+        let mut bytes = prefix.to_vec();
+        bytes.resize((workspace::MAX_READ_BYTES + 1) as usize, b' ');
+        std::fs::write(fixture.repo.join(name), &bytes).expect("large file");
+        let read = workspace::read_file(&fixture.group, name).expect("read large file");
+        assert_eq!(read.binary, binary, "{name}");
+        assert!(read.truncated);
+        assert!(read.content.is_empty());
+        assert!(read.sha256.is_empty());
+    }
+
+    // The sample boundary can split a valid UTF-8 character; this is still text.
+    let text = " ".repeat(8191) + &"\u{4e2d}".repeat(workspace::MAX_READ_BYTES as usize / 2);
+    std::fs::write(fixture.repo.join("unicode.ts"), &text).expect("unicode source");
+    let read = workspace::read_file(&fixture.group, "unicode.ts").expect("read unicode source");
+    assert!(read.truncated);
+    assert!(!read.binary);
+}
+
+#[test]
 fn concurrent_saves_sharing_one_digest_keep_exactly_one_write() {
     let fixture = fixture();
     let digest = workspace::read_file(&fixture.group, "src/lib.rs")

@@ -21,7 +21,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Droid CLI | `droid` | `droid` | Auto |
 | Amp | `amp` | `amp` | Auto |
 | Auggie (Augment) | `auggie` | `auggie` | Auto |
-| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Injected into each managed session |
+| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Automatic native MCP registration; identity inherited per session |
 | Hermes Agent | `hermes` | `hermes` | Auto through the user's Hermes profile |
 | Kimi Code | `kimi` | Native TUI | Auto through Kimi Code's MCP config |
 | OpenCode | `opencode` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
@@ -288,8 +288,16 @@ Direct Grok Actors use the same managed-session contract through Grok's native
 topology: CCCC owns one private leader, connects an ACP observer, and attaches
 the native writable Grok TUI to the exact same provider session. Structured ACP
 events own progress, completion, cancellation, and working state; terminal text is never scraped as
-protocol. CCCC injects the actor-scoped MCP server into the session rather than
-changing Grok's global MCP registry. Stop/start validates and loads the version-2
+protocol. CCCC automatically maintains Grok's native user-level `cccc` MCP entry,
+so both ACP and the native terminal load the same server. The command resolves
+the current CCCC executable through `${CCCC_CLI:-cccc}`; instance, Actor and
+Voice identity remain in the process environment. Other MCP servers and
+Claude/Cursor imports are preserved. Standalone Grok also prefers this native
+entry over an imported `cccc` entry. Conflicting project entries or invalid TOML
+produce an actionable setup error without overwriting the file. Setup also checks
+the effective arguments and environment reported by `grok mcp list --json`,
+including version overrides. Native policy blocks and conflicting overrides
+stop startup with an error; CCCC does not change those rules to force access. Stop/start validates and loads the version-2
 managed receipt, while `actor new-session` deliberately replaces it. Grok
 subcommands, wrappers, prompt tails, and user-owned leader/session flags fail
 explicitly; there is no raw-PTY fallback beside the managed path.
@@ -440,7 +448,7 @@ Common checks:
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, Grok, OpenCode, and Kilo receive an Actor-scoped server inside their managed session; none of their global MCP registries is changed. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor retains its prompt-assisted startup setup contract, while indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, Grok, OpenCode, and Kilo therefore reports session ownership instead of mutating provider-global configuration.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, and Kilo receive an Actor-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the Actor process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor retains its prompt-assisted startup setup contract; the prompt checks the registered executable and arguments as well as tool availability, because a legacy MCP can expose the same bootstrap name. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, and Kilo reports session ownership. For Grok it prepares and verifies the same native registration used during Actor and Voice Analyst startup.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 

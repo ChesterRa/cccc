@@ -179,7 +179,21 @@ fn setup_one(
             "config":{"mcpServers":{"cccc":{"command":"cccc","args":["mcp"]}}}}),
         );
     }
-    if matches!(runtime, "claude" | "grok" | "opencode" | "kilo") {
+    if runtime == "grok" {
+        let environment = std::env::vars().collect();
+        let path = cccc_core::runtime_mcp::ensure_grok(
+            &absolute(&args.path)?,
+            &environment,
+            executable,
+            "grok",
+        )?;
+        return Ok(json!({
+            "runtime":runtime,"mode":"managed_session","status":"ready",
+            "managed":true,"mcp":"native_registry","path":path,
+            "note":"Only Grok's cccc MCP entry is managed. Other imported MCP servers remain available; standalone Grok also uses this native entry."
+        }));
+    }
+    if matches!(runtime, "claude" | "opencode" | "kilo") {
         return Ok(json!({
             "runtime":runtime,
             "mode":"managed_session",

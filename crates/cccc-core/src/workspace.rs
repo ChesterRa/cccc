@@ -8,7 +8,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 #[path = "workspace_write.rs"]
 mod write;
@@ -366,6 +366,14 @@ pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
         .to_string();
     let bytes = fs::metadata(&path)?.len();
     if bytes > MAX_READ_BYTES {
+        // Even when text is too large to inline, distinguish source files from
+        // binary media: extensions such as .ts and .mts name both formats.
+        let mut head = Vec::with_capacity(READ_SNIFF_BYTES);
+        fs::File::open(&path)?
+            .take(READ_SNIFF_BYTES as u64)
+            .read_to_end(&mut head)?;
+        let binary = head.contains(&0)
+            || std::str::from_utf8(&head).is_err_and(|error| error.error_len().is_some());
         return Ok(FileContent {
             scope_key: group.active_scope_key.clone(),
             scope_url: scope.url.clone(),
@@ -373,7 +381,7 @@ pub fn read_file(group: &GroupDoc, relative: &str) -> io::Result<FileContent> {
             content: String::new(),
             bytes,
             mime_type,
-            binary: false,
+            binary,
             truncated: true,
             sha256: String::new(),
         });

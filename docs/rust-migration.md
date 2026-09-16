@@ -365,9 +365,10 @@ runtime MCP readiness contract. CLI-backed and configuration-backed runtimes
 are classified as `ready`, `missing`, or `stale`; missing or safely replaceable
 entries are installed, then verified before the provider process is created.
 This covers Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Hermes,
-and Kimi. Codex, Claude Code, Grok, and OpenCode instead receive actor-scoped MCP servers in
-their managed sessions; none of those providers' global MCP registries is
-mutated.
+and Kimi. Codex, Claude Code, OpenCode, and Kilo receive actor-scoped MCP servers
+in their managed sessions. Grok registers only its native user-level `cccc` entry
+so ACP and native TUI reloads agree; its executable and Actor identity are
+resolved from the launching process rather than saved in that shared entry.
 More-specific stale entries
 that CCCC does not own are reported rather than overwritten. This prevents an
 old Python launcher path or dangling symlink from freezing a newly created

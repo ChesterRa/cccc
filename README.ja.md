@@ -237,10 +237,10 @@ CCCC は 17 種の主要ランタイムでエージェントを編成し、残�
 | Cursor CLI | プロンプト支援 MCP 設定 | `cursor-agent` |
 | Devin CLI | MCP 自動設定 | `devin` |
 | Kiro CLI | MCP 自動設定 | `kiro-cli` |
-| Kilo Code CLI | プロンプト支援 MCP 設定 | `kilo` |
+| Kilo Code CLI | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `kilo` |
 | Antigravity CLI | MCP 自動設定 | `agy` |
 | ChatGPT Web | Remote MCP + ブラウザ配信 | `chatgpt.com` conversation |
-| Grok Build | 管理 ACP セッション + 純正 TUI、セッション単位 MCP | `grok` |
+| Grok Build | 管理 ACP セッション + 純正 TUI、自動 MCP 設定 | `grok` |
 | Hermes Agent | MCP 自動設定 | `hermes` |
 | Droid | MCP 自動設定 | `droid` |
 | Amp | MCP 自動設定 | `amp` |

@@ -107,11 +107,6 @@ fn claude_setup_reports_session_owned_mcp_without_global_config_mutation() {
 }
 
 #[test]
-fn grok_setup_reports_session_owned_mcp_without_a_global_command() {
-    assert_managed_setup("grok", ActorRuntime::Grok);
-}
-
-#[test]
 fn opencode_setup_reports_session_owned_mcp_without_global_config_mutation() {
     assert_managed_setup("opencode", ActorRuntime::Opencode);
 }

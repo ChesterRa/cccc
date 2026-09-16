@@ -6,6 +6,8 @@ mod kimi;
 pub use kimi::ensure as ensure_kimi;
 mod antigravity;
 pub use antigravity::ensure as ensure_antigravity;
+mod grok;
+pub use grok::ensure as ensure_grok;
 
 #[must_use]
 pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {

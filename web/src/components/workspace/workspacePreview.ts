@@ -4,8 +4,10 @@ export function workspacePreviewKind(file: WorkspaceFile) {
   const mime = file.mime_type.toLowerCase().split(";")[0];
   const extension = file.path.split(".").pop()?.toLowerCase();
   if (mime.startsWith("image/")) return "image";
-  if (mime.startsWith("video/")) return "video";
-  if (mime.startsWith("audio/")) return "audio";
+  // MIME is an extension hint: TypeScript shares .ts/.mts with transport streams,
+  // and audio playlists are text. Use the read result before choosing a player.
+  if (mime.startsWith("video/")) return file.binary ? "video" : "text";
+  if (mime.startsWith("audio/")) return file.binary ? "audio" : "text";
   if (mime === "application/pdf") return "pdf";
   if (file.binary || file.truncated) return "text";
   if (mime === "text/markdown" || extension === "md" || extension === "markdown") return "markdown";

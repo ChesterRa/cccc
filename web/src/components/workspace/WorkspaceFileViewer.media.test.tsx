@@ -22,7 +22,7 @@ const file = (path: string, mime: string): WorkspaceFile => ({
   mime_type: mime,
   bytes: 3_000_000,
   content: "",
-  binary: false,
+  binary: true,
   truncated: true,
   sha256: "",
 });
@@ -65,6 +65,49 @@ afterEach(async () => {
   (window as unknown as HappyWindow).happyDOM.settings.disableIframePageLoading = false;
 });
 
+it.each([
+  ["module.ts", "video/vnd.dlna.mpeg-tts"],
+  ["types.d.ts", "video/vnd.dlna.mpeg-tts"],
+  ["module.mts", "video/vnd.dlna.mpeg-tts"],
+  ["playlist.m3u", "audio/x-mpegurl"],
+  ["view.tsx", "application/octet-stream"],
+  ["module.cts", "application/octet-stream"],
+  ["view.jsx", "application/octet-stream"],
+  ["module.js", "application/javascript"],
+  ["main.py", "text/plain"],
+  ["lib.rs", "text/x-rust"],
+  ["main.cpp", "text/plain"],
+  ["settings.json", "application/json"],
+  ["config.yaml", "text/x-yaml"],
+  ["run.sh", "application/x-sh"],
+  ["Dockerfile", "application/octet-stream"],
+  [".env", "application/octet-stream"],
+])("opens text in %s without treating an extension hint as media", async (path, mime) => {
+  const source = {
+    ...file(path, mime),
+    binary: false,
+    truncated: false,
+    content: "export const value = 1;\n",
+    bytes: 24,
+    sha256: "source-digest",
+  };
+  await render(source);
+  expect(host.querySelector("video, audio, img, iframe")).toBeNull();
+  expect(host.querySelector("textarea")?.value).toBe(source.content);
+  await render(source, true);
+  expect(host.querySelector("textarea")).toBeNull();
+  expect(host.querySelector("pre")?.textContent).toBe(source.content);
+});
+
+it("keeps oversized TypeScript on the text limit path and binary TS on the video path", async () => {
+  await render({ ...file("large.ts", "video/vnd.dlna.mpeg-tts"), binary: false });
+  expect(host.querySelector("video, textarea")).toBeNull();
+  expect(host.textContent).toContain("too large for the text viewer");
+  expect(host.querySelector("a[download]")).not.toBeNull();
+  await render({ ...file("stream.ts", "video/vnd.dlna.mpeg-tts"), binary: true });
+  expect(host.querySelector("video")?.controls).toBe(true);
+});
+
 it("previews large images with the shared viewer and binds download to the opened scope", async () => {
   await render(file("drawing #1.png", "image/png"));
   expect(host.querySelector("[data-graphic-viewer]")).not.toBeNull();
@@ -98,6 +141,7 @@ it("uses native video controls and metadata preload, resets failures when files 
 it("keeps SVG source editing and draft preview inert without discarding unsaved edits", async () => {
   const svg = {
     ...file("drawing.svg", "image/svg+xml"),
+    binary: false,
     truncated: false,
     content: '<svg xmlns="http://www.w3.org/2000/svg"/>',
     sha256: "old",
@@ -169,6 +213,7 @@ it("uses native audio controls without autoplay and retains download after decod
 it("renders tables by default and preserves CRLF when switching to source, editing and previewing", async () => {
   await render({
     ...file("table.csv", "text/csv"),
+    binary: false,
     truncated: false,
     content: 'name,details\r\nAlice,"one, two"\r\n',
   });

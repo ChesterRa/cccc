@@ -30,8 +30,8 @@ pub(super) fn prepare(
     if !cccc_core::runtime_mcp::is_auto_managed(runtime) {
         return Ok(());
     }
-    // Managed sessions receive their actor-scoped MCP entry later in the launch
-    // pipeline. Do not mutate a provider-global MCP registry for these runtimes.
+    // These adapters own MCP setup later in the launch pipeline. Grok shares
+    // its native registry with the TUI; the others inject a session entry.
     if matches!(
         runtime,
         ActorRuntime::Claude

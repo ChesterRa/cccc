@@ -243,10 +243,10 @@ CCCC orchestrates agents across 17 first-class runtimes, with `custom` available
 | Cursor CLI | Prompt-assisted MCP setup | `cursor-agent` |
 | Devin CLI | Auto MCP setup | `devin` |
 | Kiro CLI | Auto MCP setup | `kiro-cli` |
-| Kilo Code CLI | Prompt-assisted MCP setup | `kilo` |
+| Kilo Code CLI | Managed ACP session + native TUI; per-session MCP | `kilo` |
 | Antigravity CLI | Auto MCP setup | `agy` |
 | ChatGPT Web | Remote MCP + Browser Delivery | `chatgpt.com` conversation |
-| Grok Build | Managed ACP session + native TUI; per-session MCP | `grok` |
+| Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
 | Hermes Agent | Auto MCP setup | `hermes` |
 | Droid | Auto MCP setup | `droid` |
 | Amp | Auto MCP setup | `amp` |

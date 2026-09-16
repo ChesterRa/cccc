@@ -19,7 +19,7 @@ mod session;
 pub(super) struct PreparedGrok {
     pub(super) leader_command: Vec<String>,
     pub(super) acp_command: Vec<String>,
-    executable: String,
+    pub(super) executable: String,
     tui_arguments: Vec<String>,
     rules: String,
     socket_path: PathBuf,
@@ -112,7 +112,6 @@ pub(super) async fn launch(
     generation: &str,
     purpose: SessionPurpose,
     resume_session_id: Option<&str>,
-    mcp_server: Value,
 ) -> io::Result<LaunchedGrok> {
     let leader = Arc::new(process::spawn_background(
         &prepared.leader_command,
@@ -135,7 +134,6 @@ pub(super) async fn launch(
         purpose,
         &prepared.rules,
         resume_session_id,
-        mcp_server,
         purpose == SessionPurpose::Actor,
     )
     .await;

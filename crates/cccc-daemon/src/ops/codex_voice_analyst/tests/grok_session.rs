@@ -641,7 +641,6 @@ async fn launch(
         generation,
         SessionPurpose::VoiceAnalyst,
         resume,
-        json!({"name":"cccc-test","command":"cccc-test","args":[]}),
     )
     .await
 }
@@ -694,9 +693,11 @@ while IFS= read -r line; do
       printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":true}}}}}}'
       ;;
     *'"method":"session/new"'*)
+      case "$line" in *'"mcpServers":[]'*) ;; *) exit 9 ;; esac
       printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"{FAKE_SESSION_ID}"}}}}'
       ;;
     *'"method":"session/load"'*)
+      case "$line" in *'"mcpServers":[]'*) ;; *) exit 9 ;; esac
       printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"{FAKE_SESSION_ID}"}}}}'
       ;;
     *'"method":"session/prompt"'*)

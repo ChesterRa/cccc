@@ -235,10 +235,10 @@ CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 | Cursor CLI | 提示词辅助 MCP 配置 | `cursor-agent` |
 | Devin CLI | 自动 MCP 配置 | `devin` |
 | Kiro CLI | 自动 MCP 配置 | `kiro-cli` |
-| Kilo Code CLI | 提示词辅助 MCP 配置 | `kilo` |
+| Kilo Code CLI | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `kilo` |
 | Antigravity CLI | 自动 MCP 配置 | `agy` |
 | ChatGPT Web | 远程 MCP + 浏览器投递 | `chatgpt.com` 对话 |
-| Grok Build | 托管 ACP 会话 + 原生 TUI；按会话注入 MCP | `grok` |
+| Grok Build | 托管 ACP 会话 + 原生 TUI；自动配置原生 MCP | `grok` |
 | Hermes Agent | 自动 MCP 配置 | `hermes` |
 | Droid | 自动 MCP 配置 | `droid` |
 | Amp | 自动 MCP 配置 | `amp` |

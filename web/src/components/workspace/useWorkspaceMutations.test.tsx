@@ -261,32 +261,39 @@ describe("workspace mutation ownership", () => {
   });
 });
 
-it("refreshes renamed file MIME metadata in the visible editor and cached drafts", async () => {
-  api.fetchWorkspaceFile.mockImplementation(async (_g, path) => ({
-    ok: true,
-    result: { ...diskFile(path), mime_type: path.endsWith(".md") ? "text/markdown" : "text/plain" },
-  }));
-  api.changeWorkspaceEntry.mockResolvedValue({
-    ok: true,
-    result: { path: "notes.md", destination: "notes.txt", mime_type: "text/plain" },
-  });
-  await act(async () => {
-    await files.openFile("notes.md");
-  });
-  await act(async () => files.setDraft("unsaved markdown"));
-  await act(async () => {
-    await files.mutations.change({ operation: "move", path: "notes.md", destination: "notes.txt" });
-  });
-  expect(files.file?.mime_type).toBe("text/plain");
-  expect(workspacePreviewKind(files.file!)).toBe("text");
-  expect(files.draft).toBe("unsaved markdown");
-  await act(async () => {
-    await files.openFile("other.txt");
-  });
-  await act(async () => {
-    await files.openFile("notes.txt");
-  });
-  expect(files.file?.mime_type).toBe("text/plain");
-  expect(files.draft).toBe("unsaved markdown");
-  expect(files.file?.sha256).toBe("sha");
-});
+it.each([
+  ["notes.md", "notes.txt", "text/markdown", "text/plain"],
+  ["module.txt", "module.ts", "text/plain", "video/vnd.dlna.mpeg-tts"],
+])(
+  "keeps text accessible after renaming %s to %s in the editor and draft cache",
+  async (from, to, oldMime, newMime) => {
+    api.fetchWorkspaceFile.mockImplementation(async (_g, path) => ({
+      ok: true,
+      result: { ...diskFile(path), mime_type: path === from ? oldMime : "text/plain" },
+    }));
+    api.changeWorkspaceEntry.mockResolvedValue({
+      ok: true,
+      result: { path: from, destination: to, mime_type: newMime },
+    });
+    await act(async () => {
+      await files.openFile(from);
+    });
+    await act(async () => files.setDraft("unsaved text"));
+    await act(async () => {
+      await files.mutations.change({ operation: "move", path: from, destination: to });
+    });
+    expect(files.file?.mime_type).toBe(newMime);
+    expect(workspacePreviewKind(files.file!)).toBe("text");
+    expect(files.draft).toBe("unsaved text");
+    await act(async () => {
+      await files.openFile("other.txt");
+    });
+    await act(async () => {
+      await files.openFile(to);
+    });
+    expect(files.file?.mime_type).toBe(newMime);
+    expect(workspacePreviewKind(files.file!)).toBe("text");
+    expect(files.draft).toBe("unsaved text");
+    expect(files.file?.sha256).toBe("sha");
+  },
+);
