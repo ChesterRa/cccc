@@ -48,7 +48,7 @@ export function useComposerHeightResize({
     const panel = footer?.parentElement;
     const textarea = composerRef.current;
     if (!panel || !footer || !textarea) return;
-    const messages = panel.querySelector(":scope > main");
+    const messages = panel.querySelector(":scope > [data-chat-work-surface]");
     const measure = () => {
       const panelHeight = panel.getBoundingClientRect().height;
       const messageHeight = messages?.getBoundingClientRect().height || 0;

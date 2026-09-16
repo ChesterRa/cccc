@@ -28,7 +28,7 @@ function Probe({
   });
   return (
     <section data-panel>
-      <main />
+      <div data-chat-work-surface />
       <footer ref={footerRef}>
         {enabled ? <ComposerResizeHandle {...resize} label="Input height" /> : null}
         <textarea
@@ -70,7 +70,7 @@ describe("composer height interaction", () => {
         const height = parseFloat(host.querySelector("textarea")?.style.height || "64");
         const h = this.hasAttribute("data-panel")
           ? panelHeight
-          : this.tagName === "MAIN"
+          : this.hasAttribute("data-chat-work-surface")
             ? panelHeight - 100 - height
             : this.tagName === "FOOTER"
               ? height + 100

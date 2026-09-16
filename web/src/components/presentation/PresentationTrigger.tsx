@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupPresentation } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { BookmarkIcon } from "../Icons";
+import { PanelsTopLeft } from "lucide-react";
 import { ensurePresentation } from "../../utils/presentation";
 
 export function PresentationTrigger({
@@ -46,9 +46,9 @@ export function PresentationTrigger({
       type="button"
       onClick={onOpen}
       className={classNames(
-        "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)]",
+        "relative flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
         isOpen
-          ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
+          ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--glass-tab-border-active)]"
           : "text-[var(--color-text-secondary)]",
         hasAttention &&
           (isDark
@@ -61,8 +61,10 @@ export function PresentationTrigger({
       data-group-presentation-trigger
       aria-expanded={isOpen}
     >
-      <BookmarkIcon size={17} className="shrink-0" aria-hidden="true" />
-      <span className="sr-only">{t("presentationTitle", { defaultValue: "Presentation" })}</span>
+      <PanelsTopLeft size={17} className="shrink-0" aria-hidden="true" />
+      <span className={mobile ? "sr-only" : "hidden @min-[1000px]/group-header:inline"}>
+        {t("presentationTitle", { defaultValue: "Presentation" })}
+      </span>
       {hasAttention ? (
         <span
           className={classNames(

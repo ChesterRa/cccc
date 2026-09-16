@@ -248,6 +248,10 @@ const chatAtBottomRef = { current: true };
 export function Fixture() {
   const groupId = useGroupStore((state) => state.selectedGroupId);
   const currentActors = useGroupStore((state) => state.actors);
+  const currentDoc = useGroupStore((state) => state.groupDoc);
+  const selectedGroupRunning = useGroupStore(
+    (state) => state.groups.find((group) => group.group_id === groupId)?.running ?? false,
+  );
   const activeTab = useUIStore((state) => state.activeTab);
   const [mounted, setMounted] = useState<string[]>([]);
   const [width, setWidth] = useState(innerWidth);
@@ -277,6 +281,13 @@ export function Fixture() {
     groupWorkProbe: {
       ...probe,
       chooseGroup: changeGroup,
+      setRunning: (running: boolean) =>
+        useGroupStore.setState((state) => ({
+          groups: state.groups.map((group) =>
+            group.group_id === groupId ? { ...group, running } : group,
+          ),
+          actors: state.actors.map((actor) => ({ ...actor, running })),
+        })),
       setCount: (count: number) => useGroupStore.setState({ actors: actors.slice(0, count) }),
       patchActor: (id: string, patch: Partial<Actor>) =>
         useGroupStore.setState((state) => ({
@@ -300,7 +311,7 @@ export function Fixture() {
     orderedGroups: groups,
     archivedGroupIds: [],
     selectedGroupId: groupId,
-    groupDoc: doc(groupId),
+    groupDoc: currentDoc,
     groupContext: { agent_states: [] },
     actors: currentActors,
     runtimeActors: currentActors,
@@ -317,7 +328,7 @@ export function Fixture() {
     isDark: dark,
     isSmallScreen: width < 768,
     webReadOnly: readOnly,
-    selectedGroupRunning: true,
+    selectedGroupRunning,
     selectedGroupRuntimeStatus: null,
     selectedGroupActorsHydrating: false,
     selectedGroupActorStatusProvisional: false,
@@ -388,6 +399,10 @@ export function Fixture() {
   };
   props.onOpenGroupEdit = () => probe.actions.push("onOpenGroupEdit");
   props.onOpenContext = () => probe.actions.push("onOpenContext");
+  props.onOpenSearch = () => probe.actions.push("onOpenSearch");
+  props.onStartGroup = () => probe.actions.push("onStartGroup");
+  props.onStopGroup = () => probe.actions.push("onStopGroup");
+  props.onSetGroupState = (state) => probe.actions.push(`onSetGroupState:${state}`);
   for (const name of [
     "onToggleActorEnabled",
     "onRelaunchActor",
@@ -406,8 +421,8 @@ export function Fixture() {
         theme={theme}
         textScale={textScale}
         selectedGroupId={groupId}
-        groupDoc={doc(groupId)}
-        selectedGroupRunning
+        groupDoc={currentDoc}
+        selectedGroupRunning={selectedGroupRunning}
         actors={currentActors}
         busy=""
         onThemeChange={setTheme}
@@ -417,9 +432,9 @@ export function Fixture() {
         onOpenSettings={props.onOpenSettings}
         canAccessAccount={canAccessAccount}
         onOpenAccount={props.onOpenAccount}
-        onStartGroup={noop}
-        onStopGroup={noop}
-        onSetGroupState={noop}
+        onStartGroup={props.onStartGroup}
+        onStopGroup={props.onStopGroup}
+        onSetGroupState={props.onSetGroupState}
       />
       {settingsOpen ? (
         <SettingsModal

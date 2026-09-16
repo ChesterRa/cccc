@@ -26,8 +26,9 @@ type Props = {
   covered?: boolean;
   loading: boolean;
   workControlsHost: HTMLElement | null;
+  sidePanelControlsHost: HTMLElement | null;
   isSmallScreen: boolean;
-  headerEnd?: ReactNode;
+  sidePanelControls?: ReactNode;
   onInspectActor: (actorId: string) => void;
   renderActor: (actorId: string, view: RuntimeActorView) => ReactNode;
   children: ReactNode;
@@ -43,8 +44,9 @@ export function GroupWorkArea({
   covered = false,
   loading,
   workControlsHost,
+  sidePanelControlsHost,
   isSmallScreen,
-  headerEnd,
+  sidePanelControls,
   onInspectActor,
   renderActor,
   children,
@@ -136,7 +138,7 @@ export function GroupWorkArea({
       (actor.effective_working_state === "waiting" || actor.effective_working_state === "stuck"),
   );
   const buttonClass =
-    "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-2 text-xs hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";
+    "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-2 hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";
 
   const pager =
     pageCount > 1 && tiled ? (
@@ -207,7 +209,7 @@ export function GroupWorkArea({
                     key={view}
                     type="button"
                     aria-pressed={session.workView === view}
-                    className={`${buttonClass} ${session.workView === view ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)]" : "text-[var(--color-text-tertiary)]"}`}
+                    className={`${buttonClass} text-sm ${session.workView === view ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)]" : "text-[var(--color-text-tertiary)]"}`}
                     onClick={() => setView(groupId, view)}
                   >
                     {t(`workView.${view}`)}
@@ -231,11 +233,11 @@ export function GroupWorkArea({
                 {unread}
               </button>
               {!isSmallScreen ? pager : null}
-              {headerEnd}
             </>,
             workControlsHost,
           )
         : null}
+      {sidePanelControlsHost ? createPortal(sidePanelControls, sidePanelControlsHost) : null}
       <div
         className={tiled ? "hidden" : "relative flex min-h-0 flex-1 flex-col"}
         inert={tiled ? true : undefined}

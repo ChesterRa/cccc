@@ -93,6 +93,7 @@ export function MessageRows({
     return (
       <div
         ref={contentRef}
+        className="chat-reading-width"
         style={{
           height: `${totalVirtualSize}px`,
           width: "100%",
@@ -127,7 +128,7 @@ export function MessageRows({
   }
 
   return (
-    <div ref={contentRef} className="w-full" style={{ marginTop: nonVirtualTopMargin }}>
+    <div ref={contentRef} className="chat-reading-width" style={{ marginTop: nonVirtualTopMargin }}>
       {messages.map((message, index) => {
         const grouping = getMessageRowGrouping(
           index > 0 ? messages[index - 1] : undefined,

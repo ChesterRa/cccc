@@ -15,6 +15,7 @@ vi.mock("react-i18next", async (importOriginal) => ({
 let host: HTMLDivElement;
 let root: Root;
 let controlsHost: HTMLDivElement;
+let panelsHost: HTMLDivElement;
 let width = 1200;
 let resize: () => void;
 const actors = Array.from({ length: 8 }, (_, index) => ({ id: `actor-${index + 1}` }));
@@ -33,8 +34,9 @@ function Fixture({ groupId = "g1", count = 8, loading = false, covered = false }
       covered={covered}
       loading={loading}
       workControlsHost={controlsHost}
+      sidePanelControlsHost={panelsHost}
       isSmallScreen={false}
-      headerEnd={<button>presentation</button>}
+      sidePanelControls={<button>presentation</button>}
       onInspectActor={setActive}
       renderActor={(id, view) => (
         <div>
@@ -86,12 +88,15 @@ beforeEach(() => {
   document.body.appendChild(host);
   controlsHost = document.createElement("div");
   document.body.appendChild(controlsHost);
+  panelsHost = document.createElement("div");
+  document.body.appendChild(panelsHost);
   root = createRoot(host);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   controlsHost.remove();
+  panelsHost.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -156,7 +161,8 @@ describe("Group work area", () => {
     await act(async () => resize());
     expect(host.querySelectorAll('[data-terminal][data-visible="true"]')).toHaveLength(1);
     expect(terminalPageLayout(2, 9, 1200)).toMatchObject({ page: 0, pageCount: 1 });
-    expect(controlsHost.textContent).toContain("presentation");
+    expect(panelsHost.textContent).toContain("presentation");
+    expect(controlsHost.textContent).not.toContain("presentation");
     expect(host.querySelector('[data-terminal="actor-5"]')).not.toBeNull();
     expect(useUIStore.getState().chatSessions.g1.terminalPage).toBe(4);
   });
@@ -168,6 +174,7 @@ it("makes the covered work area inert while keeping portalled header controls us
   expect(area.hasAttribute("inert")).toBe(true);
   expect(area.getAttribute("aria-hidden")).toBe("true");
   expect(controlsHost.querySelector("button")!.closest("[inert]")).toBeNull();
+  expect(panelsHost.querySelector("button")!.closest("[inert]")).toBeNull();
   await render({ covered: false });
   expect(area.hasAttribute("inert")).toBe(false);
 });

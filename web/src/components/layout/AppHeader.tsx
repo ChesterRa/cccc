@@ -1,15 +1,13 @@
 import { useEffect, useState, type Ref } from "react";
+import { LoaderCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import {
-  getGroupControlVisual,
-  getLaunchControlMode,
-  resolveGroupControls,
-} from "../../utils/groupControls";
+import { getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import {
   ClipboardIcon,
+  EditIcon,
   SearchIcon,
   PlayIcon,
   PauseIcon,
@@ -47,6 +45,7 @@ export interface AppHeaderProps {
   onOpenAccount: () => void;
   onOpenMobileMenu: () => void;
   workControlsRef?: Ref<HTMLDivElement>;
+  sidePanelControlsRef?: Ref<HTMLDivElement>;
 }
 
 export function AppHeader({
@@ -75,14 +74,13 @@ export function AppHeader({
   onOpenMobileMenu,
   sseStatus,
   workControlsRef,
+  sidePanelControlsRef,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
-  const headerRailClass = "flex items-center gap-1 p-[3px]";
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));
   const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
-  const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
         running: selectedGroupRunning,
@@ -94,27 +92,15 @@ export function AppHeader({
     : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
-  const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
-  const pauseControl = getGroupControlVisual(selectedStatusKey, "pause", busy);
-  const stopControl = getGroupControlVisual(selectedStatusKey, "stop", busy);
-  const {
-    launchHardUnavailable,
-    pauseHardUnavailable,
-    stopHardUnavailable,
-    launchDisabled,
-    pauseDisabled,
-    stopDisabled,
-  } = resolveGroupControls({
+  const { launchDisabled, pauseDisabled, stopDisabled } = resolveGroupControls({
     selectedGroupId,
     actorCount: actors.length,
     statusKey: selectedStatusKey,
     busy,
   });
   const isPauseAction = selectedStatusKey === "run";
-  const toggleControl = isPauseAction ? pauseControl : launchControl;
   const toggleDisabled =
     (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
-  const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
   const toggleTitle = isPauseAction
     ? t("pauseDelivery")
     : launchMode === "activate"
@@ -191,8 +177,11 @@ export function AppHeader({
     handleLaunchClick();
   };
   return (
-    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center gap-2 px-3 glass-header md:relative md:inset-auto md:px-5">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+    <header className="@container/group-header absolute inset-x-0 top-0 z-20 flex h-14 shrink-0 items-center gap-2 px-3 glass-header md:relative md:inset-auto md:px-4">
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 @min-[760px]/group-header:max-w-[28cqw] @min-[760px]/group-header:flex-initial"
+        data-group-header-identity
+      >
         <IconButton
           type="button"
           variant="secondary"
@@ -203,135 +192,150 @@ export function AppHeader({
         >
           <MenuIcon size={18} />
         </IconButton>
-
-        <div className="min-w-0 flex items-center gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            {/* The title itself opens group settings; a separate pencil was redundant chrome. */}
-            {canEditGroup ? (
-              <button
-                type="button"
-                onClick={onOpenGroupEdit}
-                title={t("editGroup")}
-                aria-haspopup="dialog"
-                data-group-title-edit="true"
-                className="min-w-0 truncate rounded-md px-1 -mx-1 text-left text-base font-semibold leading-tight text-[var(--color-text-primary)] transition-colors hover:bg-[var(--glass-tab-bg)] md:text-[1.125rem]"
-              >
-                {groupTitle}
-              </button>
-            ) : (
-              <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
-                {groupTitle}
-              </h1>
+        <h1
+          className="min-w-0 truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]"
+          title={groupTitle}
+        >
+          {groupTitle}
+        </h1>
+        {canEditGroup && (
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 text-[var(--color-text-tertiary)]"
+            label={t("editGroup")}
+            aria-haspopup="dialog"
+            data-group-title-edit
+            onClick={onOpenGroupEdit}
+          >
+            <EditIcon size={16} />
+          </IconButton>
+        )}
+        {selectedGroupId && sseStatus !== "connected" && (
+          <span
+            className={classNames(
+              "h-2 w-2 shrink-0 rounded-full",
+              sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500",
             )}
-            {selectedGroupId && sseStatus !== "connected" && (
-              <span
-                className={classNames(
-                  "h-2 w-2 flex-shrink-0 rounded-full",
-                  sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500",
-                )}
-                title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
-              />
-            )}
-            {selectedStatus && (
-              <span className="hidden shrink-0 @min-[480px]/group-header:inline-flex">
-                <GroupStatusIndicator status={selectedStatus} variant="badge" />
-              </span>
-            )}
-          </div>
-        </div>
+            title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
+          />
+        )}
+        {selectedStatus && (
+          <span className="hidden shrink-0 @min-[480px]/group-header:inline-flex">
+            <GroupStatusIndicator status={selectedStatus} />
+          </span>
+        )}
       </div>
+
+      {!webReadOnly && (
+        <div
+          className="hidden shrink-0 items-center gap-0.5 @min-[760px]/group-header:flex"
+          data-group-run-controls
+        >
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleToggleClick}
+            disabled={toggleDisabled}
+            aria-busy={pendingToggleAction !== null || isGroupBusy}
+            className="text-[var(--color-text-secondary)]"
+            label={toggleTitle}
+          >
+            {pendingToggleAction !== null || (isGroupBusy && busy !== "group-stop") ? (
+              <LoaderCircle size={17} className="animate-spin" />
+            ) : isPauseAction ? (
+              <PauseIcon size={17} />
+            ) : (
+              <PlayIcon size={17} />
+            )}
+          </IconButton>
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleStopClick}
+            disabled={stopDisabled || selectedStatusKey === "stop"}
+            aria-busy={busy === "group-stop"}
+            className="text-[var(--color-text-secondary)]"
+            label={t("stopAllAgents")}
+          >
+            {busy === "group-stop" ? (
+              <LoaderCircle size={17} className="animate-spin" />
+            ) : (
+              <StopIcon size={17} />
+            )}
+          </IconButton>
+        </div>
+      )}
 
       <div
         ref={workControlsRef}
-        className="flex shrink-0 items-center gap-1"
+        className="flex shrink-0 items-center gap-1 @min-[760px]/group-header:ml-4"
         data-group-work-controls-host
       />
-
-      {/* Right Actions */}
-      <div className="flex shrink-0 items-center gap-1.5">
-        {!webReadOnly && (
-          <>
-            {/* Desktop Actions */}
-            <div className="mr-1 hidden items-center gap-1.5 @min-[760px]/group-header:flex">
-              <div className={headerRailClass}>
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  size="rail"
-                  onClick={onOpenSearch}
-                  disabled={!selectedGroupId}
-                  className="text-[var(--color-text-secondary)]"
-                  label={t("searchMessages")}
-                >
-                  <SearchIcon size={17} />
-                </IconButton>
-
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  size="rail"
-                  onClick={onOpenContext}
-                  disabled={!selectedGroupId}
-                  className="text-[var(--color-text-secondary)]"
-                  label={t("context")}
-                >
-                  <ClipboardIcon size={17} />
-                </IconButton>
-                <span className={headerRailDividerClass} aria-hidden="true" />
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  onClick={handleToggleClick}
-                  disabled={toggleDisabled}
-                  className={classNames(
-                    toggleControl.className,
-                    toggleHardUnavailable && "opacity-45",
-                  )}
-                  label={toggleTitle}
-                  aria-pressed={toggleControl.active}
-                >
-                  {isPauseAction ? <PauseIcon size={17} /> : <PlayIcon size={17} />}
-                </IconButton>
-
-                <IconButton
-                  type="button"
-                  variant="ghost"
-                  onClick={handleStopClick}
-                  disabled={stopDisabled}
-                  className={classNames(stopControl.className, stopHardUnavailable && "opacity-45")}
-                  label={t("stopAllAgents")}
-                  aria-pressed={stopControl.active}
-                >
-                  <StopIcon size={17} />
-                </IconButton>
-              </div>
-
-              <AppSettingsMenu
-                key={selectedGroupId}
-                theme={theme}
-                textScale={textScale}
-                onThemeChange={onThemeChange}
-                onTextScaleChange={onTextScaleChange}
-                canAccessAccount={canAccessAccount}
-                accountLabel={accountLabel}
-                canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
-                onOpenAccount={onOpenAccount}
-                onOpenSettings={onOpenSettings}
-              />
-            </div>
-
-            <IconButton
-              type="button"
-              variant="secondary"
-              className="text-[var(--color-text-secondary)] @min-[760px]/group-header:hidden"
-              onClick={onOpenMobileMenu}
-              label={t("menu")}
-            >
-              <MoreIcon size={18} />
-            </IconButton>
-          </>
-        )}
-      </div>
+      {!webReadOnly && (
+        <div
+          className="hidden shrink-0 items-center gap-0.5 @min-[760px]/group-header:flex"
+          data-group-work-shortcuts
+        >
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenSearch}
+            disabled={!selectedGroupId}
+            className="text-[var(--color-text-secondary)]"
+            label={t("searchMessages")}
+          >
+            <SearchIcon size={17} />
+          </IconButton>
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenContext}
+            disabled={!selectedGroupId}
+            className="text-[var(--color-text-secondary)]"
+            label={t("context")}
+          >
+            <ClipboardIcon size={17} />
+          </IconButton>
+        </div>
+      )}
+      <div
+        ref={sidePanelControlsRef}
+        className="ml-auto flex shrink-0 items-center gap-0.5"
+        data-group-side-panel-controls-host
+      />
+      {!webReadOnly && (
+        <>
+          <div className="hidden shrink-0 border-l border-[var(--glass-border-subtle)] pl-2 @min-[760px]/group-header:block">
+            <AppSettingsMenu
+              key={selectedGroupId}
+              theme={theme}
+              textScale={textScale}
+              onThemeChange={onThemeChange}
+              onTextScaleChange={onTextScaleChange}
+              canAccessAccount={canAccessAccount}
+              accountLabel={accountLabel}
+              canOpenSettings={Boolean(selectedGroupId) || canAccessAccount}
+              onOpenAccount={onOpenAccount}
+              onOpenSettings={onOpenSettings}
+            />
+          </div>
+          <IconButton
+            type="button"
+            variant="secondary"
+            className="shrink-0 text-[var(--color-text-secondary)] @min-[760px]/group-header:hidden"
+            onClick={onOpenMobileMenu}
+            label={t("menu")}
+          >
+            <MoreIcon size={18} />
+          </IconButton>
+        </>
+      )}
     </header>
   );
 }

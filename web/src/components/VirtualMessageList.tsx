@@ -145,6 +145,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       const height = measureVirtualElement(element, entry, instance);
       const index = Number(element.getAttribute("data-index"));
       if (Number.isInteger(index) && index >= 0 && index < displayMessages.length) {
+        // Switching to Terminals hides these rows. A zero-size notification is
+        // not a new message height and must not collapse the virtual history.
+        if (height === 0) return getEstimatedSize(index);
         cacheMessageRowHeight(resetKey, getStableMessageKey(displayMessages[index], index), height);
       }
       return height;
@@ -854,7 +857,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           if (scrollRef) scrollRef.current = el;
         }}
         className={classNames("flex-1 min-h-0 overflow-auto px-4 py-4 relative", className)}
-        style={{ overflowAnchor: "none" }}
+        style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
         onKeyDownCapture={cancelForcedFollowOnKey}
         onWheel={cancelForcedFollowForUserScroll}
         onPointerDown={(event) => {

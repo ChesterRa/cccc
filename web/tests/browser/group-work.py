@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Browser regression using real AppShell, xterm and synthetic fixture transports.
 
-Requires Chrome, requests and websocket-client. Run an isolated Vite server first:
-  CCCC_WEB_PORT=19999 npm -C web run dev -- --host 127.0.0.1 --port 15559
-Then: python3 web/tests/browser/group-work.py
-Do not edit frontend files during this run (Vite hot reload replaces fixture state).
+Requires Chrome, requests and websocket-client. From web/, run an isolated Vite server:
+  CCCC_WEB_PORT=19999 node --input-type=module -e 'import {createServer,loadConfigFromFile} from "vite-plus"; const c=await loadConfigFromFile({command:"serve",mode:"development"}); const s=await createServer({...c.config,configFile:false,server:{host:"127.0.0.1",port:15559,strictPort:true,hmr:{host:"127.0.0.1",clientPort:15559},forwardConsole:false,proxy:{}}}); await s.listen();'
+The dev client uses this isolated server; all application transports are synthetic.
+Then, from the repo root: python3 web/tests/browser/group-work.py
+Keep frontend files unchanged while this run is in progress.
 Optional env: CHROME_BIN, CCCC_GROUP_WORK_BASE_URL, CCCC_GROUP_WORK_OUTPUT_DIR.
 The browser always uses a new temporary profile; it never accesses existing tabs.
 """
@@ -149,7 +150,7 @@ with tempfile.TemporaryDirectory(
 
         def drag_to(x):
             r = js(
-                'document.querySelector("[data-group-work-area]").parentElement.nextElementSibling.getBoundingClientRect().toJSON()'
+                'document.querySelector("[data-side-panel-resize]").getBoundingClientRect().toJSON()'
             )
             start = r["x"] + r["width"] / 2
             y = r["y"] + r["height"] / 2
@@ -196,6 +197,35 @@ with tempfile.TemporaryDirectory(
             '!!window.groupWorkProbe && !!document.querySelector("[data-group-work-area]")'
         )
         time.sleep(0.5)
+
+        # Ordinary stopped Groups use the existing launch controls. Setup and
+        # history notices must never displace the independent side panel.
+        click("[data-group-presentation-trigger]")
+        wait('!!document.querySelector("#group-side-panel")')
+        panel_top = rect("#group-side-panel")["top"]
+        js("groupWorkProbe.setRunning(false)")
+        wait('!!document.querySelector(\'[aria-label="Launch All Agents"]\')')
+        assert not js('!!document.querySelector("[data-chat-notices]")')
+        assert rect("#group-side-panel")["top"] == panel_top
+        click('[aria-label="Launch All Agents"]')
+        assert js('groupWorkProbe.actions.includes("onStartGroup")')
+        js("groupWorkProbe.setCount(0)")
+        wait('!!document.querySelector("[data-chat-notices]")')
+        assert rect("[data-chat-notices]")["right"] <= rect("#group-side-panel")["left"]
+        assert rect("#group-side-panel")["top"] == panel_top
+        js("groupWorkProbe.setCount(8); groupWorkProbe.setRunning(true)")
+        js('void groupWorkProbe.group.getState().openChatWindow("g1", "g1-event-10")')
+        wait('!!document.querySelector("[data-chat-notices]")')
+        assert rect("#group-side-panel")["top"] == panel_top
+        click('[data-group-presentation-trigger]')
+        js('groupWorkProbe.group.getState().closeChatWindow("g1")')
+        js("groupWorkProbe.setRunning(false); groupWorkProbe.actions.length=0")
+        dimensions(390)
+        click('[aria-label="Menu"]')
+        js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='Run').click()")
+        assert js('groupWorkProbe.actions.includes("onStartGroup")')
+        js("groupWorkProbe.setRunning(true); groupWorkProbe.actions.length=0")
+        dimensions(1440)
 
         def live():
             return js(
@@ -251,6 +281,12 @@ with tempfile.TemporaryDirectory(
         settings_trigger = "[data-app-settings-trigger]"
         settings_panel = "[data-app-settings-menu]"
 
+        def open_settings_menu():
+            # A real mouse click now opens Settings directly; keyboard opens the menu.
+            js('document.querySelector("[data-app-settings-trigger]").focus()')
+            click(settings_trigger)
+            wait('!!document.querySelector("[data-app-settings-menu]")')
+
         def preference(index, value, container=settings_panel):
             name = ("theme", "textScale", "language")[index]
             trigger = container + f' [data-appearance-select="{name}"]'
@@ -273,10 +309,11 @@ with tempfile.TemporaryDirectory(
             assert bounds["bottom"] <= js("innerHeight") + 1, bounds
             assert js(f'''Array.from(document.querySelector({json.dumps(selector)}).querySelectorAll('[data-appearance-select]')).every(e => e.scrollWidth <= e.clientWidth + 1)''')
 
-        point_click('header [aria-label="Edit group"]')
+        point_click("[data-group-title-edit]")
+        wait('groupWorkProbe.actions.includes("onOpenGroupEdit")')
         point_click('header [aria-label="Context Panel"]')
         assert js('groupWorkProbe.actions.includes("onOpenGroupEdit") && groupWorkProbe.actions.includes("onOpenContext")')
-        point_click(settings_trigger)
+        open_settings_menu()
         wait('!!document.querySelector("[data-app-settings-menu]")')
         menu_bounds(settings_panel)
         assert js('document.activeElement === document.querySelector("[data-app-settings-menu] [data-appearance-select=theme]")')
@@ -291,7 +328,7 @@ with tempfile.TemporaryDirectory(
             js("groupWorkProbe.language(" + json.dumps(locale) + ")")
             for dark in [False, True]:
                 js("groupWorkProbe.setDark(" + json.dumps(dark) + ")")
-                point_click(settings_trigger)
+                open_settings_menu()
                 wait('!!document.querySelector("[data-app-settings-menu]")')
                 for scale in ["125", "70", "100"]:
                     preference(1, scale)
@@ -302,7 +339,7 @@ with tempfile.TemporaryDirectory(
                 wait('!document.querySelector("[data-app-settings-menu]")')
         js('groupWorkProbe.language("en")')
         js("groupWorkProbe.setDark(false)")
-        point_click(settings_trigger)
+        open_settings_menu()
         preference(0, "dark")
         assert js('document.documentElement.classList.contains("dark")')
         assert js('localStorage.getItem("cccc-theme")') == "dark"
@@ -319,22 +356,22 @@ with tempfile.TemporaryDirectory(
         key("Escape")
         wait('!document.querySelector("[aria-modal=true]")')
         assert js('document.activeElement.matches("[data-app-settings-trigger]")')
-        point_click(settings_trigger)
+        open_settings_menu()
         point_click(settings_panel + " > button:first-of-type")
         wait('!!document.querySelector("[aria-modal=true]")')
         assert js('groupWorkProbe.actions.includes("onOpenAccount")')
         key("Escape")
         wait('!document.querySelector("[aria-modal=true]")')
         js("groupWorkProbe.setCanAccessAccount(false)")
-        point_click(settings_trigger)
+        open_settings_menu()
         assert js('document.querySelectorAll("[data-app-settings-menu] > button").length') == 1
         key("Escape")
         js("groupWorkProbe.setCanAccessAccount(true)")
-        point_click(settings_trigger)
+        open_settings_menu()
         js('groupWorkProbe.chooseGroup("g2")')
         wait('!document.querySelector("[data-app-settings-menu]")')
         js('groupWorkProbe.chooseGroup("g1")')
-        point_click(settings_trigger)
+        open_settings_menu()
         dimensions(900)
         wait('!document.querySelector("[data-app-settings-menu]")')
         assert js('document.querySelector("[data-app-settings-trigger]").getClientRects().length') == 0
@@ -353,6 +390,33 @@ with tempfile.TemporaryDirectory(
         wait('!document.querySelector(".mobile-menu-panel")')
         dimensions(1440)
         print("PASS settings choices/locales/scale, account scope, keyboard focus, dialog handoff, responsive dismissal and mobile reachability", flush=True)
+
+        # Wide conversations share their reading bounds with filters and composer.
+        dimensions(1920, 1000)
+        time.sleep(0.3)
+        assert js("""(() => {
+          const filters=document.querySelector('[data-message-filters]');
+          const log=document.querySelector('[data-group-message-view] [role=log]');
+          const rows=log.querySelector('.chat-reading-width').getBoundingClientRect();
+          const input=document.querySelector('footer .chat-reading-width').getBoundingClientRect();
+          const controls=filters.querySelector('.chat-reading-width').getBoundingClientRect();
+          return filters.getBoundingClientRect().bottom <= log.getBoundingClientRect().top + 1
+            && Math.abs(rows.left-input.left)<2 && Math.abs(rows.width-input.width)<2
+            && Math.abs(controls.left-input.left)<2 && rows.width<log.clientWidth-100;
+        })()""")
+        point_click('[data-group-presentation-trigger]')
+        wait('!!document.querySelector("#group-side-panel")')
+        assert js("""(() => {
+          const footer=document.querySelector('footer').getBoundingClientRect();
+          const work=document.querySelector('[data-chat-work-surface]').getBoundingClientRect();
+          const panel=document.querySelector('#group-side-panel').getBoundingClientRect();
+          return Math.abs(footer.right-work.right)<1 && footer.right<panel.left
+            && Math.abs(footer.bottom-panel.bottom)<1 && work.bottom<=footer.top+1;
+        })()""")
+        point_click('[data-group-presentation-trigger]')
+        dimensions(1440)
+        time.sleep(0.3)
+        print("PASS reading alignment, non-overlapping filters and full-height side panel", flush=True)
 
         composer_selector = "textarea:not(.xterm-helper-textarea)"
         composer = rect(composer_selector)
@@ -560,8 +624,11 @@ with tempfile.TemporaryDirectory(
         assert len(live()) == 1, live()
         js("groupWorkProbe.modals.getState().setPresentationViewer(null)")
         time.sleep(0.5)
-        assert len(live()) == 4
-        js('groupWorkProbe.ui.getState().setChatPresentationDockOpen("g1",false)')
+        # Closing a card leaves its side panel open. The header toggle closes the panel.
+        assert js('document.querySelector("[data-group-presentation-trigger]").getAttribute("aria-expanded")') == "true"
+        assert len(live()) == 1
+        click("[data-group-presentation-trigger]")
+        wait("groupWorkProbe.sockets.filter(s=>s.readyState===1).length===4")
         # Stopped/headless Actors remain useful without creating a PTY connection.
         js('groupWorkProbe.ui.getState().setGroupTerminalPage("g1",0)')
         time.sleep(0.3)
@@ -708,6 +775,44 @@ with tempfile.TemporaryDirectory(
         shot("compact-desktop-menu")
         key("Escape")
         wait('!document.querySelector(".mobile-menu-panel")')
+        # Hiding virtualized messages must not replace their measured heights with zero.
+        dimensions(1440, 1000)
+        messages()
+        js("""(() => {
+          groupWorkProbe.ui.getState().setChatFilter('g1', 'all');
+          const base=groupWorkProbe.group.getState().chatByGroup.g1.events;
+          groupWorkProbe.group.getState().setEvents(Array.from({length:120},(_,i)=>({
+            ...base[i%base.length],id:`history-${i}`,
+            ts:new Date(Date.UTC(2026,8,17,0,0,i)).toISOString()
+          })), 'g1');
+        })()""")
+        time.sleep(1)
+        log = rect(logselector)
+        cdp("Input.dispatchMouseEvent", {
+            "type": "mouseWheel", "x": log["x"]+log["width"]/2,
+            "y": log["y"]+100, "deltaY": -6000, "deltaX": 0,
+        })
+        time.sleep(0.5)
+        anchor = js("""(() => {
+          const log=document.querySelector('[data-group-message-view] [role=log]');
+          const top=log.getBoundingClientRect().top;
+          const row=Array.from(log.querySelectorAll('[data-message-row]'))
+            .find(e=>e.getBoundingClientRect().bottom>top);
+          return {id:row.dataset.messageId,offset:row.getBoundingClientRect().top-top,
+            scroll:log.scrollTop,total:log.scrollHeight,height:log.clientHeight};
+        })()""")
+        assert 1000 < anchor["scroll"] < anchor["total"]-anchor["height"]-500, anchor
+        tiled()
+        time.sleep(0.4)
+        messages()
+        time.sleep(0.6)
+        restored = js("""(() => {
+          const log=document.querySelector('[data-group-message-view] [role=log]');
+          const row=log.querySelector('[data-message-id="' + """ + json.dumps(anchor["id"]) + """ + '"]');
+          return row ? row.getBoundingClientRect().top-log.getBoundingClientRect().top : null;
+        })()""")
+        assert restored is not None and abs(restored-anchor["offset"])<2, (anchor, restored)
+        print("PASS virtual message identity and visible offset across Terminals/ Messages", flush=True)
         print("EVIDENCE", str(OUT), flush=True)
         print(
             "PASS input isolation, no focus theft, maximize same xterm/socket, terminal Escape/Tab, four-pane pagination, per-group persistence, reload, responsive/locales, Presentation split/mobile, stopped/headless, read-only input, Voice viewed gating and source navigation",

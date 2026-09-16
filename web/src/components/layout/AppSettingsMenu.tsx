@@ -69,6 +69,7 @@ export function AppSettingsMenu({
           ref={triggerRef}
           type="button"
           variant="ghost"
+          size="sm"
           label={t("settingsAndMore")}
           className="relative text-[var(--color-text-secondary)]"
           data-app-settings-trigger

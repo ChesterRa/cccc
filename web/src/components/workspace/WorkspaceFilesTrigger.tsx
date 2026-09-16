@@ -25,13 +25,14 @@ export function WorkspaceFilesTrigger({ active, onToggle }: Props) {
       aria-expanded={active}
       data-workspace-files-toggle="true"
       className={classNames(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)]",
+        "flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 focus-visible:outline-offset-2",
         active
-          ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
+          ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--glass-tab-border-active)]"
           : "text-[var(--color-text-secondary)]",
       )}
     >
-      <FolderIcon size={17} aria-hidden="true" />
+      <FolderIcon size={17} className="shrink-0" aria-hidden="true" />
+      <span className="hidden @min-[1000px]/group-header:inline">{t("workspaceFilesTitle")}</span>
     </button>
   );
 }

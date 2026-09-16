@@ -228,6 +228,7 @@ export function AppShell({
   } as CSSProperties;
   const setGroupConnections = useModalStore((state) => state.setGroupConnections);
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
+  const [sidePanelControlsHost, setSidePanelControlsHost] = useState<HTMLDivElement | null>(null);
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
   const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
@@ -293,6 +294,7 @@ export function AppShell({
           <>
             <AppHeader
               workControlsRef={setWorkControlsHost}
+              sidePanelControlsRef={setSidePanelControlsHost}
               theme={theme}
               textScale={textScale}
               onThemeChange={onThemeChange}
@@ -333,6 +335,7 @@ export function AppShell({
                 <ErrorBoundary>
                   <ChatTab
                     workControlsHost={workControlsHost}
+                    sidePanelControlsHost={sidePanelControlsHost}
                     isDark={isDark}
                     isSmallScreen={isSmallScreen}
                     readOnly={webReadOnly}

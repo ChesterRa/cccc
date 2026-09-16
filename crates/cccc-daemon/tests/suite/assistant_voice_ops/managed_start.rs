@@ -10,8 +10,8 @@ fn isolated(test_name: &str, test: impl FnOnce()) {
         test();
         return;
     }
-    // Resolve the injected MCP launcher without relying on an installed CCCC
-    // or changing process-global environment in the parallel test harness.
+    // Resolve the MCP launcher and isolate Grok's native registry without an
+    // installed CCCC or process-global changes in the parallel test harness.
     let temp = tempfile::tempdir().expect("launcher directory");
     let launcher = temp.path().join("cccc");
     std::fs::write(&launcher, "#!/bin/sh\nexit 1\n").expect("unused MCP launcher");
@@ -21,6 +21,7 @@ fn isolated(test_name: &str, test: impl FnOnce()) {
         .args(["--exact", &name, "--nocapture"])
         .env("CCCC_SECRETARY_START_FIXTURE", &name)
         .env("CCCC_LAUNCHER_PATH", launcher)
+        .env("GROK_HOME", temp.path().join("grok-home"))
         .output()
         .expect("isolated regression");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -52,6 +53,26 @@ impl ManagedSecretary {
         std::fs::write(
             &executable,
             r#"#!/bin/sh
+if [ "$1" = inspect ] || [ "$1" = mcp ]; then
+  exec python3 - "$@" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(os.environ['GROK_HOME']) / 'config.toml'
+args = sys.argv[1:]
+if args == ['inspect', '--json']:
+    entries = [{'name': 'cccc', 'transport': 'stdio', 'target': os.environ['CCCC_CLI'],
+                'source': {'type': 'configToml', 'path': str(path)}}] if path.exists() else []
+    print(json.dumps({'mcpServers': entries}))
+elif args == ['mcp', 'list', '--json']:
+    assert path.exists(), 'MCP must be registered before querying effective configuration'
+    print(json.dumps([{'name': 'cccc', 'command': os.environ['CCCC_CLI'],
+                       'args': ['mcp'], 'enabled': True, 'scope': 'user'}]))
+else:
+    assert args == ['mcp', 'add', '--scope', 'user', 'cccc', '--', '${CCCC_CLI:-cccc}', 'mcp']
+    assert not path.exists(), 'matching registration must not be rewritten'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[mcp_servers.cccc]\ncommand='${CCCC_CLI:-cccc}'\nargs=['mcp']\n")
+PY
+fi
 case " $* " in
   *" leader "*) exec sleep 60 ;;
 esac
@@ -62,6 +83,8 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}\n' "$id"
       ;;
     *'"method":"session/new"'*|*'"method":"session/load"'*)
+      [ -f "$GROK_HOME/config.toml" ] || exit 1
+      case "$line" in *'"mcpServers":[]'*) ;; *) exit 1 ;; esac
       if [ -f "$(dirname "$0")/reject-session" ]; then
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"fixture session rejected"}}\n' "$id"
       else

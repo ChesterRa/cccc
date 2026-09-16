@@ -35,11 +35,7 @@ import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
 import { ResizableSidePanel } from "../../components/layout/ResizableSidePanel";
-import {
-  MOBILE_APP_HEADER_HEIGHT_PX,
-  getMobileFloatingControlsTopInsetPx,
-  getMobileMessageTopInsetPx,
-} from "../../utils/responsiveLayout";
+import { MOBILE_APP_HEADER_HEIGHT_PX } from "../../utils/responsiveLayout";
 import {
   buildWebModelDeliveryStatusByEventId,
   latestWebModelDeliveryStatusNeedingAppPermissionHint,
@@ -145,6 +141,7 @@ export interface ChatTabProps {
   renderedActorIds: string[];
   renderRuntimeActor: (actorId: string, view: RuntimeActorView) => ReactNode;
   workControlsHost?: HTMLElement | null;
+  sidePanelControlsHost?: HTMLElement | null;
 
   // Recipient actors for cross-group messaging
   recipientActors: Actor[];
@@ -196,6 +193,7 @@ export function ChatTab({
   renderedActorIds,
   renderRuntimeActor,
   workControlsHost = null,
+  sidePanelControlsHost = null,
   recipientActors,
   recipientActorsBusy,
   destGroupScopeLabel,
@@ -654,87 +652,11 @@ export function ChatTab({
     ["request_reply", t("filterNeedReply")],
   ];
   const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
-  const showMobileFloatingControls = isSmallScreen && showMessageFilters;
-  const mobileMessageTopInsetPx = isSmallScreen
-    ? getMobileMessageTopInsetPx(showMobileFloatingControls, true)
-    : 0;
+  const showSetupNotice = !readOnly && (needsScope || needsActors) && chatMessages.length > 0;
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-transparent">
-      {/* 1. Header Area: For critical banners/setup only, very space-efficient */}
-      <header className="flex-shrink-0 z-10 flex flex-col w-full">
-        {/* Jump-to window banner */}
-        {chatWindowProps && (
-          <div className="px-4 pt-4">
-            <div
-              className={classNames(
-                "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-sm",
-                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70",
-              )}
-              role="status"
-              aria-label={t("viewingMessage")}
-            >
-              <div className="min-w-0">
-                <div
-                  className={classNames(
-                    "text-sm font-semibold",
-                    isDark ? "text-slate-200" : "text-gray-800",
-                  )}
-                >
-                  {t("viewingMessage")}
-                </div>
-                <div
-                  className={classNames(
-                    "text-xs mt-0.5",
-                    isDark ? "text-slate-400" : "text-gray-600",
-                  )}
-                >
-                  {isLoadingHistory
-                    ? t("loadingContext")
-                    : chatWindowProps.hasMoreBefore || chatWindowProps.hasMoreAfter
-                      ? t("contextTruncated")
-                      : t("contextLoaded")}
-                </div>
-              </div>
-              {!readOnly && (
-                <button
-                  type="button"
-                  className={classNames(
-                    "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
-                    isDark
-                      ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
-                      : "border-gray-200 text-gray-800 hover:bg-gray-100",
-                  )}
-                  onClick={exitChatWindow}
-                >
-                  {t("returnToLatest")}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Compact setup card */}
-        {!readOnly && showSetupCard && chatMessages.length > 0 && (
-          <div className="px-4 pt-3 pb-2">
-            <Suspense fallback={<ChatLazyFallback />}>
-              <SetupChecklist
-                isDark={isDark}
-                selectedGroupId={selectedGroupId}
-                busy={busy}
-                needsScope={needsScope}
-                needsActors={needsActors}
-                needsStart={needsStart}
-                onAddAgent={addAgent}
-                onStartGroup={onStartGroup}
-                variant="compact"
-              />
-            </Suspense>
-          </div>
-        )}
-      </header>
-
-      {/* 2. Body Area: Group work view and the secondary Presentation surface */}
+      {/* Group work view and the secondary side panel. */}
       <main className="flex flex-1 min-h-0 flex-col">
         <div ref={splitLayoutRef} className="relative flex min-h-0 flex-1">
           {!isSmallScreen || mobileSurface === "messages" ? (
@@ -747,265 +669,344 @@ export function ChatTab({
                     : undefined,
               }}
             >
-              <GroupWorkArea
-                covered={showWorkspaceFileViewer}
-                key={selectedGroupId}
-                groupId={selectedGroupId}
-                actors={runtimeActors}
-                renderedActorIds={renderedActorIds}
-                activeActorId={activeRuntimeActorId}
-                isDark={isDark}
-                isVisible={!isSmallScreen || mobileSurface === "messages"}
-                loading={selectedGroupActorsHydrating}
-                onInspectActor={onOpenRuntimeActor}
-                renderActor={renderRuntimeActor}
-                workControlsHost={workControlsHost}
-                isSmallScreen={isSmallScreen}
-                headerEnd={
-                  !selectedGroupId ? undefined : !isSmallScreen ? (
-                    <>
-                      <WorkspaceFilesTrigger
-                        active={activeSidePanel === "files"}
-                        onToggle={() => selectSidePanel("files")}
-                      />
+              <div className="relative flex min-h-0 flex-1 flex-col" data-chat-work-surface>
+                {(chatWindowProps || showSetupNotice) && (
+                  <div
+                    className="shrink-0"
+                    inert={showWorkspaceFileViewer || undefined}
+                    aria-hidden={showWorkspaceFileViewer || undefined}
+                    data-chat-notices
+                  >
+                    {/* Jump-to window banner */}
+                    {chatWindowProps && (
+                      <div className="px-4 pt-4">
+                        <div
+                          className={classNames(
+                            "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-sm",
+                            isDark
+                              ? "border-slate-700/50 bg-slate-900/40"
+                              : "border-gray-200 bg-white/70",
+                          )}
+                          role="status"
+                          aria-label={t("viewingMessage")}
+                        >
+                          <div className="min-w-0">
+                            <div
+                              className={classNames(
+                                "text-sm font-semibold",
+                                isDark ? "text-slate-200" : "text-gray-800",
+                              )}
+                            >
+                              {t("viewingMessage")}
+                            </div>
+                            <div
+                              className={classNames(
+                                "text-xs mt-0.5",
+                                isDark ? "text-slate-400" : "text-gray-600",
+                              )}
+                            >
+                              {isLoadingHistory
+                                ? t("loadingContext")
+                                : chatWindowProps.hasMoreBefore || chatWindowProps.hasMoreAfter
+                                  ? t("contextTruncated")
+                                  : t("contextLoaded")}
+                            </div>
+                          </div>
+                          {!readOnly && (
+                            <button
+                              type="button"
+                              className={classNames(
+                                "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
+                                isDark
+                                  ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
+                                  : "border-gray-200 text-gray-800 hover:bg-gray-100",
+                              )}
+                              onClick={exitChatWindow}
+                            >
+                              {t("returnToLatest")}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Compact setup card */}
+                    {showSetupNotice && (
+                      <div className="px-4 pt-3 pb-2">
+                        <Suspense fallback={<ChatLazyFallback />}>
+                          <SetupChecklist
+                            isDark={isDark}
+                            selectedGroupId={selectedGroupId}
+                            busy={busy}
+                            needsScope={needsScope}
+                            needsActors={needsActors}
+                            needsStart={false}
+                            onAddAgent={addAgent}
+                            onStartGroup={onStartGroup}
+                            variant="compact"
+                          />
+                        </Suspense>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <GroupWorkArea
+                  covered={showWorkspaceFileViewer}
+                  key={selectedGroupId}
+                  groupId={selectedGroupId}
+                  actors={runtimeActors}
+                  renderedActorIds={renderedActorIds}
+                  activeActorId={activeRuntimeActorId}
+                  isDark={isDark}
+                  isVisible={!isSmallScreen || mobileSurface === "messages"}
+                  loading={selectedGroupActorsHydrating}
+                  onInspectActor={onOpenRuntimeActor}
+                  renderActor={renderRuntimeActor}
+                  workControlsHost={workControlsHost}
+                  sidePanelControlsHost={sidePanelControlsHost}
+                  isSmallScreen={isSmallScreen}
+                  sidePanelControls={
+                    !selectedGroupId ? undefined : !isSmallScreen ? (
+                      <>
+                        <WorkspaceFilesTrigger
+                          active={activeSidePanel === "files"}
+                          onToggle={() => selectSidePanel("files")}
+                        />
+                        <PresentationTrigger
+                          presentation={groupPresentation}
+                          attentionSlots={presentationAttention}
+                          isDark={isDark}
+                          isOpen={activeSidePanel === "presentation"}
+                          onOpen={() => selectSidePanel("presentation")}
+                        />
+                      </>
+                    ) : !chatWindowProps ? (
                       <PresentationTrigger
+                        mobile
                         presentation={groupPresentation}
                         attentionSlots={presentationAttention}
                         isDark={isDark}
-                        isOpen={activeSidePanel === "presentation"}
-                        onOpen={() => selectSidePanel("presentation")}
+                        isOpen={mobileSurface === "presentation"}
+                        onOpen={() => setChatMobileSurface(selectedGroupId, "presentation")}
                       />
-                    </>
-                  ) : !chatWindowProps ? (
-                    <PresentationTrigger
-                      mobile
-                      presentation={groupPresentation}
-                      attentionSlots={presentationAttention}
-                      isDark={isDark}
-                      isOpen={mobileSurface === "presentation"}
-                      onOpen={() => setChatMobileSurface(selectedGroupId, "presentation")}
-                    />
-                  ) : undefined
-                }
-              >
-                {showMobileFloatingControls && (
-                  <div
-                    className="pointer-events-none absolute inset-x-0 z-30 px-3"
-                    style={{ top: getMobileFloatingControlsTopInsetPx(true) }}
-                  >
-                    <div className="flex items-center gap-3">
-                      {showMessageFilters ? (
-                        <div
-                          className="pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide"
-                          role="tablist"
-                          aria-label={t("chatFilters")}
-                        >
-                          <div
-                            className={classNames(
-                              "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
-                              isDark
-                                ? "border-white/10 bg-black/10"
-                                : "border-black/10 bg-white/35",
-                            )}
-                          >
-                            {filterOptions.map(([key, label]) => {
-                              const active = chatFilter === key;
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  className={classNames(
-                                    "touch-target-sm min-w-0 rounded-full px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap",
-                                    active
-                                      ? isDark
-                                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                                      : isDark
-                                        ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                        : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
-                                  )}
-                                  onClick={() => setChatFilter(key)}
-                                  aria-pressed={active}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="min-w-0 flex-1" aria-hidden="true" />
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {showMessageFilters && (
-                  <div
-                    className="hidden md:block absolute top-4 left-4 z-20 pointer-events-none"
-                    style={{ width: "calc(100% - 32px)" }}
-                  >
-                    <div
-                      className={classNames(
-                        "inline-flex items-center gap-1 xl:gap-2 rounded-full border p-1 sm:p-1.5 shadow-xl pointer-events-auto backdrop-blur-xl transition-all duration-300",
-                        isDark
-                          ? "border-white/10 bg-slate-900/60 shadow-black/40 ring-1 ring-white/5"
-                          : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5",
-                      )}
-                      role="tablist"
-                      aria-label={t("chatFilters")}
-                    >
-                      {filterOptions.map(([key, label]) => {
-                        const active = chatFilter === key;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            className={classNames(
-                              "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
-                              active
-                                ? isDark
-                                  ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
-                                  : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
-                                : isDark
-                                  ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                  : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
-                            )}
-                            onClick={() => setChatFilter(key)}
-                            aria-pressed={active}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {isBusinessEmptyState && showSetupCard ? (
-                  <div
-                    ref={scrollRef}
-                    className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
-                    role="log"
-                    aria-label={t("chatMessages")}
-                  >
-                    <div className="flex h-full flex-col items-center justify-center text-center pb-20">
+                    ) : undefined
+                  }
+                >
+                  {showMessageFilters && (
+                    <div className="shrink-0 px-4 py-2" data-message-filters>
                       <div
-                        className={classNames(
-                          "w-full max-w-md",
-                          isDark ? "text-slate-200" : "text-gray-800",
-                        )}
+                        className="chat-reading-width flex items-center gap-1 overflow-x-auto scrollbar-hide"
+                        role="group"
+                        aria-label={t("chatFilters")}
                       >
-                        {readOnly ? (
-                          <div
-                            className={classNames(
-                              "text-sm",
-                              isDark ? "text-slate-400" : "text-gray-600",
-                            )}
-                          >
-                            {t("noMessagesYet")}
-                          </div>
-                        ) : (
-                          <Suspense fallback={<ChatLazyFallback />}>
-                            <SetupChecklist
-                              isDark={isDark}
-                              selectedGroupId={selectedGroupId}
-                              busy={busy}
-                              needsScope={needsScope}
-                              needsActors={needsActors}
-                              needsStart={needsStart}
-                              onAddAgent={addAgent}
-                              onStartGroup={onStartGroup}
-                              variant="full"
-                            />
-                          </Suspense>
-                        )}
+                        {filterOptions.map(([key, label]) => {
+                          const active = chatFilter === key;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              className={classNames(
+                                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]",
+                                active
+                                  ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"
+                                  : "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)]",
+                              )}
+                              onClick={() => setChatFilter(key)}
+                              aria-pressed={active}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <VirtualMessageList
-                    messages={chatMessages}
-                    actors={actors}
-                    agentStates={agentStates}
-                    taskById={taskById}
-                    isDark={isDark}
-                    readOnly={readOnly}
-                    groupId={selectedGroupId}
-                    groupLabelById={messageGroupLabelById}
-                    webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
-                    viewKey={chatViewKey}
-                    followOnViewChangeKey={chatFilter}
-                    initialScrollTargetId={chatInitialScrollTargetId}
-                    initialScrollAnchorId={chatInitialScrollAnchorId}
-                    initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
-                    initialScrollOffsetPx={chatInitialScrollOffsetPx}
-                    highlightEventId={chatHighlightEventId}
-                    scrollRef={scrollRef}
-                    topInsetPx={mobileMessageTopInsetPx}
-                    onReply={startReply}
-                    onShowRecipients={showRecipients}
-                    onCopyLink={copyMessageLink}
-                    onCopyContent={copyMessageText}
-                    onRelay={relayMessage}
-                    onOpenSource={openSourceMessage}
-                    onOpenPresentationRef={openPresentationRef}
-                    onOpenTaskRef={openTaskRef}
-                    showScrollButton={showScrollButton}
-                    onScrollButtonClick={handleScrollButtonClick}
-                    chatUnreadCount={chatUnreadCount}
-                    sendScrollRequest={sendScrollRequest}
-                    onSendScrollRequestConsumed={consumeSendScrollRequest}
-                    onScrollChange={handleScrollChange}
-                    onScrollSnapshot={handleScrollSnapshot}
-                    isLoadingHistory={listIsLoadingHistory}
-                    hasMoreHistory={listHasMoreHistory}
-                    isFilteredEmpty={isFilteredEmptyState}
-                    onLoadMore={loadMoreHistory}
-                  />
-                )}
+                  )}
 
-                {!chatWindowProps && runtimeActors.length > 0 ? (
-                  <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
-                    <RuntimeDock
-                      groupId={selectedGroupId}
-                      runtimeActors={runtimeActors}
-                      liveWorkCards={liveWorkCards}
-                      runtimeEvents={liveWorkBucket?.rawHeadlessEventsByActorId}
-                      activeRuntimeActorId={activeRuntimeActorId}
+                  {isBusinessEmptyState && showSetupCard ? (
+                    <div
+                      ref={scrollRef}
+                      className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
+                      role="log"
+                      aria-label={t("chatMessages")}
+                    >
+                      <div className="flex h-full flex-col items-center justify-center text-center pb-20">
+                        <div
+                          className={classNames(
+                            "w-full max-w-md",
+                            isDark ? "text-slate-200" : "text-gray-800",
+                          )}
+                        >
+                          {readOnly ? (
+                            <div
+                              className={classNames(
+                                "text-sm",
+                                isDark ? "text-slate-400" : "text-gray-600",
+                              )}
+                            >
+                              {t("noMessagesYet")}
+                            </div>
+                          ) : (
+                            <Suspense fallback={<ChatLazyFallback />}>
+                              <SetupChecklist
+                                isDark={isDark}
+                                selectedGroupId={selectedGroupId}
+                                busy={busy}
+                                needsScope={needsScope}
+                                needsActors={needsActors}
+                                needsStart={needsStart}
+                                onAddAgent={addAgent}
+                                onStartGroup={onStartGroup}
+                                variant="full"
+                              />
+                            </Suspense>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <VirtualMessageList
+                      messages={chatMessages}
+                      actors={actors}
+                      agentStates={agentStates}
+                      taskById={taskById}
                       isDark={isDark}
-                      isSmallScreen={isSmallScreen}
                       readOnly={readOnly}
-                      actorStatusProvisional={selectedGroupActorStatusProvisional}
-                      onAddAgent={!readOnly ? addAgent : undefined}
-                      onOpenRuntimeActor={onOpenRuntimeActor}
+                      groupId={selectedGroupId}
+                      groupLabelById={messageGroupLabelById}
+                      webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
+                      viewKey={chatViewKey}
+                      followOnViewChangeKey={chatFilter}
+                      initialScrollTargetId={chatInitialScrollTargetId}
+                      initialScrollAnchorId={chatInitialScrollAnchorId}
+                      initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
+                      initialScrollOffsetPx={chatInitialScrollOffsetPx}
+                      highlightEventId={chatHighlightEventId}
+                      scrollRef={scrollRef}
+                      onReply={startReply}
+                      onShowRecipients={showRecipients}
+                      onCopyLink={copyMessageLink}
+                      onCopyContent={copyMessageText}
+                      onRelay={relayMessage}
+                      onOpenSource={openSourceMessage}
+                      onOpenPresentationRef={openPresentationRef}
+                      onOpenTaskRef={openTaskRef}
+                      showScrollButton={showScrollButton}
+                      onScrollButtonClick={handleScrollButtonClick}
+                      chatUnreadCount={chatUnreadCount}
+                      sendScrollRequest={sendScrollRequest}
+                      onSendScrollRequestConsumed={consumeSendScrollRequest}
+                      onScrollChange={handleScrollChange}
+                      onScrollSnapshot={handleScrollSnapshot}
+                      isLoadingHistory={listIsLoadingHistory}
+                      hasMoreHistory={listHasMoreHistory}
+                      isFilteredEmpty={isFilteredEmptyState}
+                      onLoadMore={loadMoreHistory}
                     />
-                  </div>
-                ) : null}
-              </GroupWorkArea>
+                  )}
 
-              {/* `--color-chat-bg` is a 75% glass tint, so it alone would let the chat
+                  {!chatWindowProps && runtimeActors.length > 0 ? (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-1 z-20 sm:bottom-2">
+                      <RuntimeDock
+                        groupId={selectedGroupId}
+                        runtimeActors={runtimeActors}
+                        liveWorkCards={liveWorkCards}
+                        runtimeEvents={liveWorkBucket?.rawHeadlessEventsByActorId}
+                        activeRuntimeActorId={activeRuntimeActorId}
+                        isDark={isDark}
+                        isSmallScreen={isSmallScreen}
+                        readOnly={readOnly}
+                        actorStatusProvisional={selectedGroupActorStatusProvisional}
+                        onAddAgent={!readOnly ? addAgent : undefined}
+                        onOpenRuntimeActor={onOpenRuntimeActor}
+                      />
+                    </div>
+                  ) : null}
+                </GroupWorkArea>
+
+                {/* `--color-chat-bg` is a 75% glass tint, so it alone would let the chat
                   underneath show through. The overlay composites it over the opaque page
                   background to match the chat surface exactly while staying fully opaque. */}
-              {showWorkspaceFileViewer ? (
-                <div
-                  className="absolute inset-0 z-20 flex min-h-0 flex-col"
-                  style={{
-                    backgroundColor: "var(--color-bg-primary)",
-                    backgroundImage: "linear-gradient(var(--color-chat-bg), var(--color-chat-bg))",
-                  }}
-                  data-workspace-file-viewer="true"
-                >
-                  <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <WorkspaceViewer
-                      files={workspaceFiles}
+                {showWorkspaceFileViewer ? (
+                  <div
+                    className="absolute inset-0 z-20 flex min-h-0 flex-col"
+                    style={{
+                      backgroundColor: "var(--color-bg-primary)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-chat-bg), var(--color-chat-bg))",
+                    }}
+                    data-workspace-file-viewer="true"
+                  >
+                    <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                      <WorkspaceViewer
+                        files={workspaceFiles}
+                        isDark={isDark}
+                        readOnly={!!readOnly}
+                        onAttach={attachWorkspacePath}
+                      />
+                    </Suspense>
+                  </div>
+                ) : null}
+              </div>
+              {!readOnly && (
+                <>
+                  {showAppPermissionNotice ? (
+                    <ChatGptAppPermissionNotice
                       isDark={isDark}
-                      readOnly={!!readOnly}
-                      onAttach={attachWorkspacePath}
+                      onDismiss={dismissAppPermissionNotice}
                     />
-                  </Suspense>
-                </div>
-              ) : null}
+                  ) : null}
+                  <ChatComposer
+                    isDark={isDark}
+                    isSmallScreen={isSmallScreen}
+                    selectedGroupId={selectedGroupId}
+                    actors={actors}
+                    recipientActorsBusy={recipientActorsBusy}
+                    selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                    destGroupId={destGroupId}
+                    setDestGroupId={setDestGroupId}
+                    composerGroupSettled={composerGroupSettled}
+                    composerRouteGroups={composerRouteGroups}
+                    destGroupScopeLabel={destGroupScopeLabel}
+                    busy={busy}
+                    recentMessages={chatMessages}
+                    suggestionSourceMessages={suggestionSourceMessages}
+                    replyTarget={replyTarget}
+                    onCancelReply={cancelReply}
+                    quotedPresentationRef={quotedPresentationRef}
+                    onClearQuotedPresentationRef={clearQuotedPresentationRef}
+                    quotedVoiceDocumentRef={quotedVoiceDocumentRef}
+                    onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
+                    onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
+                    toTokens={toTokens}
+                    onToggleRecipient={toggleRecipient}
+                    onClearRecipients={clearRecipients}
+                    composerFiles={composerFiles}
+                    onRemoveComposerFile={removeComposerFile}
+                    appendComposerFiles={appendComposerFiles}
+                    fileInputRef={fileInputRef}
+                    composerRef={composerRef}
+                    setComposerText={setComposerText}
+                    composerGroupMentionTokens={composerGroupMentionTokens}
+                    setComposerGroupMentionTokens={setComposerGroupMentionTokens}
+                    composerAgentMentionTokens={composerAgentMentionTokens}
+                    setComposerAgentMentionTokens={setComposerAgentMentionTokens}
+                    messageMode={messageMode}
+                    setMessageMode={setMessageMode}
+                    onSendMessage={sendMessage}
+                    showMentionMenu={showMentionMenu}
+                    setShowMentionMenu={setShowMentionMenu}
+                    mentionSuggestions={mentionSuggestions}
+                    mentionSelectedIndex={mentionSelectedIndex}
+                    setMentionSelectedIndex={setMentionSelectedIndex}
+                    setMentionFilter={setMentionFilter}
+                    setMentionKind={setMentionKind}
+                    setMentionActorScope={setMentionActorScope}
+                    setMentionTargetGroupId={setMentionTargetGroupId}
+                    slashCommands={slashCommands}
+                  />
+                </>
+              )}
             </section>
           ) : null}
 
@@ -1135,64 +1136,6 @@ export function ChatTab({
           </MobilePresentationSurface>
         </div>
       </main>
-
-      {/* 3. Footer Area: Composer */}
-      {!readOnly && (!isSmallScreen || mobileSurface === "messages") && (
-        <>
-          {showAppPermissionNotice ? (
-            <ChatGptAppPermissionNotice isDark={isDark} onDismiss={dismissAppPermissionNotice} />
-          ) : null}
-          <ChatComposer
-            isDark={isDark}
-            isSmallScreen={isSmallScreen}
-            selectedGroupId={selectedGroupId}
-            actors={actors}
-            recipientActorsBusy={recipientActorsBusy}
-            selectedGroupActorsHydrating={selectedGroupActorsHydrating}
-            destGroupId={destGroupId}
-            setDestGroupId={setDestGroupId}
-            composerGroupSettled={composerGroupSettled}
-            composerRouteGroups={composerRouteGroups}
-            destGroupScopeLabel={destGroupScopeLabel}
-            busy={busy}
-            recentMessages={chatMessages}
-            suggestionSourceMessages={suggestionSourceMessages}
-            replyTarget={replyTarget}
-            onCancelReply={cancelReply}
-            quotedPresentationRef={quotedPresentationRef}
-            onClearQuotedPresentationRef={clearQuotedPresentationRef}
-            quotedVoiceDocumentRef={quotedVoiceDocumentRef}
-            onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
-            onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
-            toTokens={toTokens}
-            onToggleRecipient={toggleRecipient}
-            onClearRecipients={clearRecipients}
-            composerFiles={composerFiles}
-            onRemoveComposerFile={removeComposerFile}
-            appendComposerFiles={appendComposerFiles}
-            fileInputRef={fileInputRef}
-            composerRef={composerRef}
-            setComposerText={setComposerText}
-            composerGroupMentionTokens={composerGroupMentionTokens}
-            setComposerGroupMentionTokens={setComposerGroupMentionTokens}
-            composerAgentMentionTokens={composerAgentMentionTokens}
-            setComposerAgentMentionTokens={setComposerAgentMentionTokens}
-            messageMode={messageMode}
-            setMessageMode={setMessageMode}
-            onSendMessage={sendMessage}
-            showMentionMenu={showMentionMenu}
-            setShowMentionMenu={setShowMentionMenu}
-            mentionSuggestions={mentionSuggestions}
-            mentionSelectedIndex={mentionSelectedIndex}
-            setMentionSelectedIndex={setMentionSelectedIndex}
-            setMentionFilter={setMentionFilter}
-            setMentionKind={setMentionKind}
-            setMentionActorScope={setMentionActorScope}
-            setMentionTargetGroupId={setMentionTargetGroupId}
-            slashCommands={slashCommands}
-          />
-        </>
-      )}
     </div>
   );
 }

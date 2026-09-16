@@ -88,16 +88,14 @@ describe("header settings menu", () => {
       onOpenGroupEdit,
       groupDoc: { group_id: "g1", title: "Robots" },
     });
-    // The group title is the edit affordance now; the standalone pencil button is gone.
-    const title = host.querySelector<HTMLButtonElement>('[data-group-title-edit="true"]')!;
-    expect(title.textContent).toBe("Robots");
-    expect(host.querySelector('[aria-label="editGroup"]')).toBeNull();
+    expect(host.querySelector("h1")?.textContent).toBe("Robots");
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="context"]')!.click();
-      title.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="editGroup"]')!.click();
     });
     expect(onOpenContext).toHaveBeenCalledOnce();
     expect(onOpenGroupEdit).toHaveBeenCalledOnce();
+    expect(document.querySelector('[role="menu"][aria-label="groupActions"]')).toBeNull();
     expect(host.querySelector('[aria-label="account"]')).toBeNull();
     const panel = await openMenu();
     await act(async () => buttonByText(panel, "account").click());
@@ -292,3 +290,52 @@ it("preserves text-input focus when a hover-only menu closes", async () => {
     vi.useRealTimers();
   }
 });
+
+it("keeps the title readable without exposing editing when unavailable", async () => {
+  await mount();
+  expect(host.querySelector('[aria-label="editGroup"]')).not.toBeNull();
+  for (const unavailable of [
+    { webReadOnly: true },
+    { selectedGroupId: "" },
+    { onOpenGroupEdit: undefined },
+  ]) {
+    await act(async () => root.render(<AppHeader {...props} {...unavailable} />));
+    expect(host.querySelector('[aria-label="editGroup"]')).toBeNull();
+    expect(host.querySelector("h1")?.textContent).toBeTruthy();
+    expect(host.querySelector("h1 button")).toBeNull();
+  }
+});
+
+it.each([
+  { state: "active", running: true, label: "pauseDelivery", action: "paused" },
+  { state: "paused", running: true, label: "resumeDelivery", action: "active" },
+  { state: "idle", running: true, label: "resumeDelivery", action: "active" },
+  { state: "active", running: false, label: "launchAllAgents", action: "start" },
+] as const)(
+  "preserves $label behavior with neutral command buttons",
+  async ({ state, running, label, action }) => {
+    const onSetGroupState = vi.fn();
+    const onStartGroup = vi.fn();
+    const onStopGroup = vi.fn();
+    await mount({
+      groupDoc: { group_id: "group-1", state },
+      selectedGroupRunning: running,
+      actors: [{ id: "actor-1" }],
+      onSetGroupState,
+      onStartGroup,
+      onStopGroup,
+    });
+    const button = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+    expect(button.hasAttribute("aria-pressed")).toBe(false);
+    const stop = host.querySelector<HTMLButtonElement>('[aria-label="stopAllAgents"]')!;
+    expect(stop.disabled).toBe(!running);
+    await act(async () => stop.click());
+    expect(onStopGroup).toHaveBeenCalledTimes(running ? 1 : 0);
+    await act(async () => button.click());
+    await act(async () => button.click());
+    if (action === "start") expect(onStartGroup).toHaveBeenCalledOnce();
+    else expect(onSetGroupState).toHaveBeenCalledWith(action);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+  },
+);
