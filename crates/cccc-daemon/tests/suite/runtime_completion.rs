@@ -269,7 +269,17 @@ fn missing_target_and_presend_failure_keep_read_or_unread_mail_retryable() {
         );
         assert_eq!(retry.result["turn"]["turn_id"], turn["turn_id"]);
         record["browser_delivery"]["state"] = json!("submitted");
-        call(&home, "web_model_browser_delivery_record", record);
+        record["browser_delivery"]["detail"] = json!("message_echo");
+        let submitted = call(&home, "web_model_browser_delivery_record", record.clone());
+        record["browser_delivery"]
+            .as_object_mut()
+            .expect("delivery")
+            .remove("detail");
+        let reconciled = call(&home, "web_model_browser_delivery_record", record);
+        assert_eq!(
+            reconciled.result["event"], submitted.result["event"],
+            "completion reconciliation must reuse the original browser receipt"
+        );
         call(
             &home,
             "runtime_complete_turn",

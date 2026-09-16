@@ -97,6 +97,25 @@ pub(super) fn append_browser_delivery(
         .ledger_path(group_id)
         .map_err(OpError::io)?;
     let mut event = Event::new(format!("web_model.browser_delivery.{state}"), group_id);
+    if state == "submitted" {
+        let existing = ledger::inspect(&path, |events, _| {
+            events
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.kind == event.kind
+                        && string(&record.data, "actor_id") == Some(actor_id)
+                        && string(&record.data, "turn_id") == Some(turn_id)
+                        && string(&record.data, "delivery_id") == Some(delivery_id)
+                        && record.data.get("event_ids") == Some(&json!(event_ids))
+                })
+                .cloned()
+        })
+        .map_err(OpError::io)?;
+        if let Some(existing) = existing {
+            return Ok(existing);
+        }
+    }
     event.by = "system".into();
     event.data = Map::from_iter([
         ("actor_id".into(), json!(actor_id)),
