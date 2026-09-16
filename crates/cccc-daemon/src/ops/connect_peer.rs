@@ -44,6 +44,48 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     })
 }
 
+fn external_groups(
+    home: &HomeLayout,
+    source_group: &str,
+    links: Option<&cccc_contracts::connect_groups::ConnectGroupLinks>,
+) -> Result<Vec<Value>, OpError> {
+    let mut external =
+        links
+            .map(|links| {
+                links.links.iter().filter_map(|link| {
+            let (local, remote) = cccc_core::connect_groups::local_endpoint(links, link)?;
+            if local.group_id != source_group
+                || !cccc_core::connect_groups::resource_current(home, local).unwrap_or(false)
+            {
+                return None;
+            }
+            Some(json!({
+                "connection_id": link.id, "instance": remote.instance,
+                "group_id": remote.group_id, "title": remote.title, "transport": "account"
+            }))
+        }).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    for relation in cccc_core::direct::load(home)
+        .map_err(OpError::io)?
+        .relations
+    {
+        if relation.local.group_id == source_group
+            && let Some(remote) = &relation.remote
+        {
+            // A direct pin also suppresses the account row while that relation is offline/revoked.
+            external.retain(|row| {
+                row["instance"]["instance_id"] != remote.instance_id
+                    || row["group_id"] != remote.group_id
+            });
+            if cccc_core::direct::binding(home, &remote.instance_id, &relation.id).is_ok() {
+                external.push(json!({"connection_id":relation.id,"instance":cccc_core::direct::instance(remote,&relation.created_at),"group_id":remote.group_id,"title":remote.title,"transport":"direct"}));
+            }
+        }
+    }
+    Ok(external)
+}
+
 fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let source_group = authorize_local_source(home, request)?;
     let instance_id = request
@@ -53,6 +95,12 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(instance_id) = instance_id else {
+        if request.args.contains_key("target_group_id") {
+            return Err(OpError::new(
+                "connect_instance_required",
+                "target_group_id requires instance_id from cccc_connect()",
+            ));
+        }
         let snapshot = cccc_core::connect::load(home);
         let links = cccc_core::connect_groups::load(home);
         let account_error =
@@ -71,28 +119,7 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut external=links.ok().flatten().map(|links|links.links.iter().filter_map(|link| {
-            let (local,remote)=cccc_core::connect_groups::local_endpoint(&links,link)?;
-            if local.group_id!=source_group || !cccc_core::connect_groups::resource_current(home,local).unwrap_or(false) {return None;}
-            Some(json!({"connection_id":link.id,"instance":remote.instance,"group_id":remote.group_id,"title":remote.title,"transport":"account"}))
-        }).collect::<Vec<_>>()).unwrap_or_default();
-        for relation in cccc_core::direct::load(home)
-            .map_err(OpError::io)?
-            .relations
-        {
-            if relation.local.group_id == source_group
-                && let Some(remote) = &relation.remote
-            {
-                // A direct pin also suppresses the account row while that relation is offline/revoked.
-                external.retain(|row| {
-                    row["instance"]["instance_id"] != remote.instance_id
-                        || row["group_id"] != remote.group_id
-                });
-                if cccc_core::direct::binding(home, &remote.instance_id, &relation.id).is_ok() {
-                    external.push(json!({"connection_id":relation.id,"instance":cccc_core::direct::instance(remote,&relation.created_at),"group_id":remote.group_id,"title":remote.title,"transport":"direct"}));
-                }
-            }
-        }
+        let external = external_groups(home, &source_group, links.ok().flatten().as_ref())?;
         let status = if directory.is_some() || !external.is_empty() {
             "ready"
         } else if snapshot.is_some() || account_error.is_some() {
@@ -108,7 +135,22 @@ fn cached_catalog(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let binding = if let Some(target) = target {
         connect_peer::group_binding(home, instance_id, &source_group, target)
     } else {
-        connect_peer::binding(home, instance_id)
+        match connect_peer::binding(home, instance_id) {
+            Ok(binding) => Ok(binding),
+            Err(message) => {
+                let links = cccc_core::connect_groups::load(home).ok().flatten();
+                let groups = external_groups(home, &source_group, links.as_ref())?
+                    .into_iter().filter(|row| row["instance"]["instance_id"] == instance_id)
+                    .collect::<Vec<_>>();
+                if !groups.is_empty() {
+                    let mut error = OpError::new("connect_target_group_required",
+                        "This instance is available through Group connections. Pass instance_id and target_group_id from external_groups to read a connected Group's Actors.");
+                    error.details.insert("external_groups".into(), json!(groups));
+                    return Err(error);
+                }
+                Err(message)
+            }
+        }
     }
     .map_err(|message| OpError::new("connect_peer_unavailable", message))?;
     let mut catalog = cccc_core::connect_catalog::load_scoped(

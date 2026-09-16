@@ -5,6 +5,7 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 ## Core Routes
 
 - Resume with `cccc_bootstrap`.
+- Discover other instances and connected Groups with `cccc_connect`; it is a core tool, not a capability to install.
 - Reply with `cccc_message_reply`; start with `cccc_message_send`. Terminal output is not delivered.
 - Target either `user` alone or one/more agents; never mix domains. Mail is agent-only, so send separate messages to humans.
 - Promote/retry with `cccc_message_deliver`; a new claim wakes a paused/stopped Group; confirm `ambiguous` retries.
@@ -33,6 +34,24 @@ per-recipient runtime truth is `runtime.delivery`.
 - Targets are `@all`, `@foreman`, `@peers`, `user`, or actor IDs. Before replying, verify `event_id`; before any message, verify `to`. Avoid broad targets for narrow updates.
 - Reply to the current message with its `event_id`; `reply_to` is its optional parent.
 - Use a tracked task, not a reply request, for durable execution and evidence.
+
+### Other Instances and Connected Groups
+
+The same tools serve same-account instances, cross-member Group connections,
+and standalone Direct connections. No Web access token is needed by the Actor.
+
+1. Call `cccc_connect()` in your local Group. Inspect both `instances` and `external_groups`.
+2. For a same-account instance, call `cccc_connect(instance_id="...")` to list Groups and Actors; follow `next` with `after` when present. For an `external_groups` entry, pass both its `instance.instance_id` and `group_id` as `instance_id` and `target_group_id`.
+3. Start a conversation with `cccc_message_send(dst_instance_id="...", dst_group_id="...", to="@foreman", text="...", insight="...", mode="send")`. Use the target's concrete Actor IDs for a specific recipient. Use `mail` for work that can wait, `send` for an immediate exchange, or `request_reply` when a concrete reply is needed. Include the peer insight required by the collaboration contract.
+4. Reply with `cccc_message_reply(event_id="received-local-event-id", text="...", insight="...")`; omit `to` to return to the original participants. Do not substitute the source instance's Event ID. Files use `cccc_file(action="send", path="...", dst_instance_id="...", dst_group_id="...", to="...")`.
+
+Keep `group_id` as your local working Group. Remote Group IDs are qualified by
+instance; `cccc_group` and `cccc_actor` are not remote administration tools.
+Catalogs are cached metadata, not proof of connectivity. `catalog=null` means
+Actors are not known yet; `fresh=false` means the metadata is stale. A queued
+message has not yet been confirmed by the destination; a receipt does not prove
+Actor execution or task completion. Reuse an unchanged `idempotency_key` after
+an uncertain send, rather than creating another message.
 
 ### Shared Context
 

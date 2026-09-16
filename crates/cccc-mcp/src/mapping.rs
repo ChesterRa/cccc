@@ -99,7 +99,7 @@ pub fn daemon_call(
         "cccc_headless" => return action(args, actions::headless),
         "cccc_terminal" => return action(args, actions::terminal),
         "cccc_debug" => return action(args, actions::debug),
-        "cccc_im_bind" => return action(args, actions::im),
+        "cccc_im_bind" => "im_bind_chat",
         "cccc_runtime_wait_next_turn" => "runtime_wait_next_turn",
         "cccc_runtime_complete_turn" => "runtime_complete_turn",
         "cccc_voice_secretary_document" => return voice_document(args),

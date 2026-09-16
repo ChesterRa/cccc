@@ -23,6 +23,7 @@ pub(crate) async fn call_with_context(
     context: Option<RequestContext<'_>>,
     via_capability_use: bool,
 ) -> Result<Value, ToolCallError> {
+    crate::tools::apply_default_action(name, &mut arguments);
     add_runtime_context(home, &mut arguments);
     if let Some(context) = context {
         apply_request_context(&mut arguments, context);
@@ -168,7 +169,7 @@ fn authorize_tool(
     {
         let role = cccc_core::actors::effective_role(group, actor_id)
             .unwrap_or(cccc_contracts::ActorRole::Peer);
-        if cccc_core::WEB_MODEL_CORE_TOOL_NAMES.contains(&name)
+        if cccc_core::web_model_tool_names().any(|tool| tool == name)
             || (via_capability_use
                 && role == cccc_contracts::ActorRole::Foreman
                 && cccc_core::is_builtin_capability_pack_tool(name))

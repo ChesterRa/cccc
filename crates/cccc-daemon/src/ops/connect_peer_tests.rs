@@ -178,3 +178,90 @@ fn catalog_handler_requires_current_peer_proof_and_returns_a_bound_response() {
         "connect_peer_denied"
     );
 }
+
+#[test]
+fn scoped_discovery_error_lists_only_the_calling_groups_authorized_targets() {
+    use cccc_contracts::direct::DirectListener;
+    use cccc_core::direct;
+    let temp = tempfile::tempdir().expect("temp");
+    let a = HomeLayout::from_path(temp.path().join("a")).expect("home");
+    let b = HomeLayout::from_path(temp.path().join("b")).expect("home");
+    let sa = GroupStore::new(a.clone()).expect("store");
+    let sb = GroupStore::new(b.clone()).expect("store");
+    let source = sa.create("Source", "").expect("source");
+    let private = sa.create("Private", "").expect("private");
+    direct::configure(
+        &a,
+        Some(DirectListener {
+            bind: "127.0.0.1:8847".into(),
+            address: "127.0.0.1:8847".into(),
+        }),
+        None,
+    )
+    .expect("listener");
+    let mut targets = Vec::new();
+    for name in ["Remote one", "Remote two"] {
+        let target = sb.create(name, "").expect("target");
+        targets.push(target.group_id.clone());
+        let invitation = direct::invite(&a, &source.group_id).expect("invite");
+        let id = direct::join(&b, &target.group_id, &invitation).expect("join");
+        let joining = direct::load(&b)
+            .expect("load")
+            .relations
+            .into_iter()
+            .find(|r| r.id == id)
+            .expect("relation");
+        direct::hello(
+            &a,
+            &id,
+            &joining.invitation.expect("invitation").secret,
+            &joining.local,
+            &joining.local.public_key,
+        )
+        .expect("hello");
+        direct::set_state(&a, &source.group_id, &id, true).expect("approve");
+    }
+    let peer = InstanceIdentity::load(&b).expect("peer").peer_id;
+    let invoke = |group: &str, args: Value| {
+        let mut request = args.as_object().expect("args").clone();
+        request.insert("group_id".into(), json!(group));
+        request.insert("by".into(), json!("user"));
+        crate::handle_request(
+            &a,
+            &DaemonRequest {
+                v: 1,
+                op: "connect_catalog".into(),
+                args: request,
+            },
+        )
+    };
+    let error = invoke(&source.group_id, json!({"instance_id":peer}))
+        .error
+        .expect("Group required");
+    assert_eq!(error.code, "connect_target_group_required");
+    let listed = error.details["external_groups"]
+        .as_array()
+        .expect("choices");
+    assert_eq!(listed.len(), 2);
+    assert!(
+        targets
+            .iter()
+            .all(|id| listed.iter().any(|g| g["group_id"] == *id))
+    );
+    let denied = invoke(&private.group_id, json!({"instance_id":peer}))
+        .error
+        .expect("no grant");
+    assert_eq!(denied.code, "connect_peer_unavailable");
+    assert!(!denied.details.contains_key("external_groups"));
+    assert!(
+        invoke(
+            &source.group_id,
+            json!({"instance_id":peer,"target_group_id":targets[0]})
+        )
+        .ok
+    );
+    let missing = invoke(&source.group_id, json!({"target_group_id":targets[0]}))
+        .error
+        .expect("instance required");
+    assert_eq!(missing.code, "connect_instance_required");
+}

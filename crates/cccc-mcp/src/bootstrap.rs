@@ -93,6 +93,7 @@ fn assemble_payload(
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
             "project_info": "cccc_capability_use(tool_name=\"cccc_project_info\", tool_arguments={})",
             "context_get": "cccc_context_get()",
+            "connect": "cccc_connect()  # discover accessible remote Groups/Actors; use both instance_id and target_group_id for an external_groups entry",
             "inbox_read": "cccc_inbox_read()",
             "memory_search": "cccc_capability_use(tool_name=\"cccc_memory\", tool_arguments={\"action\":\"search\",\"query\":\"...\"})",
         }

@@ -56,12 +56,46 @@ target's standalone page.
 
 ## Agent collaboration
 
-Agents use `cccc_connect` to discover instances and their Groups/Actors. Send a
-message with `cccc_message_send`, providing both `dst_instance_id` and
-`dst_group_id`; use the target's Actor IDs or selectors such as `@foreman`.
-`cccc_file(action="send")` supports the same qualified destination for small
-attachments. Ordinary `cccc_message_reply` uses the received local Event ID to
-return to the original participant, without guessing IDs in another instance.
+The same tools serve account connections and Direct connections. They are part
+of the ordinary Actor's core MCP catalog; no capability installation or Access
+Token is needed for Agent messaging.
+
+1. Call `cccc_connect()` in the local Group. Check both `instances` (same account)
+   and `external_groups` (connections granted to this specific Group).
+2. For a same-account instance, call `cccc_connect(instance_id="...")`. For an
+   `external_groups` entry, also set `target_group_id` to that entry's `group_id`.
+   The result includes the Group's Actors. Follow `next` with `after` if present.
+   Instance/Group names are labels; use the returned IDs to address messages.
+3. Send with `cccc_message_send(dst_instance_id="...", dst_group_id="...",
+   to=["@foreman"], text="...", insight="...", mode="send")`. Use an Actor ID
+   for a specific recipient. `mode="send"` requests immediate delivery; the
+   MCP default `mode="mail"` leaves Mail for the recipient to read.
+   `cccc_file(action="send")` supports the same qualified destination for small
+   attachments.
+4. On receipt, call `cccc_message_reply(event_id="...", text="...", insight="...")`
+   using the **local Event ID** in the incoming message. Omit `to` to reply to
+   the original sender. Replies use the existing connection automatically.
+
+`cccc_group` and `cccc_actor` manage local Groups; they do not enumerate or
+administer remote instances. Cached directory freshness describes metadata age,
+not live reachability. An empty `instances` list does not imply there are no
+Direct connections: check `external_groups` too.
+
+The CLI provides the same discovery and message routes:
+
+```bash
+cccc connect --group LOCAL_GROUP
+cccc connect --group LOCAL_GROUP --instance REMOTE_INSTANCE --target-group REMOTE_GROUP
+cccc send "Hello" --group LOCAL_GROUP --dst-instance REMOTE_INSTANCE \
+  --dst-group REMOTE_GROUP --to @foreman --insight "Confirming the connection"
+cccc reply LOCAL_EVENT_ID "Received" --group LOCAL_GROUP --insight "Ready to collaborate"
+```
+
+Inside a CCCC Actor, `--group` and `--by` default to its injected Group and Actor
+identity. Outside an Actor, the active Group and `user` are used. Supply a stable
+`--idempotency-key` (MCP: `idempotency_key`) when retrying unchanged content after
+an uncertain response; do not create a new message merely because a receipt is
+still pending.
 
 Queued means the local instance accepted responsibility to deliver. Sent means
 the target Group confirmed receipt; it does not mean an Actor finished the task.

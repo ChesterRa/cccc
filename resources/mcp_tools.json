@@ -127,7 +127,7 @@
   },
   {
     "name": "cccc_connect",
-    "description": "Discover same-account CCCC instances and Group connections approved for your local Group, including standalone Direct connections without an account. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh=false does not prove a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
+    "description": "Discover same-account CCCC instances and Group connections approved for your local Group, including standalone Direct connections without an account. Omit instance_id to list instances and external_groups; provide instance_id to page same-account Groups, or both instance_id and target_group_id from external_groups to read that exact external Group and its visible actors. Read-only cached metadata: fresh describes metadata age, never whether a peer is online. Human Web access tokens are neither required nor returned. Send through cccc_message_send with both dst_instance_id and dst_group_id; reply through the original local event_id. This does not provide remote history, Context, terminal or arbitrary tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1059,7 +1059,7 @@
   },
   {
     "name": "cccc_shell",
-    "description": "Short one-shot shell execution in the group's active workspace. Use for quick tests, builds, rg, scripts, and local commands from a cwd constrained to the active scope root. Returns ok, returncode, stdout, stderr, and truncation flags. For long-running, streaming, or interactive commands, use cccc_exec_command plus cccc_write_stdin.",
+    "description": "Short one-shot shell execution in the group's active workspace. Use for quick tests, builds, rg, scripts, and local commands from a cwd constrained to the active scope root. Returns exit_code, stdout, stderr, and output-truncation flags. For long-running, streaming, or interactive commands, use cccc_exec_command plus cccc_write_stdin.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true
@@ -1205,7 +1205,7 @@
   },
   {
     "name": "cccc_git",
-    "description": "Web Model local-power git operations in the group's active workspace: action=status|diff|log|add|commit. Returns ok, returncode, stdout, stderr. Use cccc_shell for unusual git commands.",
+    "description": "Web Model local-power git operations in the group's active workspace: action=status|diff|log|add|commit. Returns exit_code, stdout, stderr and output-truncation flags. Use cccc_shell for unusual git commands.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": true

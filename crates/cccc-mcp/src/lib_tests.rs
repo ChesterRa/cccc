@@ -340,9 +340,8 @@ async fn web_model_schema_stays_fixed_while_daemon_is_unavailable() {
         .into_iter()
         .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
         .collect::<BTreeSet<_>>();
-    let mut expected = cccc_core::WEB_MODEL_CORE_TOOL_NAMES
-        .iter()
-        .map(|name| (*name).to_owned())
+    let mut expected = cccc_core::web_model_tool_names()
+        .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     if !crate::code_mode::enabled() {
         expected.remove("cccc_code_exec");

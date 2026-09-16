@@ -137,7 +137,7 @@ async fn file_send_uses_daemon_owned_preflight_before_blob_storage() {
         11,
         "cccc_file",
         json!({
-            "action":"send","path":"note.txt","text":"attached",
+            "path":"note.txt","text":"attached",
             "to":["user"],"mode":"send"
         }),
     )

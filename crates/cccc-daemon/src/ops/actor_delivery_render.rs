@@ -93,7 +93,18 @@ fn protocol_lines(event: &Event) -> Vec<String> {
     let mut lines = Vec::new();
     let source_group = text(event, "src_group_id");
     let source_event = text(event, "src_event_id");
-    if !source_group.is_empty() && !source_event.is_empty() {
+    if is_connect_message(event) {
+        lines.push(format!(
+            "[cccc] CONNECT SOURCE: instance_id={}, group_id={}, actor_id={}",
+            text(event, "src_instance_id"),
+            source_group,
+            text(event, "source_user_id")
+        ));
+        lines.push(format!(
+            "[cccc] Reply with cccc_message_reply(event_id={}, text=..., insight=...); omit to to return to the original remote participants.",
+            serde_json::to_string(&event.id).unwrap_or_default()
+        ));
+    } else if !source_group.is_empty() && !source_event.is_empty() {
         lines.push(format!(
             "[cccc] RELAYED FROM (group_id={source_group}, event_id={source_event}):"
         ));
@@ -140,13 +151,29 @@ fn attachment_lines(event: &Event) -> Vec<String> {
     lines
 }
 
+fn is_connect_message(event: &Event) -> bool {
+    let instance = text(event, "src_instance_id");
+    !instance.is_empty() && event.by == format!("connect:{instance}")
+}
+
 fn format_envelope(event: &Event, body: &str) -> String {
     let source = ["source_platform", "source_user_name", "source_user_id"]
         .into_iter()
         .map(|key| text(event, key))
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
-    let sender = if source.is_empty() {
+    let sender = if is_connect_message(event) {
+        let label = |name: &str, fallback: &str| {
+            let value = text(event, name);
+            compact(if value.is_empty() { fallback } else { &value }, 120)
+        };
+        format!(
+            "{} [{} / {}]",
+            label("source_user_name", &text(event, "source_user_id")),
+            label("src_instance_name", &text(event, "src_instance_id")),
+            label("src_group_title", &text(event, "src_group_id"))
+        )
+    } else if source.is_empty() {
         event.by.clone()
     } else {
         format!("{}[{}]", event.by, source.join(" / "))
@@ -239,6 +266,28 @@ fn compact(value: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn connect_delivery_names_the_source_and_replies_with_the_local_event_id() {
+        let mut event = Event::new("chat.message", "g_local");
+        event.id = "received-local-id".into();
+        event.by = "connect:i_remote".into();
+        event.data = json!({
+            "text":"hello", "to":["lead"], "source_platform":"cccc_connect",
+            "source_user_name":"Remote worker", "source_user_id":"worker",
+            "src_instance_name":"Mac", "src_instance_id":"i_remote",
+            "src_group_title":"temp_task", "src_group_id":"g_remote",
+            "src_event_id":"original-remote-event"
+        })
+        .as_object()
+        .expect("data")
+        .clone();
+        let rendered = render_batch(&[event]).expect("message");
+        assert!(rendered.contains("Remote worker [Mac / temp_task]"));
+        assert!(rendered.contains("instance_id=i_remote, group_id=g_remote, actor_id=worker"));
+        assert!(rendered.contains("cccc_message_reply(event_id=\"received-local-id\""));
+        assert!(!rendered.contains("original-remote-event"));
+    }
 
     #[test]
     fn renders_complete_delivery_contract() {

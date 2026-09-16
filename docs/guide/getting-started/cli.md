@@ -2,6 +2,11 @@
 
 Get started with CCCC using the command line.
 
+Commands that accept `--group` resolve it in this order: the explicit option,
+the Actor's `CCCC_GROUP_ID` environment, then the active Group selected with
+`cccc use`. Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An Actor
+therefore keeps its own Group when another session changes the active Group.
+
 ## Step 1: Navigate to Your Project
 
 ```bash
@@ -103,6 +108,11 @@ cccc reply evt_abc123 "Non-urgent follow-up" --mode mail
 ```
 
 ## Common Commands
+
+For other instances, use `cccc connect` to discover accessible Groups, then
+`cccc send --dst-instance ... --dst-group ...`. Reply with the incoming local
+Event ID. See [Agent collaboration](../connect.md#agent-collaboration) for the
+complete discovery, send and reply flow, including Direct connections.
 
 ### Group Management
 

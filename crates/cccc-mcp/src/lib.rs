@@ -18,31 +18,13 @@ mod repo_tests;
 
 use anyhow::Result;
 use cccc_client::DaemonClient;
-use cccc_core::HomeLayout;
+use cccc_core::{CORE_TOOL_NAMES, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::fmt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
 const DEFAULT_LEGACY_PROTOCOL_VERSION: &str = SUPPORTED_LEGACY_PROTOCOL_VERSIONS[0];
-const CORE_TOOL_NAMES: &[&str] = &[
-    "cccc_help",
-    "cccc_bootstrap",
-    "cccc_capability_search",
-    "cccc_capability_use",
-    "cccc_inbox_read",
-    "cccc_message_history",
-    "cccc_connect",
-    "cccc_message_send",
-    "cccc_message_reply",
-    "cccc_message_deliver",
-    "cccc_reply_request_cancel",
-    "cccc_file",
-    "cccc_context_get",
-    "cccc_coordination",
-    "cccc_task",
-    "cccc_agent_state",
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ToolCallError {
@@ -387,29 +369,19 @@ fn actor_fallback_tools(
     group_id: &str,
     actor_id: &str,
 ) -> Vec<Value> {
-    let web_model = cccc_core::GroupStore::new(home.clone())
+    let actor = cccc_core::GroupStore::new(home.clone())
         .and_then(|store| store.load(group_id))
         .ok()
-        .and_then(|group| group.actors.into_iter().find(|actor| actor.id == actor_id))
-        .is_some_and(|actor| actor.runtime == cccc_contracts::ActorRuntime::WebModel);
-    if !web_model {
-        return catalog
-            .into_iter()
-            .filter(|tool| {
-                tool["name"].as_str().is_some_and(|name| {
-                    CORE_TOOL_NAMES.contains(&name)
-                        || (actor_id == "user"
-                            && cccc_core::USER_CONTROL_TOOL_NAMES.contains(&name))
-                })
-            })
-            .collect();
-    }
+        .and_then(|group| group.actors.into_iter().find(|actor| actor.id == actor_id));
+    let base = cccc_core::actor_base_tool_names(actor_id, actor.as_ref())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut output = catalog
         .into_iter()
         .filter(|tool| {
-            tool["name"]
-                .as_str()
-                .is_some_and(|name| cccc_core::WEB_MODEL_CORE_TOOL_NAMES.contains(&name))
+            tool["name"].as_str().is_some_and(|name| {
+                base.contains(name)
+                    || (actor_id == "user" && cccc_core::USER_CONTROL_TOOL_NAMES.contains(&name))
+            })
         })
         .collect::<Vec<_>>();
     hide_disabled_code_mode_tools(&mut output);

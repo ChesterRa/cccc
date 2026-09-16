@@ -29,12 +29,16 @@ pub fn print(response: DaemonResponse) -> Result<()> {
 }
 
 pub fn group(home: &HomeLayout, requested: Option<String>) -> Result<String> {
-    requested
-        .filter(|value| !value.trim().is_empty())
-        .or(active::get(home)?)
-        .ok_or_else(|| {
-            anyhow::anyhow!("no active group; pass --group or run `cccc use <group_id>`")
-        })
+    if let Some(group_id) = requested.filter(|v| !v.trim().is_empty()).or_else(|| {
+        std::env::var("CCCC_GROUP_ID")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+    }) {
+        return Ok(group_id);
+    }
+    active::get(home)?.ok_or_else(|| {
+        anyhow::anyhow!("no active group; pass --group or run `cccc use <group_id>`")
+    })
 }
 
 pub fn env(values: Vec<String>) -> Result<serde_json::Map<String, Value>> {

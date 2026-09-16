@@ -10,8 +10,8 @@ pub use integrations::{
     SpaceCredentialAction, SpaceJobsAction,
 };
 pub use messaging::{
-    CancelReplyArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs, SendArgs,
-    TailArgs, TrackedSendArgs,
+    CancelReplyArgs, ConnectArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs,
+    SendArgs, TailArgs, TrackedSendArgs,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -103,6 +103,8 @@ pub enum CommandKind {
     Space(SpaceArgs),
     /// Read and consume the next unread Mail batch for an actor.
     Inbox(InboxArgs),
+    /// Read cached same-account and Group connection directories. Does not connect or start Actors.
+    Connect(ConnectArgs),
     Send(SendArgs),
     TrackedSend(TrackedSendArgs),
     Reply(ReplyArgs),

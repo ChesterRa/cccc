@@ -13,6 +13,22 @@ pub struct SendArgs {
     #[arg(long, default_value = "send", value_parser = ["send", "request-reply", "mail"])]
     /// Delivery mode. Mail is available only for agent recipients.
     pub mode: String,
+    #[arg(
+        long = "dst-instance",
+        requires = "dst_group_id",
+        conflicts_with = "path"
+    )]
+    /// Exact remote instance ID from `cccc connect`; always pair with --dst-group.
+    pub dst_instance_id: Option<String>,
+    #[arg(long = "dst-group", requires = "dst_instance_id")]
+    /// Remote Group ID, qualified by --dst-instance.
+    pub dst_group_id: Option<String>,
+    #[arg(long)]
+    /// Visible perspective accompanying this message.
+    pub insight: Option<String>,
+    #[arg(long)]
+    /// Stable retry key; reuse with unchanged content after an uncertain response.
+    pub idempotency_key: Option<String>,
     #[arg(long, default_value = "")]
     pub path: String,
 }
@@ -57,6 +73,12 @@ pub struct ReplyArgs {
     pub by: Option<String>,
     #[arg(long = "to")]
     pub recipients: Vec<String>,
+    #[arg(long)]
+    /// Visible perspective accompanying this reply.
+    pub insight: Option<String>,
+    #[arg(long)]
+    /// Stable retry key for this reply.
+    pub idempotency_key: Option<String>,
     #[arg(long, default_value = "send", value_parser = ["send", "mail"])]
     /// Reply delivery mode. Mail is available only for agent recipients.
     pub mode: String,
@@ -132,4 +154,23 @@ pub enum LedgerAction {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct ConnectArgs {
+    #[arg(long = "group")]
+    /// Your local Group; defaults to the current Actor's Group or active Group.
+    pub group_id: Option<String>,
+    #[arg(long)]
+    pub by: Option<String>,
+    #[arg(long)]
+    /// Remote instance from the directory. Omit to list accessible connections.
+    pub instance: Option<String>,
+    #[arg(long, requires = "instance")]
+    /// Exact remote Group; required for a Group-scoped connection.
+    pub target_group: Option<String>,
+    #[arg(long, requires = "instance")]
+    pub after: Option<String>,
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=64))]
+    pub limit: u32,
 }

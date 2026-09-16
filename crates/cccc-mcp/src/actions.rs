@@ -120,16 +120,6 @@ pub fn debug(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-pub fn im(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "bind" => "im_bind_chat",
-        "pending" => "im_list_pending",
-        "authorized" | "list" => "im_list_authorized",
-        "reject" => "im_reject_pending",
-        "revoke" => "im_revoke_chat",
-        _ => return None,
-    })
-}
 pub fn voice_document(value: &str) -> Option<&'static str> {
     Some(match value {
         "list" => "assistant_voice_document_list",

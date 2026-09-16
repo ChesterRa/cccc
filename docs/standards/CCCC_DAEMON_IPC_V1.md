@@ -852,6 +852,19 @@ synchronization still apply. All other
 `capability_state` reads retain normal Group read serialization; capability-store updates keep
 their own locking and are not relaxed by this view.
 
+Ordinary Actor base tool exposure MUST share one definition with the native MCP
+fallback catalog. It includes `cccc_connect`, `cccc_message_deliver` and
+`cccc_reply_request_cancel`. Web Model additions and the Voice Secretary's
+restricted profile MUST also agree when daemon IPC is temporarily unavailable;
+fallback discovery does not grant daemon permissions or activate capability
+packs. User control tools and enabled packs retain their existing scope checks.
+
+Native MCP admission applies a tool's published optional `action` default before
+permission, message classification and routing. JSON Schema defaults are
+annotations; clients are not required to insert them. Explicit actions remain
+unchanged. `cccc_im_bind` has no action selector and maps directly to
+`im_bind_chat`.
+
 Result:
 ```ts
 {

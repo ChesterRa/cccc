@@ -362,6 +362,21 @@ optional exact target Group and cursor. The local default page size is 20,
 clamped to 1–64. It never starts a refresh or Actor. The core MCP tool
 `cccc_connect` exposes this read-only directory to every local Actor role.
 
+Group-scoped connections require both `instance_id` and `target_group_id` for
+detail reads. If a caller supplies only the instance and has authorized external
+Groups there, the operation returns `connect_target_group_required` with those
+choices in `error.details.external_groups`; it MUST NOT silently select a Group
+or broaden access to that instance's catalog. Supplying a target Group without
+an instance returns `connect_instance_required`. Error choices are restricted to
+the calling local Group under the same authorization as normal discovery.
+
+The CLI `cccc connect` is a thin `connect_catalog` port. `cccc send --dst-instance
+... --dst-group ...` uses the same qualified route and retry-key semantics as MCP;
+`cccc reply` uses the local received Event ID and omits recipient overrides by
+default. CLI messaging accepts `--insight` and `--idempotency-key`. Remote terminal
+envelopes identify the source names and qualified IDs, and point replies at the
+local Event ID rather than a source instance's Event ID.
+
 ## Durable message transport
 
 The daemon-owned `connect_send` operation accepts `group_id`, target `instance_id`

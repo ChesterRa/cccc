@@ -757,37 +757,10 @@ fn use_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
 }
 
-const CORE_BASIC_TOOLS: &[&str] = &[
-    "cccc_help",
-    "cccc_bootstrap",
-    "cccc_capability_search",
-    "cccc_capability_use",
-    "cccc_inbox_read",
-    "cccc_message_history",
-    "cccc_message_send",
-    "cccc_message_reply",
-    "cccc_file",
-    "cccc_context_get",
-    "cccc_coordination",
-    "cccc_task",
-    "cccc_agent_state",
-];
 const CAPABILITY_ADMIN_TOOLS: &[&str] = &[
     "cccc_capability_import",
     "cccc_capability_block",
     "cccc_capability_uninstall",
-];
-const VOICE_SECRETARY_TOOLS: &[&str] = &[
-    "cccc_help",
-    "cccc_bootstrap",
-    "cccc_project_info",
-    "cccc_inbox_read",
-    "cccc_message_history",
-    "cccc_context_get",
-    "cccc_agent_state",
-    "cccc_voice_secretary_document",
-    "cccc_voice_secretary_composer",
-    "cccc_voice_secretary_request",
 ];
 fn visible_tools(
     group: Option<&cccc_core::GroupDoc>,
@@ -800,29 +773,14 @@ fn visible_tools(
     let actor = group
         .as_ref()
         .and_then(|group| group.actors.iter().find(|actor| actor.id == actor_id));
-    let voice_secretary = actor_id == "voice-secretary"
-        || actor.and_then(|actor| actor.internal_kind.as_deref()) == Some("voice_secretary");
     let web_model =
         actor.map(|actor| actor.runtime) == Some(cccc_contracts::ActorRuntime::WebModel);
     let peer = group.as_ref().is_some_and(|group| {
         cccc_core::actors::effective_role(group, actor_id) == Some(cccc_contracts::ActorRole::Peer)
     });
-    let mut names = if voice_secretary {
-        VOICE_SECRETARY_TOOLS
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect()
-    } else if web_model {
-        cccc_core::WEB_MODEL_CORE_TOOL_NAMES
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect()
-    } else {
-        CORE_BASIC_TOOLS
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect::<BTreeSet<_>>()
-    };
+    let mut names = cccc_core::actor_base_tool_names(actor_id, actor)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
     if actor_id == "user" {
         names.extend(
             cccc_core::USER_CONTROL_TOOL_NAMES

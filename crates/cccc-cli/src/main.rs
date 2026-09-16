@@ -99,6 +99,9 @@ async fn main() -> Result<()> {
             let web_endpoint = web_endpoint::format(&binding.host, binding.port);
             commands::integrations::space(&client, &home, &web_endpoint, args).await
         }
+        Some(CommandKind::Connect(args)) => {
+            commands::messaging::connect(&client, &home, args).await
+        }
         Some(CommandKind::Send(args)) => commands::messaging::send(&client, &home, args).await,
         Some(CommandKind::TrackedSend(args)) => {
             commands::messaging::tracked(&client, &home, args).await

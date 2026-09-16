@@ -4,8 +4,8 @@ use cccc_core::HomeLayout;
 use serde_json::json;
 
 use crate::args::{
-    CancelReplyArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs, SendArgs,
-    TailArgs, TrackedSendArgs,
+    CancelReplyArgs, ConnectArgs, DeliverArgs, InboxArgs, LedgerAction, LedgerArgs, ReplyArgs,
+    SendArgs, TailArgs, TrackedSendArgs,
 };
 use crate::commands::common::{call, group, print};
 
@@ -23,18 +23,62 @@ pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> R
         anyhow::ensure!(attached, "scope not attached: {}", scope.scope_key);
         scope.scope_key
     };
+    let mut request = json!({
+        "group_id":group_id, "text":args.text, "by":sender(args.by),
+        "to":args.recipients, "message_mode":args.mode.replace('-', "_"),
+        "scope_key":scope_key
+    });
+    if let Some(insight) = args.insight {
+        request["insight"] = json!(insight);
+    }
+    let remote = match (args.dst_instance_id, args.dst_group_id) {
+        (Some(instance), Some(target)) => {
+            anyhow::ensure!(
+                !instance.trim().is_empty() && !target.trim().is_empty(),
+                "remote instance and Group IDs must be nonempty"
+            );
+            request["instance_id"] = json!(instance.trim());
+            request["target_group_id"] = json!(target.trim());
+            if args.recipients.is_empty() {
+                request["to"] = json!(["@foreman"]);
+            }
+            true
+        }
+        (None, None) => false,
+        _ => anyhow::bail!("--dst-instance and --dst-group must be supplied together"),
+    };
+    if let Some(key) = args.idempotency_key {
+        request["client_id"] = json!(key);
+    } else if remote {
+        request["client_id"] = json!(uuid::Uuid::new_v4().to_string());
+    }
     print(
         call(
             client,
-            "message_send",
-            json!({
-                "group_id":group_id,"text":args.text,"by":sender(args.by),
-                "to":args.recipients,"message_mode":args.mode.replace('-', "_"),
-                "scope_key":scope_key
-            }),
+            if remote {
+                "connect_send"
+            } else {
+                "message_send"
+            },
+            request,
         )
         .await?,
     )
+}
+
+pub async fn connect(client: &DaemonClient, home: &HomeLayout, args: ConnectArgs) -> Result<()> {
+    let mut request =
+        json!({"group_id":group(home,args.group_id)?,"by":sender(args.by),"limit":args.limit});
+    if let Some(instance) = args.instance {
+        request["instance_id"] = json!(instance);
+    }
+    if let Some(target) = args.target_group {
+        request["target_group_id"] = json!(target);
+    }
+    if let Some(after) = args.after {
+        request["after"] = json!(after);
+    }
+    print(call(client, "connect_catalog", request).await?)
 }
 
 pub async fn tracked(
@@ -62,18 +106,21 @@ pub async fn tracked(
 }
 
 pub async fn reply(client: &DaemonClient, home: &HomeLayout, args: ReplyArgs) -> Result<()> {
-    print(
-        call(
-            client,
-            "reply",
-            json!({
-                "group_id":group(home,args.group_id)?,"reply_to":args.reply_to,
-                "text":args.text,"by":sender(args.by),"to":args.recipients,
-                "message_mode":args.mode
-            }),
-        )
-        .await?,
-    )
+    let mut request = json!({
+        "group_id":group(home,args.group_id)?, "reply_to":args.reply_to,
+        "text":args.text, "by":sender(args.by), "message_mode":args.mode
+    });
+    // Omission means the original participants, including remote senders.
+    if !args.recipients.is_empty() {
+        request["to"] = json!(args.recipients);
+    }
+    if let Some(insight) = args.insight {
+        request["insight"] = json!(insight);
+    }
+    if let Some(key) = args.idempotency_key {
+        request["client_id"] = json!(key);
+    }
+    print(call(client, "reply", request).await?)
 }
 
 pub async fn deliver(client: &DaemonClient, home: &HomeLayout, args: DeliverArgs) -> Result<()> {

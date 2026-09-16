@@ -503,6 +503,7 @@ dependencies = [
  "shell-words",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
