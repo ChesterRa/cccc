@@ -161,7 +161,8 @@ fn complete_turn(session: &Session, message: &Value) {
         &session.home,
         &session.group_id,
         &session.actor_id,
-        &finished,
+        &finished.turn_id,
+        &finished.started_at,
         message,
     ) {
         tracing::error!(%error, group_id=%session.group_id, actor_id=%session.actor_id,
@@ -171,13 +172,14 @@ fn complete_turn(session: &Session, message: &Value) {
 
 // Completion is a handoff fact, never a decision that the overall task is done.
 // Reuse the existing ledger, send operation and idempotency key; no new loop.
-fn notify_web_foreman(
+pub(crate) fn notify_web_foreman(
     home: &cccc_core::HomeLayout,
     group_id: &str,
     actor_id: &str,
-    turn: &ActiveTurn,
+    turn_id: &str,
+    started_at: &str,
     message: &Value,
-) -> std::io::Result<()> {
+) -> std::io::Result<bool> {
     use cccc_contracts::{ActorRuntime, DaemonRequest, GroupState};
     use cccc_core::{GroupStore, actors, ledger};
     let store = GroupStore::new(home.clone())?;
@@ -185,15 +187,18 @@ fn notify_web_foreman(
     let delivery_enabled =
         group.running && !matches!(group.state, GroupState::Paused | GroupState::Stopped);
     let Ok(lead) = actors::unique_available_foreman(&group) else {
-        return Ok(());
+        return Ok(false);
     };
     if lead.runtime != ActorRuntime::WebModel || lead.id == actor_id {
-        return Ok(());
+        return Ok(false);
     }
     let status = message
         .pointer("/params/turn/status")
         .and_then(Value::as_str)
         .unwrap_or("ended");
+    let source_event_id = message
+        .pointer("/params/turn/source_event_id")
+        .and_then(Value::as_str);
     // ponytail: bounded scan may produce an extra reminder on extremely busy groups;
     // use indexed turn ownership if the group exceeds 2,000 messages per member turn.
     let (recent, _) =
@@ -202,7 +207,9 @@ fn notify_web_foreman(
         .iter()
         .filter(|event| {
             event.by == actor_id
-                && event.ts >= turn.started_at
+                && event.ts.as_str() >= started_at
+                && source_event_id
+                    .is_none_or(|id| event.data.get("reply_to").and_then(Value::as_str) == Some(id))
                 && event
                     .data
                     .get("to")
@@ -211,27 +218,42 @@ fn notify_web_foreman(
         })
         .cloned()
         .collect::<Vec<_>>();
-    if reports.is_empty() {
+    if reports.is_empty() || (status == "failed" && source_event_id.is_some()) {
         if !delivery_enabled {
-            return Ok(());
+            return Ok(false);
         }
         let key = super::super::message_idempotency::tracked_client_id(
             group_id,
             actor_id,
-            &format!("completion:{}", turn.turn_id),
+            &format!("completion:{turn_id}"),
         );
-        let request = DaemonRequest { v:1, op:"send".into(), args:json!({
+        let detail = source_event_id
+            .map(|id| {
+                format!(
+                    " Source event: {id}. {}",
+                    message
+                        .pointer("/params/turn/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_default();
+        let mut request = DaemonRequest { v:1, op:"send".into(), args:json!({
             "group_id":group_id,"by":"system","to":[lead.id],"message_mode":"send","client_id":key,
-            "text":format!("[CCCC] Member {actor_id} ended this turn ({status}). Please review its actual result and decide the next step; this notice does not mark the task complete."),
-            "source_actor_id":actor_id,"source_turn_id":turn.turn_id
+            "text":format!("[CCCC] Member {actor_id} ended this turn ({status}).{detail} Please review its actual result and decide the next step; this notice does not mark the task complete."),
+            "source_actor_id":actor_id,"source_turn_id":turn_id
         }).as_object().cloned().expect("completion request") };
+        if let Some(source) = source_event_id {
+            request.args.insert("reply_to".into(), json!(source));
+        }
         let sent = super::super::messaging::send(home, &request, "chat.message")
             .map_err(|error| std::io::Error::other(format!("{}: {}", error.code, error.message)))?;
         let event: cccc_contracts::Event =
             serde_json::from_value(sent.get("event").cloned().unwrap_or(Value::Null))
                 .map_err(std::io::Error::other)?;
         reports.push(event);
-    } else if delivery_enabled {
+    }
+    if delivery_enabled {
         for report in &reports {
             if report.data.get("message_mode").and_then(Value::as_str) != Some("mail") {
                 continue;
@@ -258,15 +280,9 @@ fn notify_web_foreman(
         }
     }
     super::super::coordination_relay::record_handoff(
-        home,
-        &group,
-        actor_id,
-        &lead.id,
-        &turn.turn_id,
-        &reports,
-        status,
+        home, &group, actor_id, &lead.id, turn_id, &reports, status,
     )
-    .map(|_| ())
+    .map(|_| true)
     .map_err(|error| std::io::Error::other(format!("{}: {}", error.code, error.message)))
 }
 
@@ -379,8 +395,15 @@ mod tests {
                 .collect::<Vec<_>>();
             let completed = json!({"params":{"turn":{"id":turn.turn_id,"status":"completed"}}});
             for _ in 0..2 {
-                notify_web_foreman(&home, &group.group_id, "worker", &turn, &completed)
-                    .expect("completion is repeatable");
+                notify_web_foreman(
+                    &home,
+                    &group.group_id,
+                    "worker",
+                    &turn.turn_id,
+                    &turn.started_at,
+                    &completed,
+                )
+                .expect("completion is repeatable");
             }
             let events = ledger::read_all(&path).expect("ledger");
             let messages = events

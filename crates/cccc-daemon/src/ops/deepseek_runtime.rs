@@ -9,6 +9,7 @@ mod turn_timeout;
 
 pub use delivery::deliver;
 pub use lifecycle::apply;
+pub(super) use recovery::settle_delivery;
 
 use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, HomeLayout};

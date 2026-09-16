@@ -125,19 +125,37 @@ fn process_deepseek_batch(
     actor: &Actor,
     cancelled: &AtomicBool,
 ) -> bool {
-    if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
-        if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
+    let settle = |job: &DeliveryJob| {
+        crate::ops::deepseek_runtime::settle_delivery(home, group, actor, &job.event).map_err(
+            |error| {
+                tracing::warn!(%error, group_id=%group.group_id, actor_id=%actor.id,
+                "could not settle DSH delivery")
+            },
+        )
+    };
+    for job in jobs {
+        if cancelled.load(Ordering::Acquire) {
             return false;
         }
-        match actor_runtime::apply(home, group, &actor.id, "actor.start") {
-            Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
-            Ok(_) | Err(_) => return false,
+        match settle(job) {
+            Ok(true) => {
+                complete_job(job);
+                continue;
+            }
+            Ok(false) => {}
+            Err(()) => return false,
         }
-    }
-    for job in jobs {
-        if cancelled.load(Ordering::Acquire)
-            || !crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled)
-        {
+        if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
+            if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
+                return false;
+            }
+            match actor_runtime::apply(home, group, &actor.id, "actor.start") {
+                Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
+                Ok(_) | Err(_) => return false,
+            }
+        }
+        crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled);
+        if cancelled.load(Ordering::Acquire) || !matches!(settle(job), Ok(true)) {
             return false;
         }
         complete_job(job);

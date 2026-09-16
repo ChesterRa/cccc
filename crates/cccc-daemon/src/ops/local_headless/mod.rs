@@ -4,6 +4,7 @@ mod events_migration;
 mod events_migration_tests;
 mod managed_reader;
 mod output;
+pub(crate) use output::notify_web_foreman;
 mod provider_cli;
 mod session;
 mod supervisor;
