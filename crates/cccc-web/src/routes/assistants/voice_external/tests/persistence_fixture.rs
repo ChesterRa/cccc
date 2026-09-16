@@ -26,6 +26,17 @@ impl Drop for Fixture {
 impl Fixture {
     pub(super) async fn new(lose_reply: bool) -> Self {
         let (temp, home) = home();
+        let codex_home = temp.path().join("codex");
+        std::fs::create_dir(&codex_home).expect("isolated Codex home");
+        std::fs::write(
+            codex_home.join("config.toml"),
+            "model_provider = \"offline-probe\"\n\
+             [model_providers.offline-probe]\n\
+             name = \"Offline probe\"\n\
+             base_url = \"http://127.0.0.1:9\"\n\
+             wire_api = \"responses\"\n",
+        )
+        .expect("offline Codex configuration");
         let store = GroupStore::new(home.clone()).expect("initialize persistence fixture");
         let group = store
             .create("external persistence", "")
@@ -35,6 +46,10 @@ impl Fixture {
             .mutate(&group, |doc| {
                 let mut foreman = cccc_contracts::Actor::new("foreman");
                 foreman.role = Some(cccc_contracts::ActorRole::Foreman);
+                foreman.env.insert(
+                    "CODEX_HOME".into(),
+                    codex_home.to_string_lossy().into_owned(),
+                );
                 doc.actors.push(foreman);
                 doc.scopes.push(Scope {
                     scope_key: "workspace".into(),
