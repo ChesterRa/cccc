@@ -159,7 +159,13 @@ async fn visit_pending(
             // Close only after the receipt transaction above has settled, not
             // merely because a second page inspection looks different.
             let submission = &target["last_submission_evidence"];
-            pending_receipt = submission["submission_evidence"] == "optimistic_echo_unconfirmed";
+            pending_receipt = match submission["submission_evidence"].as_str() {
+                Some("optimistic_echo_unconfirmed") => true,
+                Some("optimistic_echo_unconfirmed_after_refresh") => blocked
+                    .as_ref()
+                    .is_some_and(|b| b["submission_evidence"] == "not_sent_chat_busy"),
+                _ => false,
+            };
             let close_receipt_check = target["last_delivery_status"] == "submitted"
                 && match submission["submission_evidence"].as_str() {
                     Some("message_echo") => submission["receipt_needles"]
@@ -1155,7 +1161,10 @@ async fn recover_verified_ambiguous_submission(
     manage_browser: bool,
 ) -> Result<bool, ApiError> {
     let mut submission = target["last_submission_evidence"].clone();
-    let provisional = submission["submission_evidence"] == "optimistic_echo_unconfirmed";
+    let provisional = matches!(
+        submission["submission_evidence"].as_str(),
+        Some("optimistic_echo_unconfirmed" | "optimistic_echo_unconfirmed_after_refresh")
+    );
     if stored_verified_submission_evidence(&submission).is_none() && !provisional {
         return Ok(false);
     }
@@ -2529,6 +2538,63 @@ mod retry_integration_tests {
                     .count(),
                 1,
                 "late verified receipt must settle the original source exactly once"
+            );
+            let mut awaiting = load_target(&state, gid, "web").expect("confirmed target")["last_submission_evidence"].clone();
+            awaiting["submitted"] = json!(false);
+            awaiting["submission_evidence"] = json!("optimistic_echo_unconfirmed_after_refresh");
+            awaiting["observed"]["response_started"] = json!(false);
+            awaiting["observed"]["latest_turn_id"] = json!("request-still-present");
+            update_target(&state, gid, "web", &snapshot(&state, gid, "web").expect("owner").1,
+                json!({"last_delivery_status":"submission_ambiguous","last_delivery_reconcile_attempts":1,
+                    "last_submission_evidence":awaiting})).expect("persist a still-running refreshed turn");
+            page.evaluate(r#"document.querySelector('[data-message-id=server-late-answer]').remove();const stop=document.createElement('button');stop.id='pending-receipt-stop';stop.setAttribute('aria-label','Stop generating');stop.textContent='Stop generating';document.body.append(stop)"#)
+                .await.expect("generation still running after refresh");
+            browser.web_model_auto_close.store(true, Ordering::Release);
+            super::super::web_model_browser::schedule_delivery_check(&home, false)
+                .expect("visit due");
+            let _ = deliver_pending(&state, gid, "web")
+                .await
+                .expect("observe pending refreshed turn");
+            assert_eq!(
+                browser.info(surface_key()).await["active"],
+                true,
+                "a running refreshed turn without a receipt must keep its browser"
+            );
+            browser.web_model_auto_close.store(false, Ordering::Release);
+            super::super::web_model_browser::schedule_delivery_check(&home, false)
+                .expect("receipt visit due");
+            page.evaluate(r#"document.querySelector('#pending-receipt-stop').remove();const refreshedAnswer=document.createElement('div');refreshedAnswer.dataset.messageAuthorRole='assistant';refreshedAnswer.dataset.messageId='server-late-answer';refreshedAnswer.textContent='Received';document.querySelector('[data-turn-id=request-still-present]').append(refreshedAnswer)"#)
+                .await.expect("refreshed generation receives a real server answer");
+            assert!(matches!(
+                deliver_pending(&state, gid, "web")
+                    .await
+                    .expect("post-refresh receipt"),
+                DeliveryOutcome::Submitted
+            ));
+            assert_eq!(
+                load_target(&state, gid, "web").expect("settled target")["last_delivery_reconcile_attempts"],
+                1,
+                "late observation must not reload again"
+            );
+            assert_eq!(
+                page.evaluate("globalThis.sends")
+                    .await
+                    .expect("send count")
+                    .into_value::<u64>()
+                    .expect("count"),
+                4,
+                "late observation must not send again"
+            );
+            browser.web_model_auto_close.store(true, Ordering::Release);
+            super::super::web_model_browser::schedule_delivery_check(&home, false)
+                .expect("idle close due");
+            let _ = deliver_pending(&state, gid, "web")
+                .await
+                .expect("close settled receipt");
+            assert_eq!(
+                browser.info(surface_key()).await["active"],
+                false,
+                "a verified idle receipt must let the browser exit"
             );
         };
         let caught = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(timeout(
