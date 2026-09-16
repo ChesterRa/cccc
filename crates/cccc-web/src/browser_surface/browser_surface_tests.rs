@@ -846,11 +846,17 @@ async fn submission_does_not_wait_for_background_intersection_observers() {
         assert!(matches!(submit().await.expect("repeat"), PromptSubmissionOutcome::Verified(_)));
         page.evaluate("document.querySelector('[data-turn-id]').dataset.turnId='request-client-pending'; const old=document.querySelector('[data-message-author-role=assistant]'); document.body.prepend(old)")
             .await.expect("provisional echo with unrelated old answer");
-        assert!(!manager.relay_receipt_stable_before_close(key, &evidence).await.expect("provisional close check"));
-        assert!(matches!(submit().await.expect("provisional duplicate"), PromptSubmissionOutcome::Ambiguous(_)),
-            "provisional echo must neither be accepted nor sent again");
-        assert_eq!(page.evaluate("window.sent||0").await.expect("send counter")
-            .into_value::<u64>().expect("count"), 1, "duplicate submission");
+        for thinking_placeholder in [false, true] {
+            if thinking_placeholder {
+                page.evaluate("const placeholder=document.createElement('div'); placeholder.dataset.messageAuthorRole='assistant'; placeholder.dataset.messageId='request-placeholder-request-client-pending'; placeholder.textContent='正在思考'; document.querySelector('[data-turn-id]').append(placeholder)")
+                    .await.expect("nonempty thinking placeholder");
+            }
+            assert!(!manager.relay_receipt_stable_before_close(key, &evidence).await.expect("provisional close check"));
+            assert!(matches!(submit().await.expect("provisional duplicate"), PromptSubmissionOutcome::Ambiguous(_)),
+                "provisional echo must neither be accepted nor sent again");
+            assert_eq!(page.evaluate("window.sent||0").await.expect("send counter")
+                .into_value::<u64>().expect("count"), 1, "duplicate submission");
+        }
         for response_started in [false, true] {
             let stored = json!({
                 "baseline":{"user_message_count":0},

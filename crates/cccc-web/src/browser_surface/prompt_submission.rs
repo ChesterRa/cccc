@@ -1763,7 +1763,9 @@ const INSPECT_SUBMISSION_SCRIPT: &str = r#"(payload, isGenerationStop) => {
     const lastUser = messages.findLastIndex(node => node.getAttribute('data-message-author-role') === 'user');
     const responseStarted = lastUser >= 0 && messages.slice(lastUser + 1).some(node =>
         node.getAttribute('data-message-author-role') === 'assistant'
-        && Boolean(node.getAttribute('data-message-id')) && read(node).length > 0);
+        && Boolean(node.getAttribute('data-message-id'))
+        && !node.getAttribute('data-message-id').startsWith('request-placeholder-')
+        && read(node).length > 0);
     const controls = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible);
     const label = node => [node.getAttribute('aria-label') || '', node.getAttribute('title') || '',
         node.getAttribute('data-testid') || '', node.id || '', node.innerText || node.textContent || '']
