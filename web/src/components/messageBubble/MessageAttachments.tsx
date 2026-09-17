@@ -89,7 +89,7 @@ export function MessageAttachments({
                 key={`file:${attachmentKeyPrefix}:${index}`}
                 href={links.downloadHref}
                 className={classNames(
-                  "inline-flex max-w-full items-center gap-2 rounded-full px-2.5 py-1.5 text-[11px] transition-colors",
+                  "inline-flex max-w-full items-center gap-2 rounded-full px-2.5 py-1.5 text-xs transition-colors",
                   "border border-[var(--glass-border-subtle)] bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)]",
                 )}
                 title={downloadTitle(links.label)}

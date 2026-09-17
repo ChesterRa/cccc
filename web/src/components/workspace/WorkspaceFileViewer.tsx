@@ -1,3 +1,4 @@
+import { buttonVariants } from "../ui/button-variants";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
@@ -101,6 +102,8 @@ function FileViewer({
     [svgSource, dirty, draft, contentUrl],
   );
 
+  const fileActionClass = `${buttonVariants({ variant: "ghost", size: "iconSm" })} max-sm:h-11 max-sm:w-11`;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -126,7 +129,7 @@ function FileViewer({
           disabled={saving || loading}
           title={t("workspaceReload", { defaultValue: "Reload file" })}
           aria-label={t("workspaceReload", { defaultValue: "Reload file" })}
-          className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)] disabled:opacity-30"
+          className={fileActionClass}
         >
           <RotateCcw className={classNames("h-3.5 w-3.5", loading && "animate-spin")} />
         </button>
@@ -136,7 +139,7 @@ function FileViewer({
             onClick={() => setShowSource(!showSource)}
             title={t(showSource ? "workspacePreview" : "workspaceViewSource")}
             aria-label={t(showSource ? "workspacePreview" : "workspaceViewSource")}
-            className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+            className={fileActionClass}
           >
             {showSource ? <Eye className="h-3.5 w-3.5" /> : <Code className="h-3.5 w-3.5" />}
           </button>
@@ -148,7 +151,7 @@ function FileViewer({
             rel="noopener noreferrer"
             title={t("workspaceOpenSeparate")}
             aria-label={t("workspaceOpenSeparate")}
-            className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+            className={fileActionClass}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
@@ -158,7 +161,7 @@ function FileViewer({
           download={baseName(file.path)}
           title={t("workspaceDownload")}
           aria-label={t("workspaceDownload")}
-          className="rounded-md p-1 hover:bg-[var(--glass-tab-bg)]"
+          className={fileActionClass}
         >
           <Download className="h-3.5 w-3.5" />
         </a>
@@ -166,10 +169,7 @@ function FileViewer({
           type="button"
           onClick={onAttach}
           title={t("workspaceAttachContext", { defaultValue: "Attach as context" })}
-          className={classNames(
-            "rounded-md p-1 transition-colors",
-            isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-          )}
+          className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
         >
           <Paperclip className="h-3.5 w-3.5" />
         </button>
@@ -180,7 +180,7 @@ function FileViewer({
             onClick={() => void onSave(draft)}
             title={t("workspaceSave", { defaultValue: "Save" })}
             className={classNames(
-              "rounded-md p-1 transition-colors",
+              fileActionClass,
               !dirty || saving || loading
                 ? "opacity-30"
                 : isDark
@@ -195,10 +195,7 @@ function FileViewer({
           type="button"
           onClick={onClose}
           title={t("workspaceCloseFile", { defaultValue: "Close file" })}
-          className={classNames(
-            "rounded-md p-1 transition-colors",
-            isDark ? "hover:bg-white/8" : "hover:bg-black/5",
-          )}
+          className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -207,7 +204,7 @@ function FileViewer({
       {error ? (
         <div
           className={classNames(
-            "flex items-center gap-2 px-3 py-2 text-[12px]",
+            "flex items-center gap-2 px-3 py-2 text-xs",
             isDark ? "bg-rose-400/10 text-rose-200" : "bg-rose-500/8 text-rose-700",
           )}
         >
@@ -268,7 +265,7 @@ function FileViewer({
           />
         )
       ) : file.truncated ? (
-        <div className="px-3 py-6 text-center text-[12px] opacity-60">
+        <div className="px-3 py-6 text-center text-xs text-[var(--color-text-tertiary)]">
           {t("workspaceTooLarge", {
             defaultValue:
               "This file is too large for the text viewer ({{size}}). Download it to open locally.",
@@ -276,7 +273,7 @@ function FileViewer({
           })}
         </div>
       ) : file.binary ? (
-        <div className="px-3 py-6 text-center text-[12px] opacity-60">
+        <div className="px-3 py-6 text-center text-xs text-[var(--color-text-tertiary)]">
           {t("workspaceBinary", { defaultValue: "Binary file — no text preview." })}
         </div>
       ) : editable ? (
@@ -292,7 +289,7 @@ function FileViewer({
             }
           }}
           className={classNames(
-            "min-h-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-[12px] leading-relaxed outline-none",
+            "min-h-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none",
             isDark ? "text-slate-200" : "text-slate-800",
           )}
         />
@@ -301,7 +298,7 @@ function FileViewer({
           className={classNames(
             // Wraps rather than scrolling sideways: on a phone a horizontal drag per line is
             // unreadable, and the editable path (a textarea) already soft-wraps.
-            "min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-[12px] leading-relaxed",
+            "min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed",
             "whitespace-pre-wrap break-words",
             isDark ? "text-slate-200" : "text-slate-800",
           )}

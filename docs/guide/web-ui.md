@@ -35,6 +35,20 @@ Appearance choices use application menus for theme, text size and language. Sele
 option keeps the containing menu open and returns focus to its trigger. Arrow keys navigate
 options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
 sheet with the same choices and access rules; choice panels are portalled above its scroll area.
+Message identities, recipients, references, timestamps and actions follow the text-size preference.
+Reading controls share the application theme; embedded PDFs, web pages, images and terminal
+ANSI content retain their own colors. Image and diagram viewers keep zoom buttons separate
+from native wheel scrolling and support dragging the enlarged content.
+
+In Group settings, refreshing data or saving a different section preserves edited fields and
+updates fields you have not changed. Delivery, Automation, Messaging and Transcript display
+save results in the current settings view; a failed save leaves your changes available for retry.
+Notebook refresh also preserves a pending notebook choice. Changing Groups starts from that
+Group's saved settings. Closing settings still discards unsaved form edits.
+Web Access refresh preserves the selected access goal together with edited connection fields.
+Saving or resetting one Guidance document updates that document without reloading the other
+editor; **Discard changes** remains explicit.
+
 The **Group status button** combines the status dot with run controls, without a dropdown arrow.
 When space allows, the header also shows the state text; narrow headers and expanded sidebar
 rows use a compact button. Click it to

@@ -186,7 +186,7 @@ export function GroupWorkArea({
   const unread =
     session.chatUnreadCount > 0 ? (
       <span
-        className="ml-1 text-[10px] tabular-nums"
+        className="ml-1 text-xs tabular-nums"
         aria-label={t("workView.unread", { count: session.chatUnreadCount })}
       >
         {session.chatUnreadCount > 99 ? "99+" : session.chatUnreadCount}

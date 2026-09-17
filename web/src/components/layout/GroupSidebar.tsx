@@ -405,7 +405,7 @@ export function GroupSidebar({
                   <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
                     {t("archivedGroups")}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]">
                     {archivedGroups.length}
                   </span>
                 </div>

@@ -95,7 +95,7 @@ function WorkspaceList({
     <div
       className={classNames(
         "overflow-hidden rounded-2xl border",
-        isDark ? "border-white/10 bg-slate-950/50" : "border-black/10 bg-white/90",
+        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
       )}
     >
       <div
@@ -129,21 +129,11 @@ function WorkspaceList({
             </button>
           ) : null}
           {busy ? (
-            <div
-              className={classNames(
-                "px-4 py-4 text-sm",
-                isDark ? "text-slate-400" : "text-gray-500",
-              )}
-            >
+            <div className={classNames("px-4 py-4 text-sm", "text-[var(--color-text-tertiary)]")}>
               Loading…
             </div>
           ) : items.length === 0 ? (
-            <div
-              className={classNames(
-                "px-4 py-4 text-sm",
-                isDark ? "text-slate-400" : "text-gray-500",
-              )}
-            >
+            <div className={classNames("px-4 py-4 text-sm", "text-[var(--color-text-tertiary)]")}>
               No files here.
             </div>
           ) : (
@@ -182,10 +172,7 @@ function WorkspaceList({
                   <span className="min-w-0 flex-1 truncate">{item.name}</span>
                   {!item.is_dir && item.mime_type ? (
                     <span
-                      className={classNames(
-                        "text-[11px]",
-                        isDark ? "text-slate-500" : "text-gray-400",
-                      )}
+                      className={classNames("text-xs", isDark ? "text-slate-500" : "text-gray-400")}
                     >
                       {item.mime_type}
                     </span>
@@ -373,9 +360,7 @@ export function PresentationPinModal({
                 })}
           </div>
           {card ? (
-            <div
-              className={classNames("mt-2 text-xs", isDark ? "text-slate-500" : "text-gray-500")}
-            >
+            <div className={classNames("mt-2 text-xs", "text-[var(--color-text-tertiary)]")}>
               {t("presentationCurrentCard", {
                 title: card.title,
                 defaultValue: `Current: ${card.title}`,
@@ -388,7 +373,7 @@ export function PresentationPinModal({
           <div
             className={classNames(
               "inline-flex flex-wrap rounded-full border p-1",
-              isDark ? "border-white/10 bg-slate-900/60" : "border-black/10 bg-gray-100/80",
+              "border-[var(--color-border-primary)] bg-[var(--glass-tab-bg)]",
             )}
             role="tablist"
             aria-label={t("presentationPinSourceLabel", { defaultValue: "Choose a source type" })}
@@ -457,9 +442,7 @@ export function PresentationPinModal({
                 })}
                 className={classNames(
                   "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                  isDark
-                    ? "border-white/10 bg-slate-950/70 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                    : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/20",
+                  "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
                 )}
               />
             </label>
@@ -467,12 +450,7 @@ export function PresentationPinModal({
 
           {source === "workspace" ? (
             <div className="space-y-3">
-              <div
-                className={classNames(
-                  "text-xs leading-5",
-                  isDark ? "text-slate-400" : "text-gray-600",
-                )}
-              >
+              <div className={classNames("text-xs leading-5", "text-[var(--color-text-tertiary)]")}>
                 {t("presentationWorkspaceHint", {
                   defaultValue:
                     "Link a file from this group's active workspace. Updates to that file will show up here without re-pinning.",
@@ -505,9 +483,7 @@ export function PresentationPinModal({
                 <div
                   className={classNames(
                     "rounded-2xl border px-4 py-3 text-sm font-mono",
-                    isDark
-                      ? "border-white/10 bg-slate-950/70 text-slate-100"
-                      : "border-black/10 bg-white text-gray-900",
+                    "glass-input text-[var(--color-text-primary)]",
                   )}
                 >
                   {currentWorkspaceLabel}
@@ -531,12 +507,10 @@ export function PresentationPinModal({
                 onChange={(event) => setFile(event.target.files?.[0] || null)}
                 className={classNames(
                   "block w-full rounded-2xl border px-4 py-3 text-sm file:mr-4 file:rounded-full file:border-0 file:px-3 file:py-2 file:text-sm file:font-medium",
-                  isDark
-                    ? "border-white/10 bg-slate-950/70 text-slate-100 file:bg-slate-800 file:text-slate-100"
-                    : "border-black/10 bg-white text-gray-900 file:bg-gray-100 file:text-gray-900",
+                  "glass-input text-[var(--color-text-primary)] file:bg-[var(--glass-tab-bg)] file:text-[var(--color-text-primary)]",
                 )}
               />
-              <div className={classNames("text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+              <div className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}>
                 {file
                   ? file.name
                   : t("presentationFileHint", {
@@ -565,9 +539,7 @@ export function PresentationPinModal({
               })}
               className={classNames(
                 "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                isDark
-                  ? "border-white/10 bg-slate-950/70 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                  : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/20",
+                "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
               )}
             />
           </label>
@@ -590,9 +562,7 @@ export function PresentationPinModal({
               })}
               className={classNames(
                 "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
-                isDark
-                  ? "border-white/10 bg-slate-950/70 text-slate-100 placeholder:text-slate-500 focus:border-white/30"
-                  : "border-black/10 bg-white text-gray-900 placeholder:text-gray-400 focus:border-black/20",
+                "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]",
               )}
             />
           </label>

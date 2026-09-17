@@ -41,22 +41,25 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   return (
     <div
       className={classNames(
-        "rounded-3xl border",
-        editing ? "overflow-hidden p-0" : "p-5",
+        "rounded-xl border",
+        editing ? "overflow-hidden p-0" : "p-4",
         minHeightClassName,
-        isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90",
+        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
         className,
       )}
     >
       {error ? (
-        <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>
+        <div
+          role="alert"
+          className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}
+        >
           {error}
         </div>
       ) : loading ? (
         <div
           className={classNames(
             "flex h-full min-h-[220px] flex-col justify-center gap-4 px-3",
-            isDark ? "text-slate-400" : "text-gray-500",
+            "text-[var(--color-text-tertiary)]",
           )}
           role="status"
           aria-live="polite"
@@ -84,7 +87,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
           placeholder={editPlaceholder}
           aria-label={editAriaLabel}
           className={classNames(
-            "block h-full w-full resize-y overflow-y-auto rounded-3xl border-0 bg-transparent p-5 font-mono text-[12px] leading-5 outline-none scrollbar-subtle",
+            "block h-full w-full resize-y overflow-y-auto rounded-xl border-0 bg-transparent p-4 font-mono text-xs leading-5 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] outline-offset-[-2px] scrollbar-subtle",
             minHeightClassName,
             isDark
               ? "text-slate-100 placeholder:text-slate-500"
@@ -106,7 +109,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
         <div
           className={classNames(
             "flex h-full items-center justify-center text-sm",
-            isDark ? "text-slate-500" : "text-gray-500",
+            "text-[var(--color-text-tertiary)]",
           )}
         >
           {emptyLabel || ""}

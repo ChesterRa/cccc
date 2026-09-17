@@ -1,3 +1,4 @@
+import { buttonVariants } from "./ui/button-variants";
 import { GraphicViewer } from "./viewer/GraphicViewer";
 import { FloatingPortal } from "@floating-ui/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -94,7 +95,7 @@ function MermaidPreviewDialog({
             <div className="flex flex-shrink-0 items-center gap-1.5">
               <button
                 type="button"
-                className="mermaid-preview-action"
+                className={`${buttonVariants({ variant: "secondary", size: "sm" })} max-sm:min-h-11`}
                 onClick={() => setShowSource((current) => !current)}
                 aria-pressed={showSource}
               >
@@ -102,8 +103,9 @@ function MermaidPreviewDialog({
               </button>
               <button
                 type="button"
-                className="mermaid-preview-action"
+                className={`${buttonVariants({ variant: "secondary", size: "sm" })} max-sm:min-h-11`}
                 onClick={() => void copySource()}
+                aria-label={copied ? labels.copied : labels.copy}
               >
                 {copied ? (
                   <CheckIcon className="h-3.5 w-3.5 text-green-600 dark:text-emerald-400" />
@@ -114,7 +116,7 @@ function MermaidPreviewDialog({
               </button>
               <button
                 type="button"
-                className="mermaid-preview-action mermaid-preview-close"
+                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
                 onClick={onClose}
                 aria-label={closeLabel}
                 title={closeLabel}

@@ -61,15 +61,20 @@ function normalizeNotebookSpaces(raw: unknown): GroupSpaceRemoteSpace[] {
 
 function resolveDraftNotebookId(
   previousDraft: string,
+  previousBoundId: string,
   boundRemoteId: string,
   options: GroupSpaceRemoteSpace[],
 ): string {
   const bound = String(boundRemoteId || "").trim();
-  if (bound) return bound;
   const previous = String(previousDraft || "").trim();
-  if (previous && options.some((item) => String(item.remote_space_id || "").trim() === previous)) {
+  if (
+    previous &&
+    previous !== previousBoundId &&
+    options.some((item) => String(item.remote_space_id || "").trim() === previous)
+  ) {
     return previous;
   }
+  if (bound) return bound;
   return String(options[0]?.remote_space_id || "").trim();
 }
 
@@ -260,10 +265,10 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         nextStatus?.bindings?.memory?.remote_space_id || "",
       ).trim();
       setWorkBindRemoteId((prev) =>
-        resolveDraftNotebookId(prev, nextWorkBoundRemoteId, nextSpaces),
+        resolveDraftNotebookId(prev, workBoundRemoteId, nextWorkBoundRemoteId, nextSpaces),
       );
       setMemoryBindRemoteId((prev) =>
-        resolveDraftNotebookId(prev, nextMemoryBoundRemoteId, nextSpaces),
+        resolveDraftNotebookId(prev, memoryBoundRemoteId, nextMemoryBoundRemoteId, nextSpaces),
       );
     } catch (e) {
       if (loadSeqRef.current !== loadSeq) return;
@@ -275,9 +280,18 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     }
   };
 
+  const draftGroupRef = useRef(groupId);
   useEffect(() => {
+    if (draftGroupRef.current !== groupId) {
+      draftGroupRef.current = groupId;
+      setWorkBindRemoteId("");
+      setMemoryBindRemoteId("");
+    }
     if (!isActive || !groupId) return;
     void loadAll({ refreshSpaces: true });
+    return () => {
+      loadSeqRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when active/group changes
   }, [isActive, groupId]);
 
@@ -770,9 +784,15 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             </div>
           )}
 
-          {err ? <div className="text-xs text-rose-600 dark:text-rose-400">{err}</div> : null}
+          {err ? (
+            <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">
+              {err}
+            </div>
+          ) : null}
           {hint ? (
-            <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div>
+            <div role="status" className="text-xs text-[var(--color-accent-success)]">
+              {hint}
+            </div>
           ) : null}
         </div>
       </section>

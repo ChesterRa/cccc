@@ -1,3 +1,4 @@
+import { buttonVariants } from "../ui/button-variants";
 import { PanelRightClose } from "lucide-react";
 import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
 import { GraphicViewer } from "../viewer/GraphicViewer";
@@ -304,24 +305,9 @@ function PresentationViewer({
         ? t("presentationCompareSnapshotAction", { defaultValue: "Compare with snapshot" })
         : t("presentationOpenQuotedSnapshotAction", { defaultValue: "Open quoted snapshot" })
       : t("presentationHideSnapshotAction", { defaultValue: "Hide snapshot" });
-  const iconButtonClassName = classNames(
-    "inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
-    isDark
-      ? "border-white/12 bg-white/[0.06] text-white hover:bg-white/[0.1]"
-      : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white",
-  );
-  const destructiveIconButtonClassName = classNames(
-    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
-    isDark
-      ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
-      : "bg-rose-50 text-rose-700 hover:bg-rose-100",
-  );
-  const copiedIconButtonClassName = classNames(
-    "inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
-    isDark
-      ? "border-white/16 bg-white/[0.12] text-white"
-      : "border-black/10 bg-white text-[rgb(35,36,37)]",
-  );
+  const iconButtonClassName = `${buttonVariants({ variant: "ghost", size: "iconRail" })} max-sm:h-11 max-sm:w-11`;
+  const destructiveIconButtonClassName = `${buttonVariants({ variant: "destructive", size: "iconRail" })} max-sm:h-11 max-sm:w-11`;
+  const copiedIconButtonClassName = `${iconButtonClassName} text-[var(--color-accent-success)]`;
   const refreshActionLabel = t("presentationRefreshAction", { defaultValue: "Refresh" });
   const copyActionLabel = copiedReference
     ? t("presentationCopyReferenceCopied", { defaultValue: "Copied" })
@@ -640,7 +626,7 @@ function PresentationViewer({
     <div
       className={classNames(
         "flex h-full min-h-0 flex-col overflow-hidden rounded-3xl border",
-        isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/92",
+        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
       )}
     >
       <div
@@ -659,9 +645,7 @@ function PresentationViewer({
             {t("presentationSnapshotFromQuoteLabel", { defaultValue: "Snapshot from this quote" })}
           </div>
           {snapshotTimestamp ? (
-            <div
-              className={classNames("mt-1 text-xs", isDark ? "text-slate-400" : "text-gray-500")}
-            >
+            <div className={classNames("mt-1 text-xs", "text-[var(--color-text-tertiary)]")}>
               {snapshotTimestamp}
             </div>
           ) : null}
@@ -681,12 +665,7 @@ function PresentationViewer({
         <button
           type="button"
           onClick={() => setSnapshotLightboxOpen(true)}
-          className={classNames(
-            "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-            isDark
-              ? "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
-              : "bg-black/5 text-gray-600 hover:bg-black/10 hover:text-gray-900",
-          )}
+          className={iconButtonClassName}
           aria-label={t("presentationOpenSnapshotLightboxAction", {
             defaultValue: "Open snapshot",
           })}
@@ -718,7 +697,7 @@ function PresentationViewer({
     <div
       className={classNames(
         "flex h-full min-h-[320px] items-center justify-center rounded-3xl border border-dashed text-sm",
-        isDark ? "border-white/10 text-slate-500" : "border-black/10 text-gray-500",
+        "border-[var(--color-border-primary)] text-[var(--color-text-tertiary)]",
       )}
     >
       {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
@@ -732,19 +711,19 @@ function PresentationViewer({
       loading={cardMode !== "inline" && linkedAsset.content === null && !linkedAsset.error}
       loadingLabel={t("common:loading")}
       isDark={isDark}
-      className={isModal ? undefined : "!rounded-none !border-0 !bg-transparent !p-3"}
+      className="!rounded-none !border-0 !bg-transparent !p-3 sm:!p-4"
       minHeightClassName={isModal ? undefined : "min-h-0"}
     />
   ) : card.card_type === "table" ? (
     <div
       className={classNames(
         "overflow-hidden rounded-3xl border",
-        isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/95",
+        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
       )}
     >
       <div className="overflow-auto">
         <table className="min-w-full border-collapse text-sm">
-          <thead className={isDark ? "bg-slate-900/80 text-slate-200" : "bg-gray-50 text-gray-800"}>
+          <thead className={"bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]"}>
             <tr>
               {(card.content.table?.columns || []).map((column) => (
                 <th
@@ -756,18 +735,12 @@ function PresentationViewer({
               ))}
             </tr>
           </thead>
-          <tbody className={isDark ? "text-slate-300" : "text-gray-700"}>
+          <tbody className={"text-[var(--color-text-secondary)]"}>
             {(card.content.table?.rows || []).map((row, rowIndex) => (
               <tr
                 key={`row-${rowIndex}`}
                 className={
-                  rowIndex % 2 === 0
-                    ? isDark
-                      ? "bg-slate-950/40"
-                      : "bg-white"
-                    : isDark
-                      ? "bg-slate-900/30"
-                      : "bg-gray-50/80"
+                  rowIndex % 2 === 0 ? "bg-[var(--color-bg-primary)]" : "bg-[var(--glass-tab-bg)]"
                 }
               >
                 {row.map((cell, cellIndex) => (
@@ -831,18 +804,13 @@ function PresentationViewer({
     <div
       className={classNames(
         "rounded-3xl border p-6",
-        isDark ? "border-white/10 bg-slate-950/60" : "border-black/10 bg-white/90",
+        "border-[var(--color-border-primary)] bg-[var(--color-bg-primary)]",
       )}
     >
-      <div
-        className={classNames(
-          "text-base font-semibold",
-          isDark ? "text-slate-100" : "text-gray-900",
-        )}
-      >
+      <div className={classNames("text-base font-semibold", "text-[var(--color-text-primary)]")}>
         {card.title}
       </div>
-      <div className={classNames("mt-2 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
+      <div className={classNames("mt-2 text-sm", "text-[var(--color-text-tertiary)]")}>
         {card.summary ||
           card.source_label ||
           t("presentationFileReady", {
@@ -913,7 +881,7 @@ function PresentationViewer({
                       type="button"
                       onClick={() => setWebPreviewMode("embedded")}
                       className={classNames(
-                        "rounded-full px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors",
+                        "rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors",
                         webPreviewMode === "embedded"
                           ? isDark
                             ? "bg-slate-100 text-slate-950"
@@ -931,7 +899,7 @@ function PresentationViewer({
                       type="button"
                       onClick={() => setWebPreviewMode("interactive")}
                       className={classNames(
-                        "rounded-full px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors",
+                        "rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors",
                         webPreviewMode === "interactive"
                           ? isDark
                             ? "bg-white/[0.08] text-white"
@@ -1092,7 +1060,7 @@ function PresentationViewer({
               aria-label={t("presentationSnapshotFromQuoteLabel")}
               className={classNames(
                 "relative z-10 flex h-full max-h-full w-full max-w-6xl min-h-0 flex-col overflow-hidden rounded-3xl border shadow-2xl",
-                isDark ? "border-white/10 bg-slate-950/96" : "border-black/10 bg-white/96",
+                "border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)]",
               )}
             >
               <div
@@ -1105,7 +1073,7 @@ function PresentationViewer({
                   <div
                     className={classNames(
                       "text-sm font-semibold",
-                      isDark ? "text-slate-100" : "text-gray-900",
+                      "text-[var(--color-text-primary)]",
                     )}
                   >
                     {t("presentationSnapshotFromQuoteLabel", {
@@ -1114,10 +1082,7 @@ function PresentationViewer({
                   </div>
                   {snapshotTimestamp ? (
                     <div
-                      className={classNames(
-                        "mt-1 text-xs",
-                        isDark ? "text-slate-400" : "text-gray-500",
-                      )}
+                      className={classNames("mt-1 text-xs", "text-[var(--color-text-tertiary)]")}
                     >
                       {snapshotTimestamp}
                     </div>
@@ -1138,12 +1103,7 @@ function PresentationViewer({
                 <button
                   type="button"
                   onClick={() => setSnapshotLightboxOpen(false)}
-                  className={classNames(
-                    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-                    isDark
-                      ? "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
-                      : "bg-black/5 text-gray-600 hover:bg-black/10 hover:text-gray-900",
-                  )}
+                  className={iconButtonClassName}
                   aria-label={t("presentationCloseSnapshotAction", {
                     defaultValue: "Close snapshot",
                   })}
@@ -1192,9 +1152,7 @@ function PresentationViewer({
               disabled={quotePending}
               className={classNames(
                 "pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-sm font-medium shadow-lg backdrop-blur-xl transition-colors",
-                isDark
-                  ? "border-white/10 bg-slate-900/82 text-white hover:bg-slate-900"
-                  : "border-black/10 bg-white/88 text-[rgb(35,36,37)] hover:bg-white",
+                "border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
                 quotePending ? "opacity-70" : "",
               )}
               aria-label={t("presentationQuoteInChatAction", { defaultValue: "Quote in chat" })}
@@ -1229,7 +1187,7 @@ function PresentationViewer({
       <section
         className={classNames(
           "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-          isDark ? "bg-slate-950/18" : "bg-white/62",
+          "bg-[var(--color-bg-primary)]",
         )}
         aria-label={t("presentationTitle", { defaultValue: "Presentation" })}
       >
@@ -1280,7 +1238,7 @@ function PresentationViewer({
                   type="button"
                   onClick={() => setWebPreviewMode("embedded")}
                   className={classNames(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+                    "rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors",
                     webPreviewMode === "embedded"
                       ? isDark
                         ? "bg-slate-100 text-slate-950"
@@ -1298,7 +1256,7 @@ function PresentationViewer({
                   type="button"
                   onClick={() => setWebPreviewMode("interactive")}
                   className={classNames(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+                    "rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors",
                     webPreviewMode === "interactive"
                       ? isDark
                         ? "bg-white/[0.08] text-white"

@@ -1,4 +1,8 @@
 {
+  "saveFeedback": {
+    "saved": "Settings saved.",
+    "failed": "Could not save settings. Your changes are still here; try again."
+  },
   "title": "Settings",
   "closeAriaLabel": "Close settings",
   "tabs": {

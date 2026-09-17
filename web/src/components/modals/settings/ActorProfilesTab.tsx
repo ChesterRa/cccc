@@ -226,7 +226,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         </div>
         <div className={`${settingsDialogBodyClass} space-y-4`}>
           {editorErr ? (
-            <div className="rounded-lg border px-3 py-2 text-sm border-rose-500/30 bg-rose-500/10 text-rose-400">
+            <div
+              role="alert"
+              className="rounded-lg border px-3 py-2 text-sm border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+            >
               {editorErr}
             </div>
           ) : null}

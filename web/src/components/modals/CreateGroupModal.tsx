@@ -140,9 +140,7 @@ export function CreateGroupModal({
                     <div className="text-sm font-medium truncate text-[var(--color-text-secondary)]">
                       {s.name}
                     </div>
-                    <div className="text-[10px] truncate text-[var(--color-text-muted)]">
-                      {s.path}
-                    </div>
+                    <div className="text-xs truncate text-[var(--color-text-muted)]">{s.path}</div>
                   </div>
                 </button>
               ))}
@@ -171,7 +169,7 @@ export function CreateGroupModal({
               {t("createGroup.browse")}
             </Button>
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)]">
             {t("createGroup.pathAutoCreateHint")}
           </div>
         </div>

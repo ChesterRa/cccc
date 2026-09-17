@@ -762,8 +762,7 @@ export function AppModals({
     try {
       const resp = await api.updateSettings(selectedGroupId, settings);
       if (!resp.ok) {
-        showError(formatGroupSettingsUpdateError(t, resp.error));
-        return false;
+        throw new Error(formatGroupSettingsUpdateError(t, resp.error));
       }
       await refreshSettings(selectedGroupId);
       return true;

@@ -43,8 +43,9 @@ export function ModalFrame({
 
   const closeButtonElement = (
     <button
+      type="button"
       onClick={onClose}
-      className={`flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] ${floatingCloseButtonClassName}`}
+      className={`flex min-h-10 min-w-10 max-sm:min-h-11 max-sm:min-w-11 items-center justify-center rounded-lg border border-[var(--color-border-primary)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
       {closeIcon || (

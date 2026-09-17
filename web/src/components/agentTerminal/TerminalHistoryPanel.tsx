@@ -170,7 +170,7 @@ export function TerminalHistoryPanel({
         ) : null}
 
         {text ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.5] text-[var(--color-text-primary)]">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-[1.5] text-[var(--color-text-primary)]">
             {text}
           </pre>
         ) : null}

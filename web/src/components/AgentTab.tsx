@@ -79,7 +79,7 @@ function normalizeActorGroupRole(role: unknown): "foreman" | "peer" {
 
 function actorGroupRoleBadgeClass(role: "foreman" | "peer"): string {
   return classNames(
-    "rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+    "rounded-md border px-1.5 py-0.5 text-xs font-medium",
     role === "foreman"
       ? "border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-300"
       : "border-slate-400/25 bg-slate-500/10 text-slate-600 dark:border-slate-400/20 dark:bg-slate-400/10 dark:text-slate-300",
@@ -817,7 +817,7 @@ export function AgentTab({
                 {/* Mobile-only: condensed single-line agent state */}
                 <div
                   className={classNames(
-                    "sm:hidden mt-1 text-[11px] truncate leading-tight",
+                    "sm:hidden mt-1 text-xs truncate leading-tight",
                     stateHeadline !== t("noAgentStateYet")
                       ? "text-[var(--color-text-secondary)]"
                       : "text-[var(--color-text-muted)] italic",
@@ -861,7 +861,7 @@ export function AgentTab({
                       {stateTask ? (
                         <span
                           className={classNames(
-                            "shrink-0 rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]",
+                            "shrink-0 rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)]",
                           )}
                         >
                           {t("taskShort", { id: stateTask })}
@@ -870,7 +870,7 @@ export function AgentTab({
                       {blockerCount > 0 ? (
                         <span
                           className={classNames(
-                            "shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-600 dark:text-rose-300",
+                            "shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-600 dark:text-rose-300",
                           )}
                         >
                           {t("blockersShort", { count: blockerCount })}
@@ -879,7 +879,7 @@ export function AgentTab({
                       {stateNext ? (
                         <span
                           className={classNames(
-                            "min-w-0 truncate text-[10px] leading-4",
+                            "min-w-0 truncate text-xs leading-4",
                             "text-[var(--color-text-tertiary)]",
                           )}
                           title={stateNext}
@@ -891,7 +891,7 @@ export function AgentTab({
                   ) : null}
                 </div>
                 {agentState?.updated_at ? (
-                  <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-0.5 text-[10px] font-medium leading-4 text-[var(--color-text-tertiary)]">
+                  <div className="shrink-0 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-0.5 text-xs font-medium leading-4 text-[var(--color-text-tertiary)]">
                     {formatTime(agentState.updated_at)}
                   </div>
                 ) : null}
@@ -1193,7 +1193,7 @@ export function AgentTab({
             {unreadCount > 0 && (
               <span
                 className={classNames(
-                  "text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
+                  "text-xs px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
                   isDark ? "bg-white text-[rgb(20,20,22)]" : "bg-[rgb(35,36,37)] text-white",
                 )}
                 aria-hidden="true"

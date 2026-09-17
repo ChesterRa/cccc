@@ -1,4 +1,5 @@
 {
+  "saveFeedback": { "saved": "设置已保存。", "failed": "未能保存设置。你的修改仍然保留，请重试。" },
   "title": "设置",
   "closeAriaLabel": "关闭设置",
   "tabs": {

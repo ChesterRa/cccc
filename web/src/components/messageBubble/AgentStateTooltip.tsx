@@ -64,23 +64,23 @@ export function AgentStateTooltip({
         <div className="mt-2 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {stateTask ? (
-              <span className="rounded bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+              <span className="rounded bg-[var(--glass-tab-bg)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)]">
                 {t("taskShort", { id: stateTask })}
               </span>
             ) : null}
             {blockerCount > 0 ? (
-              <span className="rounded bg-rose-500/15 px-2 py-0.5 text-[11px] text-rose-600 dark:text-rose-300">
+              <span className="rounded bg-rose-500/15 px-2 py-0.5 text-xs text-rose-600 dark:text-rose-300">
                 {t("blockersShort", { count: blockerCount })}
               </span>
             ) : null}
           </div>
           {stateNext ? (
-            <div className="text-[11px] text-[var(--color-text-tertiary)]">
+            <div className="text-xs text-[var(--color-text-tertiary)]">
               {t("nextShort", { value: stateNext })}
             </div>
           ) : null}
           {stateChanged ? (
-            <div className="text-[11px] text-[var(--color-text-tertiary)]">
+            <div className="text-xs text-[var(--color-text-tertiary)]">
               {t("changedShort", { value: stateChanged })}
             </div>
           ) : null}

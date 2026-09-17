@@ -68,7 +68,7 @@ export function MobileMenuSheet({
   const sectionCardClass =
     "rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2 shadow-sm backdrop-blur-xl";
   const sectionTitleClass =
-    "px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]";
+    "px-2.5 pb-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]";
   const rowButtonClass =
     "w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-sm transition-all text-[var(--color-text-primary)] hover:bg-black/5 disabled:opacity-45 dark:hover:bg-white/6";
 

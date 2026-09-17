@@ -1,3 +1,4 @@
+import { buttonVariants } from "../ui/button-variants";
 import { GraphicViewer } from "../viewer/GraphicViewer";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
@@ -5,7 +6,7 @@ import { FloatingPortal } from "@floating-ui/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon } from "../Icons";
+import { CloseIcon, DownloadIcon } from "../Icons";
 import { MESSAGE_IMAGE_PREVIEW_HEIGHT_PX } from "./imageLayout";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
 
@@ -236,7 +237,7 @@ export function ImagePreview({
 
       {isLightboxVisible && (
         <FloatingPortal>
-          <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6 animate-fade-in">
+          <div className="fixed inset-0 z-[80] flex items-center justify-center sm:p-4 animate-fade-in">
             <button
               type="button"
               className={classNames("absolute inset-0", "glass-overlay")}
@@ -246,7 +247,7 @@ export function ImagePreview({
 
             <div
               className={classNames(
-                "relative z-[81] flex h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
+                "relative z-[81] flex h-[100dvh] sm:h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
                 "glass-modal",
               )}
               ref={modalRef}
@@ -275,30 +276,21 @@ export function ImagePreview({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <AuthenticatedDownloadLink
                     href={downloadHref}
                     download={downloadName}
-                    className={classNames(
-                      "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
-                      isDark
-                        ? "bg-slate-800 text-slate-100 hover:bg-slate-700"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200",
-                    )}
+                    className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
                     title={t("download", { name: alt })}
+                    aria-label={t("download", { name: alt })}
                   >
-                    {t("download", { name: alt })}
+                    <DownloadIcon size={18} aria-hidden="true" />
                   </AuthenticatedDownloadLink>
 
                   <button
                     type="button"
                     onClick={() => setIsLightboxOpen(false)}
-                    className={classNames(
-                      "inline-flex items-center justify-center rounded-lg p-2 transition-colors",
-                      isDark
-                        ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
-                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
-                    )}
+                    className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11`}
                     aria-label={t("common:close")}
                   >
                     <CloseIcon size={18} />

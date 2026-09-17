@@ -146,7 +146,7 @@ function ConsoleButton({
         <span className="block truncate text-xs font-semibold text-[var(--color-text-primary)]">
           {t("codexVoice")}
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">
+        <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
           {status}
         </span>
       </span>

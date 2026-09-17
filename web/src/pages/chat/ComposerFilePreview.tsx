@@ -107,7 +107,7 @@ export function ComposerFilePreview({
               alt={file.name}
               className="max-h-44 w-full rounded-lg object-contain"
             />
-            <div className="mt-1.5 truncate px-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+            <div className="mt-1.5 truncate px-0.5 text-xs font-medium text-[var(--color-text-secondary)]">
               {file.name}
             </div>
           </div>

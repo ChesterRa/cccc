@@ -39,7 +39,7 @@ export function GroupStatusIndicator({
   return (
     <span
       className={classNames(
-        "inline-flex min-h-6 shrink-0 items-center gap-1.5 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)]",
+        "inline-flex min-h-6 shrink-0 items-center gap-1.5 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 text-xs font-medium text-[var(--color-text-secondary)]",
         className,
       )}
       title={label}

@@ -266,12 +266,47 @@ export function WebAccessTab({
       if (remoteResp.ok && remoteResp.result?.remote_access) {
         const state = remoteResp.result.remote_access;
         setRemoteState(state);
-        setProvider((state.provider as "off" | "manual" | "tailscale" | "reach") || "off");
-        setMode(String(state.mode || "tailnet_only"));
-        setWebHost(String(state.config?.web_host || state.diagnostics?.web_host || "127.0.0.1"));
-        setWebPort(String(state.config?.web_port || state.diagnostics?.web_port || 8848));
-        setWebPublicUrl(
-          String(state.config?.web_public_url || state.diagnostics?.web_public_url || ""),
+        // Status refreshes must not replace a pending access configuration.
+        const sync = <T,>(current: T, previous: T, next: T): T =>
+          !remoteState || Object.is(current, previous) ? next : current;
+        setProvider((current) =>
+          sync(
+            current,
+            (remoteState?.provider as "off" | "manual" | "tailscale" | "reach") || "off",
+            (state.provider as "off" | "manual" | "tailscale" | "reach") || "off",
+          ),
+        );
+        setMode((current) =>
+          sync(
+            current,
+            String(remoteState?.mode || "tailnet_only"),
+            String(state.mode || "tailnet_only"),
+          ),
+        );
+        setWebHost((current) =>
+          sync(
+            current,
+            String(
+              remoteState?.config?.web_host || remoteState?.diagnostics?.web_host || "127.0.0.1",
+            ),
+            String(state.config?.web_host || state.diagnostics?.web_host || "127.0.0.1"),
+          ),
+        );
+        setWebPort((current) =>
+          sync(
+            current,
+            String(remoteState?.config?.web_port || remoteState?.diagnostics?.web_port || 8848),
+            String(state.config?.web_port || state.diagnostics?.web_port || 8848),
+          ),
+        );
+        setWebPublicUrl((current) =>
+          sync(
+            current,
+            String(
+              remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "",
+            ),
+            String(state.config?.web_public_url || state.diagnostics?.web_public_url || ""),
+          ),
         );
       } else if (!remoteResp.ok) {
         setError(remoteResp.error?.message || t("webAccess.loadFailed"));
@@ -534,10 +569,16 @@ export function WebAccessTab({
     }
   }, [lastApplyError, provider]);
 
+  const previousSavedAccessGoal = useRef<AccessGoal | null>(null);
   useEffect(() => {
     if (!remoteState) return;
-    setSelectedAccessGoal(inferAccessGoal(savedProvider, savedWebHost, savedWebPublicUrl));
-  }, [remoteState, savedProvider, savedWebHost, savedWebPublicUrl]);
+    const previous = previousSavedAccessGoal.current;
+    // The goal is part of the connection draft, not a live status indicator.
+    setSelectedAccessGoal((current) =>
+      previous === null || current === previous ? savedAccessGoal : current,
+    );
+    previousSavedAccessGoal.current = savedAccessGoal;
+  }, [remoteState, savedAccessGoal]);
 
   const revealAdvancedDisclosure = useCallback(() => {
     window.setTimeout(() => {
@@ -1346,6 +1387,7 @@ export function WebAccessTab({
         <div className={settingsWorkspaceBodyClass}>
           {(error || hint) && (
             <div
+              role={error ? "alert" : "status"}
               className={`rounded-lg border px-3 py-2 text-xs ${
                 error
                   ? "border-red-500/30 bg-red-500/15 text-red-600 dark:text-red-400"

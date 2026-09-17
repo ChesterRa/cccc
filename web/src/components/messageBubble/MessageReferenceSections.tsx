@@ -80,7 +80,7 @@ export function MessageReferenceSections({
     <>
       {presentationRefs.length > 0 ? (
         <div className={sectionClassName}>
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
             {t("presentation")}
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -90,7 +90,7 @@ export function MessageReferenceSections({
                 type="button"
                 onClick={() => onOpenPresentationRef?.(ref, event)}
                 className={classNames(
-                  "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                   "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
                 )}
                 title={getPresentationRefChipLabel(ref)}
@@ -104,14 +104,14 @@ export function MessageReferenceSections({
 
       {voiceDocumentRefs.length > 0 ? (
         <div className={sectionClassName}>
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
             {t("voiceSecretaryDocumentReferenceSection", { defaultValue: "Document" })}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {voiceDocumentRefs.map((ref, index) => (
               <div
                 key={`${String(event.id || "message")}:voice-document-ref:${index}:${ref.document_path}`}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)]"
+                className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]"
                 title={ref.document_path}
               >
                 <FileIcon size={12} aria-hidden="true" />
@@ -124,7 +124,7 @@ export function MessageReferenceSections({
 
       {taskRefs.length > 0 ? (
         <div className={sectionClassName}>
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
             {t("task", { defaultValue: "Task" })}
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -140,7 +140,7 @@ export function MessageReferenceSections({
                   type="button"
                   onClick={() => onOpenTaskRef?.(ref, event)}
                   className={classNames(
-                    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                     "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
                   )}
                   title={`${chipLabel} · ${stateLabel}`}
@@ -155,7 +155,7 @@ export function MessageReferenceSections({
                   <span className="truncate">{chipLabel}</span>
                   <span
                     className={classNames(
-                      "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                      "shrink-0 rounded-full border px-1.5 py-0.5 text-xs font-semibold leading-none",
                       TASK_REF_STATE_TONE_CLASS[stateKey],
                     )}
                   >

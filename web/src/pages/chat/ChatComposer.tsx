@@ -951,7 +951,7 @@ export function ChatComposer({
         {replyTarget && (
           <div
             className={classNames(
-              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
               isDark
                 ? "border-white/[0.06] bg-white/[0.035] text-[var(--color-text-tertiary)]"
                 : "border-black/[0.05] bg-black/[0.025] text-gray-500",
@@ -991,7 +991,7 @@ export function ChatComposer({
         {quotedPresentationRef && (
           <div
             className={classNames(
-              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
               isDark
                 ? "border-cyan-400/12 bg-cyan-500/6 text-[var(--color-text-tertiary)]"
                 : "border-cyan-200/70 bg-cyan-50/70 text-gray-600",
@@ -1030,7 +1030,7 @@ export function ChatComposer({
         {quotedVoiceDocumentRef && (
           <div
             className={classNames(
-              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px]",
+              "mb-2.5 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
               isDark
                 ? "border-violet-400/12 bg-violet-500/6 text-[var(--color-text-tertiary)]"
                 : "border-violet-200/70 bg-violet-50/70 text-gray-600",
@@ -1290,7 +1290,7 @@ export function ChatComposer({
                   <button
                     type="button"
                     className={classNames(
-                      "inline-flex h-11 w-11 items-center justify-center gap-0.5 rounded-lg px-0 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-2.5",
+                      "inline-flex h-11 w-11 items-center justify-center gap-0.5 rounded-lg px-0 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-2.5",
                       busy === "send" || !selectedGroupId
                         ? isDark
                           ? "text-[var(--color-text-tertiary)]"
@@ -1399,7 +1399,7 @@ export function ChatComposer({
                               </span>
                               <span
                                 className={classNames(
-                                  "block text-[11px]",
+                                  "block text-xs",
                                   isDark ? "text-[var(--color-text-tertiary)]" : "text-gray-500",
                                 )}
                               >

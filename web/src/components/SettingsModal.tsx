@@ -281,22 +281,87 @@ export function SettingsModal({
     });
   }, [groupId]);
 
+  const previousSettings = useRef<{ groupId: string | undefined; value: GroupSettings } | null>(
+    null,
+  );
   useEffect(() => {
-    if (isOpen && settings) {
-      setMailNoticeAfterSeconds(settings.mail_notice_after_seconds ?? 1800);
-      setReplyNoticeAfterSeconds(settings.reply_notice_after_seconds ?? 900);
-      setIdleSeconds(settings.actor_idle_timeout_seconds);
-      setKeepaliveSeconds(settings.keepalive_delay_seconds);
-      setKeepaliveMax(settings.keepalive_max_per_actor ?? 3);
-      setSilenceSeconds(settings.silence_timeout_seconds);
-      setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
-      setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
-      setDefaultSendTo(settings.default_send_to || "foreman");
-      setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
-      setTerminalNotifyTail(Boolean(settings.terminal_transcript_notify_tail));
-      setTerminalNotifyLines(Number(settings.terminal_transcript_notify_lines || 20));
+    if (!isOpen || !settings) {
+      previousSettings.current = null;
+      return;
     }
-  }, [isOpen, settings]);
+    const previous =
+      previousSettings.current && previousSettings.current.groupId === groupId
+        ? previousSettings.current.value
+        : null;
+    // Refresh clean fields; another section's save must not overwrite a local draft.
+    const sync = <T,>(current: T, before: T | undefined, next: T): T =>
+      previous === null || Object.is(current, before) ? next : current;
+    setMailNoticeAfterSeconds((current) =>
+      sync(
+        current,
+        previous?.mail_notice_after_seconds ?? 1800,
+        settings.mail_notice_after_seconds ?? 1800,
+      ),
+    );
+    setReplyNoticeAfterSeconds((current) =>
+      sync(
+        current,
+        previous?.reply_notice_after_seconds ?? 900,
+        settings.reply_notice_after_seconds ?? 900,
+      ),
+    );
+    setIdleSeconds((current) =>
+      sync(current, previous?.actor_idle_timeout_seconds, settings.actor_idle_timeout_seconds),
+    );
+    setKeepaliveSeconds((current) =>
+      sync(current, previous?.keepalive_delay_seconds, settings.keepalive_delay_seconds),
+    );
+    setKeepaliveMax((current) =>
+      sync(current, previous?.keepalive_max_per_actor ?? 3, settings.keepalive_max_per_actor ?? 3),
+    );
+    setSilenceSeconds((current) =>
+      sync(current, previous?.silence_timeout_seconds, settings.silence_timeout_seconds),
+    );
+    setHelpNudgeIntervalSeconds((current) =>
+      sync(
+        current,
+        previous?.help_nudge_interval_seconds ?? 600,
+        settings.help_nudge_interval_seconds ?? 600,
+      ),
+    );
+    setHelpNudgeMinMessages((current) =>
+      sync(
+        current,
+        previous?.help_nudge_min_messages ?? 10,
+        settings.help_nudge_min_messages ?? 10,
+      ),
+    );
+    setDefaultSendTo((current) =>
+      sync(current, previous?.default_send_to || "foreman", settings.default_send_to || "foreman"),
+    );
+    setTerminalVisibility((current) =>
+      sync(
+        current,
+        previous?.terminal_transcript_visibility || "foreman",
+        settings.terminal_transcript_visibility || "foreman",
+      ),
+    );
+    setTerminalNotifyTail((current) =>
+      sync(
+        current,
+        Boolean(previous?.terminal_transcript_notify_tail),
+        Boolean(settings.terminal_transcript_notify_tail),
+      ),
+    );
+    setTerminalNotifyLines((current) =>
+      sync(
+        current,
+        Number(previous?.terminal_transcript_notify_lines || 20),
+        Number(settings.terminal_transcript_notify_lines || 20),
+      ),
+    );
+    previousSettings.current = { groupId, value: settings };
+  }, [isOpen, groupId, settings]);
 
   useEffect(() => {
     if (imMattermostBusy.current || imPlatform === "mattermost") {
@@ -620,15 +685,69 @@ export function SettingsModal({
 
   // ============ Handlers ============
 
+  const [saveFeedback, setSaveFeedback] = useState<{
+    context: string;
+    error: boolean;
+    message: string;
+  } | null>(null);
+  const saveContext = JSON.stringify([
+    isOpen,
+    groupId,
+    scope,
+    scope === "group" ? groupTab : globalTab,
+    mailNoticeAfterSeconds,
+    replyNoticeAfterSeconds,
+    idleSeconds,
+    keepaliveSeconds,
+    keepaliveMax,
+    silenceSeconds,
+    helpNudgeIntervalSeconds,
+    helpNudgeMinMessages,
+    defaultSendTo,
+    terminalVisibility,
+    terminalNotifyTail,
+    terminalNotifyLines,
+  ]);
+  const saveContextRef = useRef(saveContext);
+  saveContextRef.current = saveContext;
+  useEffect(
+    () => () => {
+      saveContextRef.current = "";
+    },
+    [],
+  );
+  const saveGroupSettings = async (patch: Partial<GroupSettings>) => {
+    const context = saveContextRef.current;
+    setSaveFeedback(null);
+    try {
+      const result = await onUpdateSettings(patch);
+      if (saveContextRef.current === context) {
+        setSaveFeedback({
+          context,
+          error: result === false,
+          message: t(result === false ? "saveFeedback.failed" : "saveFeedback.saved"),
+        });
+      }
+    } catch (error) {
+      if (saveContextRef.current === context) {
+        setSaveFeedback({
+          context,
+          error: true,
+          message: error instanceof Error ? error.message : t("saveFeedback.failed"),
+        });
+      }
+    }
+  };
+
   const handleSaveDeliverySettings = async () => {
-    await onUpdateSettings({
+    await saveGroupSettings({
       mail_notice_after_seconds: mailNoticeAfterSeconds,
       reply_notice_after_seconds: replyNoticeAfterSeconds,
     });
   };
 
   const handleSaveAutomationSettings = async () => {
-    await onUpdateSettings({
+    await saveGroupSettings({
       actor_idle_timeout_seconds: idleSeconds,
       keepalive_delay_seconds: keepaliveSeconds,
       keepalive_max_per_actor: keepaliveMax,
@@ -648,7 +767,7 @@ export function SettingsModal({
   };
 
   const handleSaveTranscriptSettings = async () => {
-    await onUpdateSettings({
+    await saveGroupSettings({
       terminal_transcript_visibility: terminalVisibility,
       terminal_transcript_notify_tail: terminalNotifyTail,
       terminal_transcript_notify_lines: terminalNotifyLines,
@@ -656,7 +775,7 @@ export function SettingsModal({
   };
 
   const handleSaveMessagingSettings = async () => {
-    await onUpdateSettings({ default_send_to: defaultSendTo });
+    await saveGroupSettings({ default_send_to: defaultSendTo });
   };
 
   const copyTailLastLines = async (lineCount: number) => {
@@ -1727,6 +1846,14 @@ export function SettingsModal({
                   />
                 )}
               </Suspense>
+            )}
+            {saveFeedback?.context === saveContext && (
+              <p
+                role={saveFeedback.error ? "alert" : "status"}
+                className={`text-sm ${saveFeedback.error ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-accent-success)]"}`}
+              >
+                {saveFeedback.message}
+              </p>
             )}
           </div>
         </div>

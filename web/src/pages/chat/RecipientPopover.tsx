@@ -59,7 +59,7 @@ export function RecipientPopover({
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span
               className={classNames(
-                "min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide",
+                "min-w-0 truncate text-xs font-semibold uppercase tracking-wide",
                 isDark ? "text-slate-300" : "text-gray-600",
               )}
             >
@@ -68,7 +68,7 @@ export function RecipientPopover({
             {target.badgeLabel ? (
               <span
                 className={classNames(
-                  "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                  "shrink-0 rounded-full border px-1.5 py-0.5 text-xs font-semibold leading-none",
                   isDark
                     ? "border-white/12 bg-white/[0.06] text-slate-300"
                     : "border-black/10 bg-gray-50 text-gray-600",
@@ -99,7 +99,7 @@ export function RecipientPopover({
         {target.idValue ? (
           <div
             className={classNames(
-              "mt-2 truncate rounded-md px-2 py-1 font-mono text-[11px]",
+              "mt-2 truncate rounded-md px-2 py-1 font-mono text-xs",
               isDark ? "bg-white/[0.08] text-slate-200" : "bg-gray-100 text-gray-800",
             )}
           >

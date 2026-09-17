@@ -7,6 +7,9 @@ import { AppShell } from "../../src/components/app/AppShell";
 import { SearchModal } from "../../src/components/SearchModal";
 import { PresentationViewerModal } from "../../src/components/presentation/PresentationViewerModal";
 import { SettingsModal } from "../../src/components/SettingsModal";
+import { ImagePreview } from "../../src/components/messageBubble/ImagePreview";
+import { MarkdownRenderer } from "../../src/components/MarkdownRenderer";
+import { PresentationPinModal } from "../../src/components/presentation/PresentationPinModal";
 import { useGroupActions } from "../../src/hooks/useGroupActions";
 import { useTextScale } from "../../src/hooks/useTextScale";
 import { useTheme } from "../../src/hooks/useTheme";
@@ -139,6 +142,15 @@ useObservabilityStore.setState({ loaded: true });
 useComposerStore.getState().switchGroup(null, "g1");
 window.fetch = async (input, init) => {
   const url = new URL(String(input), location.href);
+  if (
+    url.pathname === "/ui/reading-example.svg" ||
+    url.pathname.endsWith("/blobs/reading-example.svg")
+  ) {
+    return new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#edf2f7"/><path d="M200 450H1400" stroke="#304050" stroke-width="8"/><text x="200" y="420" font-size="60" fill="#304050">Architecture drawing</text></svg>',
+      { headers: { "Content-Type": "image/svg+xml" } },
+    );
+  }
   const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
   probe.requests.push({ path: url.pathname, method: init?.method || "GET", body });
   let result: unknown = {};
@@ -267,7 +279,10 @@ window.fetch = async (input, init) => {
     return Response.json({
       ok: true,
       result: {
-        spaces: [{ remote_space_id: "notebook-fixture", title: "CCCC · Release workspace" }],
+        spaces: [
+          { remote_space_id: "notebook-fixture", title: "CCCC · Release workspace" },
+          { remote_space_id: "notebook-next", title: "Next project" },
+        ],
       },
     });
   if (url.pathname.endsWith("/notebooklm/auth"))
@@ -490,6 +505,8 @@ export function Fixture() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [readingExamples, setReadingExamples] = useState(false);
+  const presentationPin = useModalStore((state) => state.presentationPin);
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionKind, setMentionKind] = useState<"agent" | "group">("agent");
@@ -569,6 +586,7 @@ export function Fixture() {
         }));
       },
       setSidebarCollapsed,
+      setReadingExamples,
       setReadOnly,
       setCanAccessAccount,
       setTextScale,
@@ -690,6 +708,43 @@ export function Fixture() {
   return (
     <div className="h-dvh">
       <AppShell {...props} />
+      {readingExamples && (
+        <section
+          data-reading-examples
+          className="fixed inset-x-6 top-20 z-40 max-h-[65dvh] overflow-auto rounded-xl border bg-[var(--color-bg-primary)] p-4"
+        >
+          <ImagePreview
+            href="/ui/reading-example.svg"
+            downloadHref="/ui/reading-example.svg"
+            downloadName="drawing.svg"
+            alt="Architecture drawing"
+            isSvg
+            isUserMessage={false}
+            isDark={dark}
+          />
+          <MarkdownRenderer
+            enableMermaid
+            isDark={dark}
+            content={"```mermaid\nflowchart LR\nA[Prepare] --> B[Review]\n```"}
+          />
+        </section>
+      )}
+      {presentationPin && (
+        <PresentationPinModal
+          isOpen
+          isDark={dark}
+          groupId={groupId}
+          slot={{
+            slot_id: presentationPin.slotId,
+            index: Number(presentationPin.slotId.slice(-1)),
+          }}
+          busy={false}
+          onClose={() => useModalStore.getState().setPresentationPin(null)}
+          onSubmitUrl={() => probe.actions.push("pinUrl")}
+          onSubmitFile={() => probe.actions.push("pinFile")}
+          onSubmitWorkspace={() => probe.actions.push("pinWorkspace")}
+        />
+      )}
       <MobileMenuSheet
         isOpen={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -733,6 +788,7 @@ export function Fixture() {
           presentation={presentation}
           focusRef={presentationViewer.focusRef}
           focusEventId={presentationViewer.focusEventId}
+          onQuoteInChat={() => probe.actions.push("quote")}
           supportsSplit={width >= 768}
           onOpenSplit={() => {
             useUIStore.getState().setChatPresentationDisplayMode(groupId, "split");

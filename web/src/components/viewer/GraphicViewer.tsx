@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Maximize, Minus, Plus } from "lucide-react";
+import { buttonVariants } from "../ui/button-variants";
 
 // Only static graphics belong here. PDF and interactive browser surfaces own their input.
 type Graphic =
@@ -107,63 +108,65 @@ function GraphicViewport(graphic: Graphic) {
     }
   }, [scale, left, top, manualScale]);
 
-  const button =
-    "inline-flex min-h-8 min-w-8 items-center justify-center gap-1 rounded-md px-2 text-xs hover:bg-[var(--glass-tab-bg)] focus-visible:outline-2 disabled:opacity-40";
+  const button = `${buttonVariants({ variant: "ghost", size: "sm" })} min-w-9 max-sm:min-h-11 max-sm:min-w-11`;
   return (
     <div
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       data-graphic-viewer
     >
       <div
-        className="flex shrink-0 flex-wrap items-center justify-center gap-1 border-b border-[var(--glass-border-subtle)] p-1 text-[var(--color-text-secondary)]"
+        className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-[var(--glass-border-subtle)] p-1 text-[var(--color-text-secondary)]"
         role="group"
         aria-label={t("graphicViewer.controls")}
       >
-        <button
-          type="button"
-          className={button}
-          disabled={!ready}
-          onClick={reset}
-          title={t("graphicViewer.fit")}
-          aria-label={t("graphicViewer.fit")}
-        >
-          <Maximize size={14} />
-          <span>{t("graphicViewer.fit")}</span>
-        </button>
-        <button
-          type="button"
-          className={button}
-          disabled={!ready}
-          onClick={() => zoom(1)}
-          title={t("graphicViewer.actual")}
-          aria-label={t("graphicViewer.actual")}
-        >
-          100%
-        </button>
-        <span className="mx-1 h-4 border-l border-[var(--glass-border-subtle)]" />
-        <button
-          type="button"
-          className={button}
-          disabled={!ready}
-          onClick={() => zoom(scale / 1.25)}
-          title={t("graphicViewer.out")}
-          aria-label={t("graphicViewer.out")}
-        >
-          <Minus size={15} />
-        </button>
-        <span className="min-w-12 text-center text-xs tabular-nums" aria-live="off">
-          {ready ? `${Math.round(scale * 100)}%` : "—"}
-        </span>
-        <button
-          type="button"
-          className={button}
-          disabled={!ready}
-          onClick={() => zoom(scale * 1.25)}
-          title={t("graphicViewer.in")}
-          aria-label={t("graphicViewer.in")}
-        >
-          <Plus size={15} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={button}
+            disabled={!ready}
+            onClick={reset}
+            title={t("graphicViewer.fit")}
+            aria-label={t("graphicViewer.fit")}
+          >
+            <Maximize size={14} />
+            <span>{t("graphicViewer.fit")}</span>
+          </button>
+          <button
+            type="button"
+            className={button}
+            disabled={!ready}
+            onClick={() => zoom(1)}
+            title={t("graphicViewer.actual")}
+            aria-label={t("graphicViewer.actual")}
+          >
+            100%
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={button}
+            disabled={!ready}
+            onClick={() => zoom(scale / 1.25)}
+            title={t("graphicViewer.out")}
+            aria-label={t("graphicViewer.out")}
+          >
+            <Minus size={15} />
+          </button>
+          <span className="min-w-12 text-center text-xs tabular-nums" aria-live="off">
+            {ready ? `${Math.round(scale * 100)}%` : "—"}
+          </span>
+          <button
+            type="button"
+            className={button}
+            disabled={!ready}
+            onClick={() => zoom(scale * 1.25)}
+            title={t("graphicViewer.in")}
+            aria-label={t("graphicViewer.in")}
+          >
+            <Plus size={15} />
+          </button>
+        </div>
       </div>
       <div className="relative min-h-0 flex-1">
         <div

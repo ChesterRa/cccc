@@ -93,7 +93,7 @@ export function ActorQuickControls({
           </button>
         ) : connected && !writable ? (
           <button
-            className={`${button} @min-[480px]/actor-view:w-auto @min-[480px]/actor-view:px-1 text-[10px]`}
+            className={`${button} @min-[480px]/actor-view:w-auto @min-[480px]/actor-view:px-1 text-xs`}
             onClick={onTakeover}
             title={t("takeControl")}
             aria-label={t("takeControl")}

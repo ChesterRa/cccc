@@ -104,7 +104,7 @@ export function ChatMentionMenu({
                   {item.badgeKind ? (
                     <span
                       className={classNames(
-                        "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                        "shrink-0 rounded-full border px-1.5 py-0.5 text-xs font-semibold leading-none",
                         isDark
                           ? "border-sky-300/20 bg-sky-400/10 text-sky-100"
                           : "border-sky-100 bg-sky-50 text-sky-900",
@@ -117,14 +117,14 @@ export function ChatMentionMenu({
                   ) : null}
                 </div>
                 {item.remote && !item.remote.fresh ? (
-                  <div className="text-[11px] text-[var(--color-text-tertiary)]">
+                  <div className="text-xs text-[var(--color-text-tertiary)]">
                     {t("connectMentionStale")}
                   </div>
                 ) : null}
                 {item.description ? (
                   <div
                     className={classNames(
-                      "line-clamp-2 break-words text-[11px] leading-4",
+                      "line-clamp-2 break-words text-xs leading-4",
                       isDark ? "text-slate-400" : "text-gray-500",
                     )}
                   >
@@ -134,7 +134,7 @@ export function ChatMentionMenu({
                 {item.meta ? (
                   <div
                     className={classNames(
-                      "truncate text-[10px] leading-4 opacity-55",
+                      "truncate text-xs leading-4 opacity-55",
                       isDark ? "text-slate-500" : "text-gray-400",
                     )}
                   >

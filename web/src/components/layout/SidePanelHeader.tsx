@@ -14,7 +14,7 @@ export function SidePanelButton({
       aria-label={title}
       {...props}
       className={classNames(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40 [&_svg]:h-4 [&_svg]:w-4",
+        "flex h-8 w-8 max-sm:h-11 max-sm:w-11 shrink-0 items-center justify-center rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40 [&_svg]:h-4 [&_svg]:w-4",
         className,
       )}
     />

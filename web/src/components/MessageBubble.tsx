@@ -160,11 +160,11 @@ function MessageBubbleBody({
   const { t } = useTranslation("chat");
   const canJumpToReplyTarget = !!(replyToEventId && onOpenReplyTarget);
   const quoteClassName = classNames(
-    "rounded-2xl border px-3 py-2 text-[12px] leading-5",
+    "rounded-2xl border px-3 py-2 text-xs leading-5",
     "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
   );
   const metaChipClass = classNames(
-    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+    "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
     "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
   );
   const normalizedToLabel = String(toLabel || "").trim();
@@ -244,14 +244,14 @@ function MessageBubbleBody({
             title={t("jumpToRepliedMessage")}
             aria-label={t("jumpToRepliedMessage")}
           >
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-55">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
               {t("reply")}
             </span>
             <span className="block">"{quoteText}"</span>
           </button>
         ) : (
           <div className={classNames(quoteClassName, "mb-3")}>
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-55">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
               {t("reply")}
             </span>
             <span className="block">"{quoteText}"</span>
@@ -278,7 +278,7 @@ function MessageBubbleBody({
 
       {insight ? (
         <div className={supportingSectionClass}>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase opacity-50">
+          <div className="mb-1.5 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
             {t("senderPerspective")}
           </div>
           <div className="max-w-full break-words whitespace-pre-wrap text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
@@ -808,7 +808,7 @@ export const MessageBubble = memo(
             {replyRequested && (
               <span
                 className={classNames(
-                  "absolute -top-2 z-10 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
+                  "absolute -top-2 z-10 text-xs font-semibold px-2 py-0.5 rounded-full border shadow-sm",
                   isUserMessage ? "left-3" : "right-3",
                   "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-200 border-violet-200 dark:border-violet-800",
                 )}

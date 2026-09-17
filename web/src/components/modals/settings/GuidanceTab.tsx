@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { Actor } from "../../../types";
@@ -52,6 +52,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const { t } = useTranslation("settings");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [hint, setHint] = useState("");
   const [prompts, setPrompts] = useState<Record<PromptKind, PromptInfo> | null>(null);
   const [actors, setActors] = useState<Actor[]>([]);
   const [expandedKind, setExpandedKind] = useState<PromptKind | null>(null);
@@ -60,6 +61,9 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const [helpTouchedRaw, setHelpTouchedRaw] = useState(false);
   const [helpChangedBlocks, setHelpChangedBlocks] = useState<HelpChangedBlock[]>([]);
   const [selectedHelpScope, setSelectedHelpScope] = useState<HelpScopeId>("common");
+
+  const liveDraft = useRef({ groupId, prompts });
+  liveDraft.current = { groupId, prompts };
 
   const actorIds = useMemo(
     () => actors.map((actor) => String(actor.id || "").trim()).filter(Boolean),
@@ -82,6 +86,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     if (!groupId) return;
     setBusy(true);
     setErr("");
+    setHint("");
     try {
       const [promptsResp, actorsResp] = await Promise.all([
         api.fetchGroupPrompts(groupId),
@@ -124,6 +129,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   }, [groupId]);
 
   const setPromptContent = (kind: PromptKind, content: string) => {
+    setHint("");
     setPrompts((current) => {
       if (!current) return current;
       return { ...current, [kind]: { ...current[kind], content } };
@@ -172,17 +178,40 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     applyStructuredHelp({ ...helpStructured, actorNotes: nextActorNotes }, `actor:${actorId}`);
   };
 
+  const acceptSavedPrompt = (kind: PromptKind, saved: PromptInfo, submitted: string) => {
+    if (liveDraft.current.groupId !== groupId) return;
+    const editedWhileSaving = liveDraft.current.prompts?.[kind].content !== submitted;
+    setPrompts((current) =>
+      current
+        ? {
+            ...current,
+            [kind]: {
+              ...saved,
+              content: editedWhileSaving ? current[kind].content : saved.content,
+            },
+          }
+        : current,
+    );
+    if (kind === "help" && !editedWhileSaving) {
+      syncHelpState(String(saved.content || ""));
+      setHelpTouchedRaw(false);
+      setHelpChangedBlocks([]);
+    }
+    if (!editedWhileSaving) setHint(t("saveFeedback.saved"));
+  };
+
   const savePrompt = async (kind: PromptKind) => {
     if (!groupId || !prompts) return;
     setBusy(true);
     setErr("");
+    setHint("");
     try {
       const resp = await api.updateGroupPrompt(groupId, kind, prompts[kind].content || "");
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToSave", { kind }));
         return;
       }
-      await load();
+      acceptSavedPrompt(kind, resp.result, prompts[kind].content || "");
     } catch {
       setErr(t("guidance.failedToSave", { kind }));
     } finally {
@@ -194,6 +223,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     if (!groupId || !prompts) return;
     setBusy(true);
     setErr("");
+    setHint("");
     try {
       const resp = await api.updateGroupPrompt(
         groupId,
@@ -207,7 +237,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         setErr(resp.error?.message || t("guidance.failedToSave", { kind: "help" }));
         return;
       }
-      await load();
+      acceptSavedPrompt("help", resp.result, prompts.help.content || "");
     } catch {
       setErr(t("guidance.failedToSave", { kind: "help" }));
     } finally {
@@ -222,13 +252,14 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
     if (!ok) return;
     setBusy(true);
     setErr("");
+    setHint("");
     try {
       const resp = await api.resetGroupPrompt(groupId, kind);
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToReset", { kind }));
         return;
       }
-      await load();
+      acceptSavedPrompt(kind, resp.result, prompts[kind].content || "");
     } catch {
       setErr(t("guidance.failedToReset", { kind }));
     } finally {
@@ -769,8 +800,15 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
 
   return (
     <div className="space-y-3">
+      {hint ? (
+        <p role="status" className="text-sm text-[var(--color-accent-success)]">
+          {hint}
+        </p>
+      ) : null}
       {err ? (
-        <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>
+        <div role="alert" className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>
+          {err}
+        </div>
       ) : null}
 
       <div className={overridesHintClass}>
